@@ -20,6 +20,7 @@ struct IsolateVM {
     TypeResTable* types { new TypeResTable() };
 
     Type* getType(BuildIns type);
+    Type* getType(Slot slot);
 
     GC* gc;
 

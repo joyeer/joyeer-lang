@@ -29,6 +29,8 @@ Node::Ptr NodeVisitor::visit(const Node::Ptr& node) {
         NODE_VISITOR(SyntaxKind::parenthesizedExpr,     ParenthesizedExpr)
         NODE_VISITOR(SyntaxKind::arguCallExpr,          ArguCallExpr)
         NODE_VISITOR(SyntaxKind::funcCallExpr,          FuncCallExpr)
+        NODE_VISITOR(SyntaxKind::forceUnwrapExpr,       ForceUnwrappingExpr)
+        NODE_VISITOR(SyntaxKind::optionalChainingExpr,  OptionalChainingExpr)
         NODE_VISITOR(SyntaxKind::memberAccessExpr,      MemberAccessExpr)
         NODE_VISITOR(SyntaxKind::memberAssignExpr,      MemberAssignExpr)
         NODE_VISITOR(SyntaxKind::memberFuncCallExpr,    MemberFuncCallExpr)

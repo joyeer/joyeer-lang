@@ -31,6 +31,8 @@ protected:
     virtual Node::Ptr visit(const MemberAccessExpr::Ptr& decl) = 0;
     virtual Node::Ptr visit(const MemberAssignExpr::Ptr& decl) = 0;
     virtual Node::Ptr visit(const SubscriptExpr::Ptr& decl) = 0;
+    virtual Node::Ptr visit(const ForceUnwrappingExpr::Ptr& decl) = 0;
+    virtual Node::Ptr visit(const OptionalChainingExpr::Ptr& decl) = 0;
 
     // Statements
     virtual Node::Ptr visit(const IfStmt::Ptr& decl) = 0;

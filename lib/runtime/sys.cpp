@@ -57,10 +57,13 @@ Value Global_$_autoWrapping_Bool(Executor* executor, Arguments* args) {
     return wrapped;
 }
 
-Value Global_$_autoUnwrapping_Int(Executor* executor, Arguments* args) {
+Value Global_$_autoUnwrapping(Executor* executor, Arguments* args) {
     auto value = args->getArgument(0);
-    auto optionalInt = (Optional*)executor->vm->getType(BuildIns::Object_Optional_Int);
-    return optionalInt->intValue(value);
+    auto head = (ObjectHead*)value;
+    auto type = executor->vm->getType(head->typeSlot);
+    assert(type->kind == ValueType::Optional);
+    auto optionalClass = (Optional*)type;
+    return optionalClass->value(value);
 }
 
 Value Array_$$_get(Executor* executor, Arguments *args) {

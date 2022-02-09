@@ -144,7 +144,8 @@ void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
     {                                                                \
         auto func = new Function(descriptor, true);                  \
         declare(func);                                               \
-        func->funcType = FuncType::C_Func;                       \
+        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::func, func->name, func->slot)); \
+        func->funcType = FuncType::C_Func;                           \
         func->cFunction = (CFunction)&(cFuncImpl);                   \
         func->returnTypeSlot = (int)(retTypeSlot);                   \
         func->paramCount = 0;
@@ -232,8 +233,8 @@ void CompilerService::bootstrap() {
         DECLARE_FUNC_PARM("bool", ValueType::Bool)
     END_DECLARE_FUNC()
 
-    BEGIN_DECLARE_FUNC(BuildIns::Func_AutoUnwrapping_Int, "autoUnwrapping(int:)", ValueType::Int, Global_$_autoUnwrapping_Int)
-        DECLARE_FUNC_PARM("int", BuildIns::Object_Optional_Int)
+    BEGIN_DECLARE_FUNC(BuildIns::Func_forceUnwrapping, "autoUnwrapping(value:)", ValueType::Int, Global_$_autoUnwrapping)
+        DECLARE_FUNC_PARM("value", BuildIns::Object_Optional_Int)
     END_DECLARE_FUNC()
 
     BEGIN_DECLARE_OPTIONAL(BuildIns::Object_Optional_Int, ValueType::Int)
@@ -264,7 +265,6 @@ void CompilerService::bootstrap() {
     END_DECLARE_CLASS(BuildIns::Object_StringBuilder)
 
 
-    auto print = getType(BuildIns::Func_Print);
-    globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::func, print->name, print->slot));
+
 
 }

@@ -16,6 +16,10 @@ Type* IsolateVM::getType(BuildIns type) {
     return (*types)[(int)(type)];
 }
 
+Type* IsolateVM::getType(Slot slot) {
+    return (*types)[(int)slot];
+}
+
 void IsolateVM::bootstrap() {
     arrayClass = (ArrayClass*)((*types)[(int) BuildIns::Object_Array]);
     dictClass = (DictClass*)((*types)[(int) BuildIns::Object_Dict]);
