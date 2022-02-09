@@ -33,7 +33,7 @@ struct ObjectHead {
     bool wrapped:     1 = 0;        // for Optional type 1, else 0
     bool absent:      1 = 0;        // only available for Optional type
     bool reserved:    6 = 0;        // reserved for future usage
-    int typeSlot:     20  = 0;
+    Slot typeSlot:     20  = 0;
     int refCount:     12 = 0;
     int reserved_2:   24 = 0;       // reserved for future usage
 };
@@ -70,7 +70,7 @@ enum class BuildIns : uint16_t {
     Func_Print = static_cast<size_t>(ValueType::RESOLVED_PRIMARY_TYPE_COUNT) ,
     Func_AutoWrapping_Int,
     Func_AutoWrapping_Bool,
-    Func_AutoUnwrapping_Int,
+    Func_forceUnwrapping,
 
     Object_Optional_Int,
     Object_Optional_Bool,
@@ -250,6 +250,7 @@ struct Optional : public Type {
 
     Int intValue(intptr_t objAddr);
     Bool boolValue(intptr_t objAddr);
+    Value value(intptr_t objAddr);
 
 };
 

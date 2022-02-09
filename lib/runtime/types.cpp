@@ -115,6 +115,11 @@ Bool Optional::boolValue(intptr_t objAddr) {
     return optionalObj->wrappedValue;
 }
 
+Value Optional::value(intptr_t objAddr) {
+    auto optionalObj = reinterpret_cast<DataMap*>(objAddr);
+    return optionalObj->wrappedValue;
+}
+
 //------------/------------------------------------
 // Class implementation
 //------------------------------------------------

@@ -553,6 +553,28 @@ protected:
         return decl;
     }
 
+    Node::Ptr visit(const OptionalChainingExpr::Ptr& decl) override {
+        output << "optional-chaining:";
+        DEBUG_BLOCK_START
+        output << "wrappedExpr:";
+        DEBUG_BLOCK_START
+            NodeVisitor::visit(decl->wrappedExpr);
+        DEBUG_BLOCK_END
+        DEBUG_BLOCK_END
+        return decl;
+    }
+
+    Node::Ptr visit(const ForceUnwrappingExpr::Ptr& decl) override {
+        output << "force-unwrapping:";
+        DEBUG_BLOCK_START
+        output << "wrappedExpr:";
+        DEBUG_BLOCK_START
+        NodeVisitor::visit(decl->wrappedExpr);
+        DEBUG_BLOCK_END
+        DEBUG_BLOCK_END
+        return decl;
+    }
+
     Node::Ptr visit(const ArrayType::Ptr& decl) override {
         output << "array:";
         DEBUG_BLOCK_START

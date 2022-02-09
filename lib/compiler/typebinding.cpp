@@ -5,6 +5,11 @@
 #include <cassert>
 #include <utility>
 
+#define CHECK_ERROR_RETURN(typeSlot) \
+    if((typeSlot) == -1) {           \
+        return decl;                 \
+    }
+
 TypeBinding::TypeBinding(CompileContext::Ptr context):
 context(std::move(context)) {
     compiler = this->context->compiler;
@@ -568,6 +573,23 @@ Node::Ptr TypeBinding::visit(const PostfixExpr::Ptr &node) {
         assert(false);
     };
     return node;
+}
+
+Node::Ptr TypeBinding::visit(const ForceUnwrappingExpr::Ptr& decl) {
+    decl->wrappedExpr = visit(decl->wrappedExpr);
+
+    CHECK_ERROR_RETURN(decl->wrappedExpr->typeSlot)
+
+    auto type = compiler->getType(decl->wrappedExpr->typeSlot);
+    if(type->kind == ValueType::Optional) {
+        auto optionalType = (Optional*)type;
+        decl->typeSlot = optionalType->wrappedTypeSlot;
+    }
+    return decl;
+}
+
+Node::Ptr TypeBinding::visit(const OptionalChainingExpr::Ptr& decl) {
+    return decl;
 }
 
 Node::Ptr TypeBinding::visit(const ImportStmt::Ptr& node) {
