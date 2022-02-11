@@ -222,8 +222,10 @@ void IRGen::emit(const VarDecl::Ptr& node) {
             break;
         case SymbolFlag::field: {
             if(symbol->isStatic) {
+                autoWrapping(node->initializer->typeSlot, symbol->typeSlot);
                 writer.write(Bytecode(OP_PUTSTATIC, symbol->parentTypeSlot, symbol->locationInParent));
             } else {
+                autoWrapping(node->initializer->typeSlot, symbol->typeSlot);
                 // load *self* from first parameter
                 writer.write(Bytecode(OP_OLOAD, 0));
                 writer.write(Bytecode(OP_PUTFIELD, symbol->locationInParent));
@@ -249,7 +251,7 @@ void IRGen::emit(const PrefixExpr::Ptr& node) {
 void IRGen::emit(const PostfixExpr::Ptr& decl) {
     if(decl->op->token->rawValue == Operators::POINT) {
         emit(decl->expr);
-        writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_forceUnwrapping)->slot));
+        writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_autoUnwrapping)->slot));
         return;
     }
     assert(false);
@@ -344,11 +346,12 @@ void IRGen::emit(const AssignExpr::Ptr& node) {
         emit(node->expr);
         auto memberAccessExpr = std::static_pointer_cast<MemberAccessExpr>(node->left);
         auto identifierExpr = memberAccessExpr->callee;
-        emit(identifierExpr);
 
         auto symbol = context->lookup(identifierExpr->getSimpleName());
         assert(symbol->flag == SymbolFlag::field);
+        autoWrapping(node->expr->typeSlot, symbol->typeSlot);
 
+        emit(identifierExpr);
         writer.write(Bytecode(OP_PUTFIELD, symbol->locationInParent));
     } else if(node->left->kind == SyntaxKind::subscriptExpr) {
         
@@ -558,8 +561,9 @@ void IRGen::emit(const ImportStmt::Ptr& node) {
 }
 
 void IRGen::autoWrapping(int srcTypeSlot, int destTypeSlot) {
-    if(destTypeSlot == compiler->getType(ValueType::Any)->slot) {
-        auto srcType = compiler->getType(srcTypeSlot);
+    auto destType = compiler->getType(destTypeSlot);
+    auto srcType = compiler->getType(srcTypeSlot);
+    if(destType->kind == ValueType::Any) {
         switch (srcType->kind) {
             case ValueType::Int:
                 writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_AutoWrapping_Int)->slot));
@@ -577,9 +581,30 @@ void IRGen::autoWrapping(int srcTypeSlot, int destTypeSlot) {
             default:
                 assert(false);
         }
+    } else if(destType->kind == ValueType::Optional) {
+        switch(srcType->kind) {
+            case ValueType::Int:
+                writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_AutoWrapping_Int)->slot));
+                break;
+            case ValueType::Bool:
+                writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_AutoWrapping_Bool)->slot));
+                break;
+            case ValueType::Class:
+                forceWrapping();
+                break;
+            case ValueType::Nil:
+                break;
+            default:
+                assert(false);
+        }
     }
+
 }
 
 void IRGen::forceUnwrapping() {
-    writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_forceUnwrapping)->slot));
+    writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_autoUnwrapping)->slot));
+}
+
+void IRGen::forceWrapping() {
+    writer.write(Bytecode(OP_INVOKE, compiler->getType(BuildIns::Func_autoWrapping_Class)->slot));
 }

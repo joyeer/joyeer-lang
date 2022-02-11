@@ -57,6 +57,19 @@ Value Global_$_autoWrapping_Bool(Executor* executor, Arguments* args) {
     return wrapped;
 }
 
+Value Global_$_autoWrapping_Class(Executor* executor, Arguments* args) {
+    auto value = args->getArgument(0);
+    auto objectHead = (ObjectHead*)value;
+
+    assert(objectHead->typeSlot != -1);
+
+    auto type = executor->vm->getType(objectHead->typeSlot);
+    assert(type->optionalTypeSlot != -1);
+    auto optionalType = (Optional*)executor->vm->getType(type->optionalTypeSlot);
+    assert(optionalType->kind == ValueType::Optional);
+    return optionalType->allocate(executor->vm, value);
+}
+
 Value Global_$_autoUnwrapping(Executor* executor, Arguments* args) {
     auto value = args->getArgument(0);
     auto head = (ObjectHead*)value;

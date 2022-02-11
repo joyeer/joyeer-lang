@@ -33,7 +33,7 @@ struct ObjectHead {
     bool wrapped:     1 = 0;        // for Optional type 1, else 0
     bool absent:      1 = 0;        // only available for Optional type
     bool reserved:    6 = 0;        // reserved for future usage
-    Slot typeSlot:     20  = 0;
+    Slot typeSlot:    20 = 0;
     int refCount:     12 = 0;
     int reserved_2:   24 = 0;       // reserved for future usage
 };
@@ -70,7 +70,8 @@ enum class BuildIns : uint16_t {
     Func_Print = static_cast<size_t>(ValueType::RESOLVED_PRIMARY_TYPE_COUNT) ,
     Func_AutoWrapping_Int,
     Func_AutoWrapping_Bool,
-    Func_forceUnwrapping,
+    Func_autoWrapping_Class,
+    Func_autoUnwrapping,
 
     Object_Optional_Int,
     Object_Optional_Bool,
@@ -107,6 +108,10 @@ struct Type {
     std::string name;
     ValueType kind;
     int slot;
+    union {
+        int wrappedTypeSlot = -1;
+        int optionalTypeSlot;
+    };
 
 protected:
     Type(std::string  name, ValueType kind):
@@ -238,12 +243,12 @@ struct Optional : public Type {
         Value wrappedValue {};
     };
 
-    Slot wrappedTypeSlot;
-
     explicit Optional(const std::string& name, Slot wrappedTypeSlot);
 
     intptr_t allocate(IsolateVM* vm, Int value);
     intptr_t allocate(IsolateVM* vm, Bool value);
+    // Optional type for Class
+    intptr_t allocate(IsolateVM* vm, intptr_t objAddr);
 
     // return the wrapped Object's type slot
     Slot valueType(intptr_t objAddr);

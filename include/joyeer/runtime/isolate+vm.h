@@ -22,6 +22,7 @@ struct IsolateVM {
     Type* getType(BuildIns type);
     Type* getType(Slot slot);
 
+
     GC* gc;
 
     ArrayClass* arrayClass = nullptr;

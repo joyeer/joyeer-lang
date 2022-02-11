@@ -126,8 +126,15 @@ void CompilerService::exportClassDecl(const ClassDecl::Ptr &decl) {
 
 void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
     assert(type->slot == -1);
+    assert(type->wrappedTypeSlot != -1);
     assert(globalSymbols->find(type->name) == nullptr);
     declare((Type*)type);
+
+    // bi-binding the optionalTypeSlot to original type
+    auto wrappedType = getType(type->wrappedTypeSlot);
+    assert(wrappedType->optionalTypeSlot == -1);
+    wrappedType->optionalTypeSlot = type->slot;
+
     globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, type->name, type->slot));
 }
 
@@ -233,7 +240,11 @@ void CompilerService::bootstrap() {
         DECLARE_FUNC_PARM("bool", ValueType::Bool)
     END_DECLARE_FUNC()
 
-    BEGIN_DECLARE_FUNC(BuildIns::Func_forceUnwrapping, "autoUnwrapping(value:)", ValueType::Int, Global_$_autoUnwrapping)
+    BEGIN_DECLARE_FUNC(BuildIns::Func_autoWrapping_Class, "autoWrapping(class:)", ValueType::Class, Global_$_autoWrapping_Class)
+        DECLARE_FUNC_PARM("class", ValueType::Any)
+    END_DECLARE_FUNC()
+
+    BEGIN_DECLARE_FUNC(BuildIns::Func_autoUnwrapping, "autoUnwrapping(value:)", ValueType::Int, Global_$_autoUnwrapping)
         DECLARE_FUNC_PARM("value", BuildIns::Object_Optional_Int)
     END_DECLARE_FUNC()
 

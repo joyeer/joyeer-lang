@@ -35,7 +35,6 @@ struct YMLPrinter {
 // ASM node printer
 struct NodeDebugPrinter : public NodeVisitor, public YMLPrinter {
 
-
     explicit NodeDebugPrinter(const std::string& filename);
 
     // print AST into debug file
@@ -145,6 +144,7 @@ protected:
         DEBUG_BLOCK_START
             NodeVisitor::visit(decl->type);
         DEBUG_BLOCK_END
+        newline();
         output << "required: " << (decl->required ? "true": "false");
         DEBUG_BLOCK_END
         return decl;
