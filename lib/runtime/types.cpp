@@ -70,8 +70,8 @@ Variable *Function::getParamByIndex(int index) {
 //------------------------------------------------
 
 Optional::Optional(const std::string& name, Slot typeSlot):
-Type(name, ValueType::Optional),
-wrappedTypeSlot(typeSlot) {
+Type(name, ValueType::Optional) {
+    wrappedTypeSlot = (int)typeSlot;
 }
 
 intptr_t Optional::allocate(IsolateVM *vm, Int value) {
@@ -93,6 +93,19 @@ intptr_t Optional::allocate(IsolateVM *vm, Bool value) {
     objPtr->head.typeSlot = (*vm->types)[ValueType::Bool]->slot;
     objPtr->wrappedValue = value;
     return objAddr;
+}
+
+intptr_t Optional::allocate(IsolateVM *vm, intptr_t objAddr) {
+    auto originalObjectHead = (ObjectHead*)objAddr;
+    assert(originalObjectHead->typeSlot != -1);
+
+    auto optionalObjAddr = vm->gc->allocate(this, sizeof(DataMap));
+    auto objPtr = reinterpret_cast<DataMap*>(optionalObjAddr);
+    objPtr->head.wrapped = true;
+    objPtr->head.absent = false;
+    objPtr->head.typeSlot = slot;
+    objPtr->wrappedValue = objAddr;
+    return optionalObjAddr;
 }
 
 Slot Optional::valueType(intptr_t objAddr) {

@@ -1,5 +1,6 @@
 #include "debugprinter.h"
 #include <fstream>
+#include "joyeer/compiler/compiler+service.h"
 
 YMLPrinter::YMLPrinter(const std::string &filename) {
     output.open(filename);
