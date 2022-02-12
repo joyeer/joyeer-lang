@@ -207,12 +207,10 @@ void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
 #define BEGIN_DECLARE_OPTIONAL(type, originalTypeSlot) \
     {                                                 \
         auto symtable = std::make_shared<SymbolTable>(); \
+        auto originalType = getType(originalTypeSlot); \
         auto name =  "Optional<" + getType(originalTypeSlot)->name + ">";\
-        auto typeClass = new Optional(name, (int)(originalTypeSlot));  \
-        declare(typeClass);                           \
-        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, typeClass->name, typeClass->slot)); \
-        assert((size_t)(type) == typeClass->slot);       \
-        exportingSymbolTableOfClasses.insert({ typeClass->slot, symtable });
+        auto typeClass = new Optional(name, (int)(originalTypeSlot));    \
+        registerOptionalTypeGlobally(typeClass);
 
 #define END_DECLARE_OPTIONAL }
 
@@ -264,7 +262,7 @@ void CompilerService::bootstrap() {
     BEGIN_DECLARE_CLASS(BuildIns::Object_Dict, DictClass)
         DECLARE_CLASS_INIT("Dict()", BuildIns::Object_Dict, 0, Dict_$_init)
         DECLARE_CLASS_FUNC("insert(key:value:)", ValueType::Void, 2, Dict_$$_insert)
-        DECLARE_CLASS_FUNC("get(key:)", ValueType::Any, 1, Dict_$$_get)
+        DECLARE_CLASS_FUNC("get(key:)", BuildIns::Object_Optional_Int, 1, Dict_$$_get)
     END_DECLARE_CLASS(BuildIns::Object_Dict)
 
     BEGIN_DECLARE_CLASS(BuildIns::Object_DictEntry, DictEntry)
@@ -274,8 +272,5 @@ void CompilerService::bootstrap() {
         DECLARE_CLASS_FUNC("append(string:)", BuildIns::Object_StringBuilder, 1, StringBuilder_$$_append)
         DECLARE_CLASS_FUNC("toString()", ValueType::String, 0, StringBuilder_$$_toString)
     END_DECLARE_CLASS(BuildIns::Object_StringBuilder)
-
-
-
 
 }

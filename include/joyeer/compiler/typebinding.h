@@ -73,6 +73,7 @@ protected:
     Type* typeOf(const ArrayType::Ptr& node);
     Type* typeOf(const PrefixExpr::Ptr& node);
     Type* typeOf(const PostfixExpr::Ptr& node);
+    Type* typeOf(const ForceUnwrappingExpr::Ptr& node);
 
     // verify that assignment expressions is legal
     // left = right => expression
