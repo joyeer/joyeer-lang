@@ -52,6 +52,8 @@ protected:
     Node::Ptr visit(const DictLiteralExpr::Ptr& decl) override;
     Node::Ptr visit(const MemberAccessExpr::Ptr& decl) override;
     Node::Ptr visit(const MemberAssignExpr::Ptr& decl) override;
+    Node::Ptr visit(const ForceUnwrappingExpr::Ptr& decl) override;
+    Node::Ptr visit(const OptionalChainingExpr::Ptr& decl) override;
     Node::Ptr visit(const SubscriptExpr::Ptr& decl) override;
     Node::Ptr visit(const ImportStmt::Ptr& decl) override;
 
@@ -71,6 +73,7 @@ protected:
     Type* typeOf(const ArrayType::Ptr& node);
     Type* typeOf(const PrefixExpr::Ptr& node);
     Type* typeOf(const PostfixExpr::Ptr& node);
+    Type* typeOf(const ForceUnwrappingExpr::Ptr& node);
 
     // verify that assignment expressions is legal
     // left = right => expression

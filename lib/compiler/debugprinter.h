@@ -35,7 +35,6 @@ struct YMLPrinter {
 // ASM node printer
 struct NodeDebugPrinter : public NodeVisitor, public YMLPrinter {
 
-
     explicit NodeDebugPrinter(const std::string& filename);
 
     // print AST into debug file
@@ -145,6 +144,7 @@ protected:
         DEBUG_BLOCK_START
             NodeVisitor::visit(decl->type);
         DEBUG_BLOCK_END
+        newline();
         output << "required: " << (decl->required ? "true": "false");
         DEBUG_BLOCK_END
         return decl;
@@ -548,6 +548,28 @@ protected:
         output << "indexExpr:";
         DEBUG_BLOCK_START
         NodeVisitor::visit(decl->indexExpr);
+        DEBUG_BLOCK_END
+        DEBUG_BLOCK_END
+        return decl;
+    }
+
+    Node::Ptr visit(const OptionalChainingExpr::Ptr& decl) override {
+        output << "optional-chaining:";
+        DEBUG_BLOCK_START
+        output << "wrappedExpr:";
+        DEBUG_BLOCK_START
+            NodeVisitor::visit(decl->wrappedExpr);
+        DEBUG_BLOCK_END
+        DEBUG_BLOCK_END
+        return decl;
+    }
+
+    Node::Ptr visit(const ForceUnwrappingExpr::Ptr& decl) override {
+        output << "force-unwrapping:";
+        DEBUG_BLOCK_START
+        output << "wrappedExpr:";
+        DEBUG_BLOCK_START
+        NodeVisitor::visit(decl->wrappedExpr);
         DEBUG_BLOCK_END
         DEBUG_BLOCK_END
         return decl;

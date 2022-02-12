@@ -60,4 +60,4 @@ struct Heap {
 
 
 
-#endif //__joyeer_vm_heaps_h__
+#endif //__joyeer_runtime_heaps_h__
