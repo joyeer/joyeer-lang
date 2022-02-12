@@ -89,6 +89,27 @@ SelfExpr::SelfExpr(const Self::Ptr& self, const IdentifierExpr::Ptr& identifier)
         identifier(identifier) {
 }
 
+//--------------------------------------------------
+// ForceUnwrappingExpr implementation
+//--------------------------------------------------
+
+ForceUnwrappingExpr::ForceUnwrappingExpr(const Node::Ptr& wrappedExpr):
+Node(SyntaxKind::forceUnwrapExpr),
+wrappedExpr(wrappedExpr){
+}
+
+std::string ForceUnwrappingExpr::getSimpleName() {
+    return wrappedExpr->getSimpleName();
+}
+
+//--------------------------------------------------
+// OptionalChainingExpr implementation
+//--------------------------------------------------
+
+OptionalChainingExpr::OptionalChainingExpr(const Node::Ptr &wrappedExpr):
+Node(SyntaxKind::optionalChainingExpr),
+wrappedExpr(wrappedExpr) {
+}
 
 //--------------------------------------------------
 // OptionalType implementation

@@ -10,9 +10,6 @@
 #include "joyeer/runtime/isolate+vm.h"
 #include "joyeer/compiler/compiler+service.h"
 
-
-struct ArrayClass;
-
 struct InterpretedIsolatedVM : public IsolateVM {
     void run(ModuleClass* module);
 };

@@ -28,6 +28,8 @@ protected:
     void emit(const Expr::Ptr& node);
     void emit(const OperatorExpr::Ptr& node);
     void emit(const ParenthesizedExpr::Ptr& node);
+    void emit(const ForceUnwrappingExpr::Ptr& decl);
+    void emit(const OptionalChainingExpr::Ptr& decl);
     void emit(const IfStmt::Ptr& node);
     void emit(const WhileStmt::Ptr& node);
     void emit(const StmtsBlock::Ptr& node);
@@ -42,7 +44,10 @@ protected:
 
     // auto wrapping source type -> destine type;
     void autoWrapping(int srcTypeSlot, int destTypeSlot);
-    void autoUnwrapping(int srcTypeSlot, int destTypeSlot);
+
+    // gen IR that force unwrapping a value in stack
+    void forceUnwrapping();
+    void forceWrapping();
     
 private:
     BytecodeWriter writer;

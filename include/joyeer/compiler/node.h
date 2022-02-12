@@ -47,6 +47,8 @@ enum class SyntaxKind {
     memberAccessExpr,
     memberAssignExpr,
     subscriptExpr,
+    forceUnwrapExpr,
+    optionalChainingExpr,
 
     literalExpr,
     arrayLiteralExpr,
@@ -62,7 +64,7 @@ struct Node : std::enable_shared_from_this<Node> {
     SymbolTable::Ptr symtable = nullptr;
 
     // represent the Node's Type, only available in Expr Node
-    int typeSlot = -1;
+    Slot typeSlot = -1;
 
     // return the name of Node, it will be used as symbol in some cases
     virtual std::string getSimpleName();
@@ -284,6 +286,34 @@ struct ArguCallExpr : Node {
             expr(std::move(expr)) {
     }
 
+};
+
+// represent an expr that force unwrapping a optional value,
+// e.g.
+//  var anOptionalInt: Int? = 1
+//  var anInt = anOptionalInt!
+
+struct ForceUnwrappingExpr : public Node {
+    using Ptr = std::shared_ptr<ForceUnwrappingExpr>;
+
+    Node::Ptr wrappedExpr;
+
+    ForceUnwrappingExpr(const Node::Ptr& wrappedExpr);
+
+    std::string getSimpleName() override;
+};
+
+// represent an expr that force unwrapping a optional value,
+// e.g.
+//  var anOptionalAClass: A? = ...
+//  anOptionalAClass?.memberA = 10
+
+struct OptionalChainingExpr: public Node {
+    using Ptr = std::shared_ptr<OptionalChainingExpr>;
+
+    Node::Ptr wrappedExpr;
+
+    OptionalChainingExpr(const Node::Ptr& wrappedExpr);
 };
 
 // represent a func call expression

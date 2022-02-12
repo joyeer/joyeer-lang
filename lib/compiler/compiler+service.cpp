@@ -126,8 +126,15 @@ void CompilerService::exportClassDecl(const ClassDecl::Ptr &decl) {
 
 void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
     assert(type->slot == -1);
+    assert(type->wrappedTypeSlot != -1);
     assert(globalSymbols->find(type->name) == nullptr);
     declare((Type*)type);
+
+    // bi-binding the optionalTypeSlot to original type
+    auto wrappedType = getType(type->wrappedTypeSlot);
+    assert(wrappedType->optionalTypeSlot == -1);
+    wrappedType->optionalTypeSlot = type->slot;
+
     globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, type->name, type->slot));
 }
 
@@ -144,7 +151,8 @@ void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
     {                                                                \
         auto func = new Function(descriptor, true);                  \
         declare(func);                                               \
-        func->funcType = FuncType::C_Func;                       \
+        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::func, func->name, func->slot)); \
+        func->funcType = FuncType::C_Func;                           \
         func->cFunction = (CFunction)&(cFuncImpl);                   \
         func->returnTypeSlot = (int)(retTypeSlot);                   \
         func->paramCount = 0;
@@ -199,12 +207,10 @@ void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
 #define BEGIN_DECLARE_OPTIONAL(type, originalTypeSlot) \
     {                                                 \
         auto symtable = std::make_shared<SymbolTable>(); \
+        auto originalType = getType(originalTypeSlot); \
         auto name =  "Optional<" + getType(originalTypeSlot)->name + ">";\
-        auto typeClass = new Optional(name, (int)(originalTypeSlot));  \
-        declare(typeClass);                           \
-        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, typeClass->name, typeClass->slot)); \
-        assert((size_t)(type) == typeClass->slot);       \
-        exportingSymbolTableOfClasses.insert({ typeClass->slot, symtable });
+        auto typeClass = new Optional(name, (int)(originalTypeSlot));    \
+        registerOptionalTypeGlobally(typeClass);
 
 #define END_DECLARE_OPTIONAL }
 
@@ -232,8 +238,12 @@ void CompilerService::bootstrap() {
         DECLARE_FUNC_PARM("bool", ValueType::Bool)
     END_DECLARE_FUNC()
 
-    BEGIN_DECLARE_FUNC(BuildIns::Func_AutoUnwrapping_Int, "autoUnwrapping(int:)", ValueType::Int, Global_$_autoUnwrapping_Int)
-        DECLARE_FUNC_PARM("int", BuildIns::Object_Optional_Int)
+    BEGIN_DECLARE_FUNC(BuildIns::Func_autoWrapping_Class, "autoWrapping(class:)", ValueType::Class, Global_$_autoWrapping_Class)
+        DECLARE_FUNC_PARM("class", ValueType::Any)
+    END_DECLARE_FUNC()
+
+    BEGIN_DECLARE_FUNC(BuildIns::Func_autoUnwrapping, "autoUnwrapping(value:)", ValueType::Int, Global_$_autoUnwrapping)
+        DECLARE_FUNC_PARM("value", BuildIns::Object_Optional_Int)
     END_DECLARE_FUNC()
 
     BEGIN_DECLARE_OPTIONAL(BuildIns::Object_Optional_Int, ValueType::Int)
@@ -252,7 +262,7 @@ void CompilerService::bootstrap() {
     BEGIN_DECLARE_CLASS(BuildIns::Object_Dict, DictClass)
         DECLARE_CLASS_INIT("Dict()", BuildIns::Object_Dict, 0, Dict_$_init)
         DECLARE_CLASS_FUNC("insert(key:value:)", ValueType::Void, 2, Dict_$$_insert)
-        DECLARE_CLASS_FUNC("get(key:)", ValueType::Any, 1, Dict_$$_get)
+        DECLARE_CLASS_FUNC("get(key:)", BuildIns::Object_Optional_Int, 1, Dict_$$_get)
     END_DECLARE_CLASS(BuildIns::Object_Dict)
 
     BEGIN_DECLARE_CLASS(BuildIns::Object_DictEntry, DictEntry)
@@ -262,9 +272,5 @@ void CompilerService::bootstrap() {
         DECLARE_CLASS_FUNC("append(string:)", BuildIns::Object_StringBuilder, 1, StringBuilder_$$_append)
         DECLARE_CLASS_FUNC("toString()", ValueType::String, 0, StringBuilder_$$_toString)
     END_DECLARE_CLASS(BuildIns::Object_StringBuilder)
-
-
-    auto print = getType(BuildIns::Func_Print);
-    globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::func, print->name, print->slot));
 
 }
