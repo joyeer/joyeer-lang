@@ -71,7 +71,7 @@ func addTwoNumber(listA: ListNode?, listB: ListNode?): ListNode {
         if root == nil {
             root = result
         }
-        currentB = currentB.next
+        currentB = currentB.nextk
     }
 
 

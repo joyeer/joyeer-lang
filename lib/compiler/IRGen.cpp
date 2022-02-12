@@ -307,11 +307,14 @@ void IRGen::emit(const IdentifierExpr::Ptr& node) {
             assert(symbol->locationInParent != -1);
             writer.write(Bytecode(OP_GETSTATIC, symbol->parentTypeSlot, symbol->locationInParent));
             return;
+        } else {
+            assert(symbol->locationInParent != -1);
+            writer.write(Bytecode(OP_GETFIELD, symbol->locationInParent));
+            return;
         }
     }
 
     assert(false);
-    // Step2: try to find the symbol in symbols
 }
 
 void IRGen::emit(const AssignExpr::Ptr& node) {
@@ -327,7 +330,7 @@ void IRGen::emit(const AssignExpr::Ptr& node) {
             if(symbol->isStatic) {
                 writer.write(Bytecode(OP_PUTSTATIC, symbol->parentTypeSlot, symbol->locationInParent));
             } else {
-                assert(false);
+                writer.write(Bytecode(OP_PUTFIELD, symbol->locationInParent));
             }
         } else {
             writer.write(Bytecode(OP_ISTORE, symbol->locationInParent));
