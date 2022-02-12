@@ -383,6 +383,7 @@ Node::Ptr TypeBinding::visit(const Expr::Ptr& node) {
             nodes.push_back(visit(n));
         }
         node->nodes = nodes;
+
         node->typeSlot = typeOf(node)->slot;
     });
     
@@ -544,7 +545,7 @@ Node::Ptr TypeBinding::visit(const SubscriptExpr::Ptr& node) {
     if(symbol->typeSlot == compiler->getType(BuildIns::Object_Array)->slot) {
         node->typeSlot = compiler->getType(ValueType::Int)->slot;  // TODO: get the right ValueType
     } else if(symbol->typeSlot == compiler ->getType(BuildIns::Object_Dict)->slot){
-        node->typeSlot = compiler->getType(ValueType::Any)->slot;  // TODO: get the right ValueType
+        node->typeSlot = compiler->getType(BuildIns::Object_Optional_Int)->slot;  // TODO: get the right ValueType
     } else {
         assert(false);
     }
@@ -584,6 +585,8 @@ Node::Ptr TypeBinding::visit(const ForceUnwrappingExpr::Ptr& decl) {
     if(type->kind == ValueType::Optional) {
         auto optionalType = (Optional*)type;
         decl->typeSlot = optionalType->wrappedTypeSlot;
+    } else {
+        // TODO: report an error
     }
     return decl;
 }
@@ -639,6 +642,8 @@ Type* TypeBinding::typeOf(const Node::Ptr& node) {
             return typeOf(std::static_pointer_cast<PrefixExpr>(node));
         case SyntaxKind::postfixExpr:
             return typeOf(std::static_pointer_cast<PostfixExpr>(node));
+        case SyntaxKind::forceUnwrapExpr:
+            return typeOf(std::static_pointer_cast<ForceUnwrappingExpr>(node));
         default:
             assert(false);
     }
@@ -647,11 +652,11 @@ Type* TypeBinding::typeOf(const Node::Ptr& node) {
 Type* TypeBinding::typeOf(const Expr::Ptr& node) {
     assert(node->binaries.empty());
     assert(node->prefix == nullptr);
-    
+
     if(node->typeSlot != -1) {
         return compiler->getType(node->typeSlot);
     }
-    
+
     std::stack<Type*> stack;
     for (const auto &n: node->nodes)
         if (n->kind == SyntaxKind::operatorExpr) {
@@ -764,6 +769,10 @@ Type* TypeBinding::typeOf(const PrefixExpr::Ptr& node) {
 
 Type* TypeBinding::typeOf(const PostfixExpr::Ptr& node) {
     return typeOf(node->expr);
+}
+
+Type* TypeBinding::typeOf(const ForceUnwrappingExpr::Ptr &node) {
+    return compiler->getType(node->typeSlot);
 }
 
 bool TypeBinding::verifyIfAssignExpressionIsLegal(const Node::Ptr &left, const Node::Ptr &right) {

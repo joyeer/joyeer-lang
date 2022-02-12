@@ -483,5 +483,8 @@ Value DictEntry::getValue(intptr_t object) {
 
 void DictEntry::setValue(intptr_t object, Value valueValue) {
     char* objPtr = reinterpret_cast<char *>(object);
+    auto type = vm->getType((Slot)ValueType::Int);
+    auto optionalIntType = (Optional*)vm->getType(type->optionalTypeSlot);
+    auto entryValue = optionalIntType->allocate(vm, valueValue);
     *(Value*)(objPtr + kDictEntryValueOffset) = valueValue;
 }

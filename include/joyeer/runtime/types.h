@@ -38,12 +38,6 @@ struct ObjectHead {
     int reserved_2:   24 = 0;       // reserved for future usage
 };
 
-struct Object {
-    ObjectHead head;
-    Byte data[];
-};
-
-
 // Constants
 constexpr int kValueSize = sizeof(Value);
 constexpr int kByteSize = sizeof(Byte);

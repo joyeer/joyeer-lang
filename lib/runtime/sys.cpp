@@ -74,7 +74,6 @@ Value Global_$_autoUnwrapping(Executor* executor, Arguments* args) {
     auto value = args->getArgument(0);
     auto head = (ObjectHead*)value;
     auto type = executor->vm->getType(head->typeSlot);
-    assert(type->kind == ValueType::Optional);
     auto optionalClass = (Optional*)type;
     return optionalClass->value(value);
 }
