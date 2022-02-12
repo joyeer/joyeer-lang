@@ -469,6 +469,14 @@ Node::Ptr TypeBinding::visit(const SelfExpr::Ptr& node) {
     }
 
     node->self = std::static_pointer_cast<Self>(visit(node->self));
+
+    if(node->identifier != nullptr) {
+        assert(node->identifier->typeSlot != -1);
+        node->typeSlot = node->identifier->typeSlot;
+    } else {
+        assert(node->self->typeSlot != -1);
+        node->typeSlot = node->self->typeSlot;
+    }
     return node;
 }
 
