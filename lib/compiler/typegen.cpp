@@ -156,6 +156,7 @@ Node::Ptr TypeGen::visit(const FuncDecl::Ptr& decl) {
         funcType->funcType = FuncType::VM_CInit;
     }
 
+    // all Module's func are static
     if( context->curDeclType()->kind == ValueType::Module) {
         funcType->isStatic = true;
     }
