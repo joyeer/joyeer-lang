@@ -217,7 +217,7 @@ Node::Ptr TypeGen::visit(const FuncDecl::Ptr& decl) {
     });
 
     // post process the class member func
-    if(!decl->isStatic) {
+    if(!funcType->isStatic) {
         return processClassMemberFunc(decl);
     }
     return decl;
@@ -695,11 +695,14 @@ void TypeGen::generateOptionalGlobally(const OptionalType::Ptr &optionalType) {
 
 Node::Ptr TypeGenSelfForMemberFunc::visit(const FuncDecl::Ptr& decl) {
     assert(decl->isStatic == false);
-    std::vector<Node::Ptr> statements;
-    for(const auto& statement: decl->statements) {
-        statements.push_back(NodeVisitor::visit(statement));
-    }
-    decl->statements = statements;
+    context->visit(CompileStage::visitFuncDecl, decl, [decl, this] {
+        std::vector<Node::Ptr> statements;
+        for(const auto& statement: decl->statements) {
+            statements.push_back(NodeVisitor::visit(statement));
+        }
+        decl->statements = statements;
+    });
+
     return decl;
 }
 
@@ -746,5 +749,15 @@ Node::Ptr TypeGenSelfForMemberFunc::visit(const FuncCallExpr::Ptr& decl) {
         auto self = std::make_shared<Self>();
         return std::make_shared<MemberFuncCallExpr>(self, decl);
     }
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const AssignExpr::Ptr& decl) {
+    decl->left = NodeVisitor::visit(decl->left);
+    decl->expr = NodeVisitor::visit(decl->expr);
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const SelfExpr::Ptr& decl) {
     return decl;
 }

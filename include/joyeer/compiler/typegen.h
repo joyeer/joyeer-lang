@@ -83,12 +83,17 @@ public:
 
     Node::Ptr visit(const FuncDecl::Ptr& decl) override;
 
+    // Statement
+    Node::Ptr visit(const ReturnStmt::Ptr& decl) override;
+
     // Expressions
     Node::Ptr visit(const Expr::Ptr& decl) override;
     Node::Ptr visit(const FuncCallExpr::Ptr& decl) override;
     Node::Ptr visit(const ArguCallExpr::Ptr& decl) override;
     Node::Ptr visit(const IdentifierExpr::Ptr& decl) override;
-    Node::Ptr visit(const ReturnStmt::Ptr& decl) override;
+
+    Node::Ptr visit(const AssignExpr::Ptr& decl) override;
+    Node::Ptr visit(const SelfExpr::Ptr& decl) override;
 
     Node::Ptr visit(const VarDecl::Ptr& varDecl) override { assert(false); }
     Node::Ptr visit(const TypeIdentifier::Ptr& decl) override { assert(false); }
@@ -108,7 +113,7 @@ public:
     Node::Ptr visit(const PostfixExpr::Ptr& decl) override  { assert(false); }
 
 
-    Node::Ptr visit(const AssignExpr::Ptr& decl) override { assert(false); }
+
     Node::Ptr visit(const BinaryExpr::Ptr& decl) override  { assert(false); }
     Node::Ptr visit(const OperatorExpr::Ptr& decl) override  { assert(false); }
     Node::Ptr visit(const ParenthesizedExpr::Ptr& decl) override  { assert(false); }
@@ -119,7 +124,7 @@ public:
     Node::Ptr visit(const Pattern::Ptr& decl) override  { assert(false); }
 
     Node::Ptr visit(const Self::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const SelfExpr::Ptr& decl) override  { assert(false); }
+
     Node::Ptr visit(const ArrayLiteralExpr::Ptr& decl) override  { assert(false); }
     Node::Ptr visit(const DictLiteralExpr::Ptr& decl) override  { assert(false); }
     Node::Ptr visit(const MemberAccessExpr::Ptr& decl) override  { assert(false); }
