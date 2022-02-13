@@ -642,7 +642,7 @@ protected:
                 case ValueType::Func:
                     output << "type: Func";
                     newline();
-                    print((Function*)(tf));
+                    print((Function*)(tf), types);
                     break;
                 case ValueType::Unspecified:
                     output << "type: Unspecified";
@@ -662,41 +662,17 @@ protected:
         }
     }
 
-    void print(Function* func) {
-        output<< "name: " << func->name;
-        newline();
-        output << "param-count: " << func->paramCount;
-        if (func->localVars.size() > 0) {
-            newline();
-            output << "local-vars:";
-            for (auto i = 0 ; i < func->localVars.size(); i ++ ) {
-                newline();
-                output << "- name: " << func->localVars[i]->name;
-            }
-        }
-        newline();
-        output << "return-type-slot: " << func->returnTypeSlot;
-
-        if((func->funcType == VM_Func || func->funcType == VM_CInit) && func->bytecodes != nullptr ) {
-            newline();
-            output << "bytecodes:";
-            DEBUG_BLOCK_START
-            for(auto i = 0 ; i < func->bytecodes->size; i ++) {
-                if(i > 0){
-                    newline();
-                }
-                auto bytecode = &((Bytecode*)(func->bytecodes->bytecodes))[i];
-                output << "- " << i << ": " << debugPrint(bytecode);
-            }
-            DEBUG_BLOCK_END
-        }
-    }
+    void print(Function* func, const std::vector<Type*>& types);
 
     void print(ModuleClass* module) {
         output << "name: " << module->name;
         newline();
         output << "staticInitializer: " << module->staticInitializerSlot;
     }
+
+    // debug output the instruction
+    std::string debugPrint(Bytecode* bytecode, const std::vector<Type*>& types);
+
 };
 
 #endif

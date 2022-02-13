@@ -119,8 +119,5 @@ private:
     MemoryBuffer buffer {};
 };
 
-// debug output the instruction
-std::string debugPrint(Bytecode* bytecode);
-
 
 #endif
