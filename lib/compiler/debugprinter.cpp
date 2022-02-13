@@ -23,10 +23,33 @@ void YMLPrinter::close() {
     output.close();
 }
 
+//---------------------------------------------
+// TypeGenSelfForMemberFunc
+//---------------------------------------------
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 NodeDebugPrinter::NodeDebugPrinter(const std::string& filename):
     YMLPrinter(filename) {
 }
 
+Node::Ptr NodeDebugPrinter::visit(const ClassDecl::Ptr& decl) {
+    output << "class-decl:";
+    DEBUG_BLOCK_START
+    output << "class-name: " << decl->getSimpleName();
+    newline();
+    output << "statements:";
+    DEBUG_BLOCK_START
+    auto i = 0;
+    for(const auto& statement: decl->statements) {
+        if(i > 0) {
+            newline();
+        }
+        output << "- ";
+        NodeVisitor::visit(statement);
+        i++;
+    }
+
+    DEBUG_BLOCK_END
+    DEBUG_BLOCK_END
+    return decl;
+}
