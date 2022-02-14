@@ -183,9 +183,7 @@ FuncDecl::Ptr FuncDecl::createDefaultConstructor() {
      */
     auto parameterClause = std::make_shared<ParameterClause>( std::vector<Pattern::Ptr>());
 
-    auto returnStmt = std::make_shared<ReturnStmt>(std::make_shared<Self>());
-    auto stmts = std::make_shared<StmtsBlock>( std::vector<Node::Ptr> { returnStmt });
-
+    auto stmts = std::make_shared<StmtsBlock>( std::vector<Node::Ptr> {  });
     return createConstructor(parameterClause, nullptr, stmts);
 }
 

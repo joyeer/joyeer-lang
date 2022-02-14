@@ -156,6 +156,7 @@ Node::Ptr TypeGen::visit(const FuncDecl::Ptr& decl) {
         funcType->funcType = FuncType::VM_CInit;
     }
 
+    // all Module's func are static
     if( context->curDeclType()->kind == ValueType::Module) {
         funcType->isStatic = true;
     }
@@ -214,6 +215,11 @@ Node::Ptr TypeGen::visit(const FuncDecl::Ptr& decl) {
             decl->returnType = visit(decl->returnType);
         }
     });
+
+    // post process the class member func
+    if(!funcType->isStatic) {
+        return processClassMemberFunc(decl);
+    }
     return decl;
 }
 
@@ -479,7 +485,7 @@ Node::Ptr TypeGen::visit(const Expr::Ptr& decl) {
     
     // assembly all
     std::vector<Node::Ptr> result;
-    while(temps.size() > 0 || operators.size() > 0 ) {
+    while(!temps.empty() || !operators.empty() ) {
         if(temps.size() > operators.size() ) {
             auto t = temps.front();
             temps.pop_front();
@@ -669,10 +675,11 @@ Node::Ptr TypeGen::visit(const ImportStmt::Ptr& decl) {
     return decl;
 }
 
-void TypeGen::processClassMemberFunc(const ClassDecl::Ptr &klassDecl, const FuncDecl::Ptr &funcDecl) {
-    auto symbol = std::make_shared<Symbol>(SymbolFlag::var, Keywords::SELF, 0);
-    symbol->typeSlot = klassDecl->typeSlot;
-    funcDecl->symtable->insert(symbol);
+Node::Ptr TypeGen::processClassMemberFunc(const FuncDecl::Ptr &decl) {
+    TypeGenSelfForMemberFunc visitor;
+    visitor.context = context;
+    visitor.compiler = compiler;
+    return visitor.visit(decl);
 }
 
 void TypeGen::generateOptionalGlobally(const OptionalType::Ptr &optionalType) {
@@ -680,4 +687,77 @@ void TypeGen::generateOptionalGlobally(const OptionalType::Ptr &optionalType) {
     auto symbol = context->lookup(typeSimpleName);
     auto optional = new Optional(optionalType->getSimpleName(), symbol->typeSlot);
     compiler->registerOptionalTypeGlobally(optional);
+}
+
+//---------------------------------------------
+// TypeGenSelfForMemberFunc
+//---------------------------------------------
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const FuncDecl::Ptr& decl) {
+    assert(decl->isStatic == false);
+    context->visit(CompileStage::visitFuncDecl, decl, [decl, this] {
+        std::vector<Node::Ptr> statements;
+        for(const auto& statement: decl->statements) {
+            statements.push_back(NodeVisitor::visit(statement));
+        }
+        decl->statements = statements;
+    });
+
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const Expr::Ptr& decl) {
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const ArguCallExpr::Ptr& decl) {
+    decl->expr = NodeVisitor::visit(decl->expr);
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const ReturnStmt::Ptr& decl) {
+    if(decl->expr != nullptr) {
+        decl->expr = NodeVisitor::visit(decl->expr);
+    }
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const IdentifierExpr::Ptr& decl) {
+    auto name = decl->getSimpleName();
+    auto symbol = context->lookup(name);
+    if(symbol != nullptr && symbol->flag == SymbolFlag::field) {
+        auto self = std::make_shared<Self>();
+        return std::make_shared<SelfExpr>(self, decl);
+    }
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const FuncCallExpr::Ptr& decl) {
+    auto name = decl->getCalleeFuncSimpleName();
+    auto symbol = context->lookup(name);
+
+    std::vector<ArguCallExpr::Ptr> arguments;
+
+    for(const auto& arguCallExpr : decl->arguments) {
+        arguments.push_back(std::static_pointer_cast<ArguCallExpr>(visit(arguCallExpr)));
+    }
+    decl->arguments = arguments;
+
+    auto funcType = (Function*)compiler->getType(symbol->typeSlot);
+    assert(funcType->kind == ValueType::Func);
+    if(!funcType->isStatic) {
+        auto self = std::make_shared<Self>();
+        return std::make_shared<MemberFuncCallExpr>(self, decl);
+    }
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const AssignExpr::Ptr& decl) {
+    decl->left = NodeVisitor::visit(decl->left);
+    decl->expr = NodeVisitor::visit(decl->expr);
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const SelfExpr::Ptr& decl) {
+    return decl;
 }

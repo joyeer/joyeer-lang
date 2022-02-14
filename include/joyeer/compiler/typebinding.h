@@ -88,4 +88,5 @@ protected:
     Diagnostics* diagnostics;
 };
 
+
 #endif // __joyeer_compiler_typebinding_h__

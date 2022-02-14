@@ -3,7 +3,7 @@ class ListNode {
 	var next: ListNode?
 	var value: Any
 
-	init(previous: ListNode?, next: ListNode, value: Any) {
+	init(previous: ListNode?, next: ListNode?, value: Any) {
 		self.previous = previous
 		self.next = next
 		self.value = value
@@ -21,7 +21,7 @@ class List {
 			root = node
 			cur = root
 		} else {
-			cur.next = node
+			cur!.next = node
 			cur = node
 		}
 	}
