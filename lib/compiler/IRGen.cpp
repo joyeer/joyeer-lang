@@ -338,8 +338,8 @@ void IRGen::emit(const AssignExpr::Ptr& node) {
     } else if( node->left->kind == SyntaxKind::selfExpr ) {
         emit(node->expr);
         auto selfExpr = std::static_pointer_cast<SelfExpr>(node->left);
-        emit(selfExpr);
         assert(selfExpr->self->typeSlot != -1);
+        emit(selfExpr->self);
         auto symtable = compiler->getExportingSymbolTable(selfExpr->self->typeSlot);
         auto symbol = symtable->find(selfExpr->identifier->getSimpleName());
         assert(symbol->flag == SymbolFlag::field);
@@ -413,6 +413,9 @@ void IRGen::emit(const Self::Ptr& decl) {
 
 void IRGen::emit(const SelfExpr::Ptr& decl) {
     writer.write(Bytecode(OP_OLOAD, 0));
+    if(decl->identifier != nullptr) {
+        emit(decl->identifier);
+    }
 }
 
 void IRGen::emit(const OperatorExpr::Ptr& node) {

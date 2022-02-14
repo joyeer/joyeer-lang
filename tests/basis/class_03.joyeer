@@ -3,6 +3,7 @@ class A {
 
     func print(j: Int) {
         print(message: i)
+        print(message: j)
     }
 }
 
