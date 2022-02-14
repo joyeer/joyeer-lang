@@ -599,6 +599,7 @@ void IRGen::autoWrapping(int srcTypeSlot, int destTypeSlot) {
                 forceWrapping();
                 break;
             case ValueType::Nil:
+            case ValueType::Optional:
                 break;
             default:
                 assert(false);
