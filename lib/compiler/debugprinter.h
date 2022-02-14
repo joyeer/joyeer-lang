@@ -104,24 +104,24 @@ protected:
         if(decl->statements.size() > 0) {
             newline();
             output << "members:";
+            DEBUG_BLOCK_START
+            auto i = 0;
             for(const auto& member : decl->statements) {
-                newline();
+                if(i > 0) {
+                    newline();
+                }
                 output << "- ";
                 NodeVisitor::visit(member);
+                i ++;
             }
+            DEBUG_BLOCK_END
         }
         DEBUG_BLOCK_END
         
         return decl;
     }
 
-    Node::Ptr visit(const ClassDecl::Ptr& decl) override {
-        output << "varDecl:";
-        DEBUG_BLOCK_START
-        output << "name" ;
-        DEBUG_BLOCK_END
-        return decl;
-    }
+    Node::Ptr visit(const ClassDecl::Ptr& decl) override;
 
     Node::Ptr visit(const VarDecl::Ptr& decl) override {
         output << "varDecl:";
@@ -167,15 +167,20 @@ protected:
             DEBUG_BLOCK_START
                 NodeVisitor::visit(decl->identifier);
             DEBUG_BLOCK_END
-            newline();
-            output << "arguments:";
-            DEBUG_BLOCK_START
-            for(const auto& argument: decl->arguments) {
-                output << "- ";
-                visit(argument);
+            if(decl->arguments.size() > 0) {
                 newline();
+                output << "arguments:";
+                DEBUG_BLOCK_START
+                auto i = 0;
+                for(const auto& argument: decl->arguments) {
+                    if(i++ > 0) {
+                        newline();
+                    }
+                    output << "- ";
+                    visit(argument);
+                }
+                DEBUG_BLOCK_END
             }
-            DEBUG_BLOCK_END
         DEBUG_BLOCK_END
         return decl;
     }
@@ -420,32 +425,38 @@ protected:
     }
 
     Node::Ptr visit(const ParameterClause::Ptr& decl) override {
-        output << "paramClause:";
-        incTab();
-        newline();
         output << "parameters:";
-        incTab();
-
+        DEBUG_BLOCK_START
+        auto i = 0;
         for(const auto& param: decl->parameters) {
-            newline();
+            if(i > 0) {
+                newline();
+            }
+
             output << "- ";
             visit(param);
+
+            i++;
         }
-        newline();
-        decTab();
+        DEBUG_BLOCK_END
         return decl;
     }
 
     Node::Ptr visit(const Pattern::Ptr& decl) override {
         output << "patten:";
-        incTab();
-        newline();
-        visit(decl->identifier);
+        DEBUG_BLOCK_START
+        output << "label:";
+        DEBUG_BLOCK_START
+            visit(decl->identifier);
+        DEBUG_BLOCK_END
         if(decl->typeExpr != nullptr) {
             newline();
+            output << "expr:";
+            DEBUG_BLOCK_START
             NodeVisitor::visit(decl->typeExpr);
+            DEBUG_BLOCK_END
         }
-        decTab();
+        DEBUG_BLOCK_END
         return  decl;
     }
 
@@ -460,7 +471,10 @@ protected:
     }
 
     Node::Ptr visit(const SelfExpr::Ptr& decl) override {
-        assert(false);
+        output << "self-expr:";
+        DEBUG_BLOCK_START
+            visit(decl->identifier);
+        DEBUG_BLOCK_END
         return decl;
     }
 
@@ -628,7 +642,7 @@ protected:
                 case ValueType::Func:
                     output << "type: Func";
                     newline();
-                    print((Function*)(tf));
+                    print((Function*)(tf), types);
                     break;
                 case ValueType::Unspecified:
                     output << "type: Unspecified";
@@ -648,41 +662,17 @@ protected:
         }
     }
 
-    void print(Function* func) {
-        output<< "name: " << func->name;
-        newline();
-        output << "param-count: " << func->paramCount;
-        if (func->localVars.size() > 0) {
-            newline();
-            output << "local-vars:";
-            for (auto i = 0 ; i < func->localVars.size(); i ++ ) {
-                newline();
-                output << "- name: " << func->localVars[i]->name;
-            }
-        }
-        newline();
-        output << "return-type-slot: " << func->returnTypeSlot;
-
-        if((func->funcType == VM_Func || func->funcType == VM_CInit) && func->bytecodes != nullptr ) {
-            newline();
-            output << "bytecodes:";
-            DEBUG_BLOCK_START
-            for(auto i = 0 ; i < func->bytecodes->size; i ++) {
-                if(i > 0){
-                    newline();
-                }
-                auto bytecode = &((Bytecode*)(func->bytecodes->bytecodes))[i];
-                output << "- " << i << ": " << debugPrint(bytecode);
-            }
-            DEBUG_BLOCK_END
-        }
-    }
+    void print(Function* func, const std::vector<Type*>& types);
 
     void print(ModuleClass* module) {
         output << "name: " << module->name;
         newline();
         output << "staticInitializer: " << module->staticInitializerSlot;
     }
+
+    // debug output the instruction
+    std::string debugPrint(Bytecode* bytecode, const std::vector<Type*>& types);
+
 };
 
 #endif

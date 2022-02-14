@@ -26,7 +26,7 @@ func addTwoNumber(listA: ListNode?, listB: ListNode?): ListNode {
     var carry = 0
 
     while currentA != nil && currentB != nil {
-        var addResult = currentA.value + currentB.value + carry
+        var addResult = currentA!.value + currentB!.value + carry
         if addResult > 9 {
             carry = 1
             addResult = addResult - 10
@@ -37,12 +37,12 @@ func addTwoNumber(listA: ListNode?, listB: ListNode?): ListNode {
         if root == nil {
             root = result
         }
-        currentA = currentA.next
-        currentB = currentB.next
+        currentA = currentA!.next
+        currentB = currentB!.next
     }
 
     while currentA != nil {
-        var addResult = currentA.value + carry
+        var addResult = currentA!.value + carry
         if addResult > 9 {
             carry = 1
             addResult = addResult - 10
@@ -55,11 +55,11 @@ func addTwoNumber(listA: ListNode?, listB: ListNode?): ListNode {
         if root == nil {
             root = result
         }
-        currentA = currentA.next
+        currentA = currentA!.next
     }
 
     while currentB != nil {
-        var addResult = currentB.value + carry
+        var addResult = currentB!.value + carry
         if addResult > 9 {
             carry = 1
             addResult = addResult - 10
@@ -71,7 +71,7 @@ func addTwoNumber(listA: ListNode?, listB: ListNode?): ListNode {
         if root == nil {
             root = result
         }
-        currentB = currentB.next
+        currentB = currentB!.next
     }
 
 

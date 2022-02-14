@@ -1,0 +1,12 @@
+class A {
+    var i = 10
+
+    func print(j: Int) {
+        print(message: i)
+        print(message: j)
+    }
+}
+
+
+var a = A()
+a.print(j: 20)
