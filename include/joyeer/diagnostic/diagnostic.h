@@ -34,6 +34,7 @@ struct Diagnostics {
      * Lex error
      */
     DIAGNOSTICS_ERROR_MESSAGE(errorOctalNumberFormat,                           "Octal number only contains 0,1,2,3,4,5,6,7")
+    DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedCComment,                        "Unterminated '/*' comment")
 
     /**
      * Syntax errors

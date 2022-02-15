@@ -16,11 +16,11 @@ private:
     void parseStringLiteral();
     void parseOctalLiteral(std::string::const_iterator startAt);
     void parseNumberLiteral(std::string::const_iterator startAt);
-    void parseHexLiteral(std::string::const_iterator startAt);
-    void pushOperator(TokenKind kind, std::string op, std::string::const_iterator startIterator);
+    void pushOperator(std::string op, std::string::const_iterator startIterator);
     void parseOperator(std::string::const_iterator startIterator);
     void parsePunctuation(std::string::const_iterator startIterator);
     void parseCppComment();
+    void parseCComment();
 
 private:
     std::string::const_iterator iterator;
