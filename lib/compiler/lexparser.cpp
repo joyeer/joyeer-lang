@@ -256,18 +256,18 @@ void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
 void LexParser::parseOperator(std::string::const_iterator startIterator) {
   std::string operators(startIterator, startIterator + 1);
   sourcefile->tokens.push_back(
-    std::shared_ptr<Token>(new Token(TokenKind::operators, operators, lineNumber, iterator - startIterator))
+    std::make_shared<Token>(TokenKind::operators, operators, lineNumber, iterator - startIterator)
   );
 }
 
 void LexParser::pushOperator(std::string op, std::string::const_iterator startIterator) {
-    sourcefile->tokens.push_back(std::shared_ptr<Token>(new Token(TokenKind::operators, op, lineNumber, iterator - startIterator)));
+    sourcefile->tokens.push_back(std::make_shared<Token>(TokenKind::operators, op, lineNumber, iterator - startIterator));
 }
 
 void LexParser::parsePunctuation(std::string::const_iterator startIterator) {
   std::string punctuation(startIterator, startIterator + 1);
   sourcefile->tokens.push_back(
-    std::shared_ptr<Token>(new Token(TokenKind::punctuation, punctuation, lineNumber, iterator - startIterator))
+          std::make_shared<Token>(TokenKind::punctuation, punctuation, lineNumber, iterator - startIterator)
   );
 }
 
@@ -291,13 +291,13 @@ void LexParser::parseStringIdentifier() {
   
     std::shared_ptr<Token> token;
     if(isKeyword(identifier)) {
-        token = std::shared_ptr<Token>(new Token(TokenKind::keyword, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::keyword, identifier, lineNumber, iterator - startAt);
     } else if(identifier == Literals::NIL) {
-        token = std::shared_ptr<Token>(new Token(TokenKind::nilLiteral, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::nilLiteral, identifier, lineNumber, iterator - startAt);
     } else if(identifier == Literals::TRUE || identifier == Literals::FALSE) {
-        token = std::shared_ptr<Token>(new Token(TokenKind::booleanLiteral, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::booleanLiteral, identifier, lineNumber, iterator - startAt);
     } else {
-        token = std::shared_ptr<Token>(new Token(TokenKind::identifier, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::identifier, identifier, lineNumber, iterator - startAt);
     }
     sourcefile->tokens.push_back(token);
 }
