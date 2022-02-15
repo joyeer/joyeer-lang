@@ -1,7 +1,7 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
-LexParser::LexParser(CompileContext::Ptr context) {
+LexParser::LexParser(const CompileContext::Ptr& context) {
     this->diagnostics = context->diagnostics;
 }
 
