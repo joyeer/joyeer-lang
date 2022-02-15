@@ -304,18 +304,25 @@ void LexParser::parseStringIdentifier() {
 
 void LexParser::parseStringLiteral() {
     auto startAt = iterator;
+    bool end = false;
     while(iterator != endIterator) {
         if(*iterator == '\\') {
             iterator ++;
             if(iterator == endIterator) {
-                diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), "[Error] except character after \"");
+                diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorUnterminatedStringLiteral);
                 return;
             }
         } else if (*iterator == '\"') {
             iterator ++ ;
+            end = true;
             break;
         }
         iterator ++;
+    }
+
+    if(!end) {
+        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorUnterminatedStringLiteral);
+        return;
     }
     
     const std::string identifier(startAt, iterator - 1);
