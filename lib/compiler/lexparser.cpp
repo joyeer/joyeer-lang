@@ -64,6 +64,10 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if (iterator != endIterator && *iterator == '/') {
                     parseCppComment();
                     continue;
+                } if (iterator != endIterator && *iterator == '*') {
+                    iterator ++;
+                    parseCComment();
+                    continue;
                 }
                 parseOperator(iterator - 1);
                 break;
@@ -71,7 +75,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if (iterator != endIterator) {
                     if (*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::EQUAL_EQUAL, iterator);
+                        pushOperator(Operators::EQUAL_EQUAL, iterator);
                         continue;
                     }
                 }
@@ -87,7 +91,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if(iterator != endIterator) {
                     if(*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::NOT_EQUALS, iterator);
+                        pushOperator(Operators::NOT_EQUALS, iterator);
                         continue;
                     }
                 }
@@ -103,7 +107,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if(iterator != endIterator) {
                     if(*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::LESS_EQ, iterator);
+                        pushOperator(Operators::LESS_EQ, iterator);
                         continue;
                     }
                 }
@@ -113,7 +117,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if(iterator != endIterator) {
                     if(*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::GREATER_EQ, iterator);
+                        pushOperator(Operators::GREATER_EQ, iterator);
                         continue;
                     }
                 }
@@ -123,7 +127,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if (iterator != endIterator) {
                     if (*iterator == '&') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::AND_AND, iterator);
+                        pushOperator(Operators::AND_AND, iterator);
                         continue;
                     }
                 }
@@ -249,10 +253,6 @@ void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
     sourcefile->tokens.push_back(token);
 }
 
-void LexParser::parseHexLiteral(std::string::const_iterator startAt) {
-    assert(false);
-}
-
 void LexParser::parseOperator(std::string::const_iterator startIterator) {
   std::string operators(startIterator, startIterator + 1);
   sourcefile->tokens.push_back(
@@ -260,7 +260,7 @@ void LexParser::parseOperator(std::string::const_iterator startIterator) {
   );
 }
 
-void LexParser::pushOperator(TokenKind kind, std::string op, std::string::const_iterator startIterator) {
+void LexParser::pushOperator(std::string op, std::string::const_iterator startIterator) {
     sourcefile->tokens.push_back(std::shared_ptr<Token>(new Token(TokenKind::operators, op, lineNumber, iterator - startIterator)));
 }
 
@@ -327,4 +327,24 @@ void LexParser::parseCppComment() {
     while(iterator != endIterator && *iterator != '\n') {
         iterator ++;
     }
+}
+
+void LexParser::parseCComment() {
+
+
+    bool found = false;
+    while(iterator != endIterator && (iterator + 1) != endIterator) {
+        if(*iterator == '*' && *(iterator + 1) == '/') {
+            found = true;
+            iterator += 2;
+            break;
+        }
+
+        iterator ++;
+    }
+
+    if(!found) {
+        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, 0, Diagnostics::errorUnterminatedCComment);
+    }
+
 }
