@@ -6,7 +6,7 @@
 
 class LexParser {
 public:
-    explicit LexParser(CompileContext::Ptr context);
+    explicit LexParser(const CompileContext::Ptr& context);
 
     // parse and tokenize the source file
     void parse(const SourceFile::Ptr& sourceFile);
