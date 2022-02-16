@@ -28,7 +28,6 @@ public:
     std::string rawValue;
     union {
         int intValue;
-        int index;
         double doubleValue;
         float floatValue;
         int opValue;

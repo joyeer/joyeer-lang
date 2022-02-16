@@ -1,7 +1,7 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
-LexParser::LexParser(CompileContext::Ptr context) {
+LexParser::LexParser(const CompileContext::Ptr& context) {
     this->diagnostics = context->diagnostics;
 }
 
@@ -64,6 +64,10 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if (iterator != endIterator && *iterator == '/') {
                     parseCppComment();
                     continue;
+                } if (iterator != endIterator && *iterator == '*') {
+                    iterator ++;
+                    parseCComment();
+                    continue;
                 }
                 parseOperator(iterator - 1);
                 break;
@@ -71,7 +75,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if (iterator != endIterator) {
                     if (*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::EQUAL_EQUAL, iterator);
+                        pushOperator(Operators::EQUAL_EQUAL, iterator);
                         continue;
                     }
                 }
@@ -87,7 +91,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if(iterator != endIterator) {
                     if(*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::NOT_EQUALS, iterator);
+                        pushOperator(Operators::NOT_EQUALS, iterator);
                         continue;
                     }
                 }
@@ -103,7 +107,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if(iterator != endIterator) {
                     if(*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::LESS_EQ, iterator);
+                        pushOperator(Operators::LESS_EQ, iterator);
                         continue;
                     }
                 }
@@ -113,7 +117,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if(iterator != endIterator) {
                     if(*iterator == '=') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::GREATER_EQ, iterator);
+                        pushOperator(Operators::GREATER_EQ, iterator);
                         continue;
                     }
                 }
@@ -123,7 +127,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 if (iterator != endIterator) {
                     if (*iterator == '&') {
                         iterator ++;
-                        pushOperator(TokenKind::operators, Operators::AND_AND, iterator);
+                        pushOperator(Operators::AND_AND, iterator);
                         continue;
                     }
                 }
@@ -249,25 +253,21 @@ void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
     sourcefile->tokens.push_back(token);
 }
 
-void LexParser::parseHexLiteral(std::string::const_iterator startAt) {
-    assert(false);
-}
-
 void LexParser::parseOperator(std::string::const_iterator startIterator) {
   std::string operators(startIterator, startIterator + 1);
   sourcefile->tokens.push_back(
-    std::shared_ptr<Token>(new Token(TokenKind::operators, operators, lineNumber, iterator - startIterator))
+    std::make_shared<Token>(TokenKind::operators, operators, lineNumber, iterator - startIterator)
   );
 }
 
-void LexParser::pushOperator(TokenKind kind, std::string op, std::string::const_iterator startIterator) {
-    sourcefile->tokens.push_back(std::shared_ptr<Token>(new Token(TokenKind::operators, op, lineNumber, iterator - startIterator)));
+void LexParser::pushOperator(std::string op, std::string::const_iterator startIterator) {
+    sourcefile->tokens.push_back(std::make_shared<Token>(TokenKind::operators, op, lineNumber, iterator - startIterator));
 }
 
 void LexParser::parsePunctuation(std::string::const_iterator startIterator) {
   std::string punctuation(startIterator, startIterator + 1);
   sourcefile->tokens.push_back(
-    std::shared_ptr<Token>(new Token(TokenKind::punctuation, punctuation, lineNumber, iterator - startIterator))
+          std::make_shared<Token>(TokenKind::punctuation, punctuation, lineNumber, iterator - startIterator)
   );
 }
 
@@ -291,31 +291,38 @@ void LexParser::parseStringIdentifier() {
   
     std::shared_ptr<Token> token;
     if(isKeyword(identifier)) {
-        token = std::shared_ptr<Token>(new Token(TokenKind::keyword, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::keyword, identifier, lineNumber, iterator - startAt);
     } else if(identifier == Literals::NIL) {
-        token = std::shared_ptr<Token>(new Token(TokenKind::nilLiteral, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::nilLiteral, identifier, lineNumber, iterator - startAt);
     } else if(identifier == Literals::TRUE || identifier == Literals::FALSE) {
-        token = std::shared_ptr<Token>(new Token(TokenKind::booleanLiteral, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::booleanLiteral, identifier, lineNumber, iterator - startAt);
     } else {
-        token = std::shared_ptr<Token>(new Token(TokenKind::identifier, identifier, lineNumber, iterator - startAt));
+        token = std::make_shared<Token>(TokenKind::identifier, identifier, lineNumber, iterator - startAt);
     }
     sourcefile->tokens.push_back(token);
 }
 
 void LexParser::parseStringLiteral() {
     auto startAt = iterator;
+    bool end = false;
     while(iterator != endIterator) {
         if(*iterator == '\\') {
             iterator ++;
             if(iterator == endIterator) {
-                diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), "[Error] except character after \"");
+                diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorUnterminatedStringLiteral);
                 return;
             }
         } else if (*iterator == '\"') {
             iterator ++ ;
+            end = true;
             break;
         }
         iterator ++;
+    }
+
+    if(!end) {
+        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorUnterminatedStringLiteral);
+        return;
     }
     
     const std::string identifier(startAt, iterator - 1);
@@ -327,4 +334,24 @@ void LexParser::parseCppComment() {
     while(iterator != endIterator && *iterator != '\n') {
         iterator ++;
     }
+}
+
+void LexParser::parseCComment() {
+
+
+    bool found = false;
+    while(iterator != endIterator && (iterator + 1) != endIterator) {
+        if(*iterator == '*' && *(iterator + 1) == '/') {
+            found = true;
+            iterator += 2;
+            break;
+        }
+
+        iterator ++;
+    }
+
+    if(!found) {
+        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, 0, Diagnostics::errorUnterminatedCComment);
+    }
+
 }
