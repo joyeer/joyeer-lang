@@ -1,0 +1,2 @@
+SyntaxError(line: 0):
+    Unterminated '/*' comment
