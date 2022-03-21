@@ -1,0 +1,5 @@
+
+func (): Int {
+    return 0
+}
+

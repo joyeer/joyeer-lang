@@ -71,7 +71,7 @@ Node::Ptr SyntaxParser::tryParseFuncDecl() {
 
     auto identifier = tryParseIdentifierExpr();
     if(identifier == nullptr) {
-        diagnostics->reportError(ErrorLevel::failure, "[Error] Function except a name");
+        diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorFuncNameMissed);
         return nullptr;
     }
 
