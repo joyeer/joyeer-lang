@@ -298,7 +298,7 @@ struct ForceUnwrappingExpr : public Node {
 
     Node::Ptr wrappedExpr;
 
-    ForceUnwrappingExpr(const Node::Ptr& wrappedExpr);
+    ForceUnwrappingExpr(Node::Ptr  wrappedExpr);
 
     std::string getSimpleName() override;
 };
@@ -313,7 +313,7 @@ struct OptionalChainingExpr: public Node {
 
     Node::Ptr wrappedExpr;
 
-    OptionalChainingExpr(const Node::Ptr& wrappedExpr);
+    OptionalChainingExpr(Node::Ptr  wrappedExpr);
 };
 
 // represent a func call expression
@@ -446,7 +446,7 @@ struct SelfExpr : Node {
     Self::Ptr self;
     IdentifierExpr::Ptr identifier;
 
-    SelfExpr(const Self::Ptr& self, const IdentifierExpr::Ptr& identifier);
+    SelfExpr(Self::Ptr  self, IdentifierExpr::Ptr  identifier);
 };
 
 struct SubscriptExpr : Node {
