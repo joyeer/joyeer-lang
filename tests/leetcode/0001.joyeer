@@ -30,4 +30,3 @@ var sums = [12, 24, 11, 9, 7]
 var result = twoSum(nums: sums, target: 16)
 print(message: result[0])
 print(message: result[1])
-œ

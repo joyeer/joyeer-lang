@@ -40,7 +40,7 @@ struct Diagnostics {
     /**
      * Syntax errors
      */
-
+    DIAGNOSTICS_ERROR_MESSAGE(errorFuncNameMissed,                              "Function name missing")
     DIAGNOSTICS_ERROR_MESSAGE(errorCannotFindFunction,                          "Cannot find '%s' in scope")
     DIAGNOSTICS_ERROR_MESSAGE(errorCannotFindType,                              "Cannot find type '%s' in scope")
     DIAGNOSTICS_ERROR_MESSAGE(errorVarDeclMissingAnnotation,                    "Type annotation missing in variable declaration")

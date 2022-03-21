@@ -83,19 +83,19 @@ valueType(std::move(valueType)) {
 // SelfExpr implementation
 //--------------------------------------------------
 
-SelfExpr::SelfExpr(const Self::Ptr& self, const IdentifierExpr::Ptr& identifier) :
+SelfExpr::SelfExpr(Self::Ptr  self, IdentifierExpr::Ptr  identifier) :
         Node(SyntaxKind::selfExpr),
-        self(self),
-        identifier(identifier) {
+        self(std::move(self)),
+        identifier(std::move(identifier)) {
 }
 
 //--------------------------------------------------
 // ForceUnwrappingExpr implementation
 //--------------------------------------------------
 
-ForceUnwrappingExpr::ForceUnwrappingExpr(const Node::Ptr& wrappedExpr):
+ForceUnwrappingExpr::ForceUnwrappingExpr(Node::Ptr  wrappedExpr):
 Node(SyntaxKind::forceUnwrapExpr),
-wrappedExpr(wrappedExpr){
+wrappedExpr(std::move(wrappedExpr)){
 }
 
 std::string ForceUnwrappingExpr::getSimpleName() {
@@ -106,9 +106,9 @@ std::string ForceUnwrappingExpr::getSimpleName() {
 // OptionalChainingExpr implementation
 //--------------------------------------------------
 
-OptionalChainingExpr::OptionalChainingExpr(const Node::Ptr &wrappedExpr):
+OptionalChainingExpr::OptionalChainingExpr(Node::Ptr wrappedExpr):
 Node(SyntaxKind::optionalChainingExpr),
-wrappedExpr(wrappedExpr) {
+wrappedExpr(std::move(wrappedExpr)) {
 }
 
 //--------------------------------------------------
