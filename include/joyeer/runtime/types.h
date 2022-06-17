@@ -242,7 +242,7 @@ struct Optional : public Type {
     intptr_t allocate(IsolateVM* vm, Int value);
     intptr_t allocate(IsolateVM* vm, Bool value);
     // Optional type for Class
-    intptr_t allocate(IsolateVM* vm, intptr_t objAddr);
+    intptr_t allocateForAddress(IsolateVM* vm, intptr_t objAddr);
 
     // return the wrapped Object's type slot
     Slot valueType(intptr_t objAddr);

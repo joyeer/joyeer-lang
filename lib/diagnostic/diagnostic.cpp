@@ -1,5 +1,8 @@
 #include "joyeer/diagnostic/diagnostic.h"
 #include <iostream>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 ErrorMessage::ErrorMessage(ErrorLevel level, const char* error, int lineAt, int columnAt):
 level(level),

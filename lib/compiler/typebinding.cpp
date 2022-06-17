@@ -4,6 +4,7 @@
 #include "joyeer/compiler/compiler+service.h"
 #include <cassert>
 #include <utility>
+#include <stack>
 
 #define CHECK_ERROR_RETURN(typeSlot) \
     if((typeSlot) == -1) {           \
@@ -609,6 +610,7 @@ Node::Ptr TypeBinding::visit(const ImportStmt::Ptr& node) {
 
 Node::Ptr TypeBinding::visit(const  BinaryExpr::Ptr& decl) {
     assert(false);
+    return nullptr;
 }
 
 Node::Ptr TypeBinding::visit(const OperatorExpr::Ptr& decl) {
@@ -655,6 +657,7 @@ Type* TypeBinding::typeOf(const Node::Ptr& node) {
         default:
             assert(false);
     }
+    return nullptr;
 }
 
 Type* TypeBinding::typeOf(const Expr::Ptr& node) {
@@ -701,6 +704,7 @@ Type* TypeBinding::typeOf(const LiteralExpr::Ptr& node) {
         default:
             assert(false);
     }
+    return nullptr;
 }
 
 Type* TypeBinding::typeOf(const FuncCallExpr::Ptr& node) {
@@ -740,6 +744,7 @@ Type* TypeBinding::typeOf(const TypeIdentifier::Ptr& node) {
 
 Type* TypeBinding::typeOf(const DictLiteralExpr::Ptr& node) {
     assert(false);
+    return nullptr;
 }
 
 Type* TypeBinding::typeOf(const ArrayLiteralExpr::Ptr& node) {
@@ -769,6 +774,7 @@ Type* TypeBinding::typeOf(const SubscriptExpr::Ptr& node) {
 
 Type* TypeBinding::typeOf(const ArrayType::Ptr& node) {
     assert(false);
+    return nullptr;
 }
 
 Type* TypeBinding::typeOf(const PrefixExpr::Ptr& node) {

@@ -4,6 +4,7 @@
 #include "joyeer/runtime/arguments.h"
 #include "joyeer/compiler/sourcefile.h"
 #include "joyeer/diagnostic/diagnostic.h"
+#include <functional>
 
 class CompilerService;
 
