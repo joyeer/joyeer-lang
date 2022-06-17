@@ -6,6 +6,7 @@
 
 #include <sstream>
 #include <functional>
+#include <cassert>
 
 std::string debugAccessFlag(AccessFlag flag) {
     bool one = false;
@@ -95,7 +96,7 @@ intptr_t Optional::allocate(IsolateVM *vm, Bool value) {
     return objAddr;
 }
 
-intptr_t Optional::allocate(IsolateVM *vm, intptr_t objAddr) {
+intptr_t Optional::allocateForAddress(IsolateVM *vm, intptr_t objAddr) {
     auto originalObjectHead = (ObjectHead*)objAddr;
     assert(originalObjectHead->typeSlot != -1);
 
@@ -485,6 +486,6 @@ void DictEntry::setValue(intptr_t object, Value valueValue) {
     char* objPtr = reinterpret_cast<char *>(object);
     auto type = vm->getType((Slot)ValueType::Int);
     auto optionalIntType = (Optional*)vm->getType(type->optionalTypeSlot);
-    auto entryValue = optionalIntType->allocate(vm, valueValue);
+    auto entryValue = optionalIntType->allocateForAddress(vm, valueValue);
     *(Value*)(objPtr + kDictEntryValueOffset) = valueValue;
 }

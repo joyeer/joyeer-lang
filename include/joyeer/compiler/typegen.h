@@ -95,44 +95,44 @@ public:
     Node::Ptr visit(const AssignExpr::Ptr& decl) override;
     Node::Ptr visit(const SelfExpr::Ptr& decl) override;
 
-    Node::Ptr visit(const VarDecl::Ptr& varDecl) override { assert(false); }
-    Node::Ptr visit(const TypeIdentifier::Ptr& decl) override { assert(false); }
+    Node::Ptr visit(const VarDecl::Ptr& varDecl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const TypeIdentifier::Ptr& decl) override { assert(false); return nullptr; }
 
     // Type annotation
-    Node::Ptr visit(const ArrayType::Ptr& decl) override { assert(false); }
-    Node::Ptr visit(const OptionalType::Ptr& decl) override { assert(false); }
+    Node::Ptr visit(const ArrayType::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const OptionalType::Ptr& decl) override { assert(false); return nullptr; }
 
     // FuncCallExpr visitor
-    Node::Ptr visit(const MemberFuncCallExpr::Ptr& decl) override { assert(false); }
+    Node::Ptr visit(const MemberFuncCallExpr::Ptr& decl) override { assert(false); return nullptr; }
 
-    Node::Ptr visit(const ModuleDecl::Ptr& decl) override { assert(false); }
-    Node::Ptr visit(const ClassDecl::Ptr& classDecl) override  { assert(false); }
+    Node::Ptr visit(const ModuleDecl::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const ClassDecl::Ptr& classDecl) override { assert(false); return nullptr; }
 
-    Node::Ptr visit(const LiteralExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const PrefixExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const PostfixExpr::Ptr& decl) override  { assert(false); }
+    Node::Ptr visit(const LiteralExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const PrefixExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const PostfixExpr::Ptr& decl) override { assert(false); return nullptr; }
 
 
 
-    Node::Ptr visit(const BinaryExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const OperatorExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const ParenthesizedExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const IfStmt::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const WhileStmt::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const StmtsBlock::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const ParameterClause::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const Pattern::Ptr& decl) override  { assert(false); }
+    Node::Ptr visit(const BinaryExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const OperatorExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const ParenthesizedExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const IfStmt::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const WhileStmt::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const StmtsBlock::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const ParameterClause::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const Pattern::Ptr& decl) override { assert(false); return nullptr; }
 
-    Node::Ptr visit(const Self::Ptr& decl) override  { assert(false); }
+    Node::Ptr visit(const Self::Ptr& decl) override { assert(false); return nullptr; }
 
-    Node::Ptr visit(const ArrayLiteralExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const DictLiteralExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const MemberAccessExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const MemberAssignExpr::Ptr& decl) override  { assert(false); }
-    Node::Ptr visit(const ForceUnwrappingExpr::Ptr& decl) override { assert(false); }
-    Node::Ptr visit(const OptionalChainingExpr::Ptr& decl) override { assert(false); }
-    Node::Ptr visit(const SubscriptExpr::Ptr& decl) override { assert(false); }
-    Node::Ptr visit(const ImportStmt::Ptr& decl) override { assert(false); }
+    Node::Ptr visit(const ArrayLiteralExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const DictLiteralExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const MemberAccessExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const MemberAssignExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const ForceUnwrappingExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const OptionalChainingExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const SubscriptExpr::Ptr& decl) override { assert(false); return nullptr; }
+    Node::Ptr visit(const ImportStmt::Ptr& decl) override { assert(false); return nullptr; }
 
 protected:
     friend class TypeGen;

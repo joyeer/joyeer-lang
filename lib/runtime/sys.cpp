@@ -67,7 +67,7 @@ Value Global_$_autoWrapping_Class(Executor* executor, Arguments* args) {
     assert(type->optionalTypeSlot != -1);
     auto optionalType = (Optional*)executor->vm->getType(type->optionalTypeSlot);
     assert(optionalType->kind == ValueType::Optional);
-    return optionalType->allocate(executor->vm, value);
+    return optionalType->allocateForAddress(executor->vm, value);
 }
 
 Value Global_$_autoUnwrapping(Executor* executor, Arguments* args) {

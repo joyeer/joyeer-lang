@@ -4,6 +4,8 @@
 #include <utility>
 #include <sstream>
 #include <fstream>
+#include <cassert>
+#include <filesystem>
 
 #include "joyeer/runtime/descriptor.h"
 #include "joyeer/runtime/types.h"

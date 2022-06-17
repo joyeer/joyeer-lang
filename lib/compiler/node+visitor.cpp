@@ -47,4 +47,5 @@ Node::Ptr NodeVisitor::visit(const Node::Ptr& node) {
         default:
             assert(false);
     }
+    return nullptr;
 }
