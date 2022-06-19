@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+#define BUF_SIZE 2048
+
 ErrorMessage::ErrorMessage(ErrorLevel level, const char* error, int lineAt, int columnAt):
 level(level),
 message(error),
@@ -15,11 +17,11 @@ columnAt(columnAt) {
 void Diagnostics::reportError(ErrorLevel level, const char* errorFormat, ...) {
 
 
-    char* string;
+    char string[BUF_SIZE];
     va_list args;
 
     va_start(args, errorFormat);
-    vasprintf(&string, errorFormat, args);
+    vsnprintf(string, BUF_SIZE, errorFormat, args);
     va_end(args);
 
     ErrorMessage e(level, string, -1, -1);
@@ -29,11 +31,11 @@ void Diagnostics::reportError(ErrorLevel level, const char* errorFormat, ...) {
 
 void Diagnostics::reportError(ErrorLevel level, int lineAt, int columnAt, const char* errorFormat, ...) {
 
-    char* string;
+    char string[BUF_SIZE];
     va_list args;
 
     va_start(args, errorFormat);
-    vasprintf(&string, errorFormat, args);
+    vsnprintf(string, BUF_SIZE, errorFormat, args);
     va_end(args);
 
     ErrorMessage e(level, string, lineAt, columnAt);
