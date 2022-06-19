@@ -1,8 +1,7 @@
 #include "joyeer/diagnostic/diagnostic.h"
 #include <iostream>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdarg.h>
+#include <cstdio>
+#include <cstdarg>
 
 #define BUF_SIZE 2048
 
@@ -18,6 +17,7 @@ void Diagnostics::reportError(ErrorLevel level, const char* errorFormat, ...) {
 
 
     char string[BUF_SIZE];
+    memset(string, '\0',  BUF_SIZE);
     va_list args;
 
     va_start(args, errorFormat);
@@ -32,6 +32,7 @@ void Diagnostics::reportError(ErrorLevel level, const char* errorFormat, ...) {
 void Diagnostics::reportError(ErrorLevel level, int lineAt, int columnAt, const char* errorFormat, ...) {
 
     char string[BUF_SIZE];
+    memset(string, '\0',  BUF_SIZE);
     va_list args;
 
     va_start(args, errorFormat);
