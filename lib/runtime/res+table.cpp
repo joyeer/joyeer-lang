@@ -3,6 +3,7 @@
 //
 
 #include "joyeer/runtime/res+table.h"
+#include <cassert>
 
 int StringResTable::import(const std::string &string) {
     strings.push_back(string);

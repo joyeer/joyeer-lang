@@ -15,7 +15,7 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
 }
 
 void Driver::run() {
-    auto module = compiler->compile(arguments->inputfile);
+    auto module = compiler->compile(arguments->inputfile.string());
     if(diagnostics->errors.size() == 0) {
         ((InterpretedIsolatedVM*)vm)->run(module);
     } else {

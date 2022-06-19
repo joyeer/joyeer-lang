@@ -5,6 +5,7 @@
 #include "joyeer/runtime/sys.h"
 #include "joyeer/runtime/arguments.h"
 #include "joyeer/runtime/executor.h"
+#include <cassert>
 
 Value Global_$_print(Executor* executor, Arguments *args) {
     auto wrappedObj = args->getArgument(0);

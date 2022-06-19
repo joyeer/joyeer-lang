@@ -3,6 +3,7 @@
 //
 
 #include "joyeer/runtime/gc.h"
+#include <cassert>
 
 intptr_t GC::allocate(MemoryArea area, Class *klass) {
     if(area == MemoryArea::Permanent) {

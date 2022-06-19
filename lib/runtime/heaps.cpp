@@ -3,6 +3,7 @@
 //
 
 #include "joyeer/runtime/heaps.h"
+#include <cassert>
 
 intptr_t Page::allocate(size_t size) {
     if(used + size > kPageSize) {

@@ -17,7 +17,7 @@ Joyeer is a general purpose programming language, which inspired by Swift.
 #### Building
 
 ```shell
-    cmake -B./build -G 'Unix Makefiles'
+    cmake -B ./build -G 'Unix Makefiles'
     cmake --build ./build
 ```
 

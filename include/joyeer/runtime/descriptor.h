@@ -4,6 +4,7 @@
 
 #include <string>
 #include <vector>
+#include <memory>
 
 //  interpretation of a Type
 struct DescriptorConstants {
@@ -101,6 +102,8 @@ public:
 
 // Function descriptor
 class FunctionDescriptor: public Descriptor {
+public:
+    using Ptr = std::shared_ptr<FunctionDescriptor>;
 public:
     FunctionDescriptor(const Descriptor::Ptr& parent, const std::string& funcName, const std::vector<PatternDescriptor::Ptr>& parameters);
 };
