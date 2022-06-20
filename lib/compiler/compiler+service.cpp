@@ -5,7 +5,7 @@
 #include "joyeer/compiler/typebinding.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
-#include "debugprinter.h"
+#include "joyeer/compiler/debugprinter.h"
 #include "joyeer/runtime/types.h"
 #include "joyeer/runtime/sys.h"
 
