@@ -527,7 +527,11 @@ void InterpretedExecutor::pop(Slot frame) {
     assert(frames.back() == frame);
     frames.pop_back();
     sp = frame;
-    fp = frames.back();
+    if(frames.size() > 0) {
+        fp = frames.back();
+    } else {
+        fp = 0;
+    }
 }
 
 void InterpretedExecutor::push(Value value) {
