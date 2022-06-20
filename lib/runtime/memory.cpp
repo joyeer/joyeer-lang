@@ -3,8 +3,16 @@
 //
 
 #include "joyeer/runtime/memory.h"
+#include "joyeer/runtime/bytecode.h"
 #include <new>
 
+
+void MemoryBuffer::write(Bytecode bytecode) {
+    tryResizeIfNeed(pos + sizeof(Bytecode));
+    Byte* bytes = (Byte*) & bytecode;
+    memcpy(buffer + pos, bytes, sizeof(Bytecode));
+    pos += sizeof(Bytecode);
+}
 
 void MemoryBuffer::resize(size_t newSize) {
     if(newSize == 0) { // this check is not strictly needed,

@@ -19,9 +19,9 @@ typedef uint64_t        UInt;
 typedef int32_t         Int32;
 typedef int16_t         Int16;
 typedef bool            Bool;
-typedef uintptr_t       Any;
-typedef intptr_t        Slot;
-typedef intptr_t        Value;
+typedef uint64_t        Any;
+typedef int64_t         Slot;
+typedef int64_t         Value;
 typedef const char*     FramePtr;
 
 /**

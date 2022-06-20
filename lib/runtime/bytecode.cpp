@@ -24,7 +24,7 @@ Bytecode::Bytecode(int8_t op, int32_t value1, int32_t value2) {
 Bytecodes::Bytecodes(Byte *bytes, int length) {
     bytecodes = static_cast<Byte *>(malloc(length));
     memcpy(bytecodes, bytes, length);
-    size = length / kValueSize;
+    size = length / sizeof(Bytecode);
 }
 
 Bytecodes::~Bytecodes() {
@@ -37,13 +37,13 @@ Bytecodes::~Bytecodes() {
 //-------------------------------------------------------
 
 void BytecodeWriter::write(Bytecode bytecode) {
-    buffer.write((Int)*((Int*)(&bytecode)));
+    buffer.write(bytecode);
 }
 
 void BytecodeWriter::write(Bytecodes *bytecodes) {
     for(auto i = 0; i < bytecodes->size; i ++ ) {
         auto bytecode = ((Bytecode*)bytecodes->bytecodes)[i];
-        buffer.write(*(Int*)&bytecode);
+        buffer.write(bytecode);
     }
 }
 
