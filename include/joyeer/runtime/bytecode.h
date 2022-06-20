@@ -2,7 +2,6 @@
 #define __joyeer_runtime_bytecode_h__
 
 #include "joyeer/runtime/memory.h"
-#include <string>
 
 enum Opcode : uint8_t {
     OP_NOP = 0x00,

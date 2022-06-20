@@ -23,7 +23,7 @@ struct Interpreter;
             goto exit;
 
 struct Interpreter {
-    intptr_t cp = 0;
+    AddressPtr cp = 0;
     InterpretedExecutor* executor;
     IsolateVM* isolateVm;
     Bytecodes* bytecodes;
