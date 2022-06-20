@@ -9,8 +9,10 @@ class JoyeerTestCase(unittest.TestCase):
     def runTest(self):
         sourceCodeResult = joyeerSourceCode + ".result.txt"
         result = subprocess.run([joyeerInterpreter, joyeerSourceCode], stdout=subprocess.PIPE).stdout.decode('utf-8')
+        result = "\n".join(result.splitlines())
         f = open(sourceCodeResult, 'r')
-        exceptedResult = f.read()
+        exceptedResult = "\n".join(f.read().splitlines())
+
         f.close()
 
         print("##########")
