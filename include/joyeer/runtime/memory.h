@@ -6,6 +6,7 @@
 #define __joyeer_runtime_memory_h__
 
 #include "joyeer/runtime/types.h"
+struct Bytecode;
 
 class MemoryBuffer {
 public:
@@ -23,11 +24,7 @@ public:
         pos += kBoolSize;
     }
 
-    void write(Int value) {
-        tryResizeIfNeed(pos + kIntSize);
-        *(Int*)(buffer + pos) = value;
-        pos += kIntSize;
-    }
+    void write(Bytecode value);
 
 protected:
     friend class BytecodeWriter;

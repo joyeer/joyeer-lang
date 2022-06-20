@@ -78,7 +78,7 @@ struct Bytecode {
         } format1 ;
 
         struct {
-            int8_t op: 8 =-1;
+            int8_t op: 8 = -1;
             int32_t value1: 24 = -1;
             int32_t value2: 32 = -1;
         } format2;
