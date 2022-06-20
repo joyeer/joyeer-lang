@@ -42,7 +42,7 @@ loop:
         auto bytecode = *(Bytecode *)(bytecodes->bytecodes + cp);
 
         auto opcode = OP_FROM_BYTECODE(bytecode);
-        DEBUG_PRINT(bytecode, isolateVm->types->types)
+        // DEBUG_PRINT(bytecode, isolateVm->types->types)
 
         switch (opcode) {
             HANDLE_BYTECODE(NOP)
