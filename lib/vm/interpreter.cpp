@@ -11,7 +11,7 @@
 struct Interpreter;
 
 #define DEBUG_PRINT(bytecode, types) \
-    std::cout << ">" << debugPrint(&(bytecode), types) << std::endl;
+    std::cout << ">" << debugPrint(bytecode, types) << std::endl;
 
 #define HANDLE_BYTECODE(OP) \
         case OP_##OP: \
@@ -42,7 +42,7 @@ loop:
         auto bytecode = *(Bytecode *)(bytecodes->bytecodes + cp);
 
         auto opcode = OP_FROM_BYTECODE(bytecode);
-        // DEBUG_PRINT(bytecode, isolateVm->types->types)
+        DEBUG_PRINT(bytecode, isolateVm->types->types)
 
         switch (opcode) {
             HANDLE_BYTECODE(NOP)
