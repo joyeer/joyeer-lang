@@ -672,6 +672,6 @@ protected:
 };
 
 // debug output the instruction
-std::string debugPrint(Bytecode* bytecode, const std::vector<Type*>& types);
+std::string debugPrint(Bytecode bytecode, const std::vector<Type*>& types);
 
 #endif
