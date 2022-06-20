@@ -11,8 +11,8 @@ constexpr int kStackMaxSize = 1024 * 1024 * 4; // 4M intptr_t;
 
 struct Executor {
 
-    intptr_t fp = 0;
-    intptr_t sp = 0;
+    AddressPtr fp = 0;
+    AddressPtr sp = 0;
     IsolateVM *vm = nullptr;
 
     std::vector<Slot> frames {};
