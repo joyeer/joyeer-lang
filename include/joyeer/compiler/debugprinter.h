@@ -669,10 +669,9 @@ protected:
         newline();
         output << "staticInitializer: " << module->staticInitializerSlot;
     }
-
-    // debug output the instruction
-    std::string debugPrint(Bytecode* bytecode, const std::vector<Type*>& types);
-
 };
+
+// debug output the instruction
+std::string debugPrint(Bytecode* bytecode, const std::vector<Type*>& types);
 
 #endif
