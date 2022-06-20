@@ -10,6 +10,6 @@ void InterpretedIsolatedVM::run(ModuleClass *module) {
     ClassLoader loader(this);
     loader.load(module);
 
-    InterpretedExecutor executor(this);
-    executor.execute(module);
+    auto executor= std::make_shared<InterpretedExecutor>(this);
+    executor->execute(module);
 }
