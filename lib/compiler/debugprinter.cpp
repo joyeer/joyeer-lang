@@ -1,6 +1,5 @@
-#include "debugprinter.h"
+#include "joyeer/compiler/debugprinter.h"
 #include <fstream>
-#include "joyeer/compiler/compiler+service.h"
 
 YMLPrinter::YMLPrinter(const std::string &filename) {
     output.open(filename);
@@ -84,7 +83,7 @@ void NodeDebugPrinter::print(Function *func, const std::vector<Type*>& types)  {
     }
 }
 
-std::string NodeDebugPrinter::debugPrint(Bytecode *bytecode, const std::vector<Type*>& types) {
+std::string debugPrint(Bytecode *bytecode, const std::vector<Type*>& types) {
 
     static std::unordered_map<Opcode, std::string> maps = {
             { OP_NOP, "nop" },
