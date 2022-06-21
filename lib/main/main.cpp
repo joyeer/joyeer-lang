@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
     
     if(!options->accepted) {
         options->printUsage();
-        return -1;
+        return 0;
     }
 
     Driver driver(diagnostics, options);

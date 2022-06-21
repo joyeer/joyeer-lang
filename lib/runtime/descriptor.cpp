@@ -29,7 +29,7 @@ ModuleDescriptor::ModuleDescriptor(const std::string& filename) {
     std::stringstream ss;
     std::filesystem::path path = filename;
     path.replace_extension("");
-    ss << DescriptorConstants::ModulePrefix << path.c_str() << DescriptorConstants::END ;
+    ss << DescriptorConstants::ModulePrefix << path.string() << DescriptorConstants::END;
     
     rawDescriptor = ss.str();
 }

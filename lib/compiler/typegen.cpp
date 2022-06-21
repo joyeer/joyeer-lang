@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <utility>
+#include <deque>
 
 
 //---------------------------------------------
@@ -383,6 +384,7 @@ Node::Ptr TypeGen::visit(const IdentifierExpr::Ptr& decl) {
         default:
             assert(false);
     }
+    return nullptr;
 }
 
 Node::Ptr TypeGen::visit(const Expr::Ptr& decl) {

@@ -19,9 +19,10 @@ typedef uint64_t        UInt;
 typedef int32_t         Int32;
 typedef int16_t         Int16;
 typedef bool            Bool;
-typedef uintptr_t       Any;
-typedef intptr_t        Slot;
-typedef intptr_t        Value;
+typedef uint64_t        Any;
+typedef int64_t         Slot;
+typedef int64_t         Value;
+typedef uint64_t        AddressPtr;
 typedef const char*     FramePtr;
 
 /**
@@ -239,17 +240,17 @@ struct Optional : public Type {
 
     explicit Optional(const std::string& name, Slot wrappedTypeSlot);
 
-    intptr_t allocate(IsolateVM* vm, Int value);
-    intptr_t allocate(IsolateVM* vm, Bool value);
+    AddressPtr allocate(IsolateVM* vm, Int value);
+    AddressPtr allocate(IsolateVM* vm, Bool value);
     // Optional type for Class
-    intptr_t allocate(IsolateVM* vm, intptr_t objAddr);
+    AddressPtr allocateForAddress(IsolateVM* vm, AddressPtr objAddr);
 
     // return the wrapped Object's type slot
-    Slot valueType(intptr_t objAddr);
+    Slot valueType(AddressPtr objAddr);
 
-    Int intValue(intptr_t objAddr);
-    Bool boolValue(intptr_t objAddr);
-    Value value(intptr_t objAddr);
+    Int intValue(AddressPtr objAddr);
+    Bool boolValue(AddressPtr objAddr);
+    Value value(AddressPtr objAddr);
 
 };
 
@@ -267,7 +268,7 @@ struct Class : public Type {
     constexpr static int kObjectHeadOffset = 0;
 
     // Class static memory area in GC heap
-    intptr_t staticArea = -1;
+    AddressPtr staticArea = -1;
 
     // static initializer slot
     Slot staticInitializerSlot = -1;
@@ -280,7 +281,7 @@ struct Class : public Type {
 
     explicit Class(const std::string& name);
 
-    virtual intptr_t allocate(IsolateVM* vm);
+    virtual AddressPtr allocate(IsolateVM* vm);
 
     int getSize();
 
@@ -294,8 +295,8 @@ struct Class : public Type {
     }
 
     // get object's field value
-    Value getField(intptr_t objAddr, int fieldIndex);
-    void putField(intptr_t objAddr, int fieldIndex, Value newValue);
+    Value getField(AddressPtr objAddr, int fieldIndex);
+    void putField(AddressPtr objAddr, int fieldIndex, Value newValue);
 };
 
 struct ModuleClass : public Class {
@@ -327,14 +328,14 @@ struct StringClass : Type {
 
     StringClass(): Type("String", ValueType::String) {}
 
-    intptr_t allocate(IsolateVM* vm, int typeSlot);
-    intptr_t allocateWithLength(IsolateVM* vm, int size);
+    AddressPtr allocate(IsolateVM* vm, int typeSlot);
+    AddressPtr allocateWithLength(IsolateVM* vm, int size);
 
-    std::string toString(intptr_t thisAddr);
+    std::string toString(AddressPtr thisAddr);
 
-    int getLength(intptr_t thisAddr);
+    int getLength(AddressPtr thisAddr);
 
-    intptr_t c_str(intptr_t thisAddr);
+    AddressPtr c_str(AddressPtr thisAddr);
 };
 
 
@@ -350,18 +351,18 @@ struct ArrayClass : public Class {
 
     explicit ArrayClass();
 
-    intptr_t allocate(IsolateVM* isolateVm, int capacity);
+    AddressPtr allocate(IsolateVM* isolateVm, int capacity);
 
-    void setCapacity(intptr_t object, Value capacity);
-    Value getCapacity(intptr_t object);
+    void setCapacity(AddressPtr object, Value capacity);
+    Value getCapacity(AddressPtr object);
 
-    void setLength(intptr_t object, Value length);
-    Value getLength(intptr_t object);
+    void setLength(AddressPtr object, Value length);
+    Value getLength(AddressPtr object);
 
-    void append(intptr_t object, Value value);
+    void append(AddressPtr object, Value value);
 
-    void set(intptr_t object, Value index, Value value);
-    Value get(intptr_t object, Value index);
+    void set(AddressPtr object, Value index, Value value);
+    Value get(AddressPtr object, Value index);
 
 private:
     // calculate array object size based on capacity
@@ -385,17 +386,17 @@ struct StringBuilderClass : public Class {
 
     struct StringBuilderData {
         ObjectHead head {};
-        intptr_t stringArray = -1;
+        AddressPtr stringArray = -1;
     };
 
     explicit StringBuilderClass(): Class("StringBuilder") {}
 
-    intptr_t allocate(IsolateVM* vm) override;
+    AddressPtr allocate(IsolateVM* vm) override;
 
     // append a String
-    intptr_t append(intptr_t thisAddr, intptr_t stringAddr);
+    AddressPtr append(AddressPtr thisAddr, AddressPtr stringAddr);
 
-    intptr_t toString(intptr_t thisAddr);
+    AddressPtr toString(AddressPtr thisAddr);
 };
 
 
@@ -431,25 +432,25 @@ struct DictClass : public Class {
 
     explicit DictClass();
 
-    intptr_t allocate(IsolateVM* vm) override;
+    AddressPtr allocate(IsolateVM* vm) override;
 
-    Value capacity(intptr_t thisObj);
-    void setCapacity(intptr_t thisObj, Value capacity);
+    Value capacity(AddressPtr thisObj);
+    void setCapacity(AddressPtr thisObj, Value capacity);
 
     // Dict Bucket count
-    Value getBucketCount(intptr_t thisObj);
-    void setBucketCount(intptr_t thisObj, Value count);
+    Value getBucketCount(AddressPtr thisObj);
+    void setBucketCount(AddressPtr thisObj, Value count);
 
     // Each space slot contains a dict bucket(Array)
-    Value getBucketBySlot(intptr_t thisObj, Slot slot);
-    void setBucketBySlot(intptr_t thisObj, Slot slot, Value value);
+    Value getBucketBySlot(AddressPtr thisObj, Slot slot);
+    void setBucketBySlot(AddressPtr thisObj, Slot slot, Value value);
 
-    Value size(intptr_t thisObj);
-    void setSize(intptr_t thisObj, Value value);
+    Value size(AddressPtr thisObj);
+    void setSize(AddressPtr thisObj, Value value);
 
-    void insert(intptr_t thisObj, Value key, Value value);
+    void insert(AddressPtr thisObj, Value key, Value value);
 
-    Value get(intptr_t thisObj, Value key);
+    Value get(AddressPtr thisObj, Value key);
 };
 
 
@@ -465,13 +466,13 @@ struct DictEntry : public Class {
 
     explicit DictEntry();
 
-    intptr_t allocate(IsolateVM* vm) override;
+    AddressPtr allocate(IsolateVM* vm) override;
 
-    Value getKey(intptr_t object);
-    void setKey(intptr_t object, Value keyValue);
+    Value getKey(AddressPtr object);
+    void setKey(AddressPtr object, Value keyValue);
 
-    Value getValue(intptr_t object);
-    void setValue(intptr_t object, Value valueValue);
+    Value getValue(AddressPtr object);
+    void setValue(AddressPtr object, Value valueValue);
 
 };
 

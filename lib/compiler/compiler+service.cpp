@@ -5,7 +5,7 @@
 #include "joyeer/compiler/typebinding.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
-#include "debugprinter.h"
+#include "joyeer/compiler/debugprinter.h"
 #include "joyeer/runtime/types.h"
 #include "joyeer/runtime/sys.h"
 
@@ -40,7 +40,9 @@ SourceFile::Ptr CompilerService::findSourceFile(const std::string &path, const s
     
     auto sourcefilePath = sourcefile.string();
     if(sourceFiles.find(sourcefilePath) == sourceFiles.end()) {
-        auto sf = std::make_shared<SourceFile>(options->workingDirectory, sourcefilePath);
+        
+        std::string folder = options->workingDirectory.string();
+        auto sf = std::make_shared<SourceFile>(folder, sourcefilePath);
         sourceFiles.insert({sourcefilePath, sf});
     }
     

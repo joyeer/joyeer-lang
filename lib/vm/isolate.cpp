@@ -10,6 +10,7 @@ void InterpretedIsolatedVM::run(ModuleClass *module) {
     ClassLoader loader(this);
     loader.load(module);
 
-    InterpretedExecutor executor(this);
-    executor.execute(module);
+    InterpretedExecutor * executor = new InterpretedExecutor(this);
+    executor->execute(module);
+    // delete executor;
 }

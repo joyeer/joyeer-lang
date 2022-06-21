@@ -1,6 +1,5 @@
-#include "debugprinter.h"
+#include "joyeer/compiler/debugprinter.h"
 #include <fstream>
-#include "joyeer/compiler/compiler+service.h"
 
 YMLPrinter::YMLPrinter(const std::string &filename) {
     output.open(filename);
@@ -77,14 +76,14 @@ void NodeDebugPrinter::print(Function *func, const std::vector<Type*>& types)  {
             if(i > 0){
                 newline();
             }
-            auto bytecode = &((Bytecode*)(func->bytecodes->bytecodes))[i];
+            auto bytecode = ((Bytecode*)(func->bytecodes->bytecodes))[i];
             output << "- " << i << ": " << debugPrint(bytecode, types);
         }
         DEBUG_BLOCK_END
     }
 }
 
-std::string NodeDebugPrinter::debugPrint(Bytecode *bytecode, const std::vector<Type*>& types) {
+std::string debugPrint(Bytecode bytecode, const std::vector<Type*>& types) {
 
     static std::unordered_map<Opcode, std::string> maps = {
             { OP_NOP, "nop" },
@@ -135,34 +134,34 @@ std::string NodeDebugPrinter::debugPrint(Bytecode *bytecode, const std::vector<T
 
 
     std::stringstream ss;
-    auto instStr = maps[(Opcode)bytecode->format1.op];
+    auto instStr = maps[OP_FROM_BYTECODE(bytecode)];
     assert(!instStr.empty());
-    ss << maps[(Opcode)bytecode->format1.op] ;
-    switch((Opcode)bytecode->format1.op) {
+    ss << maps[OP_FROM_BYTECODE(bytecode)] ;
+    switch(OP_FROM_BYTECODE(bytecode)) {
         case OP_NEW: {
-            auto classTypeSlot = VALUE_FROM_BYTECODE(*bytecode);
+            auto classTypeSlot = VALUE_FROM_BYTECODE(bytecode);
             auto klass = (Class*)types[classTypeSlot];
             ss << " " << classTypeSlot << " #class: \"" << klass->name << "\"";
         }
             break;
         case OP_INVOKE: {
-            auto methodSlot = VALUE_FROM_BYTECODE(*bytecode);
+            auto methodSlot = VALUE_FROM_BYTECODE(bytecode);
             auto method = (Function*)types[methodSlot];
             ss << " " << methodSlot << " #method: \"" << method->name << "\"";
         }
             break;
         case OP_GETSTATIC:
         case OP_PUTSTATIC: {
-            auto classSlotId = VAL1_FROM_BYTECODE(*bytecode);    // slot id of class
+            auto classSlotId = VAL1_FROM_BYTECODE(bytecode);    // slot id of class
             auto klass = (Class*)types[classSlotId];
-            auto fieldOffset = VAL2_FROM_BYTECODE(*bytecode);
+            auto fieldOffset = VAL2_FROM_BYTECODE(bytecode);
             auto field = klass->staticFields[fieldOffset];
             ss << " " << classSlotId << " " << fieldOffset << " #class: \"" << klass->name << "\", field: \"" << field->name << "\""  ;
         }
             break;
 
         default:
-            ss << " " << VALUE_FROM_BYTECODE(*bytecode);
+            ss << " " << VALUE_FROM_BYTECODE(bytecode);
             break;
     }
     return ss.str();

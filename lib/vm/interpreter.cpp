@@ -5,12 +5,13 @@
 #include "joyeer/vm/interpreter.h"
 #include "joyeer/runtime/bytecode.h"
 #include "joyeer/runtime/types.h"
+#include "joyeer/compiler/debugprinter.h"
 #include <iostream>
 
 struct Interpreter;
 
-#define DEBUG_PRINT(bytecode) \
-    std::cout << ">" << debugPrint(&(bytecode)) << std::endl;
+#define DEBUG_PRINT(bytecode, types) \
+    std::cout << ">" << debugPrint(bytecode, types) << std::endl;
 
 #define HANDLE_BYTECODE(OP) \
         case OP_##OP: \
@@ -23,7 +24,7 @@ struct Interpreter;
             goto exit;
 
 struct Interpreter {
-    intptr_t cp = 0;
+    AddressPtr cp = 0;
     InterpretedExecutor* executor;
     IsolateVM* isolateVm;
     Bytecodes* bytecodes;
@@ -41,7 +42,7 @@ loop:
         auto bytecode = *(Bytecode *)(bytecodes->bytecodes + cp);
 
         auto opcode = OP_FROM_BYTECODE(bytecode);
-//        DEBUG_PRINT(bytecode)
+        // DEBUG_PRINT(bytecode, isolateVm->types->types)
 
         switch (opcode) {
             HANDLE_BYTECODE(NOP)
@@ -526,7 +527,11 @@ void InterpretedExecutor::pop(Slot frame) {
     assert(frames.back() == frame);
     frames.pop_back();
     sp = frame;
-    fp = frames.back();
+    if(frames.size() > 0) {
+        fp = frames.back();
+    } else {
+        fp = 0;
+    }
 }
 
 void InterpretedExecutor::push(Value value) {

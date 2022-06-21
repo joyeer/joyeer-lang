@@ -14,12 +14,12 @@ enum MemoryArea : uint8_t {
 
 class GC {
 public:
-    intptr_t allocate(MemoryArea area, Class* klass);
-    intptr_t allocate(Type* type, size_t size);
-    static void write(intptr_t memory, Value value, int offset);
-    static Value read(intptr_t memory, int offset);
+    AddressPtr allocate(MemoryArea area, Class* klass);
+    AddressPtr allocate(Type* type, size_t size);
+    static void write(AddressPtr memory, Value value, int offset);
+    static Value read(AddressPtr memory, int offset);
 private:
-    intptr_t allocateForStatic(Class* klass);
+    AddressPtr allocateForStatic(Class* klass);
 private:
     Heap* heap { new Heap() };
 };

@@ -7,7 +7,7 @@ SourceFile::SourceFile(const std::string& workingDirectory, const std::string& p
     auto modulePath = path.substr(workingDirectory.size() + 1, path.size() - workingDirectory.size() - 1);
     pathInWorkingDirectory = modulePath;
     location = path;
-    open(location);
+    open(path);
 }
 
 void SourceFile::open(const std::string &path) {

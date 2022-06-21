@@ -6,13 +6,10 @@ add_executable(UnitTests
 )
 
 TARGET_LINK_LIBRARIES(UnitTests
-        libgtest
-        libgmock
+        GTest::GTest
         JoyeerRuntime
         JoyeerCompiler
         JoyeerVM
         )
 
 add_test(NAME UnitTests COMMAND UnitTests)
-
-add_dependencies(joyeer UnitTests)
