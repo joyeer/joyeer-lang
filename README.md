@@ -5,19 +5,18 @@ Joyeer is a general purpose programming language, which inspired by Swift.
 
 ### Requirements
 
-*The development version is only running in macOS*
-
 - macOS > 12.0
 - cmake > 3.22.0
 - clang > 13.0.0
-- Python 2.7
+- Python > 3.10
+- Ninja > 1.11.0
 
 ### Getting Started
 
 #### Building
 
 ```shell
-    cmake -B ./build -G 'Unix Makefiles'
+    cmake -B ./build -G Ninja
     cmake --build ./build
 ```
 
