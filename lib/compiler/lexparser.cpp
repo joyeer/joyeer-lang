@@ -9,6 +9,7 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
     
     this->sourcefile = sourceFile;
     iterator = sourceFile->content.begin();
+    lineStartAtPosition = sourceFile->content.begin();
     endIterator = sourceFile->content.end();
     
     while (iterator != endIterator) {
@@ -227,7 +228,7 @@ void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
   break_label_1:
 
   bool hasFraction = false;
-  if(*iterator == '.') {
+  if(iterator != endIterator && *iterator == '.') {
     iterator ++ ;
     std::string::const_iterator fractionStartIterator = iterator;
     while(iterator != endIterator ) {
