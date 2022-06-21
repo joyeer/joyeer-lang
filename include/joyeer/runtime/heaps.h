@@ -10,16 +10,16 @@
 
 constexpr size_t kPageSize = 256 * 1024;
 constexpr size_t kMaxPageNumberInSingleSpace = 1024 * 1024; // the max number of page in one single space
-constexpr intptr_t kInvalid = -1;
+constexpr AddressPtr kInvalid = -1;
 
 
 // the default page size : 256k
 struct Page {
 
     char8_t data[kPageSize]{};
-    intptr_t used = 0;
+    AddressPtr used = 0;
 
-    [[nodiscard]] intptr_t allocate(size_t size);
+    [[nodiscard]] AddressPtr allocate(size_t size);
 };
 
 
@@ -28,7 +28,7 @@ struct Space {
     std::vector<Page*> pages { new Page() };
     size_t cur = 0;
 
-    intptr_t allocate(size_t size) {
+    AddressPtr allocate(size_t size) {
         return pages[cur]->allocate(size);
     }
 };
@@ -52,7 +52,7 @@ struct Heap {
 #undef DECLARE_SPACE
 
     // allocate a memory for a given size
-    intptr_t allocate(size_t size) {
+    AddressPtr allocate(size_t size) {
         auto address = SPACE(kNewSpace)->allocate(size);
         return address;
     }

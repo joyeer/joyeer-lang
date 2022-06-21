@@ -1,6 +1,7 @@
 #include "joyeer/compiler/symtable.h"
 #include "joyeer/diagnostic/diagnostic.h"
 #include <utility>
+#include <cassert>
 
 
 std::string debugStringOfSymbolFlag(SymbolFlag flag) {
@@ -18,6 +19,7 @@ std::string debugStringOfSymbolFlag(SymbolFlag flag) {
         default:
             assert(false);
     }
+    return nullptr;
 }
 
 Symbol::Symbol(SymbolFlag flag, std::string name, int address):

@@ -3,8 +3,9 @@
 //
 
 #include "joyeer/runtime/gc.h"
+#include <cassert>
 
-intptr_t GC::allocate(MemoryArea area, Class *klass) {
+AddressPtr GC::allocate(MemoryArea area, Class *klass) {
     if(area == MemoryArea::Permanent) {
         return allocateForStatic(klass);
     } else {
@@ -14,7 +15,7 @@ intptr_t GC::allocate(MemoryArea area, Class *klass) {
     assert(false);
 }
 
-intptr_t GC::allocate(Type *type, size_t size) {
+AddressPtr GC::allocate(Type *type, size_t size) {
     auto address = heap->allocate(size);
     auto head = reinterpret_cast<ObjectHead*>(address);
     head->absent = false;
@@ -22,18 +23,18 @@ intptr_t GC::allocate(Type *type, size_t size) {
     return address;
 }
 
-intptr_t GC::allocateForStatic(Class *klass) {
+AddressPtr GC::allocateForStatic(Class *klass) {
     size_t size = klass->getStaticSize();
     auto address = heap->allocate(size);
     return address;
 }
 
-void GC::write(intptr_t memory, Value value, int offset) {
+void GC::write(AddressPtr memory, Value value, int offset) {
     Value *address = reinterpret_cast<Value*>(memory) + offset;
     *address = value;
 }
 
-Value GC::read(intptr_t memory, int offset) {
+Value GC::read(AddressPtr memory, int offset) {
     return *(reinterpret_cast<Value*>(memory) + offset);
 }
 

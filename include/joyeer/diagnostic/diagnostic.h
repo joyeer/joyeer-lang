@@ -16,7 +16,7 @@ struct ErrorMessage {
     ErrorMessage(ErrorLevel level, const char* message, int lineAt, int columnAt);
 
     ErrorLevel level;
-    const char* message;
+    std::string message;
     int lineAt;
     int columnAt;
 };

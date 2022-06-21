@@ -6,6 +6,7 @@
 
 #include <sstream>
 #include <functional>
+#include <cassert>
 
 std::string debugAccessFlag(AccessFlag flag) {
     bool one = false;
@@ -74,7 +75,7 @@ Type(name, ValueType::Optional) {
     wrappedTypeSlot = (int)typeSlot;
 }
 
-intptr_t Optional::allocate(IsolateVM *vm, Int value) {
+AddressPtr Optional::allocate(IsolateVM *vm, Int value) {
     auto objAddr = vm->gc->allocate(this, sizeof(DataMap));
     auto objPtr = reinterpret_cast<DataMap*>(objAddr);
     objPtr->head.wrapped = true;
@@ -85,7 +86,7 @@ intptr_t Optional::allocate(IsolateVM *vm, Int value) {
     return objAddr;
 }
 
-intptr_t Optional::allocate(IsolateVM *vm, Bool value) {
+AddressPtr Optional::allocate(IsolateVM *vm, Bool value) {
     auto objAddr = vm->gc->allocate(this, sizeof(DataMap));
     auto objPtr = reinterpret_cast<DataMap*>(objAddr);
     objPtr->head.wrapped = true;
@@ -95,7 +96,7 @@ intptr_t Optional::allocate(IsolateVM *vm, Bool value) {
     return objAddr;
 }
 
-intptr_t Optional::allocate(IsolateVM *vm, intptr_t objAddr) {
+AddressPtr Optional::allocateForAddress(IsolateVM *vm, AddressPtr objAddr) {
     auto originalObjectHead = (ObjectHead*)objAddr;
     assert(originalObjectHead->typeSlot != -1);
 
@@ -108,7 +109,7 @@ intptr_t Optional::allocate(IsolateVM *vm, intptr_t objAddr) {
     return optionalObjAddr;
 }
 
-Slot Optional::valueType(intptr_t objAddr) {
+Slot Optional::valueType(AddressPtr objAddr) {
     auto optionalObj = reinterpret_cast<DataMap*>(objAddr);
     if(optionalObj == nullptr) {
         return (Slot)ValueType::Nil;
@@ -116,19 +117,19 @@ Slot Optional::valueType(intptr_t objAddr) {
     return optionalObj->head.typeSlot;
 }
 
-Int Optional::intValue(intptr_t object) {
+Int Optional::intValue(AddressPtr object) {
     auto optionalObj = reinterpret_cast<DataMap*>(object);
     assert(optionalObj->head.typeSlot == (Int)ValueType::Int);
     return optionalObj->wrappedValue;
 }
 
-Bool Optional::boolValue(intptr_t objAddr) {
+Bool Optional::boolValue(AddressPtr objAddr) {
     auto optionalObj = reinterpret_cast<DataMap*>(objAddr);
     assert(optionalObj->head.typeSlot == (Int)ValueType::Bool);
     return optionalObj->wrappedValue;
 }
 
-Value Optional::value(intptr_t objAddr) {
+Value Optional::value(AddressPtr objAddr) {
     auto optionalObj = reinterpret_cast<DataMap*>(objAddr);
     return optionalObj->wrappedValue;
 }
@@ -149,9 +150,9 @@ Class::Class(const std::string &name):
     Type(name, ValueType::Class){
 }
 
-intptr_t Class::allocate(IsolateVM *vm) {
+AddressPtr Class::allocate(IsolateVM *vm) {
     int size = getSize();
-    intptr_t addr = vm->gc->allocate(this, sizeof(ClassData) + size);
+    AddressPtr addr = vm->gc->allocate(this, sizeof(ClassData) + size);
     return addr;
 }
 
@@ -163,13 +164,13 @@ int Class::getSize() {
     return size;
 }
 
-Value Class::getField(intptr_t objAddr, int fieldIndex) {
+Value Class::getField(AddressPtr objAddr, int fieldIndex) {
     auto klassObj = reinterpret_cast<ClassData*>(objAddr);
     assert(fieldIndex < instanceFields.size());
     return klassObj->getField(fieldIndex);
 }
 
-void Class::putField(intptr_t objAddr, int fieldIndex, Value newValue) {
+void Class::putField(AddressPtr objAddr, int fieldIndex, Value newValue) {
     auto klassObj = reinterpret_cast<ClassData*>(objAddr);
     assert(fieldIndex < instanceFields.size());
     klassObj->putField(fieldIndex, newValue);
@@ -189,7 +190,7 @@ ModuleClass::ModuleClass(const std::string &name) :
 // StringClass implementation
 //------------------------------------------------
 
-intptr_t StringClass::allocate(IsolateVM *vm, int typeSlot) {
+AddressPtr StringClass::allocate(IsolateVM *vm, int typeSlot) {
 
     auto rawString = (*vm->strings)[typeSlot];
     auto objAddr = vm->gc->allocate(this, (int)(rawString.size() + sizeof(StringData)));
@@ -201,7 +202,7 @@ intptr_t StringClass::allocate(IsolateVM *vm, int typeSlot) {
     return objAddr;
 }
 
-intptr_t StringClass::allocateWithLength(IsolateVM *vm, int size) {
+AddressPtr StringClass::allocateWithLength(IsolateVM *vm, int size) {
     auto objAddr = vm->gc->allocate(this, (int)(size + kIntSize + sizeof(ObjectHead) + kIntSize));
     auto stringObj = reinterpret_cast<StringData*>(objAddr);
     stringObj->head.typeSlot = (Int)ValueType::String;
@@ -210,25 +211,25 @@ intptr_t StringClass::allocateWithLength(IsolateVM *vm, int size) {
     return objAddr;
 }
 
-std::string StringClass::toString(intptr_t objAddr) {
+std::string StringClass::toString(AddressPtr objAddr) {
     auto stringObj = reinterpret_cast<StringData*>(objAddr);
     return {stringObj->data, (size_t )stringObj->length };
 }
 
-int StringClass::getLength(intptr_t thisAddr) {
+int StringClass::getLength(AddressPtr thisAddr) {
     auto stringObj = reinterpret_cast<StringData*>(thisAddr);
     return stringObj->length;
 }
 
-intptr_t StringClass::c_str(intptr_t thisAddr) {
+AddressPtr StringClass::c_str(AddressPtr thisAddr) {
     auto stringObj = reinterpret_cast<StringData*>(thisAddr);
-    return reinterpret_cast<intptr_t>(stringObj->data);
+    return reinterpret_cast<AddressPtr>(stringObj->data);
 }
 
 //------------------------------------------------
 // StringBuilderClass implementation
 //------------------------------------------------
-intptr_t StringBuilderClass::allocate(IsolateVM *vm) {
+AddressPtr StringBuilderClass::allocate(IsolateVM *vm) {
     auto sbAddr = vm->gc->allocate(this, sizeof(StringBuilderData));
     auto sbObj = reinterpret_cast<StringBuilderData*>(sbAddr);
     auto arrayObj = vm->arrayClass->allocate(vm, 8);
@@ -238,13 +239,13 @@ intptr_t StringBuilderClass::allocate(IsolateVM *vm) {
     return sbAddr;
 }
 
-intptr_t StringBuilderClass::append(intptr_t thisAddr, intptr_t stringAddr) {
+AddressPtr StringBuilderClass::append(AddressPtr thisAddr, AddressPtr stringAddr) {
     auto thisObj = reinterpret_cast<StringBuilderData*>(thisAddr);;
     vm->arrayClass->append(thisObj->stringArray, stringAddr);
     return thisAddr;
 }
 
-intptr_t StringBuilderClass::toString(intptr_t thisAddr) {
+AddressPtr StringBuilderClass::toString(AddressPtr thisAddr) {
     auto thisObj = reinterpret_cast<StringBuilderData*>(thisAddr);
     int stringLength = 0;
     auto arrayLength = vm->arrayClass->getLength(thisObj->stringArray);
@@ -277,9 +278,9 @@ Class(std::string("Array")) {
 }
 
 
-intptr_t ArrayClass::allocate(IsolateVM* vm, int capacity) {
+AddressPtr ArrayClass::allocate(IsolateVM* vm, int capacity) {
     Int adjustedCapacity = calculateArrayCapacitySize(capacity) * kValueSize;
-    intptr_t object = vm->gc->allocate(this, sizeof(ArrayData) + adjustedCapacity);
+    AddressPtr object = vm->gc->allocate(this, sizeof(ArrayData) + adjustedCapacity);
 
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     arrayObj->capacity = adjustedCapacity;
@@ -295,39 +296,39 @@ Int ArrayClass::calculateArrayCapacitySize(int size) {
     return result;
 }
 
-void ArrayClass::setCapacity(intptr_t object, Value capacity) {
+void ArrayClass::setCapacity(AddressPtr object, Value capacity) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     arrayObj->capacity = capacity;
 }
 
-Value ArrayClass::getCapacity(intptr_t object) {
+Value ArrayClass::getCapacity(AddressPtr object) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     return arrayObj->capacity;
 }
 
-void ArrayClass::setLength(intptr_t object, Value length) {
+void ArrayClass::setLength(AddressPtr object, Value length) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     arrayObj->length = length;
 }
 
-Value ArrayClass::getLength(intptr_t object) {
+Value ArrayClass::getLength(AddressPtr object) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     return arrayObj->length;
 }
 
-void ArrayClass::append(intptr_t object, Value value) {
+void ArrayClass::append(AddressPtr object, Value value) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     auto lengthValue = getLength(object);
     arrayObj->data[lengthValue] = value;
     arrayObj->length = lengthValue + 1;
 }
 
-Value ArrayClass::get(intptr_t object, Value index) {
+Value ArrayClass::get(AddressPtr object, Value index) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     return arrayObj->data[index];
 }
 
-void ArrayClass::set(intptr_t object, Value index, Value value) {
+void ArrayClass::set(AddressPtr object, Value index, Value value) {
     auto arrayObj = reinterpret_cast<ArrayData*>(object);
     arrayObj->data[index] = value;
 }
@@ -341,7 +342,7 @@ Class(std::string("Dict")) {
 
 }
 
-intptr_t DictClass::allocate(IsolateVM *vm) {
+AddressPtr DictClass::allocate(IsolateVM *vm) {
     this->vm = vm;
     int bucketCount = kDefaultCapacitySize / kDefaultPerBucketItem ;
     auto objPtr= vm->gc->allocate(this, sizeof(DictData) + bucketCount * kValueSize ) ;
@@ -352,47 +353,47 @@ intptr_t DictClass::allocate(IsolateVM *vm) {
     return objPtr;
 }
 
-Value DictClass::capacity(intptr_t object) {
+Value DictClass::capacity(AddressPtr object) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     return dictObj->capacity;
 }
 
-void DictClass::setCapacity(intptr_t object, Value capacity) {
+void DictClass::setCapacity(AddressPtr object, Value capacity) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     dictObj->capacity = capacity;
 }
 
-Value DictClass::getBucketCount(intptr_t object) {
+Value DictClass::getBucketCount(AddressPtr object) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     return dictObj->bucketSize;
 }
 
-void DictClass::setBucketCount(intptr_t object, Value size) {
+void DictClass::setBucketCount(AddressPtr object, Value size) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     dictObj->bucketSize = size;
 }
 
-Value DictClass::getBucketBySlot(intptr_t object, Slot slot) {
+Value DictClass::getBucketBySlot(AddressPtr object, Slot slot) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     return dictObj->buckets[slot];
 }
 
-void DictClass::setBucketBySlot(intptr_t object, Slot slot, Value value) {
+void DictClass::setBucketBySlot(AddressPtr object, Slot slot, Value value) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     dictObj->buckets[slot] = value;
 }
 
-Value DictClass::size(intptr_t object) {
+Value DictClass::size(AddressPtr object) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     return dictObj->count;
 }
 
-void DictClass::setSize(intptr_t object, Value value) {
+void DictClass::setSize(AddressPtr object, Value value) {
     auto dictObj = reinterpret_cast<DictData*>(object);
     dictObj->count = value;
 }
 
-void DictClass::insert(intptr_t object, Value key, Value value) {
+void DictClass::insert(AddressPtr object, Value key, Value value) {
     auto hash = std::hash<Int>{}(key);
     auto capacityValue = capacity(object);
     auto bucketCount = getBucketCount(object);
@@ -430,7 +431,7 @@ void DictClass::insert(intptr_t object, Value key, Value value) {
 
 }
 
-Value DictClass::get(intptr_t object, Value key) {
+Value DictClass::get(AddressPtr object, Value key) {
     auto hash = std::hash<Int>{}(key);
 
     auto spaceSize = getBucketCount(object);
@@ -461,30 +462,30 @@ DictEntry::DictEntry():
 Class(std::string("DictEntry")) {
 }
 
-intptr_t DictEntry::allocate(IsolateVM *vm) {
-    intptr_t object = vm->gc->allocate(this, sizeof(DictEntryData));
+AddressPtr DictEntry::allocate(IsolateVM *vm) {
+    AddressPtr object = vm->gc->allocate(this, sizeof(DictEntryData));
     return object;
 }
 
-Value DictEntry::getKey(intptr_t object) {
+Value DictEntry::getKey(AddressPtr object) {
     char* objPtr = reinterpret_cast<char *>(object);
     return *(Value*)(objPtr + kDictEntryKeyOffset);
 }
 
-void DictEntry::setKey(intptr_t object, Value keyValue) {
+void DictEntry::setKey(AddressPtr object, Value keyValue) {
     char* objPtr = reinterpret_cast<char *>(object);
     *(Value*)(objPtr + kDictEntryKeyOffset) = keyValue;
 }
 
-Value DictEntry::getValue(intptr_t object) {
+Value DictEntry::getValue(AddressPtr object) {
     char* objPtr = reinterpret_cast<char *>(object);
     return *(Value*)(objPtr + kDictEntryValueOffset);
 }
 
-void DictEntry::setValue(intptr_t object, Value valueValue) {
+void DictEntry::setValue(AddressPtr object, Value valueValue) {
     char* objPtr = reinterpret_cast<char *>(object);
     auto type = vm->getType((Slot)ValueType::Int);
     auto optionalIntType = (Optional*)vm->getType(type->optionalTypeSlot);
-    auto entryValue = optionalIntType->allocate(vm, valueValue);
+    auto entryValue = optionalIntType->allocateForAddress(vm, valueValue);
     *(Value*)(objPtr + kDictEntryValueOffset) = valueValue;
 }

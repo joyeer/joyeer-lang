@@ -2,6 +2,8 @@
 #define __joyeer_compiler_syntax_symtable_h__
 
 #include <unordered_map>
+#include <memory>
+
 
 #include "joyeer/runtime/types.h"
 

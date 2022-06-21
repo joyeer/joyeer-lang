@@ -1,49 +1,21 @@
-include(ExternalProject)
+include(FetchContent)
 
-# Download and install GoogleTest
-ExternalProject_Add(
-    gtest
-    URL https://github.com/google/googletest/archive/refs/tags/release-1.11.0.zip
-    DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/gtest/download
-    PREFIX ${CMAKE_CURRENT_BINARY_DIR}/gtest
-    INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/gtest/install
-    CMAKE_ARGS -D CMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG        release-1.11.0
 )
 
-# Get GTest source and binary directories from CMake project
-ExternalProject_Get_Property(gtest source_dir binary_dir install_dir)
 
-set(gTest "${install_dir}/lib/libgtest.a")
-set(gMock "${install_dir}/lib/libgmock.a")
-if(XCODE) 
-    set(gTest "${install_dir}/lib/libgtestd.a")
-    set(gMock "${install_dir}/lib/libgmockd.a")
-endif()
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+set(BUILD_GTEST ON CACHE BOOL "" FORCE)
 
+FetchContent_MakeAvailable(googletest)
 
-# Create a libgtest target to be used as a dependency by test programs
-add_library(libgtest IMPORTED STATIC GLOBAL)
-add_dependencies(libgtest gtest)
+add_library(GTest::GTest INTERFACE IMPORTED)
+target_link_libraries(GTest::GTest INTERFACE gtest_main)
 
-# Set libgtest properties
-set_target_properties(libgtest PROPERTIES
-    "IMPORTED_LOCATION" "${gTest}"
-    "IMPORTED_LINK_INTERFACE_LIBRARIES" "${CMAKE_THREAD_LIBS_INIT}"
-    "CMAKE_DEBUG_POSTFIX" ""
-)
-
-# Create a libgmock target to be used as a dependency by test programs
-add_library(libgmock IMPORTED STATIC GLOBAL)
-add_dependencies(libgmock gtest)
-
-# Set libgmock properties
-set_target_properties(libgmock PROPERTIES
-    "IMPORTED_LOCATION" "${gMock}"
-    "IMPORTED_LINK_INTERFACE_LIBRARIES" "${CMAKE_THREAD_LIBS_INIT}"
-    "CMAKE_DEBUG_POSTFIX" ""
-)
-
-include_directories("${source_dir}/googletest/include"
-                    "${source_dir}/googlemock/include")
+enable_testing()
 
 add_subdirectory(testcases)
