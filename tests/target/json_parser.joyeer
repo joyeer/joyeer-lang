@@ -1,0 +1,303 @@
+// json_parser.joyeer
+//
+// Target: a complete JSON parser written in Joyeer v0.1
+// This file defines what the language MUST support.
+//
+// ============================================================
+// NEW FEATURES REQUIRED (not in current grammar):
+//
+//   [1] enum declaration + associated values
+//   [2] match statement + destructuring
+//   [3] Char type + char literals ('x')
+//   [4] Char comparison (==, !=, >=, <=)
+//   [5] Char arithmetic (ch - '0' => Int)
+//   [6] String methods: len(), charAt(index:)
+//   [7] Array method: append(value:)
+//   [8] Int method: toString()
+//   [9] Char method: toString()
+//   [10] || operator
+//   [11] String escape sequences: \n \t \\ \"
+// ============================================================
+
+// ===== [1] JSON Value — enum with associated values =====
+
+enum JsonValue {
+    Null,
+    Bool(Bool),
+    Number(Int),
+    Str(String),
+    Array([JsonValue]),
+    Object([String:JsonValue]),
+}
+
+// ===== JSON Parser =====
+
+class JsonParser {
+    var input: String
+    var pos: Int
+
+    // existing: init with named parameters
+    init(input: String) {
+        self.input = input
+        self.pos = 0
+    }
+
+    // ----- low-level helpers -----
+
+    // [3][6] charAt returns Char
+    func peek(): Char {
+        return self.input.charAt(index: self.pos)
+    }
+
+    func advance(): Char {
+        let ch = self.input.charAt(index: self.pos)
+        self.pos = self.pos + 1
+        return ch
+    }
+
+    func hasMore(): Bool {
+        return self.pos < self.input.len()
+    }
+
+    // [4] Char comparison with !=
+    func skipWhitespace() {
+        while self.hasMore() {
+            let ch = self.peek()
+            if ch != ' ' && ch != '\n' && ch != '\t' && ch != '\r' {
+                return
+            }
+            self.pos = self.pos + 1
+        }
+    }
+
+    func expect(ch: Char) {
+        let actual = self.advance()
+        if actual != ch {
+            print(message: "error: unexpected character")
+        }
+    }
+
+    // ----- entry point -----
+
+    func parse(): JsonValue {
+        self.skipWhitespace()
+        let value = self.parseValue()
+        self.skipWhitespace()
+        return value
+    }
+
+    // ----- recursive descent -----
+
+    // [4][10] Char ==, ||, >=, <=
+    func parseValue(): JsonValue {
+        self.skipWhitespace()
+        let ch = self.peek()
+
+        if ch == '"' {
+            return self.parseString()
+        } else if ch == '{' {
+            return self.parseObject()
+        } else if ch == '[' {
+            return self.parseArray()
+        } else if ch == 't' || ch == 'f' {
+            return self.parseBool()
+        } else if ch == 'n' {
+            return self.parseNull()
+        } else if ch == '-' || (ch >= '0' && ch <= '9') {
+            return self.parseNumber()
+        } else {
+            print(message: "error: unexpected character in value")
+            return JsonValue.Null
+        }
+    }
+
+    // --- null ---
+
+    func parseNull(): JsonValue {
+        self.expect(ch: 'n')
+        self.expect(ch: 'u')
+        self.expect(ch: 'l')
+        self.expect(ch: 'l')
+        return JsonValue.Null
+    }
+
+    // --- bool ---
+
+    func parseBool(): JsonValue {
+        if self.peek() == 't' {
+            self.expect(ch: 't')
+            self.expect(ch: 'r')
+            self.expect(ch: 'u')
+            self.expect(ch: 'e')
+            return JsonValue.Bool(true)
+        } else {
+            self.expect(ch: 'f')
+            self.expect(ch: 'a')
+            self.expect(ch: 'l')
+            self.expect(ch: 's')
+            self.expect(ch: 'e')
+            return JsonValue.Bool(false)
+        }
+    }
+
+    // --- number (integers only for v0.1) ---
+    // [5] Char arithmetic: ch - '0' => Int
+
+    func parseNumber(): JsonValue {
+        var num = 0
+        var negative = false
+
+        if self.peek() == '-' {
+            negative = true
+            self.advance()
+        }
+
+        while self.hasMore() && self.peek() >= '0' && self.peek() <= '9' {
+            let digit = self.advance() - '0'
+            num = num * 10 + digit
+        }
+
+        if negative {
+            num = 0 - num
+        }
+
+        return JsonValue.Number(num)
+    }
+
+    // --- string ---
+    // [9] ch.toString(), [11] escape sequences
+
+    func parseStringRaw(): String {
+        self.expect(ch: '"')
+        var result = ""
+
+        while self.hasMore() && self.peek() != '"' {
+            let ch = self.advance()
+
+            if ch == '\\' {
+                let escaped = self.advance()
+                if escaped == 'n' {
+                    result = result + "\n"
+                } else if escaped == 't' {
+                    result = result + "\t"
+                } else if escaped == '"' {
+                    result = result + "\""
+                } else if escaped == '\\' {
+                    result = result + "\\"
+                }
+            } else {
+                result = result + ch.toString()
+            }
+        }
+
+        self.expect(ch: '"')
+        return result
+    }
+
+    func parseString(): JsonValue {
+        return JsonValue.Str(self.parseStringRaw())
+    }
+
+    // --- array ---
+    // [7] arr.append(value:)
+
+    func parseArray(): JsonValue {
+        self.expect(ch: '[')
+        var elements = [JsonValue]()
+
+        self.skipWhitespace()
+        if self.peek() != ']' {
+            elements.append(value: self.parseValue())
+
+            self.skipWhitespace()
+            while self.peek() == ',' {
+                self.advance()
+                elements.append(value: self.parseValue())
+                self.skipWhitespace()
+            }
+        }
+
+        self.expect(ch: ']')
+        return JsonValue.Array(elements)
+    }
+
+    // --- object ---
+    // existing: dict[key] = value
+
+    func parseObject(): JsonValue {
+        self.expect(ch: '{')
+        var entries = [String:JsonValue]()
+
+        self.skipWhitespace()
+        if self.peek() != '}' {
+            self.skipWhitespace()
+            let key = self.parseStringRaw()
+            self.skipWhitespace()
+            self.expect(ch: ':')
+            let value = self.parseValue()
+            entries[key] = value
+
+            self.skipWhitespace()
+            while self.peek() == ',' {
+                self.advance()
+                self.skipWhitespace()
+                let k = self.parseStringRaw()
+                self.skipWhitespace()
+                self.expect(ch: ':')
+                let v = self.parseValue()
+                entries[k] = v
+                self.skipWhitespace()
+            }
+        }
+
+        self.expect(ch: '}')
+        return JsonValue.Object(entries)
+    }
+}
+
+// ===== [2] match statement — display JsonValue =====
+// [8] n.toString()
+
+func jsonToString(value: JsonValue): String {
+    match value {
+        JsonValue.Null => {
+            return "null"
+        }
+        JsonValue.Bool(b) => {
+            if b {
+                return "true"
+            } else {
+                return "false"
+            }
+        }
+        JsonValue.Number(n) => {
+            return n.toString()
+        }
+        JsonValue.Str(s) => {
+            return "\"" + s + "\""
+        }
+        JsonValue.Array(arr) => {
+            var result = "["
+            var i = 0
+            while i < arr.size() {
+                if i > 0 {
+                    result = result + ", "
+                }
+                result = result + jsonToString(value: arr[i])
+                i = i + 1
+            }
+            result = result + "]"
+            return result
+        }
+        JsonValue.Object(map) => {
+            return "{object}"
+        }
+    }
+}
+
+// ===== main =====
+
+var input = "{\"name\": \"joyeer\", \"version\": 1, \"active\": true, \"items\": [1, 2, 3]}"
+var parser = JsonParser(input: input)
+var result = parser.parse()
+print(message: jsonToString(value: result))
