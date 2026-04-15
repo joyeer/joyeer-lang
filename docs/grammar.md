@@ -4,8 +4,9 @@
 ## Lexical
 
 ### Keyword
-class
 struct
+enum
+extension
 var
 let
 if
@@ -14,8 +15,9 @@ for
 while
 import
 func
-try
+match
 return
+self
 
 ### Primary Type
 string
@@ -170,9 +172,18 @@ return-statement -> `return`  expression /opt/
 > while-statement -> `while` expression code-block
 
 branch-statement  -> if-statement
+branch-statement  -> match-statement
 
 if-statement -> if condition-list code-block else-clause /opt/
-else-clause -> `else` code-block | `else` if -statement
+else-clause -> `else` code-block | `else` if-statement
+
+match-statement -> `match` expression `{` match-clauses `}`
+match-clauses -> match-clause match-clauses /opt/
+match-clause -> match-pattern `=>` code-block
+match-pattern -> enum-case-pattern | identifier-pattern | `_`
+enum-case-pattern -> type-name `.` identifier enum-associated-bindings /opt/
+enum-associated-bindings -> `(` identifier-list `)`
+identifier-list -> identifier | identifier `,` identifier-list
 
 
 ### Declarations
@@ -180,13 +191,13 @@ else-clause -> `else` code-block | `else` if -statement
 > declaration -> constant-declaration
 > declaration -> variable-declaration
 > declaration -> function-declaration
-> declaration -> initializer-declaration
-> declaration -> class-declaration
+> declaration -> type-function-declaration
+> declaration -> struct-declaration
+> declaration -> enum-declaration
+> declaration -> extension-declaration
 > declarations -> declaration declarations
 
-initializer-declaration -> initializer-head parameter-clause code-block
-
-code-blocks -> `{` statements /opts/  `}`
+code-block -> `{` statements /opts/  `}`
 
 > import-declaration -> `import` import-path
 > import-path -> import-path
@@ -201,18 +212,32 @@ variable-declaration-head -> `var`
 function-declaration -> function-head function-name function-signature function-body
 function-head -> `func`
 function-name -> identifier
-function-signature -> parameter-clause function-result
+function-signature -> parameter-clause function-result /opt/
+function-result -> `:` type
 parameter-clause -> `(`  `)` | `(` parameter-list `)`
-parameter-list -> parameter | parameter, parameter-list
+parameter-list -> parameter | parameter `,` parameter-list
 parameter -> local-parameter-name type-annotation
 local-parameter-name -> identifier
 function-body -> code-block
 
-class-declaration -> `class` class-name type-inheritance-clause class-body
-class-name -> identifier
-class-body -> `{` class-members /opt/ `}`
+type-function-declaration -> `func` type-name `.` function-name function-signature function-body
 
-class-members -> class-member class-members /opt/
-class-member -> declaration
+struct-declaration -> `struct` struct-name struct-body
+struct-name -> identifier
+struct-body -> `{` struct-members /opt/ `}`
+struct-members -> struct-member struct-members /opt/
+struct-member -> variable-declaration | constant-declaration
+
+enum-declaration -> `enum` enum-name `{` enum-members `}`
+enum-name -> identifier
+enum-members -> enum-member `,` enum-members /opt/
+enum-member -> identifier enum-associated-types /opt/
+enum-associated-types -> `(` type-list `)`
+type-list -> type | type `,` type-list
+
+extension-declaration -> `extension` type-name `{` extension-members `}`
+type-name -> identifier
+extension-members -> extension-member extension-members /opt/
+extension-member -> function-declaration
 
 ###
