@@ -9,3 +9,8 @@ xcode-build
 cmake-build-debug
 .vs/
 *.code-workspace
+
+
+# Added by cargo
+
+/target
