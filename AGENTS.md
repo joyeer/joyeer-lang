@@ -1,0 +1,75 @@
+# AGENTS.md — Joyeer Language
+
+> Joyeer is an **AI-era systems language**: AI writes most code, humans review and assist.
+> Goal: replace C++ for new code. **No GC. Zero-cost abstractions. Swift-like syntax.**
+> Initially **no `class`** — use `struct` for aggregates. See [docs/ai-era-design.md](docs/ai-era-design.md) and [docs/memory.md](docs/memory.md) for the design philosophy.
+
+## Repository reality vs. vision
+
+The compiler is currently a **C++20 implementation** that lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its own bytecode. LLVM-based native code-gen is on the roadmap but **not implemented**.
+
+- Current state and pipeline: [docs/roadmap.md](docs/roadmap.md)
+- v0.1 target (minimal language able to write a JSON parser): [docs/v0.1-plan.md](docs/v0.1-plan.md)
+- Grammar: [docs/grammar.md](docs/grammar.md)
+- Bytecode opcodes: [docs/instructions.md](docs/instructions.md)
+
+> The repository contains a stray `Cargo.lock` from an abandoned Rust experiment. **Ignore it.** Do not propose Rust files or `cargo` commands — the build is CMake + C++.
+
+## Build & test (Windows / macOS)
+
+```pwsh
+cmake -B ./build -G Ninja
+cmake --build ./build
+ctest --test-dir ./build --output-on-failure
+```
+
+- Requires: CMake ≥ 3.16, a C++20 compiler (clang ≥ 13 or MSVC), Ninja, Python ≥ 3.10.
+- The `joyeer` executable is written to `build/bin/joyeer` (or under a config dir on multi-config generators).
+- Tests are golden-output: [tests/testRunner.py](tests/testRunner.py) runs the compiled `joyeer` on `tests/**/*.joyeer` and diffs stdout against the sibling `*.result.txt`. To add a test, drop both files in [tests/basis/](tests/basis/) (or `leetcode/`, `errors/`) and re-run CMake configure so they're picked up by [tests/CMakeLists.txt](tests/CMakeLists.txt).
+
+## Source layout
+
+| Area | Headers | Sources |
+|---|---|---|
+| Driver / `main` | [lib/main/driver.h](lib/main/driver.h) | [lib/main/main.cpp](lib/main/main.cpp), [lib/main/driver.cpp](lib/main/driver.cpp) |
+| Lexer / parser | [include/joyeer/compiler/lexparser.h](include/joyeer/compiler/lexparser.h), [include/joyeer/compiler/syntaxparser.h](include/joyeer/compiler/syntaxparser.h) | [lib/compiler/lexparser.cpp](lib/compiler/lexparser.cpp), [lib/compiler/syntaxparser.cpp](lib/compiler/syntaxparser.cpp) |
+| AST | [include/joyeer/compiler/node.h](include/joyeer/compiler/node.h), [include/joyeer/compiler/node+visitor.h](include/joyeer/compiler/node+visitor.h) | [lib/compiler/node.cpp](lib/compiler/node.cpp) |
+| Symbol / type binding | [include/joyeer/compiler/symtable.h](include/joyeer/compiler/symtable.h), [include/joyeer/compiler/typegen.h](include/joyeer/compiler/typegen.h), [include/joyeer/compiler/typebinding.h](include/joyeer/compiler/typebinding.h), [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) | matching `*.cpp` in [lib/compiler/](lib/compiler/) |
+| IR / bytecode gen | [include/joyeer/compiler/IRGen.h](include/joyeer/compiler/IRGen.h) | [lib/compiler/IRGen.cpp](lib/compiler/IRGen.cpp) |
+| Runtime (types, GC, loader, sys) | [include/joyeer/runtime/](include/joyeer/runtime/) | [lib/runtime/](lib/runtime/) |
+| VM interpreter | [include/joyeer/vm/](include/joyeer/vm/) | [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), [lib/vm/frame.cpp](lib/vm/frame.cpp) |
+| Diagnostics | [include/joyeer/diagnostic/diagnostic.h](include/joyeer/diagnostic/diagnostic.h) | [lib/diagnostic/diagnostic.cpp](lib/diagnostic/diagnostic.cpp) |
+
+The compiler pipeline drives stages via `CompileStage` in [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) — match its existing pattern when adding new stages.
+
+## Conventions when writing **Joyeer source** (`*.joyeer`)
+
+These conventions reflect the **AI-era direction**, not necessarily what every existing test does.
+
+- Prefer **`struct`** for new aggregates. **Do not introduce new `class` declarations** — `class` exists only for legacy tests in [tests/basis/class_*.joyeer](tests/basis/) and will be removed.
+- Use `let` for immutable bindings, `var` only when mutation is needed.
+- Be explicit about types on public function signatures — strong types are the AI-era guardrail (see [docs/ai-era-design.md](docs/ai-era-design.md) §1).
+- No exceptions, no `errno`, no nullable-by-default. Use `Optional` ([docs/optional.md](docs/optional.md)) for absence; future error handling is `Result`.
+- **No GC**: assume value semantics and stack allocation by default. Heap allocations should be justified.
+- Tests today still write `print(message: x)` (named arg). New tests may use whichever form the parser accepts — verify by running before committing. See `tests/basis/` for current syntax-in-use.
+
+## Conventions when writing **compiler/runtime code** (C++)
+
+- C++20, no exceptions in hot paths; follow the surrounding style (4-space indent, header-pair naming `foo.h` / `foo.cpp` or `foo+suffix.cpp` for partial impls).
+- AST changes: update the node type in [node.h](include/joyeer/compiler/node.h), the visitor in [node+visitor.h](include/joyeer/compiler/node+visitor.h), then all three pipeline passes (`typegen`, `typebinding`, `IRGen`) — missing any of these silently breaks codegen.
+- New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/instructions.md](docs/instructions.md).
+- Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions.
+- Add at least one end-to-end golden test in [tests/basis/](tests/basis/) for any user-visible feature change.
+
+## Pitfalls (don't repeat these)
+
+- The **CMake build is out-of-source only** (`CMAKE_DISABLE_IN_SOURCE_BUILD ON`). Never `cmake .` at the repo root.
+- After adding/removing `*.joyeer` test files you **must re-run** `cmake -B ./build ...` because the test list is glob-expanded at configure time.
+- The README still says "macOS > 12.0" — that's outdated; CMake + Ninja works on Windows too.
+- Don't propose a Rust port — `Cargo.lock` is a leftover artifact (see above).
+
+## When in doubt
+
+- Language design questions → [docs/ai-era-design.md](docs/ai-era-design.md), [docs/memory.md](docs/memory.md)
+- "Should this feature be in v0.1?" → [docs/v0.1-plan.md](docs/v0.1-plan.md) checklist
+- "What stage of the pipeline owns this?" → [docs/roadmap.md](docs/roadmap.md) §Current Status
