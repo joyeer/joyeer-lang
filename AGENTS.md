@@ -2,16 +2,16 @@
 
 > Joyeer is an **AI-era systems language**: AI writes most code, humans review and assist.
 > Goal: replace C++ for new code. **No GC. Zero-cost abstractions. Swift-like syntax.**
-> Initially **no `class`** — use `struct` for aggregates. See [docs/ai-era-design.md](docs/ai-era-design.md) and [docs/memory.md](docs/memory.md) for the design philosophy.
+> Initially **no `class`** — use `struct` for aggregates. See [docs/design/ai-era-design.md](docs/design/ai-era-design.md) and [docs/design/memory.md](docs/design/memory.md) for the design philosophy. The full doc index lives in [docs/README.md](docs/README.md).
 
 ## Repository reality vs. vision
 
 The compiler is currently a **C++20 implementation** that lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its own bytecode. LLVM-based native code-gen is on the roadmap but **not implemented**.
 
-- Current state and pipeline: [docs/roadmap.md](docs/roadmap.md)
-- v0.1 target (minimal language able to write a JSON parser): [docs/v0.1-plan.md](docs/v0.1-plan.md)
-- Grammar: [docs/grammar.md](docs/grammar.md)
-- Bytecode opcodes: [docs/instructions.md](docs/instructions.md)
+- Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
+- v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)
+- Grammar: [docs/design/grammar.md](docs/design/grammar.md)
+- Bytecode opcodes: [docs/impl/bytecode.md](docs/impl/bytecode.md)
 
 > The repository contains a stray `Cargo.lock` from an abandoned Rust experiment. **Ignore it.** Do not propose Rust files or `cargo` commands — the build is CMake + C++.
 
@@ -48,8 +48,8 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 
 - Prefer **`struct`** for new aggregates. **Do not introduce new `class` declarations** — `class` exists only for legacy tests in [tests/basis/class_*.joyeer](tests/basis/) and will be removed.
 - Use `let` for immutable bindings, `var` only when mutation is needed.
-- Be explicit about types on public function signatures — strong types are the AI-era guardrail (see [docs/ai-era-design.md](docs/ai-era-design.md) §1).
-- No exceptions, no `errno`, no nullable-by-default. Use `Optional` ([docs/optional.md](docs/optional.md)) for absence; future error handling is `Result`.
+- Be explicit about types on public function signatures — strong types are the AI-era guardrail (see [docs/design/ai-era-design.md](docs/design/ai-era-design.md) §1).
+- No exceptions, no `errno`, no nullable-by-default. Use `Optional` ([docs/design/optional.md](docs/design/optional.md)) for absence; future error handling is `Result`.
 - **No GC**: assume value semantics and stack allocation by default. Heap allocations should be justified.
 - Tests today still write `print(message: x)` (named arg). New tests may use whichever form the parser accepts — verify by running before committing. See `tests/basis/` for current syntax-in-use.
 
@@ -57,7 +57,7 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 
 - C++20, no exceptions in hot paths; follow the surrounding style (4-space indent, header-pair naming `foo.h` / `foo.cpp` or `foo+suffix.cpp` for partial impls).
 - AST changes: update the node type in [node.h](include/joyeer/compiler/node.h), the visitor in [node+visitor.h](include/joyeer/compiler/node+visitor.h), then all three pipeline passes (`typegen`, `typebinding`, `IRGen`) — missing any of these silently breaks codegen.
-- New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/instructions.md](docs/instructions.md).
+- New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/impl/bytecode.md](docs/impl/bytecode.md).
 - Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions.
 - Add at least one end-to-end golden test in [tests/basis/](tests/basis/) for any user-visible feature change.
 
@@ -70,6 +70,6 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 
 ## When in doubt
 
-- Language design questions → [docs/ai-era-design.md](docs/ai-era-design.md), [docs/memory.md](docs/memory.md)
-- "Should this feature be in v0.1?" → [docs/v0.1-plan.md](docs/v0.1-plan.md) checklist
-- "What stage of the pipeline owns this?" → [docs/roadmap.md](docs/roadmap.md) §Current Status
+- Language design questions → [docs/design/ai-era-design.md](docs/design/ai-era-design.md), [docs/design/memory.md](docs/design/memory.md), [docs/design/parameter-passing.md](docs/design/parameter-passing.md), [docs/design/runtime-overhead.md](docs/design/runtime-overhead.md)
+- "Should this feature be in v0.1?" → [docs/plan/v0.1.md](docs/plan/v0.1.md) checklist
+- "What stage of the pipeline owns this?" → [docs/plan/roadmap.md](docs/plan/roadmap.md) §Current Status

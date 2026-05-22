@@ -218,5 +218,6 @@ func consume(sink p: Parser)   -> Ast      // sink (ownership transfer)
 
 ## Related Documents
 
-- [docs/memory.md](memory.md) — overall memory management strategy (value semantics, regions, ARC, second-class references)
-- [docs/ai-era-design.md](ai-era-design.md) — strong types as AI guardrails; effect system; contracts
+- [memory.md](memory.md) — overall memory management strategy (value semantics, RAII, regions)
+- [runtime-overhead.md](runtime-overhead.md) — zero-cost contract and runtime size budget
+- [ai-era-design.md](ai-era-design.md) — strong types as AI guardrails; effect system; contracts
