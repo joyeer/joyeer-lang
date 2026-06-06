@@ -18,6 +18,35 @@
 `Int` and `UInt` are platform-pointer-sized but always 64-bit on the targets
 Joyeer supports. (No 32-bit target in v0.1.)
 
+#### 2.1.1 `String` is byte-indexed 📌
+
+> **📌 Decision D13.** *`String` is indexed by byte offset and its element
+> type is `UInt8`, not `Char`.*  A `String` is UTF-8 bytes; `s[i]` returns the
+> `UInt8` byte at offset `i` in **O(1)**, and `s.count` is the **byte length**.
+> Code-point (`Char`) indexing is *not* O(1) over UTF-8, so Joyeer does not
+> offer `String[Int] -> Char` (the same reason Swift forbids integer
+> subscripts on `String`). This is the Go model: `s[i]` is a byte; iterate
+> code points with `.chars()`.
+
+```joyeer
+let s = "héllo"      // 'é' is 2 UTF-8 bytes
+s.count               // 6 (bytes), not 5
+let b: UInt8 = s[0]   // 0x68 ('h'), O(1)
+```
+
+| Accessor | Result | Cost | Notes |
+|----------|--------|------|-------|
+| `s[i]` | `UInt8` | O(1) | byte at offset `i`; traps if out of range |
+| `s.count` | `Int` | O(1) | number of **bytes** |
+| `s.utf8()` | `[UInt8]` view | O(1) | the underlying bytes |
+| `s.chars()` 🔬 | iterator of `Char` | O(n) | decodes Unicode scalars; v0.2 |
+
+For ASCII-oriented work (parsing JSON, tokenizing source, protocol framing)
+byte indexing is exactly what is wanted: ASCII structural characters compare
+as their byte value, and multi-byte UTF-8 sequences are copied through
+verbatim. `Char` (a 32-bit Unicode scalar, §2.1) remains the element type
+produced by `.chars()` and written by character literals like `'a'`.
+
 ### 2.2 Nominal types
 
 A nominal type is introduced by a `struct` or `enum` declaration (§3.3,

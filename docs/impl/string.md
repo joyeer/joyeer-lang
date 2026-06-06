@@ -80,13 +80,16 @@ fn string_len(executor: &mut Executor, args: &Arguments) -> Value {
     len as Value
 }
 
-/// String.charAt(index: Int) -> Char
-fn string_char_at(executor: &mut Executor, args: &Arguments) -> Value {
+/// String.byteAt(index: Int) -> UInt8
+/// String is byte-indexed (spec §2.1.1): s[i] returns the UInt8 at byte
+/// offset i. This is NOT a Unicode scalar; code-point iteration is a
+/// separate O(n) API (.chars(), v0.2).
+fn string_byte_at(executor: &mut Executor, args: &Arguments) -> Value {
     let index = args.get(0) as usize;  // index parameter
     let self_addr = args.get(1);        // self
     let ptr = executor.vm.string_class.as_bytes(self_addr);
-    let ch = unsafe { *ptr.add(index) };
-    ch as Value
+    let b = unsafe { *ptr.add(index) };
+    b as Value
 }
 
 /// Int.toString() -> String

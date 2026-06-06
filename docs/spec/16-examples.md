@@ -83,7 +83,7 @@ public enum JsonValue {
 
 public enum JsonError {
   UnexpectedEof,
-  Unexpected(Char, at: Int),
+  Unexpected(UInt8, at: Int),
   InvalidNumber(String),
 }
 
@@ -92,12 +92,12 @@ struct Parser {
   var pos: Int
 }
 
-func peek(_ p: Parser): Char? {
+func peek(_ p: Parser): UInt8? {
   if p.pos >= p.input.count { return nil }
   return p.input[p.pos]
 }
 
-func advance(_ p: inout Parser): Char?
+func advance(_ p: inout Parser): UInt8?
   ensures p.pos == old(p.pos) + 1 || (result == nil && p.pos == old(p.pos))
 {
   if p.pos >= p.input.count { return nil }
@@ -110,12 +110,12 @@ func parseValue(_ p: inout Parser): Result<JsonValue, JsonError> {
   skipWhitespace(&p)
   let c = peek(p) ?? return .Err(.UnexpectedEof)
   return match c {
-    '"' => parseString(&p),
-    '{' => parseObject(&p),
-    '[' => parseArray(&p),
-    't', 'f' => parseBool(&p),
-    'n' => parseNull(&p),
-    _   => parseNumber(&p),
+    b'"'        => parseString(&p),
+    b'{'        => parseObject(&p),
+    b'['        => parseArray(&p),
+    b't', b'f'  => parseBool(&p),
+    b'n'        => parseNull(&p),
+    _           => parseNumber(&p),
   }
 }
 

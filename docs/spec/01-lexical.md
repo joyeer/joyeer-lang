@@ -63,6 +63,9 @@ exponent         ::= ('e'|'E') ['+'|'-'] decimal_lit
 bool_literal     ::= 'true' | 'false'
 nil_literal      ::= 'nil'
 
+char_literal     ::= "'" ( escape | <any unicode except "'" or '\'> ) "'"   // Char (32-bit scalar)
+byte_literal     ::= "b'" ( escape | <any ASCII except "'" or '\'> ) "'"    // UInt8 (single byte)
+
 string_literal   ::= '"' string_item* '"'
 string_item      ::= escape | interpolation | <any unicode except '"' or '\'>
 escape           ::= '\\' ( 'n' | 't' | 'r' | '"' | '\\' | '0' | 'u{' hex+ '}' )
@@ -75,6 +78,11 @@ tuple_literal    ::= '(' expression , expression , ... ')'
 ```
 
 Underscores in numeric literals are visual separators only: `1_000_000`.
+
+A `char_literal` such as `'a'` has type `Char` (a 32-bit Unicode scalar). A
+`byte_literal` such as `b'a'` has type `UInt8` and may only contain a single
+ASCII character; it is the natural element of a UTF-8 `String` or a `[UInt8]`
+buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 ### 1.6 Operators & punctuation
 
