@@ -39,10 +39,9 @@ an identifier.
 | Memory effects | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self`, `Any` |
-| Contracts 🔬 | `requires`, `ensures`, `invariant`, `old`, `forall`, `exists`, `result` |
 | Effects 🔬 | `performs`, `pure` |
 | Pattern | `where`, `as`, `is`, `_` |
-| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro` |
+| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro`, `requires`, `ensures`, `invariant`, `old`, `forall`, `exists`, `result` |
 
 > `class` is in the **reserved ⏳** list because it is removed in v0.2; the
 > parser still accepts it through v0.1 with a deprecation warning (§14).

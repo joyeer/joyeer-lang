@@ -1,94 +1,80 @@
-## §9 Contracts 🔬 (syntax-only in v0.1)
+## §9 Contracts & Runtime Checks
 
-Contracts attach **machine-checkable** specifications to declarations.
-In v0.1 they parse and type-check but the compiler does not yet prove or
-runtime-check them. This section locks the syntax so the future
-implementation has a stable target.
+Joyeer uses Swift-style runtime checks instead of declaration-level contract
+keywords. There is no `requires` / `ensures` / `invariant` syntax in v0.1.
 
-### 9.1 Placement
+### 9.1 Contract style in Joyeer
 
-A contract clause appears between the function signature and body:
+Contract intent is expressed in executable code:
 
-```
-contract_clause ::= ( requires_clause | ensures_clause )+
-requires_clause ::= 'requires' expression
-ensures_clause  ::= 'ensures'  expression
-```
+- Preconditions at API boundaries: `precondition(...)`
+- Internal invariants and debug-only checks: `assert(...)`
+- Unrecoverable paths: `fatalError(...)`
 
 ```joyeer
-func divide(_ a: Int, _ b: Int): Int
-  requires b != 0
-  ensures  result * b + (a % b) == a
-{
+func divide(_ a: Int, _ b: Int): Int {
+  precondition(b != 0, "divide: denominator must be non-zero")
   return a / b
 }
 ```
 
-### 9.2 `requires` (preconditions)
+### 9.2 Standard checks
 
-Any side-effect-free Bool expression in scope at function entry. Multiple
-`requires` clauses are conjoined.
+```
+assert(condition: Bool, _ message: String = "")
+precondition(condition: Bool, _ message: String = "")
+fatalError(_ message: String)
+```
 
-### 9.3 `ensures` (postconditions)
+- `assert`: for development-time validation. Implementations may elide it in
+  optimized builds.
+- `precondition`: for caller obligations that must hold in all builds.
+- `fatalError`: immediately terminates execution and does not return.
 
-A Bool expression evaluated at function exit. The pseudo-binding `result`
-refers to the returned value. `old(x)` refers to the value of `x` at
-function entry.
+### 9.3 Optional-first contract discipline
+
+Uncertainty is modeled with `T?` (Optional), not with nullable-by-default
+references. Code should unwrap explicitly and fail explicitly when required.
 
 ```joyeer
-func bumpAndGet(_ x: inout Int): Int
-  ensures result == old(x) + 1
-  ensures x == old(x) + 1
-{
+func parsePort(_ s: String): Int {
+  let v = parseInt(s) ?? fatalError("invalid port")
+  precondition(v >= 0 && v <= 65535, "port out of range")
+  return v
+}
+```
+
+Use `x!` only when a prior check or control-flow proof guarantees non-`nil`.
+If `x!` fails at runtime, execution traps.
+
+### 9.4 Writing postconditions in code
+
+Postconditions are expressed with local snapshots and `assert`:
+
+```joyeer
+func bumpAndGet(_ x: inout Int): Int {
+  let old = x
   &x += 1
+  assert(x == old + 1)
   return x
 }
 ```
 
-### 9.4 `invariant` (struct & loop)
+### 9.5 v0.1 compiler treatment
 
-Struct invariant:
+- `assert`, `precondition`, and `fatalError` are ordinary callable symbols
+  provided by the prelude / standard library.
+- They are type-checked like normal function calls.
+- The compiler does not perform theorem proving.
 
-```joyeer
-struct SortedRun {
-  var data: [Int]
-  invariant forall i in 0..<data.count - 1: data[i] <= data[i+1]
-}
-```
+### 9.6 Migration note
 
-Loop invariant:
+Specs and code that previously used declaration-level contracts should be
+migrated mechanically:
 
-```joyeer
-while i < n
-  invariant 0 <= i && i <= n
-  invariant forall k in 0..i: array[k] <= pivot
-{
-  // ...
-}
-```
-
-### 9.5 Quantifiers & ranges
-
-```
-forall identifier 'in' range_or_collection ':' bool_expression
-exists identifier 'in' range_or_collection ':' bool_expression
-```
-
-Side-effect-free; bounded iteration. (In v0.1 they only need to *parse*;
-v0.3 will add finite expansion or SMT translation.)
-
-### 9.6 v0.1 compiler treatment
-
-- Parsed into the AST.
-- Type-checked: the expressions must be Bool, side-effect-free, and
-  reference only in-scope names.
-- **Not** evaluated, **not** proven, **not** runtime-checked.
-
-### 9.7 Future runtime mode
-
-A compiler flag (`--check-contracts`) will lower each `requires` to an
-assertion at function entry and each `ensures` to an assertion at exit.
-Targeted for v0.3.
+- `requires P` -> `precondition(P)` at function entry
+- `ensures Q`  -> `assert(Q)` before each return (or before final return)
+- `invariant I` -> `assert(I)` at loop/struct consistency checkpoints
 
 ---
 

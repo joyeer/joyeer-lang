@@ -19,7 +19,6 @@ func_decl         ::= [ visibility ] [ method_effect ] 'func' identifier [ gener
                       [ ':' type ]
                       [ where_clause ]
                       [ effect_clause ]
-                      contract_clause*
                       block
 
 method_effect     ::= 'borrowing' | 'mutating' | 'consuming'
@@ -35,10 +34,6 @@ constraint        ::= type ':' type | type '==' type
 effect_clause     ::= 'performs' effect_label , ...
 effect_label      ::= identifier [ '<' type , ... '>' ]
 
-contract_clause   ::= 'requires' expression
-                   |  'ensures'  expression
-                   |  'invariant' expression
-
 struct_decl       ::= [ visibility ] 'struct' identifier [ generic_params ]
                       [ where_clause ]
                       '{' struct_member* '}'
@@ -47,10 +42,8 @@ struct_member     ::= binding
                    |  init_decl | deinit_decl
                    |  func_decl
                    |  subscript_decl
-                   |  'invariant' expression
 
 init_decl         ::= [ visibility ] 'init' '(' [ param , ... ] ')'
-                      contract_clause*
                       block
 
 deinit_decl       ::= 'deinit' '(' ')' block
@@ -88,7 +81,7 @@ statement         ::= binding ';'?
                    |  block
 
 if_stmt           ::= 'if' expression block ( 'else' if_stmt | 'else' block )?
-while_stmt        ::= 'while' expression ( 'invariant' expression )* block
+while_stmt        ::= 'while' expression block
 for_stmt          ::= 'for' [ '&' ] pattern 'in' expression block
 return_stmt       ::= 'return' [ expression ]
 break_stmt        ::= 'break'

@@ -25,7 +25,6 @@ func_decl       ::= [ visibility ] [ method_effect ] 'func' identifier [ generic
                     [ ':' return_type ]
                     [ where_clause ]
                     [ effect_clause ]
-                    [ contract_clause ]
                     function_body
 
 method_effect   ::= 'borrowing' | 'mutating' | 'consuming'   // self access; 'borrowing' is default
@@ -139,7 +138,6 @@ struct_member   ::= variable_decl
                  |  deinit_decl
                  |  func_decl
                  |  subscript_decl
-                 |  invariant_clause           // 🔬
 ```
 
 Structs are **value types** with predictable layout. No vtables, no
@@ -276,7 +274,6 @@ enclosing statement (§4.5.3).
 
 ```
 init_decl       ::= [ visibility ] 'init' '(' [ param , ... ] ')'
-                    [ contract_clause ]
                     function_body
 
 deinit_decl     ::= 'deinit' '(' ')' function_body
@@ -286,6 +283,8 @@ deinit_decl     ::= 'deinit' '(' ')' function_body
   exactly once before the body ends (data-flow checked).
 - `deinit` runs when a value is destroyed: end of scope, overwritten, or
   consumed by a `consuming` parameter. Destruction order is deterministic (§4.7).
+- Preconditions inside `init` are expressed with `precondition(...)` (§9),
+  not declaration-level clauses.
 
 ### 3.8 Import declarations
 

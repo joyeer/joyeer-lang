@@ -5,12 +5,17 @@
 ```joyeer
 import std.io
 
-func medianOfThree(a: Int, b: Int, c: Int): Int
-  ensures result == a || result == b || result == c
-{
-  if (a <= b && b <= c) || (c <= b && b <= a) { return b }
-  if (b <= a && a <= c) || (c <= a && a <= b) { return a }
-  return c
+func medianOfThree(a: Int, b: Int, c: Int): Int {
+  let r: Int
+  if (a <= b && b <= c) || (c <= b && b <= a) {
+    r = b
+  } else if (b <= a && a <= c) || (c <= a && a <= b) {
+    r = a
+  } else {
+    r = c
+  }
+  assert(r == a || r == b || r == c)
+  return r
 }
 
 func swap<T>(_ a: inout T, _ b: inout T) {
@@ -19,10 +24,8 @@ func swap<T>(_ a: inout T, _ b: inout T) {
   b = tmp
 }
 
-func partition(_ array: inout [Int], lo: Int, hi: Int): Int
-  requires 0 <= lo && lo <= hi && hi < array.count
-  ensures lo <= result && result <= hi
-{
+func partition(_ array: inout [Int], lo: Int, hi: Int): Int {
+  precondition(0 <= lo && lo <= hi && hi < array.count)
   let pivot = medianOfThree(
     a: array[lo],
     b: array[(lo + hi) / 2],
@@ -39,12 +42,12 @@ func partition(_ array: inout [Int], lo: Int, hi: Int): Int
       j -= 1
     }
   }
+  assert(lo <= j && j <= hi)
   return j
 }
 
-func quickSortRange(_ array: inout [Int], lo: Int, hi: Int)
-  requires hi < array.count
-{
+func quickSortRange(_ array: inout [Int], lo: Int, hi: Int) {
+  precondition(hi < array.count)
   if lo < hi {
     let p = partition(&array, lo: lo, hi: hi)
     quickSortRange(&array, lo: lo,    hi: p)
@@ -52,13 +55,12 @@ func quickSortRange(_ array: inout [Int], lo: Int, hi: Int)
   }
 }
 
-public func quickSort(_ input: consuming [Int]): [Int]
-  ensures result.count == input.count
-{
+public func quickSort(_ input: consuming [Int]): [Int] {
   var arr = input
   if arr.count > 1 {
     quickSortRange(&arr, lo: 0, hi: arr.count - 1)
   }
+  assert(arr.count == input.count)
   return arr
 }
 
@@ -97,12 +99,15 @@ func peek(_ p: Parser): UInt8? {
   return p.input[p.pos]
 }
 
-func advance(_ p: inout Parser): UInt8?
-  ensures p.pos == old(p.pos) + 1 || (result == nil && p.pos == old(p.pos))
-{
-  if p.pos >= p.input.count { return nil }
+func advance(_ p: inout Parser): UInt8? {
+  let oldPos = p.pos
+  if p.pos >= p.input.count {
+    assert(p.pos == oldPos)
+    return nil
+  }
   let c = p.input[p.pos]
   p.pos += 1
+  assert(p.pos == oldPos + 1)
   return c
 }
 

@@ -275,7 +275,8 @@ no GC.
 ```joyeer
 public struct FileHandle: Deinitializable {
   var fd: Int32
-  public init(path: String) requires path.notEmpty() {
+  public init(path: String) {
+    precondition(path.notEmpty())
     fd = sys.open(path: path)
   }
   deinit() {
