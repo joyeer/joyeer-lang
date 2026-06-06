@@ -12,26 +12,39 @@
 
 | You want to… | Read this |
 |---|---|
-| Understand **why** Joyeer exists | [design/ai-era-design.md](design/ai-era-design.md) |
+| Know **what the language is** (normative) | [spec.md](spec.md) |
+| Understand **why** Joyeer exists | [rationale/ai-era-design.md](rationale/ai-era-design.md) |
 | Know **what's shipping next** | [plan/v0.1.md](plan/v0.1.md) |
-| Add or change a **language feature** | [design/](design/) — read the relevant doc, then update [plan/v0.1.md](plan/v0.1.md) |
+| Add or change a **language feature** | edit [spec.md](spec.md); record the *why* in [rationale/](rationale/) |
 | Add or change a **compiler / VM internal** | [impl/](impl/) + [plan/roadmap.md](plan/roadmap.md) |
 
 ---
 
-## `design/` — What Joyeer Is (Long-term Commitments)
+## `spec.md` — The Normative Specification
 
-The semantics and guarantees the language promises. Changes here are major
-decisions; update them rarely and deliberately.
+The single source of truth for **what the language is**: lexical structure,
+types, declarations, memory model, expressions, statements, patterns,
+contracts, effects, modules, grammar. All other docs defer to it.
 
 | Doc | Topic |
 |---|---|
-| [ai-era-design.md](design/ai-era-design.md) | Philosophy: strong types, contracts, effect system as AI guardrails |
-| [memory.md](design/memory.md) | Memory model: value semantics, RAII, no GC, no ARC |
-| [parameter-passing.md](design/parameter-passing.md) | Call conventions: `borrowing` / `inout` / `consuming` (Hylo-style MVS) |
-| [runtime-overhead.md](design/runtime-overhead.md) | Zero-cost contract: runtime size budget, no-hidden-work rules, ABI |
-| [optional.md](design/optional.md) | `Option<T>` design |
-| [grammar.md](design/grammar.md) | Surface syntax grammar |
+| [spec.md](spec.md) | Full language specification (§1–§17) |
+
+---
+
+## `rationale/` — Why Joyeer Is the Way It Is
+
+The reasoning behind the spec: design surveys, trade-offs, and rejected
+alternatives. These explain *why*; the spec defines *what*. Where the two
+disagree, the spec wins.
+
+| Doc | Topic |
+|---|---|
+| [ai-era-design.md](rationale/ai-era-design.md) | Philosophy: strong types, contracts, effect system as AI guardrails |
+| [memory.md](rationale/memory.md) | Memory model rationale: value semantics, RAII, no GC, no ARC (normative: spec §4) |
+| [parameter-passing.md](rationale/parameter-passing.md) | Call-convention rationale: Hylo-style MVS (normative: spec §4.2–§4.3) |
+| [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost contract: runtime size budget, no-hidden-work rules, ABI |
+| [grammar.md](rationale/grammar.md) | Redirect stub → grammar is normative in spec §1 & §17 |
 
 ---
 
@@ -56,14 +69,16 @@ deleted, not preserved.
 |---|---|
 | [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (currently between Phase 1 and 2) |
 | [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
+| [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
 
 ---
 
 ## Cross-Doc Conventions
 
 - **One topic per doc.** If a feature needs splitting, link rather than duplicate.
-- **Resolve contradictions immediately.** If two docs disagree on a committed
-  decision, fix the older one — design docs are a single source of truth.
-- **Plan docs may go stale; design docs may not.** Treat any drift between
-  `design/` files as a bug.
+- **The spec is the single source of truth.** If a `rationale/` or `plan/` doc
+  disagrees with [spec.md](spec.md) on a committed decision, the spec wins; fix
+  the other doc.
+- **Plan docs may go stale; the spec and rationale may not.** Treat any drift
+  between the spec and a `rationale/` file as a bug.
 - **No year stamps in titles.** Docs are dated by git history.

@@ -1,5 +1,10 @@
 # Joyeer Language — Memory Management
 
+> **Normative rules live in [spec.md](../spec.md) §4 (Memory Model).** This
+> document is *rationale*: why Mutable Value Semantics was chosen, how it
+> compares to GC / ARC / Rust, and which alternatives were rejected. Where
+> this text and the spec disagree, the spec wins.
+
 ## Design Goal
 
 Zero-overhead memory management — easier to learn than Rust, safer than C++,

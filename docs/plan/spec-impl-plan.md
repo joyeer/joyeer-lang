@@ -1,8 +1,8 @@
 # Joyeer Spec Implementation Plan
 
-> Companion to [docs/spec.md](spec.md). This document is the roadmap for
+> Companion to [docs/spec.md](../spec.md). This document is the roadmap for
 > landing the spec in the compiler. It is **orthogonal** to
-> [docs/v0.1-plan.md](v0.1-plan.md) (which tracks the LLVM/native-codegen
+> [docs/plan/v0.1.md](v0.1.md) (which tracks the LLVM/native-codegen
 > migration). The two tracks can run in parallel.
 
 ---
@@ -128,7 +128,7 @@ Add to `include/joyeer/compiler/node.h` and matching visitors:
 
 Update `node+visitor.h` accordingly. **Every visitor in the codebase
 must be updated** — leaving any out silently miscompiles (per
-[AGENTS.md](../AGENTS.md) pitfall list).
+[AGENTS.md](../../AGENTS.md) pitfall list).
 
 ### A.3 Parser additions
 
@@ -172,7 +172,7 @@ This is the headline implementation effort.
      Index steps are conservatively assumed to overlap.
   4. Report errors via `Diagnostics`.
 - Use `CompileContext` plumbing per existing pipeline patterns
-  ([context.h](../include/joyeer/compiler/context.h)).
+  ([context.h](../../include/joyeer/compiler/context.h)).
 
 ### A.7 IR / Bytecode codegen
 
@@ -182,7 +182,7 @@ This is the headline implementation effort.
   - The accessor runs up to `yield`, the caller executes, then control returns to the accessor for cleanup.
   - For the VM, lower as a function pair: prologue (up to yield) + epilogue (after yield), called around the use site.
   - For future LLVM backend, this maps cleanly to coroutine intrinsics or to inline expansion when the accessor is small.
-- Add bytecode opcodes if needed; document in [docs/instructions.md](instructions.md).
+- Add bytecode opcodes if needed; document in [docs/impl/bytecode.md](../impl/bytecode.md).
 
 Files: `lib/compiler/IRGen.cpp`, `lib/vm/interpreter.cpp`,
 `include/joyeer/runtime/bytecode.h`.
@@ -422,9 +422,9 @@ VM); the Joyeer-level declarations are interfaces/façades.
    permanent parse errors with rewrite suggestions.
 4. Rewrite remaining `tests/basis/*` and `tests/leetcode/*` to spec
    syntax. Verify expected output unchanged.
-5. Update [docs/grammar.md](grammar.md) to be a one-line redirect to
+5. Update [docs/rationale/grammar.md](../rationale/grammar.md) to be a one-line redirect to
    `docs/spec.md`. (Or delete; spec.md §17 is the canonical grammar.)
-6. Update [AGENTS.md](../AGENTS.md):
+6. Update [AGENTS.md](../../AGENTS.md):
    - Drop "legacy `class` exists" note.
    - Update Joyeer conventions to match spec.
    - Update test instructions for the new `tests/spec/` layout.
@@ -481,7 +481,7 @@ File: `lib/diagnostic/diagnostic.cpp`.
 
 | Item | Tracked in |
 |------|------------|
-| LLVM backend / native codegen | [docs/v0.1-plan.md](v0.1-plan.md), [docs/roadmap.md](roadmap.md) |
+| LLVM backend / native codegen | [docs/plan/v0.1.md](v0.1.md), [docs/plan/roadmap.md](roadmap.md) |
 | Multi-file modules / build tool | roadmap Phase 3 |
 | Concurrency / async-await | spec §15 (reserved) |
 | FFI / C interop | spec §4.9, §15 |

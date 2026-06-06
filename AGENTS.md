@@ -2,7 +2,7 @@
 
 > Joyeer is an **AI-era systems language**: AI writes most code, humans review and assist.
 > Goal: replace C++ for new code. **No GC. Zero-cost abstractions. Swift-like syntax.**
-> Initially **no `class`** — use `struct` for aggregates. See [docs/design/ai-era-design.md](docs/design/ai-era-design.md) and [docs/design/memory.md](docs/design/memory.md) for the design philosophy. The full doc index lives in [docs/README.md](docs/README.md).
+> Initially **no `class`** — use `struct` for aggregates. See [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md) and [docs/rationale/memory.md](docs/rationale/memory.md) for the design philosophy, and [docs/spec.md](docs/spec.md) for the normative language spec. The full doc index lives in [docs/README.md](docs/README.md).
 
 ## Repository reality vs. vision
 
@@ -10,7 +10,7 @@ The compiler is currently a **C++20 implementation** that lexes/parses Joyeer so
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)
-- Grammar: [docs/design/grammar.md](docs/design/grammar.md)
+- Grammar: [docs/spec.md](docs/spec.md) §1 & §17
 - Bytecode opcodes: [docs/impl/bytecode.md](docs/impl/bytecode.md)
 
 > The repository contains a stray `Cargo.lock` from an abandoned Rust experiment. **Ignore it.** Do not propose Rust files or `cargo` commands — the build is CMake + C++.
@@ -48,8 +48,8 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 
 - Prefer **`struct`** for new aggregates. **Do not introduce new `class` declarations** — `class` exists only for legacy tests in [tests/basis/class_*.joyeer](tests/basis/) and will be removed.
 - Use `let` for immutable bindings, `var` only when mutation is needed.
-- Be explicit about types on public function signatures — strong types are the AI-era guardrail (see [docs/design/ai-era-design.md](docs/design/ai-era-design.md) §1).
-- No exceptions, no `errno`, no nullable-by-default. Use `Optional` ([docs/design/optional.md](docs/design/optional.md)) for absence; future error handling is `Result`.
+- Be explicit about types on public function signatures — strong types are the AI-era guardrail (see [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md) §1).
+- No exceptions, no `errno`, no nullable-by-default. Use `Optional` ([docs/spec.md](docs/spec.md) §2.4) for absence; future error handling is `Result`.
 - **No GC**: assume value semantics and stack allocation by default. Heap allocations should be justified.
 - Tests today still write `print(message: x)` (named arg). New tests may use whichever form the parser accepts — verify by running before committing. See `tests/basis/` for current syntax-in-use.
 
@@ -70,6 +70,6 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 
 ## When in doubt
 
-- Language design questions → [docs/design/ai-era-design.md](docs/design/ai-era-design.md), [docs/design/memory.md](docs/design/memory.md), [docs/design/parameter-passing.md](docs/design/parameter-passing.md), [docs/design/runtime-overhead.md](docs/design/runtime-overhead.md)
+- Language design questions → [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md), [docs/rationale/memory.md](docs/rationale/memory.md), [docs/rationale/parameter-passing.md](docs/rationale/parameter-passing.md), [docs/rationale/runtime-overhead.md](docs/rationale/runtime-overhead.md)
 - "Should this feature be in v0.1?" → [docs/plan/v0.1.md](docs/plan/v0.1.md) checklist
 - "What stage of the pipeline owns this?" → [docs/plan/roadmap.md](docs/plan/roadmap.md) §Current Status

@@ -1,5 +1,12 @@
 # Joyeer Language — Parameter Passing Design
 
+> **Normative rules live in [spec.md](../spec.md) §4.2–§4.3 (access effects &
+> call-site markers).** This document is *rationale*: the survey of how other
+> languages pass parameters and why Joyeer adopts Hylo-style Mutable Value
+> Semantics. The final keyword spelling (`borrowing` / `inout` / `consuming` /
+> `initializing`) is defined by the spec; older Hylo-style `let`/`sink`/`set`
+> names below describe Hylo, not Joyeer.
+
 This document records the design discussion around how function parameters convey ownership and mutability intent. It covers the `&T` vs `T` distinction, a survey of how major languages approach this problem, and a recommendation for Joyeer.
 
 ---
