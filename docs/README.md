@@ -28,7 +28,7 @@ decisions; update them rarely and deliberately.
 |---|---|
 | [ai-era-design.md](design/ai-era-design.md) | Philosophy: strong types, contracts, effect system as AI guardrails |
 | [memory.md](design/memory.md) | Memory model: value semantics, RAII, no GC, no ARC |
-| [parameter-passing.md](design/parameter-passing.md) | Call conventions: `let` / `inout` / `sink` (Hylo-style MVS) |
+| [parameter-passing.md](design/parameter-passing.md) | Call conventions: `borrowing` / `inout` / `consuming` (Hylo-style MVS) |
 | [runtime-overhead.md](design/runtime-overhead.md) | Zero-cost contract: runtime size budget, no-hidden-work rules, ABI |
 | [optional.md](design/optional.md) | `Option<T>` design |
 | [grammar.md](design/grammar.md) | Surface syntax grammar |

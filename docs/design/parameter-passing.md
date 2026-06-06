@@ -190,17 +190,24 @@ Hylo has **no reference types**. Ownership is a tree, never a graph. Cycles are 
 Given Joyeer's goals — **no GC, zero-cost abstractions, AI-era language, Swift-like syntax, replace C++ for new code** — the Hylo-style Mutable Value Semantics model is the strongest candidate:
 
 ```
-func peek(p: Parser)           -> Token    // let (read-only, compiler passes by ref)
-func advance(inout p: Parser)  -> Token    // inout (exclusive mutable)
-func consume(sink p: Parser)   -> Ast      // sink (ownership transfer)
+func peek(p: Parser)                -> Token   // borrowing (read-only, compiler passes by ref)
+func advance(_ p: inout Parser)     -> Token   // inout (exclusive mutable)
+func consume(_ p: consuming Parser) -> Ast     // consuming (ownership transfer)
 ```
+
+> **Keyword note.** The spec (§4) renames Hylo's effect keywords to read more
+> naturally for the Swift-trained audience: Hylo `let`/`sink`/`set` become
+> Joyeer `borrowing` (the default) / `consuming` / `initializing`; method
+> receivers use `mutating` / `consuming`. Ownership transfer is marked at the
+> call site with `consume x` (mandatory). The conventions below are unchanged;
+> only the spelling differs.
 
 ### Why This Fits Joyeer
 
 1. **AI-friendly** — the signature fully describes "read / mutate / take". AI cannot accidentally introduce hidden aliasing bugs.
 2. **No GC** — all value semantics; ownership is a tree; `deinit` fires deterministically.
 3. **No borrow checker to implement** — the biggest engineering cost of Rust's compiler disappears.
-4. **Syntax-compatible** — Swift already has `inout`; only `sink` needs to be added.
+4. **Syntax-compatible** — Swift already has `inout`; the ownership effects (`borrowing` / `consuming` / `initializing`, plus `mutating` receivers) line up with Swift 5.9's ownership vocabulary.
 5. **Zero-cost** — the compiler silently chooses pass-by-reference for large objects.
 
 ### What Is Sacrificed

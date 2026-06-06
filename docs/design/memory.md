@@ -19,7 +19,7 @@ Opt-in tools (regions, raw pointers, `unsafe`) cover the rest.
 | Deterministic destruction via `deinit` (RAII) | this doc §2 |
 | Region allocator (opt-in for bulk patterns) | this doc §3 |
 | Escape analysis (transparent optimization) | this doc §4 |
-| Ownership transfer via `sink` parameters | [parameter-passing.md](parameter-passing.md) |
+| Ownership transfer via `consuming` parameters | [parameter-passing.md](parameter-passing.md) |
 | Exclusive mutable borrow via `inout` | [parameter-passing.md](parameter-passing.md) |
 | **No** GC | [runtime-overhead.md](runtime-overhead.md) §1 |
 | **No** ARC / refcounting | [runtime-overhead.md](runtime-overhead.md) §3.2 |
@@ -70,7 +70,7 @@ func example() {
 }
 ```
 
-`sink` parameters transfer the obligation to `deinit` to the callee. See
+`consuming` parameters transfer the obligation to `deinit` to the callee. See
 [parameter-passing.md](parameter-passing.md) for the full call-convention rules.
 
 ### Ownership is a tree, not a graph
@@ -121,8 +121,8 @@ Fully transparent to the programmer. References: Go, JVM JIT, GraalVM.
 |---|---|
 | Garbage collection | Pauses, hidden cost, large runtime ([runtime-overhead.md §2](runtime-overhead.md)) |
 | Automatic reference counting (ARC) | Hidden retain/release work, retain cycles, contradicts [runtime-overhead.md §3.2](runtime-overhead.md) |
-| First-class references (`&T`, `&mut T`) | Forces a borrow checker; replaced by `let` / `inout` / `sink` ([parameter-passing.md](parameter-passing.md)) |
-| Linear / affine types (Rust-style) | High learning curve; `sink` captures the "use once" property without the type-system tax |
+| First-class references (`&T`, `&mut T`) | Forces a borrow checker; replaced by `borrowing` / `inout` / `consuming` ([parameter-passing.md](parameter-passing.md)) |
+| Linear / affine types (Rust-style) | High learning curve; `consuming` captures the "use once" property without the type-system tax |
 | Reference capabilities (Pony `iso` / `ref` / `trn`) | Too complex; concurrency model not designed yet |
 | Generational references (Vale) | Per-deref runtime check is not zero-cost |
 
@@ -145,7 +145,7 @@ Valid additions in the future, **not** part of the v0.1 commitment:
 |---|---|---|---|---|
 | Value semantics (stack) | Zero | Low | Zero | ✅ Default |
 | RAII / `deinit` | Zero | Low | Low | ✅ Default |
-| `sink` ownership transfer | Zero | Medium | Low | ✅ Default ([parameter-passing.md](parameter-passing.md)) |
+| `consuming` ownership transfer | Zero | Medium | Low | ✅ Default ([parameter-passing.md](parameter-passing.md)) |
 | Region-based | Near zero | Medium | Low | ✅ Opt-in |
 | Escape analysis | Zero (non-escaping) | Medium | Zero | ✅ Optimization |
 | Garbage collection | High (pauses) | Low | Zero | ❌ Rejected |

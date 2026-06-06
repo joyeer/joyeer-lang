@@ -88,8 +88,8 @@ The phrase "zero-cost abstraction" is overused. Joyeer commits to these
 | `Optional<T>` | niche analysis | **zero bytes** when niche exists (`Optional<&T>` = `T*`) | better than `std::optional` |
 | `Result<T, E>` | layout | tag + branch on `if r is Err` | same as `tl::expected` |
 | `inout` parameter | call conv | pointer, no copy | ✅ (`T&`) |
-| `sink` parameter | move analysis | pointer + ownership transfer | ✅ (`T&&`) |
-| `let` value parameter | escape analysis | by-ref if large, by-value if small | ✅ (template + `const T&`) |
+| `consuming` parameter | move analysis | pointer + ownership transfer | ✅ (`T&&`) |
+| `borrowing` value parameter | escape analysis | by-ref if large, by-value if small | ✅ (template + `const T&`) |
 | `protocol` method via `dyn P` | vtable emission | one indirect call | ✅ (virtual) |
 | `protocol` method via generic | monomorphization | direct call | ✅ (concepts) |
 | Bounds-checked index `a[i]` | none | compare + branch (predicted) | ❌ (C++ doesn't check by default; see §3.4) |
@@ -344,7 +344,7 @@ Track them in their own design docs as they get resolved:
 ## 13. Cross-References
 
 - [memory.md](memory.md) — ownership model (value semantics, regions, no GC)
-- [parameter-passing.md](parameter-passing.md) — `let` / `inout` / `sink` conventions
+- [parameter-passing.md](parameter-passing.md) — `borrowing` / `inout` / `consuming` conventions
 - [ai-era-design.md](ai-era-design.md) — strong types, contracts, error model
 - [../plan/roadmap.md](../plan/roadmap.md) — pipeline status (LLVM backend is Phase 1 work)
 - [../plan/v0.1.md](../plan/v0.1.md) — what subset is in scope for the first release
