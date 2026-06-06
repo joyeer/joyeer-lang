@@ -44,7 +44,6 @@ disagree, the spec wins.
 | [memory.md](rationale/memory.md) | Memory model rationale: value semantics, RAII, no GC, no ARC (normative: spec §4) |
 | [parameter-passing.md](rationale/parameter-passing.md) | Call-convention rationale: Hylo-style MVS (normative: spec §4.2–§4.3) |
 | [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost contract: runtime size budget, no-hidden-work rules, ABI |
-| [grammar.md](rationale/grammar.md) | Redirect stub → grammar is normative in spec §1 & §17 |
 
 ---
 

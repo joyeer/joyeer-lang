@@ -422,9 +422,7 @@ VM); the Joyeer-level declarations are interfaces/façades.
    permanent parse errors with rewrite suggestions.
 4. Rewrite remaining `tests/basis/*` and `tests/leetcode/*` to spec
    syntax. Verify expected output unchanged.
-5. Update [docs/rationale/grammar.md](../rationale/grammar.md) to be a one-line redirect to
-   `docs/spec.md`. (Or delete; spec.md §17 is the canonical grammar.)
-6. Update [AGENTS.md](../../AGENTS.md):
+5. Update [AGENTS.md](../../AGENTS.md):
    - Drop "legacy `class` exists" note.
    - Update Joyeer conventions to match spec.
    - Update test instructions for the new `tests/spec/` layout.
