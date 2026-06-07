@@ -28,8 +28,8 @@ func_decl       ::= [ visibility ] [ method_effect ] 'func' identifier [ generic
                     function_body
 
 method_effect   ::= 'borrowing' | 'mutating' | 'consuming'   // self access; 'borrowing' is default
-param           ::= [ label ] identifier ':' [ access_effect ] type [ '=' default_expr ]
-label           ::= '_' | identifier
+param           ::= label [ identifier ] ':' [ access_effect ] type [ '=' default_expr ]
+label           ::= identifier
 access_effect   ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'   // 'borrowing' is default
 return_type     ::= type
 function_body   ::= '{' statement* '}'
@@ -121,6 +121,31 @@ the receiver expression: `&b.append(...)` means "`append` exclusively
 borrows `b`"; `consume b.build()` means "`build` consumes `b`." `initializing`
 is not available as a method receiver effect (it only applies to `init`,
 which initializes `self` field-by-field, §3.7).
+
+#### 3.2.5 Default parameter values
+
+A parameter may declare a default value with `= default_expr` (§3.2 grammar).
+When the caller omits that argument, the default expression is used.
+
+```joyeer
+func connect(host: String, port: Int = 8080, timeout: Int = 30): Connection { ... }
+
+connect(host: "localhost")                    // port = 8080, timeout = 30
+connect(host: "localhost", port: 443)         // timeout = 30
+connect(host: "localhost", timeout: 5)        // port = 8080
+```
+
+- Labels remain **mandatory** for any argument that is supplied (§3.2.1 D3);
+  defaults only let a caller *omit* an argument, never drop its label.
+- A defaulted parameter may be omitted regardless of its position; because
+  every supplied argument is labeled, the compiler matches by label, not by
+  position. Order among supplied arguments still follows declaration order.
+- The default expression is evaluated **at the call site**, once per call in
+  which the argument is omitted, in the caller's context.
+- A default expression may not reference other parameters of the same
+  function.
+- Defaults are part of the function's interface: changing a default value is
+  an interface change visible to all callers.
 
 ### 3.3 Struct declarations 📌
 
