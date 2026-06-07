@@ -12,8 +12,8 @@ Contract intent is expressed in executable code:
 - Unrecoverable paths: `fatalError(...)`
 
 ```joyeer
-func divide(_ a: Int, _ b: Int): Int {
-  precondition(b != 0, "divide: denominator must be non-zero")
+func divide(a: Int, b: Int): Int {
+  precondition(condition: b != 0, message: "divide: denominator must be non-zero")
   return a / b
 }
 ```
@@ -21,9 +21,9 @@ func divide(_ a: Int, _ b: Int): Int {
 ### 9.2 Standard checks
 
 ```
-assert(condition: Bool, _ message: String = "")
-precondition(condition: Bool, _ message: String = "")
-fatalError(_ message: String)
+assert(condition: Bool, message: String = "")
+precondition(condition: Bool, message: String = "")
+fatalError(message: String)
 ```
 
 - `assert`: for development-time validation. Implementations may elide it in
@@ -37,9 +37,9 @@ Uncertainty is modeled with `T?` (Optional), not with nullable-by-default
 references. Code should unwrap explicitly and fail explicitly when required.
 
 ```joyeer
-func parsePort(_ s: String): Int {
-  let v = parseInt(s) ?? fatalError("invalid port")
-  precondition(v >= 0 && v <= 65535, "port out of range")
+func parsePort(s: String): Int {
+  let v = parseInt(s: s) ?? fatalError(message: "invalid port")
+  precondition(condition: v >= 0 && v <= 65535, message: "port out of range")
   return v
 }
 ```
@@ -52,10 +52,10 @@ If `x!` fails at runtime, execution traps.
 Postconditions are expressed with local snapshots and `assert`:
 
 ```joyeer
-func bumpAndGet(_ x: inout Int): Int {
+func bumpAndGet(x: inout Int): Int {
   let old = x
   &x += 1
-  assert(x == old + 1)
+  assert(condition: x == old + 1)
   return x
 }
 ```
@@ -72,9 +72,9 @@ func bumpAndGet(_ x: inout Int): Int {
 Specs and code that previously used declaration-level contracts should be
 migrated mechanically:
 
-- `requires P` -> `precondition(P)` at function entry
-- `ensures Q`  -> `assert(Q)` before each return (or before final return)
-- `invariant I` -> `assert(I)` at loop/struct consistency checkpoints
+- `requires P` -> `precondition(condition: P)` at function entry
+- `ensures Q`  -> `assert(condition: Q)` before each return (or before final return)
+- `invariant I` -> `assert(condition: I)` at loop/struct consistency checkpoints
 
 ---
 

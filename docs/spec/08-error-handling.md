@@ -16,7 +16,7 @@ A function that can fail returns `Result<T, ErrorEnum>`:
 ```joyeer
 enum ParseError { Empty, Invalid(String) }
 
-func parseInt(_ s: String): Result<Int, ParseError> {
+func parseInt(s: String): Result<Int, ParseError> {
   if s.isEmpty() { return .Err(.Empty) }
   // ...
   return .Ok(n)
@@ -31,9 +31,9 @@ func parseInt(_ s: String): Result<Int, ParseError> {
 
 ```joyeer
 func parsePair(s: String): Result<(Int, Int), ParseError> {
-  let parts = s.split(",")
-  let a = parseInt(parts[0])?
-  let b = parseInt(parts[1])?
+  let parts = s.split(separator: ",")
+  let a = parseInt(s: parts[0])?
+  let b = parseInt(s: parts[1])?
   .Ok((a, b))
 }
 ```

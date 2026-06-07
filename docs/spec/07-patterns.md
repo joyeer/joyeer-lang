@@ -18,7 +18,7 @@ Binds a fresh name to the matched value:
 
 ```joyeer
 match v {
-  .Number(n) => print(n),    // n bound
+  .Number(n) => print(value: n),    // n bound
   _ => (),
 }
 ```

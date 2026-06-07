@@ -144,6 +144,116 @@ Valid additions in the future, **not** part of the v0.1 commitment:
 
 ---
 
+## Open Discussion: Concurrency & Cross-Thread Read-Only Sharing
+
+> **Status: not designed, not committed.** The concurrency model is explicitly
+> deferred (see the "concurrency model not designed yet" note in the rejected-
+> mechanisms table above). This section records candidate approaches for a
+> future design discussion; none of it is normative.
+
+### The problem
+
+The model has **no reference types** and **no reference counting** (spec §4.8),
+so "who frees the memory when multiple threads read the same value?" cannot be
+answered by refcount-reaches-zero. Release is always triggered by the **single
+owner** at the end of its scope (spec §4.7). Multiple readers are multiple
+`borrowing` projections (spec §4.4), and a reader **never** frees.
+
+The gap: spec §4.5.3 bounds a projection's lifetime to the **enclosing
+statement** with *no flow analysis*. That is sufficient for single-threaded
+code but does **not** cover handing a `borrowing` projection to a thread that
+runs concurrently — such a borrow *escapes* the statement that created it.
+Supporting read-only cross-thread sharing therefore requires a new mechanism.
+
+### Candidate approaches
+
+The invariant to preserve in every option: **the single owner's lifetime ≥
+every reader thread's lifetime**, and release stays with the owner.
+
+| Option | Idea | Who frees / when | Runtime cost | Fits MVS+RAII? |
+|---|---|---|---|---|
+| **A. Structured concurrency (scoped threads)** | Child threads are lexically nested in the owner's scope; the compiler proves all borrows end before the owner is dropped. (cf. Rust `thread::scope`, Hylo.) | Owner's scope end, deterministic | Zero | ✅ Best fit |
+| **B. Ownership transfer to a holder** | `consume` the data into a container that owns it and outlives all workers; workers `borrowing` from the container. | Holder's `deinit`, deterministic | Zero | ✅ Single owner + RAII |
+| **C. Explicit `Shared`/`Arc` library type** | Atomic refcount hidden inside a stdlib type built on an `unsafe` block (spec §4.9). Escape hatch only — contradicts "ownership is a tree". | Runtime: last holder to drop | Atomic refcount | ⚠️ Escape hatch, non-deterministic release |
+
+**Option A** is the preferred default: zero-overhead and the most consistent
+with deterministic RAII destruction.
+
+**Option C** is deliberately *not* in the core model (spec §4.8 has no `Rc`/
+`Arc`); if ever added it must be a library type behind `unsafe`, because its
+non-deterministic release is exactly what [runtime-overhead.md §3.2](runtime-overhead.md)
+rejects ARC for.
+
+### Spec work this would require (when picked up)
+
+- Extend spec §4.5.3 with a **cross-thread borrow** rule, making structured
+  concurrency (Option A) the only safe way to escape a borrow to another thread,
+  and stating explicitly that readers never free.
+- Possibly a `Sendable`-style marker for "safe to move/share across threads."
+- A new Concurrency chapter (or §10.x) tying Options A/B/C together, with
+  `Shared` as the `unsafe` library escape hatch.
+
+---
+
+## Open Discussion: Implicit move/copy Hides Performance Behavior
+
+> **Status: unresolved objection.** This records a concern about a *committed*
+> decision (spec §4.1, §4.6); it is not yet a change to the spec.
+
+### The objection
+
+Spec §4.1 says assignment is *semantically* a copy, and §4.6 lets the compiler
+silently lower it to a **move**, a **copy-on-write**, or an **in-place reuse**
+based on last-use analysis. The programmer cannot see, at the assignment site,
+whether `var b = a` is an O(1) move or an O(n) deep copy:
+
+```joyeer
+var b = a     // move? copy? COW? — invisible at the use site
+```
+
+For a language that aims to **replace C++** and advertises a *zero-hidden-cost*
+contract ([runtime-overhead.md](runtime-overhead.md) "no hidden work"), an
+invisible O(n)-vs-O(1) performance cliff is a real wart. You cannot review or
+grep for "where do copies happen?"
+
+### Why this is also an *internal inconsistency*
+
+The spec already commits to the opposite principle everywhere else:
+
+- §4.3 **Decision D1 / D11**: `consume x` and `&x` are **mandatory, always-
+  visible** call-site markers, precisely so that ownership transfer and
+  mutation are "trivially greppable" and there is no "did the compiler move or
+  copy here?" ambiguity.
+
+Yet plain assignment `b = a` reintroduces exactly that ambiguity — the one
+§4.3 went out of its way to forbid. The two rules are in tension: ownership
+transfer through a *parameter* is explicit, but ownership transfer (or
+duplication) through an *assignment* is implicit.
+
+### Candidate directions (not decided)
+
+| Direction | Idea | Cost |
+|---|---|---|
+| **1. Make copies explicit** | A true copy of a heap-backed value requires `a.copy()` / `clone a`; a bare `b = a` is **always a move** (last-use not required), and using `a` afterward is a compile error — Rust-like, but consistent with §4.3's "explicit transfer". | More keystrokes; breaks the "value semantics by default" simplicity claim |
+| **2. Make the choice visible, keep it cheap** | Keep last-use move elision, but require a marker (e.g. `copy a`) wherever the compiler would otherwise emit a real copy; flag implicit copies as a warning/lint. | Compiler must surface its decision; some annotation churn |
+| **3. Keep implicit, add tooling** | Leave §4.1/§4.6 as-is but mandate editor/CLI surfacing of every materialized copy (cost annotations), so the behavior is *discoverable* even if not *syntactic*. | Relies on tooling, not the language; weakest guarantee |
+| **4. Status quo** | Accept implicit lowering; document that value semantics is the contract and performance is a compiler-quality matter. | The current wart stands |
+
+Direction **1** is the most consistent with §4.3's philosophy (explicit,
+greppable ownership), at the price of the "copy is the default mental model"
+ergonomics. Direction **2** is a middle ground.
+
+### Spec work this would require (when picked up)
+
+- Revisit spec §4.1 (assignment semantics) and §4.6 (last-use optimization) to
+  decide whether move/copy must be **syntactically visible**.
+- If yes, define the copy marker (`copy a` / `a.copy()`) and the rule that bare
+  assignment is a move, aligning with the §4.3 call-site marker philosophy.
+- Update [runtime-overhead.md](runtime-overhead.md) "no hidden work" to state
+  explicitly whether implicit copies count as "hidden work."
+
+---
+
 ## Comparison Summary
 
 | Mechanism | Runtime overhead | Compile-time complexity | Programmer burden | In Joyeer? |

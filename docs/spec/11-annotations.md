@@ -12,7 +12,7 @@ documentation generators).
 
 ```joyeer
 @spec "Returns the nth Fibonacci number, where fib(0) = 0 and fib(1) = 1."
-func fib(_ n: Int): Int { ... }
+func fib(n: Int): Int { ... }
 ```
 
 ### 11.2 `@property`
@@ -21,10 +21,10 @@ Executable Bool expression that the value of `n` (or the function under
 test) should satisfy. Test runners may sample inputs.
 
 ```joyeer
-@property fib(0) == 0
-@property fib(1) == 1
-@property forall n in 2..20: fib(n) == fib(n-1) + fib(n-2)
-func fib(_ n: Int): Int { ... }
+@property fib(n: 0) == 0
+@property fib(n: 1) == 1
+@property forall n in 2..<20: fib(n: n) == fib(n: n-1) + fib(n: n-2)
+func fib(n: Int): Int { ... }
 ```
 
 ### 11.3 v0.1 treatment

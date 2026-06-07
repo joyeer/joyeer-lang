@@ -33,7 +33,7 @@ The optional `&` requests an `inout` iteration over the source collection
 (if the collection's `Iterable` conformance provides an inout view).
 
 ```joyeer
-for x in arr      { print(x) }
+for x in arr      { print(value: x) }
 for &x in arr     { &x *= 2 }
 ```
 

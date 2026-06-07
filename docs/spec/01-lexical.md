@@ -41,7 +41,7 @@ an identifier.
 | Types & literals | `true`, `false`, `nil`, `self`, `Self`, `Any` |
 | Effects 🔬 | `performs`, `pure` |
 | Pattern | `where`, `as`, `is`, `_` |
-| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro`, `requires`, `ensures`, `invariant`, `old`, `forall`, `exists`, `result` |
+| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result` |
 
 > `class` is in the **reserved ⏳** list because it is removed in v0.2; the
 > parser still accepts it through v0.1 with a deprecation warning (§14).
@@ -109,7 +109,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 ```joyeer
 let n = 42
-print("answer is \(n), squared is \(n * n)")
+print(value: "answer is \(n), squared is \(n * n)")
 ```
 
 The expression inside `\(...)` is any `expression`. The result must implement

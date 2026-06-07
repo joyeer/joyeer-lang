@@ -11,8 +11,8 @@ Every binding holds a **value**. Assignment is conceptually a copy:
 var a = [1, 2, 3]
 var b = a            // semantically: b is an independent copy of a
 &b[0] = 99
-print(a)              // [1, 2, 3]
-print(b)              // [99, 2, 3]
+print(value: a)       // [1, 2, 3]
+print(value: b)       // [99, 2, 3]
 ```
 
 The compiler is free to implement this as a move, a copy-on-write, or an
@@ -41,25 +41,25 @@ must match it explicitly at the call site (§4.3).
 #### 4.2.1 `borrowing` (default)
 
 ```joyeer
-func max(_ a: Int, _ b: Int): Int { if a > b { a } else { b } }
+func max(a: Int, b: Int): Int { if a > b { a } else { b } }
 
 var x = 10
 var y = 20
-let m = max(x, y)    // both x and y are borrow-projected; safe to coexist
-print(x)              // ✅ x still accessible
+let m = max(a: x, b: y)    // both x and y are borrow-projected; safe to coexist
+print(value: x)       // ✅ x still accessible
 ```
 
 The default may be written explicitly for emphasis:
-`func max(_ a: borrowing Int, _ b: borrowing Int): Int`.
+`func max(a: borrowing Int, b: borrowing Int): Int`.
 
 #### 4.2.2 `inout`
 
 ```joyeer
-func increment(_ n: inout Int) { &n += 1 }
+func increment(n: inout Int) { &n += 1 }
 
 var k = 5
-&increment(&k)
-print(k)              // 6
+increment(n: &k)
+print(value: k)       // 6
 ```
 
 While `increment` holds an `inout` projection of `k`, no other access to
@@ -69,11 +69,11 @@ While `increment` holds an `inout` projection of `k`, no other access to
 #### 4.2.3 `consuming`
 
 ```joyeer
-func store(_ s: consuming String) { /* s is mine; printable, destroyable, returnable */ }
+func store(s: consuming String) { /* s is mine; printable, destroyable, returnable */ }
 
 var greeting = "hello"
-store(consume greeting)
-// print(greeting)    // ❌ error: use of consumed value 'greeting'
+store(s: consume greeting)
+// print(value: greeting)    // ❌ error: use of consumed value 'greeting'
 ```
 
 After the call, `greeting` is in an **uninitialized state**. The compiler
@@ -83,12 +83,12 @@ re-initializes the storage and re-enables reads.
 #### 4.2.4 `initializing`
 
 ```joyeer
-func produceLargeBuffer(_ out: initializing [UInt8]) {
+func produceLargeBuffer(out: initializing [UInt8]) {
   &out = makeBuffer(size: 1_000_000)
 }
 
 var buf: [UInt8]                  // declared but uninitialized
-produceLargeBuffer(&buf)          // 'initializing' writes without destructing prior contents
+produceLargeBuffer(out: &buf)     // 'initializing' writes without destructing prior contents
 ```
 
 `initializing` is the emplace pattern: the callee promises to initialize the
@@ -103,10 +103,10 @@ destruct-then-construct round-trip for large objects.
 > exclusively borrowed, or given away, across this call."
 
 ```joyeer
-swap(&a, &b)              // both args are inout
-produceLargeBuffer(&buf)  // 'initializing' is also marked &
-store(consume s)          // 'consuming' is marked with consume
-plain(x, y)               // no marker → both are borrowing (read-only)
+swap(a: &a, b: &b)        // both args are inout
+produceLargeBuffer(out: &buf)  // 'initializing' is also marked &
+store(s: consume s)       // 'consuming' is marked with consume
+plain(x: x, y: y)         // no marker → both are borrowing (read-only)
 ```
 
 The `&` marker is **mandatory** on `inout` and `initializing` arguments,
@@ -137,21 +137,21 @@ Checked statically by the compiler. Examples:
 var x = 10
 let a = x            // ✅ borrowing projection
 let b = x            // ✅ another borrowing projection coexists
-&increment(&x)       // ❌ error: cannot establish inout projection while
+increment(n: &x)     // ❌ error: cannot establish inout projection while
                      //    borrowing projections 'a' and 'b' are active
 ```
 
 ```joyeer
 var x = 10
-&increment(&x)       // ✅ inout for the duration of the call
+increment(n: &x)     // ✅ inout for the duration of the call
 let a = x            // ✅ inout ended; borrowing now allowed
 ```
 
 ```joyeer
-func add(_ dst: inout Int, _ src: Int) { &dst += src }
+func add(dst: inout Int, src: Int) { &dst += src }
 
 var n = 5
-&add(&n, n)          // ❌ error: 'n' has overlapping inout + borrowing projections
+add(dst: &n, src: n)          // ❌ error: 'n' has overlapping inout + borrowing projections
 ```
 
 #### 4.4.1 Field-level disjointness
@@ -212,13 +212,13 @@ and the storage is "ungiven."
 
 ```joyeer
 extension Buffer {
-  public subscript(_ i: Int): UInt8 {
+  public subscript(i: Int): UInt8 {
     borrowing {
-      assert(i >= 0 && i < count)
+      assert(condition: i >= 0 && i < count)
       yield  data[i]
     }
     inout {
-      assert(i >= 0 && i < count)
+      assert(condition: i >= 0 && i < count)
       yield &data[i]
     }
   }
@@ -251,12 +251,12 @@ the copy is downgraded to a move (storage transfer). Example:
 ```joyeer
 var src = makeBigArray()
 var dst = src        // last use of src → move, not copy
-print(dst.count)
+print(value: dst.count)
 ```
 
-If `print(src.count)` were added between the two lines, the compiler would
-instead emit a true copy. Programmers never write `move(x)` — the compiler
-infers it.
+If `print(value: src.count)` were added between the two lines, the compiler
+would instead emit a true copy. Programmers never write `move(x)` — the
+compiler infers it.
 
 ### 4.7 Deinitialization & destruction order
 
@@ -276,7 +276,7 @@ no GC.
 public struct FileHandle: Deinitializable {
   var fd: Int32
   public init(path: String) {
-    precondition(path.notEmpty())
+    precondition(condition: path.notEmpty())
     fd = sys.open(path: path)
   }
   deinit() {

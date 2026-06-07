@@ -3,8 +3,8 @@
 | Feature | v0.1 behavior | Removal target |
 |---------|---------------|----------------|
 | `class` keyword + class declarations | Parsed; warning "class is deprecated, use struct"; methods compile via VM bytecode path (existing implementation). | v0.2 |
-| Named-only function calls (`f(x: 1)` where `_` was not used) | Both labeled and positional forms accepted. Existing-style call sites continue to work. | n/a (positional now supported alongside) |
-| `print(message: x)` | Equivalent to `print(_ message: x)`; legacy form accepted. | v0.2 (replaced by `print(_:)`) |
+| Positional (unlabeled) function calls `f(1)` | No longer accepted; every argument must be written with its label `f(x: 1)` (§3.2.1 D3). | removed in v0.1 |
+| `print(message: x)` | Legacy label `message`; canonical form is `print(value: x)`. | v0.2 |
 | Implicit reference semantics on arrays / class instances | Still present for `class`; structs use value semantics. | Removed when `class` is removed. |
 
 Migration helper: a future `joyeer migrate` tool will rewrite legacy

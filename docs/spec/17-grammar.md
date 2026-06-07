@@ -22,8 +22,8 @@ func_decl         ::= [ visibility ] [ method_effect ] 'func' identifier [ gener
                       block
 
 method_effect     ::= 'borrowing' | 'mutating' | 'consuming'
-param             ::= [ label ] identifier ':' [ access_effect ] type [ '=' expression ]
-label             ::= '_' | identifier
+param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expression ]
+label             ::= identifier
 access_effect     ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'
 
 generic_params    ::= '<' generic_param , ... '>'
@@ -97,7 +97,7 @@ postfix_expr      ::= primary_expr ( '.' identifier
                                     | '[' expression , ... ']'
                                     | '?'
                                     | '!' )*
-call_arg          ::= [ label ':' ] [ '&' | 'consume' ] expression
+call_arg          ::= label ':' [ '&' | 'consume' ] expression
 
 primary_expr      ::= literal
                    |  identifier

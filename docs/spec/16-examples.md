@@ -14,18 +14,18 @@ func medianOfThree(a: Int, b: Int, c: Int): Int {
   } else {
     r = c
   }
-  assert(r == a || r == b || r == c)
+  assert(condition: r == a || r == b || r == c)
   return r
 }
 
-func swap<T>(_ a: inout T, _ b: inout T) {
+func swap<T>(a: inout T, b: inout T) {
   let tmp = a
   a = b
   b = tmp
 }
 
-func partition(_ array: inout [Int], lo: Int, hi: Int): Int {
-  precondition(0 <= lo && lo <= hi && hi < array.count)
+func partition(array: inout [Int], lo: Int, hi: Int): Int {
+  precondition(condition: 0 <= lo && lo <= hi && hi < array.count)
   let pivot = medianOfThree(
     a: array[lo],
     b: array[(lo + hi) / 2],
@@ -37,37 +37,37 @@ func partition(_ array: inout [Int], lo: Int, hi: Int): Int {
     while array[i] < pivot { i += 1 }
     while array[j] > pivot { j -= 1 }
     if i <= j {
-      swap(&array[i], &array[j])
+      swap(a: &array[i], b: &array[j])
       i += 1
       j -= 1
     }
   }
-  assert(lo <= j && j <= hi)
+  assert(condition: lo <= j && j <= hi)
   return j
 }
 
-func quickSortRange(_ array: inout [Int], lo: Int, hi: Int) {
-  precondition(hi < array.count)
+func quickSortRange(array: inout [Int], lo: Int, hi: Int) {
+  precondition(condition: hi < array.count)
   if lo < hi {
-    let p = partition(&array, lo: lo, hi: hi)
-    quickSortRange(&array, lo: lo,    hi: p)
-    quickSortRange(&array, lo: p + 1, hi: hi)
+    let p = partition(array: &array, lo: lo, hi: hi)
+    quickSortRange(array: &array, lo: lo,    hi: p)
+    quickSortRange(array: &array, lo: p + 1, hi: hi)
   }
 }
 
-public func quickSort(_ input: consuming [Int]): [Int] {
+public func quickSort(input: consuming [Int]): [Int] {
   var arr = input
   if arr.count > 1 {
-    quickSortRange(&arr, lo: 0, hi: arr.count - 1)
+    quickSortRange(array: &arr, lo: 0, hi: arr.count - 1)
   }
-  assert(arr.count == input.count)
+  assert(condition: arr.count == input.count)
   return arr
 }
 
 public func main() {
   let unsorted = [8, 6, 1, 2, 1, 12, 3, 4, 34]
-  let sorted = quickSort(consume unsorted)
-  for x in sorted { print(x) }
+  let sorted = quickSort(input: consume unsorted)
+  for x in sorted { print(value: x) }
 }
 ```
 
@@ -94,39 +94,39 @@ struct Parser {
   var pos: Int
 }
 
-func peek(_ p: Parser): UInt8? {
+func peek(p: Parser): UInt8? {
   if p.pos >= p.input.count { return nil }
   return p.input[p.pos]
 }
 
-func advance(_ p: inout Parser): UInt8? {
+func advance(p: inout Parser): UInt8? {
   let oldPos = p.pos
   if p.pos >= p.input.count {
-    assert(p.pos == oldPos)
+    assert(condition: p.pos == oldPos)
     return nil
   }
   let c = p.input[p.pos]
   p.pos += 1
-  assert(p.pos == oldPos + 1)
+  assert(condition: p.pos == oldPos + 1)
   return c
 }
 
-func parseValue(_ p: inout Parser): Result<JsonValue, JsonError> {
-  skipWhitespace(&p)
-  let c = peek(p) ?? return .Err(.UnexpectedEof)
+func parseValue(p: inout Parser): Result<JsonValue, JsonError> {
+  skipWhitespace(p: &p)
+  let c = peek(p: p) ?? return .Err(.UnexpectedEof)
   return match c {
-    b'"'        => parseString(&p),
-    b'{'        => parseObject(&p),
-    b'['        => parseArray(&p),
-    b't', b'f'  => parseBool(&p),
-    b'n'        => parseNull(&p),
-    _           => parseNumber(&p),
+    b'"'        => parseString(p: &p),
+    b'{'        => parseObject(p: &p),
+    b'['        => parseArray(p: &p),
+    b't', b'f'  => parseBool(p: &p),
+    b'n'        => parseNull(p: &p),
+    _           => parseNumber(p: &p),
   }
 }
 
-public func parse(_ source: String): Result<JsonValue, JsonError> {
+public func parse(source: String): Result<JsonValue, JsonError> {
   var p = Parser(input: source, pos: 0)
-  return parseValue(&p)
+  return parseValue(p: &p)
 }
 ```
 
@@ -146,7 +146,7 @@ extension List<T> {
     }
   }
 
-  public func prepended(_ x: consuming T): List<T> {
+  public func prepended(x: consuming T): List<T> {
     .Cons(x, self)
   }
 }
@@ -160,11 +160,11 @@ public struct StringBuilder {
 
   public init() { buffer = [] }
 
-  public mutating func append(_ s: String) {
-    for b in s.utf8() { &buffer.append(b) }
+  public mutating func append(s: String) {
+    for b in s.utf8() { &buffer.append(element: b) }
   }
 
-  public subscript(_ i: Int): UInt8 {
+  public subscript(i: Int): UInt8 {
     borrowing { yield  buffer[i] }
     inout     { yield &buffer[i] }
   }
@@ -176,10 +176,10 @@ public struct StringBuilder {
 
 public func main() {
   var sb = StringBuilder()
-  &sb.append("hello, ")
-  &sb.append("world")
+  &sb.append(s: "hello, ")
+  &sb.append(s: "world")
   let s = consume sb.build()    // build() is consuming; consume marks the receiver
-  print(s)
+  print(value: s)
 }
 ```
 

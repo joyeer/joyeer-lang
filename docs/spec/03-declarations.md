@@ -39,26 +39,27 @@ function_body   ::= '{' statement* '}'
 (methods declared inside a `struct`, `enum`, or `extension`). Free functions
 may not carry it. See §3.2.4.
 
-#### 3.2.1 Parameters: labels & positions 📌
+#### 3.2.1 Parameters: labels 📌
 
-> **📌 Decision D3.** *Labels optional at call site; positional default.*
-> The legacy `print(message: x)` style is supported via labels but no longer
-> required.
+> **📌 Decision D3.** *Argument labels are mandatory at every call site;
+> there is no positional / unlabeled form.*  Every parameter has a label and
+> the caller must always write it.
 
 ```joyeer
-func add(_ a: Int, _ b: Int): Int { a + b }
+func add(a: Int, b: Int): Int { a + b }
 func transfer(from src: Account, to dst: Account, amount: Int) { ... }
 
-add(1, 2)
+add(a: 1, b: 2)
 transfer(from: alice, to: bob, amount: 100)
 ```
 
 - A parameter has a *label* (used at call site) and an *internal name*
-  (used in body). When omitted, the label is the internal name.
-- `_` as the label means the argument is **positional only** at the call site.
-- A parameter declared `func f(x: Int)` may be called either as `f(1)`
-  (positional) **or** `f(x: 1)` (labeled). Mixing across multiple params
-  must follow declaration order.
+  (used in body). When only one name is written it serves as both: the label
+  and the internal name are identical.
+- A distinct external label may precede the internal name, as in `from src`:
+  the caller writes `from:`, the body uses `src`.
+- There is **no** `_` wildcard label and **no** positional call form. A
+  parameter declared `func f(x: Int)` must be called as `f(x: 1)`.
 
 #### 3.2.2 Return type
 
@@ -66,7 +67,7 @@ A `Void` return may be written as `: ()` or omitted entirely. Single-expression
 bodies may omit the `return` keyword:
 
 ```joyeer
-func sq(_ x: Int): Int { x * x }
+func sq(x: Int): Int { x * x }
 ```
 
 #### 3.2.3 Generic parameters & where clauses
@@ -80,7 +81,7 @@ constraint      ::= type ':' type            // T : Comparable
 ```
 
 ```joyeer
-func minimum<T>(_ a: T, _ b: T): T where T: Comparable {
+func minimum<T>(a: T, b: T): T where T: Comparable {
   if a < b { a } else { b }
 }
 ```
@@ -97,19 +98,19 @@ func minimum<T>(_ a: T, _ b: T): T where T: Comparable {
 | Receiver effect | Declaration | `self` in body | Call-site marker |
 |-----------------|-------------|----------------|-------------------|
 | `borrowing` (default) | `func peek(): UInt8` | read-only | none: `b.peek()` |
-| `mutating` | `mutating func append(_ s: String)` | mutable, exclusive | `&`: `&b.append(s)` |
+| `mutating` | `mutating func append(s: String)` | mutable, exclusive | `&`: `&b.append(s: s)` |
 | `consuming` | `consuming func build(): String` | owned; consumed | `consume`: `consume b.build()` |
 
 ```joyeer
 extension StringBuilder {
   func length(): Int { ... }                    // borrowing self (default)
-  mutating func append(_ s: String) { ... }      // mutates self
+  mutating func append(s: String) { ... }      // mutates self
   consuming func build(): String { ... }         // consumes self
 }
 
 var b = StringBuilder()
 let n = b.length()           // borrowing: no marker
-&b.append("hi")              // mutating: '&' marks the receiver (§4.3 / D1)
+&b.append(s: "hi")              // mutating: '&' marks the receiver (§4.3 / D1)
 let s = consume b.build()    // consuming: 'consume' marks the receiver (§4.3 / D11)
 // b is now uninitialized
 ```
@@ -256,14 +257,14 @@ call-site usage is invoked.
 
 ```joyeer
 extension Array<T> {
-  public subscript(_ i: Int): T {
+  public subscript(i: Int): T {
     borrowing { yield  storage[i] }
     inout     { yield &storage[i] }
   }
 }
 
 var a = [1, 2, 3]
-print(a[0])         // → let accessor
+print(value: a[0])         // → let accessor
 &a[0] += 10         // → inout accessor; a is exclusively borrowed during the += expression
 ```
 

@@ -3,7 +3,7 @@
 > **Status:** Draft v0.1-spec. This document defines the future language. Some
 > features are marked **syntax-only** (parsed and type-checked, but not yet
 > semantically enforced). Legacy syntax that exists in the current parser
-> (`class`, named-only calls, `print(message: x)`) is listed in §14 and will
+> (`class`, positional/unlabeled calls, `print(message: x)`) is listed in §14 and will
 > be removed.
 
 This specification is split into one file per chapter under
