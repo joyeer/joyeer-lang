@@ -54,9 +54,13 @@ X , ...        — comma-separated list of one or more X
 
 Examples are written in fenced ` ```joyeer ` blocks.
 
-📌 **Decisions** are inline callouts of the form:
+📌 **Decisions** are inline callouts that record a committed design choice,
+the alternatives considered, and the rationale. They are **not numbered**
+during internal development — cross-reference a decision by its section
+number (e.g. "see §4.3"). A stable numbering scheme may be introduced once
+the spec is frozen for the first public release. Form:
 
-> **📌 Decision D1.** *Inout call-site marker is `&x`.*  Alternatives: `inout x`
+> **📌 Decision.** *Inout call-site marker is `&x`.*  Alternatives: `inout x`
 > (keyword form). Chosen `&x` because it is concise and consistent with Swift,
 > which our target audience already knows.
 

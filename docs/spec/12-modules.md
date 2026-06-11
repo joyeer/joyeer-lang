@@ -8,7 +8,7 @@ supported once the build system lands (v0.2).
 
 ### 12.2 Visibility 📌
 
-> **📌 Decision D10.** *Three visibility levels: `public`, `internal`
+> **📌 Decision.** *Three visibility levels: `public`, `internal`
 > (default), `private` (file-local).*
 
 | Visibility | Reachable from |
@@ -36,7 +36,7 @@ The standard library implicitly imports the following into every file:
 - `Array`, `Dict`, `Tuple`
 - `Display`, `Equatable`, `Comparable` (the *de facto* protocol vocabulary;
   protocols are reserved ⏳, but these names are reserved already).
-- `print`, `assert`, `panic`
+- `print`, `assert`, `precondition`, `fatalError`
 
 ---
 

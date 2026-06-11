@@ -41,7 +41,7 @@ may not carry it. See §3.2.4.
 
 #### 3.2.1 Parameters: labels 📌
 
-> **📌 Decision D3.** *Argument labels are mandatory at every call site;
+> **📌 Decision.** *Argument labels are mandatory at every call site;
 > there is no positional / unlabeled form.*  Every parameter has a label and
 > the caller must always write it.
 
@@ -88,7 +88,7 @@ func minimum<T>(a: T, b: T): T where T: Comparable {
 
 #### 3.2.4 Method receiver effects 📌
 
-> **📌 Decision D12.** *A method declares how it accesses `self` with a
+> **📌 Decision.** *A method declares how it accesses `self` with a
 > prefix `method_effect` keyword: `mutating` / `consuming` / `borrowing`
 > (default).*  Borrowed from Swift's `mutating func`. The same access
 > effects as parameters apply to the implicit `self` receiver, but the
@@ -110,8 +110,8 @@ extension StringBuilder {
 
 var b = StringBuilder()
 let n = b.length()           // borrowing: no marker
-&b.append(s: "hi")              // mutating: '&' marks the receiver (§4.3 / D1)
-let s = consume b.build()    // consuming: 'consume' marks the receiver (§4.3 / D11)
+&b.append(s: "hi")              // mutating: '&' marks the receiver (§4.3)
+let s = consume b.build()    // consuming: 'consume' marks the receiver (§4.3)
 // b is now uninitialized
 ```
 
@@ -135,7 +135,7 @@ connect(host: "localhost", port: 443)         // timeout = 30
 connect(host: "localhost", timeout: 5)        // port = 8080
 ```
 
-- Labels remain **mandatory** for any argument that is supplied (§3.2.1 D3);
+- Labels remain **mandatory** for any argument that is supplied (§3.2.1);
   defaults only let a caller *omit* an argument, never drop its label.
 - A defaulted parameter may be omitted regardless of its position; because
   every supplied argument is labeled, the compiler matches by label, not by
@@ -149,7 +149,7 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 
 ### 3.3 Struct declarations 📌
 
-> **📌 Decision D4.** *Struct construction uses call syntax `Point(x:1, y:2)`,
+> **📌 Decision.** *Struct construction uses call syntax `Point(x:1, y:2)`,
 > not record-literal `Point { x:1, y:2 }`.*  Chosen for consistency with
 > function calls and Swift familiarity. The `{}` brace form is reserved (⏳).
 

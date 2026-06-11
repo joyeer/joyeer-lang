@@ -18,12 +18,6 @@ func medianOfThree(a: Int, b: Int, c: Int): Int {
   return r
 }
 
-func swap<T>(a: inout T, b: inout T) {
-  let tmp = a
-  a = b
-  b = tmp
-}
-
 func partition(array: inout [Int], lo: Int, hi: Int): Int {
   precondition(condition: 0 <= lo && lo <= hi && hi < array.count)
   let pivot = medianOfThree(
@@ -37,7 +31,7 @@ func partition(array: inout [Int], lo: Int, hi: Int): Int {
     while array[i] < pivot { i += 1 }
     while array[j] > pivot { j -= 1 }
     if i <= j {
-      swap(a: &array[i], b: &array[j])
+      &array.swapAt(i: i, j: j)   // one inout projection of `array`; cannot pass &array[i] and &array[j] (§4.4.2)
       i += 1
       j -= 1
     }

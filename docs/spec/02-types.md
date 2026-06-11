@@ -20,7 +20,7 @@ Joyeer supports. (No 32-bit target in v0.1.)
 
 #### 2.1.1 `String` is byte-indexed 📌
 
-> **📌 Decision D13.** *`String` is indexed by byte offset and its element
+> **📌 Decision.** *`String` is indexed by byte offset and its element
 > type is `UInt8`, not `Char`.*  A `String` is UTF-8 bytes; `s[i]` returns the
 > `UInt8` byte at offset `i` in **O(1)**, and `s.count` is the **byte length**.
 > Code-point (`Char`) indexing is *not* O(1) over UTF-8, so Joyeer does not
@@ -109,7 +109,7 @@ See §8 for error-handling semantics.
 
 ### 2.6 Generics 📌
 
-> **📌 Decision D2.** *Generic syntax uses `<T>`*  Alternative: Hylo's `[T]`.
+> **📌 Decision.** *Generic syntax uses `<T>`*  Alternative: Hylo's `[T]`.
 > Chosen `<T>` for familiarity with Swift, Rust, C#, TypeScript users.
 
 ```joyeer
@@ -149,6 +149,24 @@ This is a deliberate AI-era choice (§0.1): signatures are contracts.
 func add(a: Int, b: Int): Int { return a + b }  // ✅
 func add(a, b) { return a + b }                  // ❌ error: missing types
 ```
+
+### 2.9 Never (the bottom type)
+
+`Never` is the type with **no values**. It is the return type of functions
+that do not return — notably `fatalError` (§9.2) — and the type of the
+diverging expressions `return e`, `break`, and `continue` (§6.4).
+
+`Never` is a subtype of every type: an expression of type `Never` is
+usable in any typed position. This is what lets a diverging expression sit
+on the right-hand side of `??` (§5.12):
+
+```joyeer
+let v: Int = parseInt(s: s) ?? fatalError(message: "bad input")   // RHS: Never
+let c = peek(p: p) ?? return .Err(.UnexpectedEof)                 // RHS: Never
+```
+
+Because a value of type `Never` can never be produced, any code path
+dominated by a `Never`-typed expression is unreachable.
 
 ---
 

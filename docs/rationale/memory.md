@@ -220,7 +220,7 @@ grep for "where do copies happen?"
 
 The spec already commits to the opposite principle everywhere else:
 
-- §4.3 **Decision D1 / D11**: `consume x` and `&x` are **mandatory, always-
+- §4.3 **Decision**: `consume x` and `&x` are **mandatory, always-
   visible** call-site markers, precisely so that ownership transfer and
   mutation are "trivially greppable" and there is no "did the compiler move or
   copy here?" ambiguity.

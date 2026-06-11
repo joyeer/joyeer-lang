@@ -25,7 +25,7 @@ func parseInt(s: String): Result<Int, ParseError> {
 
 ### 8.3 `?` propagation 📌
 
-> **📌 Decision D6.** *Postfix `?` on `Result<T,E>` (and `Optional<T>`)
+> **📌 Decision.** *Postfix `?` on `Result<T,E>` (and `Optional<T>`)
 > propagates the failure.*  Equivalent to `match x { .Ok(v) => v,
 > .Err(e) => return .Err(e) }`.
 

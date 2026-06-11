@@ -46,5 +46,14 @@ chapter file below.
   contracts/effects/property as syntax-only.
 - **2026-06-06** — Adopt Swift-style ownership keywords (`borrowing` /
   `consuming` / `initializing`, `mutating` receivers, mandatory `consume`
-  call-site marker; Decisions D11–D12). Split the single `spec.md` into
+  call-site marker; §3.2.4, §4.3). Split the single `spec.md` into
   per-chapter files under [spec/](spec/); this file is now the index.
+- **2026-06-11** — Resolve internal contradictions: call-site rule made
+  consistent (mandatory labels, no positional / `_` form; §5.6); reconcile
+  reserved-keyword lists (§1.4 ↔ §15) and `class`'s accepted-with-warning
+  status; add nil-coalescing `??` (§1.6, §5.1, §5.12, §17);
+  add the `Never` bottom type (§2.9; `fatalError: Never`, §9.2/§6.4);
+  allow comma-separated alternative patterns in `match` arms (§5.9, §7.2,
+  §17); align the prelude with the §9 check names (§12.4); fix the quicksort
+  example to respect index-level exclusivity via `swapAt` (§16.1). Drop the
+  global `Dn` decision numbering (decisions are now referenced by section).

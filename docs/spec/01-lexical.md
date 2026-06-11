@@ -41,10 +41,12 @@ an identifier.
 | Types & literals | `true`, `false`, `nil`, `self`, `Self`, `Any` |
 | Effects 🔬 | `performs`, `pure` |
 | Pattern | `where`, `as`, `is`, `_` |
-| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result` |
+| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro`, `unsafe`, `package`, `invariant`, `result` |
 
-> `class` is in the **reserved ⏳** list because it is removed in v0.2; the
-> parser still accepts it through v0.1 with a deprecation warning (§14).
+> `class` is in the **reserved ⏳** list because it is removed in v0.2; unlike
+> the other reserved words it is **not** rejected — the parser still accepts
+> it through v0.1 with a deprecation warning (§14). The remaining reserved
+> words are rejected with a clear error message in v0.1 (§15).
 
 ### 1.5 Literals
 
@@ -93,6 +95,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Bitwise | `&` `\|` `^` `~` `<<` `>>` |
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 | Range | `..<` `...` |
+| Nil-coalescing | `??` |
 | Postfix | `?` (optional chain / Result-propagation) `!` (force-unwrap) |
 | Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `->` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
@@ -102,7 +105,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 ### 1.7 String interpolation 📌
 
-> **📌 Decision D7.** *String interpolation included in v0.1, Swift-style
+> **📌 Decision.** *String interpolation included in v0.1, Swift-style
 > `"\(expr)"`.*  Alternative: defer to v0.2. Included because the bytecode-printer
 > use case (writing tests, debug output) is pervasive and otherwise requires
 > manual concatenation.

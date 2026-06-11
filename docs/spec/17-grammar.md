@@ -110,7 +110,7 @@ primary_expr      ::= literal
                    |  type '.' identifier [ '(' ... ')' ]        // qualified ctor
 
 match_expr        ::= 'match' expression '{' match_arm+ '}'
-match_arm         ::= pattern [ 'where' expression ] '=>' ( expression | block ) ','?
+match_arm         ::= pattern ( ',' pattern )* [ 'where' expression ] '=>' ( expression | block ) ','?
 
 pattern           ::= '_'
                    |  literal
@@ -121,7 +121,7 @@ pattern           ::= '_'
 
 binary_op         ::= '+' | '-' | '*' | '/' | '%'
                    |  '==' | '!=' | '<' | '<=' | '>' | '>='
-                   |  '&&' | '||'
+                   |  '&&' | '||' | '??'
                    |  '&' | '|' | '^' | '<<' | '>>'
                    |  '..<' | '...'
                    |  assign_op

@@ -23,6 +23,22 @@ match v {
 }
 ```
 
+### 7.2 Alternative patterns
+
+A match arm may list several comma-separated patterns; the arm runs when
+**any** of them matches. To keep each arm's bindings unambiguous,
+alternative patterns may only combine patterns that bind no variables
+(wildcards and literals):
+
+```joyeer
+match c {
+  b'"'             => parseString(p: &p),
+  b't', b'f'       => parseBool(p: &p),
+  b'0', b'1', b'2' => parseDigit(c: c),
+  _                => parseOther(p: &p),
+}
+```
+
 ### 7.6 Where guards
 
 ```joyeer

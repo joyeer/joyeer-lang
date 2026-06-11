@@ -97,7 +97,7 @@ destruct-then-construct round-trip for large objects.
 
 ### 4.3 Call-site markers `&` and `consume` 📌
 
-> **📌 Decision D1.** *Call-site marker for `inout` / `initializing` is `&x`;
+> **📌 Decision.** *Call-site marker for `inout` / `initializing` is `&x`;
 > for `consuming` it is `consume x`.*  Caller readability: any visible `&` or
 > `consume` at a call site signals "this argument's storage will be
 > exclusively borrowed, or given away, across this call."
@@ -115,7 +115,7 @@ a syntax-level error, not just a type error — this guarantees that mutation
 and ownership transfer are always visible at the call site by simple
 scanning (§0.1 principle 2).
 
-> **📌 Decision D11.** *`consume` at the call site is mandatory, not optional.*
+> **📌 Decision.** *`consume` at the call site is mandatory, not optional.*
 > Swift makes its `consume` operator optional, relying on implicit last-use
 > analysis to move otherwise. Joyeer requires it explicitly because the bulk
 > of code is AI-generated: a mandatory, always-visible marker makes ownership

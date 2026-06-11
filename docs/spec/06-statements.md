@@ -42,5 +42,9 @@ for &x in arr     { &x *= 2 }
 Standard. `return` may be omitted in single-expression function bodies
 (§3.2.2). `break label` / `continue label` reserved ⏳ for v0.2.
 
+Used as expressions, `return e`, `break`, and `continue` have type `Never`
+(§2.9); this is why they may appear as the right-hand side of `??` (§5.12)
+or as a `match` arm body.
+
 ---
 

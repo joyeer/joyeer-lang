@@ -20,7 +20,8 @@ precedence; associativity is shown.
 | 11 | `==`  `!=` | none |
 | 12 | `&&` | left |
 | 13 | `\|\|` | left |
-| 14 | assignment (`=`  `+=` …) | right |
+| 14 | `??` (nil-coalescing) | right |
+| 15 | assignment (`=`  `+=` …) | right |
 
 (Postfix `?` and `!` are optional-chain / force-unwrap, see §5.4.)
 
@@ -82,13 +83,14 @@ depends on the surrounding context (§4.5.1).
 
 ```
 call_expr       ::= callee '(' [ call_arg , ... ] ')'
-call_arg        ::= [ label ':' ] [ '&' | 'consume' ] expression
+call_arg        ::= label ':' [ '&' | 'consume' ] expression
 ```
 
-> **📌 Decision D3 (call site).**  Both `f(1, 2)` and `f(a: 1, b: 2)` are
-> legal for `func f(a: Int, b: Int)`. A parameter declared with `_` as
-> label is positional only; a parameter declared with an external label
-> may be called either way, but mixed calls must preserve order.
+> **📌 Decision (call site).**  Every argument is written with its label:
+> the only legal call of `func f(a: Int, b: Int)` is `f(a: 1, b: 2)`. There
+> is **no** positional / unlabeled call form and **no** `_` wildcard label
+> (§3.2.1); `f(1, 2)` is a syntax error. Supplied arguments follow
+> declaration order; defaulted arguments may be omitted (§3.2.5).
 
 ### 5.7 Struct construction
 
@@ -108,11 +110,12 @@ let w = JsonValue.Bool(true)            // fully qualified
 
 ```
 match_expr      ::= 'match' expression '{' match_arm+ '}'
-match_arm       ::= pattern [ 'where' expression ] '=>' (expression | block) ','?
+match_arm       ::= pattern ( ',' pattern )* [ 'where' expression ] '=>' (expression | block) ','?
 ```
 
 `match` is an **expression**; every arm must produce a value of the same
-type (or all be `Void`):
+type (or all be `Void`). An arm may list several comma-separated
+alternative patterns and runs when any of them matches (§7.2):
 
 ```joyeer
 let label = match v {
@@ -129,7 +132,7 @@ Exhaustiveness is checked (§7.7).
 
 ### 5.10 if as expression 📌
 
-> **📌 Decision D9.** *`if`/`match` are expressions; `while`/`for` are
+> **📌 Decision.** *`if`/`match` are expressions; `while`/`for` are
 > statements.*  Pure functional `if` improves AI-generated code clarity
 > (no scattered `return` paths).
 
@@ -142,10 +145,31 @@ total (i.e., have an `else` arm) when used as an expression.
 
 ### 5.11 Closures 📌
 
-> **📌 Decision D8.** *Closures deferred to v0.2.*  v0.1 has only top-level
+> **📌 Decision.** *Closures deferred to v0.2.*  v0.1 has only top-level
 > and method functions. Iteration uses `for-in`; higher-order patterns
 > use free functions. This keeps the memory model simpler (no closure
 > capture rules) and matches the v0.1 use cases (JSON parser, quicksort).
+
+### 5.12 Nil-coalescing `??` 📌
+
+> **📌 Decision.** *`??` supplies a fallback for an absent / failed
+> value.*  For `a: T?`, `a ?? b` evaluates to the wrapped value when `a` is
+> `.Some(v)`, otherwise to `b`. For `a: Result<T, E>`, `a ?? b` evaluates to
+> the `Ok` value when `a` is `.Ok(v)`, otherwise to `b` (the error is
+> discarded; use `match` or `?` (§8.3) when the error must be inspected).
+> `b` is evaluated only when needed (short-circuit), and `??` is
+> right-associative, so `a ?? b ?? c` parses as `a ?? (b ?? c)`.
+
+```joyeer
+let port: Int = parseInt(s: s) ?? 8080                       // plain fallback value
+let v = parseInt(s: s) ?? fatalError(message: "bad input")   // fallback diverges (Never, §2.9)
+let c = peek(p: p) ?? return .Err(.UnexpectedEof)            // fallback returns from the caller
+```
+
+For `a: T?`, the type of `a ?? b` is `T` when `b: T`, or `T?` when `b: T?`.
+The right-hand side may have type `Never` (§2.9) — as with `fatalError`,
+`return`, `break`, or `continue` — in which case the whole expression has
+the left-hand side's unwrapped type `T`.
 
 ---
 
