@@ -26,6 +26,7 @@ Reserved syntactic constructs:
 - Record literal struct construction (`Point { x: 1, y: 2 }`)
 - Wrapping arithmetic (`&+`, `&-`, `&*`)
 - Labeled break/continue (`break outer`)
+- String interpolation (`"\(expr)"`, §1.7)
 
 ---
 

@@ -31,7 +31,7 @@ file, before any declaration.
 
 The standard library implicitly imports the following into every file:
 
-- `Bool`, `Int`, `UInt`, `Float`, `Double`, `Char`, `String`, `Void`
+- `Bool`, `Int`, `UInt`, `Float`, `Double`, `Char`, `String`, `Void`, `Never`
 - `Optional`, `Result`
 - `Array`, `Dict`, `Tuple`
 - `print`, `assert`, `precondition`, `fatalError`

@@ -154,8 +154,7 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 struct_decl     ::= [ visibility ] 'struct' identifier
                     '{' struct_member* '}'
 
-struct_member   ::= variable_decl
-                 |  constant_decl
+struct_member   ::= binding
                  |  init_decl
                  |  deinit_decl
                  |  func_decl
@@ -267,12 +266,12 @@ internal storage** for in-place mutation without leaking reference types.
 subscript_decl  ::= 'subscript' [ identifier ] '(' [ param , ... ] ')' ':' type
                     '{' accessor+ '}'
 
-accessor        ::= 'borrowing'   '{' yield_stmt '}'
-                 |  'inout'        '{' yield_stmt '}'
-                 |  'initializing' '{' yield_stmt '}'
-                 |  'consuming'    '{' statement* 'return' expression '}'
+accessor        ::= 'borrowing'   block_with_yield
+                 |  'inout'        block_with_yield
+                 |  'initializing' block_with_yield
+                 |  'consuming'    block
 
-yield_stmt      ::= 'yield' [ '&' ] expression
+block_with_yield ::= '{' statement* 'yield' [ '&' ] expression statement* '}'
 ```
 
 A subscript may declare any combination of `borrowing`, `inout`,
@@ -314,7 +313,7 @@ deinit_decl     ::= 'deinit' '(' ')' function_body
 ### 3.8 Import declarations
 
 ```
-import_decl     ::= 'import' import_path
+import_decl     ::= 'import' import_path [ 'as' identifier ]
 import_path     ::= identifier ( '.' identifier )*
 ```
 

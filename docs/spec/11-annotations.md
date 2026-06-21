@@ -27,6 +27,10 @@ test) should satisfy. Test runners may sample inputs.
 func fib(n: Int): Int { ... }
 ```
 
+The `forall <name> in <range>: <bool-expr>` quantifier used by `@property` is
+a reserved annotation DSL (🔬); it is **not** part of the v0.1 expression
+grammar (§5) and is recognized only inside `@property`.
+
 ### 11.3 v0.1 treatment
 
 - Parsed and stored.

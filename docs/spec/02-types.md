@@ -67,6 +67,7 @@ array_type      ::= '[' type ']'
 dict_type       ::= '[' type ':' type ']'
 tuple_type      ::= '(' type , type , ... ')'
 function_type   ::= '(' [ param_type , ... ] ')' ':' type
+param_type      ::= [ access_effect ] type        // access_effect defined in §3.2
 optional_type   ::= type '?'
 generic_args    ::= '<' type , ... '>'
 ```
@@ -160,6 +161,22 @@ This is a deliberate AI-era choice (§0.1): signatures are contracts.
 ```joyeer
 func add(a: Int, b: Int): Int { return a + b }  // ✅
 func add(a, b) { return a + b }                  // ❌ error: missing types
+```
+
+### 2.9 The `Never` type
+
+`Never` is the **uninhabited bottom type**: it has no values. A *diverging*
+expression — `return ...`, `fatalError(...)`, or any call to a function whose
+return type is `Never` — has type `Never`, which is a subtype of every type.
+A diverging expression is therefore well-typed in any position that expects a
+value. This is what lets the right operand of `??` be `return .Err(e)` or
+`fatalError(...)` (§5.1, §8.5, §9.3).
+
+`Never` may appear in a signature as an explicit "this function never returns"
+marker:
+
+```joyeer
+func fatalError(message: String): Never { ... }
 ```
 
 ---

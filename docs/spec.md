@@ -58,3 +58,18 @@ chapter file below.
   terse form (§3.4). `&` is now required on every `inout` / `initializing`
   lvalue assignment (§5.3). Merged the reserved-keyword lists and fixed the
   prelude (`precondition` / `fatalError`, §12.4).
+- **2026-06-21** — Grammar/lexical consistency pass for implementability.
+  Added the `indirect` keyword to the reserved list (§1.4) and removed the
+  unused `->` token (returns use `:`, §1.6). Defined the `Never` bottom type
+  (§2.9) and `param_type` (§2.3); `fatalError` now returns `Never` (§9.2) and
+  `Never` is in the prelude (§12.4). Fixed `struct_member` to use `binding`
+  (§3.3) and `import_decl` to allow `as` (§3.8). Reconciled the subscript
+  `accessor` grammar with §17 so statements may surround `yield` (§3.6).
+  Admitted the diverging `return` operand of `??` in the expression grammar
+  and fixed the tuple `primary_expr` rule (§17). Noted that `@property`'s
+  `forall` quantifier is a reserved annotation DSL, not v0.1 expression
+  syntax (§11.2).
+- **2026-06-21b** — Deferred string interpolation (`"\(expr)"`) out of v0.1
+  to a future version (§1.7, now ⏳); removed `interpolation` from the v0.1
+  `string_item` grammar (§1.5) and added it to the reserved syntactic
+  constructs (§15).

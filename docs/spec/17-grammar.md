@@ -83,6 +83,8 @@ expression        ::= prefix_expr ( binary_op prefix_expr )*
 prefix_expr       ::= [ '!' | '-' | '~' ] postfix_expr
                    |  ( '&' | 'consume' ) postfix_expr   // ownership markers (§4.3);
                                                          //   prefix an lvalue / owned path only
+                   |  'return' [ expression ]            // diverging expr, type Never (§2.9);
+                                                         //   only valid as the RHS of '??' (§8.5)
 postfix_expr      ::= primary_expr ( '.' identifier
                                     | '?.' identifier
                                     | '(' [ call_arg , ... ] ')'
@@ -93,7 +95,7 @@ call_arg          ::= label ':' [ '&' | 'consume' ] expression
 
 primary_expr      ::= literal
                    |  identifier
-                   |  '(' expression ')'                       // parens or tuple
+                   |  '(' expression ( ',' expression )* ')'   // parens (1) or tuple (≥2)
                    |  array_literal
                    |  dict_literal
                    |  if_stmt                                   // if as expr

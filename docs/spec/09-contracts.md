@@ -23,7 +23,7 @@ func divide(a: Int, b: Int): Int {
 ```
 assert(condition: Bool, message: String = "")
 precondition(condition: Bool, message: String = "")
-fatalError(message: String)
+fatalError(message: String): Never
 ```
 
 - `assert`: for development-time validation. Implementations may elide it in

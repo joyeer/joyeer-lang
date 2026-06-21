@@ -35,7 +35,7 @@ an identifier.
 |----------|----------|
 | Bindings | `let`, `var` |
 | Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `break`, `continue`, `yield` |
-| Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `typealias`, `import` |
+| Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `typealias`, `import`, `indirect` |
 | Memory effects | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self` |
@@ -66,9 +66,9 @@ char_literal     ::= "'" ( escape | <any unicode except "'" or '\'> ) "'"   // C
 byte_literal     ::= "b'" ( escape | <any ASCII except "'" or '\'> ) "'"    // UInt8 (single byte)
 
 string_literal   ::= '"' string_item* '"'
-string_item      ::= escape | interpolation | <any unicode except '"' or '\'>
+string_item      ::= escape | <any unicode except '"' or '\'>
 escape           ::= '\\' ( 'n' | 't' | 'r' | '"' | '\\' | '0' | 'u{' hex+ '}' )
-interpolation    ::= '\(' expression ')'
+// interpolation ::= '\(' expression ')'   // reserved ⏳ — future version (§1.7)
 
 array_literal    ::= '[' [ expression , ... ] ']'
 dict_literal     ::= '[' ':' ']'  |  '[' dict_entry , ... ']'
@@ -95,28 +95,34 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 | Range | `..<` `...` |
 | Postfix | `?` (optional chain / Result-propagation) `!` (force-unwrap) |
-| Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `->` `=>` `_` |
+| Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
 
 `&` is both bitwise-AND (binary infix) and the inout call-site marker
 (prefix on argument). Disambiguated by syntactic position.
 
-### 1.7 String interpolation 📌
+### 1.7 String interpolation ⏳
 
-> **📌 Decision D7.** *String interpolation included in v0.1, Swift-style
-> `"\(expr)"`.*  Alternative: defer to v0.2. Included because the bytecode-printer
-> use case (writing tests, debug output) is pervasive and otherwise requires
-> manual concatenation.
+> **📌 Decision D7.** *String interpolation is reserved for a future version,
+> not part of v0.1.*  Swift-style `"\(expr)"` is convenient sugar, but it is
+> not required for the v0.1 use cases; debug and test output use `print` with
+> separate arguments or manual concatenation. Deferring it keeps the v0.1
+> lexer and type checker simpler and can be added later without breaking
+> existing string literals.
+
+When added, the syntax will be Swift-style `"\(expr)"`, where the expression
+inside `\(...)` is any `expression` whose result is one of the built-in
+printable types (the integer and floating types, `Bool`, `Char`, `UInt8`,
+`String`):
 
 ```joyeer
+// future syntax (⏳, not v0.1):
 let n = 42
 print(value: "answer is \(n), squared is \(n * n)")
 ```
 
-The expression inside `\(...)` is any `expression`. The result must be one of
-the built-in printable types (the integer and floating types, `Bool`, `Char`,
-`UInt8`, `String`). A user-extensible `Display` protocol is reserved for a
-future version (§15).
+A user-extensible `Display` protocol is also reserved for a future version
+(§15).
 
 ---
 
