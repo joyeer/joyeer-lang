@@ -23,7 +23,7 @@ Rust's memory safety guarantees, Dafny's contracts, Koka's effect system.
 
 | Version | Scope |
 |---------|-------|
-| **v0.1** | Lexical, types, declarations, memory model, expressions, statements, patterns, generics, errors, modules. Contracts/effects/property annotations parse but are not enforced. |
+| **v0.1** | Lexical, types, declarations, memory model, expressions, statements, patterns, built-in containers, errors, modules. Contracts/effects/property annotations parse but are not enforced. User-defined generics and protocols are reserved (§15). |
 | **v0.2** | Removal of legacy syntax (§14). Improved diagnostics. Standard library. |
 | **v0.3** | Runtime contract enforcement (debug mode). Property-based test runner. |
 | **future** | Concurrency, SMT-backed verification, FFI, macros, traits. |
@@ -49,7 +49,7 @@ nonterminal  ::= alternative1 | alternative2
 ( X )          — grouping
 X+             — one or more
 X*             — zero or more
-X , ...        — comma-separated list of one or more X
+X , ...        — comma-separated list of one or more X (a trailing comma is permitted)
 ```
 
 Examples are written in fenced ` ```joyeer ` blocks.

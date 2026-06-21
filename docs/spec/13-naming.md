@@ -5,7 +5,7 @@ when they are violated. AI code generators must follow them.
 
 | Construct | Convention | Example |
 |-----------|-----------|---------|
-| Types (struct, enum, typealias) | PascalCase | `JsonValue`, `LinkedList` |
+| Types (struct, enum, typealias) | PascalCase | `JsonValue`, `IntList` |
 | Functions, methods | camelCase | `parseInt`, `appendByte` |
 | Variables, fields, parameters | camelCase | `firstName`, `count` |
 | Constants (let bindings) | camelCase | `let maxRetries = 5` |

@@ -66,7 +66,7 @@ type            ::= primitive_type
 array_type      ::= '[' type ']'
 dict_type       ::= '[' type ':' type ']'
 tuple_type      ::= '(' type , type , ... ')'
-function_type   ::= '(' [ param_type , ... ] ')' '->' type
+function_type   ::= '(' [ param_type , ... ] ')' ':' type
 optional_type   ::= type '?'
 generic_args    ::= '<' type , ... '>'
 ```
@@ -75,9 +75,13 @@ generic_args    ::= '<' type , ... '>'
 functions (§3.2):
 
 ```joyeer
-let f: (inout Int) -> Int = ...
-let g: (consuming String) -> ()  = ...
+let f: (inout Int): Int = ...
+let g: (consuming String): ()  = ...
 ```
+
+The inner `:` is the function type's return separator (§3.2 uses the same `:`
+for declared functions); the outer `:` in `let f: ...` is the binding's type
+annotation.
 
 ### 2.4 Optional<T>
 
@@ -109,27 +113,35 @@ See §8 for error-handling semantics.
 
 ### 2.6 Generics 📌
 
-> **📌 Decision D2.** *Generic syntax uses `<T>`*  Alternative: Hylo's `[T]`.
-> Chosen `<T>` for familiarity with Swift, Rust, C#, TypeScript users.
+> **📌 Decision D2.** *v0.1 has **no user-defined generics**.* The only generic
+> types are the built-in containers `Array<T>` / `[T]`, `Dict<K, V>` /
+> `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>`. Their angle brackets are
+> **type arguments understood directly by the compiler**, not a general
+> type-parameter mechanism. User code may *use* these containers but may not
+> declare new generic `func` / `struct` / `enum`, type parameters, or
+> constraints.
 
 ```joyeer
-func swap<T>(a: inout T, b: inout T) { ... }
-struct Pair<A, B> { var first: A; var second: B }
-extension Array<T> { ... }
+let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
+let m: [String: Int] = [:]             // built-in Dict<String, Int>
+let r: Result<Int, ParseError> = .Ok(1)
 ```
 
-Constraints via `where` clauses (§3.2.3). v0.1 supports parametric generics
-only (no associated types, no higher-kinded types).
+> **📌 Decision D2a.** *When generics are reintroduced they will use `<T>`*
+> (not Hylo's `[T]`), for familiarity with Swift / Rust / C# / TypeScript
+> users. User-defined generics, constraints, associated types, and
+> monomorphization are reserved for a future version (§15); see
+> [../plan/v0.1.md](../plan/v0.1.md) for the milestone rationale.
 
 ### 2.7 Type aliases
 
 ```
-typealias_decl ::= 'typealias' identifier [ generic_params ] '=' type
+typealias_decl ::= 'typealias' identifier '=' type
 ```
 
 ```joyeer
-typealias StringMap<V> = [String: V]
 typealias Bytes = [UInt8]
+typealias IntMap = [String: Int]
 ```
 
 ### 2.8 Type inference

@@ -48,3 +48,13 @@ chapter file below.
   `consuming` / `initializing`, `mutating` receivers, mandatory `consume`
   call-site marker; Decisions D11–D12). Split the single `spec.md` into
   per-chapter files under [spec/](spec/); this file is now the index.
+- **2026-06-20** — Consistency pass. Removed user-defined generics and the
+  protocol/trait dependencies (`Comparable` / `Display` / `Iterable` /
+  `Deinitializable`): v0.1 keeps only built-in generic containers (§2.6).
+  Unified function return-type syntax to `:` (§2.3). Integer overflow now
+  **traps in all builds** (§5.2). Moved `Any` to reserved (§1.4, §15). Added
+  the `??` coalescing operator (§8.5). Resolved the duplicate-D3 call-site
+  contradiction — labels are mandatory (§5.6). Collapsed enum cases to one
+  terse form (§3.4). `&` is now required on every `inout` / `initializing`
+  lvalue assignment (§5.3). Merged the reserved-keyword lists and fixed the
+  prelude (`precondition` / `fatalError`, §12.4).

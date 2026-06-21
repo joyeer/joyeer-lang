@@ -273,7 +273,7 @@ of a struct as well. Order is fully deterministic; no finalizer queue,
 no GC.
 
 ```joyeer
-public struct FileHandle: Deinitializable {
+public struct FileHandle {
   var fd: Int32
   public init(path: String) {
     precondition(condition: path.notEmpty())

@@ -18,10 +18,10 @@ func medianOfThree(a: Int, b: Int, c: Int): Int {
   return r
 }
 
-func swap<T>(a: inout T, b: inout T) {
+func swap(a: inout Int, b: inout Int) {
   let tmp = a
-  a = b
-  b = tmp
+  &a = b
+  &b = tmp
 }
 
 func partition(array: inout [Int], lo: Int, hi: Int): Int {
@@ -133,12 +133,12 @@ public func parse(source: String): Result<JsonValue, JsonError> {
 ### 16.3 Linked list (indirect enum + deinit demo)
 
 ```joyeer
-public enum List<T> {
+public enum IntList {
   Empty,
-  indirect Cons(T, List<T>),
+  indirect Cons(Int, IntList),
 }
 
-extension List<T> {
+extension IntList {
   public func count(): Int {
     match self {
       .Empty       => 0,
@@ -146,7 +146,7 @@ extension List<T> {
     }
   }
 
-  public func prepended(x: consuming T): List<T> {
+  public func prepended(x: consuming Int): IntList {
     .Cons(x, self)
   }
 }

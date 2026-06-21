@@ -197,17 +197,18 @@ Hylo has **no reference types**. Ownership is a tree, never a graph. Cycles are 
 Given Joyeer's goals — **no GC, zero-cost abstractions, AI-era language, Swift-like syntax, replace C++ for new code** — the Hylo-style Mutable Value Semantics model is the strongest candidate:
 
 ```
-func peek(p: Parser)              -> Token   // borrowing (read-only, compiler passes by ref)
-func advance(p: inout Parser)     -> Token   // inout (exclusive mutable)
-func consume(p: consuming Parser) -> Ast     // consuming (ownership transfer)
+func peek(p: Parser): Token                // borrowing (read-only, compiler passes by ref)
+func advance(p: inout Parser): Token       // inout (exclusive mutable)
+func consume(p: consuming Parser): Ast     // consuming (ownership transfer)
 ```
 
 > **Keyword note.** The spec (§4) renames Hylo's effect keywords to read more
 > naturally for the Swift-trained audience: Hylo `let`/`sink`/`set` become
 > Joyeer `borrowing` (the default) / `consuming` / `initializing`; method
 > receivers use `mutating` / `consuming`. Ownership transfer is marked at the
-> call site with `consume x` (mandatory). The conventions below are unchanged;
-> only the spelling differs.
+> call site with `consume x` (mandatory). The return type is written with `:`
+> (spec §2.3), not `->`. The conventions below are unchanged; only the
+> spelling differs.
 
 ### Why This Fits Joyeer
 

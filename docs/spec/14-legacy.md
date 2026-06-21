@@ -18,7 +18,8 @@ The following keywords are reserved and rejected with a clear error
 message in v0.1:
 
 `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`,
-`protocol`, `trait`, `macro`, `unsafe`, `package`.
+`protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`,
+`Any`.
 
 Reserved syntactic constructs:
 - Trailing closure call syntax (`f { ... }`)

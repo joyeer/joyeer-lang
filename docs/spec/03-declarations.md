@@ -10,6 +10,9 @@ binding         ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
   The value's interior fields may be mutated only if the type permits
   through `inout` projections, but the binding itself never re-binds.
 - `var` introduces a **mutable** binding.
+- A binding may be declared without an initializer and assigned later. A `let`
+  must be assigned **exactly once** on every path before its first use
+  (definite assignment); this initializing assignment is not a re-binding.
 
 ```joyeer
 let pi = 3.14159
@@ -20,10 +23,9 @@ let (x, y) = somePair        // tuple destructuring
 ### 3.2 Function declarations
 
 ```
-func_decl       ::= [ visibility ] [ method_effect ] 'func' identifier [ generic_params ]
+func_decl       ::= [ visibility ] [ method_effect ] 'func' identifier
                     '(' [ param , ... ] ')'
                     [ ':' return_type ]
-                    [ where_clause ]
                     [ effect_clause ]
                     function_body
 
@@ -63,28 +65,23 @@ transfer(from: alice, to: bob, amount: 100)
 
 #### 3.2.2 Return type
 
-A `Void` return may be written as `: ()` or omitted entirely. Single-expression
-bodies may omit the `return` keyword:
+A `Void` return may be written as `: ()` or omitted entirely. A block's
+**trailing expression** is its value: when the last item of a function body
+(or any block, including `if` / `match` arms) is an expression of the return
+type, the `return` keyword may be omitted for it. `return` is still required
+for early exits.
 
 ```joyeer
 func sq(x: Int): Int { x * x }
 ```
 
-#### 3.2.3 Generic parameters & where clauses
+#### 3.2.3 Generics & constraints
 
-```
-generic_params  ::= '<' generic_param , ... '>'
-generic_param   ::= identifier [ ':' constraint ]
-where_clause    ::= 'where' constraint ( ',' constraint )*
-constraint      ::= type ':' type            // T : Comparable
-                 |  type '==' type           // associated equality
-```
-
-```joyeer
-func minimum<T>(a: T, b: T): T where T: Comparable {
-  if a < b { a } else { b }
-}
-```
+v0.1 has **no user-defined generics** (§2.6): a `func` may not declare type
+parameters, `where` clauses, or constraints. Generic *containers* (`Array`,
+`Dict`, `Optional`, `Result`) are built-ins. User-defined generics and the
+protocol system needed for constraints (`Comparable`, etc.) are reserved for a
+future version (§15).
 
 #### 3.2.4 Method receiver effects 📌
 
@@ -154,8 +151,7 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 > function calls and Swift familiarity. The `{}` brace form is reserved (⏳).
 
 ```
-struct_decl     ::= [ visibility ] 'struct' identifier [ generic_params ]
-                    [ where_clause ]
+struct_decl     ::= [ visibility ] 'struct' identifier
                     '{' struct_member* '}'
 
 struct_member   ::= variable_decl
@@ -189,24 +185,27 @@ let p = Point(x: 1.0, y: 2.0)
 ```
 
 If no `init` is declared, the compiler synthesizes a memberwise initializer
-exposing all fields in declaration order, labeled by field name.
+exposing all fields in declaration order, labeled by field name. The
+synthesized initializer takes the **least visible** access of the struct's
+stored fields (a `private` field makes the memberwise `init` `private`), so
+synthesis never widens access to a field.
 
 ### 3.4 Enum declarations (ADT)
 
 ```
-enum_decl       ::= [ visibility ] 'enum' identifier [ generic_params ]
-                    [ where_clause ]
-                    '{' enum_case+ enum_member* '}'
+enum_decl       ::= [ visibility ] 'enum' identifier
+                    '{' enum_case ( ',' enum_case )* ','? enum_member* '}'
 
-enum_case       ::= 'case' identifier [ '(' assoc_type , ... ')' ]   // form A
-                 |  identifier [ '(' assoc_type , ... ')' ] ','      // form B (terse)
+enum_case       ::= [ 'indirect' ] identifier [ '(' assoc_type , ... ')' ]
 
 assoc_type      ::= [ label ':' ] type
 
 enum_member     ::= func_decl | subscript_decl
 ```
 
-Both forms allowed; mixing in one declaration is disallowed for clarity.
+Cases are comma-separated; a trailing comma is permitted. There is exactly
+one case syntax (no `case` keyword) — one way to write each thing (§0.1
+principle 4).
 
 ```joyeer
 public enum JsonValue {
@@ -231,9 +230,9 @@ stack-allocatable, no heap unless the user requests indirection (§3.4.1).
 #### 3.4.1 Indirect cases (for recursive enums)
 
 ```joyeer
-public enum LinkedList<T> {
+public enum IntList {
   Empty,
-  indirect Cons(T, LinkedList<T>),
+  indirect Cons(Int, IntList),
 }
 ```
 
@@ -244,7 +243,7 @@ and visible** in the declaration — no hidden boxing.
 ### 3.5 Extension declarations
 
 ```
-extension_decl  ::= 'extension' type [ where_clause ]
+extension_decl  ::= 'extension' type
                     '{' extension_member* '}'
 
 extension_member ::= func_decl | subscript_decl
@@ -254,7 +253,7 @@ Extensions add methods (functions tied to a type) and subscripts to an
 existing type. They cannot add stored fields.
 
 ```joyeer
-extension Array<T> {
+extension Array<Int> {
   public func isEmpty(): Bool { count == 0 }
 }
 ```
@@ -281,8 +280,8 @@ A subscript may declare any combination of `borrowing`, `inout`,
 call-site usage is invoked.
 
 ```joyeer
-extension Array<T> {
-  public subscript(i: Int): T {
+extension Array<Int> {
+  public subscript(i: Int): Int {
     borrowing { yield  storage[i] }
     inout     { yield &storage[i] }
   }
