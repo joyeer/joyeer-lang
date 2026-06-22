@@ -30,7 +30,9 @@ for_stmt        ::= 'for' [ '&' ] pattern 'in' expression block
 ```
 
 The optional `&` requests an `inout` iteration over the source collection
-(if the collection's `Iterable` conformance provides an inout view).
+(when the collection — a built-in container such as `Array` — provides an
+inout view). A user-extensible iteration protocol is reserved for a future
+version (§15).
 
 ```joyeer
 for x in arr      { print(value: x) }

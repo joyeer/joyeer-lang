@@ -14,10 +14,9 @@ top_decl          ::= func_decl
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
-func_decl         ::= [ visibility ] [ method_effect ] 'func' identifier [ generic_params ]
+func_decl         ::= [ visibility ] [ method_effect ] 'func' identifier
                       '(' [ param , ... ] ')'
                       [ ':' type ]
-                      [ where_clause ]
                       [ effect_clause ]
                       block
 
@@ -26,16 +25,10 @@ param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expr
 label             ::= identifier
 access_effect     ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'
 
-generic_params    ::= '<' generic_param , ... '>'
-generic_param     ::= identifier [ ':' type ]
-where_clause      ::= 'where' constraint , ...
-constraint        ::= type ':' type | type '==' type
-
 effect_clause     ::= 'performs' effect_label , ...
 effect_label      ::= identifier [ '<' type , ... '>' ]
 
-struct_decl       ::= [ visibility ] 'struct' identifier [ generic_params ]
-                      [ where_clause ]
+struct_decl       ::= [ visibility ] 'struct' identifier
                       '{' struct_member* '}'
 
 struct_member     ::= binding
@@ -48,14 +41,13 @@ init_decl         ::= [ visibility ] 'init' '(' [ param , ... ] ')'
 
 deinit_decl       ::= 'deinit' '(' ')' block
 
-enum_decl         ::= [ visibility ] 'enum' identifier [ generic_params ]
-                      [ where_clause ]
-                      '{' enum_case+ ( func_decl | subscript_decl )* '}'
+enum_decl         ::= [ visibility ] 'enum' identifier
+                      '{' enum_case ( ',' enum_case )* ','? ( func_decl | subscript_decl )* '}'
 
 enum_case         ::= [ 'indirect' ] identifier [ '(' assoc_type , ... ')' ]
 assoc_type        ::= [ identifier ':' ] type
 
-extension_decl    ::= 'extension' type [ where_clause ]
+extension_decl    ::= 'extension' type
                       '{' ( func_decl | subscript_decl )* '}'
 
 subscript_decl    ::= [ visibility ] 'subscript' [ identifier ]
@@ -69,7 +61,7 @@ accessor          ::= 'borrowing'   block_with_yield
 
 block_with_yield  ::= '{' statement* 'yield' [ '&' ] expression statement* '}'
 
-typealias_decl    ::= 'typealias' identifier [ generic_params ] '=' type
+typealias_decl    ::= 'typealias' identifier '=' type
 import_decl       ::= 'import' import_path [ 'as' identifier ]
 import_path       ::= identifier ( '.' identifier )*
 visibility        ::= 'public' | 'internal' | 'private'
@@ -91,6 +83,8 @@ expression        ::= prefix_expr ( binary_op prefix_expr )*
 prefix_expr       ::= [ '!' | '-' | '~' ] postfix_expr
                    |  ( '&' | 'consume' ) postfix_expr   // ownership markers (§4.3);
                                                          //   prefix an lvalue / owned path only
+                   |  'return' [ expression ]            // diverging expr, type Never (§2.9);
+                                                         //   only valid as the RHS of '??' (§8.5)
 postfix_expr      ::= primary_expr ( '.' identifier
                                     | '?.' identifier
                                     | '(' [ call_arg , ... ] ')'
@@ -101,7 +95,7 @@ call_arg          ::= label ':' [ '&' | 'consume' ] expression
 
 primary_expr      ::= literal
                    |  identifier
-                   |  '(' expression ')'                       // parens or tuple
+                   |  '(' expression ( ',' expression )* ')'   // parens (1) or tuple (≥2)
                    |  array_literal
                    |  dict_literal
                    |  if_stmt                                   // if as expr
@@ -131,6 +125,12 @@ assign_op         ::= '=' | '+=' | '-=' | '*=' | '/=' | '%='
 attribute         ::= '@' identifier [ '(' attribute_args ')' ]
 attribute_args    ::= string_literal | expression , ...
 ```
+
+> **Note on `??`.** The right operand of the coalescing operator `??` may be
+> an ordinary expression *or* a diverging expression (`return expr` /
+> `fatalError(...)`), which has the bottom type `Never` and satisfies any
+> result type. This is what makes `let v = parse(x) ?? return .Err(e)` and
+> `let v = opt ?? fatalError(...)` well-typed (§8.5, §9.3).
 
 ---
 

@@ -33,13 +33,14 @@ func transfer(from, to, amount) {
     to.balance += amount
 }
 
-// Strong + contracts: compiler forces correctness
-func transfer(from: &mut Account, to: &mut Account, amount: PositiveInt)
-    requires from.balance >= amount
-    ensures from.balance == old(from.balance) - amount
-{
-    from.balance -= amount
-    to.balance += amount
+// Strong + explicit checks: correctness is reviewable
+func transfer(from: inout Account, to: inout Account, amount: Int) {
+    precondition(condition: amount > 0)
+    precondition(condition: from.balance >= amount)
+    let oldFrom = from.balance
+    &from.balance -= amount
+    &to.balance += amount
+    assert(condition: from.balance == oldFrom - amount)
 }
 ```
 
@@ -48,14 +49,16 @@ References: Dependent types, Design by Contract, Refinement types
 ### 2. Formal Verification — Prove Code Correct
 
 ```
-func sort(arr: Array<Int>): Array<Int>
-    ensures result.len() == arr.len()
-    ensures isPermutation(result, arr)
-    ensures isSorted(result)
-{
-    // AI generates implementation
-    // Compiler/verifier proves properties hold
+func sort(arr: [Int]): [Int] {
+    var out = arr
+    // ... AI generates the sorting implementation ...
+    assert(condition: out.count == arr.count)
+    assert(condition: isPermutation(a: out, b: arr))
+    assert(condition: isSorted(a: out))
+    return out
 }
+// The asserts are runtime-checked today (spec §9); static (SMT) verification
+// of the same properties is a future goal (spec §0.2).
 ```
 
 References: Dafny, Lean 4, F*, Ada/SPARK
@@ -100,7 +103,7 @@ let x = a + b    // Clear: integer addition, cannot be string concatenation
 AI writes one line → Compiler responds in <100ms:
   ✅ Types correct
   ⚠️ This branch doesn't handle None
-  ❌ Violates ensures condition
+  ❌ A `precondition` may not hold
 ```
 
 Incremental compilation must be designed into the language, not added later.
@@ -158,7 +161,7 @@ Ranked by feasibility:
 | Feature | Difficulty | Impact |
 |---------|-----------|--------|
 | Effect system (IO, Throw annotations) | Medium | High |
-| Contracts (requires/ensures) | Medium | High |
+| Contracts (precondition/assert) | Medium | High |
 | Property-based testing built-in (@property) | Easy | Medium |
 | Refinement types (PositiveInt, NonEmpty) | Hard | High |
 | Incremental compilation (language-level design) | Architecture | High |

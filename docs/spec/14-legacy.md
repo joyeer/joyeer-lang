@@ -17,18 +17,16 @@ sources to v0.2 syntax automatically.
 The following keywords are reserved and rejected with a clear error
 message in v0.1:
 
-`async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`,
-`protocol`, `trait`, `macro`, `unsafe`, `package`, `invariant`, `result`.
-
-`class` is also reserved (§1.4) but, unlike the words above, is **not**
-rejected: the parser accepts it through v0.1 with a deprecation warning and
-removes it in v0.2 (§14).
+`async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`,
+`protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`,
+`Any`.
 
 Reserved syntactic constructs:
 - Trailing closure call syntax (`f { ... }`)
 - Record literal struct construction (`Point { x: 1, y: 2 }`)
 - Wrapping arithmetic (`&+`, `&-`, `&*`)
 - Labeled break/continue (`break outer`)
+- String interpolation (`"\(expr)"`, §1.7)
 
 ---
 

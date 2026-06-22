@@ -69,6 +69,7 @@ deleted, not preserved.
 | [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (currently between Phase 1 and 2) |
 | [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
 | [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
+| [feasibility.md](plan/feasibility.md) | Can the design be built? Per-feature prior art, combination risks, layered-verification ceiling |
 
 ---
 

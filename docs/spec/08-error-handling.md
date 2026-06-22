@@ -48,5 +48,23 @@ Reserved keywords ⏳. If error-handling syntax for `Result` chains becomes
 ergonomically heavy, a `try-block` may be added in v0.3. For v0.1, `?`
 plus `match` covers all cases.
 
+### 8.5 `??` coalescing 📌
+
+> **📌 Decision D14.** *Binary `??` supplies a fallback for a `nil`
+> `Optional` or an `.Err` `Result`.* `a ?? b` evaluates to the unwrapped
+> value when `a` is `.Some` / `.Ok`, otherwise to `b`. The right operand `b`
+> may be an ordinary value **or** a diverging expression (`return ...`,
+> `fatalError(...)`) — which has the bottom type `Never` and satisfies any
+> result type — letting `??` double as an early-exit guard.
+
+```joyeer
+let c = peek(p: p) ?? return .Err(.UnexpectedEof)            // Optional → early return
+let port = parseInt(s: s) ?? fatalError(message: "bad port") // Result → abort
+let n = maybe ?? 0                                          // plain fallback value
+```
+
+`??` binds looser than the comparison and logical operators and is
+right-associative (§5.1).
+
 ---
 

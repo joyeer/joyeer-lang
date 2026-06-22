@@ -66,7 +66,8 @@ type            ::= primitive_type
 array_type      ::= '[' type ']'
 dict_type       ::= '[' type ':' type ']'
 tuple_type      ::= '(' type , type , ... ')'
-function_type   ::= '(' [ param_type , ... ] ')' '->' type
+function_type   ::= '(' [ param_type , ... ] ')' ':' type
+param_type      ::= [ access_effect ] type        // access_effect defined in §3.2
 optional_type   ::= type '?'
 generic_args    ::= '<' type , ... '>'
 ```
@@ -75,9 +76,13 @@ generic_args    ::= '<' type , ... '>'
 functions (§3.2):
 
 ```joyeer
-let f: (inout Int) -> Int = ...
-let g: (consuming String) -> ()  = ...
+let f: (inout Int): Int = ...
+let g: (consuming String): ()  = ...
 ```
+
+The inner `:` is the function type's return separator (§3.2 uses the same `:`
+for declared functions); the outer `:` in `let f: ...` is the binding's type
+annotation.
 
 ### 2.4 Optional<T>
 
@@ -109,27 +114,35 @@ See §8 for error-handling semantics.
 
 ### 2.6 Generics 📌
 
-> **📌 Decision.** *Generic syntax uses `<T>`*  Alternative: Hylo's `[T]`.
-> Chosen `<T>` for familiarity with Swift, Rust, C#, TypeScript users.
+> **📌 Decision D2.** *v0.1 has **no user-defined generics**.* The only generic
+> types are the built-in containers `Array<T>` / `[T]`, `Dict<K, V>` /
+> `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>`. Their angle brackets are
+> **type arguments understood directly by the compiler**, not a general
+> type-parameter mechanism. User code may *use* these containers but may not
+> declare new generic `func` / `struct` / `enum`, type parameters, or
+> constraints.
 
 ```joyeer
-func swap<T>(a: inout T, b: inout T) { ... }
-struct Pair<A, B> { var first: A; var second: B }
-extension Array<T> { ... }
+let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
+let m: [String: Int] = [:]             // built-in Dict<String, Int>
+let r: Result<Int, ParseError> = .Ok(1)
 ```
 
-Constraints via `where` clauses (§3.2.3). v0.1 supports parametric generics
-only (no associated types, no higher-kinded types).
+> **📌 Decision D2a.** *When generics are reintroduced they will use `<T>`*
+> (not Hylo's `[T]`), for familiarity with Swift / Rust / C# / TypeScript
+> users. User-defined generics, constraints, associated types, and
+> monomorphization are reserved for a future version (§15); see
+> [../plan/v0.1.md](../plan/v0.1.md) for the milestone rationale.
 
 ### 2.7 Type aliases
 
 ```
-typealias_decl ::= 'typealias' identifier [ generic_params ] '=' type
+typealias_decl ::= 'typealias' identifier '=' type
 ```
 
 ```joyeer
-typealias StringMap<V> = [String: V]
 typealias Bytes = [UInt8]
+typealias IntMap = [String: Int]
 ```
 
 ### 2.8 Type inference
@@ -150,23 +163,21 @@ func add(a: Int, b: Int): Int { return a + b }  // ✅
 func add(a, b) { return a + b }                  // ❌ error: missing types
 ```
 
-### 2.9 Never (the bottom type)
+### 2.9 The `Never` type
 
-`Never` is the type with **no values**. It is the return type of functions
-that do not return — notably `fatalError` (§9.2) — and the type of the
-diverging expressions `return e`, `break`, and `continue` (§6.4).
+`Never` is the **uninhabited bottom type**: it has no values. A *diverging*
+expression — `return ...`, `fatalError(...)`, or any call to a function whose
+return type is `Never` — has type `Never`, which is a subtype of every type.
+A diverging expression is therefore well-typed in any position that expects a
+value. This is what lets the right operand of `??` be `return .Err(e)` or
+`fatalError(...)` (§5.1, §8.5, §9.3).
 
-`Never` is a subtype of every type: an expression of type `Never` is
-usable in any typed position. This is what lets a diverging expression sit
-on the right-hand side of `??` (§5.12):
+`Never` may appear in a signature as an explicit "this function never returns"
+marker:
 
 ```joyeer
-let v: Int = parseInt(s: s) ?? fatalError(message: "bad input")   // RHS: Never
-let c = peek(p: p) ?? return .Err(.UnexpectedEof)                 // RHS: Never
+func fatalError(message: String): Never { ... }
 ```
-
-Because a value of type `Never` can never be produced, any code path
-dominated by a `Never`-typed expression is unreachable.
 
 ---
 

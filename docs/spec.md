@@ -48,12 +48,28 @@ chapter file below.
   `consuming` / `initializing`, `mutating` receivers, mandatory `consume`
   call-site marker; §3.2.4, §4.3). Split the single `spec.md` into
   per-chapter files under [spec/](spec/); this file is now the index.
-- **2026-06-11** — Resolve internal contradictions: call-site rule made
-  consistent (mandatory labels, no positional / `_` form; §5.6); reconcile
-  reserved-keyword lists (§1.4 ↔ §15) and `class`'s accepted-with-warning
-  status; add nil-coalescing `??` (§1.6, §5.1, §5.12, §17);
-  add the `Never` bottom type (§2.9; `fatalError: Never`, §9.2/§6.4);
-  allow comma-separated alternative patterns in `match` arms (§5.9, §7.2,
-  §17); align the prelude with the §9 check names (§12.4); fix the quicksort
-  example to respect index-level exclusivity via `swapAt` (§16.1). Drop the
-  global `Dn` decision numbering (decisions are now referenced by section).
+- **2026-06-20** — Consistency pass. Removed user-defined generics and the
+  protocol/trait dependencies (`Comparable` / `Display` / `Iterable` /
+  `Deinitializable`): v0.1 keeps only built-in generic containers (§2.6).
+  Unified function return-type syntax to `:` (§2.3). Integer overflow now
+  **traps in all builds** (§5.2). Moved `Any` to reserved (§1.4, §15). Added
+  the `??` coalescing operator (§8.5). Resolved the duplicate-D3 call-site
+  contradiction — labels are mandatory (§5.6). Collapsed enum cases to one
+  terse form (§3.4). `&` is now required on every `inout` / `initializing`
+  lvalue assignment (§5.3). Merged the reserved-keyword lists and fixed the
+  prelude (`precondition` / `fatalError`, §12.4).
+- **2026-06-21** — Grammar/lexical consistency pass for implementability.
+  Added the `indirect` keyword to the reserved list (§1.4) and removed the
+  unused `->` token (returns use `:`, §1.6). Defined the `Never` bottom type
+  (§2.9) and `param_type` (§2.3); `fatalError` now returns `Never` (§9.2) and
+  `Never` is in the prelude (§12.4). Fixed `struct_member` to use `binding`
+  (§3.3) and `import_decl` to allow `as` (§3.8). Reconciled the subscript
+  `accessor` grammar with §17 so statements may surround `yield` (§3.6).
+  Admitted the diverging `return` operand of `??` in the expression grammar
+  and fixed the tuple `primary_expr` rule (§17). Noted that `@property`'s
+  `forall` quantifier is a reserved annotation DSL, not v0.1 expression
+  syntax (§11.2).
+- **2026-06-21b** — Deferred string interpolation (`"\(expr)"`) out of v0.1
+  to a future version (§1.7, now ⏳); removed `interpolation` from the v0.1
+  `string_item` grammar (§1.5) and added it to the reserved syntactic
+  constructs (§15).

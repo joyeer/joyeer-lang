@@ -20,7 +20,7 @@ precedence; associativity is shown.
 | 11 | `==`  `!=` | none |
 | 12 | `&&` | left |
 | 13 | `\|\|` | left |
-| 14 | `??` (nil-coalescing) | right |
+| 14 | `??` (nil / `.Err` coalescing) | right |
 | 15 | assignment (`=`  `+=` …) | right |
 
 (Postfix `?` and `!` are optional-chain / force-unwrap, see §5.4.)
@@ -28,8 +28,10 @@ precedence; associativity is shown.
 ### 5.2 Arithmetic, comparison, logical, bitwise
 
 Standard semantics. Integer overflow on signed types is a **trap** in
-debug builds and **wraps** in release builds — programmers may opt into
-wrapping with `&+`, `&-`, `&*` (reserved syntax ⏳, deferred to v0.2).
+**all** builds (debug and release alike) — the behavior never changes with the
+optimization level (§0.1 principles 4 & 5). Programmers may opt into
+two's-complement wrapping with `&+`, `&-`, `&*` (reserved syntax ⏳, deferred
+to v0.2).
 
 Comparisons are non-chaining: `1 < x < 10` is a syntax error.
 
@@ -41,18 +43,23 @@ assign_op       ::= '=' | '+=' | '-=' | '*=' | '/=' | '%='
                  |  '&=' | '|=' | '^=' | '<<=' | '>>='
 ```
 
-The `&` prefix is required when the lvalue is a projection through an
-`inout` or `initializing` subscript:
+The `&` prefix is required whenever the assignment target is a mutable
+projection that the writer does not own outright — an `inout` / `initializing`
+**parameter binding**, or a projection through an `inout` / `initializing`
+**subscript**:
 
 ```joyeer
-&a[0] = 10         // subscript inout
-p.x = 10           // direct field on a var binding — no & needed
+&a[0] = 10         // subscript inout projection — & required
+&n += 1            // n is an `inout` parameter — & required
+p.x = 10           // direct field on a local `var` binding — no & needed
+count = count + 1  // direct local `var` — no & needed
 ```
 
-> **Heuristic.** Whenever the assignment touches storage that came from a
-> `subscript`, write `&`. Whenever you assign directly to a `var` or a
-> direct field of a `var`, no `&`. The compiler will tell you the right
-> form in any case.
+> **Heuristic.** Write `&` when the assignment targets an `inout` /
+> `initializing` parameter or storage reached through a `subscript`. Omit `&`
+> only when assigning directly to a local `var` or a direct field of a local
+> `var`. (Reads never take `&`; the marker is about the *write* target.) The
+> compiler reports the required form in any case.
 
 ### 5.4 Member access & methods
 
@@ -70,6 +77,16 @@ Optional chaining short-circuits to `nil`:
 let lengths = optionalString?.count   // type: Int?
 ```
 
+#### 5.4.1 The `?` / `!` forms
+
+| Form | Meaning | Section |
+|------|---------|---------|
+| `T?` | optional **type** (`Optional<T>`) | §2.4 |
+| `x?.field` | optional **chaining** | §5.4 |
+| `expr?` | `Result` / `Optional` **propagation** (early return) | §8.3 |
+| `x ?? y` | **coalescing** with fallback `y` | §8.5 |
+| `x!` | **force-unwrap** (traps on `nil`) | §2.4 / §9.3 |
+
 ### 5.5 Subscript expressions
 
 ```
@@ -86,11 +103,11 @@ call_expr       ::= callee '(' [ call_arg , ... ] ')'
 call_arg        ::= label ':' [ '&' | 'consume' ] expression
 ```
 
-> **📌 Decision (call site).**  Every argument is written with its label:
-> the only legal call of `func f(a: Int, b: Int)` is `f(a: 1, b: 2)`. There
-> is **no** positional / unlabeled call form and **no** `_` wildcard label
-> (§3.2.1); `f(1, 2)` is a syntax error. Supplied arguments follow
-> declaration order; defaulted arguments may be omitted (§3.2.5).
+> **📌 Decision D3 (call site).** Argument labels are **mandatory** at every
+> call site (§3.2.1); there is no positional / unlabeled form and no `_`
+> label. `func f(a: Int, b: Int)` must be called as `f(a: 1, b: 2)`. Supplied
+> arguments follow declaration order; a defaulted argument (§3.2.5) may be
+> omitted but is never written without its label.
 
 ### 5.7 Struct construction
 
