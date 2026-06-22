@@ -9,8 +9,12 @@ pattern         ::= '_'                                       // wildcard
                  |  '(' pattern , ... ')'                       // tuple
                  |  type '.' identifier [ '(' pattern , ... ')' ]   // enum case
                  |  '.' identifier [ '(' pattern , ... ')' ]        // contextual enum case
-                 |  identifier 'as' type                       // type test + bind
 ```
+
+> **Note.** Type-test / cast patterns (`x as T`) and the `is` / `as` type-test
+> operators are deferred to v0.2 (§15). v0.1 has no runtime type tests because
+> it has no subtyping, protocols, or inheritance, so there is no type
+> relationship to query.
 
 ### 7.1 Identifier
 

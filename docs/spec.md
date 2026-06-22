@@ -53,7 +53,7 @@ chapter file below.
   `Deinitializable`): v0.1 keeps only built-in generic containers (§2.6).
   Unified function return-type syntax to `:` (§2.3). Integer overflow now
   **traps in all builds** (§5.2). Moved `Any` to reserved (§1.4, §15). Added
-  the `??` coalescing operator (§8.5). Resolved the duplicate-D3 call-site
+  the `??` coalescing operator (§8.5). Resolved the duplicate call-site
   contradiction — labels are mandatory (§5.6). Collapsed enum cases to one
   terse form (§3.4). `&` is now required on every `inout` / `initializing`
   lvalue assignment (§5.3). Merged the reserved-keyword lists and fixed the
@@ -73,3 +73,17 @@ chapter file below.
   to a future version (§1.7, now ⏳); removed `interpolation` from the v0.1
   `string_item` grammar (§1.5) and added it to the reserved syntactic
   constructs (§15).
+- **2026-06-22** — Deferred `break` / `continue` (including labeled forms) and
+  the type-test / cast operators (`is`, `as`) to v0.2. They move to the
+  reserved list (§1.4, §15); the pattern grammar drops `x as T` (§7, §17), the
+  statement grammar drops `break` / `continue` (§6, §17), and `??` / §2.9 no
+  longer treat `break` / `continue` as `Never`-typed expressions (§5.12,
+  §6.4). The `as` keyword remains for `import` aliasing only (§3.8, §12.3).
+- **2026-06-22b** — Editorial consistency pass. Removed the ad-hoc decision
+  numbers (`D2` / `D2a` / `D3` / `D7` / `D14`) to comply with §0.4 (decisions
+  are cross-referenced by section, not numbered); de-duplicated the
+  call-site-label decision (canonical at §3.2.1, referenced from §5.6) and the
+  `??` decision (canonical at §8.5, referenced from §5.12). Removed the
+  duplicate nil-coalescing row from the §1.6 operator table. Clarified that
+  `class` is reserved but accepted-with-warning, not rejected (§15 ↔ §1.4 /
+  §14).

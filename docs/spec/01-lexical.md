@@ -34,19 +34,23 @@ an identifier.
 | Category | Keywords |
 |----------|----------|
 | Bindings | `let`, `var` |
-| Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `break`, `continue`, `yield` |
-| Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `typealias`, `import`, `indirect` |
+| Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `yield` |
+| Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `typealias`, `import`, `as`, `indirect` |
 | Memory effects | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self` |
 | Effects 🔬 | `performs`, `pure` |
-| Pattern | `where`, `as`, `is`, `_` |
-| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
+| Pattern | `where`, `_` |
+| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `break`, `continue`, `is`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
 
 > `class` is in the **reserved ⏳** list because it is removed in v0.2; unlike
 > the other reserved words it is **not** rejected — the parser still accepts
 > it through v0.1 with a deprecation warning (§14). The remaining reserved
 > words are rejected with a clear error message in v0.1 (§15).
+
+> `as` is a contextual keyword: in v0.1 it is used **only** for `import`
+> aliasing (§3.8). Its type-cast meaning (`x as T`) and the `is` type-test
+> operator are deferred to v0.2 (§15).
 
 ### 1.5 Literals
 
@@ -96,7 +100,6 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Bitwise | `&` `\|` `^` `~` `<<` `>>` |
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 | Range | `..<` `...` |
-| Nil-coalescing | `??` |
 | Postfix | `?` (optional chain / Result-propagation) `!` (force-unwrap) |
 | Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
@@ -106,7 +109,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 ### 1.7 String interpolation ⏳
 
-> **📌 Decision D7.** *String interpolation is reserved for a future version,
+> **📌 Decision.** *String interpolation is reserved for a future version,
 > not part of v0.1.*  Swift-style `"\(expr)"` is convenient sugar, but it is
 > not required for the v0.1 use cases; debug and test output use `print` with
 > separate arguments or manual concatenation. Deferring it keeps the v0.1

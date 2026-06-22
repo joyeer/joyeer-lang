@@ -50,7 +50,7 @@ plus `match` covers all cases.
 
 ### 8.5 `??` coalescing 📌
 
-> **📌 Decision D14.** *Binary `??` supplies a fallback for a `nil`
+> **📌 Decision.** *Binary `??` supplies a fallback for a `nil`
 > `Optional` or an `.Err` `Result`.* `a ?? b` evaluates to the unwrapped
 > value when `a` is `.Some` / `.Ok`, otherwise to `b`. The right operand `b`
 > may be an ordinary value **or** a diverging expression (`return ...`,

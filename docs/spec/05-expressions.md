@@ -96,18 +96,18 @@ subscript_expr  ::= postfix_expr '[' expression , ... ']'
 Resolves to the matching `subscript` declaration. The accessor invoked
 depends on the surrounding context (§4.5.1).
 
-### 5.6 Function calls 📌
+### 5.6 Function calls
 
 ```
 call_expr       ::= callee '(' [ call_arg , ... ] ')'
 call_arg        ::= label ':' [ '&' | 'consume' ] expression
 ```
 
-> **📌 Decision D3 (call site).** Argument labels are **mandatory** at every
-> call site (§3.2.1); there is no positional / unlabeled form and no `_`
-> label. `func f(a: Int, b: Int)` must be called as `f(a: 1, b: 2)`. Supplied
-> arguments follow declaration order; a defaulted argument (§3.2.5) may be
-> omitted but is never written without its label.
+Argument labels are **mandatory** at every call site (the decision is recorded
+at §3.2.1); there is no positional / unlabeled form and no `_` label.
+`func f(a: Int, b: Int)` must be called as `f(a: 1, b: 2)`. Supplied arguments
+follow declaration order; a defaulted argument (§3.2.5) may be omitted but is
+never written without its label.
 
 ### 5.7 Struct construction
 
@@ -167,15 +167,14 @@ total (i.e., have an `else` arm) when used as an expression.
 > use free functions. This keeps the memory model simpler (no closure
 > capture rules) and matches the v0.1 use cases (JSON parser, quicksort).
 
-### 5.12 Nil-coalescing `??` 📌
+### 5.12 Nil-coalescing `??`
 
-> **📌 Decision.** *`??` supplies a fallback for an absent / failed
-> value.*  For `a: T?`, `a ?? b` evaluates to the wrapped value when `a` is
-> `.Some(v)`, otherwise to `b`. For `a: Result<T, E>`, `a ?? b` evaluates to
-> the `Ok` value when `a` is `.Ok(v)`, otherwise to `b` (the error is
-> discarded; use `match` or `?` (§8.3) when the error must be inspected).
-> `b` is evaluated only when needed (short-circuit), and `??` is
-> right-associative, so `a ?? b ?? c` parses as `a ?? (b ?? c)`.
+The coalescing operator `??` supplies a fallback for an absent `Optional` or a
+failed `Result`; the decision and its `.Some` / `.Ok` unwrapping semantics are
+recorded at §8.5. `b` is evaluated only when needed (short-circuit), and `??`
+is right-associative (§5.1), so `a ?? b ?? c` parses as `a ?? (b ?? c)`. When
+the error of a `Result` must be inspected rather than discarded, use `match`
+or `?` (§8.3).
 
 ```joyeer
 let port: Int = parseInt(s: s) ?? 8080                       // plain fallback value
@@ -184,9 +183,9 @@ let c = peek(p: p) ?? return .Err(.UnexpectedEof)            // fallback returns
 ```
 
 For `a: T?`, the type of `a ?? b` is `T` when `b: T`, or `T?` when `b: T?`.
-The right-hand side may have type `Never` (§2.9) — as with `fatalError`,
-`return`, `break`, or `continue` — in which case the whole expression has
-the left-hand side's unwrapped type `T`.
+The right-hand side may have type `Never` (§2.9) — as with `fatalError` or
+`return` — in which case the whole expression has the left-hand side's
+unwrapped type `T`.
 
 ---
 

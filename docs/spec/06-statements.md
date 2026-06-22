@@ -4,7 +4,7 @@
 statement       ::= binding ';'?
                  |  expression ';'?
                  |  if_stmt | while_stmt | for_stmt
-                 |  return_stmt | break_stmt | continue_stmt
+                 |  return_stmt
                  |  block
 
 block           ::= '{' statement* '}'
@@ -39,14 +39,15 @@ for x in arr      { print(value: x) }
 for &x in arr     { &x *= 2 }
 ```
 
-### 6.4 return / break / continue
+### 6.4 return
 
 Standard. `return` may be omitted in single-expression function bodies
-(§3.2.2). `break label` / `continue label` reserved ⏳ for v0.2.
+(§3.2.2). `break` and `continue` (including the labeled `break label` /
+`continue label` forms) are reserved ⏳ for v0.2 (§15); a v0.1 loop is exited
+only by its condition or by `return`.
 
-Used as expressions, `return e`, `break`, and `continue` have type `Never`
-(§2.9); this is why they may appear as the right-hand side of `??` (§5.12)
-or as a `match` arm body.
+Used as an expression, `return e` has type `Never` (§2.9); this is why it may
+appear as the right-hand side of `??` (§5.12) or as a `match` arm body.
 
 ---
 

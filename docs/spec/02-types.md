@@ -114,7 +114,7 @@ See §8 for error-handling semantics.
 
 ### 2.6 Generics 📌
 
-> **📌 Decision D2.** *v0.1 has **no user-defined generics**.* The only generic
+> **📌 Decision.** *v0.1 has **no user-defined generics**.* The only generic
 > types are the built-in containers `Array<T>` / `[T]`, `Dict<K, V>` /
 > `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>`. Their angle brackets are
 > **type arguments understood directly by the compiler**, not a general
@@ -128,7 +128,7 @@ let m: [String: Int] = [:]             // built-in Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
 
-> **📌 Decision D2a.** *When generics are reintroduced they will use `<T>`*
+> **📌 Decision.** *When generics are reintroduced they will use `<T>`*
 > (not Hylo's `[T]`), for familiarity with Swift / Rust / C# / TypeScript
 > users. User-defined generics, constraints, associated types, and
 > monomorphization are reserved for a future version (§15); see
