@@ -75,6 +75,11 @@ for early exits.
 func sq(x: Int): Int { x * x }
 ```
 
+A return value carries **ownership** of the result out of the function: the
+ownership-escape semantics, the `consuming` / `initializing` interplay, why no
+reference may be returned, and `Result` / `Optional` / `Never` results are
+specified in §4.10.
+
 #### 3.2.3 Generics & constraints
 
 v0.1 has **no user-defined generics** (§2.6): a `func` may not declare type
@@ -96,7 +101,7 @@ future version (§15).
 |-----------------|-------------|----------------|-------------------|
 | `borrowing` (default) | `func peek(): UInt8` | read-only | none: `b.peek()` |
 | `mutating` | `mutating func append(s: String)` | mutable, exclusive | `&`: `&b.append(s: s)` |
-| `consuming` | `consuming func build(): String` | owned; consumed | `consume`: `consume b.build()` |
+| `consuming` | `consuming func build(): String` | owned, mutable in place (§4.1.1); consumed | `consume`: `consume b.build()` |
 
 ```joyeer
 extension StringBuilder {

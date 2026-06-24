@@ -87,3 +87,22 @@ chapter file below.
   duplicate nil-coalescing row from the §1.6 operator table. Clarified that
   `class` is reserved but accepted-with-warning, not rejected (§15 ↔ §1.4 /
   §14).
+- **2026-06-23** — Added §4.10 (Return values & ownership escape): the return
+  value is the sole route by which ownership leaves a frame, since reference
+  returns do not exist (§4.8); returning a binding is a move at its last use
+  (§4.6) that transfers the `deinit` obligation to the caller (§4.7).
+  Specified returning through `consuming` (§4.10.1), the `initializing` emplace
+  alternative for large results (§4.10.2), the prohibition on returning
+  references/projections with subscript `yield` as the in-place substitute
+  (§4.10.3), and `Result` / `Optional` / `Never` results (§4.10.4). Linked from
+  §3.2.2.
+- **2026-06-23b** — Clarified ownership vocabulary. Added §4.1.1 (Ownership
+  state vs. access effect): "owned" is a **state** (responsible for `deinit`),
+  while `consuming` is the only **effect** that transfers it — `borrowing` /
+  `inout` / `initializing` are projections that leave ownership with the
+  caller. Decided that an owning binding is mutable in place by its owner and
+  that `consuming` parameters / `consuming self` are `var`-like (owned,
+  mutable), so a `consuming` method may mutate `self` directly (mutation still
+  marked `&`); the `mutating` vs `consuming` distinction is the caller's fate,
+  not in-body mutability. Propagated to the §4.2 effect table, §4.2.3, §3.2.4,
+  and simplified the §4.10.1 example (removed the rebind-to-`var`).

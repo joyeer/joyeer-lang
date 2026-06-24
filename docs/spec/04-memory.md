@@ -25,6 +25,61 @@ There are **no reference types** in Joyeer. No `&T`, no pointers, no
 parameters (§4.2) and *projections* via subscripts (§4.5), neither of
 which is a first-class value.
 
+#### 4.1.1 Ownership state vs. access effect (two axes)
+
+Two **orthogonal** classifications govern every binding. Keeping them apart
+removes a common confusion: *owned* is a **state** (who must destroy the
+value), whereas `consuming` is an **effect** (how a parameter acquires that
+state across a call).
+
+**Axis 1 — ownership state.**
+
+- An **owning** binding is responsible for the value's destruction: its
+  `deinit` runs when the binding goes out of scope, is overwritten, or is
+  consumed (§4.7). Local `let` / `var` bindings, stored `struct` / `enum`
+  fields, and `consuming` parameters (including `consuming self`) are owning
+  bindings.
+- A **projecting** (borrowing) binding is a temporary view that **never**
+  destroys the value; an owner elsewhere stays responsible. `borrowing` and
+  `inout` parameters and subscript `yield` projections (§4.5) are projecting
+  bindings.
+
+**Axis 2 — mutability.** Independently of Axis 1, a binding is immutable
+(`let`, `borrowing`) or mutable (`var`, `inout`, owning `consuming`).
+
+The four parameter **access effects** (§4.2) are *points in this space* — they
+describe how a parameter relates to the **caller's** storage, not a separate
+kind of thing from ownership:
+
+| Binding | Owns? (runs `deinit`) | Mutable? | Caller's value |
+|---------|----------------------|----------|----------------|
+| `let x` (local) | ✅ | ❌ | — (no call boundary) |
+| `var x` (local) | ✅ | ✅ | — |
+| `borrowing` param (default) | ❌ | ❌ | caller keeps |
+| `inout` param | ❌ | ✅ (exclusive) | caller keeps |
+| `consuming` param / `self` | ✅ | ✅ | **transferred to callee** |
+| `initializing` param | writes caller's uninit. storage | ✅ (write) | caller keeps |
+
+> **📌 Decision.** *`consuming` is the only access effect that transfers
+> ownership; `borrowing` / `inout` / `initializing` are projections that leave
+> ownership with the caller.*  "owned" names the resulting **state**;
+> `consuming` names the **effect** that produces it. A local `var` is owned
+> without ever being `consuming`; a `consuming` parameter is owned *because*
+> the caller relinquished it (the caller's binding becomes uninitialized,
+> §4.2.3). Hence every `consuming` binding is owned, but not every owned
+> binding is `consuming`.
+
+> **📌 Decision.** *A `consuming` parameter (and `consuming self`) is an
+> owning, `var`-like (mutable) binding, and any owning mutable binding may be
+> mutated in place by its owner.*  A `consuming` binding is owned outright and
+> is therefore mutable — not `let`-like. (A `let` local is owning but immutable,
+> per Axis 2.) In-place mutation is still marked with `&` at the mutation site
+> (§4.3), so "where is this mutated?" stays greppable. Consequently the
+> difference between a `mutating` and a `consuming` receiver is **not** in-body
+> mutability — both may mutate `self` — but the **caller's fate**: `mutating`
+> returns the receiver to the caller (an exclusive borrow), while `consuming`
+> takes it away (§3.2.4).
+
 ### 4.2 Access effects on parameters
 
 A function parameter declares **how** the function will access the
@@ -35,7 +90,7 @@ must match it explicitly at the call site (§4.3).
 |--------|---------|-------------------|----------------|
 | `borrowing` (default) | Read-only projection. Multiple `borrowing` projections of the same value may coexist. | Pass without marker (may write `borrowing x` for emphasis). | Use as immutable value. |
 | `inout` | **Exclusive** mutable projection. While held, the original storage is inaccessible to anyone else. | Mark with `&x` at call site. | Use and mutate like a local `var`. |
-| `consuming` | **Consume** the argument. Caller's binding becomes uninitialized after the call. | Mark with `consume x` at call site; caller must own the value. | Owned outright; may be moved into return value, into another `consuming` parameter, or destroyed. |
+| `consuming` | **Consume** the argument. Caller's binding becomes uninitialized after the call. | Mark with `consume x` at call site; caller must own the value. | Owned outright — a `var`-like, mutable binding (§4.1.1); may be **mutated in place**, moved into the return value, passed to another `consuming` parameter, or destroyed. |
 | `initializing` | Write-only into uninitialized storage. | Mark with `&x` at call site, where `x` is uninitialized or has been consumed. | Must initialize before the body ends. |
 
 #### 4.2.1 `borrowing` (default)
@@ -69,7 +124,7 @@ While `increment` holds an `inout` projection of `k`, no other access to
 #### 4.2.3 `consuming`
 
 ```joyeer
-func store(s: consuming String) { /* s is mine; printable, destroyable, returnable */ }
+func store(s: consuming String) { /* s is mine: mutable, printable, destroyable, returnable */ }
 
 var greeting = "hello"
 store(s: consume greeting)
@@ -79,6 +134,10 @@ store(s: consume greeting)
 After the call, `greeting` is in an **uninitialized state**. The compiler
 rejects any subsequent read. A subsequent assignment (`greeting = "world"`)
 re-initializes the storage and re-enables reads.
+
+Inside `store`, `s` is an owning, `var`-like binding (§4.1.1): the body may
+**mutate `s` in place** (e.g. `&s.append(s: "!")`) as well as move or destroy
+it. Ownership — not a `mutating` keyword — is what grants in-body mutation.
 
 #### 4.2.4 `initializing`
 
@@ -309,6 +368,137 @@ model trivially analyzable by both the compiler and AI tools.
 Out of scope for v0.1. A future `unsafe` block will expose raw pointers
 for C interop. Until then, the standard library is the only producer of
 heap-backed types (`Array`, `String`, `Dict`).
+
+### 4.10 Return values & ownership escape
+
+A function communicates a result to its caller **only** through its return
+value. Because Joyeer has no reference types (§4.8), the return value is the
+single mechanism by which a value's ownership may **escape** the frame that
+produced it.
+
+> **📌 Decision.** *A function returns **ownership** of its result to the
+> caller.*  After the `return`, the callee does not retain, alias, or `deinit`
+> the returned value; the destruction obligation (§4.7) transfers to the
+> caller. "Who frees the result?" is therefore answerable by simple scanning:
+> the value lives until the caller's binding that receives it goes out of
+> scope.
+
+Returning a locally-owned binding is a **move** at its last use (§4.6), not a
+copy, so the moved-out value's `deinit` does **not** run at the `return` site:
+
+```joyeer
+struct FileHandle {
+  var fd: Int32
+  init(path: String) { fd = sys.open(path: path) }
+  deinit() { sys.close(fd: fd) }
+}
+
+func openLog(): FileHandle {
+  let f = FileHandle(path: "log.txt")
+  f                 // last use of f → moved out; f.deinit() does NOT run here
+}
+
+func use() {
+  let log = openLog()    // caller now owns the handle
+  // ...
+}                         // log.deinit() runs here — exactly once
+```
+
+#### 4.10.1 Returning through `consuming`
+
+A `consuming` parameter or `consuming self` (§4.2.3, §3.2.4) owns its argument
+outright. Because an owning binding is mutable in place (§4.1.1), the body may
+mutate `self` directly and then move it into the return value — no rebinding to
+a local `var` is needed. Ownership flows in at the call site (marked `consume`,
+§4.3) and back out through the result:
+
+```joyeer
+struct PathBuilder { var buf: String }
+
+extension PathBuilder {
+  consuming func join(part: String): PathBuilder {
+    &self.buf.append(s: "/")     // self is owned in-body → mutable in place (§4.1.1)
+    &self.buf.append(s: part)
+    self                         // move out: ownership returns to the caller
+  }
+}
+
+var p = PathBuilder(buf: "usr")
+let full = consume p.join(part: "local").join(part: "bin")
+```
+
+Each link consumes its receiver, mutates the owned `self`, and moves it out as
+a freshly-owned result; at every point there is exactly one owner (§4.4), and
+the transfer is visible at the call site.
+
+#### 4.10.2 In-place result via `initializing`
+
+Returning a large value *by result* would, at an overwrite site, require the
+prior value to be destroyed before the new one is stored (§4.7 rule 2). To
+avoid that destruct-then-construct round-trip, a function may instead write its
+result directly into caller-provided **uninitialized** storage through an
+`initializing` parameter (§4.2.4) — the emplace alternative to a return value:
+
+```joyeer
+// by-result form
+func makeBuffer(size: Int): [UInt8] { ... }
+
+// emplace form — constructs in the caller's storage, no intermediate value
+func produceLargeBuffer(out: initializing [UInt8]) {
+  &out = makeBuffer(size: 1_000_000)
+}
+
+var buf: [UInt8]                  // declared, uninitialized
+produceLargeBuffer(out: &buf)     // '&' marks the initializing argument (§4.3)
+```
+
+The two forms are observationally equivalent; the `initializing` form exists
+for cases where eliding the temporary is required (very large or non-movable
+payloads).
+
+#### 4.10.3 No reference or projection may be returned
+
+A function result is always an owned value. The following are **not**
+expressible:
+
+- returning a reference (`&T` is not a type, §4.8);
+- returning a `borrowing` / `inout` projection of a parameter or local;
+- returning the address of a local.
+
+When a caller needs **in-place** access to storage owned by a callee, the
+callee exposes a `subscript` whose accessor `yield`s a projection (§4.5.2)
+instead of returning it. The projection's lifetime is the enclosing statement
+(§4.5.3); it is not a value and cannot be stored:
+
+```joyeer
+extension Buffer {
+  subscript(i: Int): UInt8 {
+    borrowing { yield  data[i] }     // in-place read projection
+    inout     { yield &data[i] }     // in-place mutable projection
+  }
+}
+
+&buf[3] += 1     // projection established and released within this one statement
+```
+
+#### 4.10.4 Result, Optional, and diverging returns
+
+Fallible functions return the failure **as a value** — there is no out-of-band
+return channel (no exceptions, §8.1). Absence is `Optional<T>` (§2.4);
+recoverable failure is `Result<T, E>` (§8.2); both compose with `?` (§8.3) and
+`??` (§8.5):
+
+```joyeer
+func parseInt(s: String): Result<Int, ParseError> {
+  if s.isEmpty() { return .Err(.Empty) }
+  // ...
+  .Ok(n)                                  // implicit return of the trailing expression
+}
+```
+
+A function that never returns normally has result type `Never` (§2.9); a
+`Never`-typed expression (`return …`, `fatalError(…)`) satisfies any expected
+result type and may stand on the right of `??` as an early-exit guard (§8.5).
 
 ---
 
