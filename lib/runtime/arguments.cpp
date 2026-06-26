@@ -27,10 +27,6 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         }
     }
     
-    if(inputfile.is_absolute()) {
-        inputfile = workingDirectory / inputfile;
-    }
-    
     if(!std::filesystem::exists(inputfile)) {
         diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
     }
@@ -47,8 +43,8 @@ void CommandLineArguments::printUsage() {
 void CommandLineArguments::parseInputFile(const std::string &inputpath) {
     inputfile = std::filesystem::path(inputpath);
     if(inputfile.is_relative()) {
-        auto path = std::filesystem::current_path() / inputfile.parent_path();
-        workingDirectory = std::filesystem::canonical(path);
+        inputfile = std::filesystem::absolute(inputfile).lexically_normal();
+        workingDirectory = inputfile.parent_path();
     } else {
         // using input file as working directory
         workingDirectory = inputfile.parent_path();

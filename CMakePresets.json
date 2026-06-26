@@ -26,7 +26,8 @@
             "displayName": "x64 Debug",
             "inherits": "windows-base",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "JOYEER_BUILD_UNITTESTS": "OFF"
             }
         },
         {

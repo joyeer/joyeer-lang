@@ -18,6 +18,8 @@ list(APPEND CMAKE_MODULE_PATH
 enable_testing()
 enable_language(CXX)
 
+option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
+
 # Use C++20.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,4 +49,6 @@ include_directories(
 
 add_subdirectory(lib)
 add_subdirectory(tests)
-add_subdirectory(unittests)
+if(JOYEER_BUILD_UNITTESTS)
+    add_subdirectory(unittests)
+endif()
