@@ -46,6 +46,11 @@ Node::Ptr SyntaxParser::tryParseDecl() {
         return classDecl;
     }
 
+    auto structDecl = tryParseStructDecl();
+    if(structDecl != nullptr) {
+        return structDecl;
+    }
+
     auto funcDecl = tryParseFuncDecl();
     if(funcDecl != nullptr) {
         return funcDecl;
@@ -241,6 +246,39 @@ Node::Ptr SyntaxParser::tryParseClassDecl() {
     }
 
     return std::make_shared<ClassDecl>(className, members);
+}
+
+Node::Ptr SyntaxParser::tryParseStructDecl() {
+    if (tryEat(TokenKind::keyword, Keywords::STRUCT) == nullptr) {
+        return nullptr;
+    }
+
+    auto structName = tryEat(TokenKind::identifier);
+    if (structName == nullptr ) {
+        diagnostics->reportError(ErrorLevel::failure, "[Error]");
+        return nullptr;
+    }
+
+    if (tryEat(TokenKind::punctuation, Punctuations::OPEN_CURLY_BRACKET) == nullptr) {
+        diagnostics->reportError(ErrorLevel::failure, "[Error]");
+        return nullptr;
+    }
+
+    std::vector<Node::Ptr> members;
+    while (true) {
+        auto member = tryParseDecl();
+        if(member == nullptr) {
+            break;
+        }
+        members.push_back(member);
+    }
+
+    if (tryEat(TokenKind::punctuation, Punctuations::CLOSE_CURLY_BRACKET) == nullptr) {
+        diagnostics->reportError(ErrorLevel::failure, "[Error]");
+        return nullptr;
+    }
+
+    return std::make_shared<StructDecl>(structName, members);
 }
 
 StmtsBlock::Ptr SyntaxParser::tryParseStmtsBlock() {

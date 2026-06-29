@@ -709,6 +709,21 @@ Node::Ptr TypeGenSelfForMemberFunc::visit(const FuncDecl::Ptr& decl) {
 }
 
 Node::Ptr TypeGenSelfForMemberFunc::visit(const Expr::Ptr& decl) {
+    if(decl->prefix != nullptr) {
+        decl->prefix = NodeVisitor::visit(decl->prefix);
+    }
+    std::vector<Node::Ptr> binaries;
+    for(const auto& binary : decl->binaries) {
+        binaries.push_back(NodeVisitor::visit(binary));
+    }
+    decl->binaries = binaries;
+    // By the time member-func self-injection runs, TypeGen::visit(Expr) has
+    // already flattened prefix/binaries into `nodes`; rewrite those operands too.
+    std::vector<Node::Ptr> nodes;
+    for(const auto& n : decl->nodes) {
+        nodes.push_back(NodeVisitor::visit(n));
+    }
+    decl->nodes = nodes;
     return decl;
 }
 
@@ -761,5 +776,34 @@ Node::Ptr TypeGenSelfForMemberFunc::visit(const AssignExpr::Ptr& decl) {
 }
 
 Node::Ptr TypeGenSelfForMemberFunc::visit(const SelfExpr::Ptr& decl) {
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const StmtsBlock::Ptr& decl) {
+    std::vector<Node::Ptr> statements;
+    for(const auto& statement : decl->statements) {
+        statements.push_back(NodeVisitor::visit(statement));
+    }
+    decl->statements = statements;
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const ArrayLiteralExpr::Ptr& decl) {
+    std::vector<Node::Ptr> items;
+    for(const auto& item : decl->items) {
+        items.push_back(NodeVisitor::visit(item));
+    }
+    decl->items = items;
+    return decl;
+}
+
+Node::Ptr TypeGenSelfForMemberFunc::visit(const DictLiteralExpr::Ptr& decl) {
+    std::vector<std::tuple<Node::Ptr, Node::Ptr>> items;
+    for(const auto& item : decl->items) {
+        auto key = NodeVisitor::visit(std::get<0>(item));
+        auto value = NodeVisitor::visit(std::get<1>(item));
+        items.emplace_back(key, value);
+    }
+    decl->items = items;
     return decl;
 }

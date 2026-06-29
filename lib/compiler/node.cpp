@@ -140,6 +140,15 @@ std::string ClassDecl::getSimpleName() {
     return name->rawValue;
 }
 
+//-------------------------------------
+// StructDecl implementation
+//-------------------------------------
+
+StructDecl::StructDecl(Token::Ptr name, const std::vector<Node::Ptr>& statements) :
+        ClassDecl(std::move(name), statements) {
+    kind = SyntaxKind::structDecl;
+}
+
 
 //-------------------------------------
 //FuncDecl implementation
@@ -158,7 +167,8 @@ void FuncDecl::bindClass(const Class* klass) {
     assert(symtable->find(Keywords::SELF) == nullptr);
     // self symbol
 
-    assert(returnType == nullptr);
+    // A member method may declare its own return type (e.g. `func sum(): Int`);
+    // only constructors get a synthesized return type below.
 
     auto clause = std::static_pointer_cast<ParameterClause>(this->parameterClause);
 

@@ -1,0 +1,16 @@
+struct Point {
+    var x = 1
+    var y = 2
+
+    func sum(): Int {
+        return x + y
+    }
+}
+
+var p = Point()
+print(message: p.x)
+print(message: p.y)
+
+p.x = 10
+print(message: p.x)
+print(message: p.sum())

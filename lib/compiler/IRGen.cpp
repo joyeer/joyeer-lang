@@ -25,6 +25,7 @@ void IRGen::emit(const Node::Ptr& node) {
         NODE_EMIT(SyntaxKind::funcDecl, FuncDecl)
         NODE_EMIT(SyntaxKind::memberFuncCallExpr, MemberFuncCallExpr)
         NODE_EMIT(SyntaxKind::classDecl, ClassDecl)
+        NODE_EMIT(SyntaxKind::structDecl, ClassDecl)
         NODE_EMIT(SyntaxKind::stmtsBlock, StmtsBlock)
         NODE_EMIT(SyntaxKind::ifStmt, IfStmt)
         NODE_EMIT(SyntaxKind::expr, Expr)

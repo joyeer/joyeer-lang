@@ -20,6 +20,8 @@ private:
 
     Node::Ptr tryParseClassDecl();
 
+    Node::Ptr tryParseStructDecl();
+
     Node::Ptr tryParseFuncDecl();
     
     Node::Ptr tryParseConstructorDecl();

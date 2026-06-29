@@ -24,6 +24,7 @@ enum class SyntaxKind {
     varDecl,
     funcDecl,
     classDecl,
+    structDecl,
 
     parameterClause,
 
@@ -77,6 +78,7 @@ struct Node : std::enable_shared_from_this<Node> {
             case SyntaxKind::varDecl:
             case SyntaxKind::funcDecl:
             case SyntaxKind::classDecl:
+            case SyntaxKind::structDecl:
             case SyntaxKind::module:
                 return true;
             default:
@@ -571,6 +573,16 @@ struct ClassDecl : public StmtsBlock {
     ClassDecl(Token::Ptr name, const std::vector<Node::Ptr>& statements);
 
     std::string getSimpleName() override;
+};
+
+// Represent a `struct` value-type declaration (spec §3.3).
+// For v0.1 it reuses the ClassDecl pipeline because the VM does not yet model
+// value semantics; it carries a distinct SyntaxKind so later passes can
+// distinguish structs from legacy classes.
+struct StructDecl : public ClassDecl {
+    using Ptr = std::shared_ptr<StructDecl>;
+
+    StructDecl(Token::Ptr name, const std::vector<Node::Ptr>& statements);
 };
 
 
