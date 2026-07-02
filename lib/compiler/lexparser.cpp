@@ -1,5 +1,6 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/diagnostic/diagnostic.h"
+#include <charconv>
 
 LexParser::LexParser(const CompileContext::Ptr& context) {
     this->diagnostics = context->diagnostics;
@@ -135,6 +136,13 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
                 parseOperator(iterator - 1);
                 break;
             case '|':
+                if (iterator != endIterator) {
+                    if (*iterator == '|') {
+                        iterator ++;
+                        pushOperator(Operators::OR_OR, iterator);
+                        continue;
+                    }
+                }
                 parseOperator(iterator - 1);
                 break;
             case '^':
@@ -240,9 +248,11 @@ void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
         break;
       default:
         iterator --;
-        break;
+        goto break_label_2;
       }
     }
+
+  break_label_2:
     if(!hasFraction) {
       iterator --;
     } 
@@ -250,7 +260,12 @@ void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
 
     std::string identifier(startAt, iterator);
     auto token = std::make_shared<Token>(TokenKind::decimalLiteral, identifier, lineNumber, iterator - startAt);
-    token->intValue = std::stoi(identifier);
+    int value = 0;
+    auto convResult = std::from_chars(identifier.data(), identifier.data() + identifier.size(), value);
+    if (convResult.ec == std::errc::result_out_of_range) {
+        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(startAt - lineStartAtPosition), Diagnostics::errorIntegerLiteralOverflow);
+    }
+    token->intValue = value;
     sourcefile->tokens.push_back(token);
 }
 

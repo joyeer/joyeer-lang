@@ -42,6 +42,7 @@ std::unordered_set<std::string> initKeywordMap() {
     map.insert(Keywords::ELSE);
     map.insert(Keywords::FOR);
     map.insert(Keywords::WHILE);
+    map.insert(Keywords::IMPORT);
     map.insert(Keywords::TRY);
     map.insert(Keywords::IN);
     map.insert(Keywords::INIT);
@@ -73,6 +74,7 @@ const std::string Operators::EQUALS = "=";
 const std::string Operators::NOT_EQUALS = "!=";
 const std::string Operators::EQUAL_EQUAL = "==";
 const std::string Operators::AND_AND = "&&";
+const std::string Operators::OR_OR = "||";
 const std::string Operators::QUESTION = "?";
 const std::string Operators::POINT = "!";
 const std::string Operators::PLUS = "+";
@@ -91,6 +93,7 @@ std::unordered_map<std::string, OperatorPriority> initOperatorPriorities() {
         { Operators::NOT_EQUALS, OperatorPriority::high },
         { Operators::EQUAL_EQUAL, OperatorPriority::high },
         { Operators::AND_AND,     OperatorPriority::low },
+        { Operators::OR_OR,       OperatorPriority::low },
         { Operators::QUESTION,    OperatorPriority::high },
         { Operators::POINT,       OperatorPriority::high },
         { Operators::PLUS,        OperatorPriority::low },

@@ -85,6 +85,7 @@ struct Operators {
     static const std::string NOT_EQUALS;           // !=
     static const std::string EQUAL_EQUAL;          // ==
     static const std::string AND_AND;              // &&
+    static const std::string OR_OR;                // ||
     static const std::string QUESTION;             // ?
     static const std::string POINT;                // !
     static const std::string PLUS;                 // +
