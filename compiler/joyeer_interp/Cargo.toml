@@ -1,0 +1,9 @@
+[package]
+name = "joyeer_interp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+joyeer_ast.workspace = true

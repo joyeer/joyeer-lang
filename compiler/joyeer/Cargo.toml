@@ -1,0 +1,13 @@
+[package]
+name = "joyeer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "joyeer"
+path = "src/main.rs"
+
+[dependencies]
+joyeer_driver.workspace = true
