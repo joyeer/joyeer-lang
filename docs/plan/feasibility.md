@@ -41,7 +41,6 @@ to a real language that already ships it.
 | No GC + value semantics + ownership | **Rust, Swift, Hylo, Mojo** | Hylo (ex-Val) is almost exactly Joyeer's "no reference types, mutable value semantics" target. The path has been walked. |
 | `borrowing` / `inout` / `consuming` / `initializing` | **Swift 5.9+** (near-verbatim) | Joyeer borrows Swift's ownership keywords directly. Shipping ⇒ implementable. |
 | 4 subscript accessors + `yield` | **Swift** `_read` / `_modify` coroutine accessors | Already runs in a production compiler. |
-| Effect system (`performs IO`, …) | **Koka, Effekt, Unison, OCaml 5** | Active but mature area; effect handlers are real. |
 | Contracts (`requires` / `ensures`) | **Eiffel, Ada/SPARK, Dafny, Verus** | Runtime contracts are 1986 tech; compile-time verification proven by SPARK / Dafny / Verus. |
 | Refinement types (`PositiveInt`, `NonEmpty`) | **Liquid Haskell, F\***, Dafny | Decidable subsets are well understood. |
 | Zero-cost generics (monomorphization) | **Rust, C++** | Standard practice. |
@@ -112,8 +111,8 @@ automatic" as a release promise.
 
 ## 3. Verdict
 
-- ✅ **As an integrated systems language** — "no GC + ownership + effects +
-  runtime contracts + refinement types + LLVM backend" — **clearly buildable.**
+- ✅ **As an integrated systems language** — "no GC + ownership + runtime
+  contracts + refinement types + LLVM backend" — **clearly buildable.**
   Each block has prior art; the cost is integration engineering and years of
   polish, not feasibility. This is "needs an experienced team for a long time,"
   not "needs a breakthrough."

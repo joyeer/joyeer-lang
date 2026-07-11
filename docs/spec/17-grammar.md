@@ -17,16 +17,12 @@ binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 func_decl         ::= [ visibility ] [ method_effect ] 'func' identifier
                       '(' [ param , ... ] ')'
                       [ ':' type ]
-                      [ effect_clause ]
                       block
 
 method_effect     ::= 'borrowing' | 'mutating' | 'consuming'
 param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expression ]
 label             ::= identifier
 access_effect     ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'
-
-effect_clause     ::= 'performs' effect_label , ...
-effect_label      ::= identifier [ '<' type , ... '>' ]
 
 struct_decl       ::= [ visibility ] 'struct' identifier
                       '{' struct_member* '}'

@@ -26,7 +26,6 @@ let (x, y) = somePair        // tuple destructuring
 func_decl       ::= [ visibility ] [ method_effect ] 'func' identifier
                     '(' [ param , ... ] ')'
                     [ ':' return_type ]
-                    [ effect_clause ]
                     function_body
 
 method_effect   ::= 'borrowing' | 'mutating' | 'consuming'   // self access; 'borrowing' is default

@@ -13,7 +13,7 @@
 ┌───────────────────────────────────────────────────────────────────┐
 │  Spec scope  =  A (memory model)                                  │
 │                + B (struct / enum / generics / Result)             │
-│                + C-syntax-only (contracts / effects / props)       │
+│                + C-syntax-only (property/spec annotations)         │
 └───────────────────────────────────────────────────────────────────┘
 
 Implementation tracks (each track has phases that align to spec sections):
@@ -30,12 +30,12 @@ Phases:
   Phase 0  Scaffolding & legacy compat carve-out          ~ 1 week
   Phase A  Memory model: inout / consuming / initializing / subscript   ~ 4 weeks
   Phase B  Data model: struct / enum / generics / Result  ~ 6 weeks
-  Phase C  Syntax-only annotations: contracts / effects   ~ 2 weeks
+  Phase C  Syntax-only property/spec annotations          ~ 1 week
   Phase D  Legacy removal: class out, `print(message:)` out, etc.
                                                             ~ 2 weeks
 ```
 
-Target: from end of Phase 0 to end of Phase C, **~15 weeks of focused
+Target: from end of Phase 0 to end of Phase C, **~14 weeks of focused
 work** for one engineer or one well-prompted AI agent loop.
 
 ---
@@ -229,10 +229,16 @@ Files: `lib/compiler/IRGen.cpp`, `lib/vm/interpreter.cpp`,
 | `match`  | Keyword |
 | `indirect` | Contextual keyword inside `enum` body |
 | `init`, `deinit` | Keywords |
-| `where`, `as`, `is` | Pattern keywords |
+| `where` | Match-guard keyword |
 | `Self`   | Type-name keyword |
 | `=>`     | Match-arm separator |
 | `..<`, `...` | Range operators |
+
+Patterns are not lexer tokens as a category. The lexer recognizes the
+keywords/punctuation above plus ordinary identifiers, literals, `_`, `.`, and
+parentheses; `PatternNode` structure is produced by the parser and checked by
+the type checker. `as` remains contextual for import aliases, while type-test
+`is` / `as` are deferred (§15).
 
 ### B.2 AST additions
 
@@ -252,7 +258,7 @@ Files: `lib/compiler/IRGen.cpp`, `lib/vm/interpreter.cpp`,
 - `match` expression per §5.9.
 - `if` as expression — adjust expression vs statement disambiguation.
 - Range literal `0..<n`, `0...n`.
-- Function-type syntax `(Int) -> Int`.
+- Function-type syntax `(Int): Int`.
 
 ### B.4 Name resolution
 
@@ -337,53 +343,40 @@ VM); the Joyeer-level declarations are interfaces/façades.
 
 ---
 
-## Phase C — Syntax-only Annotations
+## Phase C — Syntax-only Property/Spec Annotations
 
-> Implements spec §9 (contracts), §10 (effects), §11 (property tests)
-> at the **parse + type-check** level. No semantic enforcement yet.
+> Implements spec §11 (`@spec` and `@property`) at the parse-and-store level.
+> Runtime checks from §9 are ordinary prelude calls and need no declaration-
+> level contract grammar. The general effect system in §10 is removed.
 
 ### C.1 Lexer additions
 
 | Token |
 |-------|
-| `requires`, `ensures`, `invariant`, `old`, `forall`, `exists`, `result` |
-| `performs`, `pure` |
 | `@` (attribute marker) |
+
+The `forall` form inside `@property` is an annotation-local DSL recognized by
+the annotation parser, not a general lexer keyword (§11.2).
 
 ### C.2 AST additions
 
 | Node | Purpose |
 |------|---------|
-| `ContractClause` (kind: requires/ensures/invariant) | Attached to `FuncDecl`, `InitDecl`, `WhileStmt`, `StructDecl` |
-| `EffectClause` | Attached to `FuncDecl` |
 | `AttributeNode` (`@spec`, `@property`, etc.) | Attached to any decl |
-| `QuantifierExpr` (`forall`, `exists`) | Expression form, type Bool |
-| `OldExpr` (`old(x)`) | Only valid inside `ensures` |
-| `ResultRef` | Only valid inside `ensures` |
+| `PropertyQuantifier` | Annotation-local `forall` form |
 
 ### C.3 Parser additions
 
-- Contract clauses between function signature and body; allow multiple,
-  any order.
-- `performs E1, E2, ...` clause on functions.
 - Attributes (`@spec("...")`, `@property expr`) precede any declaration.
-- Loop invariants between `while expr` and `{ ... }`.
 
 ### C.4 Type checking additions
 
-- Contracts: expressions must be Bool, side-effect-free, and only
-  reference in-scope names. `old(x)` may only appear inside `ensures`.
-  `result` may only appear inside `ensures` and must match the function
-  return type.
-- `performs` clause: store on the function symbol; propagate up call
-  graph. **Warning** in v0.1 when a function's `performs` doesn't cover
-  its callees' effects. **Error** in v0.2.
+- `@property` bodies must type-check as `Bool` when they use ordinary
+  expressions. Annotation-local quantified forms are parsed and stored.
 
 ### C.5 No codegen impact
 
-- v0.1: contracts and effects are stripped before IR generation.
-- A `--check-contracts` flag is reserved but currently rejects with
-  "contract enforcement not yet implemented; planned v0.3."
+- v0.1: `@spec` / `@property` metadata is not lowered to runtime IR.
 
 ### C.6 Tests (DoD)
 
@@ -391,18 +384,14 @@ VM); the Joyeer-level declarations are interfaces/façades.
 
 | File | Tests |
 |------|-------|
-| `01_requires_ensures_parse.joyeer` | Parses, runs identical to no-contract version |
-| `02_contract_typecheck_bad.joyeer` (errors/) | `requires "string"` → type error |
-| `03_old_outside_ensures.joyeer` (errors/) | `old()` in `requires` → error |
-| `04_result_in_requires.joyeer` (errors/) | `result` referenced in `requires` → error |
-| `05_performs_propagation.joyeer` (errors/, warning_as_error) | function calls `IO` callee without declaring `performs IO` |
-| `06_property_attribute_parse.joyeer` | `@property` parses and is preserved on the decl |
-| `07_invariant_on_struct.joyeer` | Parses |
-| `08_loop_invariant.joyeer` | Parses inside `while` |
+| `01_spec_attribute_parse.joyeer` | `@spec` parses and is preserved on the declaration |
+| `02_property_attribute_parse.joyeer` | `@property` parses and is preserved on the declaration |
+| `03_property_typecheck_bad.joyeer` (errors/) | string-valued property → type error |
+| `04_property_forall_parse.joyeer` | annotation-local `forall` form parses and is preserved |
 
 ### C.7 Future work (not in scope of this plan)
 
-- v0.3: runtime contract enforcement (`--check-contracts`).
+- v0.3: property-based test runner.
 - v1.0: SMT-backed static contract verification (target: Z3 or CVC5
   bridge in IR pass).
 

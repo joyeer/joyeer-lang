@@ -36,12 +36,16 @@ an identifier.
 | Bindings | `let`, `var` |
 | Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `yield` |
 | Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `typealias`, `import`, `as`, `indirect` |
-| Memory effects | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
+| Access conventions | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self` |
-| Effects 🔬 | `performs`, `pure` |
-| Pattern | `where`, `_` |
+| Match guard | `where` |
 | Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `break`, `continue`, `is`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
+
+`match` does not require a separate "Pattern" lexer feature. The lexer emits
+ordinary identifier/literal/punctuation tokens plus `match`, `where`,
+`indirect`, and `=>`; the parser builds pattern nodes and the type checker
+performs binding and exhaustiveness checks (§7).
 
 > `class` is in the **reserved ⏳** list because it is removed in v0.2; unlike
 > the other reserved words it is **not** rejected — the parser still accepts

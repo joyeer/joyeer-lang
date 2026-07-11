@@ -63,24 +63,20 @@ func sort(arr: [Int]): [Int] {
 
 References: Dafny, Lean 4, F*, Ada/SPARK
 
-### 3. Effect System — Annotate Side Effects
+### 3. Explicit State Changes Without a General Effect System
 
-```
-func readConfig(path: String): Config
-    performs IO
-    performs Throw<FileNotFound>
+Joyeer deliberately does not add a `performs` / `pure` effect language. The
+implementation and annotation burden is not justified for the initial systems
+language core. Instead, the high-risk state transitions remain explicit:
 
-func pureCompute(x: Int): Int
-    // No performs → pure function, safe to refactor
-{
-    return x * 2 + 1
-}
-```
+- `&` marks exclusive mutation;
+- `consume` marks ownership transfer;
+- `Result<T, E>` represents recoverable failure;
+- `precondition` / `assert` document executable obligations.
 
-AI can tell from the signature which functions have side effects.
-Safe refactoring and optimization without breaking behavior.
-
-References: Koka, Unison, Effekt
+I/O and allocation are ordinary APIs rather than type-level effect labels.
+This keeps the lexer, parser, function type identity, and higher-order APIs
+smaller while preserving the ownership changes reviewers most need to see.
 
 ### 4. No Implicit Behavior — Semantic Clarity
 
@@ -131,7 +127,6 @@ func fib(n: Nat): Nat {
 | **Dafny** | ★★★★★ | Built-in verification conditions |
 | **Rust** | ★★★★ | Strong types + ownership = strong guardrails |
 | **F#/OCaml** | ★★★★ | Algebraic types + immutable-first, clear semantics |
-| **Koka** | ★★★★ | Effect system, explicit side effects |
 | **TypeScript** | ★★★ | Good type system, but JavaScript semantics have traps |
 | **Python** | ★★ | Most used by AI, but dynamic types = runtime-only errors |
 | **C/C++** | ★ | Too much undefined behavior, AI easily writes hidden bugs |
@@ -147,7 +142,7 @@ Old philosophy (human writes code):
 
 New philosophy (AI writes code + human reviews):
   "Make errors impossible"       → strong types, contracts, formal verification
-  "Make intent visible"          → effect system, explicit side effects, docs as code
+  "Make intent visible"          → explicit mutation, ownership transfer, docs as code
   "Automate verification"       → property testing, theorem proving, invariant checking
   "Make review efficient"       → readability, consistency, no implicit behavior
 ```
@@ -160,12 +155,11 @@ Ranked by feasibility:
 
 | Feature | Difficulty | Impact |
 |---------|-----------|--------|
-| Effect system (IO, Throw annotations) | Medium | High |
 | Contracts (precondition/assert) | Medium | High |
 | Property-based testing built-in (@property) | Easy | Medium |
 | Refinement types (PositiveInt, NonEmpty) | Hard | High |
 | Incremental compilation (language-level design) | Architecture | High |
 | Formal verification integration | Very Hard | Very High |
 
-Even just adding **effect system + contracts** would make Joyeer more
-"AI-friendly" than most existing languages.
+Even without a general effect system, explicit ownership conventions plus
+contracts provide strong guardrails for AI-generated code.

@@ -11,7 +11,6 @@ when they are violated. AI code generators must follow them.
 | Constants (let bindings) | camelCase | `let maxRetries = 5` |
 | Enum cases | PascalCase | `.Ok`, `.NotFound` |
 | Generic type parameters | single capital or PascalCase | `T`, `K`, `Element` |
-| Effect labels | PascalCase | `IO`, `Throw<E>` |
 | Modules / files | lowercase | `std.io`, `json_parser.joyeer` |
 
 ---

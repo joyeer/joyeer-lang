@@ -115,7 +115,7 @@ See §8 for error-handling semantics.
 ### 2.6 Generics 📌
 
 > **📌 Decision.** *v0.1 has **no user-defined generics**.* The only generic
-> types are the built-in containers `Array<T>` / `[T]`, `Dict<K, V>` /
+> types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
 > `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>`. Their angle brackets are
 > **type arguments understood directly by the compiler**, not a general
 > type-parameter mechanism. User code may *use* these containers but may not

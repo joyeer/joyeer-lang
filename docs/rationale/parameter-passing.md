@@ -235,4 +235,4 @@ func consume(p: consuming Parser): Ast     // consuming (ownership transfer)
 
 - [memory.md](memory.md) — overall memory management strategy (value semantics, RAII, regions)
 - [runtime-overhead.md](runtime-overhead.md) — zero-cost contract and runtime size budget
-- [ai-era-design.md](ai-era-design.md) — strong types as AI guardrails; effect system; contracts
+- [ai-era-design.md](ai-era-design.md) — strong types, explicit ownership, and contracts as AI guardrails

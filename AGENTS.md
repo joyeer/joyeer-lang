@@ -57,6 +57,7 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 
 - C++20, no exceptions in hot paths; follow the surrounding style (4-space indent, header-pair naming `foo.h` / `foo.cpp` or `foo+suffix.cpp` for partial impls).
 - AST changes: update the node type in [node.h](include/joyeer/compiler/node.h), the visitor in [node+visitor.h](include/joyeer/compiler/node+visitor.h), then all three pipeline passes (`typegen`, `typebinding`, `IRGen`) — missing any of these silently breaks codegen.
+- `match` remains part of the language. The lexer only recognizes `match`, `where`, `indirect`, `=>`, and ordinary pattern components; pattern structure and exhaustiveness belong to the parser and type checker. The general `performs` / `pure` effect system is removed; ownership access conventions remain.
 - New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/impl/bytecode.md](docs/impl/bytecode.md).
 - Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions.
 - Add at least one end-to-end golden test in [tests/basis/](tests/basis/) for any user-visible feature change.

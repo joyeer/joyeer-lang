@@ -24,7 +24,8 @@
 
 The single source of truth for **what the language is**: lexical structure,
 types, declarations, memory model, expressions, statements, patterns,
-contracts, effects, modules, grammar. All other docs defer to it.
+contracts, modules, grammar, and the explicit removal of general effects. All
+other docs defer to it.
 
 | Doc | Topic |
 |---|---|
@@ -40,7 +41,7 @@ disagree, the spec wins.
 
 | Doc | Topic |
 |---|---|
-| [ai-era-design.md](rationale/ai-era-design.md) | Philosophy: strong types, contracts, effect system as AI guardrails |
+| [ai-era-design.md](rationale/ai-era-design.md) | Philosophy: strong types, explicit ownership, and contracts as AI guardrails |
 | [memory.md](rationale/memory.md) | Memory model rationale: value semantics, RAII, no GC, no ARC (normative: spec §4) |
 | [parameter-passing.md](rationale/parameter-passing.md) | Call-convention rationale: Hylo-style MVS (normative: spec §4.2–§4.3) |
 | [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost contract: runtime size budget, no-hidden-work rules, ABI |

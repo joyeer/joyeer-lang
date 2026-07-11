@@ -1,6 +1,7 @@
-## §7 Patterns
+## §7 Match Patterns
 
-Used in `let`/`var`, `match` arms, and `for-in`.
+Patterns are parser/type-checker constructs used in `let`/`var`, `match`
+arms, and `for-in`; they are not a separate lexer subsystem.
 
 ```
 pattern         ::= '_'                                       // wildcard

@@ -7,8 +7,8 @@ humans review, audit, and refine. The language optimizes for:
 
 1. **Verifiability over brevity.** Stronger types catch more AI mistakes at
    compile time.
-2. **Explicit intent over implicit behavior.** Side effects, mutation, and
-   ownership transfer must be visible at the call site and in the signature.
+2. **Explicit intent over implicit behavior.** Mutation and ownership transfer
+   must be visible at the call site and in the signature.
 3. **Value semantics by default.** No GC, no reference counting, no hidden
    aliasing. Heap allocation is opt-in.
 4. **One way to do each thing.** Reduce stylistic variance so AI output is
@@ -17,13 +17,13 @@ humans review, audit, and refine. The language optimizes for:
    layout; no runtime overhead for safety features.
 
 References: Hylo's mutable value semantics, Swift's syntactic surface,
-Rust's memory safety guarantees, Dafny's contracts, Koka's effect system.
+Rust's memory safety guarantees, and Dafny's contracts.
 
 ### 0.2 Versioning
 
 | Version | Scope |
 |---------|-------|
-| **v0.1** | Lexical, types, declarations, memory model, expressions, statements, patterns, built-in containers, errors, modules. Contracts/effects/property annotations parse but are not enforced. User-defined generics and protocols are reserved (§15). |
+| **v0.1** | Lexical, types, declarations, memory model, expressions, statements, match patterns, built-in containers, errors, modules. Property annotations parse but are not executed. User-defined generics and protocols are reserved (§15). The general effect system is not part of the language. |
 | **v0.2** | Removal of legacy syntax (§14). Improved diagnostics. Standard library. |
 | **v0.3** | Runtime contract enforcement (debug mode). Property-based test runner. |
 | **future** | Concurrency, SMT-backed verification, FFI, macros, traits. |

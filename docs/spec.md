@@ -1,8 +1,8 @@
 # The Joyeer Programming Language — Specification
 
 > **Status:** Draft v0.1-spec. This document defines the future language. Some
-> features are marked **syntax-only** (parsed and type-checked, but not yet
-> semantically enforced). Legacy syntax that exists in the current parser
+> annotations are marked **syntax-only** (parsed and stored, but not yet
+> executed). Legacy syntax that exists in the current parser
 > (`class`, positional/unlabeled calls, `print(message: x)`) is listed in §14 and will
 > be removed.
 
@@ -24,10 +24,10 @@ chapter file below.
 | 4 | Memory Model ★ CORE ★ | [spec/04-memory.md](spec/04-memory.md) |
 | 5 | Expressions | [spec/05-expressions.md](spec/05-expressions.md) |
 | 6 | Statements | [spec/06-statements.md](spec/06-statements.md) |
-| 7 | Patterns | [spec/07-patterns.md](spec/07-patterns.md) |
+| 7 | Match Patterns | [spec/07-patterns.md](spec/07-patterns.md) |
 | 8 | Error Handling | [spec/08-error-handling.md](spec/08-error-handling.md) |
 | 9 | Contracts 🔬 | [spec/09-contracts.md](spec/09-contracts.md) |
-| 10 | Effects 🔬 | [spec/10-effects.md](spec/10-effects.md) |
+| 10 | General effect system — removed | [spec/10-effects.md](spec/10-effects.md) |
 | 11 | Property-Test & Spec Annotations 🔬 | [spec/11-annotations.md](spec/11-annotations.md) |
 | 12 | Modules & Imports | [spec/12-modules.md](spec/12-modules.md) |
 | 13 | Naming Conventions | [spec/13-naming.md](spec/13-naming.md) |
@@ -42,6 +42,11 @@ chapter file below.
 
 ## Appendix: change log
 
+- **2026-07-11** — Reduced the lexer and language surface. Removed the general
+  effect system (`performs`, `pure`, and effect labels), while retaining the
+  ownership access conventions (`borrowing`, `inout`, `consuming`, and
+  `initializing`). `match` and payload-carrying enums remain: their patterns
+  are parser/type-checker constructs, not a separate lexer subsystem.
 - **2026-05-30** — Initial draft. Locks A + B language features, includes C
   contracts/effects/property as syntax-only.
 - **2026-06-06** — Adopt Swift-style ownership keywords (`borrowing` /
