@@ -1,9 +1,0 @@
-[package]
-name = "joyeer_ast"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-publish.workspace = true
-
-[dependencies]
-joyeer_span.workspace = true

@@ -1,2 +1,0 @@
-let greeting = "Hello, " + "world"
-print(message: greeting)
