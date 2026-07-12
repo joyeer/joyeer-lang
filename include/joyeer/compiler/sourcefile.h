@@ -11,6 +11,7 @@ public:
     
 public:
     SourceFile(const std::string& workingDirectory, const std::string& path);
+    explicit SourceFile(std::string sourceContent);
     
     // get .joyeer file's relative locationInParent against the working directory
     [[nodiscard]] std::string getLocation() const {
@@ -32,6 +33,9 @@ public:
     
     // lexer parsing result: token list
     std::vector<Token::Ptr> tokens;
+
+    // UTF-8 byte offsets at which source lines begin. Always starts with 0.
+    std::vector<uint32_t> lineStarts { 0 };
 
     ModuleClass* moduleClass;
     

@@ -9,6 +9,11 @@
 #include "joyeer/runtime/types.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
+enum class LanguageMode {
+    legacy,
+    v0_1
+};
+
 struct CommandLineArguments {
     using Ptr = std::shared_ptr<CommandLineArguments>;
     
@@ -21,6 +26,7 @@ struct CommandLineArguments {
     
     bool vmDebug = true;
     bool accepted = false;
+    LanguageMode languageMode = LanguageMode::legacy;
 
     Diagnostics* diagnostics;
 

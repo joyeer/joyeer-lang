@@ -21,6 +21,10 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     for(; iterator != arguments.end(); iterator ++) {
         if(*iterator == "--debug-vm") {
             vmDebug = true;
+        } else if(*iterator == "--lang=v0.1") {
+            languageMode = LanguageMode::v0_1;
+        } else if(*iterator == "--lang=v0.1-legacy") {
+            languageMode = LanguageMode::legacy;
         } else {
             // input file
             parseInputFile(*iterator);

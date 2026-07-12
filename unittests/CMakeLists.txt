@@ -15,5 +15,5 @@ FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
 add_subdirectory(runtime)
-# add_subdirectory(compiler)
+add_subdirectory(compiler)
 # add_subdirectory(vm)

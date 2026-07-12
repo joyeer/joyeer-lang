@@ -12,7 +12,7 @@ sourcefile(sourcefile) {
 
 ModuleDecl::Ptr SyntaxParser::parse() {
     std::vector<std::shared_ptr<Node>> decls;
-    while(iterator != endIterator) {
+    while(iterator != endIterator && curToken()->kind != TokenKind::endOfFile) {
         std::shared_ptr<Node> decl = tryParseStmt();
         if(decl == nullptr) {
             return nullptr; 
@@ -944,7 +944,7 @@ std::shared_ptr<Token> SyntaxParser::tryParseLiteral()
 Token::Ptr SyntaxParser::tryEat(TokenKind kind) {
     if (iterator != endIterator) {
         auto pToken = curToken();
-        if (pToken->kind == kind) {
+        if (tokenKindMatches(pToken->kind, kind)) {
             iterator++;
             return pToken;
         }

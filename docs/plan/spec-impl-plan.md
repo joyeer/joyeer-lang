@@ -28,6 +28,7 @@ Implementation tracks (each track has phases that align to spec sections):
 Phases:
 
   Phase 0  Scaffolding & legacy compat carve-out          ~ 1 week
+  Phase L  Minimal C++ lexer for the JSON-parser profile  ~ 1 week
   Phase A  Memory model: inout / consuming / initializing / subscript   ~ 4 weeks
   Phase B  Data model: struct / enum / generics / Result  ~ 6 weeks
   Phase C  Syntax-only property/spec annotations          ~ 1 week
@@ -35,8 +36,9 @@ Phases:
                                                             ~ 2 weeks
 ```
 
-Target: from end of Phase 0 to end of Phase C, **~14 weeks of focused
-work** for one engineer or one well-prompted AI agent loop.
+Target: from end of Phase 0 to end of Phase C, **~12 weeks of focused
+work**; the full Phase 0 through Phase D sequence is **~15 weeks** for one
+engineer or one well-prompted AI agent loop.
 
 ---
 
@@ -87,6 +89,38 @@ ctest --test-dir ./build --output-on-failure -R 'legacy_'
 # New spec mode runs a hello-world:
 ./build/bin/joyeer --lang=v0.1 tests/spec/Phase0_smoke/001.joyeer
 ```
+
+---
+
+## Phase L — JSON-Parser Lexer MVP
+
+### Goal
+
+Replace the legacy tokenization contract with the deliberately small C++ lexer
+defined in [../impl/lexer.md](../impl/lexer.md). This phase recognizes exactly
+the terminals needed by the first Joyeer JSON parser, including payload enums,
+minimal `match`, byte literals, `=>`, `?`, and `&`. It does not implement
+unrelated syntax sugar.
+
+### Work items
+
+1. Add explicit `TokenKind`, absolute `SourceSpan`, `Invalid`, and EOF.
+2. Implement trivia, ASCII identifiers, MVP/deferred keyword classification,
+   decimal integers, strings, and strict byte literals.
+3. Implement the longest-match operator table for the MVP.
+4. Diagnose every invalid or intentionally deferred source form.
+5. Add direct in-memory lexer unit tests and malformed-input fuzz coverage.
+6. Adapt the existing parser to the new token contract without adding the
+   later parser productions yet.
+
+### DoD
+
+- Every token and diagnostic in the lexer test matrix is covered.
+- Spans and LF/CR/CRLF line starts are correct.
+- Re-tokenization is deterministic and does not duplicate tokens.
+- The JSON-parser target source reaches syntax parsing with no lexical error.
+- Legacy behavior is isolated behind legacy mode rather than leaking into the
+  MVP token contract.
 
 ---
 
@@ -503,10 +537,7 @@ mostly autonomously:
 - **Q2.** Generic monomorphization caching: per-translation-unit or
   whole-program? → Defer to B-tail; profile-driven.
 
-- **Q3.** Effect inference for closures (once closures land in v0.2):
-  inferred or annotated? → Decide when closures are in scope.
-
-- **Q4.** Standard-library home: pure Joyeer with `__builtin` hooks, or
+- **Q3.** Standard-library home: pure Joyeer with `__builtin` hooks, or
   inline C++? → Per-type decision; start with C++ for the v0.1 stretch.
 
 ---
@@ -517,6 +548,9 @@ mostly autonomously:
 Phase 0  ──┐
            │
            ▼
+     Phase L ── ★ minimal JSON-parser lexer (1 week)
+       │
+       ▼
        Phase A ── ★ memory model (4 weeks)
            │
            ▼
@@ -524,7 +558,7 @@ Phase 0  ──┐
            │      ├── uses A's exclusivity checker for struct fields
            │      └── uses A's subscript machinery for Array/Dict/String
            ▼
-       Phase C ── ★ syntax-only annotations (2 weeks)
+      Phase C ── ★ syntax-only annotations (1 week)
            │
            ▼
        Phase D ── ★ legacy removal (2 weeks)

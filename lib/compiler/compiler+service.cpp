@@ -60,7 +60,10 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
     context->compiler = this;
     
     // lex structure analyze
-    LexParser lexParser(context);
+        const auto lexerProfile = options->languageMode == LanguageMode::v0_1
+            ? LexerProfile::jsonParserMvp
+            : LexerProfile::legacy;
+        LexParser lexParser(context, lexerProfile);
     lexParser.parse(sourcefile);
     CHECK_ERROR_RETURN_NULL
     

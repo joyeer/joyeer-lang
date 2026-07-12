@@ -4,35 +4,58 @@
 #include "joyeer/compiler/token.h"
 #include "joyeer/compiler/context.h"
 
+enum class LexerProfile {
+    legacy,
+    jsonParserMvp
+};
+
 class LexParser {
 public:
-    explicit LexParser(const CompileContext::Ptr& context);
+    explicit LexParser(const CompileContext::Ptr& context,
+                       LexerProfile profile = LexerProfile::legacy);
 
-    // parse and tokenize the source file
+    // Tokenize the source file. Existing output and cursor state are reset.
     void parse(const SourceFile::Ptr& sourceFile);
     
 private:
-    void parseStringIdentifier();
+    [[nodiscard]] bool atEnd() const;
+    [[nodiscard]] char peek(size_t lookahead = 0) const;
+    char advance();
+    bool consumeIf(char expected);
+
+    void skipTrivia();
+    void consumeNewline();
+    void parseLineComment();
+    void parseBlockComment(size_t start, size_t startLine, size_t startColumn);
+
+    void parseIdentifier();
+    void parseNumberLiteral();
     void parseStringLiteral();
-    void parseOctalLiteral(std::string::const_iterator startAt);
-    void parseNumberLiteral(std::string::const_iterator startAt);
-    void pushOperator(std::string op, std::string::const_iterator startIterator);
-    void parseOperator(std::string::const_iterator startIterator);
-    void parsePunctuation(std::string::const_iterator startIterator);
-    void parseCppComment();
-    void parseCComment();
+    void parseByteLiteral();
+    void parseOperatorOrPunctuation();
+
+    void emit(TokenKind kind, size_t start, std::string rawValue = {});
+    void emitInvalid(size_t start, std::string rawValue = {});
+    void report(size_t line, size_t column, const char* error, ...);
+
+    [[nodiscard]] bool isIdentifierHead(char value) const;
+    [[nodiscard]] bool isIdentifierTail(char value) const;
+    [[nodiscard]] bool isMvpKeyword(TokenKind kind) const;
+    [[nodiscard]] bool isMvpOperator(TokenKind kind) const;
 
 private:
-    std::string::const_iterator iterator;
-    std::string::const_iterator endIterator;
-
+    size_t position = 0;
     size_t lineNumber = 0;
-    std::string::const_iterator lineStartAtPosition;
+    size_t lineStartOffset = 0;
+    size_t tokenLine = 0;
+    size_t tokenColumn = 0;
+    bool nextTokenStartsLine = true;
 
     // Source files
     SourceFile::Ptr sourcefile;
 
     Diagnostics* diagnostics;
+    LexerProfile profile;
 };
 
 

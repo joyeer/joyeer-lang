@@ -1,373 +1,637 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/diagnostic/diagnostic.h"
-#include <charconv>
 
-LexParser::LexParser(const CompileContext::Ptr& context) {
-    this->diagnostics = context->diagnostics;
+#include <charconv>
+#include <cstdarg>
+#include <cstdio>
+#include <utility>
+
+namespace {
+
+bool isDigit(char value) {
+    return value >= '0' && value <= '9';
+}
+
+bool isAscii(char value) {
+    return static_cast<unsigned char>(value) <= 0x7f;
+}
+
+} // namespace
+
+LexParser::LexParser(const CompileContext::Ptr& context, LexerProfile profile):
+        diagnostics(context->diagnostics),
+        profile(profile) {
 }
 
 void LexParser::parse(const SourceFile::Ptr& sourceFile) {
-    
-    this->sourcefile = sourceFile;
-    iterator = sourceFile->content.begin();
-    lineStartAtPosition = sourceFile->content.begin();
-    endIterator = sourceFile->content.end();
-    
-    while (iterator != endIterator) {
-        switch (*iterator ++) {
-            case '\u0000':
-            case '\u0009':
-            case '\u000B':
-            case '\u000C':
-            case '\u0020':
-                break;
-            case '\u000A':
-                lineNumber ++;
-                lineStartAtPosition = (iterator - 1);
-                break;
-            case '\u000D':
-                lineNumber ++;
-                lineStartAtPosition = iterator - 1;
-                if(iterator != endIterator && *iterator == '\u000A') {
-                    iterator ++;
-                }
-                break;
-            case 'a': case 'b': case 'c': case 'd': case 'e': case 'f': case 'g': case 'h': case 'i': case 'j': case 'k': case 'l': case 'm': case 'n': case 'o': case 'p': case 'q': case 'r': case 's': case 't': case 'u': case 'v': case 'w': case 'x': case 'y': case 'z':
-            case 'A': case 'B': case 'C': case 'D': case 'E': case 'F': case 'G': case 'H': case 'I': case 'J': case 'K': case 'L': case 'M': case 'N': case 'O': case 'P': case 'Q': case 'R': case 'S': case 'T': case 'U': case 'V': case 'W': case 'X': case 'Y': case 'Z':
-            case '_':
-                parseStringIdentifier();
-                break;
-            case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-                parseNumberLiteral(iterator - 1);
-                break;
-            case '0':
-                if (iterator == endIterator) {
-                    auto token = std::make_shared<Token>(TokenKind::decimalLiteral, "0", lineNumber, iterator - lineStartAtPosition);
-                    token->intValue = 0;
-                    sourceFile->tokens.push_back(token);
-                    break;
-                }
-                switch (*iterator) {
-                    case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
-                        parseOctalLiteral(iterator);
-                        break;
-                    case '8': case '9':
-                        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorOctalNumberFormat);
-                        break;
-                    default:
-                        auto token = std::make_shared<Token>(TokenKind::decimalLiteral, "0", lineNumber, iterator - lineStartAtPosition);
-                        token->intValue = 0;
-                        sourceFile->tokens.push_back(token);
-                        break;
-                }
-                
-                break;
-            case '/':
-                if (iterator != endIterator && *iterator == '/') {
-                    parseCppComment();
-                    continue;
-                } if (iterator != endIterator && *iterator == '*') {
-                    iterator ++;
-                    parseCComment();
-                    continue;
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '=':
-                if (iterator != endIterator) {
-                    if (*iterator == '=') {
-                        iterator ++;
-                        pushOperator(Operators::EQUAL_EQUAL, iterator);
-                        continue;
-                    }
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '-':
-                parseOperator(iterator - 1);
-                break;
-            case '+':
-                parseOperator(iterator - 1);
-                break;
-            case '!':
-                if(iterator != endIterator) {
-                    if(*iterator == '=') {
-                        iterator ++;
-                        pushOperator(Operators::NOT_EQUALS, iterator);
-                        continue;
-                    }
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '*':
-                parseOperator(iterator - 1);
-                break;
-            case '%':
-                parseOperator(iterator - 1);
-                break;
-            case '<':
-                if(iterator != endIterator) {
-                    if(*iterator == '=') {
-                        iterator ++;
-                        pushOperator(Operators::LESS_EQ, iterator);
-                        continue;
-                    }
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '>':
-                if(iterator != endIterator) {
-                    if(*iterator == '=') {
-                        iterator ++;
-                        pushOperator(Operators::GREATER_EQ, iterator);
-                        continue;
-                    }
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '&':
-                if (iterator != endIterator) {
-                    if (*iterator == '&') {
-                        iterator ++;
-                        pushOperator(Operators::AND_AND, iterator);
-                        continue;
-                    }
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '|':
-                if (iterator != endIterator) {
-                    if (*iterator == '|') {
-                        iterator ++;
-                        pushOperator(Operators::OR_OR, iterator);
-                        continue;
-                    }
-                }
-                parseOperator(iterator - 1);
-                break;
-            case '^':
-                parseOperator(iterator - 1);
-                break;
-            case '~':
-                parseOperator(iterator - 1);
-                break;
-            case '?':
-                parseOperator(iterator - 1);
-                break;
-            case '(':
-                parsePunctuation(iterator - 1);
-                break;
-            case ')':
-                parsePunctuation(iterator - 1);
-                break;
-            case '{':
-                parsePunctuation(iterator - 1);
-                break;
-            case '}':
-                parsePunctuation(iterator - 1);
-                break;
-            case '[':
-                parsePunctuation(iterator - 1);
-                break;
-            case ']':
-                parsePunctuation(iterator - 1);
-                break;
-            case '.':
-                parsePunctuation(iterator - 1);
-                break;
-            case ',':
-                parsePunctuation(iterator - 1);
-                break;
-            case ':':
-                parsePunctuation(iterator - 1);
-                break;
-            case '@':
-                parsePunctuation(iterator - 1);
-                break;
-            case '#':
-                parsePunctuation(iterator - 1);
-                break;
-            case ';':
-                parsePunctuation(iterator - 1);
-                break;
-            case '\"':
-                parseStringLiteral();
-                break;
-            default:
-                break;
-            }
-  }
-}
+    sourcefile = sourceFile;
+    sourcefile->tokens.clear();
+    sourcefile->lineStarts.clear();
+    sourcefile->lineStarts.push_back(0);
 
-void LexParser::parseOctalLiteral(std::string::const_iterator startAt) {
-    while (iterator < endIterator) {
-        switch (*iterator) {
-            case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7':
-                iterator ++;
-                break;
-            case '8': case '9':
-                diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(startAt - lineStartAtPosition), Diagnostics::errorOctalNumberFormat);
-                goto label;
-            default:
-                goto label;
+    position = 0;
+    lineNumber = 0;
+    lineStartOffset = 0;
+    tokenLine = 0;
+    tokenColumn = 0;
+    nextTokenStartsLine = true;
+
+    while (true) {
+        skipTrivia();
+        if (atEnd()) {
+            break;
+        }
+
+        const size_t start = position;
+        tokenLine = lineNumber;
+        tokenColumn = position - lineStartOffset;
+        const char value = peek();
+
+        if (value == 'b' && peek(1) == '\'') {
+            parseByteLiteral();
+        } else if (isIdentifierHead(value)) {
+            parseIdentifier();
+        } else if (isDigit(value)) {
+            parseNumberLiteral();
+        } else if (value == '"') {
+            parseStringLiteral();
+        } else {
+            parseOperatorOrPunctuation();
+        }
+
+        // Every scanner must consume input. Keep malformed-input recovery from
+        // ever turning into an infinite loop.
+        if (position == start) {
+            advance();
+            report(tokenLine, tokenColumn, Diagnostics::errorInvalidSourceCharacter,
+                   sourcefile->content.substr(start, 1).c_str());
+            emitInvalid(start);
         }
     }
-    
-label:
-    std::string number(startAt, iterator);
-    auto token = std::make_shared<Token>(TokenKind::decimalLiteral, number, lineNumber, startAt - lineStartAtPosition);
-    sourcefile->tokens.push_back(token);
+
+    tokenLine = lineNumber;
+    tokenColumn = position - lineStartOffset;
+    emit(endOfFile, position);
 }
 
-void LexParser::parseNumberLiteral(std::string::const_iterator startAt) {
+bool LexParser::atEnd() const {
+    return position >= sourcefile->content.size();
+}
 
-  bool isFloatingLiteral = false;
-  while (iterator != endIterator) {
-    switch (*iterator ++)
-    {
-    case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': case '0':
-      break;
-    default:
-      iterator --;
-      goto break_label_1;
+char LexParser::peek(size_t lookahead) const {
+    const size_t target = position + lookahead;
+    if (target >= sourcefile->content.size()) {
+        return '\0';
     }
-  }
+    return sourcefile->content[target];
+}
 
-  break_label_1:
-
-  bool hasFraction = false;
-  if(iterator != endIterator && *iterator == '.') {
-    iterator ++ ;
-    std::string::const_iterator fractionStartIterator = iterator;
-    while(iterator != endIterator ) {
-      switch (*iterator ++)
-      {
-      case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': case '0':
-        hasFraction = true;
-        isFloatingLiteral = true;
-        break;
-      default:
-        iterator --;
-        goto break_label_2;
-      }
+char LexParser::advance() {
+    if (atEnd()) {
+        return '\0';
     }
+    return sourcefile->content[position++];
+}
 
-  break_label_2:
-    if(!hasFraction) {
-      iterator --;
-    } 
-  }
-
-    std::string identifier(startAt, iterator);
-    auto token = std::make_shared<Token>(TokenKind::decimalLiteral, identifier, lineNumber, iterator - startAt);
-    int value = 0;
-    auto convResult = std::from_chars(identifier.data(), identifier.data() + identifier.size(), value);
-    if (convResult.ec == std::errc::result_out_of_range) {
-        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(startAt - lineStartAtPosition), Diagnostics::errorIntegerLiteralOverflow);
+bool LexParser::consumeIf(char expected) {
+    if (peek() != expected) {
+        return false;
     }
-    token->intValue = value;
-    sourcefile->tokens.push_back(token);
+    ++position;
+    return true;
 }
 
-void LexParser::parseOperator(std::string::const_iterator startIterator) {
-  std::string operators(startIterator, startIterator + 1);
-  sourcefile->tokens.push_back(
-    std::make_shared<Token>(TokenKind::operators, operators, lineNumber, iterator - startIterator)
-  );
-}
-
-void LexParser::pushOperator(std::string op, std::string::const_iterator startIterator) {
-    sourcefile->tokens.push_back(std::make_shared<Token>(TokenKind::operators, op, lineNumber, iterator - startIterator));
-}
-
-void LexParser::parsePunctuation(std::string::const_iterator startIterator) {
-  std::string punctuation(startIterator, startIterator + 1);
-  sourcefile->tokens.push_back(
-          std::make_shared<Token>(TokenKind::punctuation, punctuation, lineNumber, iterator - startIterator)
-  );
-}
-
-void LexParser::parseStringIdentifier() {
-  std::string::const_iterator startAt = iterator - 1;
-  while(iterator != endIterator) {
-    switch (*iterator ++) {
-    case 'a': case 'b': case 'c': case 'd': case 'e': case 'f': case 'g': case 'h': case 'i': case 'j': case 'k': case 'l': case 'm': case 'n': case 'o': case 'p': case 'q': case 'r': case 's': case 't': case 'u': case 'v': case 'w': case 'x': case 'y': case 'z':
-    case 'A': case 'B': case 'C': case 'D': case 'E': case 'F': case 'G': case 'H': case 'I': case 'J': case 'K': case 'L': case 'M': case 'N': case 'O': case 'P': case 'Q': case 'R': case 'S': case 'T': case 'U': case 'V': case 'W': case 'X': case 'Y': case 'Z':
-    case '_':
-    case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-      break; 
-    default:
-      iterator --;
-      goto exit_label;
+void LexParser::skipTrivia() {
+    while (!atEnd()) {
+        switch (peek()) {
+            case ' ':
+            case '\t':
+                ++position;
+                continue;
+            case '\n':
+            case '\r':
+                consumeNewline();
+                continue;
+            case '/':
+                if (peek(1) == '/') {
+                    position += 2;
+                    parseLineComment();
+                    continue;
+                }
+                if (peek(1) == '*') {
+                    const size_t start = position;
+                    const size_t startLine = lineNumber;
+                    const size_t startColumn = position - lineStartOffset;
+                    position += 2;
+                    parseBlockComment(start, startLine, startColumn);
+                    continue;
+                }
+                return;
+            default:
+                return;
+        }
     }
-  }
+}
 
-  exit_label:
-  std::string identifier(startAt, iterator);
-  
-    std::shared_ptr<Token> token;
-    if(isKeyword(identifier)) {
-        token = std::make_shared<Token>(TokenKind::keyword, identifier, lineNumber, iterator - startAt);
-    } else if(identifier == Literals::NIL) {
-        token = std::make_shared<Token>(TokenKind::nilLiteral, identifier, lineNumber, iterator - startAt);
-    } else if(identifier == Literals::TRUE || identifier == Literals::FALSE) {
-        token = std::make_shared<Token>(TokenKind::booleanLiteral, identifier, lineNumber, iterator - startAt);
+void LexParser::consumeNewline() {
+    if (peek() == '\r') {
+        ++position;
+        if (peek() == '\n') {
+            ++position;
+        }
     } else {
-        token = std::make_shared<Token>(TokenKind::identifier, identifier, lineNumber, iterator - startAt);
+        ++position;
     }
-    sourcefile->tokens.push_back(token);
+
+    ++lineNumber;
+    lineStartOffset = position;
+    sourcefile->lineStarts.push_back(static_cast<uint32_t>(position));
+    nextTokenStartsLine = true;
+}
+
+void LexParser::parseLineComment() {
+    while (!atEnd() && peek() != '\n' && peek() != '\r') {
+        ++position;
+    }
+}
+
+void LexParser::parseBlockComment(size_t start, size_t startLine, size_t startColumn) {
+    size_t depth = 1;
+    while (!atEnd()) {
+        if (peek() == '/' && peek(1) == '*') {
+            position += 2;
+            ++depth;
+            continue;
+        }
+        if (peek() == '*' && peek(1) == '/') {
+            position += 2;
+            if (--depth == 0) {
+                return;
+            }
+            continue;
+        }
+        if (peek() == '\n' || peek() == '\r') {
+            consumeNewline();
+            continue;
+        }
+        ++position;
+    }
+
+    report(startLine, startColumn, Diagnostics::errorUnterminatedCComment);
+    (void)start;
+}
+
+void LexParser::parseIdentifier() {
+    const size_t start = position;
+    advance();
+    while (isIdentifierTail(peek())) {
+        advance();
+    }
+
+    const std::string value = sourcefile->content.substr(start, position - start);
+    if (value == "_") {
+        emit(wildcard, start, value);
+        return;
+    }
+    if (value == Literals::NIL) {
+        emit(nilLiteral, start, value);
+        return;
+    }
+    if (value == Literals::TRUE || value == Literals::FALSE) {
+        emit(booleanLiteral, start, value);
+        return;
+    }
+
+    const TokenKind kind = keywordKind(value);
+    if (profile == LexerProfile::jsonParserMvp) {
+        if (kind != identifier && !isMvpKeyword(kind)) {
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
+            emit(deferredKeyword, start, value);
+            return;
+        }
+        if (kind == identifier && isDeferredKeyword(value)) {
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
+            emit(deferredKeyword, start, value);
+            return;
+        }
+    }
+
+    emit(kind, start, value);
+}
+
+void LexParser::parseNumberLiteral() {
+    const size_t start = position;
+    while (isDigit(peek())) {
+        advance();
+    }
+
+    bool unsupportedNumber = false;
+    if ((peek() == '.' && isDigit(peek(1))) || peek() == 'e' || peek() == 'E') {
+        unsupportedNumber = true;
+        if (peek() == '.') {
+            advance();
+            while (isDigit(peek())) {
+                advance();
+            }
+        }
+        if (peek() == 'e' || peek() == 'E') {
+            advance();
+            if (peek() == '+' || peek() == '-') {
+                advance();
+            }
+            while (isDigit(peek())) {
+                advance();
+            }
+        }
+    } else if (position == start + 1 && sourcefile->content[start] == '0' &&
+               (peek() == 'x' || peek() == 'X' || peek() == 'b' || peek() == 'B' ||
+                peek() == 'o' || peek() == 'O')) {
+        unsupportedNumber = true;
+        advance();
+        while (isIdentifierTail(peek())) {
+            advance();
+        }
+    } else if (isIdentifierHead(peek())) {
+        while (isIdentifierTail(peek())) {
+            advance();
+        }
+        report(tokenLine, tokenColumn, Diagnostics::errorInvalidNumericSuffix);
+        emitInvalid(start);
+        return;
+    }
+
+    if (unsupportedNumber) {
+        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedNumericLiteral);
+        emitInvalid(start);
+        return;
+    }
+
+    const std::string value = sourcefile->content.substr(start, position - start);
+    if (profile == LexerProfile::legacy && value.size() > 1 && value.front() == '0' &&
+        value.find_first_of("89") != std::string::npos) {
+        report(tokenLine, tokenColumn, Diagnostics::errorOctalNumberFormat);
+    }
+
+    int64_t parsed = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed, 10);
+    if (result.ec == std::errc::result_out_of_range) {
+        report(tokenLine, tokenColumn, Diagnostics::errorIntegerLiteralOverflow);
+    }
+
+    emit(decimalLiteral, start, value);
+    sourcefile->tokens.back()->intValue = parsed;
 }
 
 void LexParser::parseStringLiteral() {
-    auto startAt = iterator;
-    bool end = false;
-    while(iterator != endIterator) {
-        if(*iterator == '\\') {
-            iterator ++;
-            if(iterator == endIterator) {
-                diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorUnterminatedStringLiteral);
-                return;
+    const size_t start = position;
+    advance(); // opening quote
+
+    std::string decoded;
+    bool invalidLiteral = false;
+    while (!atEnd()) {
+        const char value = peek();
+        if (value == '"') {
+            advance();
+            if (invalidLiteral) {
+                emitInvalid(start);
+            } else {
+                emit(stringLiteral, start, decoded);
             }
-        } else if (*iterator == '\"') {
-            iterator ++ ;
-            end = true;
-            break;
+            return;
         }
-        iterator ++;
+        if (value == '\n' || value == '\r') {
+            report(tokenLine, tokenColumn, Diagnostics::errorUnterminatedStringLiteral);
+            emitInvalid(start);
+            return;
+        }
+        if (value != '\\') {
+            decoded.push_back(advance());
+            continue;
+        }
+
+        advance(); // backslash
+        if (atEnd()) {
+            report(tokenLine, tokenColumn, Diagnostics::errorUnterminatedStringLiteral);
+            emitInvalid(start);
+            return;
+        }
+
+        const char escaped = advance();
+        switch (escaped) {
+            case 'n': decoded.push_back('\n'); break;
+            case 't': decoded.push_back('\t'); break;
+            case 'r': decoded.push_back('\r'); break;
+            case '"': decoded.push_back('"'); break;
+            case '\\': decoded.push_back('\\'); break;
+            case '0': decoded.push_back('\0'); break;
+            default:
+                report(tokenLine, tokenColumn, Diagnostics::errorInvalidStringEscape);
+                invalidLiteral = true;
+                break;
+        }
     }
 
-    if(!end) {
-        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, (int)(iterator - lineStartAtPosition), Diagnostics::errorUnterminatedStringLiteral);
+    report(tokenLine, tokenColumn, Diagnostics::errorUnterminatedStringLiteral);
+    emitInvalid(start);
+}
+
+void LexParser::parseByteLiteral() {
+    const size_t start = position;
+    position += 2; // b'
+
+    bool valid = true;
+    uint8_t decoded = 0;
+    if (atEnd() || peek() == '\n' || peek() == '\r') {
+        report(tokenLine, tokenColumn, Diagnostics::errorUnterminatedByteLiteral);
+        emitInvalid(start);
         return;
     }
-    
-    const std::string identifier(startAt, iterator - 1);
-    auto stringLiteral = std::make_shared<Token>(TokenKind::stringLiteral, identifier, lineNumber, iterator - startAt);
-    sourcefile->tokens.push_back(stringLiteral);
-}
 
-void LexParser::parseCppComment() {
-    while(iterator != endIterator && *iterator != '\n') {
-        iterator ++;
+    if (peek() == '\'') {
+        report(tokenLine, tokenColumn, Diagnostics::errorInvalidByteLiteral);
+        advance();
+        emitInvalid(start);
+        return;
     }
-}
 
-void LexParser::parseCComment() {
-
-
-    bool found = false;
-    while(iterator != endIterator && (iterator + 1) != endIterator) {
-        if(*iterator == '*' && *(iterator + 1) == '/') {
-            found = true;
-            iterator += 2;
-            break;
+    if (peek() == '\\') {
+        advance();
+        if (atEnd()) {
+            report(tokenLine, tokenColumn, Diagnostics::errorUnterminatedByteLiteral);
+            emitInvalid(start);
+            return;
         }
-
-        iterator ++;
+        const char escaped = advance();
+        switch (escaped) {
+            case 'n': decoded = '\n'; break;
+            case 't': decoded = '\t'; break;
+            case 'r': decoded = '\r'; break;
+            case '\'': decoded = '\''; break;
+            case '"': decoded = '"'; break;
+            case '\\': decoded = '\\'; break;
+            case '0': decoded = '\0'; break;
+            default:
+                report(tokenLine, tokenColumn, Diagnostics::errorInvalidByteEscape);
+                valid = false;
+                break;
+        }
+    } else {
+        const char value = advance();
+        if (!isAscii(value)) {
+            report(tokenLine, tokenColumn, Diagnostics::errorInvalidByteLiteral);
+            valid = false;
+        }
+        decoded = static_cast<uint8_t>(value);
     }
 
-    if(!found) {
-        diagnostics->reportError(ErrorLevel::failure, (int)lineNumber, 0, Diagnostics::errorUnterminatedCComment);
+    if (!consumeIf('\'')) {
+        while (!atEnd() && peek() != '\'' && peek() != '\n' && peek() != '\r') {
+            advance();
+        }
+        consumeIf('\'');
+        report(tokenLine, tokenColumn, Diagnostics::errorInvalidByteLiteral);
+        valid = false;
     }
 
+    if (!valid) {
+        emitInvalid(start);
+        return;
+    }
+
+    emit(byteLiteral, start, std::string(1, static_cast<char>(decoded)));
+    sourcefile->tokens.back()->intValue = decoded;
+}
+
+void LexParser::parseOperatorOrPunctuation() {
+    const size_t start = position;
+    const char value = advance();
+
+    auto emitMvpOperator = [this, start](TokenKind kind) {
+        if (profile == LexerProfile::jsonParserMvp && !isMvpOperator(kind)) {
+            const std::string text = sourcefile->content.substr(start, position - start);
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, text.c_str());
+            emitInvalid(start, text);
+        } else {
+            emit(kind, start);
+        }
+    };
+
+    switch (value) {
+        case '{': emit(leftCurly, start); return;
+        case '}': emit(rightCurly, start); return;
+        case '(': emit(leftParen, start); return;
+        case ')': emit(rightParen, start); return;
+        case '[': emit(leftSquare, start); return;
+        case ']': emit(rightSquare, start); return;
+        case ':': emit(colon, start); return;
+        case ',': emit(comma, start); return;
+        case '.':
+            if (profile == LexerProfile::jsonParserMvp && (peek() == '.' || isDigit(peek()))) {
+                while (peek() == '.' || isDigit(peek())) {
+                    advance();
+                }
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax,
+                       sourcefile->content.substr(start, position - start).c_str());
+                emitInvalid(start);
+                return;
+            }
+            emit(dot, start);
+            return;
+        case ';':
+            if (profile == LexerProfile::jsonParserMvp) {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, ";");
+                emitInvalid(start);
+            } else {
+                emit(semicolon, start);
+            }
+            return;
+        case '@':
+            if (profile == LexerProfile::jsonParserMvp) {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "@");
+                emitInvalid(start);
+            } else {
+                emit(atSign, start);
+            }
+            return;
+        case '#':
+            if (profile == LexerProfile::jsonParserMvp) {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "#");
+                emitInvalid(start);
+            } else {
+                emit(hash, start);
+            }
+            return;
+        case '=':
+            if (consumeIf('>')) { emit(fatArrow, start); return; }
+            if (consumeIf('=')) { emit(equalEqual, start); return; }
+            emit(equal, start);
+            return;
+        case '!':
+            if (consumeIf('=')) { emit(notEqual, start); return; }
+            emitMvpOperator(bang);
+            return;
+        case '<':
+            if (consumeIf('=')) { emit(lessEqual, start); return; }
+            emit(less, start);
+            return;
+        case '>':
+            if (consumeIf('=')) { emit(greaterEqual, start); return; }
+            emit(greater, start);
+            return;
+        case '&':
+            if (consumeIf('&')) { emit(andAnd, start); return; }
+            emit(ampersand, start);
+            return;
+        case '|':
+            if (consumeIf('|')) {
+                emitMvpOperator(orOr);
+            } else {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "|");
+                emitInvalid(start);
+            }
+            return;
+        case '?':
+            if (profile == LexerProfile::jsonParserMvp && (peek() == '?' || peek() == '.')) {
+                advance();
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax,
+                       sourcefile->content.substr(start, position - start).c_str());
+                emitInvalid(start);
+                return;
+            }
+            emit(question, start);
+            return;
+        case '+':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "+=");
+                emitInvalid(start);
+                return;
+            }
+            emit(plus, start);
+            return;
+        case '-':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "-=");
+                emitInvalid(start);
+                return;
+            }
+            emit(minus, start);
+            return;
+        case '*':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "*=");
+                emitInvalid(start);
+                return;
+            }
+            emit(multiply, start);
+            return;
+        case '/':
+            emitMvpOperator(divide);
+            return;
+        case '%':
+            emitMvpOperator(percentage);
+            return;
+        case '^':
+        case '~':
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax,
+                   sourcefile->content.substr(start, 1).c_str());
+            emitInvalid(start);
+            return;
+        case '\'':
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "'");
+            while (!atEnd() && peek() != '\'' && peek() != '\n' && peek() != '\r') {
+                advance();
+            }
+            consumeIf('\'');
+            emitInvalid(start);
+            return;
+        default:
+            report(tokenLine, tokenColumn, Diagnostics::errorInvalidSourceCharacter,
+                   sourcefile->content.substr(start, 1).c_str());
+            emitInvalid(start);
+            return;
+    }
+}
+
+void LexParser::emit(TokenKind kind, size_t start, std::string rawValue) {
+    if (rawValue.empty() && position > start &&
+        kind != stringLiteral && kind != byteLiteral) {
+        rawValue = sourcefile->content.substr(start, position - start);
+    }
+
+    const auto token = std::make_shared<Token>(
+            kind,
+            rawValue,
+            SourceSpan { static_cast<uint32_t>(start), static_cast<uint32_t>(position - start) },
+            tokenLine,
+            tokenColumn,
+            nextTokenStartsLine);
+    sourcefile->tokens.push_back(token);
+    nextTokenStartsLine = false;
+}
+
+void LexParser::emitInvalid(size_t start, std::string rawValue) {
+    emit(invalid, start, std::move(rawValue));
+}
+
+void LexParser::report(size_t line, size_t column, const char* error, ...) {
+    char message[2048] = {};
+    va_list args;
+    va_start(args, error);
+    std::vsnprintf(message, sizeof(message), error, args);
+    va_end(args);
+    diagnostics->reportError(ErrorLevel::failure,
+                             static_cast<int>(line),
+                             static_cast<int>(column),
+                             "%s",
+                             message);
+}
+
+bool LexParser::isIdentifierHead(char value) const {
+    return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') ||
+           value == '_';
+}
+
+bool LexParser::isIdentifierTail(char value) const {
+    return isIdentifierHead(value) || isDigit(value);
+}
+
+bool LexParser::isMvpKeyword(TokenKind kind) const {
+    switch (kind) {
+        case kwFunc:
+        case kwStruct:
+        case kwEnum:
+        case kwVar:
+        case kwLet:
+        case kwIf:
+        case kwElse:
+        case kwWhile:
+        case kwReturn:
+        case kwMatch:
+        case kwInout:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool LexParser::isMvpOperator(TokenKind kind) const {
+    switch (kind) {
+        case equal:
+        case notEqual:
+        case equalEqual:
+        case andAnd:
+        case question:
+        case plus:
+        case minus:
+        case multiply:
+        case less:
+        case lessEqual:
+        case greater:
+        case greaterEqual:
+        case ampersand:
+            return true;
+        default:
+            return false;
+    }
 }
