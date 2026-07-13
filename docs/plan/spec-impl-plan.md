@@ -28,7 +28,7 @@ Implementation tracks (each track has phases that align to spec sections):
 Phases:
 
   Phase 0  Scaffolding & legacy compat carve-out          ~ 1 week
-  Phase L  Minimal C++ lexer for the JSON-parser profile  ~ 1 week
+  Phase L  Minimal C++ lexer for the JSON-parser profile  ✅ complete
   Phase A  Memory model: inout / consuming / initializing / subscript   ~ 4 weeks
   Phase B  Data model: struct / enum / generics / Result  ~ 6 weeks
   Phase C  Syntax-only property/spec annotations          ~ 1 week
@@ -92,7 +92,7 @@ ctest --test-dir ./build --output-on-failure -R 'legacy_'
 
 ---
 
-## Phase L — JSON-Parser Lexer MVP
+## Phase L — JSON-Parser Lexer MVP ✅
 
 ### Goal
 
@@ -104,23 +104,31 @@ unrelated syntax sugar.
 
 ### Work items
 
-1. Add explicit `TokenKind`, absolute `SourceSpan`, `Invalid`, and EOF.
-2. Implement trivia, ASCII identifiers, MVP/deferred keyword classification,
+1. [x] Add explicit `TokenKind`, absolute `SourceSpan`, `Invalid`, and EOF.
+2. [x] Implement trivia, ASCII identifiers, MVP/deferred keyword classification,
    decimal integers, strings, and strict byte literals.
-3. Implement the longest-match operator table for the MVP.
-4. Diagnose every invalid or intentionally deferred source form.
-5. Add direct in-memory lexer unit tests and malformed-input fuzz coverage.
-6. Adapt the existing parser to the new token contract without adding the
+3. [x] Implement the longest-match operator table for the MVP.
+4. [x] Diagnose every invalid or intentionally deferred source form.
+5. [x] Add direct in-memory lexer unit tests and deterministic malformed-byte
+  property coverage.
+6. [x] Adapt the existing parser to the new token contract without adding the
    later parser productions yet.
 
 ### DoD
 
-- Every token and diagnostic in the lexer test matrix is covered.
-- Spans and LF/CR/CRLF line starts are correct.
-- Re-tokenization is deterministic and does not duplicate tokens.
-- The JSON-parser target source reaches syntax parsing with no lexical error.
-- Legacy behavior is isolated behind legacy mode rather than leaking into the
+- [x] Token classes and diagnostics in the lexer test matrix are covered by 24
+  direct tests.
+- [x] Spans and LF/CR/CRLF line starts are correct.
+- [x] Re-tokenization is deterministic and does not duplicate tokens.
+- [x] The focused JSON-parser acceptance source reaches the parser boundary
+  with no lexical error.
+- [x] Legacy behavior is isolated behind legacy mode rather than leaking into the
   MVP token contract.
+
+Validation uses `ctest --test-dir build --output-on-failure -L lexer`. The
+forward-looking source under `tests/target/` is a design fixture, not an
+executable golden test. Byte-literal, `enum`, and `match` consumers remain work
+for later parser/type/IR phases.
 
 ---
 
@@ -548,7 +556,7 @@ mostly autonomously:
 Phase 0  ──┐
            │
            ▼
-     Phase L ── ★ minimal JSON-parser lexer (1 week)
+    Phase L ✅ ── ★ minimal JSON-parser lexer
        │
        ▼
        Phase A ── ★ memory model (4 weeks)

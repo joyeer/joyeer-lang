@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -55,6 +57,17 @@ TEST_F(LexerTest, ClassifiesMvpKeywordsAndLiteralWords) {
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
+TEST_F(LexerTest, ClassifiesIdentifiersWildcardAndPunctuation) {
+    lex("x _x matchValue b0 _ { } ( ) [ ] : , .");
+
+    expectKinds({
+        identifier, identifier, identifier, identifier, wildcard,
+        leftCurly, rightCurly, leftParen, rightParen, leftSquare, rightSquare,
+        colon, comma, dot, endOfFile
+    });
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
 TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
     lex("for where public performs pure");
 
@@ -74,6 +87,26 @@ TEST_F(LexerTest, UsesLongestMatchForMvpOperators) {
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
+TEST_F(LexerTest, TracksEverySupportedNewlineForm) {
+    lex(" \tlet\rvar\nfunc\r\n");
+
+    expectKinds({kwLet, kwVar, kwFunc, endOfFile});
+    EXPECT_EQ(source->tokens[0]->lineNumber, 0u);
+    EXPECT_EQ(source->tokens[0]->columnAt, 2u);
+    EXPECT_EQ(source->tokens[1]->lineNumber, 1u);
+    EXPECT_EQ(source->tokens[1]->columnAt, 0u);
+    EXPECT_EQ(source->tokens[2]->lineNumber, 2u);
+    EXPECT_EQ(source->tokens[2]->columnAt, 0u);
+    EXPECT_EQ(source->tokens[3]->lineNumber, 3u);
+    EXPECT_EQ(source->tokens[3]->span.offset, 16u);
+    EXPECT_EQ(source->tokens[3]->span.length, 0u);
+    EXPECT_EQ(source->lineStarts, (std::vector<uint32_t> {0, 6, 10, 16}));
+    for (const auto& token : source->tokens) {
+        EXPECT_TRUE(token->startsLine);
+    }
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
 TEST_F(LexerTest, ScansDecimalIntegersWithoutImplicitOctal) {
     lex("0 00 077 42");
 
@@ -83,6 +116,27 @@ TEST_F(LexerTest, ScansDecimalIntegersWithoutImplicitOctal) {
     EXPECT_EQ(source->tokens[2]->intValue, 77);
     EXPECT_EQ(source->tokens[3]->intValue, 42);
     EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, PreservesInt64WidthAndDiagnosesOverflow) {
+    lex("9223372036854775807 9223372036854775808");
+
+    expectKinds({decimalLiteral, decimalLiteral, endOfFile});
+    EXPECT_EQ(source->tokens[0]->intValue, std::numeric_limits<int64_t>::max());
+    ASSERT_EQ(diagnostics.errors.size(), 1u);
+    EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorIntegerLiteralOverflow);
+}
+
+TEST_F(LexerTest, RejectsUnsupportedNumbersAsWholeTokens) {
+    lex("1.2 1e3 0xff 0b1 0o7 12abc 1_000");
+
+    expectKinds({invalid, invalid, invalid, invalid, invalid, invalid, invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 7u);
+    for (size_t index = 0; index < 5; ++index) {
+        EXPECT_EQ(diagnostics.errors[index].message, Diagnostics::errorUnsupportedNumericLiteral);
+    }
+    EXPECT_EQ(diagnostics.errors[5].message, Diagnostics::errorInvalidNumericSuffix);
+    EXPECT_EQ(diagnostics.errors[6].message, Diagnostics::errorInvalidNumericSuffix);
 }
 
 TEST_F(LexerTest, DecodesTheFixedStringEscapeSet) {
@@ -96,6 +150,16 @@ TEST_F(LexerTest, DecodesTheFixedStringEscapeSet) {
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
+TEST_F(LexerTest, AcceptsEmptyUtf8AndCarriageReturnStrings) {
+    lex("\"\" \"é\" \"\\r\"");
+
+    expectKinds({stringLiteral, stringLiteral, stringLiteral, endOfFile});
+    EXPECT_TRUE(source->tokens[0]->rawValue.empty());
+    EXPECT_EQ(source->tokens[1]->rawValue, "é");
+    EXPECT_EQ(source->tokens[2]->rawValue, std::string(1, '\r'));
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
 TEST_F(LexerTest, ScansJsonByteLiterals) {
     lex(R"(b'{' b'\n' b'\\' b'"')");
 
@@ -104,6 +168,23 @@ TEST_F(LexerTest, ScansJsonByteLiterals) {
     EXPECT_EQ(source->tokens[1]->intValue, static_cast<int64_t>('\n'));
     EXPECT_EQ(source->tokens[2]->intValue, static_cast<int64_t>('\\'));
     EXPECT_EQ(source->tokens[3]->intValue, static_cast<int64_t>('"'));
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, ScansAllRemainingJsonBytesAndEscapes) {
+    lex("b'}' b'[' b']' b':' b',' b' ' b'\\t' b'\\r' b'\\0' b'\\\''");
+
+    expectKinds({
+        byteLiteral, byteLiteral, byteLiteral, byteLiteral, byteLiteral,
+        byteLiteral, byteLiteral, byteLiteral, byteLiteral, byteLiteral,
+        endOfFile
+    });
+    const std::vector<int64_t> expected {
+        '}', '[', ']', ':', ',', ' ', '\t', '\r', '\0', '\''
+    };
+    for (size_t index = 0; index < expected.size(); ++index) {
+        EXPECT_EQ(source->tokens[index]->intValue, expected[index]);
+    }
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
@@ -186,11 +267,32 @@ TEST_F(LexerTest, TracksSpansLinesAndCommentTrivia) {
 }
 
 TEST_F(LexerTest, RejectsDeferredMvpSyntaxAsSingleInvalidTokens) {
-    lex("?? ?. || ! / % ; += 1.2 0xff");
+    lex("?? ?. || ! / % ; @ # 'x' += << >> 1.2 0xff");
 
     expectKinds({invalid, invalid, invalid, invalid, invalid, invalid,
-                 invalid, invalid, invalid, invalid, endOfFile});
-    EXPECT_EQ(diagnostics.errors.size(), 10u);
+                 invalid, invalid, invalid, invalid, invalid, invalid,
+                 invalid, invalid, invalid, endOfFile});
+    EXPECT_EQ(diagnostics.errors.size(), 15u);
+}
+
+TEST_F(LexerTest, RejectsCompoundAndShiftOperatorsAsWholeTokens) {
+    lex("-= *= /= %= &= |= ^= ~= <<= >>= &&= ||=");
+
+    expectKinds({
+        invalid, invalid, invalid, invalid, invalid, invalid,
+        invalid, invalid, invalid, invalid, invalid, invalid,
+        endOfFile
+    });
+    ASSERT_EQ(diagnostics.errors.size(), 12u);
+
+    const std::vector<std::string> expected {
+        "-=", "*=", "/=", "%=", "&=", "|=", "^=", "~=",
+        "<<=", ">>=", "&&=", "||="
+    };
+    for (size_t index = 0; index < expected.size(); ++index) {
+        EXPECT_EQ(source->tokens[index]->rawValue, expected[index]);
+        EXPECT_EQ(source->tokens[index]->span.length, expected[index].size());
+    }
 }
 
 TEST_F(LexerTest, DiagnosesMalformedLiteralsAndUnknownCharacters) {
@@ -198,6 +300,47 @@ TEST_F(LexerTest, DiagnosesMalformedLiteralsAndUnknownCharacters) {
 
     expectKinds({invalid, invalid, invalid, invalid, invalid, endOfFile});
     EXPECT_EQ(diagnostics.errors.size(), 5u);
+}
+
+TEST_F(LexerTest, DiagnosesNulAndNonAsciiSourceBytes) {
+    std::string bytes;
+    bytes.push_back('\0');
+    bytes.push_back(static_cast<char>(0xc3));
+    bytes.push_back(static_cast<char>(0xa9));
+    lex(bytes);
+
+    expectKinds({invalid, invalid, invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 3u);
+    for (const auto& error : diagnostics.errors) {
+        EXPECT_EQ(error.level, ErrorLevel::failure);
+    }
+}
+
+TEST_F(LexerTest, DiagnosesUnterminatedConstructsAtTheirStart) {
+    lex("\"unterminated");
+    expectKinds({invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 1u);
+    EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorUnterminatedStringLiteral);
+    EXPECT_EQ(diagnostics.errors[0].lineAt, 0);
+    EXPECT_EQ(diagnostics.errors[0].columnAt, 0);
+
+    lex("b'a");
+    expectKinds({invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 1u);
+    EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorUnterminatedByteLiteral);
+
+    lex("/* unterminated");
+    expectKinds({endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 1u);
+    EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorUnterminatedCComment);
+}
+
+TEST_F(LexerTest, LineCommentsMayEndAtEof) {
+    lex("// comment without newline");
+
+    expectKinds({endOfFile});
+    EXPECT_EQ(source->tokens[0]->span.offset, source->content.size());
+    EXPECT_TRUE(diagnostics.errors.empty());
 }
 
 TEST_F(LexerTest, RetokenizingDoesNotDuplicateTokens) {
@@ -215,6 +358,41 @@ TEST_F(LexerTest, RetokenizingDoesNotDuplicateTokens) {
     EXPECT_EQ(source->tokens.size(), count);
     expectKinds({kwLet, identifier, equal, decimalLiteral, endOfFile});
     EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, ArbitraryByteBuffersAlwaysEndWithOrderedSpansAndOneEof) {
+    uint32_t state = 0x4a6f7965u;
+    for (size_t sample = 0; sample < 64; ++sample) {
+        std::string bytes;
+        bytes.reserve(128);
+        for (size_t index = 0; index < 128; ++index) {
+            state = state * 1664525u + 1013904223u;
+            bytes.push_back(static_cast<char>(state >> 24));
+        }
+
+        lex(bytes);
+        ASSERT_FALSE(source->tokens.empty()) << "sample " << sample;
+
+        uint32_t previousEnd = 0;
+        size_t eofCount = 0;
+        for (const auto& token : source->tokens) {
+            EXPECT_GE(token->span.offset, previousEnd) << "sample " << sample;
+            EXPECT_LE(static_cast<uint64_t>(token->span.offset) + token->span.length,
+                      source->content.size()) << "sample " << sample;
+            if (token->kind == endOfFile) {
+                ++eofCount;
+                EXPECT_EQ(token->span.length, 0u);
+            } else {
+                EXPECT_GT(token->span.length, 0u) << "sample " << sample;
+            }
+            previousEnd = token->span.offset + token->span.length;
+        }
+
+        EXPECT_EQ(eofCount, 1u) << "sample " << sample;
+        EXPECT_EQ(source->tokens.back()->kind, endOfFile) << "sample " << sample;
+        EXPECT_EQ(source->tokens.back()->span.offset, source->content.size())
+                << "sample " << sample;
+    }
 }
 
 TEST_F(LexerTest, LegacyProfileKeepsExistingKeywordAndOperatorSurface) {

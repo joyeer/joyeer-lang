@@ -1,9 +1,11 @@
-# Joyeer Lexer MVP — C++ Implementation Design
+# Joyeer Lexer MVP — C++ Implementation
 
-> **Status:** implementation plan for the first JSON-parser milestone.
+> **Status:** Phase L implemented and validated for the first JSON-parser milestone.
 > The normative lexical grammar remains in [../spec/01-lexical.md](../spec/01-lexical.md).
 > This document deliberately defines a smaller implementation profile: only
 > the Joyeer syntax needed to write a JSON parser is required initially.
+> The profile is selected with `--lang=v0.1`; the default remains the legacy
+> profile while the rest of the compiler is migrated.
 
 ---
 
@@ -57,8 +59,9 @@ of a JSON parser using:
    before their prefixes.
 4. **No silent loss.** Every non-trivia input byte either belongs to a token or
    produces a diagnostic.
-5. **Spans, not copied strings.** A token points into the immutable source
-   buffer by byte offset and length.
+5. **Spans are canonical.** A token points into the immutable source buffer by
+  byte offset and length. `rawValue` and decoded literal payloads remain
+  temporarily for compatibility with the existing parser and VM.
 6. **Deterministic semantics.** Build mode and platform do not change tokenization.
 7. **Linear time.** Tokenization is $O(n)$ in source bytes with no backtracking.
 
@@ -186,9 +189,11 @@ digit           ::= "0".."9"
 - A leading zero does **not** imply octal: `077` means decimal 77.
 - `-42` is two tokens, `Minus` and `IntegerLiteral`; the parser handles unary
   negation.
-- The lexer stores the source span. Integer conversion and overflow checking
-  belong to literal semantic analysis, which can correctly handle the
-  `-9223372036854775808` boundary.
+- The lexer stores the source span and, during the migration, also parses the
+  value into the existing 64-bit `Token::intValue` payload. Out-of-range
+  positive literals receive a lexical diagnostic. Moving conversion into
+  literal semantic analysis remains desirable so the
+  `-9223372036854775808` boundary can be handled contextually.
 - A letter or `_` immediately after digits is diagnosed as an invalid numeric
   suffix rather than silently producing two plausible tokens.
 - A digit sequence followed by `.` and another digit is consumed for recovery
@@ -210,8 +215,9 @@ Rules:
 - unknown escapes are errors;
 - interpolation is not recognized;
 - tokens retain the full source span, including quotes;
-- decoding escapes is performed once by literal lowering, not while deciding
-  token boundaries.
+- the current compatibility path decodes escapes once into `Token::rawValue`
+  while scanning; the full source spelling remains available through the
+  token span for future literal lowering.
 
 This small escape set is retained because, before `readFile()` exists, JSON
 tests embed inputs such as `"{\"n\":42}"` in Joyeer source. General string
@@ -232,7 +238,8 @@ Rules:
 - empty, multi-byte, multi-character, invalid-escape, and unterminated byte
   literals are errors;
 - `b` not followed by `'` starts a normal identifier;
-- byte literals produce `UInt8` values after semantic lowering.
+- byte literals currently populate the existing 64-bit literal payload with a
+  `UInt8` value; parser/type/IR consumers are scheduled after Phase L.
 
 The required JSON punctuation can therefore be written directly:
 
@@ -384,19 +391,16 @@ Milestone requirements:
 - line tracking continues through comments;
 - `///` is treated as an ordinary line comment in this milestone.
 
-Nested block comments are desirable and straightforward with a depth counter,
-but they are not a JSON-parser blocker. The implementation may land them after
-the MVP; lexical conformance with the full specification requires them.
+Nested block comments are supported with a depth counter, including line
+tracking through every nesting level.
 
 ---
 
 ## 5. Token representation
 
-The current token model copies lexemes into `std::string` and mixes source
-position with literal values. The MVP should use an immutable source buffer and
-absolute byte spans.
-
-Recommended representation:
+Phase L added an immutable source buffer contract and absolute byte spans. The
+current representation deliberately coexists with legacy fields while parser,
+type, and IR consumers migrate:
 
 ```cpp
 struct SourceSpan {
@@ -407,12 +411,18 @@ struct SourceSpan {
 struct Token {
     TokenKind kind;
     SourceSpan span;
-  bool startsLine; // skipped trivia contained LF, CR, or CRLF
+    bool startsLine; // skipped trivia contained LF, CR, or CRLF
+
+    // Temporary compatibility payloads:
+    std::string rawValue;
+    int64_t intValue;
 };
 ```
 
-`TokenKind` should identify fixed terminals directly rather than putting every
-operator into one `operators` bucket and comparing strings later:
+`TokenKind` identifies fixed terminals directly rather than putting every
+operator into one `operators` bucket and comparing strings later. The actual
+C++ enum remains unscoped and retains the three broad legacy categories until
+parser migration is complete; conceptually, the explicit portion is:
 
 ```cpp
 enum class TokenKind {
@@ -425,8 +435,7 @@ enum class TokenKind {
     IntegerLiteral,
     StringLiteral,
     ByteLiteral,
-    TrueLiteral,
-    FalseLiteral,
+    BooleanLiteral,
     NilLiteral,
 
     KwFunc,
@@ -470,14 +479,16 @@ enum class TokenKind {
 
 Benefits:
 
-- parser code switches on enums instead of string values;
+- migrated parser code can switch on enums instead of string values;
 - one deferred-keyword kind reserves future spellings without implementing
   their grammar;
 - operator spelling cannot be mistyped in multiple maps;
-- tokens require no per-token lexeme allocation;
 - source excerpts are obtained with `source.substr(span.offset, span.length)`;
-- literal values can be decoded by the semantic stage with the expected type;
 - future terminals can be appended without changing existing token meaning.
+
+After the remaining consumers use spans directly, `rawValue`, literal payloads,
+and the broad legacy categories can be removed. At that point ordinary tokens
+will no longer require per-token lexeme allocation.
 
 ### 5.1 Source positions
 
@@ -491,7 +502,8 @@ std::vector<uint32_t> lineStarts; // starts with 0
 Rules:
 
 - internal offsets and lengths are zero-based byte counts;
-- diagnostics display one-based line and column numbers;
+- `Token::lineNumber` and `Token::columnAt` currently remain zero-based for
+  compatibility; a future diagnostic renderer should display them one-based;
 - CRLF adds one line start after both bytes;
 - token location is always its **first** byte, never its length;
 - `startsLine` is true for the first token and whenever skipped trivia
@@ -507,8 +519,9 @@ Unicode string contents without changing token spans.
 ### 5.2 EOF
 
 The lexer always emits exactly one `EndOfFile` token, including after a lexical
-error. Its span is `{source.size(), 0}`. This removes end-iterator special cases
-from the parser and gives unexpected-EOF diagnostics a stable location.
+error. Its span is `{source.size(), 0}`. The parser recognizes that token while
+retaining an end-iterator guard during migration, and unexpected-EOF
+diagnostics have a stable location.
 
 ---
 
@@ -526,16 +539,16 @@ public:
 };
 ```
 
-If the existing `LexParser::parse(SourceFile::Ptr)` API is retained during the
-transition, it must:
+The retained `LexParser::parse(SourceFile::Ptr)` API:
 
-1. clear `sourceFile->tokens` before scanning;
-2. reset all cursor state;
-3. scan the entire source;
-4. append one EOF token;
-5. report all recoverable lexical errors through `Diagnostics`.
+1. clears `sourceFile->tokens` before scanning;
+2. resets all cursor state;
+3. scans the entire source;
+4. appends one EOF token;
+5. reports all recoverable lexical errors through `Diagnostics`.
 
-The preferred name is `Lexer`, not `LexParser`: this stage tokenizes source and
+The current implementation retains the name `LexParser` to minimize migration
+churn. A later cleanup may rename it to `Lexer`; the stage tokenizes source and
 does not parse syntax.
 
 ### 6.2 Cursor primitives
@@ -611,10 +624,12 @@ an accidental use of deferred syntax.
 For $n$ source bytes:
 
 - time: $O(n)$;
-- token storage: $O(t)$ for $t$ tokens;
+- token storage: $O(t + l)$ for $t$ tokens and copied compatibility payload
+  bytes $l$;
 - temporary lexer storage: $O(1)$, excluding diagnostics and optional line
   starts;
-- no token requires a lexeme allocation.
+- the intended post-migration representation is $O(t)$ with source slices
+  obtained from spans rather than copied lexemes.
 
 ---
 
@@ -641,7 +656,9 @@ should still collect multiple independent errors where recovery is unambiguous.
 
 ### 7.2 Diagnostic shape
 
-Every error should contain:
+The Phase L implementation uses the existing `Diagnostics` carrier and records
+severity, a targeted message, and zero-based line/column. The richer compiler
+diagnostic model should eventually contain:
 
 - stable diagnostic identifier;
 - file path;
@@ -661,6 +678,10 @@ error[LEX004]: floating-point literals are not supported in the JSON-parser MVP
 help: use an Int representation for the first milestone
 ```
 
+Stable diagnostic IDs, file paths, source-span rendering, one-based display,
+and fix-it/help text remain diagnostics-infrastructure work; they are not lexer
+tokenization blockers.
+
 ### 7.3 No silent default branch
 
 The main dispatch must never use an empty `default:` branch. Unknown bytes are
@@ -669,48 +690,67 @@ valid but different token sequence.
 
 ---
 
-## 8. Current implementation assessment
+## 8. Implemented migration state
 
-The existing C++ lexer is a useful prototype but is not the implementation
-specified above.
+Phase L replaced the scanner while intentionally retaining a compatibility
+layer for downstream code:
 
-| Area | Current behavior | Required change |
+| Area | Implemented behavior | Remaining migration debt |
 |---|---|---|
-| Token model | Broad `keyword` / `operators` / `punctuation` kinds with copied strings | Explicit terminal kinds and source spans |
-| EOF | No EOF token | Always append one EOF token |
-| Repeated compile | Token vector is not cleared by the lexer | Clear output before scanning |
-| Keywords | Legacy subset; no `enum` / `match` / `inout` | Implement the MVP keyword table |
-| Match | No `match` or `=>` token | Add keyword and fat arrow |
-| Byte literal | Missing | Add strict `b'x'` scanner |
-| Integer | Legacy leading-zero octal behavior | Decimal-only; no implicit octal |
-| Float | Fraction is scanned but emitted as decimal and converted to `int` | Diagnose as deferred or implement later correctly |
-| Strings | Skips escaped byte but does not validate it | Validate the MVP escape set |
-| Comments | Block comments do not nest and do not update line state | Correct line tracking; nesting may follow MVP |
-| Unknown input | Silently ignored | Emit diagnostic and recover |
-| Position | Several constructors receive token length as column; two-byte operators may get column 0 | Store absolute start span |
-| Newlines in comments/strings | Line state is not consistently updated | Centralize cursor/location handling |
-| Source range width | `uint16_t` line/column | Use 32-bit offsets/ranges |
-| Literal payload | `int` conversion happens in lexer | Defer typed conversion to semantic analysis |
+| Token model | Explicit terminal kinds, `Invalid`, `DeferredKeyword`, wildcard, and absolute `SourceSpan` | Remove broad legacy categories and `rawValue` after parser migration |
+| Profiles | Default `legacy`; `jsonParserMvp` via `--lang=v0.1`; `--lang=v0.1-legacy` selects legacy explicitly | Decide when v0.1 becomes the default |
+| EOF/reset | Every scan resets cursor/output and appends exactly one EOF | Remove redundant parser end-iterator assumptions later |
+| Keywords/match | MVP/deferred classification plus `enum`, `match`, `inout`, `_`, and `=>` | Enum/match grammar and semantics are later phases |
+| Literals | Decimal `Int`, fixed string escapes, strict byte literals; unsupported numeric forms recover as one token | Integrate byte literals into parser/type/IR; move typed conversion out of lexer |
+| Operators | Longest-match MVP terminals; deferred compound, shift, range, optional-chain, and coalescing forms recover as one invalid token | Add syntax only when a later milestone requires it |
+| Trivia | LF, CR, CRLF, line comments, and nested block comments update line starts | None for Phase L |
+| Invalid input | Unknown and non-ASCII source bytes are diagnosed instead of disappearing | Unicode identifiers remain deferred |
+| Positions | 32-bit absolute byte spans plus temporary 32-bit line/column fields | Centralize rich source rendering in diagnostics |
 
-The current pipeline order remains valid:
+The pipeline order remains valid:
 
 ```text
 SourceFile -> Lexer -> SyntaxParser -> TypeGen -> TypeBinding -> IRGen
 ```
 
-Only the lexer/token contract needs replacement; a new compiler stage is not
-required.
+No new compiler stage was required. `SyntaxParser` accepts explicit terminals
+through `tokenKindMatches()` until its broad-category call sites are migrated.
+
+### 8.1 Validation record
+
+- A clean Ninja/Clang C++20 configure and build succeeds on Windows with unit
+  tests enabled.
+- All 24 direct `LexerTest.*` cases pass. They include deterministic arbitrary
+  byte-buffer coverage for ordered spans, progress, bounded ranges, and one EOF.
+- The in-memory JSON-parser acceptance source tokenizes in `jsonParserMvp`
+  without lexical diagnostics.
+- The 35 legacy golden-output comparisons matched during Phase L validation.
+  The old VM/runtime can still trigger Debug CRT assertions on Windows; that
+  implementation is being replaced and is not a lexer completion gate.
+- `tests/target/` contains forward-looking design fixtures and is intentionally
+  excluded from executable golden tests until a sibling expected-output file
+  exists in an executable test directory.
+
+Use the `lexer` CTest label to validate this phase without entering the legacy
+VM/runtime:
+
+```pwsh
+ctest --test-dir build --output-on-failure -L lexer
+```
 
 ---
 
 ## 9. Implementation sequence
+
+L0 through L4 are complete for the compatibility profile described above.
 
 ### L0 — Token and span foundation
 
 1. Introduce `SourceSpan` and explicit `TokenKind`.
 2. Add `EndOfFile` and `Invalid`.
 3. Store token spans as absolute byte offsets.
-4. Add centralized line-start indexing and location rendering.
+4. Add centralized line-start indexing; rich location rendering remains
+  diagnostics-infrastructure work.
 5. Clear tokens and lexer state before every scan.
 
 **Exit condition:** punctuation-only input produces exact kinds/spans plus EOF.
@@ -746,21 +786,25 @@ as Joyeer byte literals.
 
 ### L4 — Parser integration and tests
 
-1. Update parser token comparisons to explicit `TokenKind` values.
+1. Adapt parser token comparisons to explicit terminals through the temporary
+  `tokenKindMatches()` compatibility layer.
 2. Add token-dump test support or direct lexer unit tests.
 3. Add positive and negative acceptance cases.
 4. Run all legacy end-to-end tests and migrate only intentional differences.
 
-**Exit condition:** lexer unit tests and existing end-to-end tests are green;
-the complete JSON-parser target source reaches the parser without lexical
-errors.
+**Exit condition:** direct lexer tests are green; the focused JSON-parser MVP
+acceptance source reaches the parser boundary without lexical errors. The
+larger file under `tests/target/` remains a forward-looking design fixture and
+contains parser/runtime features outside Phase L.
 
 ---
 
 ## 10. Test matrix
 
-Lexer tests should operate directly on in-memory source strings. Golden
-end-to-end tests alone cannot reliably distinguish lexer and parser defects.
+Lexer tests operate directly on in-memory source strings. Golden end-to-end
+tests alone cannot reliably distinguish lexer and parser defects. The current
+suite covers the matrix below with focused cases plus deterministic arbitrary
+byte buffers.
 
 ### 10.1 Positive cases
 
@@ -796,7 +840,7 @@ end-to-end tests alone cannot reliably distinguish lexer and parser defects.
 
 ### 10.3 Invariants
 
-Property-style tests should verify:
+The token contract requires:
 
 1. token spans are ordered and never overlap;
 2. every non-trivia byte is covered by a valid or invalid token;
@@ -808,29 +852,38 @@ Property-style tests should verify:
    source buffer;
 7. no malformed input causes out-of-bounds reads.
 
-Fuzzing arbitrary byte buffers is appropriate even before the parser is
-complete; the primary initial property is “diagnose or tokenize, never crash or
-hang.”
+The deterministic arbitrary-byte test directly checks ordered/bounded spans,
+progress, and exactly one final EOF. Focused scanner cases cover trivia and
+retokenization behavior. The primary property is “diagnose or tokenize, never
+crash or hang.” A sanitizer-backed external fuzz target may be added later
+without changing the token contract.
 
 ---
 
 ## 11. Definition of done for the JSON-parser milestone
 
-The Lexer MVP is complete when all of the following hold:
+Phase L is complete:
 
-- the target Joyeer JSON-parser source uses only terminals in this document;
-- all terminals tokenize with correct byte spans;
-- `enum`, payload cases, `match`, byte literals, `=>`, `?`, and `&` reach the
-  parser correctly;
-- every invalid byte produces a diagnostic;
-- strings and byte escapes are validated;
-- LF, CR, and CRLF locations are correct;
-- an EOF token is always emitted;
-- direct lexer unit tests cover every token and every lexical diagnostic;
-- the lexer is linear-time and performs no per-token lexeme allocation;
-- deferred syntax is rejected intentionally rather than partially accepted;
-- the existing compiler pipeline consumes the new token contract;
-- the JSON-parser target source has no lexical errors.
+- [x] the focused Joyeer JSON-parser acceptance source uses only terminals in
+  this document;
+- [x] all MVP terminals tokenize with correct byte spans;
+- [x] `enum`, payload-case terminals, `match`, byte literals, `=>`, `?`, and
+  `&` reach the parser boundary correctly;
+- [x] every invalid source byte produces a diagnostic;
+- [x] strings and byte escapes are validated;
+- [x] LF, CR, and CRLF locations are correct;
+- [x] exactly one EOF token is always emitted;
+- [x] direct lexer unit tests cover token classes and lexical diagnostics;
+- [x] scanning is linear-time and always advances or terminates;
+- [x] deferred syntax is rejected intentionally rather than partially
+  accepted;
+- [x] the existing compiler pipeline accepts the migrated token contract;
+- [x] the focused JSON-parser acceptance source has no lexical errors.
+
+The no-copied-lexeme end state is intentionally not claimed yet: `rawValue`
+and literal payloads are compatibility fields for the current parser and VM.
+Likewise, parsing and lowering byte literals, `enum`, and `match` belong to the
+next feature phases rather than Phase L.
 
 This milestone does **not** require every chapter of the future Joyeer
 specification. New syntax should be added only when a concrete language feature
@@ -855,8 +908,8 @@ or standard-library implementation requires it.
 | `for-in` | Deferred; use `while` |
 | `??` coalescing | Deferred; use `match` on `Optional` / `Result` |
 | Compound assignment | Deferred; write explicit assignment |
-| Token text ownership | Source span into immutable source |
-| Source position | Absolute UTF-8 byte span; displayed as 1-based line/column |
+| Token text ownership | Source span is canonical; copied compatibility payload retained temporarily |
+| Source position | Absolute UTF-8 byte span; temporary zero-based line/column fields |
 | Unknown characters | Always diagnostic |
 | EOF token | Mandatory |
 | First optimization target | Correctness and simplicity, not micro-optimization |

@@ -388,8 +388,11 @@ void LexParser::parseByteLiteral() {
         while (!atEnd() && peek() != '\'' && peek() != '\n' && peek() != '\r') {
             advance();
         }
-        consumeIf('\'');
-        report(tokenLine, tokenColumn, Diagnostics::errorInvalidByteLiteral);
+        if (consumeIf('\'')) {
+            report(tokenLine, tokenColumn, Diagnostics::errorInvalidByteLiteral);
+        } else {
+            report(tokenLine, tokenColumn, Diagnostics::errorUnterminatedByteLiteral);
+        }
         valid = false;
     }
 
@@ -405,6 +408,12 @@ void LexParser::parseByteLiteral() {
 void LexParser::parseOperatorOrPunctuation() {
     const size_t start = position;
     const char value = advance();
+
+    auto emitUnsupported = [this, start]() {
+        const std::string text = sourcefile->content.substr(start, position - start);
+        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, text.c_str());
+        emitInvalid(start, text);
+    };
 
     auto emitMvpOperator = [this, start](TokenKind kind) {
         if (profile == LexerProfile::jsonParserMvp && !isMvpOperator(kind)) {
@@ -471,23 +480,49 @@ void LexParser::parseOperatorOrPunctuation() {
             emitMvpOperator(bang);
             return;
         case '<':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('<')) {
+                consumeIf('=');
+                emitUnsupported();
+                return;
+            }
             if (consumeIf('=')) { emit(lessEqual, start); return; }
             emit(less, start);
             return;
         case '>':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('>')) {
+                consumeIf('=');
+                emitUnsupported();
+                return;
+            }
             if (consumeIf('=')) { emit(greaterEqual, start); return; }
             emit(greater, start);
             return;
         case '&':
-            if (consumeIf('&')) { emit(andAnd, start); return; }
+            if (consumeIf('&')) {
+                if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                    emitUnsupported();
+                } else {
+                    emit(andAnd, start);
+                }
+                return;
+            }
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                emitUnsupported();
+                return;
+            }
             emit(ampersand, start);
             return;
         case '|':
             if (consumeIf('|')) {
+                if (profile == LexerProfile::jsonParserMvp) {
+                    consumeIf('=');
+                }
                 emitMvpOperator(orOr);
             } else {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "|");
-                emitInvalid(start);
+                if (profile == LexerProfile::jsonParserMvp) {
+                    consumeIf('=');
+                }
+                emitUnsupported();
             }
             return;
         case '?':
@@ -525,16 +560,25 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(multiply, start);
             return;
         case '/':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                emitUnsupported();
+                return;
+            }
             emitMvpOperator(divide);
             return;
         case '%':
+            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                emitUnsupported();
+                return;
+            }
             emitMvpOperator(percentage);
             return;
         case '^':
         case '~':
-            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax,
-                   sourcefile->content.substr(start, 1).c_str());
-            emitInvalid(start);
+            if (profile == LexerProfile::jsonParserMvp) {
+                consumeIf('=');
+            }
+            emitUnsupported();
             return;
         case '\'':
             report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "'");

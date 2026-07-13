@@ -4,8 +4,12 @@ add_executable(CompilerLexerTests
 
 target_link_libraries(CompilerLexerTests
         GTest::gtest_main
-        JoyeerCompiler
         JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerVM
 )
 
-gtest_discover_tests(CompilerLexerTests)
+gtest_discover_tests(CompilerLexerTests
+        PROPERTIES LABELS lexer
+)
