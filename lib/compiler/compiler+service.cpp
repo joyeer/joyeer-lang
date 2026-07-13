@@ -3,6 +3,7 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/compiler/typegen.h"
 #include "joyeer/compiler/typebinding.h"
+#include "joyeer/compiler/nameresolution.h"
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
@@ -13,6 +14,32 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+
+void reportSpannedFailure(
+    Diagnostics* diagnostics,
+    const SourceFile::Ptr& sourcefile,
+    SourceSpan span,
+    const std::string& message) {
+    const auto upper = std::upper_bound(
+        sourcefile->lineStarts.begin(),
+        sourcefile->lineStarts.end(),
+        span.offset);
+    const auto line = upper == sourcefile->lineStarts.begin()
+        ? 0
+        : static_cast<int>(
+            std::distance(sourcefile->lineStarts.begin(), upper) - 1);
+    const auto column = static_cast<int>(
+        span.offset - sourcefile->lineStarts[static_cast<size_t>(line)]);
+    diagnostics->reportError(
+        ErrorLevel::failure,
+        line,
+        column,
+        "%s",
+        message.c_str());
+}
+
+} // namespace
 
 #define CHECK_ERROR_RETURN_NULL \
     if(diagnostics->errors.size() != 0) { \
@@ -66,21 +93,25 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
     CHECK_ERROR_RETURN_NULL
 
     if(options->languageMode == LanguageMode::v0_1) {
+        sourcefile->semanticModel.reset();
         joyeer::parser::Parser parser(sourcefile->tokens);
         auto result = parser.parse();
         for(const auto& diagnostic : result.diagnostics) {
-            const auto upper = std::upper_bound(
-                sourcefile->lineStarts.begin(),
-                sourcefile->lineStarts.end(),
-                diagnostic.span.offset);
-            const auto line = upper == sourcefile->lineStarts.begin()
-                ? 0
-                : static_cast<int>(std::distance(sourcefile->lineStarts.begin(), upper) - 1);
-            const auto column = static_cast<int>(
-                diagnostic.span.offset - sourcefile->lineStarts[static_cast<size_t>(line)]);
             const std::string message = std::string(joyeer::parser::diagnosticName(diagnostic.id)) +
                 ": " + diagnostic.message;
-            diagnostics->reportError(ErrorLevel::failure, line, column, "%s", message.c_str());
+            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+        }
+        if (!result.succeeded()) {
+            return nullptr;
+        }
+
+        const auto resolution = joyeer::semantic::NameResolver().resolve(result.root);
+        sourcefile->semanticModel = resolution.model;
+        for (const auto& diagnostic : resolution.diagnostics) {
+            const std::string message =
+                    std::string(joyeer::semantic::diagnosticName(diagnostic.id)) +
+                    ": " + diagnostic.message;
+            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
         }
         return nullptr;
     }

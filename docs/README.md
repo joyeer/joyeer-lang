@@ -58,6 +58,7 @@ the current backend; will be revised or archived when LLVM lands.
 | [bytecode.md](impl/bytecode.md) | VM bytecode opcode reference |
 | [lexer.md](impl/lexer.md) | Implemented minimal C++ lexer profile for the first JSON-parser milestone |
 | [parser.md](impl/parser.md) | Parser MVP grammar, AST boundary, recovery strategy, and parser-only test contract |
+| [name-resolution.md](impl/name-resolution.md) | v0.1 semantic IDs, scopes, symbols, binding order, diagnostics, and type-directed handoff |
 | [string.md](impl/string.md) | `String` runtime layout and builtin methods |
 
 ---

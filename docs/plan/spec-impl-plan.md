@@ -154,8 +154,8 @@ B still own their semantic checking, representation, and lowering.
 4. [x] Parse byte literals, postfix chains, labeled/enum-payload arguments, `&`,
    `if`, `while`, `return`, contextual cases, and minimal `match` patterns.
 5. [x] Add synchronization-based recovery and direct AST/diagnostic snapshots.
-6. [x] Keep parser tests out of name resolution, type checking, IR, VM, and
-   runtime; retain the old parser only for the legacy lane.
+6. [x] Keep direct parser tests out of semantic passes, IR, VM, and runtime;
+  retain the old parser only for the legacy lane.
 
 ### DoD
 
@@ -169,8 +169,9 @@ B still own their semantic checking, representation, and lowering.
 - [x] `ctest --test-dir build --output-on-failure -L parser` passes without
   launching the old VM/runtime.
 
-Successful parsing does not close Phase A or B: ownership checking, enum
-layout, name resolution, match exhaustiveness, and lowering remain there.
+Successful parsing does not close Phase A or B: ownership checking,
+type-directed completion of deferred references, enum layout, match
+exhaustiveness, and lowering remain there.
 
 ---
 

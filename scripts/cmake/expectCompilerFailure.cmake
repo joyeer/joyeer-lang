@@ -10,13 +10,13 @@ execute_process(
 )
 
 if(result EQUAL 0)
-    message(FATAL_ERROR "Parser validation unexpectedly succeeded")
+    message(FATAL_ERROR "Compiler validation unexpectedly succeeded")
 endif()
 
 set(combined "${output}${error}")
 if(NOT combined MATCHES "${EXPECTED_PATTERN}")
     message(FATAL_ERROR
-            "Parser failed without the expected diagnostic '${EXPECTED_PATTERN}':\n${combined}")
+            "Compiler failed without the expected diagnostic '${EXPECTED_PATTERN}':\n${combined}")
 endif()
 
-message(STATUS "Observed expected parser failure: ${EXPECTED_PATTERN}")
+message(STATUS "Observed expected compiler failure: ${EXPECTED_PATTERN}")

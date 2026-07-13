@@ -6,7 +6,9 @@ add_joyeer_library(JoyeerCompiler STATIC
         IRGen.cpp
         node.cpp
         node+visitor.cpp
+        nameresolution.cpp
         parser.cpp
+        semantic.cpp
         debugprinter.cpp
         sourcefile.cpp
         symtable.cpp

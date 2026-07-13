@@ -8,8 +8,9 @@
 
 The compiler is currently a **C++20 implementation**. Default/legacy mode
 lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its
-own bytecode. `--lang=v0.1` uses the new lexer and syntax-only Parser MVP, then
-stops before semantic analysis/codegen; it does not construct the legacy VM.
+own bytecode. `--lang=v0.1` uses the new lexer, syntax-only Parser MVP, and
+independent name-resolution semantic model, then stops before type checking
+and codegen; it does not construct the legacy VM.
 LLVM-based native code-gen is on the roadmap but **not implemented**.
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
@@ -38,6 +39,7 @@ ctest --test-dir ./build --output-on-failure
 | Driver / `main` | [lib/main/driver.h](lib/main/driver.h) | [lib/main/main.cpp](lib/main/main.cpp), [lib/main/driver.cpp](lib/main/driver.cpp) |
 | Lexer / parser | [include/joyeer/compiler/lexparser.h](include/joyeer/compiler/lexparser.h), [include/joyeer/compiler/syntaxparser.h](include/joyeer/compiler/syntaxparser.h) | [lib/compiler/lexparser.cpp](lib/compiler/lexparser.cpp), [lib/compiler/syntaxparser.cpp](lib/compiler/syntaxparser.cpp) |
 | v0.1 Parser MVP / syntax AST | [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | [lib/compiler/parser.cpp](lib/compiler/parser.cpp), [lib/compiler/syntax.cpp](lib/compiler/syntax.cpp) |
+| v0.1 name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | [lib/compiler/nameresolution.cpp](lib/compiler/nameresolution.cpp), [lib/compiler/semantic.cpp](lib/compiler/semantic.cpp) |
 | AST | [include/joyeer/compiler/node.h](include/joyeer/compiler/node.h), [include/joyeer/compiler/node+visitor.h](include/joyeer/compiler/node+visitor.h) | [lib/compiler/node.cpp](lib/compiler/node.cpp) |
 | Symbol / type binding | [include/joyeer/compiler/symtable.h](include/joyeer/compiler/symtable.h), [include/joyeer/compiler/typegen.h](include/joyeer/compiler/typegen.h), [include/joyeer/compiler/typebinding.h](include/joyeer/compiler/typebinding.h), [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) | matching `*.cpp` in [lib/compiler/](lib/compiler/) |
 | IR / bytecode gen | [include/joyeer/compiler/IRGen.h](include/joyeer/compiler/IRGen.h) | [lib/compiler/IRGen.cpp](lib/compiler/IRGen.cpp) |

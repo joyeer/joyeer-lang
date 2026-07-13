@@ -64,8 +64,8 @@ Source (.joyeer)
 |-------|--------|--------|
 | 1. Lexer | ✅ JSON-parser MVP; legacy profile retained | `lexparser.cpp`, [lexer contract](../impl/lexer.md) |
 | 2. Parser | ✅ JSON-parser MVP; legacy parser retained | `parser.cpp`, `syntax.cpp`, [Parser MVP contract](../impl/parser.md) |
-| 3. Name Resolution | ⚠️ Partial | `symtable.cpp` |
-| 4. Type Checking | ⚠️ Partial | `typebinding.cpp` + `typegen.cpp` |
+| 3. Name Resolution | ✅ Parser-MVP resolver; type-directed references handed to Stage 4 | `semantic.cpp`, `nameresolution.cpp`, [contract](../impl/name-resolution.md) |
+| 4. Type Checking | ❌ Parser-MVP checker missing; legacy pipeline partial | `typebinding.cpp` + `typegen.cpp` (legacy only) |
 | 5. Semantic Analysis | ❌ Missing | — |
 | 6. Own IR | ❌ Missing | Currently AST → bytecode directly |
 | 7. LLVM IR Gen | ❌ Missing | Currently generates custom bytecode |
@@ -97,15 +97,17 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Resolve and Type the Parser MVP AST
+## Immediate Next Milestone: Type the Resolved Parser MVP AST
 
-The syntax-only [Parser MVP contract](../impl/parser.md) is implemented. The
-next frontend work is to consume that stable AST without reviving the legacy
+The syntax-only [Parser MVP contract](../impl/parser.md) and its independent
+[name-resolution model](../impl/name-resolution.md) are implemented. The next
+frontend work is to consume the resolved model without reviving the legacy
 AST's coupling to runtime descriptors:
 
-1. Add name-resolution tables keyed by syntax node IDs.
-2. Resolve functions, fields, synthesized struct initializers, enum cases, and
-  contextual `.Case` expressions.
+1. Consume resolved symbols, call targets, and scope tables from the semantic
+  model.
+2. Complete type-directed member and contextual `.Case` references recorded
+  by the resolver as explicit deferred entries.
 3. Type optional/built-in generic uses and minimal match payload bindings.
 4. Add enum layout and match-exhaustiveness checks before lowering.
 5. Keep `--lang=v0.1` out of the old `TypeGen`/VM until a new semantic path is

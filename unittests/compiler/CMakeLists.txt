@@ -34,19 +34,52 @@ gtest_discover_tests(CompilerParserTests
         PROPERTIES LABELS parser
 )
 
+add_executable(CompilerNameResolutionTests
+        nameresolution_test.cpp
+)
+
+target_link_libraries(CompilerNameResolutionTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerVM
+)
+
+target_compile_definitions(CompilerNameResolutionTests PRIVATE
+        JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
+)
+
+gtest_discover_tests(CompilerNameResolutionTests
+        PROPERTIES LABELS name-resolution
+)
+
+add_test(NAME NameResolutionCliRejectsUndefinedName
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/name-resolution/err/undefined_name.joyeer
+                -DEXPECTED_PATTERN=name-resolution.undefined-name
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(NameResolutionCliRejectsUndefinedName PROPERTIES
+        LABELS name-resolution
+)
+
 add_test(NAME ParserMvpCliAcceptance
         COMMAND $<TARGET_FILE:joyeer>
                 --lang=v0.1
                 "${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer"
 )
-set_tests_properties(ParserMvpCliAcceptance PROPERTIES LABELS parser)
+set_tests_properties(ParserMvpCliAcceptance PROPERTIES
+        LABELS "parser;name-resolution"
+)
 
 add_test(NAME ParserMvpCliRejectsInvalidSource
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                 -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/err/missing_expression.joyeer
                 -DEXPECTED_PATTERN=parser.expected-expression
-                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectParserFailure.cmake
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
 )
 set_tests_properties(ParserMvpCliRejectsInvalidSource PROPERTIES
         LABELS parser

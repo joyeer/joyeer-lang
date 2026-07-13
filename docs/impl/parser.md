@@ -74,9 +74,10 @@ keep old lowering alive.
 
 The implemented v0.1 path lives in `parser.h` / `parser.cpp` with its separate
 syntax-only AST in `syntax.h` / `syntax.cpp`. `--lang=v0.1` runs the MVP lexer
-and this parser, reports stable parser diagnostics, and then exits without
-constructing the old VM/runtime. Default/legacy mode continues through the old
-`SyntaxParser`, semantic passes, bytecode, and VM.
+and this parser, reports stable parser diagnostics, then passes a successful
+tree to the independent [name resolver](name-resolution.md). It still exits
+before type checking, lowering, or the old VM/runtime. Default/legacy mode
+continues through the old `SyntaxParser`, semantic passes, bytecode, and VM.
 
 ---
 
@@ -684,8 +685,8 @@ Parser MVP is complete when:
   optional types, `inout`, and `&` all reach stable syntax nodes;
 - [x] malformed input yields stable diagnostic IDs/spans and parsing continues at
   documented boundaries;
-- [x] no parser test enters legacy `TypeGen`, `TypeBinding`, bytecode, VM, or
-  runtime code;
+- [x] direct `ParserTest` cases enter no semantic pass, and no v0.1 test enters
+  legacy `TypeGen`, `TypeBinding`, bytecode, VM, or runtime code;
 - [x] the existing legacy parser remains isolated until its tests are intentionally
   migrated or archived.
 
@@ -695,6 +696,7 @@ Validate this milestone with:
 ctest --test-dir build --output-on-failure -L parser
 ```
 
-Name resolution, enum layout, match exhaustiveness, ownership enforcement, and
-code generation are explicit later gates. A source file parsing successfully
-does not imply that it is semantically valid or executable.
+Type-directed completion of deferred name references, type checking, enum
+layout, match exhaustiveness, ownership enforcement, and code generation are
+explicit later gates. A source file parsing and resolving successfully does
+not imply that it is fully typed or executable.
