@@ -3,23 +3,24 @@
 
 Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):arguments(arguments) {
     this->diagnostics = diagnostics;
-
-    vm = new InterpretedIsolatedVM();
-
     compiler = new CompilerService(diagnostics, arguments);
-    compiler->strings = vm->strings;
-    compiler->types = vm->types;
 
-    compiler->bootstrap();
-    vm->bootstrap();
+    if(arguments->languageMode == LanguageMode::legacy) {
+        vm = new InterpretedIsolatedVM();
+        compiler->strings = vm->strings;
+        compiler->types = vm->types;
+        compiler->bootstrap();
+        vm->bootstrap();
+    }
 }
 
-void Driver::run() {
+int Driver::run() {
     auto module = compiler->compile(arguments->inputfile.string());
-    if(diagnostics->errors.empty()) {
-        ((InterpretedIsolatedVM*)vm)->run(module);
-    } else {
+    if(!diagnostics->errors.empty()) {
         diagnostics->printErrors();
+        return 1;
+    } else if(arguments->languageMode == LanguageMode::legacy) {
+        ((InterpretedIsolatedVM*)vm)->run(module);
     }
-
+    return 0;
 }

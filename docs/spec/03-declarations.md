@@ -225,7 +225,25 @@ let arr: JsonValue = .Array([.Null, .Bool(true)])
 ```
 
 Construction uses `Type.Case(args)` or `.Case(args)` when the target type
-is inferable from context. Pattern-match with `match` (§5.9).
+is inferable from context. An associated value declared without a label is
+positional; one declared with a label must use that label in construction and
+patterns (§5.8, §7):
+
+```joyeer
+enum JsonError {
+  Unexpected(UInt8, at: Int),
+}
+
+let error: JsonError = .Unexpected(b'{', at: 12)
+match error {
+  .Unexpected(byte, at: position) => position,
+}
+```
+
+This positional form is specific to unlabeled enum payloads. Ordinary
+function and struct-initializer arguments remain labeled (§3.2.1). A case
+without associated values is written without parentheses (`.Null`, not
+`.Null()`). Pattern-match with `match` (§5.9).
 
 Enums are **tagged unions**. Size is `discriminant + max(variant)`,
 stack-allocatable, no heap unless the user requests indirection (§3.4.1).

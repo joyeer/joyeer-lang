@@ -9,11 +9,11 @@
 class Driver {
 public:
     Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments);
-    void run();
+    int run();
 
 private:
     CompilerService* compiler;
-    IsolateVM* vm;
+    IsolateVM* vm = nullptr;
     CommandLineArguments::Ptr arguments;
     Diagnostics* diagnostics;
 };

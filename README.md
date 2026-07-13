@@ -16,7 +16,13 @@ The design philosophy and trade-offs are documented under [docs/rationale/](docs
 
 ## Project status
 
-The "no GC / zero-cost / native" points above describe the **design direction**. The current implementation is a **C++20 compiler** that lexes and parses Joyeer source and executes it on a custom **stack-based virtual machine** with its own bytecode. LLVM-based native code generation is on the roadmap but **not yet implemented**.
+The "no GC / zero-cost / native" points above describe the **design direction**.
+The current implementation is a **C++20 compiler**. Default/legacy mode
+executes on a custom stack-based VM. The new `--lang=v0.1` frontend now has an
+isolated lexer and syntax-only Parser MVP (including payload enums, minimal
+`match`, Pratt precedence, recovery, and stable spans), but semantic analysis
+and code generation for that AST are not implemented yet. LLVM-based native
+code generation is on the roadmap.
 
 Working today: integers, booleans and strings; `var` bindings; arithmetic, comparison and logical operators; `if`/`else`; `while`; functions with typed parameters and named arguments; `print`; arrays, dictionaries, optionals (and legacy classes).
 
@@ -69,10 +75,25 @@ The `joyeer` executable is written to `build/bin/joyeer`.
 ./build/bin/joyeer path/to/program.joyeer
 ```
 
+The default mode uses the legacy parser and VM. The new JSON-parser frontend
+can currently be used for syntax validation only; it intentionally stops
+before legacy type checking, bytecode generation, and VM startup:
+
+```shell
+./build/bin/joyeer --lang=v0.1 path/to/program.joyeer
+```
+
 ### Testing
 
 ```shell
 ctest --test-dir ./build --output-on-failure
+```
+
+Focused frontend validation avoids the legacy VM/runtime:
+
+```shell
+ctest --test-dir ./build --output-on-failure -L lexer
+ctest --test-dir ./build --output-on-failure -L parser
 ```
 
 Tests are golden-output: [tests/testRunner.py](tests/testRunner.py) runs the compiled `joyeer` on `tests/**/*.joyeer` and diffs stdout against the sibling `*.result.txt`. After adding or removing `*.joyeer` test files, re-run `cmake -B ./build -G Ninja` so the test list is regenerated.

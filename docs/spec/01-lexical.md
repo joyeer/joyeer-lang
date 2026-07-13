@@ -4,7 +4,9 @@
 
 - Source files are UTF-8.
 - Line breaks: `U+000A` (LF), `U+000D` (CR), or `CRLF`.
-- Whitespace separates tokens but is otherwise insignificant.
+- Whitespace separates tokens. Horizontal whitespace is otherwise
+    insignificant; a line break may terminate a statement when its optional
+    semicolon is omitted (§6).
 - Indentation is **not** semantically significant (unlike Python).
 
 ### 1.2 Comments

@@ -3,12 +3,14 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/compiler/typegen.h"
 #include "joyeer/compiler/typebinding.h"
+#include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
 #include "joyeer/compiler/debugprinter.h"
 #include "joyeer/runtime/types.h"
 #include "joyeer/runtime/sys.h"
 
+#include <algorithm>
 #include <utility>
 
 
@@ -37,36 +39,55 @@ SourceFile::Ptr CompilerService::findSourceFile(const std::string &path, const s
             sourcefile = target;
         }
     }
-    
+
     auto sourcefilePath = sourcefile.string();
     if(sourceFiles.find(sourcefilePath) == sourceFiles.end()) {
-        
+
         std::string folder = options->workingDirectory.string();
         auto sf = std::make_shared<SourceFile>(folder, sourcefilePath);
         sourceFiles.insert({sourcefilePath, sf});
     }
-    
+
     return sourceFiles.find(sourcefilePath)->second;
 }
 
 
 ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
+    auto context= std::make_shared<CompileContext>(diagnostics, globalSymbols);
+    context->sourcefile = sourcefile;
+    context->compiler = this;
+
+    // lex structure analyze
+    const auto lexerProfile = options->languageMode == LanguageMode::v0_1
+            ? LexerProfile::jsonParserMvp
+            : LexerProfile::legacy;
+    LexParser lexParser(context, lexerProfile);
+    lexParser.parse(sourcefile);
+    CHECK_ERROR_RETURN_NULL
+
+    if(options->languageMode == LanguageMode::v0_1) {
+        joyeer::parser::Parser parser(sourcefile->tokens);
+        auto result = parser.parse();
+        for(const auto& diagnostic : result.diagnostics) {
+            const auto upper = std::upper_bound(
+                sourcefile->lineStarts.begin(),
+                sourcefile->lineStarts.end(),
+                diagnostic.span.offset);
+            const auto line = upper == sourcefile->lineStarts.begin()
+                ? 0
+                : static_cast<int>(std::distance(sourcefile->lineStarts.begin(), upper) - 1);
+            const auto column = static_cast<int>(
+                diagnostic.span.offset - sourcefile->lineStarts[static_cast<size_t>(line)]);
+            const std::string message = std::string(joyeer::parser::diagnosticName(diagnostic.id)) +
+                ": " + diagnostic.message;
+            diagnostics->reportError(ErrorLevel::failure, line, column, "%s", message.c_str());
+        }
+        return nullptr;
+    }
 
     auto debugfile = sourcefile->getAbstractLocation() + ".xdump.yml";
     NodeDebugPrinter debugPrinter(debugfile);
 
-    auto context= std::make_shared<CompileContext>(diagnostics, globalSymbols);
-    context->sourcefile = sourcefile;
-    context->compiler = this;
-    
-    // lex structure analyze
-        const auto lexerProfile = options->languageMode == LanguageMode::v0_1
-            ? LexerProfile::jsonParserMvp
-            : LexerProfile::legacy;
-        LexParser lexParser(context, lexerProfile);
-    lexParser.parse(sourcefile);
-    CHECK_ERROR_RETURN_NULL
-    
     // syntax analyze
     SyntaxParser syntaxParser(context, sourcefile);
     auto block = syntaxParser.parse();

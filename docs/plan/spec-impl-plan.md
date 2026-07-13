@@ -12,7 +12,7 @@
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │  Spec scope  =  A (memory model)                                  │
-│                + B (struct / enum / generics / Result)             │
+│                + B (struct / enum / built-in containers / Result)  │
 │                + C-syntax-only (property/spec annotations)         │
 └───────────────────────────────────────────────────────────────────┘
 
@@ -29,15 +29,16 @@ Phases:
 
   Phase 0  Scaffolding & legacy compat carve-out          ~ 1 week
   Phase L  Minimal C++ lexer for the JSON-parser profile  ✅ complete
+  Phase P  Parser foundation + JSON-parser grammar        ✅ complete
   Phase A  Memory model: inout / consuming / initializing / subscript   ~ 4 weeks
-  Phase B  Data model: struct / enum / generics / Result  ~ 6 weeks
+  Phase B  Data model: struct / enum / built-in containers / Result  ~ 6 weeks
   Phase C  Syntax-only property/spec annotations          ~ 1 week
   Phase D  Legacy removal: class out, `print(message:)` out, etc.
                                                             ~ 2 weeks
 ```
 
-Target: from end of Phase 0 to end of Phase C, **~12 weeks of focused
-work**; the full Phase 0 through Phase D sequence is **~15 weeks** for one
+Target: from end of Phase 0 to end of Phase C, **~14 weeks of focused
+work**; the full Phase 0 through Phase D sequence is **~17 weeks** for one
 engineer or one well-prompted AI agent loop.
 
 ---
@@ -77,7 +78,8 @@ tests; introduce a deprecation lane.
    - One enum entry per legacy item from spec §14.
    - All emit as **warnings** in `v0.1-legacy`, **errors** in `v0.1`.
 
-4. **Add `tests/spec/Phase0_smoke/` with a trivial `let x = 1; print(x)`
+4. **Add `tests/spec/Phase0_smoke/` with a trivial `let x = 1` followed by
+  `print(value: x)`
    example** under the new flag.
 
 ### DoD
@@ -132,6 +134,46 @@ for later parser/type/IR phases.
 
 ---
 
+## Phase P — JSON-Parser Parser MVP ✅
+
+### Goal
+
+Replace the legacy parser contract with the syntax-only, spanned AST and
+focused grammar defined in [../impl/parser.md](../impl/parser.md). Phase P
+crosses the later feature phases only at the **syntax** boundary: it parses
+`inout`/`&`, payload enums, and minimal match patterns, while Phase A and Phase
+B still own their semantic checking, representation, and lowering.
+
+### Work items
+
+1. [x] Add a bounded token cursor, syntax-only AST, node spans, stable parser
+   diagnostic IDs, and error nodes.
+2. [x] Parse MVP types and declarations: bindings, functions/labels/`inout`,
+   field-only structs, payload-only enums, and built-in generic type uses.
+3. [x] Replace flat expressions and `TypeGen` precedence repair with Pratt parsing.
+4. [x] Parse byte literals, postfix chains, labeled/enum-payload arguments, `&`,
+   `if`, `while`, `return`, contextual cases, and minimal `match` patterns.
+5. [x] Add synchronization-based recovery and direct AST/diagnostic snapshots.
+6. [x] Keep parser tests out of name resolution, type checking, IR, VM, and
+   runtime; retain the old parser only for the legacy lane.
+
+### DoD
+
+- [x] Core positive/negative categories have direct cases; deterministic token
+  deletion exercises malformed-stream progress and bounds.
+- [x] Precedence and associativity are encoded in the parser AST itself.
+- [x] The focused JSON-parser acceptance source reaches EOF with no lexical or
+  parser diagnostic.
+- [x] Malformed token streams terminate, remain in bounds, and recover to later
+  independent declarations where possible.
+- [x] `ctest --test-dir build --output-on-failure -L parser` passes without
+  launching the old VM/runtime.
+
+Successful parsing does not close Phase A or B: ownership checking, enum
+layout, name resolution, match exhaustiveness, and lowering remain there.
+
+---
+
 ## Phase A — Memory Model
 
 > The chapter that makes Joyeer ≠ Swift-clone. Implements spec §4.
@@ -140,7 +182,7 @@ for later parser/type/IR phases.
 
 | Token | Notes |
 |-------|-------|
-| `inout` | Keyword |
+| `inout` | Already tokenized and parsed syntactically by Phase P |
 | `borrowing` | Keyword (default access effect; may be written explicitly) |
 | `consuming` | Keyword |
 | `initializing` | Keyword (when in subscript/parameter context) |
@@ -148,7 +190,7 @@ for later parser/type/IR phases.
 | `consume` | Keyword (call-site ownership-transfer marker) |
 | `subscript` | Keyword |
 | `yield` | Keyword |
-| `&` as prefix | Reuse existing `&` token; parser decides prefix vs infix by position |
+| `&` as prefix | Already tokenized and stored as an access marker by Phase P |
 
 Files: `lib/compiler/lexparser.cpp`,
 `include/joyeer/compiler/lexparser.h`.
@@ -174,9 +216,12 @@ must be updated** — leaving any out silently miscompiles (per
 
 ### A.3 Parser additions
 
-- Parameter syntax: `[label] name : [AccessEffect] type`.
-- Call-site arg: optional `&` prefix before expression.
-- Top-level + member `subscript` declarations with `{ let { yield ... } inout { yield &... } ... }` accessor blocks.
+- Extend Phase P's `label [name] : [inout] type` parameter syntax to all
+  access effects and method receiver effects.
+- Extend Phase P's `&` access marker with the `consume` call-site/receiver
+  marker.
+- Top-level + member `subscript` declarations with
+  `{ borrowing { yield ... } inout { yield &... } ... }` accessor blocks.
 - Top-level `yield` only valid inside accessor blocks (parse error otherwise).
 
 Files: `lib/compiler/syntaxparser.cpp`.
@@ -235,8 +280,8 @@ Files: `lib/compiler/IRGen.cpp`, `lib/vm/interpreter.cpp`,
 
 | File | Tests |
 |------|-------|
-| `01_inout_basic.joyeer` | `increment(&n)` ; expect `6` printed |
-| `02_swap.joyeer` | Generic swap on Int; round-trip |
+| `01_inout_basic.joyeer` | `increment(n: &n)`; expect `6` printed |
+| `02_swap.joyeer` | Concrete Int swap; round-trip |
 | `03_exclusivity_self_alias.joyeer` (errors/) | `add(&n, n)` must produce diagnostic |
 | `04_subscript_let_inout.joyeer` | `&a[0] += 10`; verify result |
 | `05_subscript_disjoint_paths.joyeer` | `&p.x += p.y`; verify result |
@@ -258,9 +303,10 @@ Files: `lib/compiler/IRGen.cpp`, `lib/vm/interpreter.cpp`,
 
 ## Phase B — Data Model
 
-> Implements spec §2 (composite types), §3.3–§3.6 (struct, enum,
+> Implements spec §2 (composite and built-in generic type uses), §3.3–§3.6 (struct, enum,
 > extension, subscript already in A), §3.7 (init/deinit), §7 (patterns
-> for match), §5.9 (match expression), §2.6 (generics), §8 (Result).
+> for match), §5.9 (match expression), §2.6 (built-in containers), §8 (Result).
+> User-defined generic declarations and monomorphization remain deferred.
 
 ### B.1 Lexer additions
 
@@ -289,15 +335,17 @@ the type checker. `as` remains contextual for import aliases, while type-test
 | `StructDecl` | Stored fields, init, deinit, methods, subscripts, invariants |
 | `EnumDecl`, `EnumCaseDecl` | Variants with associated types; `indirect` flag |
 | `InitDecl`, `DeinitDecl` | Special methods |
-| `GenericParamList`, `GenericArgList`, `WhereClause` | Generics machinery |
+| `GenericArgList` | Built-in generic type uses only; no user-declared type parameters |
 | `MatchExpr`, `MatchArm`, `PatternNode` | All pattern variants from §7 |
 | `IfExpr` | Allow `if` in expression position (per §5.10) |
 | `IndirectMarker` | On `EnumCaseDecl` |
 
 ### B.3 Parser additions
 
-- Struct/enum syntax per spec §3.3, §3.4.
-- `match` expression per §5.9.
+- Extend Phase P's field/payload-only struct and enum syntax with the remaining
+  members required by §3.3–§3.7.
+- Extend Phase P's minimal `match` syntax only when guards, alternatives, or
+  additional patterns acquire a concrete v0.1 consumer.
 - `if` as expression — adjust expression vs statement disambiguation.
 - Range literal `0..<n`, `0...n`.
 - Function-type syntax `(Int): Int`.
@@ -311,9 +359,8 @@ the type checker. `as` remains contextual for import aliases, while type-test
 
 ### B.5 Type system additions
 
-- **Monomorphization** of generic functions/types per call site.
-  - First pass: simple substitution; no specialization caching yet (add
-    in B-tail if compile times bite).
+- Validate built-in generic container arguments; reject user-defined generic
+  declarations and generic bases outside the compiler-provided set.
 - Pattern type-checking: enum case constructor must match scrutinee
   type; bindings carry the inferred types.
 - Exhaustiveness checker for `match` over `enum` and `Bool`.
@@ -332,8 +379,8 @@ public struct Array<T> {
   var storage: <opaque>
   public func count(): Int { ... }
   public init() { ... }
-  public subscript(_ i: Int): T { borrowing { ... } inout { ... } }
-  public mutating func append(_ x: consuming T) { ... }
+  public subscript(i: Int): T { borrowing { ... } inout { ... } }
+  public mutating func append(element: consuming T) { ... }
 }
 
 public struct Dict<K, V> { ... }
@@ -341,7 +388,8 @@ public struct String { ... }
 ```
 
 In v0.1 these are still **runtime-provided** (existing `runtime/` in the
-VM); the Joyeer-level declarations are interfaces/façades.
+VM); the declarations above are interfaces/façades understood as compiler
+built-ins, not evidence that user-defined generic declarations are accepted.
 
 ### B.7 Memory model integration with structs/enums
 
@@ -361,25 +409,22 @@ VM); the Joyeer-level declarations are interfaces/façades.
 | `02_struct_memberwise_init.joyeer` | Synthesized init |
 | `03_struct_deinit_order.joyeer` | Verify deterministic deinit order via prints |
 | `04_enum_payload.joyeer` | Number(42), match arms |
-| `05_enum_indirect_list.joyeer` | `List<Int>` with `.Cons` indirect |
+| `05_enum_indirect_list.joyeer` | `IntList` with `.Cons` indirect |
 | `06_enum_exhaustive.joyeer` (errors/) | non-exhaustive match must error |
 | `07_match_where_guard.joyeer` | Guard on `.Number(n) where n > 0` |
-| `08_generic_swap.joyeer` | Reuse PhaseA swap, with `<T>` |
-| `09_generic_pair.joyeer` | `Pair<A, B>` with two type params |
-| `10_result_propagation.joyeer` | `?` operator on Result chain |
-| `11_optional_chaining.joyeer` | `x?.field` propagation |
-| `12_if_expression.joyeer` | `let sign = if x > 0 { ... } else { ... }` |
-| `13_string_interpolation.joyeer` | `"x = \(x)"` |
-| `14_indirect_list_traverse.joyeer` | Recursive count on `List<Int>` |
-| `15_subscript_on_enum.joyeer` | Subscript declared in extension on enum |
-| `16_quicksort.joyeer` | The canonical demo from spec §16.1; full sort + verify output |
-| `17_json_minimal.joyeer` | Parse `{"n":42}`; assert AST shape |
+| `08_result_builtin.joyeer` | Construct and match compiler-provided `Result<Int, E>` |
+| `09_optional_builtin.joyeer` | Construct and match `Optional<Int>` / `Int?` |
+| `10_if_expression.joyeer` | `let sign = if x > 0 { ... } else { ... }` |
+| `11_indirect_list_traverse.joyeer` | Recursive count on `IntList` without user generics |
+| `12_subscript_on_enum.joyeer` | Subscript declared in extension on enum |
+| `13_quicksort.joyeer` | The canonical demo from spec §16.1; full sort + verify output |
+| `14_json_minimal.joyeer` | Parse `{"n":42}`; assert AST shape |
 
 ### B.9 Risks
 
 | Risk | Mitigation |
 |------|-----------|
-| Generic monomorphization explodes compile time | Start with no caching; profile after B is feature-complete |
+| Built-in container special cases leak into general syntax | Keep generic declaration syntax rejected and centralize the allowed built-in bases |
 | Enum exhaustiveness false positives on `..` ranges | Restrict to enum + Bool in v0.1; range exhaustiveness in v0.2 |
 | Recursive enum (indirect) interactions with deinit | Cycle detection via use-site rules; document non-collected cycles as user responsibility |
 
@@ -462,8 +507,8 @@ the annotation parser, not a general lexer keyword (§11.2).
 
 - All tests under `tests/spec/` and the migrated `tests/basis/`,
   `tests/leetcode/` pass.
-- No reference to `class`, `print(message:)`, or named-only-only call
-  style in production source.
+- No reference to `class`, `print(message:)`, or legacy positional/unlabeled
+  call syntax in production source.
 - Spec §14 (Deprecated) becomes an empty section or is removed.
 
 ---
@@ -493,12 +538,13 @@ error: cannot establish inout projection while let projections are active
    |
  5 |     let snapshot = n
    |                    - 'n' is read here
- 7 |     &increment(&n)
-   |               ^^ inout projection of 'n' conflicts with the read above
+ 7 |     increment(n: &n)
+   |                  ^^ inout projection of 'n' conflicts with the read above
    |
 help: end the snapshot's use before the inout call, or copy first
    |
- 7 |     let n2 = snapshot; &increment(&n)
+ 7 |     let n2 = snapshot
+ 8 |     increment(n: &n)
    |
 ```
 
@@ -524,7 +570,7 @@ File: `lib/diagnostic/diagnostic.cpp`.
 Because Joyeer is an AI-era language, this plan should be executable
 mostly autonomously:
 
-1. **One AI agent per phase**. Phases A → B → C → D are sequentially
+1. **One AI agent per phase**. Phases P → A → B → C → D are sequentially
    dependent.
 2. **Within a phase**, the cross-cutting tracks (T5, T6) can run in
    parallel agent fleets.
@@ -542,10 +588,7 @@ mostly autonomously:
   inline-expanded callee fragments (faster, more codegen work)?
   → Decide at start of A.7 based on bytecode complexity.
 
-- **Q2.** Generic monomorphization caching: per-translation-unit or
-  whole-program? → Defer to B-tail; profile-driven.
-
-- **Q3.** Standard-library home: pure Joyeer with `__builtin` hooks, or
+- **Q2.** Standard-library home: pure Joyeer with `__builtin` hooks, or
   inline C++? → Per-type decision; start with C++ for the v0.1 stretch.
 
 ---
@@ -557,6 +600,9 @@ Phase 0  ──┐
            │
            ▼
     Phase L ✅ ── ★ minimal JSON-parser lexer
+       │
+       ▼
+      Phase P ✅ ── ★ syntax-only Parser MVP
        │
        ▼
        Phase A ── ★ memory model (4 weeks)

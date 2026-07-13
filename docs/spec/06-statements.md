@@ -41,13 +41,24 @@ for &x in arr     { &x *= 2 }
 
 ### 6.4 return
 
-Standard. `return` may be omitted in single-expression function bodies
+```
+return_expr     ::= 'return' [ expression ]
+return_stmt     ::= return_expr
+```
+
+`return` may be omitted in single-expression function bodies
 (§3.2.2). `break` and `continue` (including the labeled `break label` /
 `continue label` forms) are reserved ⏳ for v0.2 (§15); a v0.1 loop is exited
 only by its condition or by `return`.
 
-Used as an expression, `return e` has type `Never` (§2.9); this is why it may
-appear as the right-hand side of `??` (§5.12) or as a `match` arm body.
+The statement and expression forms are the same syntax node. Used as an
+expression, `return e` has type `Never` (§2.9); this is why it may appear as
+the right-hand side of `??` (§5.12) or as a `match` arm body.
+
+When present, the returned expression must begin on the same physical line as
+`return`; a newline immediately after `return` terminates a bare return. Once
+the expression has begun, it may continue across lines according to the usual
+delimiter and operator-continuation rules.
 
 ---
 

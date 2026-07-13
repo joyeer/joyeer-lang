@@ -62,8 +62,8 @@ Source (.joyeer)
 
 | Stage | Status | Source |
 |-------|--------|--------|
-| 1. Lexer | ✅ Done | `lexparser.cpp` |
-| 2. Parser | ✅ Done | `syntaxparser.cpp` |
+| 1. Lexer | ✅ JSON-parser MVP; legacy profile retained | `lexparser.cpp`, [lexer contract](../impl/lexer.md) |
+| 2. Parser | ✅ JSON-parser MVP; legacy parser retained | `parser.cpp`, `syntax.cpp`, [Parser MVP contract](../impl/parser.md) |
 | 3. Name Resolution | ⚠️ Partial | `symtable.cpp` |
 | 4. Type Checking | ⚠️ Partial | `typebinding.cpp` + `typegen.cpp` |
 | 5. Semantic Analysis | ❌ Missing | — |
@@ -74,7 +74,7 @@ Source (.joyeer)
 | Runtime Library | ⚠️ Partial | `sys.cpp` (VM-level built-ins) |
 | Error Diagnostics | ⚠️ Partial | `diagnostic.cpp` |
 
-### Currently Working Features
+### Currently Working Features (legacy pipeline)
 
 - Integer, Bool, String literals
 - Variable declaration and assignment (`var`)
@@ -87,6 +87,33 @@ Source (.joyeer)
 - Named argument function calls: `add(left: 1, right: 2)`
 - `print(message: x)` built-in
 - Arrays, Dictionaries, Classes, Optionals
+
+The list above describes behavior exercised by the old parser/VM, not complete
+conformance with the v0.1 specification. In particular, the legacy parser has
+no enum or match AST, conflates parameters with binding patterns, stops on the
+first syntax failure, and delegates a two-level approximation of operator
+precedence to `TypeGen`. It must not be marked complete merely because legacy
+golden programs execute.
+
+---
+
+## Immediate Next Milestone: Resolve and Type the Parser MVP AST
+
+The syntax-only [Parser MVP contract](../impl/parser.md) is implemented. The
+next frontend work is to consume that stable AST without reviving the legacy
+AST's coupling to runtime descriptors:
+
+1. Add name-resolution tables keyed by syntax node IDs.
+2. Resolve functions, fields, synthesized struct initializers, enum cases, and
+  contextual `.Case` expressions.
+3. Type optional/built-in generic uses and minimal match payload bindings.
+4. Add enum layout and match-exhaustiveness checks before lowering.
+5. Keep `--lang=v0.1` out of the old `TypeGen`/VM until a new semantic path is
+  ready end to end.
+
+The legacy parser remains isolated for old tests. Parser MVP completion means
+the JSON-parser source has a stable syntax tree; it does not imply enum layout,
+exhaustiveness, ownership, or code generation are implemented.
 
 ---
 
@@ -181,10 +208,14 @@ error: type mismatch
    |                ^^^^^^^ expected Int, found String
 ```
 
-### Step 2.5 — Simplify Syntax
+### Step 2.5 — Syntax Conformance and Legacy Removal
 
-- Allow positional arguments: `add(1, 2)` instead of `add(left: 1, right: 2)`
-- Simplify print: `print(x)` instead of `print(message: x)`
+- Keep mandatory argument labels: `add(left: 1, right: 2)`; reject positional
+  function calls after the legacy lane is removed.
+- Migrate the legacy `print(message: x)` spelling to the canonical
+  `print(value: x)` label.
+- Remove broad legacy token categories once the v0.1 parser consumes explicit
+  terminal kinds exclusively.
 
 ---
 
@@ -199,13 +230,13 @@ error: type mismatch
 - Decouples frontend from backend (can swap LLVM later)
 - References: Swift SIL, Rust MIR
 
-### Step 3.2 — Class / Object System
+### Step 3.2 — Struct / Enum Data Model
 
-- Object memory layout design
-- vtable for method dispatch
-- `init` constructors
-- `self` reference
-- Member field access
+- Predictable value-type layout for `struct`
+- Tagged-union layout and payload construction for `enum`
+- `init` construction, `deinit`, and `self`
+- Member field access, methods, and exhaustive `match`
+- No inheritance, object identity, or vtables
 
 ### Step 3.3 — Memory Management
 
@@ -255,7 +286,7 @@ std/
 | Stage | Rust | Swift | Zig | Joyeer (target) |
 |-------|------|-------|-----|-----------------|
 | Lexer | ✅ | ✅ | ✅ | ✅ |
-| Parser → AST | ✅ | ✅ | ✅ | ✅ |
+| Parser → AST | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Name Resolution | ✅ | ✅ | ✅ | Phase 1 |
 | Type Checking | ✅ | ✅ | ✅ | Phase 1 |
 | Semantic Analysis | ✅ | ✅ | ✅ | Phase 2 |

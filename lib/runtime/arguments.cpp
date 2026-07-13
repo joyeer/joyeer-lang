@@ -9,14 +9,14 @@ CommandLineArguments::CommandLineArguments(Diagnostics* diagnostics, int argc, c
     for(int i = 0 ; i < argc; i ++) {
         arguments.emplace_back(argv[i]);
     }
-    
+
     parse(arguments);
 }
 
 void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     auto iterator = arguments.begin();
     vmLocation = *iterator;
-    
+
     iterator ++;
     for(; iterator != arguments.end(); iterator ++) {
         if(*iterator == "--debug-vm") {
@@ -30,18 +30,20 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             parseInputFile(*iterator);
         }
     }
-    
+
     if(!std::filesystem::exists(inputfile)) {
         diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
     }
-    
+
     if(!inputfile.empty()) {
         accepted = true;
     }
 }
 
 void CommandLineArguments::printUsage() {
-    std::cout << "Usage: joyeer <inputfile>" << std::endl;
+    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] <inputfile>" << std::endl;
+    std::cout << "  --lang=v0.1         validate with the new lexer and Parser MVP (no codegen yet)" << std::endl;
+    std::cout << "  --lang=v0.1-legacy  compile and run with the legacy VM pipeline (default)" << std::endl;
 }
 
 void CommandLineArguments::parseInputFile(const std::string &inputpath) {

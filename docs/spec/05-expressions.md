@@ -118,10 +118,25 @@ let q = Point(x: 0.0, y: p.y)
 
 ### 5.8 Enum construction
 
+```
+enum_ctor_expr     ::= [ type ] '.' identifier [ enum_payload_clause ]
+enum_payload_clause
+                   ::= '(' enum_arg , ... ')'
+enum_arg           ::= [ label ':' ] expression
+```
+
 ```joyeer
 let v: JsonValue = .Number(3.14)       // contextual: target type known
 let w = JsonValue.Bool(true)            // fully qualified
+let e: JsonError = .Unexpected(b'{', at: 12)
 ```
+
+The declaration determines the payload arity and labels. A payload position
+declared without a label is positional; a labeled position must use exactly
+that label. Positional and labeled payloads may be mixed in declaration order.
+This is the only unlabeled invocation form in v0.1 — ordinary function and
+struct-initializer calls still require labels (§3.2.1, §5.6). A payload-less
+case is written without an empty argument clause (`.Null`, not `.Null()`).
 
 ### 5.9 Match expression
 
@@ -146,6 +161,15 @@ let label = match v {
 ```
 
 Exhaustiveness is checked (§7.7).
+
+Because `return` is a diverging expression (§2.9, §6.4), it may be an arm body:
+
+```joyeer
+let value = match result {
+  .Ok(value) => value,
+  .Err(error) => return .Err(error),
+}
+```
 
 ### 5.10 if as expression 📌
 

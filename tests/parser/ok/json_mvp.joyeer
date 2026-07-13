@@ -1,0 +1,33 @@
+enum JsonValue {
+    Null,
+    Bool(Bool),
+    Number(Int),
+    Str(String),
+}
+
+enum JsonError {
+    UnexpectedEof,
+}
+
+struct Parser {
+    var input: String
+    var pos: Int
+}
+
+func peek(p: Parser): UInt8? {
+    if p.pos >= p.input.count { return nil }
+    return p.input[p.pos]
+}
+
+func parseValue(p: inout Parser): Result<JsonValue, JsonError> {
+    let c = match peek(p: p) {
+        .Some(value) => value,
+        .None => return .Err(.UnexpectedEof),
+    }
+    &p.pos = p.pos + 1
+    return match c {
+        b'{' => .Null,
+        b't' => .Bool(true),
+        _ => .Number(0),
+    }
+}

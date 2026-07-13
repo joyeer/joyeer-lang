@@ -13,3 +13,41 @@ target_link_libraries(CompilerLexerTests
 gtest_discover_tests(CompilerLexerTests
         PROPERTIES LABELS lexer
 )
+
+add_executable(CompilerParserTests
+        parser_test.cpp
+)
+
+target_link_libraries(CompilerParserTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerVM
+)
+
+target_compile_definitions(CompilerParserTests PRIVATE
+        JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
+)
+
+gtest_discover_tests(CompilerParserTests
+        PROPERTIES LABELS parser
+)
+
+add_test(NAME ParserMvpCliAcceptance
+        COMMAND $<TARGET_FILE:joyeer>
+                --lang=v0.1
+                "${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer"
+)
+set_tests_properties(ParserMvpCliAcceptance PROPERTIES LABELS parser)
+
+add_test(NAME ParserMvpCliRejectsInvalidSource
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/err/missing_expression.joyeer
+                -DEXPECTED_PATTERN=parser.expected-expression
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectParserFailure.cmake
+)
+set_tests_properties(ParserMvpCliRejectsInvalidSource PROPERTIES
+        LABELS parser
+)

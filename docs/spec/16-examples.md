@@ -106,7 +106,7 @@ func advance(p: inout Parser): UInt8? {
     return nil
   }
   let c = p.input[p.pos]
-  p.pos += 1
+  &p.pos += 1
   assert(condition: p.pos == oldPos + 1)
   return c
 }

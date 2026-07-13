@@ -8,8 +8,12 @@ pattern         ::= '_'                                       // wildcard
                  |  identifier                                 // bind
                  |  literal                                    // literal compare
                  |  '(' pattern , ... ')'                       // tuple
-                 |  type '.' identifier [ '(' pattern , ... ')' ]   // enum case
-                 |  '.' identifier [ '(' pattern , ... ')' ]        // contextual enum case
+                 |  enum_case_pattern
+
+enum_case_pattern
+                ::= [ type ] '.' identifier [ '(' enum_pattern_arg , ... ')' ]
+enum_pattern_arg
+                ::= [ label ':' ] pattern
 ```
 
 > **Note.** Type-test / cast patterns (`x as T`) and the `is` / `as` type-test
@@ -25,6 +29,15 @@ Binds a fresh name to the matched value:
 match v {
   .Number(n) => print(value: n),    // n bound
   _ => (),
+}
+```
+
+An enum payload label is present in a pattern exactly when that payload
+position was labeled in the case declaration (§3.4):
+
+```joyeer
+match error {
+  .Unexpected(byte, at: position) => position,
 }
 ```
 

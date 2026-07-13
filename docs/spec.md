@@ -2,9 +2,9 @@
 
 > **Status:** Draft v0.1-spec. This document defines the future language. Some
 > annotations are marked **syntax-only** (parsed and stored, but not yet
-> executed). Legacy syntax that exists in the current parser
-> (`class`, positional/unlabeled calls, `print(message: x)`) is listed in §14 and will
-> be removed.
+> executed). Legacy syntax that exists in the current parser (`class`,
+> `print(message: x)`) and forms removed from earlier drafts (including
+> positional/unlabeled function calls) are listed in §14.
 
 This specification is split into one file per chapter under
 [spec/](spec/). Section numbers (`§N`, `§N.M`) are stable across the split;
@@ -42,6 +42,12 @@ chapter file below.
 
 ## Appendix: change log
 
+- **2026-07-13** — Consolidated parser-facing grammar. Made enum construction
+  and associated-value labels explicit, added labeled enum pattern payloads,
+  and reconciled `return` as the same `Never`-typed expression in standalone,
+  `match`-arm, and `??` contexts. Clarified newline statement boundaries and
+  bare `return`. Added the implementation-level Parser MVP contract for the
+  JSON-parser subset.
 - **2026-07-11** — Reduced the lexer and language surface. Removed the general
   effect system (`performs`, `pure`, and effect labels), while retaining the
   ownership access conventions (`borrowing`, `inout`, `consuming`, and

@@ -62,6 +62,7 @@ import_decl       ::= 'import' import_path [ 'as' identifier ]
 import_path       ::= identifier ( '.' identifier )*
 visibility        ::= 'public' | 'internal' | 'private'
 
+block             ::= '{' statement* '}'
 statement         ::= binding ';'?
                    |  expression ';'?
                    |  if_stmt | while_stmt | for_stmt
@@ -71,14 +72,15 @@ statement         ::= binding ';'?
 if_stmt           ::= 'if' expression block ( 'else' if_stmt | 'else' block )?
 while_stmt        ::= 'while' expression block
 for_stmt          ::= 'for' [ '&' ] pattern 'in' expression block
-return_stmt       ::= 'return' [ expression ]
+return_stmt       ::= return_expr
 
-expression        ::= prefix_expr ( binary_op prefix_expr )*
-prefix_expr       ::= [ '!' | '-' | '~' ] postfix_expr
+expression        ::= return_expr
+                   |  prefix_expr ( binary_op prefix_expr )*
+return_expr       ::= 'return' [ expression ]             // diverging expr, type Never (§2.9)
+prefix_expr       ::= ( '!' | '-' | '~' ) prefix_expr
                    |  ( '&' | 'consume' ) postfix_expr   // ownership markers (§4.3);
                                                          //   prefix an lvalue / owned path only
-                   |  'return' [ expression ]            // diverging expr, type Never (§2.9);
-                                                         //   only valid as the RHS of '??' (§8.5)
+                   |  postfix_expr
 postfix_expr      ::= primary_expr ( '.' identifier
                                     | '?.' identifier
                                     | '(' [ call_arg , ... ] ')'
@@ -94,8 +96,13 @@ primary_expr      ::= literal
                    |  dict_literal
                    |  if_stmt                                   // if as expr
                    |  match_expr
+                   |  enum_ctor_expr
                    |  'self' | 'Self'
-                   |  type '.' identifier [ '(' ... ')' ]        // qualified ctor
+
+enum_ctor_expr    ::= [ type ] '.' identifier [ enum_payload_clause ]
+enum_payload_clause
+                  ::= '(' enum_arg , ... ')'
+enum_arg          ::= [ label ':' ] expression
 
 match_expr        ::= 'match' expression '{' match_arm+ '}'
 match_arm         ::= pattern ( ',' pattern )* [ 'where' expression ] '=>' ( expression | block ) ','?
@@ -104,7 +111,9 @@ pattern           ::= '_'
                    |  literal
                    |  identifier
                    |  '(' pattern , ... ')'
-                   |  [ type ] '.' identifier [ '(' pattern , ... ')' ]
+                   |  enum_case_pattern
+enum_case_pattern ::= [ type ] '.' identifier [ '(' enum_pattern_arg , ... ')' ]
+enum_pattern_arg  ::= [ label ':' ] pattern
 
 binary_op         ::= '+' | '-' | '*' | '/' | '%'
                    |  '==' | '!=' | '<' | '<=' | '>' | '>='
