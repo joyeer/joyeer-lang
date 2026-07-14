@@ -15,6 +15,7 @@ add_joyeer_library(JoyeerCompiler STATIC
         syntax.cpp
         syntaxparser.cpp
         token.cpp
+        typechecking.cpp
         typegen.cpp
         typebinding.cpp
         )

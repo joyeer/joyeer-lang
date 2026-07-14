@@ -54,6 +54,22 @@ gtest_discover_tests(CompilerNameResolutionTests
         PROPERTIES LABELS name-resolution
 )
 
+add_executable(CompilerTypeCheckingTests
+        typechecking_test.cpp
+)
+
+target_link_libraries(CompilerTypeCheckingTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerVM
+)
+
+gtest_discover_tests(CompilerTypeCheckingTests
+        PROPERTIES LABELS type-checking
+)
+
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
