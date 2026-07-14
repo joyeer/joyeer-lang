@@ -53,7 +53,15 @@ private:
     void snapshotTypes() {
         const auto& types = model->types();
         for (typing::TypeId id = 0; id < types.size(); ++id) {
-            module->types.push_back(ir::TypeName { id, types.displayName(id) });
+            const auto* type = types.type(id);
+            assert(type != nullptr);
+            module->types.push_back(ir::TypeName {
+                id,
+                types.displayName(id),
+                type->kind,
+                type->symbol,
+                type->arguments,
+            });
         }
     }
 
@@ -419,6 +427,11 @@ private:
                 return lowerCall(std::static_pointer_cast<syntax::CallExprSyntax>(expression));
             case syntax::Kind::subscriptExpr:
                 return lowerSubscript(std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression));
+            case syntax::Kind::arrayExpr:
+                return lowerArray(std::static_pointer_cast<syntax::ArrayExprSyntax>(expression));
+            case syntax::Kind::dictionaryExpr:
+                return lowerDictionary(
+                        std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression));
             case syntax::Kind::contextualCaseExpr:
                 return lowerContextualCase(
                         std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression));
@@ -736,6 +749,72 @@ private:
                 ir::ValueCategory::value,
                 { base->id, index->id },
                 expression->span);
+    }
+
+    std::optional<ir::Value> lowerArray(const syntax::ArrayExprSyntax::Ptr& expression) {
+        const auto type = model->typeOf(expression);
+        if (!type.has_value()) return std::nullopt;
+        const auto* arrayType = model->types().type(*type);
+        if (arrayType == nullptr || arrayType->kind != typing::TypeKind::array ||
+            arrayType->arguments.size() != 1) {
+            report(DiagnosticId::missingType, expression->span, "array literal has no array type");
+            return std::nullopt;
+        }
+
+        auto instruction = makeInstruction(ir::Opcode::constructArray, expression->span);
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        for (const auto& element : expression->elements) {
+            const auto value = lowerExpression(element);
+            if (!value.has_value()) return std::nullopt;
+            const auto converted = coerce(*value, arrayType->arguments[0], element->span);
+            if (!converted.has_value()) return std::nullopt;
+            instruction.operands.push_back(converted->id);
+        }
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        return result;
+    }
+
+    std::optional<ir::Value> lowerDictionary(
+            const syntax::DictionaryExprSyntax::Ptr& expression) {
+        const auto type = model->typeOf(expression);
+        if (!type.has_value()) return std::nullopt;
+        const auto* dictionaryType = model->types().type(*type);
+        if (dictionaryType == nullptr ||
+            dictionaryType->kind != typing::TypeKind::dictionary ||
+            dictionaryType->arguments.size() != 2) {
+            report(
+                    DiagnosticId::missingType,
+                    expression->span,
+                    "dictionary literal has no dictionary type");
+            return std::nullopt;
+        }
+
+        auto instruction = makeInstruction(
+                ir::Opcode::constructDictionary,
+                expression->span);
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        for (const auto& entry : expression->entries) {
+            const auto key = lowerExpression(entry->key);
+            const auto value = lowerExpression(entry->value);
+            if (!key.has_value() || !value.has_value()) return std::nullopt;
+            const auto convertedKey = coerce(
+                    *key,
+                    dictionaryType->arguments[0],
+                    entry->key->span);
+            const auto convertedValue = coerce(
+                    *value,
+                    dictionaryType->arguments[1],
+                    entry->value->span);
+            if (!convertedKey.has_value() || !convertedValue.has_value()) {
+                return std::nullopt;
+            }
+            instruction.operands.push_back(convertedKey->id);
+            instruction.operands.push_back(convertedValue->id);
+        }
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        return result;
     }
 
     std::optional<ir::Value> lowerContextualCase(

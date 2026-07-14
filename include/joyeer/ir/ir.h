@@ -57,6 +57,8 @@ enum class Opcode {
 
     call,
     constructStruct,
+    constructArray,
+    constructDictionary,
     fieldAddress,
     extractField,
     constructEnum,
@@ -139,6 +141,9 @@ struct Function {
 struct TypeName {
     TypeId id = typing::invalidTypeId;
     std::string name;
+    typing::TypeKind kind = typing::TypeKind::error;
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    std::vector<TypeId> arguments;
 };
 
 struct FieldDefinition {

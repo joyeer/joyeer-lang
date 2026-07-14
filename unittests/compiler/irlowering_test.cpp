@@ -297,6 +297,53 @@ return text[0]
     EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::subscript), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersArrayAndDictionaryLiteralsWithStructuredTypes) {
+    lower(R"JOYEER(func build(): Int {
+let values: [Int] = [1, 2, 3]
+let lookup: [String: Int] = ["answer": 42]
+print(value: values.count)
+return values[0] + lookup["answer"]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& build = function("build");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructArray), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 2u);
+
+    const auto arrayType = std::find_if(
+            result.module->types.begin(),
+            result.module->types.end(),
+            [](const auto& type) { return type.name == "[Int]"; });
+    ASSERT_NE(arrayType, result.module->types.end());
+    EXPECT_EQ(arrayType->kind, joyeer::typing::TypeKind::array);
+    ASSERT_EQ(arrayType->arguments.size(), 1u);
+    const auto elementType = std::find_if(
+            result.module->types.begin(),
+            result.module->types.end(),
+            [&arrayType](const auto& type) { return type.id == arrayType->arguments[0]; });
+    ASSERT_NE(elementType, result.module->types.end());
+    EXPECT_EQ(elementType->kind, joyeer::typing::TypeKind::integer);
+}
+
+TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
+    lower(R"JOYEER(func incrementFirst(values: inout [Int]): Int {
+&values[0] = values[0] + 1
+return values[0]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& increment = function("incrementFirst");
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscriptAddress), 1u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscript), 2u);
+}
+
 TEST_F(IRLoweringTest, LowersEnumMatchesAndPayloadBindings) {
     lower(R"JOYEER(enum Value { Empty, Number(Int), }
 func read(value: Value): Int {

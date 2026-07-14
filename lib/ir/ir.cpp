@@ -28,6 +28,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::notEqual:
         case Opcode::logicalAnd:
         case Opcode::constructStruct:
+        case Opcode::constructArray:
+        case Opcode::constructDictionary:
         case Opcode::fieldAddress:
         case Opcode::extractField:
         case Opcode::constructEnum:
@@ -135,6 +137,19 @@ VerificationResult Verifier::verify(const Module& module) const {
                     std::nullopt,
                     std::nullopt,
                     "duplicate type id " + std::to_string(type.id));
+        }
+    }
+    for (const auto& type : module.types) {
+        for (const auto argument : type.arguments) {
+            if (!types.contains(argument)) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                        "type '" + type.name + "' references unknown type argument " +
+                                std::to_string(argument));
+            }
         }
     }
 
@@ -602,6 +617,62 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                         }
+                        case Opcode::constructArray: {
+                        const auto* resultType = instruction.result.has_value() &&
+                            types.contains(instruction.result->type)
+                            ? types.at(instruction.result->type)
+                            : nullptr;
+                        bool matches = resultType != nullptr &&
+                            resultType->kind == typing::TypeKind::array &&
+                            resultType->arguments.size() == 1 &&
+                            instruction.result->category == ValueCategory::value &&
+                            instruction.targets.empty();
+                        if (resultType != nullptr && resultType->arguments.size() == 1) {
+                            for (const auto* operand : operands) {
+                                matches &= operand != nullptr &&
+                                        operand->category == ValueCategory::value &&
+                                        operand->type == resultType->arguments[0];
+                            }
+                        }
+                        if (!matches) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "array construction elements do not match its element type");
+                        }
+                        break;
+                        }
+                        case Opcode::constructDictionary: {
+                        const auto* resultType = instruction.result.has_value() &&
+                            types.contains(instruction.result->type)
+                            ? types.at(instruction.result->type)
+                            : nullptr;
+                        bool matches = resultType != nullptr &&
+                            resultType->kind == typing::TypeKind::dictionary &&
+                            resultType->arguments.size() == 2 &&
+                            instruction.result->category == ValueCategory::value &&
+                            instruction.operands.size() % 2 == 0 &&
+                            instruction.targets.empty();
+                        if (resultType != nullptr && resultType->arguments.size() == 2) {
+                            for (size_t index = 0; index < operands.size(); ++index) {
+                                matches &= operands[index] != nullptr &&
+                                        operands[index]->category == ValueCategory::value &&
+                                        operands[index]->type ==
+                                                resultType->arguments[index % 2];
+                            }
+                        }
+                        if (!matches) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "dictionary construction entries do not match key/value types");
+                        }
+                        break;
+                        }
                         case Opcode::fieldAddress:
                         case Opcode::extractField: {
                         const auto shapeMatches = requireShape(1, 0);
@@ -690,36 +761,91 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         case Opcode::count:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
-                            instruction.result.has_value() &&
-                            (operands[0]->category != ValueCategory::value ||
-                             instruction.result->category != ValueCategory::value)) {
-                            report(
-                                VerificationErrorId::typeMismatch,
-                                functionId,
-                                block.id,
-                                location,
-                                "count operand and result must be object values");
+                                instruction.result.has_value()) {
+                                const auto* baseType = types.contains(operands[0]->type)
+                                        ? types.at(operands[0]->type)
+                                        : nullptr;
+                                const auto* resultType = types.contains(instruction.result->type)
+                                        ? types.at(instruction.result->type)
+                                        : nullptr;
+                                const auto matches = baseType != nullptr && resultType != nullptr &&
+                                        operands[0]->category == ValueCategory::value &&
+                                        instruction.result->category == ValueCategory::value &&
+                                        (baseType->kind == typing::TypeKind::string ||
+                                         baseType->kind == typing::TypeKind::array) &&
+                                        resultType->kind == typing::TypeKind::integer;
+                                if (!matches) {
+                                    report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "count requires String/Array and produces Int");
+                                }
                         }
                         break;
-                            case Opcode::subscript:
-                            case Opcode::subscriptAddress:
+                        case Opcode::subscript:
+                        case Opcode::subscriptAddress:
                         if (requireShape(2, 0) && operands[0] != nullptr &&
-                            operands[1] != nullptr && instruction.result.has_value() &&
-                                (operands[0]->category !=
-                                     (instruction.opcode == Opcode::subscript
-                                         ? ValueCategory::value
-                                         : ValueCategory::address) ||
-                             operands[1]->category != ValueCategory::value ||
-                                 instruction.result->category !=
-                                     (instruction.opcode == Opcode::subscript
-                                         ? ValueCategory::value
-                                         : ValueCategory::address))) {
-                            report(
-                                VerificationErrorId::typeMismatch,
-                                functionId,
-                                block.id,
-                                location,
-                                "subscript base, index, and result must be object values");
+                                operands[1] != nullptr && instruction.result.has_value()) {
+                                const auto* baseType = types.contains(operands[0]->type)
+                                        ? types.at(operands[0]->type)
+                                        : nullptr;
+                                const auto* indexType = types.contains(operands[1]->type)
+                                        ? types.at(operands[1]->type)
+                                        : nullptr;
+                                std::optional<TypeId> expectedIndex;
+                                std::optional<TypeId> expectedResult;
+                                if (baseType != nullptr) {
+                                    if (baseType->kind == typing::TypeKind::string) {
+                                        const auto intType = std::find_if(
+                                                module.types.begin(),
+                                                module.types.end(),
+                                                [](const auto& type) {
+                                                    return type.kind == typing::TypeKind::integer;
+                                                });
+                                        const auto byteType = std::find_if(
+                                                module.types.begin(),
+                                                module.types.end(),
+                                                [](const auto& type) {
+                                                    return type.kind == typing::TypeKind::uint8;
+                                                });
+                                        if (intType != module.types.end()) expectedIndex = intType->id;
+                                        if (byteType != module.types.end()) expectedResult = byteType->id;
+                                    } else if (baseType->kind == typing::TypeKind::array &&
+                                               baseType->arguments.size() == 1) {
+                                        const auto intType = std::find_if(
+                                                module.types.begin(),
+                                                module.types.end(),
+                                                [](const auto& type) {
+                                                    return type.kind == typing::TypeKind::integer;
+                                                });
+                                        if (intType != module.types.end()) expectedIndex = intType->id;
+                                        expectedResult = baseType->arguments[0];
+                                    } else if (baseType->kind == typing::TypeKind::dictionary &&
+                                               baseType->arguments.size() == 2) {
+                                        expectedIndex = baseType->arguments[0];
+                                        expectedResult = baseType->arguments[1];
+                                    }
+                                }
+                                const auto expectedCategory = instruction.opcode == Opcode::subscript
+                                        ? ValueCategory::value
+                                        : ValueCategory::address;
+                                const auto matches = indexType != nullptr &&
+                                        expectedIndex.has_value() && expectedResult.has_value() &&
+                                        operands[0]->category == expectedCategory &&
+                                        operands[1]->category == ValueCategory::value &&
+                                        operands[1]->type == *expectedIndex &&
+                                        instruction.result->category == expectedCategory &&
+                                        instruction.result->type == *expectedResult;
+                                if (!matches) {
+                                    report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "subscript index/result types do not match its base type");
+                                }
                         }
                         break;
                     case Opcode::branch:
@@ -861,6 +987,8 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::logicalAnd: return "and";
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
+        case Opcode::constructArray: return "construct_array";
+        case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::fieldAddress: return "field_addr";
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
@@ -1048,6 +1176,8 @@ std::string dump(const Module& module) {
                         out << ')';
                         break;
                     case Opcode::constructStruct:
+                    case Opcode::constructArray:
+                    case Opcode::constructDictionary:
                     case Opcode::constructEnum:
                         out << '(';
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
