@@ -91,6 +91,7 @@ public:
         for (const auto& function : source.functions) {
             if (!function.isExternal) emitFunction(function);
         }
+        emitEntryPoint();
         if (!diagnostics.empty()) return Result { {}, std::move(diagnostics) };
 
         std::ostringstream out;
@@ -117,7 +118,7 @@ public:
             out << functionBodies[index];
             if (index + 1 < functionBodies.size()) out << '\n';
         }
-        return Result { out.str(), {} };
+        return Result { out.str(), {}, hasEntryPoint };
     }
 
 private:
@@ -146,6 +147,7 @@ private:
     bool usesString = false;
     bool usesArray = false;
     bool usesDictionary = false;
+    bool hasEntryPoint = false;
 
     void report(
             DiagnosticId id,
@@ -370,6 +372,34 @@ private:
         return std::nullopt;
     }
 
+    void emitEntryPoint() {
+        const auto found = std::find_if(
+                module->functions.begin(),
+                module->functions.end(),
+                [](const auto& function) {
+                    return !function.isExternal && function.name == "main";
+                });
+        if (found == module->functions.end()) return;
+        const auto* resultType = type(found->resultType);
+        if (!found->parameters.empty() || resultType == nullptr ||
+            resultType->kind != typing::TypeKind::voidType) {
+            report(
+                    DiagnosticId::invalidEntryPoint,
+                    {},
+                    found->id,
+                    std::nullopt,
+                    "entry function must have signature 'func main()'");
+            return;
+        }
+        functionBodies.push_back(
+                "define void @joyeer_main() {\n"
+                "entry:\n"
+                "  call void " + functionName(*found) + "()\n"
+                "  ret void\n"
+                "}\n");
+        hasEntryPoint = true;
+    }
+
     const ir::TypeName* type(ir::TypeId id) const {
         const auto found = types.find(id);
         return found == types.end() ? nullptr : found->second;
@@ -560,6 +590,24 @@ private:
         return "%tmp" + std::to_string(nextTemporary++);
     }
 
+    struct HandleParts {
+        std::string data;
+        std::string count;
+    };
+
+    std::optional<HandleParts> emitHandleParts(
+            std::ostringstream& out,
+            const std::string& llvmType,
+            const std::string& value) {
+        const auto data = temporary();
+        const auto count = temporary();
+        out << "  " << data << " = extractvalue " << llvmType << ' ' << value
+            << ", 0\n"
+            << "  " << count << " = extractvalue " << llvmType << ' ' << value
+            << ", 1\n";
+        return HandleParts { data, count };
+    }
+
     bool emitConstructStruct(
             std::ostringstream& out,
             const ir::Instruction& instruction) {
@@ -601,7 +649,7 @@ private:
         if (!elementType.has_value() || !elementLayout.has_value()) return false;
         usesArray = true;
         runtimeDeclarations.insert(
-                "declare %joyeer.array @joyeer_array_create(ptr, i64, i64)");
+            "declare void @joyeer_array_create_abi(ptr, ptr, i64, i64)");
 
         std::string data = "null";
         if (!instruction.operands.empty()) {
@@ -619,10 +667,13 @@ private:
                     << ", ptr " << address << "\n";
             }
         }
-        out << "  " << valueName(instruction.result->id)
-            << " = call %joyeer.array @joyeer_array_create(ptr " << data
-            << ", i64 " << instruction.operands.size()
-            << ", i64 " << elementLayout->size << ")\n";
+        const auto resultAddress = temporary();
+        out << "  " << resultAddress << " = alloca %joyeer.array\n"
+            << "  call void @joyeer_array_create_abi(ptr " << resultAddress
+            << ", ptr " << data << ", i64 " << instruction.operands.size()
+            << ", i64 " << elementLayout->size << ")\n"
+            << "  " << valueName(instruction.result->id)
+            << " = load %joyeer.array, ptr " << resultAddress << "\n";
         return true;
     }
 
@@ -646,7 +697,7 @@ private:
         }
         usesDictionary = true;
         runtimeDeclarations.insert(
-            "declare %joyeer.dictionary @joyeer_dictionary_create(ptr, i64, i64, i64, i64, i64, i32)");
+            "declare void @joyeer_dictionary_create_abi(ptr, ptr, i64, i64, i64, i64, i64, i32)");
 
         const auto count = instruction.operands.size() / 2;
         const auto entryType = "{ " + *keyType + ", " + *valueType + " }";
@@ -681,11 +732,14 @@ private:
                     << valueAddress << "\n";
             }
         }
-        out << "  " << valueName(instruction.result->id)
-            << " = call %joyeer.dictionary @joyeer_dictionary_create(ptr " << data
-            << ", i64 " << count << ", i64 " << keyLayout->size
+        const auto resultAddress = temporary();
+        out << "  " << resultAddress << " = alloca %joyeer.dictionary\n"
+            << "  call void @joyeer_dictionary_create_abi(ptr " << resultAddress
+            << ", ptr " << data << ", i64 " << count << ", i64 " << keyLayout->size
             << ", i64 " << valueLayout->size << ", i64 " << entrySize
-            << ", i64 " << valueOffset << ", i32 " << *keyKind << ")\n";
+            << ", i64 " << valueOffset << ", i32 " << *keyKind << ")\n"
+            << "  " << valueName(instruction.result->id)
+            << " = load %joyeer.dictionary, ptr " << resultAddress << "\n";
         return true;
     }
 
@@ -892,10 +946,12 @@ private:
         if (baseType->kind == typing::TypeKind::string && !returnsAddress) {
             usesString = true;
             runtimeDeclarations.insert(
-                    "declare i8 @joyeer_string_byte_at(%joyeer.string, i64)");
+                "declare i8 @joyeer_string_byte_at_abi(ptr, i64, i64)");
+            const auto parts = emitHandleParts(out, "%joyeer.string", *base);
+            if (!parts.has_value()) return false;
             out << "  " << valueName(instruction.result->id)
-                << " = call i8 @joyeer_string_byte_at(%joyeer.string " << *base
-                << ", i64 " << *index << ")\n";
+            << " = call i8 @joyeer_string_byte_at_abi(ptr " << parts->data
+            << ", i64 " << parts->count << ", i64 " << *index << ")\n";
             return true;
         }
 
@@ -926,18 +982,20 @@ private:
             bool returnsAddress) {
         usesArray = true;
         runtimeDeclarations.insert(
-                "declare ptr @joyeer_array_at(%joyeer.array, i64)");
+            "declare ptr @joyeer_array_at_abi(ptr, i64, i64)");
         auto arrayValue = base;
         if (returnsAddress) {
             arrayValue = temporary();
             out << "  " << arrayValue << " = load %joyeer.array, ptr " << base << "\n";
         }
+        const auto parts = emitHandleParts(out, "%joyeer.array", arrayValue);
+        if (!parts.has_value()) return false;
         const auto elementAddress = returnsAddress
                 ? valueName(instruction.result->id)
                 : temporary();
         out << "  " << elementAddress
-            << " = call ptr @joyeer_array_at(%joyeer.array " << arrayValue
-            << ", i64 " << index << ")\n";
+            << " = call ptr @joyeer_array_at_abi(ptr " << parts->data
+            << ", i64 " << parts->count << ", i64 " << index << ")\n";
         if (returnsAddress) return true;
         const auto resultType = llvmType(instruction.result->type, instruction.span);
         if (!resultType.has_value()) return false;
@@ -962,7 +1020,7 @@ private:
         }
         usesDictionary = true;
         runtimeDeclarations.insert(
-                "declare ptr @joyeer_dictionary_at(%joyeer.dictionary, ptr, i64, i32)");
+            "declare ptr @joyeer_dictionary_at_abi(ptr, i64, ptr, i64, i32)");
 
         auto dictionaryValue = base;
         if (returnsAddress) {
@@ -970,6 +1028,8 @@ private:
             out << "  " << dictionaryValue
                 << " = load %joyeer.dictionary, ptr " << base << "\n";
         }
+        const auto parts = emitHandleParts(out, "%joyeer.dictionary", dictionaryValue);
+        if (!parts.has_value()) return false;
         const auto keyAddress = temporary();
         const auto valueAddress = returnsAddress
                 ? valueName(instruction.result->id)
@@ -977,8 +1037,8 @@ private:
         out << "  " << keyAddress << " = alloca " << *keyType << "\n"
             << "  store " << *keyType << ' ' << key << ", ptr " << keyAddress << "\n"
             << "  " << valueAddress
-            << " = call ptr @joyeer_dictionary_at(%joyeer.dictionary "
-            << dictionaryValue << ", ptr " << keyAddress << ", i64 "
+            << " = call ptr @joyeer_dictionary_at_abi(ptr " << parts->data
+            << ", i64 " << parts->count << ", ptr " << keyAddress << ", i64 "
             << keyLayout->size << ", i32 " << *keyKind << ")\n";
         if (returnsAddress) return true;
         const auto resultType = llvmType(instruction.result->type, instruction.span);
@@ -1022,11 +1082,18 @@ private:
             }
             case ir::PatternKind::stringLiteral: {
                 runtimeDeclarations.insert(
-                        "declare i1 @joyeer_string_equal(%joyeer.string, %joyeer.string)");
+                        "declare i1 @joyeer_string_equal_abi(ptr, i64, ptr, i64)");
+                const auto testedParts = emitHandleParts(out, "%joyeer.string", testedValue);
+                const auto literal = stringLiteralOperand(pattern.text);
+                const auto literalParts = emitHandleParts(out, "%joyeer.string", literal);
+                if (!testedParts.has_value() || !literalParts.has_value()) {
+                    return std::nullopt;
+                }
                 const auto condition = temporary();
                 out << "  " << condition
-                    << " = call i1 @joyeer_string_equal(%joyeer.string " << testedValue
-                    << ", %joyeer.string " << stringLiteralOperand(pattern.text) << ")\n";
+                    << " = call i1 @joyeer_string_equal_abi(ptr " << testedParts->data
+                    << ", i64 " << testedParts->count << ", ptr " << literalParts->data
+                    << ", i64 " << literalParts->count << ")\n";
                 return condition;
             }
             case ir::PatternKind::enumCase: {
@@ -1152,10 +1219,18 @@ private:
                    instruction.opcode == ir::Opcode::add) {
             usesString = true;
             runtimeDeclarations.insert(
-                    "declare %joyeer.string @joyeer_string_concat(%joyeer.string, %joyeer.string)");
-            out << "  " << result
-                << " = call %joyeer.string @joyeer_string_concat(%joyeer.string "
-                << *left << ", %joyeer.string " << *right << ")\n";
+                "declare void @joyeer_string_concat_abi(ptr, ptr, i64, ptr, i64)");
+            const auto leftParts = emitHandleParts(out, "%joyeer.string", *left);
+            const auto rightParts = emitHandleParts(out, "%joyeer.string", *right);
+            if (!leftParts.has_value() || !rightParts.has_value()) return false;
+            const auto resultAddress = temporary();
+            out << "  " << resultAddress << " = alloca %joyeer.string\n"
+            << "  call void @joyeer_string_concat_abi(ptr " << resultAddress
+            << ", ptr " << leftParts->data << ", i64 " << leftParts->count
+            << ", ptr " << rightParts->data << ", i64 " << rightParts->count
+            << ")\n"
+            << "  " << result << " = load %joyeer.string, ptr "
+            << resultAddress << "\n";
         } else {
             reportHere(
                     DiagnosticId::unsupportedInstruction,
@@ -1194,16 +1269,20 @@ private:
             const std::string& right) {
         usesString = true;
         const auto result = valueName(instruction.result->id);
+        const auto leftParts = emitHandleParts(out, "%joyeer.string", left);
+        const auto rightParts = emitHandleParts(out, "%joyeer.string", right);
+        if (!leftParts.has_value() || !rightParts.has_value()) return false;
         if (instruction.opcode == ir::Opcode::equal ||
             instruction.opcode == ir::Opcode::notEqual) {
             runtimeDeclarations.insert(
-                    "declare i1 @joyeer_string_equal(%joyeer.string, %joyeer.string)");
+                "declare i1 @joyeer_string_equal_abi(ptr, i64, ptr, i64)");
             const auto equal = instruction.opcode == ir::Opcode::equal
                     ? result
                     : "%tmp" + std::to_string(nextTemporary++);
             out << "  " << equal
-                << " = call i1 @joyeer_string_equal(%joyeer.string " << left
-                << ", %joyeer.string " << right << ")\n";
+                << " = call i1 @joyeer_string_equal_abi(ptr " << leftParts->data
+                << ", i64 " << leftParts->count << ", ptr " << rightParts->data
+                << ", i64 " << rightParts->count << ")\n";
             if (instruction.opcode == ir::Opcode::notEqual) {
                 out << "  " << result << " = xor i1 " << equal << ", true\n";
             }
@@ -1211,11 +1290,12 @@ private:
         }
 
         runtimeDeclarations.insert(
-                "declare i64 @joyeer_string_compare(%joyeer.string, %joyeer.string)");
+            "declare i64 @joyeer_string_compare_abi(ptr, i64, ptr, i64)");
         const auto compared = "%tmp" + std::to_string(nextTemporary++);
         out << "  " << compared
-            << " = call i64 @joyeer_string_compare(%joyeer.string " << left
-            << ", %joyeer.string " << right << ")\n";
+            << " = call i64 @joyeer_string_compare_abi(ptr " << leftParts->data
+            << ", i64 " << leftParts->count << ", ptr " << rightParts->data
+            << ", i64 " << rightParts->count << ")\n";
         out << "  " << result << " = icmp "
             << comparisonPredicate(instruction.opcode, true)
             << " i64 " << compared << ", 0\n";
@@ -1283,7 +1363,15 @@ private:
             case typing::TypeKind::integer: runtimeName = "joyeer_print_int"; break;
             case typing::TypeKind::boolean: runtimeName = "joyeer_print_bool"; break;
             case typing::TypeKind::uint8: runtimeName = "joyeer_print_byte"; break;
-            case typing::TypeKind::string: runtimeName = "joyeer_print_string"; break;
+            case typing::TypeKind::string: {
+                const auto parts = emitHandleParts(out, "%joyeer.string", *argument);
+                if (!parts.has_value()) return false;
+                runtimeDeclarations.insert(
+                        "declare void @joyeer_print_string_abi(ptr, i64)");
+                out << "  call void @joyeer_print_string_abi(ptr " << parts->data
+                    << ", i64 " << parts->count << ")\n";
+                return true;
+            }
             default:
                 reportHere(
                         DiagnosticId::unsupportedExternal,
@@ -1323,6 +1411,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::unsupportedType: return "llvm.unsupported-type";
         case DiagnosticId::unsupportedInstruction: return "llvm.unsupported-instruction";
         case DiagnosticId::unsupportedExternal: return "llvm.unsupported-external";
+        case DiagnosticId::invalidEntryPoint: return "llvm.invalid-entry-point";
     }
     return "llvm.unknown";
 }

@@ -14,6 +14,7 @@ enum class DiagnosticId {
     unsupportedType,
     unsupportedInstruction,
     unsupportedExternal,
+    invalidEntryPoint,
 };
 
 struct Diagnostic {
@@ -27,6 +28,7 @@ struct Diagnostic {
 struct Result {
     std::string text;
     std::vector<Diagnostic> diagnostics;
+    bool hasEntryPoint = false;
 
     [[nodiscard]] bool succeeded() const {
         return diagnostics.empty();

@@ -81,10 +81,10 @@ print(value: "left" + "right")
     EXPECT_NE(result.text.find("declare void @joyeer_print_bool(i1)"), std::string::npos);
     EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8)"), std::string::npos);
     EXPECT_NE(
-            result.text.find("declare void @joyeer_print_string(%joyeer.string)"),
+            result.text.find("declare void @joyeer_print_string_abi(ptr, i64)"),
             std::string::npos);
     EXPECT_NE(
-            result.text.find("declare %joyeer.string @joyeer_string_concat"),
+            result.text.find("declare void @joyeer_string_concat_abi(ptr, ptr, i64, ptr, i64)"),
             std::string::npos);
     EXPECT_NE(result.text.find("private unnamed_addr constant [5 x i8] c\"hello\""),
               std::string::npos);

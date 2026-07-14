@@ -155,6 +155,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(LLVMBackendCompilerJsonMvpValidation PROPERTIES
             LABELS "llvm-backend;ir-lowering;type-checking"
     )
+
+    add_test(NAME NativeExecutableHello
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-hello${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableHello PROPERTIES
+            LABELS "native;llvm-backend;native-runtime"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
@@ -188,6 +200,19 @@ add_test(NAME IRLoweringCliRejectsMissingReturn
 )
 set_tests_properties(IRLoweringCliRejectsMissingReturn PROPERTIES
         LABELS ir-lowering
+)
+
+add_test(NAME NativeLinkerRejectsMissingMain
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/missing_main.joyeer
+                -DEXPECTED_PATTERN=linker.missing-entry-point
+                "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/missing-main${CMAKE_EXECUTABLE_SUFFIX}"
+                -DOUTPUT_TO_REMOVE=${CMAKE_CURRENT_BINARY_DIR}/missing-main${CMAKE_EXECUTABLE_SUFFIX}
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(NativeLinkerRejectsMissingMain PROPERTIES
+        LABELS "native;llvm-backend"
 )
 
 add_test(NAME ParserMvpCliAcceptance

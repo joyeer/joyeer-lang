@@ -266,3 +266,89 @@ void joyeer_dictionary_destroy(JoyeerDictionary* dictionary) {
     dictionary->count = 0;
     dictionary->capacity = 0;
 }
+
+void joyeer_print_string_abi(const uint8_t* data, int64_t count) {
+    joyeer_print_string((JoyeerString) { data, count });
+}
+
+void joyeer_string_concat_abi(
+        JoyeerString* result,
+        const uint8_t* leftData,
+        int64_t leftCount,
+        const uint8_t* rightData,
+        int64_t rightCount) {
+    if (result == NULL) joyeer_panic("string result is null");
+    *result = joyeer_string_concat(
+            (JoyeerString) { leftData, leftCount },
+            (JoyeerString) { rightData, rightCount });
+}
+
+bool joyeer_string_equal_abi(
+        const uint8_t* leftData,
+        int64_t leftCount,
+        const uint8_t* rightData,
+        int64_t rightCount) {
+    return joyeer_string_equal(
+            (JoyeerString) { leftData, leftCount },
+            (JoyeerString) { rightData, rightCount });
+}
+
+int64_t joyeer_string_compare_abi(
+        const uint8_t* leftData,
+        int64_t leftCount,
+        const uint8_t* rightData,
+        int64_t rightCount) {
+    return joyeer_string_compare(
+            (JoyeerString) { leftData, leftCount },
+            (JoyeerString) { rightData, rightCount });
+}
+
+uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index) {
+    return joyeer_string_byte_at((JoyeerString) { data, count }, index);
+}
+
+void joyeer_array_create_abi(
+        JoyeerArray* result,
+        const void* values,
+        int64_t count,
+        int64_t elementSize) {
+    if (result == NULL) joyeer_panic("array result is null");
+    *result = joyeer_array_create(values, count, elementSize);
+}
+
+void* joyeer_array_at_abi(void* data, int64_t count, int64_t index) {
+    return joyeer_array_at((JoyeerArray) { data, count, count }, index);
+}
+
+void joyeer_dictionary_create_abi(
+        JoyeerDictionary* result,
+        const void* entries,
+        int64_t count,
+        int64_t keySize,
+        int64_t valueSize,
+        int64_t entrySize,
+        int64_t valueOffset,
+        int32_t keyKind) {
+    if (result == NULL) joyeer_panic("dictionary result is null");
+    *result = joyeer_dictionary_create(
+            entries,
+            count,
+            keySize,
+            valueSize,
+            entrySize,
+            valueOffset,
+            keyKind);
+}
+
+void* joyeer_dictionary_at_abi(
+        void* data,
+        int64_t count,
+        const void* key,
+        int64_t keySize,
+        int32_t keyKind) {
+    return joyeer_dictionary_at(
+            (JoyeerDictionary) { data, count, count },
+            key,
+            keySize,
+            keyKind);
+}

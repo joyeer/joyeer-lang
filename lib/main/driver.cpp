@@ -1,5 +1,14 @@
 #include "driver.h"
+#include "joyeer/backend/linker.h"
 #include "joyeer/vm/isolate.h"
+
+#ifndef JOYEER_CLANG_EXECUTABLE_PATH
+#define JOYEER_CLANG_EXECUTABLE_PATH ""
+#endif
+
+#ifndef JOYEER_NATIVE_RUNTIME_PATH
+#define JOYEER_NATIVE_RUNTIME_PATH ""
+#endif
 
 Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):arguments(arguments) {
     this->diagnostics = diagnostics;
@@ -19,6 +28,32 @@ int Driver::run() {
     if(!diagnostics->errors.empty()) {
         diagnostics->printErrors();
         return 1;
+    } else if(arguments->languageMode == LanguageMode::v0_1 &&
+              arguments->outputMode == OutputMode::executable) {
+        const auto& source = compiler->getLastCompiledSourceFile();
+        if (source == nullptr) {
+            diagnostics->reportError(ErrorLevel::failure, "compiler produced no source result");
+        } else {
+            const auto linking = joyeer::native::Linker().link(
+                    source->llvmIR,
+                    source->llvmHasEntryPoint,
+                    joyeer::native::LinkOptions {
+                        JOYEER_CLANG_EXECUTABLE_PATH,
+                        JOYEER_NATIVE_RUNTIME_PATH,
+                        arguments->outputFile,
+                    });
+            for (const auto& diagnostic : linking.diagnostics) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "%s: %s",
+                        joyeer::native::diagnosticName(diagnostic.id),
+                        diagnostic.message.c_str());
+            }
+        }
+        if (!diagnostics->errors.empty()) {
+            diagnostics->printErrors();
+            return 1;
+        }
     } else if(arguments->languageMode == LanguageMode::legacy) {
         ((InterpretedIsolatedVM*)vm)->run(module);
     }

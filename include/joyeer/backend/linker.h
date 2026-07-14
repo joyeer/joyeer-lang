@@ -1,0 +1,49 @@
+#ifndef __joyeer_backend_linker_h__
+#define __joyeer_backend_linker_h__
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace joyeer::native {
+
+enum class LinkDiagnosticId {
+    missingEntryPoint,
+    missingTool,
+    fileError,
+    toolFailure,
+};
+
+struct LinkDiagnostic {
+    LinkDiagnosticId id;
+    std::string message;
+};
+
+struct LinkOptions {
+    std::filesystem::path clangExecutable;
+    std::filesystem::path runtimeLibrary;
+    std::filesystem::path outputFile;
+};
+
+struct LinkResult {
+    std::vector<LinkDiagnostic> diagnostics;
+
+    [[nodiscard]] bool succeeded() const {
+        return diagnostics.empty();
+    }
+};
+
+class Linker {
+public:
+    [[nodiscard]] LinkResult link(
+            const std::string& llvmIR,
+            bool hasEntryPoint,
+            const LinkOptions& options) const;
+};
+
+[[nodiscard]] const char* diagnosticName(LinkDiagnosticId id);
+[[nodiscard]] std::string dump(const std::vector<LinkDiagnostic>& diagnostics);
+
+} // namespace joyeer::native
+
+#endif

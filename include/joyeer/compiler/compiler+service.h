@@ -14,6 +14,10 @@ public:
     // return the entry file module
     ModuleClass* compile(const std::string& inputFile);
 
+    [[nodiscard]] const SourceFile::Ptr& getLastCompiledSourceFile() const {
+        return lastCompiledSourceFile;
+    }
+
     // register a kind
     int declare(Type* type);
 
@@ -45,6 +49,7 @@ private:
 
     CommandLineArguments::Ptr options;
     std::unordered_map<std::string, SourceFile::Ptr> sourceFiles;
+    SourceFile::Ptr lastCompiledSourceFile;
     
     // global symbols
     SymbolTable::Ptr globalSymbols = nullptr;

@@ -58,6 +58,7 @@ CompilerService::CompilerService(Diagnostics* diagnostics, CommandLineArguments:
 
 ModuleClass* CompilerService::compile(const std::string& inputFile) {
     auto sourcefile = findSourceFile(inputFile);
+    lastCompiledSourceFile = sourcefile;
     return compile(sourcefile);
 }
 
@@ -101,6 +102,7 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         sourcefile->typeCheckedModel.reset();
         sourcefile->joyeerIR.reset();
         sourcefile->llvmIR.clear();
+        sourcefile->llvmHasEntryPoint = false;
         joyeer::parser::Parser parser(sourcefile->tokens);
         auto result = parser.parse();
         for(const auto& diagnostic : result.diagnostics) {
@@ -152,6 +154,7 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
 
         const auto llvm = joyeer::llvmbackend::Emitter().emit(*lowering.module);
         sourcefile->llvmIR = llvm.text;
+        sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
         for (const auto& diagnostic : llvm.diagnostics) {
             const std::string message =
                     std::string(joyeer::llvmbackend::diagnosticName(diagnostic.id)) +
@@ -170,10 +173,6 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                         "cannot write LLVM IR output: %s",
                         options->outputFile.string().c_str());
             }
-        } else if (options->outputMode == OutputMode::executable) {
-            diagnostics->reportError(
-                    ErrorLevel::failure,
-                    "native executable linking is not implemented yet; use --emit-llvm");
         }
         return nullptr;
     }

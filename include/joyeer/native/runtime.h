@@ -72,6 +72,50 @@ void* joyeer_dictionary_at(
         int32_t keyKind);
 void joyeer_dictionary_destroy(JoyeerDictionary* dictionary);
 
+// Stable compiler ABI. These functions deliberately avoid passing or
+// returning C structs by value, whose ABI differs across targets.
+void joyeer_print_string_abi(const uint8_t* data, int64_t count);
+void joyeer_string_concat_abi(
+    JoyeerString* result,
+    const uint8_t* leftData,
+    int64_t leftCount,
+    const uint8_t* rightData,
+    int64_t rightCount);
+bool joyeer_string_equal_abi(
+    const uint8_t* leftData,
+    int64_t leftCount,
+    const uint8_t* rightData,
+    int64_t rightCount);
+int64_t joyeer_string_compare_abi(
+    const uint8_t* leftData,
+    int64_t leftCount,
+    const uint8_t* rightData,
+    int64_t rightCount);
+uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
+
+void joyeer_array_create_abi(
+    JoyeerArray* result,
+    const void* values,
+    int64_t count,
+    int64_t elementSize);
+void* joyeer_array_at_abi(void* data, int64_t count, int64_t index);
+
+void joyeer_dictionary_create_abi(
+    JoyeerDictionary* result,
+    const void* entries,
+    int64_t count,
+    int64_t keySize,
+    int64_t valueSize,
+    int64_t entrySize,
+    int64_t valueOffset,
+    int32_t keyKind);
+void* joyeer_dictionary_at_abi(
+    void* data,
+    int64_t count,
+    const void* key,
+    int64_t keySize,
+    int32_t keyKind);
+
 #ifdef __cplusplus
 }
 #endif

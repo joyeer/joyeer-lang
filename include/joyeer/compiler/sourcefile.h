@@ -64,6 +64,7 @@ public:
     // Textual LLVM IR emitted from verified Joyeer IR. Empty when LLVM
     // lowering did not run or failed.
     std::string llvmIR;
+    bool llvmHasEntryPoint = false;
 
     ModuleClass* moduleClass;
     
