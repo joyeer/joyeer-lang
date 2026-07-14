@@ -136,6 +136,7 @@ enum class TypeCheckingDiagnosticId {
     notSubscriptable,
     unknownEnumCase,
     enumCaseArgumentMismatch,
+    nonExhaustiveMatch,
 };
 
 struct TypeCheckingDiagnostic {

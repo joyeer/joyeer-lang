@@ -602,4 +602,117 @@ let selected = if flag { 1 } else { "two" }
                     joyeer::typing::TypeCheckingDiagnosticId::unknownEnumCase);
             }
 
+                TEST_F(TypeCheckingTest, TypesMatchPayloadBindingsAndArmResults) {
+                    check(R"JOYEER(enum Value { Empty, Number(Int), Text(String), }
+                func read(value: Value): Int {
+                return match value {
+                .Empty => 0,
+                .Number(number) => number,
+                .Text(text) => text.count,
+                }
+                }
+                )JOYEER");
+
+                    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+                    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                        parseResult.root->items[1]);
+                    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                        function->body->items[0]);
+                    const auto match = std::static_pointer_cast<joyeer::syntax::MatchExprSyntax>(
+                        returned->value);
+                    EXPECT_EQ(checking.model->typeOf(match), checking.model->types().intType());
+
+                    const auto numberPattern = std::static_pointer_cast<joyeer::syntax::EnumCasePatternSyntax>(
+                        match->arms[1]->pattern);
+                    const auto numberBinding =
+                        std::static_pointer_cast<joyeer::syntax::BindingPatternSyntax>(
+                            numberPattern->arguments[0]->pattern);
+                    EXPECT_EQ(
+                        checking.model->types().displayName(declaredType(numberBinding)),
+                        "Int");
+                    const auto textPattern = std::static_pointer_cast<joyeer::syntax::EnumCasePatternSyntax>(
+                        match->arms[2]->pattern);
+                    const auto textBinding = std::static_pointer_cast<joyeer::syntax::BindingPatternSyntax>(
+                        textPattern->arguments[0]->pattern);
+                    EXPECT_EQ(
+                        checking.model->types().displayName(declaredType(textBinding)),
+                        "String");
+                }
+
+                TEST_F(TypeCheckingTest, ChecksOptionalAndResultMatchesWithContextualBodies) {
+                    check(R"JOYEER(enum Failure { Missing, }
+                func unwrap(value: Int?): Result<Int, Failure> {
+                return match value {
+                .Some(number) => .Ok(number),
+                .None => .Err(.Missing),
+                }
+                }
+                )JOYEER");
+
+                    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+                    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                        parseResult.root->items[1]);
+                    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                        function->body->items[0]);
+                    const auto match = std::static_pointer_cast<joyeer::syntax::MatchExprSyntax>(
+                        returned->value);
+                    EXPECT_EQ(
+                        checking.model->types().displayName(*checking.model->typeOf(match)),
+                        "Result<Int, Failure>");
+                    for (const auto& arm : match->arms) {
+                    const auto casePattern =
+                        std::static_pointer_cast<joyeer::syntax::EnumCasePatternSyntax>(arm->pattern);
+                    EXPECT_TRUE(checking.model->referencedSymbol(casePattern).has_value());
+                    }
+                }
+
+                TEST_F(TypeCheckingTest, DiagnosesNonExhaustiveEnumMatches) {
+                    check(R"JOYEER(enum Choice { First, Second, Third, }
+                func choose(value: Choice): Int {
+                return match value {
+                .First => 1,
+                .Second => 2,
+                }
+                }
+                )JOYEER");
+
+                    ASSERT_EQ(checking.diagnostics.size(), 1u)
+                        << joyeer::typing::dump(checking.diagnostics);
+                    EXPECT_EQ(
+                        checking.diagnostics[0].id,
+                        joyeer::typing::TypeCheckingDiagnosticId::nonExhaustiveMatch);
+                }
+
+                TEST_F(TypeCheckingTest, AcceptsBooleanCompletenessAndWildcardForInfiniteDomains) {
+                    check(R"JOYEER(func fromBool(value: Bool): Int {
+                return match value { true => 1, false => 0, }
+                }
+                func fromByte(value: UInt8): Int {
+                return match value { b'a' => 1, _ => 0, }
+                }
+                )JOYEER");
+
+                    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+                }
+
+                TEST_F(TypeCheckingTest, DiagnosesMatchPayloadAndArmTypeErrors) {
+                    check(R"JOYEER(enum Value { Empty, Number(Int), }
+                func invalid(value: Value) {
+                let selected = match value {
+                .Empty => 0,
+                .Number("not an int") => "wrong arm type",
+                }
+                }
+                )JOYEER");
+
+                    ASSERT_EQ(checking.diagnostics.size(), 2u)
+                        << joyeer::typing::dump(checking.diagnostics);
+                    EXPECT_EQ(
+                        checking.diagnostics[0].id,
+                        joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+                    EXPECT_EQ(
+                        checking.diagnostics[1].id,
+                        joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+                }
+
 } // namespace

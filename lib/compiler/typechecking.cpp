@@ -1,8 +1,10 @@
 #include "joyeer/compiler/typechecking.h"
 
+#include <algorithm>
 #include <cassert>
 #include <functional>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace joyeer::typing {
@@ -807,9 +809,9 @@ private:
                 break;
             }
             case syntax::Kind::matchExpr: {
-                const auto match = std::static_pointer_cast<syntax::MatchExprSyntax>(expression);
-                checkExpression(match->scrutinee);
-                for (const auto& arm : match->arms) checkExpression(arm->body, expected);
+                result = checkMatch(
+                        std::static_pointer_cast<syntax::MatchExprSyntax>(expression),
+                        expected);
                 break;
             }
             case syntax::Kind::binaryExpr: {
@@ -1232,6 +1234,226 @@ private:
                 "payload label does not match enum case '" + caseName + "'");
     }
 
+    struct PatternCoverage {
+        bool catchesAll = false;
+        std::optional<semantic::SymbolId> enumCase;
+        std::optional<bool> booleanLiteral;
+    };
+
+    TypeId checkMatch(
+            const syntax::MatchExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        const auto scrutinee = checkExpression(expression->scrutinee).value_or(
+                model->typeContext.errorType());
+        std::vector<PatternCoverage> coverage;
+        coverage.reserve(expression->arms.size());
+        std::optional<TypeId> result;
+
+        for (const auto& arm : expression->arms) {
+            coverage.push_back(checkPattern(arm->pattern, scrutinee));
+            const auto armType = checkExpression(arm->body, expected).value_or(
+                    model->typeContext.errorType());
+            recordNodeType(arm, armType);
+            result = result.has_value()
+                    ? std::optional<TypeId>(commonType(*result, armType, arm->body->span))
+                    : std::optional<TypeId>(armType);
+        }
+
+        checkMatchExhaustiveness(expression, scrutinee, coverage);
+        return result.value_or(model->typeContext.voidType());
+    }
+
+    PatternCoverage checkPattern(
+            const syntax::PatternPtr& pattern,
+            TypeId expected) {
+        if (pattern == nullptr) return {};
+        PatternCoverage coverage;
+
+        switch (pattern->kind) {
+            case syntax::Kind::errorPattern:
+                break;
+            case syntax::Kind::wildcardPattern:
+                coverage.catchesAll = true;
+                break;
+            case syntax::Kind::bindingPattern: {
+                const auto binding =
+                        std::static_pointer_cast<syntax::BindingPatternSyntax>(pattern);
+                recordDeclaredType(binding, expected);
+                coverage.catchesAll = true;
+                break;
+            }
+            case syntax::Kind::literalPattern: {
+                const auto literal =
+                        std::static_pointer_cast<syntax::LiteralPatternSyntax>(pattern);
+                const auto actual = patternLiteralType(literal->literal, expected);
+                requireAssignable(actual, expected, pattern->span);
+                if (literal->literal != nullptr && literal->literal->kind == booleanLiteral) {
+                    coverage.booleanLiteral = literal->literal->rawValue == Literals::TRUE;
+                }
+                break;
+            }
+            case syntax::Kind::enumCasePattern:
+                coverage = checkEnumCasePattern(
+                        std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern),
+                        expected);
+                break;
+            default:
+                break;
+        }
+
+        recordNodeType(pattern, expected);
+        return coverage;
+    }
+
+    TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) const {
+        if (literal == nullptr) return model->typeContext.errorType();
+        switch (literal->kind) {
+            case decimalLiteral: return model->typeContext.intType();
+            case booleanLiteral: return model->typeContext.boolType();
+            case stringLiteral: return model->typeContext.stringType();
+            case byteLiteral: return model->typeContext.uint8Type();
+            case nilLiteral: {
+                const auto* expectedType = model->typeContext.type(expected);
+                return expectedType != nullptr && expectedType->kind == TypeKind::optional
+                        ? expected
+                        : model->typeContext.errorType();
+            }
+            default:
+                return model->typeContext.errorType();
+        }
+    }
+
+    PatternCoverage checkEnumCasePattern(
+            const syntax::EnumCasePatternSyntax::Ptr& pattern,
+            TypeId expected) {
+        const auto name = pattern->name == nullptr
+                ? std::string()
+                : pattern->name->rawValue;
+        auto caseSymbol = model->referencedSymbol(pattern);
+        if (!caseSymbol.has_value()) caseSymbol = lookupMember(expected, name);
+        const auto signature = caseSymbol.has_value()
+                ? enumCaseSignature(*caseSymbol, expected)
+                : std::optional<TypedCallableSignature>();
+        if (!caseSymbol.has_value() || !signature.has_value()) {
+            report(
+                    TypeCheckingDiagnosticId::unknownEnumCase,
+                    pattern->name == nullptr ? pattern->span : pattern->name->span,
+                    "type '" + model->typeContext.displayName(expected) +
+                            "' has no enum case named '" + name + "'");
+            for (const auto& argument : pattern->arguments) {
+                checkPattern(argument->pattern, model->typeContext.errorType());
+            }
+            return {};
+        }
+
+        recordResolvedReference(pattern, *caseSymbol);
+        validatePatternArguments(*pattern, *caseSymbol, *signature);
+        return PatternCoverage { false, caseSymbol, std::nullopt };
+    }
+
+    void validatePatternArguments(
+            const syntax::EnumCasePatternSyntax& pattern,
+            semantic::SymbolId caseSymbol,
+            const TypedCallableSignature& signature) {
+        const auto* symbol = model->semanticModelValue->symbol(caseSymbol);
+        assert(symbol != nullptr && symbol->callable.has_value());
+        const auto& semanticSignature = *symbol->callable;
+
+        if (pattern.arguments.size() != signature.parameters.size() ||
+            pattern.hasPayloadClause != signature.acceptsArgumentClause) {
+            report(
+                    TypeCheckingDiagnosticId::enumCaseArgumentMismatch,
+                    pattern.span,
+                    "enum case '" + symbol->name + "' expects " +
+                            std::to_string(signature.parameters.size()) +
+                            " payload pattern(s), but got " +
+                            std::to_string(pattern.arguments.size()));
+        }
+
+        for (size_t index = 0; index < pattern.arguments.size(); ++index) {
+            const auto& argument = pattern.arguments[index];
+            const auto payloadType = index < signature.parameters.size()
+                    ? signature.parameters[index]
+                    : model->typeContext.errorType();
+            if (index < semanticSignature.parameters.size()) {
+                validateEnumArgumentLabel(
+                        semanticSignature.parameters[index].label,
+                        argument->label,
+                        argument->span,
+                        symbol->name);
+            }
+            checkPattern(argument->pattern, payloadType);
+            recordNodeType(argument, payloadType);
+        }
+    }
+
+    void checkMatchExhaustiveness(
+            const syntax::MatchExprSyntax::Ptr& expression,
+            TypeId scrutinee,
+            const std::vector<PatternCoverage>& coverage) {
+        if (scrutinee == model->typeContext.errorType() ||
+            std::any_of(coverage.begin(), coverage.end(), [](const auto& item) {
+                return item.catchesAll;
+            })) {
+            return;
+        }
+
+        const auto* type = model->typeContext.type(scrutinee);
+        bool exhaustive = false;
+        if (type != nullptr && type->kind == TypeKind::boolean) {
+            bool hasTrue = false;
+            bool hasFalse = false;
+            for (const auto& item : coverage) {
+                if (!item.booleanLiteral.has_value()) continue;
+                hasTrue |= *item.booleanLiteral;
+                hasFalse |= !*item.booleanLiteral;
+            }
+            exhaustive = hasTrue && hasFalse;
+        } else {
+            const auto required = enumCases(scrutinee);
+            if (!required.empty()) {
+                std::unordered_set<semantic::SymbolId> covered;
+                for (const auto& item : coverage) {
+                    if (item.enumCase.has_value()) covered.insert(*item.enumCase);
+                }
+                exhaustive = std::all_of(
+                        required.begin(),
+                        required.end(),
+                        [&covered](const auto caseSymbol) {
+                            return covered.contains(caseSymbol);
+                        });
+            }
+        }
+
+        if (!exhaustive) {
+            report(
+                    TypeCheckingDiagnosticId::nonExhaustiveMatch,
+                    expression->span,
+                    "match over '" + model->typeContext.displayName(scrutinee) +
+                            "' is not exhaustive; add the missing cases or a wildcard arm");
+        }
+    }
+
+    std::vector<semantic::SymbolId> enumCases(TypeId type) const {
+        std::vector<semantic::SymbolId> result;
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return result;
+        const auto* symbol = model->semanticModelValue->symbol(record->symbol);
+        if (symbol == nullptr || !symbol->memberScope.has_value()) return result;
+        const auto* members = model->semanticModelValue->scope(*symbol->memberScope);
+        if (members == nullptr) return result;
+        for (const auto& [name, memberId] : members->values) {
+            static_cast<void>(name);
+            const auto* member = model->semanticModelValue->symbol(memberId);
+            if (member != nullptr &&
+                (member->kind == semantic::SymbolKind::enumCase ||
+                 member->kind == semantic::SymbolKind::builtinEnumCase)) {
+                result.push_back(memberId);
+            }
+        }
+        return result;
+    }
+
     TypeId checkArray(
             const syntax::ArrayExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
@@ -1340,6 +1562,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.unknown-enum-case";
         case TypeCheckingDiagnosticId::enumCaseArgumentMismatch:
             return "type-checking.enum-case-argument-mismatch";
+        case TypeCheckingDiagnosticId::nonExhaustiveMatch:
+            return "type-checking.non-exhaustive-match";
     }
     return "type-checking.unknown";
 }
