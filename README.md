@@ -27,15 +27,15 @@ without starting the VM.
 The native lane is still experimental. The current heap-backed values have
 recursive clone/destroy support, deterministic scope and early-return cleanup,
 and a native-entry allocation-balance check. Source-level consuming ownership,
-an explicit optimization policy, debug information, and file I/O are not yet
-complete, so this is not a production release.
+an explicit optimization policy, debug information, and a complete standard
+library are not yet complete, so this is not a production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
 and `inout`; structs; payload enums; exhaustive `match`; arrays, dictionaries,
 `Optional`, `Result`, byte indexing, `print(value:)`, all-paths-return,
-unreachable-code warnings, definite initialization, and unused-binding
-warnings.
+`readFile(path:)`, unreachable-code warnings, definite initialization, and
+unused-binding warnings.
 
 See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the full pipeline and current stage, and [docs/plan/v0.1.md](docs/plan/v0.1.md) for the v0.1 goal (a zero-overhead JSON parser written in Joyeer).
 

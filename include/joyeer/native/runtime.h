@@ -132,6 +132,17 @@ int64_t joyeer_string_compare_abi(
     int64_t rightCount);
 uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
 
+// Writes Result<String, Int> through separate tag/payload pointers. The
+// compiler supplies concrete Ok/Err tags so the runtime does not depend on
+// frontend enum-case ordering or target aggregate calling conventions.
+void joyeer_read_file_abi(
+    int32_t* resultTag,
+    void* resultPayload,
+    int32_t okTag,
+    int32_t errorTag,
+    const uint8_t* pathData,
+    int64_t pathCount);
+
 void joyeer_array_create_abi(
     JoyeerArray* result,
     const void* values,

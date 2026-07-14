@@ -160,6 +160,29 @@ print(value: number)
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersReadFileAsAnOwnedExternalResult) {
+    lower(R"JOYEER(func load(path: String): Result<String, Int> {
+return readFile(path: path)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    const auto& readFile = function("readFile");
+    EXPECT_TRUE(readFile.isExternal);
+    EXPECT_TRUE(readFile.returnsValue);
+    ASSERT_EQ(readFile.parameters.size(), 1u);
+    EXPECT_EQ(
+            result.module->types[readFile.parameters[0].value.type].kind,
+            joyeer::typing::TypeKind::string);
+    EXPECT_EQ(
+            result.module->types[readFile.resultType].kind,
+            joyeer::typing::TypeKind::result);
+    EXPECT_EQ(opcodeCount(function("load"), joyeer::ir::Opcode::call), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersIfExpressionValuesThroughMergeSlots) {
     lower(R"JOYEER(func choose(flag: Bool): Int {
 return if flag { 1 } else { 2 }

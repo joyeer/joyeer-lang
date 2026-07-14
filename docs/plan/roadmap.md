@@ -72,7 +72,7 @@ Source (.joyeer)
 | 8. LLVM Optimization | ❌ Deliberate pass/optimization policy missing | Clang currently uses its default level |
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
-| Runtime Library | ✅ Primitive/string/collection MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
+| Runtime Library | ✅ Primitive/string/collection/file-input MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
 | Error Diagnostics | ⚠️ Stable stage IDs and error/warning severity work; rich source rendering missing | `diagnostic.cpp` |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
@@ -113,7 +113,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add file input and run the complete JSON parser as a native executable.
+1. Complete the remaining dynamic collection/parser surface and run the JSON
+  parser against `readFile(path:)` input as a native executable.
 2. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
   `consume` flow states.
 3. Configure a deliberate LLVM optimization pipeline and verify overflow/
@@ -221,7 +222,14 @@ error: type mismatch
    |                ^^^^^^^ expected Int, found String
 ```
 
-### Step 2.5 — Syntax Conformance and Legacy Removal
+### Step 2.5 — File Input ✅
+
+- ✅ `readFile(path: String): Result<String, Int>` in the v0.1 prelude
+- ✅ binary-safe owned `String` result and nonzero platform error code
+- ✅ pointer/count plus tag/payload out-pointer native ABI
+- ✅ success/error, ownership-balance, and native executable tests
+
+### Step 2.6 — Syntax Conformance and Legacy Removal
 
 - Keep mandatory argument labels: `add(left: 1, right: 2)`; reject positional
   function calls after the legacy lane is removed.
@@ -253,9 +261,9 @@ error: type mismatch
 
 ### Step 3.3 — Memory Management
 
-- Implement chosen strategy (see `memory.md`)
-- Recommended: value semantics by default + compile-time ARC for heap objects
-- C runtime functions: `joyeer_alloc()`, `joyeer_retain()`, `joyeer_release()`
+- Extend the implemented value-semantics ownership model (see `memory.md`)
+- Keep deterministic clone/move/destroy lowering; no implicit ARC or GC
+- Add source-level `borrowing`, `consuming`, `initializing`, and `consume`
 
 ### Step 3.4 — Optional Types
 

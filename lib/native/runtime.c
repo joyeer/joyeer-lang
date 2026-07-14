@@ -1,5 +1,6 @@
 #include "joyeer/native/runtime.h"
 
+#include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
@@ -199,6 +200,113 @@ void joyeer_string_clone_abi(
 
 void joyeer_string_destroy_abi(JoyeerString* value) {
     joyeer_string_destroy(value);
+}
+
+static void setReadFileError(
+        int32_t* resultTag,
+        void* resultPayload,
+        int32_t errorTag,
+        int errorCode) {
+    const int64_t value = errorCode == 0 ? EIO : errorCode;
+    *resultTag = errorTag;
+    memset(resultPayload, 0, sizeof(JoyeerString));
+    memcpy(resultPayload, &value, sizeof(value));
+}
+
+static FILE* openBinaryFile(const char* path, int* errorCode) {
+#if defined(_MSC_VER)
+    FILE* file = NULL;
+    const errno_t status = fopen_s(&file, path, "rb");
+    *errorCode = (int)status;
+    return file;
+#else
+    errno = 0;
+    FILE* file = fopen(path, "rb");
+    *errorCode = errno;
+    return file;
+#endif
+}
+
+void joyeer_read_file_abi(
+        int32_t* resultTag,
+        void* resultPayload,
+        int32_t okTag,
+        int32_t errorTag,
+        const uint8_t* pathData,
+        int64_t pathCount) {
+    if (resultTag == NULL || resultPayload == NULL) {
+        joyeer_panic("invalid readFile result storage");
+    }
+    memset(resultPayload, 0, sizeof(JoyeerString));
+    if (pathCount < 0 || (pathCount != 0 && pathData == NULL) ||
+        (uint64_t)pathCount >= SIZE_MAX) {
+        setReadFileError(resultTag, resultPayload, errorTag, EINVAL);
+        return;
+    }
+
+    char* path = (char*)checkedAllocate((size_t)pathCount + 1);
+    if (pathCount != 0) memcpy(path, pathData, (size_t)pathCount);
+    path[pathCount] = '\0';
+    if (memchr(path, '\0', (size_t)pathCount) != NULL) {
+        checkedFree(path);
+        setReadFileError(resultTag, resultPayload, errorTag, EINVAL);
+        return;
+    }
+
+    int openError = 0;
+    FILE* file = openBinaryFile(path, &openError);
+    checkedFree(path);
+    if (file == NULL) {
+        setReadFileError(resultTag, resultPayload, errorTag, openError);
+        return;
+    }
+
+    size_t capacity = 4096;
+    size_t count = 0;
+    uint8_t* data = (uint8_t*)checkedAllocate(capacity);
+    for (;;) {
+        const size_t available = capacity - count;
+        errno = 0;
+        const size_t amount = fread(data + count, 1, available, file);
+        count += amount;
+        if (amount != available) {
+            if (ferror(file)) {
+                const int readError = errno;
+                fclose(file);
+                checkedFree(data);
+                setReadFileError(resultTag, resultPayload, errorTag, readError);
+                return;
+            }
+            break;
+        }
+
+        if (capacity > SIZE_MAX / 2 || (uint64_t)capacity * 2 > INT64_MAX) {
+            fclose(file);
+            checkedFree(data);
+            setReadFileError(resultTag, resultPayload, errorTag, EFBIG);
+            return;
+        }
+        capacity *= 2;
+        void* grown = realloc(data, capacity);
+        if (grown == NULL) {
+            fclose(file);
+            checkedFree(data);
+            joyeer_panic("out of memory");
+        }
+        data = (uint8_t*)grown;
+    }
+
+    errno = 0;
+    if (fclose(file) != 0) {
+        const int closeError = errno;
+        checkedFree(data);
+        setReadFileError(resultTag, resultPayload, errorTag, closeError);
+        return;
+    }
+
+    const JoyeerString value = { data, (int64_t)count };
+    *resultTag = okTag;
+    memcpy(resultPayload, &value, sizeof(value));
 }
 
 static JoyeerArray arrayCreateOwned(

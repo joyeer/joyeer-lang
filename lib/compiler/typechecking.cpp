@@ -391,6 +391,20 @@ private:
             };
         }
 
+        const auto readFile = prelude->values.find("readFile");
+        if (readFile != prelude->values.end()) {
+            const auto result = model->typeContext.resultType(
+                    model->typeContext.stringType(),
+                    model->typeContext.intType());
+            model->symbolTypes[readFile->second] = result;
+            model->callables[readFile->second] = TypedCallableSignature {
+                semantic::CallableKind::function,
+                true,
+                { model->typeContext.stringType() },
+                result,
+            };
+        }
+
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             if (symbol.kind != semantic::SymbolKind::builtinMember ||
                 !symbol.declaredType.has_value()) {

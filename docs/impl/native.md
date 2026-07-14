@@ -102,6 +102,7 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
   clone, and reverse-order element destruction;
 - dictionary construction, linear lookup for primitive/string keys, recursive
   key/value clone, and destruction;
+- binary file input through `readFile(path:)`;
 - panic and bounds traps;
 - the process entry trampoline and active-allocation balance check.
 
@@ -116,6 +117,26 @@ owned storage and temporaries in reverse order on normal and early-return
 paths. The C entry point fails the process if runtime-managed allocation count
 is nonzero after `joyeer_main` returns, making leaks in native integration
 tests observable.
+
+### File input
+
+The v0.1 prelude exposes:
+
+```joyeer
+readFile(path: String): Result<String, Int>
+```
+
+`Ok` contains an owned byte-preserving `String`, including embedded NUL bytes;
+normal ownership cleanup destroys it. `Err` contains a nonzero platform C I/O
+error code. Callers handle both cases with exhaustive `match` because postfix
+propagation is outside the v0.1 surface.
+
+LLVM passes the path as pointer/count and passes separate result tag and
+payload pointers to `joyeer_read_file_abi`. It also supplies the concrete
+`Ok`/`Err` tags, so the runtime does not hard-code frontend case ordering or
+pass a tagged aggregate by value. Embedded NUL bytes in a path return an error.
+Windows paths currently use the active narrow-character CRT encoding; a future
+Unicode path API belongs to broader standard-library design.
 
 ---
 
@@ -134,8 +155,8 @@ The native path is an MVP, not the final zero-cost implementation:
   pipeline is not configured;
 - no DWARF/source debug information is emitted;
 - `print` supports primitive and string values, not arbitrary aggregates;
-- no file I/O builtin is available, so the full JSON parser cannot yet read a
-  file;
+- file input is synchronous and whole-file only; streaming, writing, metadata,
+  and a typed I/O error enum are not provided;
 - the default CLI mode is still the legacy VM.
 
 These gaps must be addressed without adding new dependencies from v0.1 code to
@@ -151,9 +172,12 @@ Focused tests:
 ctest --test-dir build -L llvm-backend --output-on-failure
 ctest --test-dir build -L native-runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
+ctest --test-dir build -L file-io --output-on-failure
 ```
 
 The tests make Clang compile generated LLVM IR, compile and run native Joyeer
 programs, verify output and zero allocation balance, stress nested
 string/array/dictionary ownership, exercise runtime traps, and reject an
-executable request without `main`.
+executable request without `main`. File-input tests cover binary bytes,
+missing-file errors, exhaustive source-level handling, and zero allocation
+balance on both paths.

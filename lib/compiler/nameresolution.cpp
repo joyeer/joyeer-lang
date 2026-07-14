@@ -430,6 +430,26 @@ private:
                 {});
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
+
+        CallableSignature readFileSignature {
+            CallableKind::function,
+            true,
+            { CallableParameter {
+                std::string("path"),
+                true,
+                std::nullopt,
+                std::nullopt,
+                stringType,
+            } },
+        };
+        const auto readFile = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "readFile",
+                {});
+        symbol(readFile).declaredType = resultType;
+        symbol(readFile).callable = std::move(readFileSignature);
     }
 
     void collectTopLevelDeclarations(const syntax::SourceFileSyntax::Ptr& root) {

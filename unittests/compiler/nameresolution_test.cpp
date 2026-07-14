@@ -122,6 +122,27 @@ return item.count
     EXPECT_EQ(referenced(field).name, "count");
 }
 
+TEST_F(NameResolutionTest, ResolvesReadFileFromThePrelude) {
+        resolve(R"JOYEER(func load(): Result<String, Int> {
+return readFile(path: "input.json")
+}
+)JOYEER");
+
+        ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                        parseResult.root->items[0]);
+        const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                        function->body->items[0]);
+        const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                        returned->value);
+
+        EXPECT_EQ(referenced(call->callee).kind, SymbolKind::builtinFunction);
+        EXPECT_EQ(referenced(call->callee).name, "readFile");
+        const auto target = resolution.model->callTarget(call);
+        ASSERT_TRUE(target.has_value());
+        EXPECT_EQ(resolution.model->symbol(*target)->name, "readFile");
+}
+
 TEST_F(NameResolutionTest, ResolvesMemberChainsThroughLaterTypeSignatures) {
     resolve(R"JOYEER(func read(node: Node): Int {
 return node.child.value

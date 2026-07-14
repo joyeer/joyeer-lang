@@ -287,6 +287,36 @@ let copy = integer
     }
 }
 
+    TEST_F(TypeCheckingTest, TypesReadFileAsResultOfOwnedStringOrErrorCode) {
+        check(R"JOYEER(func load() {
+    let loaded = readFile(path: "input.json")
+    }
+    )JOYEER");
+
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+        const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            function->body->items[0]);
+        EXPECT_EQ(
+            checking.model->types().displayName(declaredType(binding)),
+            "Result<String, Int>");
+
+        const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+            binding->initializer);
+        const auto target = checking.model->callTarget(call);
+        ASSERT_TRUE(target.has_value());
+        const auto* signature = checking.model->callable(*target);
+        ASSERT_NE(signature, nullptr);
+        ASSERT_EQ(signature->parameters.size(), 1u);
+        EXPECT_EQ(
+            checking.model->types().displayName(signature->parameters[0]),
+            "String");
+        EXPECT_EQ(
+            checking.model->types().displayName(signature->result),
+            "Result<String, Int>");
+    }
+
 TEST_F(TypeCheckingTest, ContextuallyTypesEmptyCollectionsNilAndOptionalPromotion) {
     check(R"JOYEER(func values() {
 let integers: [Int] = []

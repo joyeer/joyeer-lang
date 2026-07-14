@@ -16,8 +16,19 @@ if(NOT EXISTS "${OUTPUT_FILE}")
     message(FATAL_ERROR "Joyeer succeeded without producing ${OUTPUT_FILE}")
 endif()
 
+set(program_working_directory_arguments)
+if(DEFINED PROGRAM_WORKING_DIRECTORY)
+    if(NOT IS_DIRECTORY "${PROGRAM_WORKING_DIRECTORY}")
+    message(FATAL_ERROR
+        "PROGRAM_WORKING_DIRECTORY does not exist: ${PROGRAM_WORKING_DIRECTORY}")
+    endif()
+    list(APPEND program_working_directory_arguments
+        WORKING_DIRECTORY "${PROGRAM_WORKING_DIRECTORY}")
+endif()
+
 execute_process(
-        COMMAND "${OUTPUT_FILE}"
+    COMMAND "${OUTPUT_FILE}"
+    ${program_working_directory_arguments}
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error

@@ -63,7 +63,7 @@ Joyeer IR, LLVM IR, a C runtime, and Clang linking.
 | [type-checking.md](impl/type-checking.md) | canonical compile-time types, typed overlays, inference, calls, patterns, and deferred-reference closure |
 | [semantic-analysis.md](impl/semantic-analysis.md) | all-paths-return, reachability, definite initialization, unused-binding warnings, and pipeline severity behavior |
 | [ir.md](impl/ir.md) | backend-neutral typed IR, verifier, CFG/aggregate/pattern lowering, and remaining backend boundary |
-| [native.md](impl/native.md) | LLVM text emission, native ABI/runtime, Clang linking, CLI usage, and known limitations |
+| [native.md](impl/native.md) | LLVM text emission, native ABI/runtime, file input, Clang linking, CLI usage, and known limitations |
 | [string.md](impl/string.md) | `String` runtime layout and builtin methods |
 
 ---
@@ -75,7 +75,7 @@ deleted, not preserved.
 
 | Doc | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (ownership-correct native MVP and Stage 5 analysis work; file I/O/quality next) |
+| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (ownership, Stage 5, and file input work; executable JSON parser/quality next) |
 | [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
 | [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
 | [feasibility.md](plan/feasibility.md) | Can the design be built? Per-feature prior art, combination risks, layered-verification ceiling |

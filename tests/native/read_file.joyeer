@@ -1,0 +1,11 @@
+func main() {
+    match readFile(path: "read_file_input.txt") {
+        .Ok(contents) => print(value: contents),
+        .Err(error) => print(value: error),
+    }
+
+    match readFile(path: "missing-read-file-input.txt") {
+        .Ok(contents) => print(value: contents),
+        .Err(error) => print(value: error != 0),
+    }
+}

@@ -1641,6 +1641,9 @@ private:
             if (callee.name == "print" && instruction.operands.size() == 1) {
                 return emitPrint(out, instruction);
             }
+            if (callee.name == "readFile" && instruction.operands.size() == 1) {
+                return emitReadFile(out, instruction, callee);
+            }
             reportHere(
                     DiagnosticId::unsupportedExternal,
                     instruction.span,
@@ -1667,6 +1670,74 @@ private:
             out << *argumentType << ' ' << *argument;
         }
         out << ")\n";
+        return true;
+    }
+
+    bool emitReadFile(
+            std::ostringstream& out,
+            const ir::Instruction& instruction,
+            const ir::Function& callee) {
+        if (!instruction.result.has_value()) return false;
+        const auto* pathValue = value(instruction.operands[0]);
+        const auto path = operand(instruction.operands[0]);
+        const auto* pathType = pathValue == nullptr ? nullptr : type(pathValue->type);
+        const auto enumeration = enumerations.find(callee.resultType);
+        if (!path.has_value() || pathType == nullptr ||
+            pathType->kind != typing::TypeKind::string ||
+            enumeration == enumerations.end()) {
+            reportHere(
+                    DiagnosticId::unsupportedExternal,
+                    instruction.span,
+                    "readFile requires String -> Result<String, Int>");
+            return false;
+        }
+
+        std::optional<size_t> okTag;
+        std::optional<size_t> errorTag;
+        for (size_t index = 0; index < enumeration->second->cases.size(); ++index) {
+            const auto& enumCase = enumeration->second->cases[index];
+            if (enumCase.name == "Ok" && enumCase.payloadTypes.size() == 1) {
+                const auto* payload = type(enumCase.payloadTypes[0]);
+                if (payload != nullptr && payload->kind == typing::TypeKind::string) {
+                    okTag = index;
+                }
+            } else if (enumCase.name == "Err" && enumCase.payloadTypes.size() == 1) {
+                const auto* payload = type(enumCase.payloadTypes[0]);
+                if (payload != nullptr && payload->kind == typing::TypeKind::integer) {
+                    errorTag = index;
+                }
+            }
+        }
+        const auto resultType = llvmType(callee.resultType, instruction.span);
+        const auto pathParts = emitHandleParts(out, "%joyeer.string", *path);
+        if (!okTag.has_value() || !errorTag.has_value() ||
+            !resultType.has_value() || !pathParts.has_value()) {
+            reportHere(
+                    DiagnosticId::unsupportedExternal,
+                    instruction.span,
+                    "readFile result must be Result<String, Int>");
+            return false;
+        }
+
+        const auto storage = "%tmp" + std::to_string(nextTemporary++);
+        const auto tagAddress = "%tmp" + std::to_string(nextTemporary++);
+        const auto payloadAddress = "%tmp" + std::to_string(nextTemporary++);
+        out << "  " << storage << " = alloca " << *resultType << "\n"
+            << "  store " << *resultType << " zeroinitializer, ptr " << storage << "\n"
+            << "  " << tagAddress << " = getelementptr inbounds " << *resultType
+            << ", ptr " << storage << ", i32 0, i32 0\n"
+            << "  " << payloadAddress << " = getelementptr inbounds " << *resultType
+            << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
+        runtimeDeclarations.insert(
+                "declare void @joyeer_read_file_abi(ptr, ptr, i32, i32, ptr, i64)");
+        out << "  call void @joyeer_read_file_abi(ptr " << tagAddress
+            << ", ptr " << payloadAddress
+            << ", i32 " << *okTag
+            << ", i32 " << *errorTag
+            << ", ptr " << pathParts->data
+            << ", i64 " << pathParts->count << ")\n"
+            << "  " << valueName(instruction.result->id) << " = load "
+            << *resultType << ", ptr " << storage << "\n";
         return true;
     }
 

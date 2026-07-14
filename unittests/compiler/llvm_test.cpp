@@ -154,6 +154,25 @@ return text
             std::string::npos);
 }
 
+        TEST_F(LLVMBackendTest, EmitsReadFileThroughTagAndPayloadOutPointers) {
+            emit(R"JOYEER(func load(path: String): Result<String, Int> {
+        return readFile(path: path)
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+            EXPECT_NE(
+                result.text.find(
+                    "declare void @joyeer_read_file_abi(ptr, ptr, i32, i32, ptr, i64)"),
+                std::string::npos);
+            EXPECT_NE(
+                result.text.find("call void @joyeer_read_file_abi(ptr"),
+                std::string::npos);
+            EXPECT_NE(result.text.find("getelementptr inbounds %joyeer.enum."),
+                  std::string::npos);
+            EXPECT_NE(result.text.find("store %joyeer.enum."), std::string::npos);
+        }
+
 TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
     joyeer::ir::Module module;
     module.sourceName = "ownership.joyeer";

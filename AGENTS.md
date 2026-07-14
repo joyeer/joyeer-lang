@@ -15,7 +15,7 @@ LLVM IR, and Clang-based native codegen/linking. It does not construct the
 legacy VM. The native lane is an
 MVP with recursive value clone/destroy, deterministic scope cleanup, and
 control-flow semantic analysis. Source-level consuming ownership, optimization
-policy, debug info, and file I/O remain.
+policy, debug info, and broader standard-library work remain.
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)

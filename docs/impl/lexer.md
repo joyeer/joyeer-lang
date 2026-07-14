@@ -219,9 +219,10 @@ Rules:
   while scanning; the full source spelling remains available through the
   token span for future literal lowering.
 
-This small escape set is retained because, before `readFile()` exists, JSON
-tests embed inputs such as `"{\"n\":42}"` in Joyeer source. General string
-interpolation and Unicode escape syntax remain deferred.
+This small escape set remains useful for JSON tests that embed inputs such as
+`"{\"n\":42}"` directly in Joyeer source. Native `readFile(path:)` is now
+available for external byte content; general string interpolation and Unicode
+escape syntax remain deferred.
 
 #### 3.3.3 Byte literals
 

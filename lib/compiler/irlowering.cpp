@@ -332,6 +332,7 @@ private:
 
     void collectFunctions() {
         collectPrint();
+        collectReadFile();
         const auto& semanticModel = *model->semanticModel();
         const auto& root = semanticModel.root();
         if (root == nullptr) return;
@@ -369,6 +370,33 @@ private:
             true,
         });
         function.resultType = signature->result;
+        function.isExternal = true;
+        functions.emplace(found->second, function.id);
+        module->functions.push_back(std::move(function));
+    }
+
+    void collectReadFile() {
+        const auto& semanticModel = *model->semanticModel();
+        const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
+        if (prelude == nullptr) return;
+        const auto found = prelude->values.find("readFile");
+        if (found == prelude->values.end()) return;
+        const auto* signature = model->callable(found->second);
+        if (signature == nullptr || signature->parameters.size() != 1) return;
+
+        ir::Function function;
+        function.id = static_cast<ir::FunctionId>(module->functions.size());
+        function.symbol = found->second;
+        function.name = "readFile";
+        function.parameters.push_back(ir::Parameter {
+            ir::Value { 0, signature->parameters[0], ir::ValueCategory::value },
+            std::nullopt,
+            "path",
+            false,
+            {},
+        });
+        function.resultType = signature->result;
+        function.returnsValue = true;
         function.isExternal = true;
         functions.emplace(found->second, function.id);
         module->functions.push_back(std::move(function));
