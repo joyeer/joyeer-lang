@@ -436,4 +436,111 @@ let selected = if flag { 1 } else { "two" }
             joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
 }
 
+        TEST_F(TypeCheckingTest, ChecksFunctionStructEnumAndBuiltinCalls) {
+            check(R"JOYEER(struct Box {
+        var value: Int
+        var names: [String] = []
+        }
+        enum Value { Number(Int), Text(String), }
+        func identity(value: Int): Int { return value }
+        func use(): Int {
+        let box = Box(value: 42)
+        let copied = identity(value: box.value)
+        let wrapped = Value.Number(copied)
+        print(value: wrapped)
+        return copied
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+            const auto use = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[3]);
+            const auto box = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                use->body->items[0]);
+            const auto copied = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                use->body->items[1]);
+            const auto wrapped = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                use->body->items[2]);
+            EXPECT_EQ(checking.model->types().displayName(declaredType(box)), "Box");
+            EXPECT_EQ(checking.model->types().displayName(declaredType(copied)), "Int");
+            EXPECT_EQ(checking.model->types().displayName(declaredType(wrapped)), "Value");
+        }
+
+        TEST_F(TypeCheckingTest, DiagnosesCallArgumentTypeMismatches) {
+            check(R"JOYEER(func acceptValues(values: [Int], enabled: Bool): Int { return 0 }
+        func use(): Int {
+        return acceptValues(values: [1, "two"], enabled: 1)
+        }
+        )JOYEER");
+
+            ASSERT_EQ(checking.diagnostics.size(), 2u)
+                << joyeer::typing::dump(checking.diagnostics);
+            EXPECT_TRUE(std::all_of(
+                checking.diagnostics.begin(),
+                checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+                }));
+        }
+
+        TEST_F(TypeCheckingTest, ResolvesMembersAfterLocalTypeInference) {
+            check(R"JOYEER(struct Box { var value: Int }
+        func read(box: Box): Int {
+        let inferred = box
+        return inferred.value
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+            const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[1]);
+            const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                function->body->items[1]);
+            const auto member = std::static_pointer_cast<joyeer::syntax::MemberExprSyntax>(
+                returned->value);
+            ASSERT_NE(resolution.model->deferredReference(member), nullptr);
+            const auto resolved = checking.model->referencedSymbol(member);
+            ASSERT_TRUE(resolved.has_value());
+            EXPECT_EQ(resolution.model->symbol(*resolved)->name, "value");
+            EXPECT_EQ(checking.model->typeOf(member), checking.model->types().intType());
+        }
+
+        TEST_F(TypeCheckingTest, TypesStringArrayAndDictionarySubscripts) {
+            check(R"JOYEER(func read(text: String, values: [String], lookup: [String: Int]) {
+        let byte = text[0]
+        let value = values[0]
+        let number = lookup["answer"]
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+            const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[0]);
+            const std::vector<std::string> expected { "UInt8", "String", "Int" };
+            for (size_t index = 0; index < expected.size(); ++index) {
+            const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[index]);
+            EXPECT_EQ(
+                checking.model->types().displayName(declaredType(binding)),
+                expected[index]);
+            }
+        }
+
+        TEST_F(TypeCheckingTest, DiagnosesInvalidSubscriptBasesAndIndices) {
+            check(R"JOYEER(func invalid(text: String) {
+        let wrongIndex = text["zero"]
+        let wrongBase = 1[0]
+        }
+        )JOYEER");
+
+            ASSERT_EQ(checking.diagnostics.size(), 2u)
+                << joyeer::typing::dump(checking.diagnostics);
+            EXPECT_EQ(
+                checking.diagnostics[0].id,
+                joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+            EXPECT_EQ(
+                checking.diagnostics[1].id,
+                joyeer::typing::TypeCheckingDiagnosticId::notSubscriptable);
+        }
+
 } // namespace

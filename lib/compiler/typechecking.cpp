@@ -284,11 +284,32 @@ const TypedCallableSignature* TypeCheckedModel::callable(
     return &found->second;
 }
 
+std::optional<semantic::SymbolId> TypeCheckedModel::referencedSymbol(
+        const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (id.has_value()) {
+        const auto resolved = resolvedReferences.find(*id);
+        if (resolved != resolvedReferences.end()) return resolved->second;
+    }
+    return semanticModelValue->referencedSymbol(node);
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::callTarget(
+        const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (id.has_value()) {
+        const auto resolved = resolvedCallTargets.find(*id);
+        if (resolved != resolvedCallTargets.end()) return resolved->second;
+    }
+    return semanticModelValue->callTarget(node);
+}
+
 class TypeCheckingBuilder {
 public:
     TypeCheckingResult build(const semantic::SemanticModel::Ptr& semanticModel) {
         assert(semanticModel != nullptr);
         model = TypeCheckedModel::Ptr(new TypeCheckedModel(semanticModel));
+        resolveBuiltinSignatures();
 
         const auto& root = semanticModel->root();
         if (root != nullptr) {
@@ -315,6 +336,46 @@ private:
     void recordDeclaredType(const syntax::NodePtr& node, TypeId type) {
         const auto symbol = model->semanticModelValue->declaredSymbol(node);
         if (symbol.has_value()) model->symbolTypes[*symbol] = type;
+    }
+
+    void recordResolvedReference(
+            const syntax::NodePtr& node,
+            semantic::SymbolId symbol) {
+        const auto id = model->semanticModelValue->nodeId(node);
+        if (id.has_value()) model->resolvedReferences[*id] = symbol;
+    }
+
+    void recordResolvedCallTarget(
+            const syntax::NodePtr& node,
+            semantic::SymbolId symbol) {
+        const auto id = model->semanticModelValue->nodeId(node);
+        if (id.has_value()) model->resolvedCallTargets[*id] = symbol;
+    }
+
+    void resolveBuiltinSignatures() {
+        const auto* prelude = model->semanticModelValue->scope(
+                model->semanticModelValue->preludeScope());
+        assert(prelude != nullptr);
+
+        const auto print = prelude->values.find("print");
+        if (print != prelude->values.end()) {
+            model->symbolTypes[print->second] = model->typeContext.voidType();
+            model->callables[print->second] = TypedCallableSignature {
+                semantic::CallableKind::function,
+                true,
+                { model->typeContext.anyType() },
+                model->typeContext.voidType(),
+            };
+        }
+
+        for (const auto& symbol : model->semanticModelValue->symbols()) {
+            if (symbol.kind != semantic::SymbolKind::builtinMember ||
+                !symbol.declaredType.has_value()) {
+                continue;
+            }
+            const auto type = model->typeContext.typeForSymbol(*symbol.declaredType);
+            if (type.has_value()) model->symbolTypes[symbol.id] = *type;
+        }
     }
 
     std::optional<TypeId> resolveType(const syntax::TypePtr& syntaxType) {
@@ -686,21 +747,14 @@ private:
                 result = model->typeContext.voidType();
                 break;
             }
-            case syntax::Kind::memberExpr: {
-                const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
-                checkExpression(member->base);
-                result = referencedValueType(expression);
+            case syntax::Kind::memberExpr:
+                result = checkMember(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression));
                 break;
-            }
-            case syntax::Kind::callExpr: {
-                const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
-                checkExpression(call->callee);
-                for (const auto& argument : call->arguments) checkExpression(argument->value);
-                const auto target = model->semanticModelValue->callTarget(call);
-                const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
-                if (signature != nullptr) result = signature->result;
+            case syntax::Kind::callExpr:
+                result = checkCall(
+                        std::static_pointer_cast<syntax::CallExprSyntax>(expression));
                 break;
-            }
             case syntax::Kind::arrayExpr:
                 result = checkArray(
                         std::static_pointer_cast<syntax::ArrayExprSyntax>(expression),
@@ -763,12 +817,10 @@ private:
                         std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
                 break;
             }
-            case syntax::Kind::subscriptExpr: {
-                const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
-                checkExpression(subscript->base);
-                checkExpression(subscript->index);
+            case syntax::Kind::subscriptExpr:
+                result = checkSubscript(
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression));
                 break;
-            }
             default:
                 break;
         }
@@ -894,10 +946,152 @@ private:
     }
 
     TypeId referencedValueType(const syntax::NodePtr& expression) {
-        const auto referenced = model->semanticModelValue->referencedSymbol(expression);
+        const auto referenced = model->referencedSymbol(expression);
         if (!referenced.has_value()) return model->typeContext.errorType();
         const auto type = model->typeOf(*referenced);
         return type.value_or(model->typeContext.errorType());
+    }
+
+    TypeId checkMember(const syntax::MemberExprSyntax::Ptr& expression) {
+        const auto base = checkExpression(expression->base).value_or(
+                model->typeContext.errorType());
+        auto member = model->referencedSymbol(expression);
+        if (!member.has_value() && base != model->typeContext.errorType()) {
+            member = lookupMember(
+                    base,
+                    expression->member == nullptr
+                            ? std::string()
+                            : expression->member->rawValue);
+            if (member.has_value()) recordResolvedReference(expression, *member);
+        }
+        if (!member.has_value()) {
+            if (base != model->typeContext.errorType()) {
+                report(
+                        TypeCheckingDiagnosticId::unknownMember,
+                        expression->member == nullptr
+                                ? expression->span
+                                : expression->member->span,
+                        "type '" + model->typeContext.displayName(base) +
+                                "' has no member named '" +
+                                (expression->member == nullptr
+                                        ? std::string()
+                                        : expression->member->rawValue) + "'");
+            }
+            return model->typeContext.errorType();
+        }
+        return model->typeOf(*member).value_or(model->typeContext.errorType());
+    }
+
+    std::optional<semantic::SymbolId> lookupMember(
+            TypeId base,
+            const std::string& name) const {
+        const auto* baseType = model->typeContext.type(base);
+        if (baseType == nullptr) return std::nullopt;
+        const auto* typeSymbol = model->semanticModelValue->symbol(baseType->symbol);
+        if (typeSymbol == nullptr || !typeSymbol->memberScope.has_value()) {
+            return std::nullopt;
+        }
+        const auto* memberScope = model->semanticModelValue->scope(*typeSymbol->memberScope);
+        if (memberScope == nullptr) return std::nullopt;
+        const auto found = memberScope->values.find(name);
+        if (found == memberScope->values.end()) return std::nullopt;
+        return found->second;
+    }
+
+    TypeId checkCall(const syntax::CallExprSyntax::Ptr& expression) {
+        checkExpression(expression->callee);
+        auto target = model->callTarget(expression);
+        if (!target.has_value()) {
+            const auto callee = model->referencedSymbol(expression->callee);
+            if (callee.has_value()) {
+                const auto* symbol = model->semanticModelValue->symbol(*callee);
+                if (symbol != nullptr && symbol->kind == semantic::SymbolKind::structure &&
+                    symbol->synthesizedInitializer.has_value()) {
+                    target = symbol->synthesizedInitializer;
+                } else if (symbol != nullptr && symbol->callable.has_value()) {
+                    target = callee;
+                }
+            }
+            if (target.has_value()) recordResolvedCallTarget(expression, *target);
+        }
+
+        const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
+        const auto* semanticTarget = target.has_value()
+                ? model->semanticModelValue->symbol(*target)
+                : nullptr;
+        for (size_t index = 0; index < expression->arguments.size(); ++index) {
+            const auto& argument = expression->arguments[index];
+            const auto parameterIndex = semanticTarget == nullptr
+                    ? std::optional<size_t>()
+                    : parameterIndexForArgument(*semanticTarget, *argument, index);
+            const auto expected = signature != nullptr && parameterIndex.has_value() &&
+                                  *parameterIndex < signature->parameters.size()
+                    ? std::optional<TypeId>(signature->parameters[*parameterIndex])
+                    : std::optional<TypeId>();
+            const auto actual = checkExpression(argument->value, expected);
+            if (expected.has_value() && actual.has_value()) {
+                requireAssignable(*actual, *expected, argument->value->span);
+            }
+        }
+        return signature == nullptr ? model->typeContext.errorType() : signature->result;
+    }
+
+    std::optional<size_t> parameterIndexForArgument(
+            const semantic::Symbol& target,
+            const syntax::CallArgumentSyntax& argument,
+            size_t positionalIndex) const {
+        if (!target.callable.has_value()) return std::nullopt;
+        if (target.callable->kind == semantic::CallableKind::enumCase) {
+            return positionalIndex < target.callable->parameters.size()
+                    ? std::optional<size_t>(positionalIndex)
+                    : std::nullopt;
+        }
+        if (argument.label == nullptr) return std::nullopt;
+        for (size_t index = 0; index < target.callable->parameters.size(); ++index) {
+            const auto& label = target.callable->parameters[index].label;
+            if (label.has_value() && *label == argument.label->rawValue) return index;
+        }
+        return std::nullopt;
+    }
+
+    TypeId checkSubscript(const syntax::SubscriptExprSyntax::Ptr& expression) {
+        const auto base = checkExpression(expression->base).value_or(
+                model->typeContext.errorType());
+        const auto* baseType = model->typeContext.type(base);
+        if (baseType == nullptr || base == model->typeContext.errorType()) {
+            checkExpression(expression->index);
+            return model->typeContext.errorType();
+        }
+
+        TypeId indexType = model->typeContext.errorType();
+        TypeId result = model->typeContext.errorType();
+        switch (baseType->kind) {
+            case TypeKind::string:
+                indexType = model->typeContext.intType();
+                result = model->typeContext.uint8Type();
+                break;
+            case TypeKind::array:
+                indexType = model->typeContext.intType();
+                result = baseType->arguments[0];
+                break;
+            case TypeKind::dictionary:
+                indexType = baseType->arguments[0];
+                result = baseType->arguments[1];
+                break;
+            default:
+                report(
+                        TypeCheckingDiagnosticId::notSubscriptable,
+                        expression->base->span,
+                        "value of type '" + model->typeContext.displayName(base) +
+                                "' cannot be subscripted");
+                checkExpression(expression->index);
+                return model->typeContext.errorType();
+        }
+
+        const auto actualIndex = checkExpression(expression->index, indexType).value_or(
+                model->typeContext.errorType());
+        requireAssignable(actualIndex, indexType, expression->index->span);
+        return result;
     }
 
     TypeId checkArray(
@@ -1000,6 +1194,10 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.missing-contextual-type";
         case TypeCheckingDiagnosticId::invalidOperatorOperands:
             return "type-checking.invalid-operator-operands";
+        case TypeCheckingDiagnosticId::unknownMember:
+            return "type-checking.unknown-member";
+        case TypeCheckingDiagnosticId::notSubscriptable:
+            return "type-checking.not-subscriptable";
     }
     return "type-checking.unknown";
 }

@@ -132,6 +132,8 @@ enum class TypeCheckingDiagnosticId {
     typeMismatch,
     missingContextualType,
     invalidOperatorOperands,
+    unknownMember,
+    notSubscriptable,
 };
 
 struct TypeCheckingDiagnostic {
@@ -152,6 +154,10 @@ public:
     [[nodiscard]] std::optional<TypeId> typeOf(const syntax::NodePtr& node) const;
     [[nodiscard]] std::optional<TypeId> typeOf(semantic::SymbolId symbol) const;
     [[nodiscard]] const TypedCallableSignature* callable(semantic::SymbolId symbol) const;
+        [[nodiscard]] std::optional<semantic::SymbolId> referencedSymbol(
+            const syntax::NodePtr& node) const;
+        [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
+            const syntax::NodePtr& node) const;
 
 private:
     friend class TypeCheckingBuilder;
@@ -163,6 +169,8 @@ private:
     std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
     std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
     std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;
+    std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedReferences;
+    std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedCallTargets;
 };
 
 struct TypeCheckingResult {
