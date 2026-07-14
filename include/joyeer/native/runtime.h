@@ -29,6 +29,9 @@ typedef struct JoyeerDictionary {
     int64_t capacity;
 } JoyeerDictionary;
 
+typedef void (*JoyeerCloneValueFn)(void* destination, const void* source);
+typedef void (*JoyeerDestroyValueFn)(void* value);
+
 enum JoyeerDictionaryKeyKind {
     JOYEER_DICTIONARY_KEY_INT = 1,
     JOYEER_DICTIONARY_KEY_BOOL = 2,
@@ -52,10 +55,27 @@ bool joyeer_string_equal(JoyeerString left, JoyeerString right);
 int64_t joyeer_string_compare(JoyeerString left, JoyeerString right);
 uint8_t joyeer_string_byte_at(JoyeerString value, int64_t index);
 void joyeer_string_destroy(JoyeerString* value);
+void joyeer_string_clone_abi(
+    JoyeerString* result,
+    const uint8_t* data,
+    int64_t count);
+void joyeer_string_destroy_abi(JoyeerString* value);
 
 JoyeerArray joyeer_array_create(const void* values, int64_t count, int64_t elementSize);
 void* joyeer_array_at(JoyeerArray array, int64_t index);
 void joyeer_array_destroy(JoyeerArray* array);
+void joyeer_array_create_owned_abi(
+    JoyeerArray* result,
+    const void* values,
+    int64_t count,
+    int64_t elementSize,
+    JoyeerCloneValueFn cloneElement,
+    JoyeerDestroyValueFn destroyElement);
+void joyeer_array_clone_abi(
+    JoyeerArray* result,
+    const void* data,
+    int64_t count);
+void joyeer_array_destroy_abi(JoyeerArray* array);
 
 JoyeerDictionary joyeer_dictionary_create(
         const void* entries,
@@ -71,6 +91,24 @@ void* joyeer_dictionary_at(
         int64_t keySize,
         int32_t keyKind);
 void joyeer_dictionary_destroy(JoyeerDictionary* dictionary);
+void joyeer_dictionary_create_owned_abi(
+    JoyeerDictionary* result,
+    const void* entries,
+    int64_t count,
+    int64_t keySize,
+    int64_t valueSize,
+    int64_t entrySize,
+    int64_t valueOffset,
+    int32_t keyKind,
+    JoyeerCloneValueFn cloneKey,
+    JoyeerDestroyValueFn destroyKey,
+    JoyeerCloneValueFn cloneValue,
+    JoyeerDestroyValueFn destroyValue);
+void joyeer_dictionary_clone_abi(
+    JoyeerDictionary* result,
+    const void* data,
+    int64_t count);
+void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary);
 
 // Stable compiler ABI. These functions deliberately avoid passing or
 // returning C structs by value, whose ABI differs across targets.

@@ -12,6 +12,8 @@
 
 typedef struct ArrayHeader {
     int64_t elementSize;
+    JoyeerCloneValueFn cloneElement;
+    JoyeerDestroyValueFn destroyElement;
 } ArrayHeader;
 
 typedef struct DictionaryHeader {
@@ -20,6 +22,10 @@ typedef struct DictionaryHeader {
     int64_t entrySize;
     int64_t valueOffset;
     int32_t keyKind;
+    JoyeerCloneValueFn cloneKey;
+    JoyeerDestroyValueFn destroyKey;
+    JoyeerCloneValueFn cloneValue;
+    JoyeerDestroyValueFn destroyValue;
 } DictionaryHeader;
 
 static void* checkedAllocate(size_t size) {
@@ -160,17 +166,86 @@ void joyeer_string_destroy(JoyeerString* value) {
     value->count = 0;
 }
 
-JoyeerArray joyeer_array_create(const void* values, int64_t count, int64_t elementSize) {
+void joyeer_string_clone_abi(
+        JoyeerString* result,
+        const uint8_t* data,
+        int64_t count) {
+    if (result == NULL || count < 0 || (count != 0 && data == NULL)) {
+        joyeer_panic("invalid string clone");
+    }
+    uint8_t* copy = (uint8_t*)checkedAllocate((size_t)(count == 0 ? 1 : count));
+    if (count != 0) memcpy(copy, data, (size_t)count);
+    result->data = copy;
+    result->count = count;
+}
+
+void joyeer_string_destroy_abi(JoyeerString* value) {
+    joyeer_string_destroy(value);
+}
+
+static JoyeerArray arrayCreateOwned(
+        const void* values,
+        int64_t count,
+        int64_t elementSize,
+        JoyeerCloneValueFn cloneElement,
+        JoyeerDestroyValueFn destroyElement,
+        bool cloneValues) {
     const size_t bytes = checkedByteCount(count, elementSize);
     ArrayHeader* storage = (ArrayHeader*)checkedAllocate(sizeof(ArrayHeader) + bytes);
     storage->elementSize = elementSize;
+    storage->cloneElement = cloneElement;
+    storage->destroyElement = destroyElement;
     void* data = storage + 1;
     if (bytes != 0) {
         if (values == NULL) joyeer_panic("array initializer is null");
-        memcpy(data, values, bytes);
+        if (cloneValues && cloneElement != NULL) {
+            for (int64_t index = 0; index < count; ++index) {
+                cloneElement(
+                        (uint8_t*)data + checkedByteCount(index, elementSize),
+                        (const uint8_t*)values + checkedByteCount(index, elementSize));
+            }
+        } else {
+            memcpy(data, values, bytes);
+        }
     }
     JoyeerArray result = { data, count, count };
     return result;
+}
+
+JoyeerArray joyeer_array_create(const void* values, int64_t count, int64_t elementSize) {
+    return arrayCreateOwned(values, count, elementSize, NULL, NULL, false);
+}
+
+void joyeer_array_create_owned_abi(
+        JoyeerArray* result,
+        const void* values,
+        int64_t count,
+        int64_t elementSize,
+        JoyeerCloneValueFn cloneElement,
+        JoyeerDestroyValueFn destroyElement) {
+    if (result == NULL) joyeer_panic("array result is null");
+    *result = arrayCreateOwned(
+            values,
+            count,
+            elementSize,
+            cloneElement,
+            destroyElement,
+            false);
+}
+
+void joyeer_array_clone_abi(
+        JoyeerArray* result,
+        const void* data,
+        int64_t count) {
+    if (result == NULL || data == NULL) joyeer_panic("invalid array clone");
+    const ArrayHeader* source = ((const ArrayHeader*)data) - 1;
+    *result = arrayCreateOwned(
+            data,
+            count,
+            source->elementSize,
+            source->cloneElement,
+            source->destroyElement,
+            true);
 }
 
 void* joyeer_array_at(JoyeerArray array, int64_t index) {
@@ -183,10 +258,22 @@ void* joyeer_array_at(JoyeerArray array, int64_t index) {
 
 void joyeer_array_destroy(JoyeerArray* array) {
     if (array == NULL || array->data == NULL) return;
-    free(((ArrayHeader*)array->data) - 1);
+    ArrayHeader* header = ((ArrayHeader*)array->data) - 1;
+    if (header->destroyElement != NULL) {
+        for (int64_t index = array->count; index > 0; --index) {
+            header->destroyElement(
+                    (uint8_t*)array->data +
+                    checkedByteCount(index - 1, header->elementSize));
+        }
+    }
+    free(header);
     array->data = NULL;
     array->count = 0;
     array->capacity = 0;
+}
+
+void joyeer_array_destroy_abi(JoyeerArray* array) {
+    joyeer_array_destroy(array);
 }
 
 static bool dictionaryKeyEqual(
@@ -210,14 +297,19 @@ static bool dictionaryKeyEqual(
     }
 }
 
-JoyeerDictionary joyeer_dictionary_create(
+static JoyeerDictionary dictionaryCreateOwned(
         const void* entries,
         int64_t count,
         int64_t keySize,
         int64_t valueSize,
         int64_t entrySize,
         int64_t valueOffset,
-        int32_t keyKind) {
+        int32_t keyKind,
+        JoyeerCloneValueFn cloneKey,
+        JoyeerDestroyValueFn destroyKey,
+        JoyeerCloneValueFn cloneValue,
+        JoyeerDestroyValueFn destroyValue,
+        bool cloneEntries) {
     if (keySize <= 0 || valueSize < 0 || entrySize < keySize ||
         valueOffset < keySize || valueOffset + valueSize > entrySize) {
         joyeer_panic("invalid dictionary layout");
@@ -230,13 +322,110 @@ JoyeerDictionary joyeer_dictionary_create(
     storage->entrySize = entrySize;
     storage->valueOffset = valueOffset;
     storage->keyKind = keyKind;
+    storage->cloneKey = cloneKey;
+    storage->destroyKey = destroyKey;
+    storage->cloneValue = cloneValue;
+    storage->destroyValue = destroyValue;
     void* data = storage + 1;
     if (bytes != 0) {
         if (entries == NULL) joyeer_panic("dictionary initializer is null");
-        memcpy(data, entries, bytes);
+        if (cloneEntries && (cloneKey != NULL || cloneValue != NULL)) {
+            memset(data, 0, bytes);
+            for (int64_t index = 0; index < count; ++index) {
+                const uint8_t* source = (const uint8_t*)entries +
+                        checkedByteCount(index, entrySize);
+                uint8_t* destination = (uint8_t*)data +
+                        checkedByteCount(index, entrySize);
+                if (cloneKey != NULL) cloneKey(destination, source);
+                else memcpy(destination, source, (size_t)keySize);
+                if (cloneValue != NULL) {
+                    cloneValue(destination + valueOffset, source + valueOffset);
+                } else {
+                    memcpy(
+                            destination + valueOffset,
+                            source + valueOffset,
+                            (size_t)valueSize);
+                }
+            }
+        } else {
+            memcpy(data, entries, bytes);
+        }
     }
     JoyeerDictionary result = { data, count, count };
     return result;
+}
+
+JoyeerDictionary joyeer_dictionary_create(
+        const void* entries,
+        int64_t count,
+        int64_t keySize,
+        int64_t valueSize,
+        int64_t entrySize,
+        int64_t valueOffset,
+        int32_t keyKind) {
+    return dictionaryCreateOwned(
+            entries,
+            count,
+            keySize,
+            valueSize,
+            entrySize,
+            valueOffset,
+            keyKind,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            false);
+}
+
+void joyeer_dictionary_create_owned_abi(
+        JoyeerDictionary* result,
+        const void* entries,
+        int64_t count,
+        int64_t keySize,
+        int64_t valueSize,
+        int64_t entrySize,
+        int64_t valueOffset,
+        int32_t keyKind,
+        JoyeerCloneValueFn cloneKey,
+        JoyeerDestroyValueFn destroyKey,
+        JoyeerCloneValueFn cloneValue,
+        JoyeerDestroyValueFn destroyValue) {
+    if (result == NULL) joyeer_panic("dictionary result is null");
+    *result = dictionaryCreateOwned(
+            entries,
+            count,
+            keySize,
+            valueSize,
+            entrySize,
+            valueOffset,
+            keyKind,
+            cloneKey,
+            destroyKey,
+            cloneValue,
+            destroyValue,
+            false);
+}
+
+void joyeer_dictionary_clone_abi(
+        JoyeerDictionary* result,
+        const void* data,
+        int64_t count) {
+    if (result == NULL || data == NULL) joyeer_panic("invalid dictionary clone");
+    const DictionaryHeader* source = ((const DictionaryHeader*)data) - 1;
+    *result = dictionaryCreateOwned(
+            data,
+            count,
+            source->keySize,
+            source->valueSize,
+            source->entrySize,
+            source->valueOffset,
+            source->keyKind,
+            source->cloneKey,
+            source->destroyKey,
+            source->cloneValue,
+            source->destroyValue,
+            true);
 }
 
 void* joyeer_dictionary_at(
@@ -261,10 +450,23 @@ void* joyeer_dictionary_at(
 
 void joyeer_dictionary_destroy(JoyeerDictionary* dictionary) {
     if (dictionary == NULL || dictionary->data == NULL) return;
-    free(((DictionaryHeader*)dictionary->data) - 1);
+    DictionaryHeader* header = ((DictionaryHeader*)dictionary->data) - 1;
+    for (int64_t index = dictionary->count; index > 0; --index) {
+        uint8_t* entry = (uint8_t*)dictionary->data +
+                checkedByteCount(index - 1, header->entrySize);
+        if (header->destroyValue != NULL) {
+            header->destroyValue(entry + header->valueOffset);
+        }
+        if (header->destroyKey != NULL) header->destroyKey(entry);
+    }
+    free(header);
     dictionary->data = NULL;
     dictionary->count = 0;
     dictionary->capacity = 0;
+}
+
+void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary) {
+    joyeer_dictionary_destroy(dictionary);
 }
 
 void joyeer_print_string_abi(const uint8_t* data, int64_t count) {

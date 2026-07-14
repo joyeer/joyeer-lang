@@ -10,11 +10,35 @@
 
 namespace {
 
+int cloneCount = 0;
+int destroyCount = 0;
+
 JoyeerString view(const std::string& value) {
     return JoyeerString {
         reinterpret_cast<const uint8_t*>(value.data()),
         static_cast<int64_t>(value.size()),
     };
+}
+
+JoyeerString owned(const std::string& value) {
+    JoyeerString result {};
+    const auto source = view(value);
+    joyeer_string_clone_abi(&result, source.data, source.count);
+    return result;
+}
+
+void cloneString(void* destination, const void* source) {
+    ++cloneCount;
+    const auto* value = static_cast<const JoyeerString*>(source);
+    joyeer_string_clone_abi(
+            static_cast<JoyeerString*>(destination),
+            value->data,
+            value->count);
+}
+
+void destroyString(void* value) {
+    ++destroyCount;
+    joyeer_string_destroy_abi(static_cast<JoyeerString*>(value));
 }
 
 TEST(NativeRuntimeTest, PerformsCheckedIntegerArithmetic) {
@@ -52,6 +76,24 @@ TEST(NativeRuntimeTest, ConcatenatesComparesAndIndexesStrings) {
     EXPECT_EQ(joined.count, 0);
 }
 
+TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
+    const std::string sourceText = "owned";
+    JoyeerString first {};
+    joyeer_string_clone_abi(&first, view(sourceText).data, sourceText.size());
+    JoyeerString second {};
+    joyeer_string_clone_abi(&second, first.data, first.count);
+
+    ASSERT_NE(first.data, second.data);
+    ASSERT_EQ(first.count, second.count);
+    EXPECT_EQ(std::memcmp(first.data, second.data, first.count), 0);
+    static_cast<uint8_t*>(const_cast<uint8_t*>(second.data))[0] = 'O';
+    EXPECT_EQ(first.data[0], static_cast<uint8_t>('o'));
+    EXPECT_EQ(second.data[0], static_cast<uint8_t>('O'));
+
+    joyeer_string_destroy_abi(&second);
+    joyeer_string_destroy_abi(&first);
+}
+
 TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
     EXPECT_DEATH(
             static_cast<void>(joyeer_string_byte_at(view(std::string("x")), 1)),
@@ -73,6 +115,36 @@ TEST(NativeRuntimeTest, CopiesIndexesAndMutatesArrays) {
 
     joyeer_array_destroy(&array);
     EXPECT_EQ(array.data, nullptr);
+}
+
+TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
+    cloneCount = 0;
+    destroyCount = 0;
+    std::array<JoyeerString, 2> source {
+        owned(std::string("left")),
+        owned(std::string("right")),
+    };
+    JoyeerArray first {};
+    joyeer_array_create_owned_abi(
+            &first,
+            source.data(),
+            source.size(),
+            sizeof(JoyeerString),
+            cloneString,
+            destroyString);
+    JoyeerArray second {};
+    joyeer_array_clone_abi(&second, first.data, first.count);
+
+    ASSERT_EQ(cloneCount, 2);
+    auto* firstElement = static_cast<JoyeerString*>(joyeer_array_at(first, 0));
+    auto* secondElement = static_cast<JoyeerString*>(joyeer_array_at(second, 0));
+    ASSERT_NE(firstElement->data, secondElement->data);
+    static_cast<uint8_t*>(const_cast<uint8_t*>(secondElement->data))[0] = 'L';
+    EXPECT_EQ(firstElement->data[0], static_cast<uint8_t>('l'));
+
+    joyeer_array_destroy_abi(&second);
+    joyeer_array_destroy_abi(&first);
+    EXPECT_EQ(destroyCount, 4);
 }
 
 TEST(NativeRuntimeDeathTest, TrapsArrayBoundsFailures) {
@@ -139,6 +211,55 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
     ASSERT_NE(value, nullptr);
     EXPECT_EQ(*value, 42);
     joyeer_dictionary_destroy(&dictionary);
+}
+
+struct OwnedStringEntry {
+    JoyeerString key;
+    JoyeerString value;
+};
+
+TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
+    cloneCount = 0;
+    destroyCount = 0;
+    const OwnedStringEntry entry {
+        owned(std::string("key")),
+        owned(std::string("value")),
+    };
+    JoyeerDictionary first {};
+    joyeer_dictionary_create_owned_abi(
+            &first,
+            &entry,
+            1,
+            sizeof(JoyeerString),
+            sizeof(JoyeerString),
+            sizeof(OwnedStringEntry),
+            offsetof(OwnedStringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING,
+            cloneString,
+            destroyString,
+            cloneString,
+            destroyString);
+    JoyeerDictionary second {};
+    joyeer_dictionary_clone_abi(&second, first.data, first.count);
+
+    ASSERT_EQ(cloneCount, 2);
+    const std::string lookupKey = "key";
+    const auto key = view(lookupKey);
+    const auto* firstValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+            first,
+            &key,
+            sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    const auto* secondValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+            second,
+            &key,
+            sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    ASSERT_NE(firstValue->data, secondValue->data);
+
+    joyeer_dictionary_destroy_abi(&second);
+    joyeer_dictionary_destroy_abi(&first);
+    EXPECT_EQ(destroyCount, 4);
 }
 
 } // namespace
