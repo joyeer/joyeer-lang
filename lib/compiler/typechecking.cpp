@@ -766,9 +766,9 @@ private:
                         expected);
                 break;
             case syntax::Kind::contextualCaseExpr: {
-                const auto contextual =
-                        std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
-                for (const auto& argument : contextual->arguments) checkExpression(argument->value);
+                result = checkContextualCase(
+                    std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression),
+                    expected);
                 break;
             }
             case syntax::Kind::blockExpr:
@@ -1094,6 +1094,144 @@ private:
         return result;
     }
 
+    TypeId checkContextualCase(
+            const syntax::ContextualCaseExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        if (!expected.has_value() || *expected == model->typeContext.errorType()) {
+            for (const auto& argument : expression->arguments) checkExpression(argument->value);
+            if (!expected.has_value()) {
+                report(
+                        TypeCheckingDiagnosticId::missingContextualType,
+                        expression->span,
+                        "enum case '." +
+                                (expression->name == nullptr
+                                        ? std::string()
+                                        : expression->name->rawValue) +
+                                "' requires a contextual enum type");
+            }
+            return model->typeContext.errorType();
+        }
+
+        const auto name = expression->name == nullptr
+                ? std::string()
+                : expression->name->rawValue;
+        const auto caseSymbol = lookupMember(*expected, name);
+        const auto signature = caseSymbol.has_value()
+                ? enumCaseSignature(*caseSymbol, *expected)
+                : std::optional<TypedCallableSignature>();
+        if (!caseSymbol.has_value() || !signature.has_value()) {
+            for (const auto& argument : expression->arguments) checkExpression(argument->value);
+            report(
+                    TypeCheckingDiagnosticId::unknownEnumCase,
+                    expression->name == nullptr ? expression->span : expression->name->span,
+                    "type '" + model->typeContext.displayName(*expected) +
+                            "' has no enum case named '" + name + "'");
+            return model->typeContext.errorType();
+        }
+
+        recordResolvedReference(expression, *caseSymbol);
+        recordResolvedCallTarget(expression, *caseSymbol);
+        validateContextualCaseArguments(*expression, *caseSymbol, *signature);
+        return *expected;
+    }
+
+    std::optional<TypedCallableSignature> enumCaseSignature(
+            semantic::SymbolId caseSymbol,
+            TypeId enumerationType) const {
+        const auto* symbol = model->semanticModelValue->symbol(caseSymbol);
+        if (symbol == nullptr ||
+            (symbol->kind != semantic::SymbolKind::enumCase &&
+             symbol->kind != semantic::SymbolKind::builtinEnumCase)) {
+            return std::nullopt;
+        }
+
+        if (symbol->kind == semantic::SymbolKind::enumCase) {
+            const auto* signature = model->callable(caseSymbol);
+            if (signature == nullptr || signature->result != enumerationType) {
+                return std::nullopt;
+            }
+            return *signature;
+        }
+
+        const auto* type = model->typeContext.type(enumerationType);
+        if (type == nullptr || !symbol->containingSymbol.has_value() ||
+            *symbol->containingSymbol != type->symbol || !symbol->callable.has_value()) {
+            return std::nullopt;
+        }
+
+        TypedCallableSignature signature {
+            semantic::CallableKind::enumCase,
+            symbol->callable->acceptsArgumentClause,
+            {},
+            enumerationType,
+        };
+        if (type->kind == TypeKind::optional && symbol->name == "Some") {
+            signature.parameters.push_back(type->arguments[0]);
+        } else if (type->kind == TypeKind::optional && symbol->name != "None") {
+            return std::nullopt;
+        } else if (type->kind == TypeKind::result && symbol->name == "Ok") {
+            signature.parameters.push_back(type->arguments[0]);
+        } else if (type->kind == TypeKind::result && symbol->name == "Err") {
+            signature.parameters.push_back(type->arguments[1]);
+        } else if (type->kind != TypeKind::optional && type->kind != TypeKind::result) {
+            return std::nullopt;
+        }
+        return signature;
+    }
+
+    void validateContextualCaseArguments(
+            const syntax::ContextualCaseExprSyntax& expression,
+            semantic::SymbolId caseSymbol,
+            const TypedCallableSignature& signature) {
+        const auto* symbol = model->semanticModelValue->symbol(caseSymbol);
+        assert(symbol != nullptr && symbol->callable.has_value());
+        const auto& semanticSignature = *symbol->callable;
+
+        if (expression.arguments.size() != signature.parameters.size() ||
+            expression.hasPayloadClause != signature.acceptsArgumentClause) {
+            report(
+                    TypeCheckingDiagnosticId::enumCaseArgumentMismatch,
+                    expression.span,
+                    "enum case '" + symbol->name + "' expects " +
+                            std::to_string(signature.parameters.size()) +
+                            " payload argument(s), but got " +
+                            std::to_string(expression.arguments.size()));
+        }
+
+        for (size_t index = 0; index < expression.arguments.size(); ++index) {
+            const auto& argument = expression.arguments[index];
+            const auto expected = index < signature.parameters.size()
+                    ? std::optional<TypeId>(signature.parameters[index])
+                    : std::optional<TypeId>();
+            if (index < semanticSignature.parameters.size()) {
+                validateEnumArgumentLabel(
+                        semanticSignature.parameters[index].label,
+                        argument->label,
+                        argument->span,
+                        symbol->name);
+            }
+            const auto actual = checkExpression(argument->value, expected);
+            if (expected.has_value() && actual.has_value()) {
+                requireAssignable(*actual, *expected, argument->value->span);
+            }
+        }
+    }
+
+    void validateEnumArgumentLabel(
+            const std::optional<std::string>& expected,
+            const Token::Ptr& actual,
+            SourceSpan span,
+            const std::string& caseName) {
+        const auto matches = (!expected.has_value() && actual == nullptr) ||
+                (expected.has_value() && actual != nullptr &&
+                 *expected == actual->rawValue);
+        if (matches) return;
+        report(
+                TypeCheckingDiagnosticId::enumCaseArgumentMismatch,
+                actual == nullptr ? span : actual->span,
+                "payload label does not match enum case '" + caseName + "'");
+    }
+
     TypeId checkArray(
             const syntax::ArrayExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
@@ -1198,6 +1336,10 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.unknown-member";
         case TypeCheckingDiagnosticId::notSubscriptable:
             return "type-checking.not-subscriptable";
+        case TypeCheckingDiagnosticId::unknownEnumCase:
+            return "type-checking.unknown-enum-case";
+        case TypeCheckingDiagnosticId::enumCaseArgumentMismatch:
+            return "type-checking.enum-case-argument-mismatch";
     }
     return "type-checking.unknown";
 }

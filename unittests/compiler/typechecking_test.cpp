@@ -543,4 +543,63 @@ let selected = if flag { 1 } else { "two" }
                 joyeer::typing::TypeCheckingDiagnosticId::notSubscriptable);
         }
 
+            TEST_F(TypeCheckingTest, ResolvesContextualUserOptionalAndResultCases) {
+                check(R"JOYEER(enum Failure { Missing, Message(String), }
+            func some(value: Int): Int? { return .Some(value) }
+            func none(): Int? { return .None }
+            func ok(value: Int): Result<Int, Failure> { return .Ok(value) }
+            func err(): Result<Int, Failure> { return .Err(.Missing) }
+            )JOYEER");
+
+                ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+                const std::vector<std::string> expectedCases { "Some", "None", "Ok", "Err" };
+                for (size_t index = 0; index < expectedCases.size(); ++index) {
+                const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                    parseResult.root->items[index + 1]);
+                const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                    function->body->items[0]);
+                const auto resolved = checking.model->referencedSymbol(returned->value);
+                ASSERT_TRUE(resolved.has_value());
+                EXPECT_EQ(resolution.model->symbol(*resolved)->name, expectedCases[index]);
+                EXPECT_EQ(checking.model->callTarget(returned->value), resolved);
+                }
+
+                const auto err = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                    parseResult.root->items[4]);
+                const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                    err->body->items[0]);
+                const auto outer = std::static_pointer_cast<joyeer::syntax::ContextualCaseExprSyntax>(
+                    returned->value);
+                const auto inner = std::static_pointer_cast<joyeer::syntax::ContextualCaseExprSyntax>(
+                    outer->arguments[0]->value);
+                const auto innerCase = checking.model->referencedSymbol(inner);
+                ASSERT_TRUE(innerCase.has_value());
+                EXPECT_EQ(resolution.model->symbol(*innerCase)->name, "Missing");
+            }
+
+            TEST_F(TypeCheckingTest, DiagnosesInvalidContextualEnumConstructions) {
+                check(R"JOYEER(enum Value { Number(Int), Empty, }
+            func invalid(): Value {
+            let missingContext = .Number(1)
+            let wrongPayload: Value = .Number("one", 2)
+            return .Absent
+            }
+            )JOYEER");
+
+                ASSERT_EQ(checking.diagnostics.size(), 4u)
+                    << joyeer::typing::dump(checking.diagnostics);
+                EXPECT_EQ(
+                    checking.diagnostics[0].id,
+                    joyeer::typing::TypeCheckingDiagnosticId::missingContextualType);
+                EXPECT_EQ(
+                    checking.diagnostics[1].id,
+                    joyeer::typing::TypeCheckingDiagnosticId::enumCaseArgumentMismatch);
+                EXPECT_EQ(
+                    checking.diagnostics[2].id,
+                    joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+                EXPECT_EQ(
+                    checking.diagnostics[3].id,
+                    joyeer::typing::TypeCheckingDiagnosticId::unknownEnumCase);
+            }
+
 } // namespace

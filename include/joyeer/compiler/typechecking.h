@@ -134,6 +134,8 @@ enum class TypeCheckingDiagnosticId {
     invalidOperatorOperands,
     unknownMember,
     notSubscriptable,
+    unknownEnumCase,
+    enumCaseArgumentMismatch,
 };
 
 struct TypeCheckingDiagnostic {
