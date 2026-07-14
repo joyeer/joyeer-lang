@@ -5,6 +5,7 @@
 #include "joyeer/compiler/typebinding.h"
 #include "joyeer/compiler/nameresolution.h"
 #include "joyeer/compiler/parser.h"
+#include "joyeer/compiler/typechecking.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
 #include "joyeer/compiler/debugprinter.h"
@@ -94,6 +95,7 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
 
     if(options->languageMode == LanguageMode::v0_1) {
         sourcefile->semanticModel.reset();
+        sourcefile->typeCheckedModel.reset();
         joyeer::parser::Parser parser(sourcefile->tokens);
         auto result = parser.parse();
         for(const auto& diagnostic : result.diagnostics) {
@@ -110,6 +112,18 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         for (const auto& diagnostic : resolution.diagnostics) {
             const std::string message =
                     std::string(joyeer::semantic::diagnosticName(diagnostic.id)) +
+                    ": " + diagnostic.message;
+            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+        }
+        if (!resolution.succeeded()) {
+            return nullptr;
+        }
+
+        const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
+        sourcefile->typeCheckedModel = checking.model;
+        for (const auto& diagnostic : checking.diagnostics) {
+            const std::string message =
+                    std::string(joyeer::typing::diagnosticName(diagnostic.id)) +
                     ": " + diagnostic.message;
             reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
         }

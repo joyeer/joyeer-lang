@@ -238,8 +238,9 @@ Rules:
 - empty, multi-byte, multi-character, invalid-escape, and unterminated byte
   literals are errors;
 - `b` not followed by `'` starts a normal identifier;
-- byte literals currently populate the existing 64-bit literal payload with a
-  `UInt8` value; parser/type/IR consumers are scheduled after Phase L.
+- byte literals populate the existing 64-bit literal payload with a `UInt8`
+  value; parser and type-checker consumers are implemented, while Joyeer IR
+  lowering remains pending.
 
 The required JSON punctuation can therefore be written directly:
 
@@ -700,17 +701,23 @@ layer for downstream code:
 | Token model | Explicit terminal kinds, `Invalid`, `DeferredKeyword`, wildcard, and absolute `SourceSpan` | Remove broad legacy categories and `rawValue` after parser migration |
 | Profiles | Default `legacy`; `jsonParserMvp` via `--lang=v0.1`; `--lang=v0.1-legacy` selects legacy explicitly | Decide when v0.1 becomes the default |
 | EOF/reset | Every scan resets cursor/output and appends exactly one EOF | Remove redundant parser end-iterator assumptions later |
-| Keywords/match | MVP/deferred classification plus `enum`, `match`, `inout`, `_`, and `=>` | Enum/match grammar and semantics are later phases |
-| Literals | Decimal `Int`, fixed string escapes, strict byte literals; unsupported numeric forms recover as one token | Integrate byte literals into parser/type/IR; move typed conversion out of lexer |
+| Keywords/match | MVP/deferred classification plus `enum`, `match`, `inout`, `_`, and `=>` | Enum/match lowering remains pending |
+| Literals | Decimal `Int`, fixed string escapes, strict byte literals; unsupported numeric forms recover as one token | Integrate byte literals into Joyeer IR; move typed conversion out of lexer |
 | Operators | Longest-match MVP terminals; deferred compound, shift, range, optional-chain, and coalescing forms recover as one invalid token | Add syntax only when a later milestone requires it |
 | Trivia | LF, CR, CRLF, line comments, and nested block comments update line starts | None for Phase L |
 | Invalid input | Unknown and non-ASCII source bytes are diagnosed instead of disappearing | Unicode identifiers remain deferred |
 | Positions | 32-bit absolute byte spans plus temporary 32-bit line/column fields | Centralize rich source rendering in diagnostics |
 
-The pipeline order remains valid:
+The legacy compatibility pipeline remains:
 
 ```text
 SourceFile -> Lexer -> SyntaxParser -> TypeGen -> TypeBinding -> IRGen
+```
+
+The v0.1 replacement frontend is:
+
+```text
+SourceFile -> Lexer -> Parser -> NameResolver -> TypeChecker -> (Joyeer IR pending)
 ```
 
 No new compiler stage was required. `SyntaxParser` accepts explicit terminals

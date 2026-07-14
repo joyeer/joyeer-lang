@@ -8,6 +8,10 @@ namespace joyeer::semantic {
 class SemanticModel;
 }
 
+namespace joyeer::typing {
+class TypeCheckedModel;
+}
+
 // SourceFile contains all information of source file in disk
 class SourceFile {
 public:
@@ -44,6 +48,10 @@ public:
     // v0.1 syntax tree ownership and all name-resolution annotations live in
     // the semantic model. The legacy pipeline does not populate this field.
     std::shared_ptr<joyeer::semantic::SemanticModel> semanticModel;
+
+    // Exact v0.1 declaration/expression types and type-directed reference
+    // completions. The legacy TypeGen/VM pipeline does not use this model.
+    std::shared_ptr<joyeer::typing::TypeCheckedModel> typeCheckedModel;
 
     ModuleClass* moduleClass;
     

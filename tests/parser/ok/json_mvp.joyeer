@@ -26,8 +26,8 @@ func parseValue(p: inout Parser): Result<JsonValue, JsonError> {
     }
     &p.pos = p.pos + 1
     return match c {
-        b'{' => .Null,
-        b't' => .Bool(true),
-        _ => .Number(0),
+        b'{' => .Ok(.Null),
+        b't' => .Ok(.Bool(true)),
+        _ => .Ok(.Number(0)),
     }
 }

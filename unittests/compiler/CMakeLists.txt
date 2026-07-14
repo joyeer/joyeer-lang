@@ -66,6 +66,10 @@ target_link_libraries(CompilerTypeCheckingTests
         JoyeerVM
 )
 
+target_compile_definitions(CompilerTypeCheckingTests PRIVATE
+        JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
+)
+
 gtest_discover_tests(CompilerTypeCheckingTests
         PROPERTIES LABELS type-checking
 )
@@ -81,13 +85,24 @@ set_tests_properties(NameResolutionCliRejectsUndefinedName PROPERTIES
         LABELS name-resolution
 )
 
+add_test(NAME TypeCheckingCliRejectsMismatch
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/type_mismatch.joyeer
+                -DEXPECTED_PATTERN=type-checking.type-mismatch
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(TypeCheckingCliRejectsMismatch PROPERTIES
+        LABELS type-checking
+)
+
 add_test(NAME ParserMvpCliAcceptance
         COMMAND $<TARGET_FILE:joyeer>
                 --lang=v0.1
                 "${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer"
 )
 set_tests_properties(ParserMvpCliAcceptance PROPERTIES
-        LABELS "parser;name-resolution"
+        LABELS "parser;name-resolution;type-checking"
 )
 
 add_test(NAME ParserMvpCliRejectsInvalidSource

@@ -9,7 +9,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <fstream>
 #include <memory>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -17,6 +20,15 @@ namespace {
 
 using joyeer::typing::TypeContext;
 using joyeer::typing::TypeKind;
+
+std::string readFixture(const std::string& relativePath) {
+    const std::string path = std::string(JOYEER_TESTS_DIR) + "/" + relativePath;
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("cannot open type-checking fixture: " + path);
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
+}
 
 class TypeContextTest : public testing::Test {
 protected:
@@ -809,6 +821,21 @@ let selected = if flag { 1 } else { "two" }
                     EXPECT_EQ(
                             checking.diagnostics[0].id,
                             joyeer::typing::TypeCheckingDiagnosticId::notCallable);
+                }
+
+                TEST_F(TypeCheckingTest, TypeChecksTheJsonParserMvpFixture) {
+                    check(readFixture("parser/ok/json_mvp.joyeer"));
+
+                    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+                    EXPECT_FALSE(resolution.model->deferredReferences().empty());
+                    for (const auto& deferred : resolution.model->deferredReferences()) {
+                        const auto& node = resolution.model->node(deferred.node);
+                        if (deferred.kind == joyeer::semantic::DeferredResolutionKind::callNeedsCalleeType) {
+                            EXPECT_TRUE(checking.model->callTarget(node).has_value());
+                        } else {
+                            EXPECT_TRUE(checking.model->referencedSymbol(node).has_value());
+                        }
+                    }
                 }
 
 } // namespace

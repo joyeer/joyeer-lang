@@ -8,9 +8,10 @@
 
 The compiler is currently a **C++20 implementation**. Default/legacy mode
 lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its
-own bytecode. `--lang=v0.1` uses the new lexer, syntax-only Parser MVP, and
-independent name-resolution semantic model, then stops before type checking
-and codegen; it does not construct the legacy VM.
+own bytecode. `--lang=v0.1` uses the new lexer, syntax-only Parser MVP,
+independent name-resolution semantic model, and canonical compile-time type
+model, then stops before Joyeer IR lowering and codegen; it does not construct
+the legacy VM.
 LLVM-based native code-gen is on the roadmap but **not implemented**.
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
@@ -40,6 +41,7 @@ ctest --test-dir ./build --output-on-failure
 | Lexer / parser | [include/joyeer/compiler/lexparser.h](include/joyeer/compiler/lexparser.h), [include/joyeer/compiler/syntaxparser.h](include/joyeer/compiler/syntaxparser.h) | [lib/compiler/lexparser.cpp](lib/compiler/lexparser.cpp), [lib/compiler/syntaxparser.cpp](lib/compiler/syntaxparser.cpp) |
 | v0.1 Parser MVP / syntax AST | [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | [lib/compiler/parser.cpp](lib/compiler/parser.cpp), [lib/compiler/syntax.cpp](lib/compiler/syntax.cpp) |
 | v0.1 name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | [lib/compiler/nameresolution.cpp](lib/compiler/nameresolution.cpp), [lib/compiler/semantic.cpp](lib/compiler/semantic.cpp) |
+| v0.1 type checking / typed model | [include/joyeer/compiler/typechecking.h](include/joyeer/compiler/typechecking.h) | [lib/compiler/typechecking.cpp](lib/compiler/typechecking.cpp) |
 | AST | [include/joyeer/compiler/node.h](include/joyeer/compiler/node.h), [include/joyeer/compiler/node+visitor.h](include/joyeer/compiler/node+visitor.h) | [lib/compiler/node.cpp](lib/compiler/node.cpp) |
 | Symbol / type binding | [include/joyeer/compiler/symtable.h](include/joyeer/compiler/symtable.h), [include/joyeer/compiler/typegen.h](include/joyeer/compiler/typegen.h), [include/joyeer/compiler/typebinding.h](include/joyeer/compiler/typebinding.h), [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) | matching `*.cpp` in [lib/compiler/](lib/compiler/) |
 | IR / bytecode gen | [include/joyeer/compiler/IRGen.h](include/joyeer/compiler/IRGen.h) | [lib/compiler/IRGen.cpp](lib/compiler/IRGen.cpp) |
@@ -68,9 +70,9 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 - New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/impl/bytecode.md](docs/impl/bytecode.md).
 - Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions.
 - Add at least one end-to-end golden test in [tests/basis/](tests/basis/) for any user-visible feature change.
-- New v0.1 parser work uses the syntax-only AST and direct tests under
+- New v0.1 frontend work uses the syntax AST, semantic/type models, and direct tests under
 	[unittests/compiler/](unittests/compiler/) plus durable sources under
-	[tests/parser/](tests/parser/). Do not route it through legacy `TypeGen`,
+	[tests/parser/](tests/parser/) and [tests/type-checking/](tests/type-checking/). Do not route it through legacy `TypeGen`,
 	bytecode, or VM merely to reuse old tests.
 
 ## Pitfalls (don't repeat these)

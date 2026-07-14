@@ -65,14 +65,18 @@ Source (.joyeer)
 | 1. Lexer | ✅ JSON-parser MVP; legacy profile retained | `lexparser.cpp`, [lexer contract](../impl/lexer.md) |
 | 2. Parser | ✅ JSON-parser MVP; legacy parser retained | `parser.cpp`, `syntax.cpp`, [Parser MVP contract](../impl/parser.md) |
 | 3. Name Resolution | ✅ Parser-MVP resolver; type-directed references handed to Stage 4 | `semantic.cpp`, `nameresolution.cpp`, [contract](../impl/name-resolution.md) |
-| 4. Type Checking | ❌ Parser-MVP checker missing; legacy pipeline partial | `typebinding.cpp` + `typegen.cpp` (legacy only) |
-| 5. Semantic Analysis | ❌ Missing | — |
+| 4. Type Checking | ✅ JSON-parser MVP typed model | `typechecking.cpp`, [contract](../impl/type-checking.md) |
+| 5. Semantic Analysis | ⚠️ Access/mutability checks implemented; flow/lint checks missing | `typechecking.cpp` |
 | 6. Own IR | ❌ Missing | Currently AST → bytecode directly |
 | 7. LLVM IR Gen | ❌ Missing | Currently generates custom bytecode |
 | 8-9. LLVM Optimization + CodeGen | ❌ Missing | Depends on LLVM integration |
-| 10. Linker | ❌ Missing | Currently uses VM execution |
+| 10. Linker | ❌ Native linking missing | Legacy compatibility lane executes via VM |
 | Runtime Library | ⚠️ Partial | `sys.cpp` (VM-level built-ins) |
 | Error Diagnostics | ⚠️ Partial | `diagnostic.cpp` |
+
+The stack VM and bytecode pipeline are now compatibility-only. New v0.1
+frontend work must consume `TypeCheckedModel` and must not add dependencies on
+legacy runtime descriptors or VM opcodes.
 
 ### Currently Working Features (legacy pipeline)
 
@@ -97,25 +101,25 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Type the Resolved Parser MVP AST
+## Immediate Next Milestone: Lower the Typed MVP to Joyeer IR
 
-The syntax-only [Parser MVP contract](../impl/parser.md) and its independent
-[name-resolution model](../impl/name-resolution.md) are implemented. The next
-frontend work is to consume the resolved model without reviving the legacy
-AST's coupling to runtime descriptors:
+The [Parser MVP](../impl/parser.md), [name-resolution model](../impl/name-resolution.md),
+and [type checker](../impl/type-checking.md) are implemented and wired into
+`--lang=v0.1`. The next work is a backend-neutral lowering path:
 
-1. Consume resolved symbols, call targets, and scope tables from the semantic
-  model.
-2. Complete type-directed member and contextual `.Case` references recorded
-  by the resolver as explicit deferred entries.
-3. Type optional/built-in generic uses and minimal match payload bindings.
-4. Add enum layout and match-exhaustiveness checks before lowering.
-5. Keep `--lang=v0.1` out of the old `TypeGen`/VM until a new semantic path is
-  ready end to end.
+1. Define typed Joyeer IR values, blocks, branches, calls, aggregates, and
+  explicit ownership/access operations.
+2. Lower primitive expressions, functions, `if`, and `while` from
+  `TypeCheckedModel` without consulting legacy `Type` or AST descriptors.
+3. Define value layout for `struct`, tagged layout for `enum`/`Optional`/
+  `Result`, and lower exhaustive `match` dispatch.
+4. Add LLVM as the first native Joyeer IR backend, then emit objects and link
+  the minimal runtime.
+5. Retire the legacy VM lane after native golden tests cover its supported
+  v0.1 behavior.
 
-The legacy parser remains isolated for old tests. Parser MVP completion means
-the JSON-parser source has a stable syntax tree; it does not imply enum layout,
-exhaustiveness, ownership, or code generation are implemented.
+Match exhaustiveness is checked in Stage 4; enum representation, ownership,
+and code generation remain Stage 6+ responsibilities.
 
 ---
 
@@ -125,37 +129,43 @@ exhaustiveness, ownership, or code generation are implemented.
 
 **Language scope**: Int, Bool, functions, if/else, while, print.
 
-### Step 1.1 — Strengthen Name Resolution + Type Checking
+### Step 1.1 — Strengthen Name Resolution + Type Checking ✅
 
 - Ensure all identifiers are properly bound to declarations
 - Full type inference for local variables
 - Type mismatch error reporting with source locations
 
-### Step 1.2 — LLVM Integration (Build System)
+### Step 1.2 — Joyeer IR Foundation
+
+- Typed SSA-like values and basic blocks
+- Explicit load/store, calls, branches, aggregate construction, and match
+- No references to legacy VM runtime descriptors
+
+### Step 1.3 — LLVM Integration (Build System)
 
 - Add LLVM as a dependency in CMake
 - Verify LLVM headers and libraries link correctly
 - Create a new `LLVMCodeGen` module
 
-### Step 1.3 — AST → LLVM IR (Core Types)
+### Step 1.4 — Joyeer IR → LLVM IR (Core Types)
 
 - Map `Int` → `i64`, `Bool` → `i1`
 - Local variables → `alloca` + `load`/`store`
 - Arithmetic → `CreateAdd`, `CreateSub`, `CreateMul`, `CreateSDiv`, `CreateSRem`
 - Comparisons → `CreateICmpSGT`, `CreateICmpSLT`, `CreateICmpEQ`, etc.
 
-### Step 1.4 — AST → LLVM IR (Control Flow)
+### Step 1.5 — Joyeer IR → LLVM IR (Control Flow)
 
 - `if/else` → `CreateCondBr` + BasicBlocks
 - `while` → loop BasicBlocks + `CreateBr`
 
-### Step 1.5 — AST → LLVM IR (Functions)
+### Step 1.6 — Joyeer IR → LLVM IR (Functions)
 
 - Function definitions → `Function::Create`
 - Function calls → `CreateCall`
 - Return → `CreateRet`
 
-### Step 1.6 — Minimal C Runtime
+### Step 1.7 — Minimal C Runtime
 
 ```
 runtime/
@@ -164,7 +174,7 @@ runtime/
 └── panic.c         // joyeer_panic() for runtime errors
 ```
 
-### Step 1.7 — Link and Output Executable
+### Step 1.8 — Link and Output Executable
 
 - LLVM → `.o` object file
 - Link with runtime library → executable
@@ -225,7 +235,7 @@ error: type mismatch
 
 **Goal**: Production-ready language with objects, memory management, and tooling.
 
-### Step 3.1 — Design Own IR (Joyeer IR)
+### Step 3.1 — Optimize and Stabilize Joyeer IR
 
 - Intermediate representation between AST and LLVM IR
 - Enables language-specific optimizations that LLVM cannot do
@@ -289,10 +299,10 @@ std/
 |-------|------|-------|-----|-----------------|
 | Lexer | ✅ | ✅ | ✅ | ✅ |
 | Parser → AST | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
-| Name Resolution | ✅ | ✅ | ✅ | Phase 1 |
-| Type Checking | ✅ | ✅ | ✅ | Phase 1 |
+| Name Resolution | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
+| Type Checking | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Semantic Analysis | ✅ | ✅ | ✅ | Phase 2 |
-| Own IR | MIR | SIL | AIR | Phase 3 |
+| Own IR | MIR | SIL | AIR | Phase 1 next |
 | LLVM IR Gen | ✅ | ✅ | ❌ (own backend) | Phase 1 |
 | Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | Phase 1-2 |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |

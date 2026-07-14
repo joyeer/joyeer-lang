@@ -50,8 +50,9 @@ disagree, the spec wins.
 
 ## `impl/` — Current Implementation Details
 
-How the **current C++ + VM** implementation works. Bound to the lifetime of
-the current backend; will be revised or archived when LLVM lands.
+How the current C++ implementation works. The legacy bytecode/VM lane remains
+for compatibility tests; the v0.1 frontend has independent syntax, semantic,
+and type models intended for native lowering.
 
 | Doc | Topic |
 |---|---|
@@ -59,6 +60,7 @@ the current backend; will be revised or archived when LLVM lands.
 | [lexer.md](impl/lexer.md) | Implemented minimal C++ lexer profile for the first JSON-parser milestone |
 | [parser.md](impl/parser.md) | Parser MVP grammar, AST boundary, recovery strategy, and parser-only test contract |
 | [name-resolution.md](impl/name-resolution.md) | v0.1 semantic IDs, scopes, symbols, binding order, diagnostics, and type-directed handoff |
+| [type-checking.md](impl/type-checking.md) | canonical compile-time types, typed overlays, inference, calls, patterns, and deferred-reference closure |
 | [string.md](impl/string.md) | `String` runtime layout and builtin methods |
 
 ---
@@ -70,7 +72,7 @@ deleted, not preserved.
 
 | Doc | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (Lexer and Parser MVP complete; semantic consumers next) |
+| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (typed frontend complete; Joyeer IR/native lowering next) |
 | [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
 | [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
 | [feasibility.md](plan/feasibility.md) | Can the design be built? Per-feature prior art, combination risks, layered-verification ceiling |
