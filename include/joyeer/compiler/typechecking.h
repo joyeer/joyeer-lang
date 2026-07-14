@@ -140,6 +140,8 @@ enum class TypeCheckingDiagnosticId {
     assignmentToImmutable,
     invalidAccessMarker,
     invalidInoutArgument,
+    notCallable,
+    unresolvedReference,
 };
 
 struct TypeCheckingDiagnostic {

@@ -771,4 +771,44 @@ let selected = if flag { 1 } else { "two" }
                             }));
                     }
 
+                TEST_F(TypeCheckingTest, ResolvesEverySuccessfulDeferredReference) {
+                    check(R"JOYEER(enum Choice { Some(Int), None, }
+                struct Box { var value: Int }
+                func update(box: Box, choice: Choice): Choice {
+                let inferred = box
+                let copied = inferred.value
+                return match choice {
+                .Some(number) => .Some(number + copied),
+                .None => .None,
+                }
+                }
+                )JOYEER");
+
+                    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+                    ASSERT_FALSE(resolution.model->deferredReferences().empty());
+                    for (const auto& deferred : resolution.model->deferredReferences()) {
+                        const auto& node = resolution.model->node(deferred.node);
+                        if (deferred.kind == joyeer::semantic::DeferredResolutionKind::callNeedsCalleeType) {
+                            EXPECT_TRUE(checking.model->callTarget(node).has_value());
+                        } else {
+                            EXPECT_TRUE(checking.model->referencedSymbol(node).has_value());
+                        }
+                    }
+                }
+
+                TEST_F(TypeCheckingTest, DiagnosesDeferredMembersThatAreNotCallable) {
+                    check(R"JOYEER(struct Box { var value: Int }
+                func invalid(box: Box) {
+                let inferred = box
+                inferred.value()
+                }
+                )JOYEER");
+
+                    ASSERT_EQ(checking.diagnostics.size(), 1u)
+                            << joyeer::typing::dump(checking.diagnostics);
+                    EXPECT_EQ(
+                            checking.diagnostics[0].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::notCallable);
+                }
+
 } // namespace

@@ -318,6 +318,7 @@ public:
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
             for (const auto& item : root->items) checkTopLevelBody(item);
         }
+        validateDeferredReferences();
         return TypeCheckingResult { model, std::move(diagnostics) };
     }
 
@@ -325,6 +326,7 @@ private:
     TypeCheckedModel::Ptr model;
     std::vector<TypeCheckingDiagnostic> diagnostics;
     std::optional<TypeId> currentReturnType;
+    std::unordered_set<semantic::NodeId> handledDeferredReferences;
 
     void report(TypeCheckingDiagnosticId id, SourceSpan span, std::string message) {
         diagnostics.push_back(TypeCheckingDiagnostic { id, span, std::move(message) });
@@ -352,6 +354,25 @@ private:
             semantic::SymbolId symbol) {
         const auto id = model->semanticModelValue->nodeId(node);
         if (id.has_value()) model->resolvedCallTargets[*id] = symbol;
+    }
+
+    void markDeferredReferenceHandled(const syntax::NodePtr& node) {
+        if (node == nullptr || model->semanticModelValue->deferredReference(node) == nullptr) {
+            return;
+        }
+        const auto id = model->semanticModelValue->nodeId(node);
+        if (id.has_value()) handledDeferredReferences.insert(*id);
+    }
+
+    void validateDeferredReferences() {
+        for (const auto& deferred : model->semanticModelValue->deferredReferences()) {
+            if (handledDeferredReferences.contains(deferred.node)) continue;
+            report(
+                    TypeCheckingDiagnosticId::unresolvedReference,
+                    deferred.span,
+                    "type checker did not consume deferred reference '" +
+                            deferred.name + "'");
+        }
     }
 
     void resolveBuiltinSignatures() {
@@ -711,6 +732,7 @@ private:
             const syntax::ExprPtr& expression,
             std::optional<TypeId> expected = std::nullopt) {
         if (expression == nullptr) return std::nullopt;
+        markDeferredReferenceHandled(expression);
 
         auto result = model->typeContext.errorType();
         switch (expression->kind) {
@@ -1002,7 +1024,8 @@ private:
     }
 
     TypeId checkCall(const syntax::CallExprSyntax::Ptr& expression) {
-        checkExpression(expression->callee);
+        const auto calleeType = checkExpression(expression->callee).value_or(
+            model->typeContext.errorType());
         auto target = model->callTarget(expression);
         if (!target.has_value()) {
             const auto callee = model->referencedSymbol(expression->callee);
@@ -1039,6 +1062,19 @@ private:
                 requireAssignable(*actual, *expected, argument->value->span);
             }
         }
+            if (signature == nullptr && calleeType != model->typeContext.errorType()) {
+                const auto callee = model->referencedSymbol(expression->callee);
+                const auto* symbol = callee.has_value()
+                    ? model->semanticModelValue->symbol(*callee)
+                    : nullptr;
+                report(
+                    TypeCheckingDiagnosticId::notCallable,
+                    expression->callee->span,
+                    "value '" +
+                        (symbol == nullptr ? std::string("<expression>") : symbol->name) +
+                        "' of type '" + model->typeContext.displayName(calleeType) +
+                        "' is not callable");
+            }
         return signature == nullptr ? model->typeContext.errorType() : signature->result;
     }
 
@@ -1380,6 +1416,7 @@ private:
             const syntax::PatternPtr& pattern,
             TypeId expected) {
         if (pattern == nullptr) return {};
+        markDeferredReferenceHandled(pattern);
         PatternCoverage coverage;
 
         switch (pattern->kind) {
@@ -1683,6 +1720,10 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-access-marker";
         case TypeCheckingDiagnosticId::invalidInoutArgument:
             return "type-checking.invalid-inout-argument";
+        case TypeCheckingDiagnosticId::notCallable:
+            return "type-checking.not-callable";
+        case TypeCheckingDiagnosticId::unresolvedReference:
+            return "type-checking.unresolved-reference";
     }
     return "type-checking.unknown";
 }
