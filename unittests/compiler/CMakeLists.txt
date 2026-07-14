@@ -245,6 +245,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableReadFile PROPERTIES
             LABELS "native;llvm-backend;native-runtime;ownership;file-io"
     )
+
+    add_test(NAME NativeExecutableArrayAppend
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/array_append.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-array-append${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=3\n30\nfirst!\nsecond\nsecond\n2\n6\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableArrayAppend PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;array"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName

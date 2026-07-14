@@ -178,6 +178,42 @@ TEST(IRModelTest, RejectsZeroInitializationOfNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
+TEST(IRModelTest, VerifiesArrayAppendStorageAndElementTypes) {
+    auto module = validAddModule();
+    module.types.push_back(TypeName {
+        3,
+        "[Int]",
+        joyeer::typing::TypeKind::array,
+        joyeer::semantic::invalidSymbolId,
+        { 1 },
+    });
+    auto& function = module.functions[0];
+    function.name = "append";
+    function.parameters.clear();
+    function.resultType = 0;
+    function.returnsValue = false;
+    function.blocks[0].instructions = {
+        Instruction {
+            Opcode::stackAllocate,
+            Value { 0, 3, ValueCategory::address },
+        },
+        Instruction {
+            Opcode::integerConstant,
+            Value { 1, 1, ValueCategory::value },
+            {}, {}, std::nullopt, std::nullopt, 42,
+        },
+        Instruction { Opcode::arrayAppend, std::nullopt, { 0, 1 } },
+        Instruction { Opcode::returnVoid },
+    };
+
+    const auto valid = Verifier().verify(module);
+    EXPECT_TRUE(valid.succeeded()) << dump(valid);
+
+    function.blocks[0].instructions[2].operands = { 1, 0 };
+    const auto invalid = Verifier().verify(module);
+    EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
+}
+
 TEST(IRModelTest, ReportsDuplicateAndUndefinedValueIds) {
     auto module = validAddModule();
     auto& add = module.functions[0].blocks[0].instructions[0];

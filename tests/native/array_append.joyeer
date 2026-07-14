@@ -1,0 +1,30 @@
+enum Value {
+    Number(Int),
+    Text(String),
+}
+
+func main() {
+    var numbers: [Int] = []
+    &numbers.append(element: 10)
+    &numbers.append(element: 20)
+    &numbers.append(element: 30)
+    print(value: numbers.count)
+    print(value: numbers[2])
+
+    var words: [String] = []
+    &words.append(element: "first" + "!")
+    let second = "second"
+    &words.append(element: second)
+    print(value: words[0])
+    print(value: words[1])
+    print(value: second)
+
+    var values: [Value] = []
+    &values.append(element: .Number(42))
+    &values.append(element: .Text("nested"))
+    print(value: values.count)
+    print(value: match values[1] {
+        .Number(number) => number,
+        .Text(text) => text.count,
+    })
+}

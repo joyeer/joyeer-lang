@@ -76,6 +76,9 @@ void joyeer_array_clone_abi(
     JoyeerArray* result,
     const void* data,
     int64_t count);
+void joyeer_array_append_owned_abi(
+    JoyeerArray* array,
+    const void* element);
 void joyeer_array_destroy_abi(JoyeerArray* array);
 
 JoyeerDictionary joyeer_dictionary_create(

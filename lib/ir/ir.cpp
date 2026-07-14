@@ -763,6 +763,28 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                         }
+                    case Opcode::arrayAppend:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr) {
+                            const auto found = types.find(operands[0]->type);
+                            const auto* arrayType = found == types.end()
+                                    ? nullptr
+                                    : found->second;
+                            if (operands[0]->category != ValueCategory::address ||
+                                operands[1]->category != ValueCategory::value ||
+                                arrayType == nullptr ||
+                                arrayType->kind != typing::TypeKind::array ||
+                                arrayType->arguments.size() != 1 ||
+                                arrayType->arguments[0] != operands[1]->type) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "array append requires an array address and matching element value");
+                            }
+                        }
+                        break;
                         case Opcode::constructDictionary: {
                         const auto* resultType = instruction.result.has_value() &&
                             types.contains(instruction.result->type)
@@ -1111,6 +1133,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
+        case Opcode::arrayAppend: return "array_append";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::fieldAddress: return "field_addr";
         case Opcode::extractField: return "extract_field";
@@ -1279,6 +1302,7 @@ std::string dump(const Module& module) {
                         }
                         break;
                     case Opcode::store:
+                    case Opcode::arrayAppend:
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:

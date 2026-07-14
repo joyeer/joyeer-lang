@@ -49,6 +49,13 @@ static void checkedFree(void* value) {
     if (previous <= 0) joyeer_panic("runtime allocation counter underflow");
 }
 
+static void* checkedReallocate(void* value, size_t size) {
+    if (value == NULL) return checkedAllocate(size);
+    void* result = realloc(value, size == 0 ? 1 : size);
+    if (result == NULL) joyeer_panic("out of memory");
+    return result;
+}
+
 int64_t joyeer_runtime_active_allocations(void) {
     return atomic_load_explicit(&activeAllocations, memory_order_relaxed);
 }
@@ -287,13 +294,7 @@ void joyeer_read_file_abi(
             return;
         }
         capacity *= 2;
-        void* grown = realloc(data, capacity);
-        if (grown == NULL) {
-            fclose(file);
-            checkedFree(data);
-            joyeer_panic("out of memory");
-        }
-        data = (uint8_t*)grown;
+        data = (uint8_t*)checkedReallocate(data, capacity);
     }
 
     errno = 0;
@@ -317,6 +318,9 @@ static JoyeerArray arrayCreateOwned(
         JoyeerDestroyValueFn destroyElement,
         bool cloneValues) {
     const size_t bytes = checkedByteCount(count, elementSize);
+    if (bytes > SIZE_MAX - sizeof(ArrayHeader)) {
+        joyeer_panic("array allocation size overflow");
+    }
     ArrayHeader* storage = (ArrayHeader*)checkedAllocate(sizeof(ArrayHeader) + bytes);
     storage->elementSize = elementSize;
     storage->cloneElement = cloneElement;
@@ -372,6 +376,45 @@ void joyeer_array_clone_abi(
             source->cloneElement,
             source->destroyElement,
             true);
+}
+
+void joyeer_array_append_owned_abi(
+        JoyeerArray* array,
+        const void* element) {
+    if (array == NULL || array->data == NULL || array->count < 0 ||
+        array->capacity < array->count) {
+        joyeer_panic("invalid array append");
+    }
+    ArrayHeader* header = ((ArrayHeader*)array->data) - 1;
+    if (header->elementSize < 0 ||
+        (header->elementSize != 0 && element == NULL) ||
+        array->count == INT64_MAX) {
+        joyeer_panic("invalid array append");
+    }
+
+    if (array->count == array->capacity) {
+        int64_t capacity = array->capacity < 4 ? 4 : array->capacity;
+        if (capacity == array->capacity) {
+            if (capacity > INT64_MAX / 2) joyeer_panic("array capacity overflow");
+            capacity *= 2;
+        }
+        const size_t bytes = checkedByteCount(capacity, header->elementSize);
+        if (bytes > SIZE_MAX - sizeof(ArrayHeader)) {
+            joyeer_panic("array allocation size overflow");
+        }
+        header = (ArrayHeader*)checkedReallocate(
+                header,
+                sizeof(ArrayHeader) + bytes);
+        array->data = header + 1;
+        array->capacity = capacity;
+    }
+
+    uint8_t* destination = (uint8_t*)array->data +
+            checkedByteCount(array->count, header->elementSize);
+    if (header->elementSize != 0) {
+        memcpy(destination, element, (size_t)header->elementSize);
+    }
+    ++array->count;
 }
 
 void* joyeer_array_at(JoyeerArray array, int64_t index) {

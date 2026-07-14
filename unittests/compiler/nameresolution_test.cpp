@@ -143,6 +143,29 @@ return readFile(path: "input.json")
         EXPECT_EQ(resolution.model->symbol(*target)->name, "readFile");
 }
 
+        TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheBuiltinMemberScope) {
+            resolve(R"JOYEER(func add(values: inout [Int]) {
+        &values.append(element: 42)
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+            const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                    parseResult.root->items[0]);
+            const auto access = std::static_pointer_cast<joyeer::syntax::AccessExprSyntax>(
+                    function->body->items[0]);
+            const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                    access->operand);
+            const auto member = std::static_pointer_cast<joyeer::syntax::MemberExprSyntax>(
+                    call->callee);
+
+            EXPECT_EQ(referenced(member).kind, SymbolKind::builtinMember);
+            EXPECT_EQ(referenced(member).name, "append");
+            const auto target = resolution.model->callTarget(call);
+            ASSERT_TRUE(target.has_value());
+            EXPECT_EQ(resolution.model->symbol(*target)->name, "append");
+        }
+
 TEST_F(NameResolutionTest, ResolvesMemberChainsThroughLaterTypeSignatures) {
     resolve(R"JOYEER(func read(node: Node): Int {
 return node.child.value

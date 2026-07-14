@@ -779,6 +779,8 @@ private:
                 return emitConstructStruct(out, instruction);
             case ir::Opcode::constructArray:
                 return emitConstructArray(out, instruction);
+            case ir::Opcode::arrayAppend:
+                return emitArrayAppend(out, instruction);
             case ir::Opcode::constructDictionary:
                 return emitConstructDictionary(out, instruction);
             case ir::Opcode::fieldAddress:
@@ -931,6 +933,32 @@ private:
             << destroy << ")\n"
             << "  " << valueName(instruction.result->id)
             << " = load %joyeer.array, ptr " << resultAddress << "\n";
+        return true;
+    }
+
+    bool emitArrayAppend(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (instruction.operands.size() != 2) return false;
+        const auto array = operand(instruction.operands[0]);
+        const auto element = operand(instruction.operands[1]);
+        const auto* elementValue = value(instruction.operands[1]);
+        const auto elementType = elementValue == nullptr
+                ? std::optional<std::string>()
+                : llvmType(elementValue->type, instruction.span);
+        if (!array.has_value() || !element.has_value() ||
+            !elementType.has_value()) {
+            return false;
+        }
+
+        const auto elementAddress = temporary();
+        out << "  " << elementAddress << " = alloca " << *elementType << "\n"
+            << "  store " << *elementType << ' ' << *element
+            << ", ptr " << elementAddress << "\n";
+        runtimeDeclarations.insert(
+                "declare void @joyeer_array_append_owned_abi(ptr, ptr)");
+        out << "  call void @joyeer_array_append_owned_abi(ptr " << *array
+            << ", ptr " << elementAddress << ")\n";
         return true;
     }
 

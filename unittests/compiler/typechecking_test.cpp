@@ -813,6 +813,43 @@ let selected = if flag { 1 } else { "two" }
                             }));
                     }
 
+                    TEST_F(TypeCheckingTest, TypesMutatingArrayAppendFromTheReceiverElement) {
+                        check(R"JOYEER(func build() {
+                    var values: [String] = []
+                    &values.append(element: "first")
+                    let second = "second"
+                    &values.append(element: second)
+                    print(value: values.count)
+                    }
+                    )JOYEER");
+
+                        EXPECT_TRUE(checking.succeeded())
+                            << joyeer::typing::dump(checking.diagnostics);
+                    }
+
+                    TEST_F(TypeCheckingTest, EnforcesArrayAppendReceiverAndElementRules) {
+                        check(R"JOYEER(func invalid() {
+                    let frozen = [1]
+                    &frozen.append(element: 2)
+                    var values = [1]
+                    values.append(element: 2)
+                    &values.append(element: "wrong")
+                    }
+                    )JOYEER");
+
+                        ASSERT_EQ(checking.diagnostics.size(), 3u)
+                            << joyeer::typing::dump(checking.diagnostics);
+                        EXPECT_EQ(
+                            checking.diagnostics[0].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+                        EXPECT_EQ(
+                            checking.diagnostics[1].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker);
+                        EXPECT_EQ(
+                            checking.diagnostics[2].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+                    }
+
                 TEST_F(TypeCheckingTest, ResolvesEverySuccessfulDeferredReference) {
                     check(R"JOYEER(enum Choice { Some(Int), None, }
                 struct Box { var value: Int }

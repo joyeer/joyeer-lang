@@ -178,6 +178,58 @@ TEST(NativeRuntimeTest, CopiesIndexesAndMutatesArrays) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
+TEST(NativeRuntimeTest, AppendsTrivialElementsAndGrowsCapacity) {
+    JoyeerArray array {};
+    joyeer_array_create_owned_abi(
+            &array,
+            nullptr,
+            0,
+            sizeof(int64_t),
+            nullptr,
+            nullptr);
+
+    for (int64_t value = 0; value < 17; ++value) {
+        const int64_t appended = value * 3;
+        joyeer_array_append_owned_abi(&array, &appended);
+    }
+
+    ASSERT_EQ(array.count, 17);
+    EXPECT_GE(array.capacity, array.count);
+    for (int64_t index = 0; index < array.count; ++index) {
+        EXPECT_EQ(*static_cast<int64_t*>(joyeer_array_at(array, index)), index * 3);
+    }
+    joyeer_array_destroy_abi(&array);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, TakesAndRecursivelyDestroysAppendedOwnedElements) {
+    cloneCount = 0;
+    destroyCount = 0;
+    JoyeerArray array {};
+    joyeer_array_create_owned_abi(
+            &array,
+            nullptr,
+            0,
+            sizeof(JoyeerString),
+            cloneString,
+            destroyString);
+    const auto first = owned(std::string("first"));
+    const auto second = owned(std::string("second"));
+
+    joyeer_array_append_owned_abi(&array, &first);
+    joyeer_array_append_owned_abi(&array, &second);
+
+    ASSERT_EQ(array.count, 2);
+    EXPECT_EQ(cloneCount, 0);
+    const auto* firstStored = static_cast<const JoyeerString*>(joyeer_array_at(array, 0));
+    const auto* secondStored = static_cast<const JoyeerString*>(joyeer_array_at(array, 1));
+    EXPECT_TRUE(joyeer_string_equal(*firstStored, view(std::string("first"))));
+    EXPECT_TRUE(joyeer_string_equal(*secondStored, view(std::string("second"))));
+    joyeer_array_destroy_abi(&array);
+    EXPECT_EQ(destroyCount, 2);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
 TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
     cloneCount = 0;
     destroyCount = 0;

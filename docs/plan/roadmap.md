@@ -113,8 +113,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Complete the remaining dynamic collection/parser surface and run the JSON
-  parser against `readFile(path:)` input as a native executable.
+1. Add dynamic dictionary insertion/update, then run the JSON parser against
+  `readFile(path:)` input as a native executable; dynamic array append works.
 2. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
   `consume` flow states.
 3. Configure a deliberate LLVM optimization pipeline and verify overflow/
@@ -202,11 +202,12 @@ runtime/
 - String representation: pointer + length (no null-terminated)
 - String literals compiled as global constants
 
-### Step 2.3 — Array Support
+### Step 2.3 — Array Support ✅ (native MVP)
 
-- Runtime: `joyeer_array_create()`, `joyeer_array_get()`, `joyeer_array_set()`, `joyeer_array_size()`
-- Bounds checking in debug mode
-- Stack-allocated fixed-size arrays (optimization)
+- ✅ typed literals, count, checked read/write subscripts, and mutable
+  `&array.append(element:)`
+- ✅ ownership-aware growth, clone, and reverse-order element destruction
+- fixed-size stack allocation remains a future optimization
 
 ### Step 2.4 — Error Diagnostics
 

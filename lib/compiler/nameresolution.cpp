@@ -385,6 +385,24 @@ private:
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
+        CallableSignature appendSignature {
+            CallableKind::function,
+            true,
+            { CallableParameter {
+                std::string("element"),
+                true,
+                std::nullopt,
+                std::nullopt,
+                std::nullopt,
+            } },
+        };
+        const auto append = declareBuiltinMember(
+                arrayType,
+                SymbolKind::builtinMember,
+                "append",
+                voidType,
+                std::move(appendSignature));
+        symbol(append).isMutable = true;
 
         CallableSignature singlePayload {
             CallableKind::enumCase,

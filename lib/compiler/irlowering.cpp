@@ -1480,6 +1480,11 @@ private:
             }
             return emitEnumConstruction(*type, *target, payloads, expression->span);
         }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "append") {
+            return lowerArrayAppend(expression);
+        }
         if (!functions.contains(*target)) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1527,6 +1532,50 @@ private:
                     : ValueOwnership::trivial);
         }
         return result;
+    }
+
+    std::optional<ir::Value> lowerArrayAppend(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            expression->arguments.size() != 1) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Array.append requires one element argument");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto array = lowerAddress(member->base);
+        const auto* arrayType = array.has_value()
+                ? model->types().type(array->type)
+                : nullptr;
+        if (!array.has_value() || arrayType == nullptr ||
+            arrayType->kind != typing::TypeKind::array ||
+            arrayType->arguments.size() != 1) {
+            report(
+                    DiagnosticId::missingType,
+                    expression->span,
+                    "Array.append receiver has no concrete element type");
+            return std::nullopt;
+        }
+
+        auto element = lowerExpression(expression->arguments[0]->value);
+        if (!element.has_value()) return std::nullopt;
+        element = coerce(
+                *element,
+                arrayType->arguments[0],
+                expression->arguments[0]->value->span);
+        if (!element.has_value()) return std::nullopt;
+        if (requiresDestroy(element->type)) {
+            element = acquireOwned(*element, expression->arguments[0]->value->span);
+            if (!element.has_value()) return std::nullopt;
+        }
+
+        auto instruction = makeInstruction(ir::Opcode::arrayAppend, expression->span);
+        instruction.operands = { array->id, element->id };
+        emit(std::move(instruction));
+        return std::nullopt;
     }
 
     std::optional<ir::Value> lowerStructConstruction(

@@ -140,6 +140,26 @@ return values[0] + lookup["answer"]
     EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, EmitsMutatingArrayAppendRuntimeAbi) {
+    emit(R"JOYEER(func build(): [String] {
+var values: [String] = []
+&values.append(element: "first")
+let second = "second"
+&values.append(element: second)
+return values
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(
+            result.text.find("declare void @joyeer_array_append_owned_abi(ptr, ptr)"),
+            std::string::npos);
+    EXPECT_NE(
+            result.text.find("call void @joyeer_array_append_owned_abi(ptr"),
+            std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_clone_type_"), std::string::npos);
+}
+
 TEST_F(LLVMBackendTest, EmitsZeroInitializationForDeferredOwnedStorage) {
     emit(R"JOYEER(func value(): String {
 var text: String

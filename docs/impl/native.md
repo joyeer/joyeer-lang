@@ -98,8 +98,9 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 - scalar and string printing;
 - string concatenation, equality, ordering, byte indexing, deep clone, and
   destroy;
-- array construction, checked indexing, mutable element projection, recursive
-  clone, and reverse-order element destruction;
+- array construction, checked indexing, mutable element projection,
+  ownership-transferring append/growth, recursive clone, and reverse-order
+  element destruction;
 - dictionary construction, linear lookup for primitive/string keys, recursive
   key/value clone, and destruction;
 - binary file input through `readFile(path:)`;
@@ -117,6 +118,13 @@ owned storage and temporaries in reverse order on normal and early-return
 paths. The C entry point fails the process if runtime-managed allocation count
 is nonzero after `joyeer_main` returns, making leaks in native integration
 tests observable.
+
+The built-in mutating method
+`&values.append(element: value)` requires an addressable mutable `Array<T>`.
+Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`; the
+runtime grows geometrically and preserves the array's element clone/destroy
+callbacks. Borrowed heap-backed elements are cloned before transfer, while
+owned temporaries move directly into the array.
 
 ### File input
 

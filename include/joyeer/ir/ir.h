@@ -62,6 +62,7 @@ enum class Opcode {
     call,
     constructStruct,
     constructArray,
+    arrayAppend,
     constructDictionary,
     fieldAddress,
     extractField,

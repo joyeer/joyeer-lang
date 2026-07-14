@@ -412,6 +412,14 @@ private:
             }
             const auto type = model->typeContext.typeForSymbol(*symbol.declaredType);
             if (type.has_value()) model->symbolTypes[symbol.id] = *type;
+            if (symbol.name == "append" && symbol.callable.has_value()) {
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    { model->typeContext.anyType() },
+                    model->typeContext.voidType(),
+                };
+            }
         }
     }
 
@@ -744,7 +752,8 @@ private:
 
     std::optional<TypeId> checkExpression(
             const syntax::ExprPtr& expression,
-            std::optional<TypeId> expected = std::nullopt) {
+            std::optional<TypeId> expected = std::nullopt,
+            bool hasReceiverAccessMarker = false) {
         if (expression == nullptr) return std::nullopt;
         markDeferredReferenceHandled(expression);
 
@@ -772,7 +781,8 @@ private:
             case syntax::Kind::accessExpr:
                 result = checkExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
-                        expected).value_or(model->typeContext.errorType());
+                        expected,
+                        true).value_or(model->typeContext.errorType());
                 break;
             case syntax::Kind::assignmentExpr: {
                 const auto assignment =
@@ -792,7 +802,8 @@ private:
                 break;
             case syntax::Kind::callExpr:
                 result = checkCall(
-                        std::static_pointer_cast<syntax::CallExprSyntax>(expression));
+                        std::static_pointer_cast<syntax::CallExprSyntax>(expression),
+                        hasReceiverAccessMarker);
                 break;
             case syntax::Kind::arrayExpr:
                 result = checkArray(
@@ -1037,7 +1048,9 @@ private:
         return found->second;
     }
 
-    TypeId checkCall(const syntax::CallExprSyntax::Ptr& expression) {
+        TypeId checkCall(
+            const syntax::CallExprSyntax::Ptr& expression,
+            bool hasReceiverAccessMarker = false) {
         const auto calleeType = checkExpression(expression->callee).value_or(
             model->typeContext.errorType());
         auto target = model->callTarget(expression);
@@ -1059,13 +1072,54 @@ private:
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
+        const auto mutatingReceiver = semanticTarget != nullptr &&
+            semanticTarget->kind == semantic::SymbolKind::builtinMember &&
+            semanticTarget->isMutable;
+        if (mutatingReceiver != hasReceiverAccessMarker) {
+            report(
+                TypeCheckingDiagnosticId::invalidAccessMarker,
+                expression->callee->span,
+                mutatingReceiver
+                    ? "mutating method call requires '&' on the receiver"
+                    : "non-mutating call must not use '&' on the receiver");
+        }
+        if (mutatingReceiver && expression->callee->kind == syntax::Kind::memberExpr) {
+            const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+            const auto storage = analyzeStorage(member->base);
+            if (!storage.writable) {
+            report(
+                TypeCheckingDiagnosticId::assignmentToImmutable,
+                member->base->span,
+                "cannot call mutating method through immutable binding '" +
+                    storage.immutableName + "'");
+            }
+        }
+
+        std::optional<TypeId> arrayElementType;
+        if (semanticTarget != nullptr && semanticTarget->name == "append" &&
+            expression->callee->kind == syntax::Kind::memberExpr) {
+            const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+            const auto base = model->typeOf(member->base);
+            const auto* baseType = base.has_value()
+                ? model->typeContext.type(*base)
+                : nullptr;
+            if (baseType != nullptr && baseType->kind == TypeKind::array &&
+            baseType->arguments.size() == 1) {
+            arrayElementType = baseType->arguments[0];
+            }
+        }
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
             const auto& argument = expression->arguments[index];
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
-            const auto expected = signature != nullptr && parameterIndex.has_value() &&
-                                  *parameterIndex < signature->parameters.size()
+                        const auto expected = arrayElementType.has_value() &&
+                                                                    parameterIndex == std::optional<size_t>(0)
+                                        ? arrayElementType
+                                        : signature != nullptr && parameterIndex.has_value() &&
+                                            *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
             if (semanticTarget != nullptr && parameterIndex.has_value()) {

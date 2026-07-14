@@ -55,6 +55,7 @@ The current instruction set covers:
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction and payload extraction;
+- mutating `array_append` with an addressable receiver and transferred element;
 - `String`/collection count and value/address subscript operations;
 - high-level recursive pattern switching.
 
@@ -74,6 +75,11 @@ Early returns clean every active scope before transferring the result to the
 caller. A typed local declared without an initializer uses `zero_init` when its
 type requires destruction, making cleanup safe while Stage 5 rejects any
 source-level read before initialization.
+
+`array_append` consumes its element operand. Lowering moves an owned temporary
+or clones a borrowed nontrivial value before the instruction, so runtime
+reallocation never aliases the caller's retained value and array destruction
+owns every appended element exactly once.
 
 ---
 

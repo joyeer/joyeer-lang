@@ -89,7 +89,9 @@ The v0.1 checker currently validates:
 - exhaustive user enum, `Optional`, `Result`, and `Bool` matches; other
   domains require a catch-all arm;
 - immutable bindings/fields and explicit `inout` access markers for assignment
-  and calls.
+  and calls;
+- concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
+  on a mutable receiver.
 
 Ordinary call labels, ordering, required/default argument presence, and
 lexical declaration binding remain name-resolution responsibilities. The type
