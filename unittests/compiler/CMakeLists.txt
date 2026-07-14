@@ -2,6 +2,19 @@ add_executable(CompilerLexerTests
         lexer_test.cpp
 )
 
+add_executable(CompilerDiagnosticTests
+        diagnostic_test.cpp
+)
+
+target_link_libraries(CompilerDiagnosticTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+)
+
+gtest_discover_tests(CompilerDiagnosticTests
+        PROPERTIES LABELS diagnostics
+)
+
 target_link_libraries(CompilerLexerTests
         GTest::gtest_main
         JoyeerDiagnostic

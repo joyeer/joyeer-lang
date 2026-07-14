@@ -25,10 +25,12 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
 
 int Driver::run() {
     auto module = compiler->compile(arguments->inputfile.string());
-    if(!diagnostics->errors.empty()) {
+    if(diagnostics->hasFailure()) {
         diagnostics->printErrors();
         return 1;
-    } else if(arguments->languageMode == LanguageMode::v0_1 &&
+    }
+    if (!diagnostics->errors.empty()) diagnostics->printErrors();
+    if(arguments->languageMode == LanguageMode::v0_1 &&
               arguments->outputMode == OutputMode::executable) {
         const auto& source = compiler->getLastCompiledSourceFile();
         if (source == nullptr) {
@@ -50,7 +52,7 @@ int Driver::run() {
                         diagnostic.message.c_str());
             }
         }
-        if (!diagnostics->errors.empty()) {
+        if (diagnostics->hasFailure()) {
             diagnostics->printErrors();
             return 1;
         }

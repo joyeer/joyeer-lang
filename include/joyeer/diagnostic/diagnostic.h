@@ -1,6 +1,7 @@
 #ifndef __joyeer_diagnostic_diagnostic_h__
 #define __joyeer_diagnostic_diagnostic_h__
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -68,6 +69,12 @@ struct Diagnostics {
 
     // print the error message
     void printError(ErrorMessage& error);
+
+    [[nodiscard]] bool hasFailure() const {
+        return std::any_of(errors.begin(), errors.end(), [](const auto& error) {
+            return error.level == ErrorLevel::failure;
+        });
+    }
 
     std::vector<ErrorMessage> errors;
     

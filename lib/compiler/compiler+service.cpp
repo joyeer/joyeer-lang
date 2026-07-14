@@ -46,7 +46,7 @@ void reportSpannedFailure(
 } // namespace
 
 #define CHECK_ERROR_RETURN_NULL \
-    if(diagnostics->errors.size() != 0) { \
+    if(diagnostics->hasFailure()) { \
         return nullptr; \
     }
 
