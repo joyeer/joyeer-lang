@@ -624,6 +624,253 @@ private:
     }
 };
 
+class UsageBuilder {
+public:
+    Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
+        assert(checkedModel != nullptr);
+        model = checkedModel;
+        const auto& root = model->semanticModel()->root();
+        if (root != nullptr) {
+            for (const auto& item : root->items) {
+                if (item->kind == syntax::Kind::functionDecl) {
+                    analyzeFunction(
+                            std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
+                }
+            }
+        }
+        return Result { std::move(diagnostics) };
+    }
+
+private:
+    typing::TypeCheckedModel::Ptr model;
+    std::vector<Diagnostic> diagnostics;
+    std::vector<semantic::SymbolId> candidates;
+    std::unordered_set<semantic::SymbolId> reads;
+
+    void analyzeFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        candidates.clear();
+        reads.clear();
+        visitBlock(declaration->body);
+        for (const auto symbolId : candidates) {
+            if (reads.contains(symbolId)) continue;
+            const auto* symbol = model->semanticModel()->symbol(symbolId);
+            if (symbol == nullptr || symbol->name.starts_with('_')) continue;
+            diagnostics.push_back(Diagnostic {
+                DiagnosticId::unusedBinding,
+                Severity::warning,
+                symbol->span,
+                "binding '" + symbol->name + "' is never read",
+            });
+        }
+    }
+
+    void addCandidate(const syntax::NodePtr& declaration) {
+        const auto symbol = model->semanticModel()->declaredSymbol(declaration);
+        if (symbol.has_value()) candidates.push_back(*symbol);
+    }
+
+    void visitBlock(const syntax::BlockExprSyntax::Ptr& block) {
+        if (block == nullptr) return;
+        for (const auto& item : block->items) visitNode(item);
+    }
+
+    void visitNode(const syntax::NodePtr& node) {
+        if (node == nullptr) return;
+        if (node->kind == syntax::Kind::bindingDecl) {
+            const auto declaration =
+                    std::static_pointer_cast<syntax::BindingDeclSyntax>(node);
+            addCandidate(declaration);
+            visitExpression(declaration->initializer);
+            return;
+        }
+        if (node->kind == syntax::Kind::whileStmt) {
+            const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
+            visitExpression(statement->condition);
+            visitBlock(statement->body);
+            return;
+        }
+        if (node->kind == syntax::Kind::blockExpr) {
+            visitBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(node));
+            return;
+        }
+        if (isExpressionKind(node->kind)) {
+            visitExpression(std::static_pointer_cast<syntax::ExprSyntax>(node));
+        }
+    }
+
+    void visitExpression(const syntax::ExprPtr& expression) {
+        if (expression == nullptr) return;
+        switch (expression->kind) {
+            case syntax::Kind::nameExpr: {
+                const auto symbol = model->referencedSymbol(expression);
+                if (symbol.has_value()) reads.insert(*symbol);
+                break;
+            }
+            case syntax::Kind::parenthesizedExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+                break;
+            case syntax::Kind::prefixExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand);
+                break;
+            case syntax::Kind::accessExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+                break;
+            case syntax::Kind::binaryExpr: {
+                const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
+                visitExpression(binary->left);
+                visitExpression(binary->right);
+                break;
+            }
+            case syntax::Kind::assignmentExpr: {
+                const auto assignment =
+                        std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
+                visitAssignmentTarget(assignment->target);
+                visitExpression(assignment->value);
+                break;
+            }
+            case syntax::Kind::memberExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base);
+                break;
+            case syntax::Kind::callExpr: {
+                const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
+                visitExpression(call->callee);
+                for (const auto& argument : call->arguments) {
+                    visitExpression(argument->value);
+                }
+                break;
+            }
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript =
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                visitExpression(subscript->base);
+                visitExpression(subscript->index);
+                break;
+            }
+            case syntax::Kind::arrayExpr: {
+                const auto array = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression);
+                for (const auto& element : array->elements) visitExpression(element);
+                break;
+            }
+            case syntax::Kind::dictionaryExpr: {
+                const auto dictionary =
+                        std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression);
+                for (const auto& entry : dictionary->entries) {
+                    visitExpression(entry->key);
+                    visitExpression(entry->value);
+                }
+                break;
+            }
+            case syntax::Kind::contextualCaseExpr: {
+                const auto enumCase =
+                        std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+                for (const auto& argument : enumCase->arguments) {
+                    visitExpression(argument->value);
+                }
+                break;
+            }
+            case syntax::Kind::blockExpr:
+                visitBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
+                break;
+            case syntax::Kind::ifExpr: {
+                const auto conditional =
+                        std::static_pointer_cast<syntax::IfExprSyntax>(expression);
+                visitExpression(conditional->condition);
+                visitBlock(conditional->thenBranch);
+                visitExpression(conditional->elseBranch);
+                break;
+            }
+            case syntax::Kind::returnExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::ReturnExprSyntax>(expression)->value);
+                break;
+            case syntax::Kind::matchExpr: {
+                const auto match = std::static_pointer_cast<syntax::MatchExprSyntax>(expression);
+                visitExpression(match->scrutinee);
+                for (const auto& arm : match->arms) {
+                    visitPattern(arm->pattern);
+                    visitExpression(arm->body);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    void visitAssignmentTarget(const syntax::ExprPtr& target) {
+        if (target == nullptr) return;
+        switch (target->kind) {
+            case syntax::Kind::nameExpr:
+                return;
+            case syntax::Kind::parenthesizedExpr:
+                visitAssignmentTarget(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression);
+                return;
+            case syntax::Kind::accessExpr:
+                visitAssignmentTarget(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand);
+                return;
+            case syntax::Kind::memberExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(target)->base);
+                return;
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript =
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
+                visitExpression(subscript->base);
+                visitExpression(subscript->index);
+                return;
+            }
+            default:
+                visitExpression(target);
+                return;
+        }
+    }
+
+    void visitPattern(const syntax::PatternPtr& pattern) {
+        if (pattern == nullptr) return;
+        if (pattern->kind == syntax::Kind::bindingPattern) {
+            addCandidate(pattern);
+            return;
+        }
+        if (pattern->kind != syntax::Kind::enumCasePattern) return;
+        const auto enumCase = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        for (const auto& argument : enumCase->arguments) {
+            visitPattern(argument->pattern);
+        }
+    }
+
+    bool isExpressionKind(syntax::Kind kind) const {
+        switch (kind) {
+            case syntax::Kind::errorExpr:
+            case syntax::Kind::nameExpr:
+            case syntax::Kind::literalExpr:
+            case syntax::Kind::parenthesizedExpr:
+            case syntax::Kind::prefixExpr:
+            case syntax::Kind::accessExpr:
+            case syntax::Kind::binaryExpr:
+            case syntax::Kind::assignmentExpr:
+            case syntax::Kind::memberExpr:
+            case syntax::Kind::callExpr:
+            case syntax::Kind::subscriptExpr:
+            case syntax::Kind::arrayExpr:
+            case syntax::Kind::dictionaryExpr:
+            case syntax::Kind::contextualCaseExpr:
+            case syntax::Kind::blockExpr:
+            case syntax::Kind::ifExpr:
+            case syntax::Kind::returnExpr:
+            case syntax::Kind::matchExpr:
+                return true;
+            default:
+                return false;
+        }
+    }
+};
+
 } // namespace
 
 bool Result::succeeded() const {
@@ -639,6 +886,11 @@ Result Analyzer::analyze(const typing::TypeCheckedModel::Ptr& model) const {
             result.diagnostics.end(),
             initialization.diagnostics.begin(),
             initialization.diagnostics.end());
+    auto usage = UsageBuilder().build(model);
+    result.diagnostics.insert(
+            result.diagnostics.end(),
+            usage.diagnostics.begin(),
+            usage.diagnostics.end());
     return result;
 }
 
@@ -648,6 +900,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::unreachableCode: return "semantic-analysis.unreachable-code";
         case DiagnosticId::useBeforeInitialization:
             return "semantic-analysis.use-before-initialization";
+        case DiagnosticId::unusedBinding: return "semantic-analysis.unused-binding";
     }
     return "semantic-analysis.unknown";
 }

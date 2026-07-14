@@ -235,4 +235,67 @@ update(value: &number)
             2);
 }
 
+TEST_F(SemanticAnalysisTest, ReportsUnusedLocalBindingsAsWarnings) {
+    analyze(R"JOYEER(func run() {
+let first = 1
+var second: Int
+second = 2
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    ASSERT_EQ(result.diagnostics.size(), 2u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_TRUE(std::all_of(
+            result.diagnostics.begin(),
+            result.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::analysis::DiagnosticId::unusedBinding &&
+                        diagnostic.severity == joyeer::analysis::Severity::warning;
+            }));
+}
+
+TEST_F(SemanticAnalysisTest, SuppressesUsedAndExplicitlyIgnoredBindings) {
+    analyze(R"JOYEER(func run() {
+let used = 1
+let _ignored = 2
+print(value: used)
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unusedBinding));
+}
+
+TEST_F(SemanticAnalysisTest, CountsAggregateAndInoutStorageAsUsed) {
+    analyze(R"JOYEER(func update(value: inout Int) { &value = 1 }
+func run() {
+var values = [1]
+&values[0] = 2
+var number = 0
+update(value: &number)
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unusedBinding));
+}
+
+TEST_F(SemanticAnalysisTest, ReportsUnusedPatternBindings) {
+    analyze(R"JOYEER(enum Choice { None, Some(Int), }
+func run(value: Choice) {
+match value {
+.None => return,
+.Some(item) => return,
+}
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::unusedBinding);
+    EXPECT_NE(result.diagnostics[0].message.find("item"), std::string::npos);
+}
+
 } // namespace

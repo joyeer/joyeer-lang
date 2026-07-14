@@ -288,6 +288,16 @@ set_tests_properties(SemanticAnalysisCliReportsUnreachableWarning PROPERTIES
         PASS_REGULAR_EXPRESSION semantic-analysis.unreachable-code
 )
 
+add_test(NAME SemanticAnalysisCliReportsUnusedBindingWarning
+        COMMAND $<TARGET_FILE:joyeer>
+                --lang=v0.1
+                "${JOYEER_TESTS_DIR}/semantic-analysis/unused_warning.joyeer"
+)
+set_tests_properties(SemanticAnalysisCliReportsUnusedBindingWarning PROPERTIES
+        LABELS semantic-analysis
+        PASS_REGULAR_EXPRESSION semantic-analysis.unused-binding
+)
+
 add_test(NAME NativeLinkerRejectsMissingMain
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

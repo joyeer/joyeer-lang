@@ -17,6 +17,7 @@ enum class DiagnosticId {
     missingReturn,
     unreachableCode,
     useBeforeInitialization,
+    unusedBinding,
 };
 
 struct Diagnostic {
