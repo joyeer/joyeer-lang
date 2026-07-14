@@ -19,18 +19,23 @@ The design philosophy and trade-offs are documented under [docs/rationale/](docs
 The "no GC / zero-cost / native" points above describe the **design direction**.
 The current implementation is a **C++20 compiler**. Default/legacy mode
 executes on a custom stack-based VM. The new `--lang=v0.1` lane has an isolated
-lexer/parser, name resolution, type checking, verified Joyeer IR, textual LLVM
-IR, a minimal C runtime, and Clang-based native linking. It compiles and runs
-the JSON-parser MVP language surface without starting the VM.
+lexer/parser, name resolution, type checking, control-flow semantic analysis,
+verified Joyeer IR, textual LLVM IR, a minimal C runtime, and Clang-based
+native linking. It compiles and runs the JSON-parser MVP language surface
+without starting the VM.
 
-The native lane is still experimental: ownership destruction, optimization
-policy, debug information, and file I/O are not complete. Heap-backed
-temporaries can currently leak, so this is not a production release.
+The native lane is still experimental. The current heap-backed values have
+recursive clone/destroy support, deterministic scope and early-return cleanup,
+and a native-entry allocation-balance check. Source-level consuming ownership,
+an explicit optimization policy, debug information, and file I/O are not yet
+complete, so this is not a production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
 and `inout`; structs; payload enums; exhaustive `match`; arrays, dictionaries,
-`Optional`, `Result`, byte indexing, and `print(value:)`.
+`Optional`, `Result`, byte indexing, `print(value:)`, all-paths-return,
+unreachable-code warnings, definite initialization, and unused-binding
+warnings.
 
 See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the full pipeline and current stage, and [docs/plan/v0.1.md](docs/plan/v0.1.md) for the v0.1 goal (a zero-overhead JSON parser written in Joyeer).
 

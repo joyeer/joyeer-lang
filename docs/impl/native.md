@@ -2,7 +2,8 @@
 
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
 > Clang validates it, generates machine code, and links native executables.
-> The runtime and ownership model are still experimental.
+> Deterministic cleanup works for the current heap-backed value surface; the
+> broader source-level ownership language remains experimental.
 
 ---
 
@@ -15,6 +16,7 @@ source
   -> v0.1 lexer / parser
   -> name resolution
   -> type checking
+  -> control-flow semantic analysis
   -> verified Joyeer IR
   -> textual LLVM IR
   -> Clang object generation + link
@@ -94,15 +96,26 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 
 - checked `Int` add/subtract/multiply;
 - scalar and string printing;
-- string concatenation, equality, ordering, and byte indexing;
-- array construction, checked indexing, and mutable element projection;
-- dictionary construction and linear lookup for primitive/string keys;
+- string concatenation, equality, ordering, byte indexing, deep clone, and
+  destroy;
+- array construction, checked indexing, mutable element projection, recursive
+  clone, and reverse-order element destruction;
+- dictionary construction, linear lookup for primitive/string keys, recursive
+  key/value clone, and destruction;
 - panic and bounds traps;
-- the process entry trampoline.
+- the process entry trampoline and active-allocation balance check.
 
 The runtime uses libc allocation today. Collection lookup favors correctness
 and a small implementation over performance; dictionary hashing is not yet
 implemented.
+
+Joyeer IR `copy`, `take`, and `destroy` operations lower through generated
+per-type LLVM helpers. Helpers recurse through structs and tagged payloads and
+delegate strings/collections to runtime callbacks. Scope lowering destroys
+owned storage and temporaries in reverse order on normal and early-return
+paths. The C entry point fails the process if runtime-managed allocation count
+is nonzero after `joyeer_main` returns, making leaks in native integration
+tests observable.
 
 ---
 
@@ -110,8 +123,11 @@ implemented.
 
 The native path is an MVP, not the final zero-cost implementation:
 
-- ownership/lifetime lowering does not yet insert destroy operations, so
-  heap-backed temporary values can leak;
+- `borrowing`, `consuming`, `initializing`, and explicit `consume` syntax are
+  not yet accepted by the v0.1 frontend; current ordinary value passing uses
+  copy-or-move lowering internally;
+- allocation balance covers runtime-managed string/collection allocations,
+  not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an
   aligned payload buffer;
 - Clang runs at its default optimization level; a deliberate pass/optimization
@@ -137,6 +153,7 @@ ctest --test-dir build -L native-runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
 ```
 
-The tests make Clang compile generated LLVM IR, compile and run a native Joyeer
-program, verify its output, exercise runtime collections and traps, and reject
-an executable request without `main`.
+The tests make Clang compile generated LLVM IR, compile and run native Joyeer
+programs, verify output and zero allocation balance, stress nested
+string/array/dictionary ownership, exercise runtime traps, and reject an
+executable request without `main`.

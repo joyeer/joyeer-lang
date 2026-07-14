@@ -138,8 +138,9 @@ JSON-parser MVP source, and CLI rejection of a type mismatch.
 ## 7. Deliberately not implemented here
 
 Type checking does not provide data layout, ownership lowering, Joyeer IR,
-LLVM IR, object emission, or linking. It also does not yet implement
-user-defined generics, function values, all-paths-return analysis,
-unreachable/unused diagnostics, or enum representation. These belong to later
-semantic-analysis and lowering stages; they must not be routed through the
-legacy VM to reuse its runtime descriptors.
+LLVM IR, object emission, or linking. It also does not implement user-defined
+generics, function values, all-paths-return analysis, unreachable/unused
+diagnostics, or enum representation. Control-flow and lint checks now live in
+the dedicated [semantic-analysis pass](semantic-analysis.md); representation
+and ownership decisions live in later lowering stages. None of these may be
+routed through the legacy VM to reuse its runtime descriptors.

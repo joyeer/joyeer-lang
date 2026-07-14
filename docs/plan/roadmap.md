@@ -27,7 +27,7 @@ Source (.joyeer)
   │
   ▼
 ┌──────────────────┐
-│ 5. Semantic Analysis│  Deep checks (unused vars, reachability, let immutability)
+│ 5. Semantic Analysis│  Returns, reachability, initialization, unused bindings
 └──────────────────┘
   │
   ▼
@@ -66,14 +66,14 @@ Source (.joyeer)
 | 2. Parser | ✅ JSON-parser MVP; legacy parser retained | `parser.cpp`, `syntax.cpp`, [Parser MVP contract](../impl/parser.md) |
 | 3. Name Resolution | ✅ Parser-MVP resolver; type-directed references handed to Stage 4 | `semantic.cpp`, `nameresolution.cpp`, [contract](../impl/name-resolution.md) |
 | 4. Type Checking | ✅ JSON-parser MVP typed model | `typechecking.cpp`, [contract](../impl/type-checking.md) |
-| 5. Semantic Analysis | ⚠️ Access/mutability checks implemented; flow/lint checks missing | `typechecking.cpp` |
-| 6. Own IR | ✅ JSON-parser MVP lowering + verifier | `irlowering.cpp`, `ir.cpp`, [contract](../impl/ir.md) |
+| 5. Semantic Analysis | ✅ all-paths-return, unreachable warnings, definite initialization, unused bindings; access/mutability in Stage 4 | `semanticanalysis.cpp`, [contract](../impl/semantic-analysis.md) |
+| 6. Own IR | ✅ JSON-parser MVP lowering, ownership operations, cleanup, verifier | `irlowering.cpp`, `ir.cpp`, [contract](../impl/ir.md) |
 | 7. LLVM IR Gen | ✅ JSON-parser MVP textual LLVM IR | `backend/llvm.cpp`, [native contract](../impl/native.md) |
 | 8. LLVM Optimization | ❌ Deliberate pass/optimization policy missing | Clang currently uses its default level |
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
-| Runtime Library | ⚠️ Primitive/string/collection MVP; ownership cleanup missing | `native/runtime.c` |
-| Error Diagnostics | ⚠️ Partial | `diagnostic.cpp` |
+| Runtime Library | ✅ Primitive/string/collection MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
+| Error Diagnostics | ⚠️ Stable stage IDs and error/warning severity work; rich source rendering missing | `diagnostic.cpp` |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
 frontend work must consume `TypeCheckedModel` and must not add dependencies on
@@ -102,24 +102,24 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Ownership-Correct Native MVP
+## Immediate Next Milestone: Executable JSON Parser and Native Quality
 
 The [Parser MVP](../impl/parser.md), [name-resolution model](../impl/name-resolution.md),
 [type checker](../impl/type-checking.md), [Joyeer IR lowering](../impl/ir.md),
 and [native backend](../impl/native.md) are wired into `--lang=v0.1`. Clang
-compiles the complete JSON-parser MVP fixture, and `-o` builds/runs a native
-program using strings, arrays, and dictionaries. The next work is correctness
-and quality rather than another backend:
+compiles the complete JSON-parser MVP fixture, and `-o` builds/runs native
+programs using strings, arrays, and dictionaries. Explicit IR ownership,
+recursive runtime clone/destroy, deterministic cleanup, allocation-balance
+checks, and Stage 5 control-flow analysis are complete for that surface. The
+next work is product completeness and quality:
 
-1. Add ownership/lifetime analysis and insert destroy operations for
-  heap-backed values on every normal and early-return path.
-2. Define move/copy behavior for aggregates and prevent accidental aliasing or
-  double-free when handles are assigned or passed.
-3. Add all-paths-return, unreachable-code, uninitialized-variable, and unused
-  binding analysis before IR lowering.
-4. Configure a deliberate LLVM optimization pipeline and verify overflow/
+1. Add file input and run the complete JSON parser as a native executable.
+2. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
+  `consume` flow states.
+3. Configure a deliberate LLVM optimization pipeline and verify overflow/
   bounds checks survive required optimization levels.
-5. Add file I/O and a complete executable JSON parser, then retire the legacy
+4. Improve diagnostic source rendering, one-based locations, and fix-it hints.
+5. Retire the legacy
   VM lane after native golden coverage is equivalent.
 
 ---
@@ -187,13 +187,13 @@ runtime/
 
 **Goal**: A usable minimal language with strings, arrays, and proper safety checks.
 
-### Step 2.1 — Semantic Analysis Pass
+### Step 2.1 — Semantic Analysis Pass ✅
 
-- `let` immutability enforcement (assign to `let` → compile error)
-- Return value checking (all paths must return in non-void functions)
-- Unreachable code warnings
-- Uninitialized variable detection
-- Unused variable warnings
+- ✅ `let`/field immutability enforcement (assign to immutable storage → error)
+- ✅ return value checking (all paths return or yield a trailing expression)
+- ✅ unreachable code warnings
+- ✅ definite-initialization analysis across branches and loops
+- ✅ unused local and pattern-binding warnings
 
 ### Step 2.2 — String Support
 
@@ -302,10 +302,10 @@ std/
 | Parser → AST | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Name Resolution | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Type Checking | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
-| Semantic Analysis | ✅ | ✅ | ✅ | Phase 2 |
+| Semantic Analysis | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Own IR | MIR | SIL | AIR | ✅ JSON-parser MVP |
 | LLVM IR Gen | ✅ | ✅ | ❌ (own backend) | ✅ JSON-parser MVP |
-| Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | ⚠️ native MVP; cleanup pending |
+| Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | ✅ native MVP clone/destroy; stdlib incomplete |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |
 | Package Manager | cargo | SPM | zig build | Phase 3 |
 | Error Diagnostics | Excellent | Good | Good | Phase 2 |

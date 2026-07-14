@@ -10,9 +10,12 @@ The compiler is currently a **C++20 implementation**. Default/legacy mode
 lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its
 own bytecode. `--lang=v0.1` uses the new lexer, syntax-only Parser MVP,
 independent name-resolution semantic model, canonical compile-time type model,
-verified backend-neutral Joyeer IR, textual LLVM IR, and Clang-based native
-codegen/linking. It does not construct the legacy VM. The native lane is an
-MVP: ownership destruction, optimization policy, and debug info remain.
+control-flow semantic analysis, verified backend-neutral Joyeer IR, textual
+LLVM IR, and Clang-based native codegen/linking. It does not construct the
+legacy VM. The native lane is an
+MVP with recursive value clone/destroy, deterministic scope cleanup, and
+control-flow semantic analysis. Source-level consuming ownership, optimization
+policy, debug info, and file I/O remain.
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)
@@ -45,6 +48,7 @@ ctest --test-dir ./build --output-on-failure
 | v0.1 Parser MVP / syntax AST | [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | [lib/compiler/parser.cpp](lib/compiler/parser.cpp), [lib/compiler/syntax.cpp](lib/compiler/syntax.cpp) |
 | v0.1 name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | [lib/compiler/nameresolution.cpp](lib/compiler/nameresolution.cpp), [lib/compiler/semantic.cpp](lib/compiler/semantic.cpp) |
 | v0.1 type checking / typed model | [include/joyeer/compiler/typechecking.h](include/joyeer/compiler/typechecking.h) | [lib/compiler/typechecking.cpp](lib/compiler/typechecking.cpp) |
+| v0.1 control-flow semantic analysis | [include/joyeer/compiler/semanticanalysis.h](include/joyeer/compiler/semanticanalysis.h) | [lib/compiler/semanticanalysis.cpp](lib/compiler/semanticanalysis.cpp) |
 | v0.1 Joyeer IR / lowering | [include/joyeer/ir/ir.h](include/joyeer/ir/ir.h), [include/joyeer/compiler/irlowering.h](include/joyeer/compiler/irlowering.h) | [lib/ir/ir.cpp](lib/ir/ir.cpp), [lib/compiler/irlowering.cpp](lib/compiler/irlowering.cpp) |
 | LLVM/native backend | [include/joyeer/backend/llvm.h](include/joyeer/backend/llvm.h), [include/joyeer/backend/linker.h](include/joyeer/backend/linker.h) | [lib/backend/llvm.cpp](lib/backend/llvm.cpp), [lib/backend/linker.cpp](lib/backend/linker.cpp) |
 | Native runtime | [include/joyeer/native/runtime.h](include/joyeer/native/runtime.h) | [lib/native/runtime.c](lib/native/runtime.c), [lib/native/entry.c](lib/native/entry.c) |

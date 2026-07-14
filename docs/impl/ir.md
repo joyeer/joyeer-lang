@@ -48,7 +48,8 @@ and debuggable semantics in the language IR.
 The current instruction set covers:
 
 - scalar and string constants;
-- stack allocation, load, and store;
+- stack allocation, zero initialization, load, and store;
+- explicit `copy`, `take`, and `destroy` ownership operations;
 - MVP arithmetic, comparison, and logical operations;
 - direct source and external calls;
 - unconditional/conditional branches, returns, and unreachable;
@@ -64,6 +65,15 @@ false fallthrough edge.
 Optional promotion is explicit in IR: a type-checked conversion from `T` to
 `T?` emits `Optional.Some(T)` at binding, field, argument, arm-merge, or return
 boundaries. `nil` emits `Optional.None`.
+
+Heap-backed and recursively nontrivial values have explicit ownership in the
+IR. Borrowed values are cloned before entering owned storage; owned temporaries
+are moved when possible; overwriting storage destroys the previous value; and
+scope exits destroy owned storage and live temporaries in reverse order.
+Early returns clean every active scope before transferring the result to the
+caller. A typed local declared without an initializer uses `zero_init` when its
+type requires destruction, making cleanup safe while Stage 5 rejects any
+source-level read before initialization.
 
 ---
 
@@ -92,6 +102,7 @@ tests without reconstructing source semantics.
 - invalid value/address categories;
 - load/store, return, operator, call, field, aggregate, or payload type
   mismatches;
+- invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - malformed recursive patterns;
 - blocks without terminators or instructions after a terminator.
 
@@ -116,8 +127,9 @@ The lowering suite includes the complete JSON-parser MVP fixture.
 
 The current IR/native pipeline intentionally leaves these to later commits:
 
-- ownership/lifetime operations and deterministic destruction;
-- move/copy decisions for heap-backed handles and large aggregates;
+- source-level `borrowing`/`consuming`/`initializing` conventions and
+  `consume` use-after-move analysis;
+- copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
 - an explicit LLVM optimization pipeline;
 - source-level debug information.
