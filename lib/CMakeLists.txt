@@ -1,4 +1,5 @@
 add_subdirectory(runtime)
+add_subdirectory(native)
 add_subdirectory(ir)
 add_subdirectory(backend)
 add_subdirectory(compiler)
