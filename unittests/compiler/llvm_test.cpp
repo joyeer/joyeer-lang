@@ -140,4 +140,82 @@ return values[0] + lookup["answer"]
     EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
 }
 
+TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
+    joyeer::ir::Module module;
+    module.sourceName = "ownership.joyeer";
+    module.types = {
+        joyeer::ir::TypeName {
+            0,
+            "Void",
+            joyeer::typing::TypeKind::voidType,
+        },
+        joyeer::ir::TypeName {
+            1,
+            "String",
+            joyeer::typing::TypeKind::string,
+        },
+    };
+    joyeer::ir::Function function;
+    function.id = 0;
+    function.name = "ownership";
+    function.resultType = 0;
+    function.entry = 0;
+    function.blocks = {
+        joyeer::ir::BasicBlock {
+            0,
+            "entry",
+            {
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stringConstant,
+                    joyeer::ir::Value { 0, 1, joyeer::ir::ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 0, "text",
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::copyValue,
+                    joyeer::ir::Value { 1, 1, joyeer::ir::ValueCategory::value },
+                    { 0 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stackAllocate,
+                    joyeer::ir::Value { 2, 1, joyeer::ir::ValueCategory::address },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::store,
+                    std::nullopt,
+                    { 1, 2 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::take,
+                    joyeer::ir::Value { 3, 1, joyeer::ir::ValueCategory::value },
+                    { 2 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stackAllocate,
+                    joyeer::ir::Value { 4, 1, joyeer::ir::ValueCategory::address },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::store,
+                    std::nullopt,
+                    { 3, 4 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::destroy,
+                    std::nullopt,
+                    { 4 },
+                },
+                joyeer::ir::Instruction { joyeer::ir::Opcode::returnVoid },
+            },
+        },
+    };
+    module.functions.push_back(std::move(function));
+
+    const auto result = joyeer::llvmbackend::Emitter().emit(module);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("define void @joyeer_clone_type_1"), std::string::npos);
+    EXPECT_NE(result.text.find("define void @joyeer_destroy_type_1"), std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_clone_type_1"), std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_destroy_type_1"), std::string::npos);
+    EXPECT_NE(result.text.find("store %joyeer.string zeroinitializer"), std::string::npos);
+}
+
 } // namespace

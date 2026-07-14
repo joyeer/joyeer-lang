@@ -325,6 +325,60 @@ int main(int argc, char** argv) {
     };
     module.functions.push_back(std::move(collections));
 
+    joyeer::ir::Function ownership;
+    ownership.id = 4;
+    ownership.name = "ownership";
+    ownership.resultType = 0;
+    ownership.entry = 0;
+    ownership.blocks = {
+        joyeer::ir::BasicBlock {
+            0,
+            "entry",
+            {
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stringConstant,
+                    joyeer::ir::Value { 0, 4, joyeer::ir::ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 0, "owned",
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::copyValue,
+                    joyeer::ir::Value { 1, 4, joyeer::ir::ValueCategory::value },
+                    { 0 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stackAllocate,
+                    joyeer::ir::Value { 2, 4, joyeer::ir::ValueCategory::address },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::store,
+                    std::nullopt,
+                    { 1, 2 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::take,
+                    joyeer::ir::Value { 3, 4, joyeer::ir::ValueCategory::value },
+                    { 2 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stackAllocate,
+                    joyeer::ir::Value { 4, 4, joyeer::ir::ValueCategory::address },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::store,
+                    std::nullopt,
+                    { 3, 4 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::destroy,
+                    std::nullopt,
+                    { 4 },
+                },
+                joyeer::ir::Instruction { joyeer::ir::Opcode::returnVoid },
+            },
+        },
+    };
+    module.functions.push_back(std::move(ownership));
+
     const auto result = joyeer::llvmbackend::Emitter().emit(module);
     if (!result.succeeded()) {
         std::cerr << joyeer::llvmbackend::dump(result.diagnostics);

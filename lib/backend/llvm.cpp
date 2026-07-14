@@ -88,6 +88,7 @@ public:
             functions.emplace(function.id, &function);
         }
         emitAggregateTypeDefinitions();
+        emitOwnershipHelpers();
         for (const auto& function : source.functions) {
             if (!function.isExternal) emitFunction(function);
         }
@@ -321,6 +322,237 @@ private:
         }
     }
 
+    std::string cloneHelper(ir::TypeId type) const {
+        return "@joyeer_clone_type_" + std::to_string(type);
+    }
+
+    std::string destroyHelper(ir::TypeId type) const {
+        return "@joyeer_destroy_type_" + std::to_string(type);
+    }
+
+    void emitOwnershipHelpers() {
+        std::vector<ir::TypeId> ownedTypes;
+        for (const auto& type : module->types) {
+            if (ir::requiresDestruction(*module, type.id)) ownedTypes.push_back(type.id);
+        }
+        std::sort(ownedTypes.begin(), ownedTypes.end());
+        for (const auto type : ownedTypes) emitCloneHelper(type);
+        for (const auto type : ownedTypes) emitDestroyHelper(type);
+    }
+
+    void emitCloneHelper(ir::TypeId id) {
+        const auto* valueType = type(id);
+        const auto typeText = llvmType(id);
+        if (valueType == nullptr || !typeText.has_value()) return;
+        std::ostringstream out;
+        out << "define void " << cloneHelper(id) << "(ptr %destination, ptr %source) {\n"
+            << "entry:\n";
+        switch (valueType->kind) {
+            case typing::TypeKind::string:
+                runtimeDeclarations.insert(
+                        "declare void @joyeer_string_clone_abi(ptr, ptr, i64)");
+                out << "  %value = load %joyeer.string, ptr %source\n"
+                    << "  %data = extractvalue %joyeer.string %value, 0\n"
+                    << "  %count = extractvalue %joyeer.string %value, 1\n"
+                    << "  call void @joyeer_string_clone_abi(ptr %destination, ptr %data, i64 %count)\n";
+                break;
+            case typing::TypeKind::array:
+                runtimeDeclarations.insert(
+                        "declare void @joyeer_array_clone_abi(ptr, ptr, i64)");
+                out << "  %value = load %joyeer.array, ptr %source\n"
+                    << "  %data = extractvalue %joyeer.array %value, 0\n"
+                    << "  %count = extractvalue %joyeer.array %value, 1\n"
+                    << "  call void @joyeer_array_clone_abi(ptr %destination, ptr %data, i64 %count)\n";
+                break;
+            case typing::TypeKind::dictionary:
+                runtimeDeclarations.insert(
+                        "declare void @joyeer_dictionary_clone_abi(ptr, ptr, i64)");
+                out << "  %value = load %joyeer.dictionary, ptr %source\n"
+                    << "  %data = extractvalue %joyeer.dictionary %value, 0\n"
+                    << "  %count = extractvalue %joyeer.dictionary %value, 1\n"
+                    << "  call void @joyeer_dictionary_clone_abi(ptr %destination, ptr %data, i64 %count)\n";
+                break;
+            case typing::TypeKind::structure:
+                emitStructClone(out, id, *typeText);
+                break;
+            case typing::TypeKind::enumeration:
+            case typing::TypeKind::optional:
+            case typing::TypeKind::result:
+                emitEnumClone(out, id, *typeText);
+                break;
+            default:
+                return;
+        }
+        out << "  ret void\n}\n";
+        functionBodies.push_back(out.str());
+    }
+
+    void emitStructClone(std::ostringstream& out, ir::TypeId id, const std::string& typeText) {
+        const auto* structure = structures.at(id);
+        for (size_t index = 0; index < structure->fields.size(); ++index) {
+            const auto& field = structure->fields[index];
+            const auto destination = "%destination.field." + std::to_string(index);
+            const auto source = "%source.field." + std::to_string(index);
+            out << "  " << destination << " = getelementptr inbounds " << typeText
+                << ", ptr %destination, i32 0, i32 " << index << "\n"
+                << "  " << source << " = getelementptr inbounds " << typeText
+                << ", ptr %source, i32 0, i32 " << index << "\n";
+            if (ir::requiresDestruction(*module, field.type)) {
+                out << "  call void " << cloneHelper(field.type) << "(ptr "
+                    << destination << ", ptr " << source << ")\n";
+            } else {
+                const auto fieldType = llvmType(field.type);
+                if (!fieldType.has_value()) return;
+                const auto loaded = "%field.value." + std::to_string(index);
+                out << "  " << loaded << " = load " << *fieldType << ", ptr "
+                    << source << "\n"
+                    << "  store " << *fieldType << ' ' << loaded << ", ptr "
+                    << destination << "\n";
+            }
+        }
+    }
+
+    std::string emitEnumPayloadAddress(
+            std::ostringstream& out,
+            const std::string& owner,
+            const std::string& prefix,
+            const std::string& typeText,
+            size_t offset) {
+        const auto base = '%' + prefix + ".payload.base";
+        out << "  " << base << " = getelementptr inbounds " << typeText << ", ptr "
+            << owner << ", i32 0, i32 1, i32 0\n";
+        if (offset == 0) return base;
+        const auto address = '%' + prefix + ".payload";
+        out << "  " << address << " = getelementptr inbounds i8, ptr " << base
+            << ", i64 " << offset << "\n";
+        return address;
+    }
+
+    void emitEnumClone(std::ostringstream& out, ir::TypeId id, const std::string& typeText) {
+        const auto* enumeration = enumerations.at(id);
+        out << "  %whole = load " << typeText << ", ptr %source\n"
+            << "  store " << typeText << " %whole, ptr %destination\n"
+            << "  %tag = extractvalue " << typeText << " %whole, 0\n"
+            << "  switch i32 %tag, label %exit [";
+        for (size_t index = 0; index < enumeration->cases.size(); ++index) {
+            out << " i32 " << index << ", label %case." << index;
+        }
+        out << " ]\n";
+        for (size_t caseIndex = 0; caseIndex < enumeration->cases.size(); ++caseIndex) {
+            const auto& enumCase = enumeration->cases[caseIndex];
+            const auto offsets = payloadOffsets(enumCase);
+            if (!offsets.has_value()) return;
+            out << "case." << caseIndex << ":\n";
+            for (size_t payload = 0; payload < enumCase.payloadTypes.size(); ++payload) {
+                const auto payloadType = enumCase.payloadTypes[payload];
+                if (!ir::requiresDestruction(*module, payloadType)) continue;
+                const auto source = emitEnumPayloadAddress(
+                        out,
+                        "%source",
+                        "source." + std::to_string(caseIndex) + '.' + std::to_string(payload),
+                        typeText,
+                        (*offsets)[payload]);
+                const auto destination = emitEnumPayloadAddress(
+                        out,
+                        "%destination",
+                        "destination." + std::to_string(caseIndex) + '.' + std::to_string(payload),
+                        typeText,
+                        (*offsets)[payload]);
+                out << "  call void " << cloneHelper(payloadType) << "(ptr "
+                    << destination << ", ptr " << source << ")\n";
+            }
+            out << "  br label %exit\n";
+        }
+        out << "exit:\n";
+    }
+
+    void emitDestroyHelper(ir::TypeId id) {
+        const auto* valueType = type(id);
+        const auto typeText = llvmType(id);
+        if (valueType == nullptr || !typeText.has_value()) return;
+        std::ostringstream out;
+        out << "define void " << destroyHelper(id) << "(ptr %value) {\n"
+            << "entry:\n";
+        switch (valueType->kind) {
+            case typing::TypeKind::string:
+                runtimeDeclarations.insert("declare void @joyeer_string_destroy_abi(ptr)");
+                out << "  call void @joyeer_string_destroy_abi(ptr %value)\n";
+                break;
+            case typing::TypeKind::array:
+                runtimeDeclarations.insert("declare void @joyeer_array_destroy_abi(ptr)");
+                out << "  call void @joyeer_array_destroy_abi(ptr %value)\n";
+                break;
+            case typing::TypeKind::dictionary:
+                runtimeDeclarations.insert("declare void @joyeer_dictionary_destroy_abi(ptr)");
+                out << "  call void @joyeer_dictionary_destroy_abi(ptr %value)\n";
+                break;
+            case typing::TypeKind::structure:
+                emitStructDestroy(out, id, *typeText);
+                break;
+            case typing::TypeKind::enumeration:
+            case typing::TypeKind::optional:
+            case typing::TypeKind::result:
+                emitEnumDestroy(out, id, *typeText);
+                break;
+            default:
+                return;
+        }
+        out << "  ret void\n}\n";
+        functionBodies.push_back(out.str());
+    }
+
+    void emitStructDestroy(
+            std::ostringstream& out,
+            ir::TypeId id,
+            const std::string& typeText) {
+        const auto* structure = structures.at(id);
+        for (size_t index = structure->fields.size(); index > 0; --index) {
+            const auto& field = structure->fields[index - 1];
+            if (!ir::requiresDestruction(*module, field.type)) continue;
+            const auto address = "%field." + std::to_string(index - 1);
+            out << "  " << address << " = getelementptr inbounds " << typeText
+                << ", ptr %value, i32 0, i32 " << index - 1 << "\n"
+                << "  call void " << destroyHelper(field.type) << "(ptr "
+                << address << ")\n";
+        }
+        out << "  store " << typeText << " zeroinitializer, ptr %value\n";
+    }
+
+    void emitEnumDestroy(
+            std::ostringstream& out,
+            ir::TypeId id,
+            const std::string& typeText) {
+        const auto* enumeration = enumerations.at(id);
+        out << "  %whole = load " << typeText << ", ptr %value\n"
+            << "  %tag = extractvalue " << typeText << " %whole, 0\n"
+            << "  switch i32 %tag, label %exit [";
+        for (size_t index = 0; index < enumeration->cases.size(); ++index) {
+            out << " i32 " << index << ", label %case." << index;
+        }
+        out << " ]\n";
+        for (size_t caseIndex = 0; caseIndex < enumeration->cases.size(); ++caseIndex) {
+            const auto& enumCase = enumeration->cases[caseIndex];
+            const auto offsets = payloadOffsets(enumCase);
+            if (!offsets.has_value()) return;
+            out << "case." << caseIndex << ":\n";
+            for (size_t payload = enumCase.payloadTypes.size(); payload > 0; --payload) {
+                const auto payloadType = enumCase.payloadTypes[payload - 1];
+                if (!ir::requiresDestruction(*module, payloadType)) continue;
+                const auto address = emitEnumPayloadAddress(
+                        out,
+                        "%value",
+                        "value." + std::to_string(caseIndex) + '.' + std::to_string(payload - 1),
+                        typeText,
+                        (*offsets)[payload - 1]);
+                out << "  call void " << destroyHelper(payloadType) << "(ptr "
+                    << address << ")\n";
+            }
+            out << "  br label %exit\n";
+        }
+        out << "exit:\n"
+            << "  store " << typeText << " zeroinitializer, ptr %value\n";
+    }
+
     std::optional<std::string> llvmType(ir::TypeId id, SourceSpan span = {}) {
         const auto found = types.find(id);
         if (found == types.end()) {
@@ -505,6 +737,12 @@ private:
             }
             case ir::Opcode::store:
                 return emitStore(out, instruction);
+            case ir::Opcode::copyValue:
+                return emitCopy(out, instruction);
+            case ir::Opcode::take:
+                return emitTake(out, instruction);
+            case ir::Opcode::destroy:
+                return emitDestroy(out, instruction);
             case ir::Opcode::add:
             case ir::Opcode::subtract:
             case ir::Opcode::multiply:
@@ -649,7 +887,7 @@ private:
         if (!elementType.has_value() || !elementLayout.has_value()) return false;
         usesArray = true;
         runtimeDeclarations.insert(
-            "declare void @joyeer_array_create_abi(ptr, ptr, i64, i64)");
+            "declare void @joyeer_array_create_owned_abi(ptr, ptr, i64, i64, ptr, ptr)");
 
         std::string data = "null";
         if (!instruction.operands.empty()) {
@@ -668,10 +906,18 @@ private:
             }
         }
         const auto resultAddress = temporary();
+        const auto ownsElements = ir::requiresDestruction(*module, arrayType->arguments[0]);
+        const auto clone = ownsElements
+            ? "ptr " + cloneHelper(arrayType->arguments[0])
+            : std::string("ptr null");
+        const auto destroy = ownsElements
+            ? "ptr " + destroyHelper(arrayType->arguments[0])
+            : std::string("ptr null");
         out << "  " << resultAddress << " = alloca %joyeer.array\n"
-            << "  call void @joyeer_array_create_abi(ptr " << resultAddress
+            << "  call void @joyeer_array_create_owned_abi(ptr " << resultAddress
             << ", ptr " << data << ", i64 " << instruction.operands.size()
-            << ", i64 " << elementLayout->size << ")\n"
+            << ", i64 " << elementLayout->size << ", " << clone << ", "
+            << destroy << ")\n"
             << "  " << valueName(instruction.result->id)
             << " = load %joyeer.array, ptr " << resultAddress << "\n";
         return true;
@@ -697,7 +943,7 @@ private:
         }
         usesDictionary = true;
         runtimeDeclarations.insert(
-            "declare void @joyeer_dictionary_create_abi(ptr, ptr, i64, i64, i64, i64, i64, i32)");
+            "declare void @joyeer_dictionary_create_owned_abi(ptr, ptr, i64, i64, i64, i64, i64, i32, ptr, ptr, ptr, ptr)");
 
         const auto count = instruction.operands.size() / 2;
         const auto entryType = "{ " + *keyType + ", " + *valueType + " }";
@@ -733,11 +979,27 @@ private:
             }
         }
         const auto resultAddress = temporary();
+        const auto ownsKeys = ir::requiresDestruction(*module, dictionaryType->arguments[0]);
+        const auto ownsValues = ir::requiresDestruction(*module, dictionaryType->arguments[1]);
+        const auto cloneKey = ownsKeys
+            ? "ptr " + cloneHelper(dictionaryType->arguments[0])
+            : std::string("ptr null");
+        const auto destroyKey = ownsKeys
+            ? "ptr " + destroyHelper(dictionaryType->arguments[0])
+            : std::string("ptr null");
+        const auto cloneValue = ownsValues
+            ? "ptr " + cloneHelper(dictionaryType->arguments[1])
+            : std::string("ptr null");
+        const auto destroyValue = ownsValues
+            ? "ptr " + destroyHelper(dictionaryType->arguments[1])
+            : std::string("ptr null");
         out << "  " << resultAddress << " = alloca %joyeer.dictionary\n"
-            << "  call void @joyeer_dictionary_create_abi(ptr " << resultAddress
+            << "  call void @joyeer_dictionary_create_owned_abi(ptr " << resultAddress
             << ", ptr " << data << ", i64 " << count << ", i64 " << keyLayout->size
             << ", i64 " << valueLayout->size << ", i64 " << entrySize
-            << ", i64 " << valueOffset << ", i32 " << *keyKind << ")\n"
+            << ", i64 " << valueOffset << ", i32 " << *keyKind << ", "
+            << cloneKey << ", " << destroyKey << ", " << cloneValue << ", "
+            << destroyValue << ")\n"
             << "  " << valueName(instruction.result->id)
             << " = load %joyeer.dictionary, ptr " << resultAddress << "\n";
         return true;
@@ -1192,6 +1454,52 @@ private:
         if (!typeText.has_value()) return false;
         out << "  store " << *typeText << ' ' << *stored
             << ", ptr " << *address << "\n";
+        return true;
+    }
+
+    bool emitCopy(std::ostringstream& out, const ir::Instruction& instruction) {
+        const auto source = operand(instruction.operands[0]);
+        const auto* sourceValue = value(instruction.operands[0]);
+        if (!source.has_value() || sourceValue == nullptr) return false;
+        if (!ir::requiresDestruction(*module, sourceValue->type)) {
+            operands[instruction.result->id] = *source;
+            return true;
+        }
+        const auto typeText = llvmType(sourceValue->type, instruction.span);
+        if (!typeText.has_value()) return false;
+        const auto sourceAddress = temporary();
+        const auto destinationAddress = temporary();
+        out << "  " << sourceAddress << " = alloca " << *typeText << "\n"
+            << "  store " << *typeText << ' ' << *source << ", ptr "
+            << sourceAddress << "\n"
+            << "  " << destinationAddress << " = alloca " << *typeText << "\n"
+            << "  call void " << cloneHelper(sourceValue->type) << "(ptr "
+            << destinationAddress << ", ptr " << sourceAddress << ")\n"
+            << "  " << valueName(instruction.result->id) << " = load "
+            << *typeText << ", ptr " << destinationAddress << "\n";
+        return true;
+    }
+
+    bool emitTake(std::ostringstream& out, const ir::Instruction& instruction) {
+        const auto source = operand(instruction.operands[0]);
+        if (!source.has_value()) return false;
+        const auto typeText = llvmType(instruction.result->type, instruction.span);
+        if (!typeText.has_value()) return false;
+        out << "  " << valueName(instruction.result->id) << " = load "
+            << *typeText << ", ptr " << *source << "\n"
+            << "  store " << *typeText << " zeroinitializer, ptr " << *source << "\n";
+        return true;
+    }
+
+    bool emitDestroy(std::ostringstream& out, const ir::Instruction& instruction) {
+        const auto address = operand(instruction.operands[0]);
+        const auto* storage = value(instruction.operands[0]);
+        if (!address.has_value() || storage == nullptr ||
+            !ir::requiresDestruction(*module, storage->type)) {
+            return false;
+        }
+        out << "  call void " << destroyHelper(storage->type) << "(ptr "
+            << *address << ")\n";
         return true;
     }
 
