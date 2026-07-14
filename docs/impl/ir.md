@@ -16,8 +16,8 @@ in `include/joyeer/compiler/irlowering.h` and
 `lib/compiler/irlowering.cpp`.
 
 A successful `--lang=v0.1` compilation stores the result in
-`SourceFile::joyeerIR`. No native object is emitted yet; LLVM lowering is the
-next backend stage.
+`SourceFile::joyeerIR`. The LLVM/native backend consumes it for
+`--emit-llvm` and `-o`; see [native.md](native.md).
 
 ---
 
@@ -114,12 +114,12 @@ The lowering suite includes the complete JSON-parser MVP fixture.
 
 ## 6. Remaining backend work
 
-The current IR intentionally leaves these to later commits:
+The current IR/native pipeline intentionally leaves these to later commits:
 
-- array and dictionary literal construction/runtime ownership;
-- concrete size, alignment, field offsets, and tagged-enum ABI layout;
-- string/collection runtime call selection;
-- LLVM type mapping and instruction generation;
-- optimization, object emission, runtime linking, and debug information.
+- ownership/lifetime operations and deterministic destruction;
+- move/copy decisions for heap-backed handles and large aggregates;
+- enum niche optimization and a stable public ABI;
+- an explicit LLVM optimization pipeline;
+- source-level debug information.
 
 None of those should be implemented by extending the compatibility VM lane.

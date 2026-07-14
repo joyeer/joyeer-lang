@@ -18,13 +18,19 @@ The design philosophy and trade-offs are documented under [docs/rationale/](docs
 
 The "no GC / zero-cost / native" points above describe the **design direction**.
 The current implementation is a **C++20 compiler**. Default/legacy mode
-executes on a custom stack-based VM. The new `--lang=v0.1` frontend now has an
-isolated lexer and syntax-only Parser MVP (including payload enums, minimal
-`match`, Pratt precedence, recovery, and stable spans), but semantic analysis
-and code generation for that AST are not implemented yet. LLVM-based native
-code generation is on the roadmap.
+executes on a custom stack-based VM. The new `--lang=v0.1` lane has an isolated
+lexer/parser, name resolution, type checking, verified Joyeer IR, textual LLVM
+IR, a minimal C runtime, and Clang-based native linking. It compiles and runs
+the JSON-parser MVP language surface without starting the VM.
 
-Working today: integers, booleans and strings; `var` bindings; arithmetic, comparison and logical operators; `if`/`else`; `while`; functions with typed parameters and named arguments; `print`; arrays, dictionaries, optionals (and legacy classes).
+The native lane is still experimental: ownership destruction, optimization
+policy, debug information, and file I/O are not complete. Heap-backed
+temporaries can currently leak, so this is not a production release.
+
+Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
+checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
+and `inout`; structs; payload enums; exhaustive `match`; arrays, dictionaries,
+`Optional`, `Result`, byte indexing, and `print(value:)`.
 
 See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the full pipeline and current stage, and [docs/plan/v0.1.md](docs/plan/v0.1.md) for the v0.1 goal (a zero-overhead JSON parser written in Joyeer).
 
@@ -35,15 +41,15 @@ func add(left: Int, right: Int): Int {
     return left + right
 }
 
-print(message: add(left: 3, right: 4))   // 7
-
-var sum = 0
-var i = 1
-while i <= 5 {
-    sum = sum + i
-    i = i + 1
+func main() {
+    var sum = add(left: 3, right: 4)
+    var i = 1
+    while i <= 5 {
+        sum = sum + i
+        i = i + 1
+    }
+    print(value: sum)
 }
-print(message: sum)                       // 15
 ```
 
 ## Requirements
@@ -53,6 +59,7 @@ print(message: sum)                       // 15
 - Clang ≥ 13, or MSVC (Visual Studio 2022/2026)
 - Ninja ≥ 1.11
 - Python ≥ 3.10 (for the test runner)
+- Clang for `--emit-llvm` validation and native `-o` output
 
 ## Getting Started
 
@@ -69,19 +76,21 @@ The `joyeer` executable is written to `build/bin/joyeer`.
 
 > On Windows, run the commands from a Visual Studio Developer prompt (or after loading the MSVC environment) so that the compiler and `ninja` are on `PATH`.
 
-### Running a program
+### Compiling and running a native program
 
 ```shell
-./build/bin/joyeer path/to/program.joyeer
+./build/bin/joyeer --lang=v0.1 -o ./hello path/to/program.joyeer
+./hello
 ```
 
-The default mode uses the legacy parser and VM. The new JSON-parser frontend
-can currently be used for syntax validation only; it intentionally stops
-before legacy type checking, bytecode generation, and VM startup:
+Emit textual LLVM IR instead:
 
 ```shell
-./build/bin/joyeer --lang=v0.1 path/to/program.joyeer
+./build/bin/joyeer --lang=v0.1 --emit-llvm ./hello.ll path/to/program.joyeer
 ```
+
+Without an output option, `--lang=v0.1` validates and lowers the source without
+writing an artifact. The default mode remains the legacy VM for compatibility.
 
 ### Testing
 
@@ -94,6 +103,8 @@ Focused frontend validation avoids the legacy VM/runtime:
 ```shell
 ctest --test-dir ./build --output-on-failure -L lexer
 ctest --test-dir ./build --output-on-failure -L parser
+ctest --test-dir ./build --output-on-failure -L llvm-backend
+ctest --test-dir ./build --output-on-failure -L native
 ```
 
 Tests are golden-output: [tests/testRunner.py](tests/testRunner.py) runs the compiled `joyeer` on `tests/**/*.joyeer` and diffs stdout against the sibling `*.result.txt`. After adding or removing `*.joyeer` test files, re-run `cmake -B ./build -G Ninja` so the test list is regenerated.
@@ -102,8 +113,8 @@ Tests are golden-output: [tests/testRunner.py](tests/testRunner.py) runs the com
 
 | Path | Contents |
 |---|---|
-| [include/joyeer/](include/joyeer/) | Public headers: compiler, runtime, vm, diagnostic |
-| [lib/](lib/) | Implementation: `compiler/`, `runtime/`, `vm/`, `diagnostic/`, `main/` |
+| [include/joyeer/](include/joyeer/) | Public headers: frontend, Joyeer IR, LLVM backend, native/legacy runtimes |
+| [lib/](lib/) | Implementation: `compiler/`, `ir/`, `backend/`, `native/`, legacy `runtime/` and `vm/` |
 | [docs/](docs/) | Language spec, design rationale, and plans (index: [docs/README.md](docs/README.md)) |
 | [tests/](tests/) | Golden end-to-end tests: `basis/`, `errors/`, `leetcode/`, `target/` |
 | [unittests/](unittests/) | C++ unit tests (GoogleTest) |

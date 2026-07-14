@@ -67,11 +67,12 @@ Source (.joyeer)
 | 3. Name Resolution | ✅ Parser-MVP resolver; type-directed references handed to Stage 4 | `semantic.cpp`, `nameresolution.cpp`, [contract](../impl/name-resolution.md) |
 | 4. Type Checking | ✅ JSON-parser MVP typed model | `typechecking.cpp`, [contract](../impl/type-checking.md) |
 | 5. Semantic Analysis | ⚠️ Access/mutability checks implemented; flow/lint checks missing | `typechecking.cpp` |
-| 6. Own IR | ⚠️ JSON-parser MVP lowering implemented; layout/ABI incomplete | `irlowering.cpp`, `ir.cpp`, [contract](../impl/ir.md) |
-| 7. LLVM IR Gen | ❌ Missing | Currently generates custom bytecode |
-| 8-9. LLVM Optimization + CodeGen | ❌ Missing | Depends on LLVM integration |
-| 10. Linker | ❌ Native linking missing | Legacy compatibility lane executes via VM |
-| Runtime Library | ⚠️ Partial | `sys.cpp` (VM-level built-ins) |
+| 6. Own IR | ✅ JSON-parser MVP lowering + verifier | `irlowering.cpp`, `ir.cpp`, [contract](../impl/ir.md) |
+| 7. LLVM IR Gen | ✅ JSON-parser MVP textual LLVM IR | `backend/llvm.cpp`, [native contract](../impl/native.md) |
+| 8. LLVM Optimization | ❌ Deliberate pass/optimization policy missing | Clang currently uses its default level |
+| 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
+| 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
+| Runtime Library | ⚠️ Primitive/string/collection MVP; ownership cleanup missing | `native/runtime.c` |
 | Error Diagnostics | ⚠️ Partial | `diagnostic.cpp` |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
@@ -101,23 +102,25 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Lower Joyeer IR to LLVM IR
+## Immediate Next Milestone: Ownership-Correct Native MVP
 
 The [Parser MVP](../impl/parser.md), [name-resolution model](../impl/name-resolution.md),
-[type checker](../impl/type-checking.md), and [Joyeer IR lowering](../impl/ir.md)
-are implemented and wired into `--lang=v0.1`. The complete JSON-parser MVP
-fixture now produces verified backend-neutral IR. The next work is native
-lowering:
+[type checker](../impl/type-checking.md), [Joyeer IR lowering](../impl/ir.md),
+and [native backend](../impl/native.md) are wired into `--lang=v0.1`. Clang
+compiles the complete JSON-parser MVP fixture, and `-o` builds/runs a native
+program using strings, arrays, and dictionaries. The next work is correctness
+and quality rather than another backend:
 
-1. Define target-independent size/alignment and tagged aggregate ABI layout.
-2. Add LLVM as a dependency and map primitive, pointer, struct, enum, and
-   function types.
-3. Lower stack slots, operators, calls, CFG, aggregate operations, and
-   `switch_pattern` to LLVM IR.
-4. Emit objects and link a minimal runtime for `print`, strings, arrays,
-   dictionaries, bounds traps, and ownership operations.
-5. Retire the legacy VM lane after native golden tests cover its supported
-   v0.1 behavior.
+1. Add ownership/lifetime analysis and insert destroy operations for
+  heap-backed values on every normal and early-return path.
+2. Define move/copy behavior for aggregates and prevent accidental aliasing or
+  double-free when handles are assigned or passed.
+3. Add all-paths-return, unreachable-code, uninitialized-variable, and unused
+  binding analysis before IR lowering.
+4. Configure a deliberate LLVM optimization pipeline and verify overflow/
+  bounds checks survive required optimization levels.
+5. Add file I/O and a complete executable JSON parser, then retire the legacy
+  VM lane after native golden coverage is equivalent.
 
 ---
 
@@ -139,31 +142,31 @@ lowering:
 - Explicit load/store, calls, branches, aggregate construction, and match
 - No references to legacy VM runtime descriptors
 
-### Step 1.3 — LLVM Integration (Build System)
+### Step 1.3 — LLVM Integration (Build System) ✅
 
-- Add LLVM as a dependency in CMake
-- Verify LLVM headers and libraries link correctly
-- Create a new `LLVMCodeGen` module
+- Discover a Clang driver in CMake
+- Emit portable textual LLVM IR without linking LLVM's unstable C++ ABI
+- Make Clang parse/verify every tested LLVM module
 
-### Step 1.4 — Joyeer IR → LLVM IR (Core Types)
+### Step 1.4 — Joyeer IR → LLVM IR (Core Types) ✅
 
 - Map `Int` → `i64`, `Bool` → `i1`
 - Local variables → `alloca` + `load`/`store`
 - Arithmetic → `CreateAdd`, `CreateSub`, `CreateMul`, `CreateSDiv`, `CreateSRem`
 - Comparisons → `CreateICmpSGT`, `CreateICmpSLT`, `CreateICmpEQ`, etc.
 
-### Step 1.5 — Joyeer IR → LLVM IR (Control Flow)
+### Step 1.5 — Joyeer IR → LLVM IR (Control Flow) ✅
 
 - `if/else` → `CreateCondBr` + BasicBlocks
 - `while` → loop BasicBlocks + `CreateBr`
 
-### Step 1.6 — Joyeer IR → LLVM IR (Functions)
+### Step 1.6 — Joyeer IR → LLVM IR (Functions) ✅
 
 - Function definitions → `Function::Create`
 - Function calls → `CreateCall`
 - Return → `CreateRet`
 
-### Step 1.7 — Minimal C Runtime
+### Step 1.7 — Minimal C Runtime ✅
 
 ```
 runtime/
@@ -172,7 +175,7 @@ runtime/
 └── panic.c         // joyeer_panic() for runtime errors
 ```
 
-### Step 1.8 — Link and Output Executable
+### Step 1.8 — Link and Output Executable ✅
 
 - LLVM → `.o` object file
 - Link with runtime library → executable
@@ -300,9 +303,9 @@ std/
 | Name Resolution | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Type Checking | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Semantic Analysis | ✅ | ✅ | ✅ | Phase 2 |
-| Own IR | MIR | SIL | AIR | ⚠️ JSON-parser MVP |
-| LLVM IR Gen | ✅ | ✅ | ❌ (own backend) | Phase 1 |
-| Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | Phase 1-2 |
+| Own IR | MIR | SIL | AIR | ✅ JSON-parser MVP |
+| LLVM IR Gen | ✅ | ✅ | ❌ (own backend) | ✅ JSON-parser MVP |
+| Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | ⚠️ native MVP; cleanup pending |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |
 | Package Manager | cargo | SPM | zig build | Phase 3 |
 | Error Diagnostics | Excellent | Good | Good | Phase 2 |
