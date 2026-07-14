@@ -7,6 +7,7 @@
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/compiler/irlowering.h"
+#include "joyeer/backend/llvm.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
 #include "joyeer/compiler/debugprinter.h"
@@ -14,6 +15,7 @@
 #include "joyeer/runtime/sys.h"
 
 #include <algorithm>
+#include <fstream>
 #include <utility>
 
 namespace {
@@ -98,6 +100,7 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         sourcefile->semanticModel.reset();
         sourcefile->typeCheckedModel.reset();
         sourcefile->joyeerIR.reset();
+        sourcefile->llvmIR.clear();
         joyeer::parser::Parser parser(sourcefile->tokens);
         auto result = parser.parse();
         for(const auto& diagnostic : result.diagnostics) {
@@ -142,6 +145,35 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                     std::string(joyeer::lowering::diagnosticName(diagnostic.id)) +
                     ": " + diagnostic.message;
             reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+        }
+        if (!lowering.succeeded()) {
+            return nullptr;
+        }
+
+        const auto llvm = joyeer::llvmbackend::Emitter().emit(*lowering.module);
+        sourcefile->llvmIR = llvm.text;
+        for (const auto& diagnostic : llvm.diagnostics) {
+            const std::string message =
+                    std::string(joyeer::llvmbackend::diagnosticName(diagnostic.id)) +
+                    ": " + diagnostic.message;
+            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+        }
+        if (!llvm.succeeded()) {
+            return nullptr;
+        }
+        if (options->outputMode == OutputMode::llvmIR) {
+            std::ofstream output(options->outputFile, std::ios::binary);
+            output << llvm.text;
+            if (!output.good()) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "cannot write LLVM IR output: %s",
+                        options->outputFile.string().c_str());
+            }
+        } else if (options->outputMode == OutputMode::executable) {
+            diagnostics->reportError(
+                    ErrorLevel::failure,
+                    "native executable linking is not implemented yet; use --emit-llvm");
         }
         return nullptr;
     }

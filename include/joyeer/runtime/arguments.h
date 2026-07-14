@@ -14,6 +14,12 @@ enum class LanguageMode {
     v0_1
 };
 
+enum class OutputMode {
+    validate,
+    llvmIR,
+    executable,
+};
+
 struct CommandLineArguments {
     using Ptr = std::shared_ptr<CommandLineArguments>;
     
@@ -23,10 +29,12 @@ struct CommandLineArguments {
     std::filesystem::path inputfile;
     // working directory for source code
     std::filesystem::path workingDirectory;
+    std::filesystem::path outputFile;
     
     bool vmDebug = true;
     bool accepted = false;
     LanguageMode languageMode = LanguageMode::legacy;
+    OutputMode outputMode = OutputMode::validate;
 
     Diagnostics* diagnostics;
 

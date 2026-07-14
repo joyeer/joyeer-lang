@@ -61,6 +61,10 @@ public:
     // checking and structural verification. It is unrelated to legacy IRGen.
     std::shared_ptr<joyeer::ir::Module> joyeerIR;
 
+    // Textual LLVM IR emitted from verified Joyeer IR. Empty when LLVM
+    // lowering did not run or failed.
+    std::string llvmIR;
+
     ModuleClass* moduleClass;
     
 protected:

@@ -143,6 +143,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(LLVMBackendClangValidation PROPERTIES
             LABELS llvm-backend
     )
+
+    add_test(NAME LLVMBackendCompilerJsonMvpValidation
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-json-mvp.ll
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+    )
+    set_tests_properties(LLVMBackendCompilerJsonMvpValidation PROPERTIES
+            LABELS "llvm-backend;ir-lowering;type-checking"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName

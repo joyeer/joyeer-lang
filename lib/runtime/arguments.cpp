@@ -25,14 +25,34 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             languageMode = LanguageMode::v0_1;
         } else if(*iterator == "--lang=v0.1-legacy") {
             languageMode = LanguageMode::legacy;
+        } else if(*iterator == "--emit-llvm" || *iterator == "-o") {
+            const auto option = *iterator;
+            iterator++;
+            if(iterator == arguments.end()) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "%s requires an output path",
+                        option.c_str());
+                break;
+            }
+            outputMode = option == "--emit-llvm"
+                    ? OutputMode::llvmIR
+                    : OutputMode::executable;
+            outputFile = std::filesystem::path(*iterator);
         } else {
             // input file
             parseInputFile(*iterator);
         }
     }
 
-    if(!std::filesystem::exists(inputfile)) {
+    if(inputfile.empty() || !std::filesystem::exists(inputfile)) {
         diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
+    }
+
+    if(outputMode != OutputMode::validate && languageMode != LanguageMode::v0_1) {
+        diagnostics->reportError(
+                ErrorLevel::failure,
+                "native output options require --lang=v0.1");
     }
 
     if(!inputfile.empty()) {
@@ -41,9 +61,11 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
 }
 
 void CommandLineArguments::printUsage() {
-    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] <inputfile>" << std::endl;
-    std::cout << "  --lang=v0.1         validate with the new lexer and Parser MVP (no codegen yet)" << std::endl;
+    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
+    std::cout << "  --lang=v0.1         compile with the typed native pipeline" << std::endl;
     std::cout << "  --lang=v0.1-legacy  compile and run with the legacy VM pipeline (default)" << std::endl;
+    std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
+    std::cout << "  -o <file>           write a native executable" << std::endl;
 }
 
 void CommandLineArguments::parseInputFile(const std::string &inputpath) {

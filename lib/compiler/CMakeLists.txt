@@ -22,4 +22,5 @@ add_joyeer_library(JoyeerCompiler STATIC
         )
 
 target_link_libraries(JoyeerCompiler PUBLIC JoyeerIR)
+target_link_libraries(JoyeerCompiler PUBLIC JoyeerLLVMBackend)
 
