@@ -67,9 +67,33 @@ enum class Opcode {
 
     branch,
     conditionalBranch,
+    switchPattern,
     returnValue,
     returnVoid,
     unreachable,
+};
+
+enum class PatternKind {
+    wildcard,
+    integerLiteral,
+    booleanLiteral,
+    stringLiteral,
+    byteLiteral,
+    enumCase,
+};
+
+struct Pattern {
+    PatternKind kind = PatternKind::wildcard;
+    TypeId type = typing::invalidTypeId;
+    std::optional<semantic::SymbolId> symbol;
+    int64_t integerValue = 0;
+    std::string text;
+    std::vector<Pattern> payloads;
+};
+
+struct SwitchCase {
+    Pattern pattern;
+    BlockId target = invalidBlockId;
 };
 
 struct Instruction {
@@ -82,6 +106,7 @@ struct Instruction {
     int64_t integerValue = 0;
     std::string text;
     SourceSpan span;
+    std::vector<SwitchCase> switchCases;
 };
 
 struct BasicBlock {

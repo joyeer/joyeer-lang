@@ -285,6 +285,67 @@ return text[0]
     EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::subscript), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersEnumMatchesAndPayloadBindings) {
+    lower(R"JOYEER(enum Value { Empty, Number(Int), }
+func read(value: Value): Int {
+return match value {
+.Empty => 0,
+.Number(number) => number,
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& read = function("read");
+    EXPECT_EQ(read.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::extractPayload), 1u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersOptionalMatchesToResultConstruction) {
+    lower(R"JOYEER(enum Failure { Missing, }
+func unwrap(value: Int?): Result<Int, Failure> {
+return match value {
+.Some(number) => .Ok(number),
+.None => .Err(.Missing),
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& unwrap = function("unwrap");
+    EXPECT_EQ(opcodeCount(unwrap, joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(unwrap, joyeer::ir::Opcode::extractPayload), 1u);
+    EXPECT_EQ(opcodeCount(unwrap, joyeer::ir::Opcode::constructEnum), 3u);
+}
+
+TEST_F(IRLoweringTest, LowersLiteralWildcardAndNestedPayloadPatterns) {
+    lower(R"JOYEER(enum Flag { Bool(Bool), }
+func classify(value: UInt8): Int {
+return match value { b'a' => 1, _ => 0, }
+}
+func fromFlag(flag: Flag): Int {
+return match flag { .Bool(true) => 1, .Bool(false) => 0, }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(opcodeCount(function("classify"), joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(function("fromFlag"), joyeer::ir::Opcode::switchPattern), 1u);
+
+    const auto text = joyeer::ir::dump(*result.module);
+    EXPECT_NE(text.find("byte(97):UInt8"), std::string::npos);
+    EXPECT_NE(text.find("case#"), std::string::npos);
+    EXPECT_NE(text.find("true:Bool"), std::string::npos);
+}
+
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
     lower(R"JOYEER(func incomplete(value: Int): Int {
 let copy = value

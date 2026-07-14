@@ -429,6 +429,8 @@ private:
                 return lowerBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
             case syntax::Kind::ifExpr:
                 return lowerIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression));
+            case syntax::Kind::matchExpr:
+                return lowerMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression));
             default:
                 report(
                         DiagnosticId::unsupportedSyntax,
@@ -785,6 +787,191 @@ private:
         const auto result = *instruction.result;
         emit(std::move(instruction));
         return result;
+    }
+
+    std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
+        const auto scrutinee = lowerExpression(expression->scrutinee);
+        const auto resultType = model->typeOf(expression);
+        if (!scrutinee.has_value() || !resultType.has_value()) return std::nullopt;
+
+        const auto producesResult = *resultType != model->types().voidType() &&
+                *resultType != model->types().neverType();
+        const auto resultAddress = producesResult
+                ? std::optional<ir::Value>(emitValue(
+                        ir::Opcode::stackAllocate,
+                        *resultType,
+                        ir::ValueCategory::address,
+                        {},
+                        expression->span))
+                : std::optional<ir::Value>();
+
+        std::vector<ir::BlockId> armBlocks;
+        for (size_t index = 0; index < expression->arms.size(); ++index) {
+            armBlocks.push_back(createBlock("match.arm." + std::to_string(index)));
+        }
+        const auto mergeBlock = createBlock("match.merge");
+
+        auto dispatch = makeInstruction(ir::Opcode::switchPattern, expression->span);
+        dispatch.operands = { scrutinee->id };
+        for (size_t index = 0; index < expression->arms.size(); ++index) {
+            const auto pattern = lowerPattern(expression->arms[index]->pattern);
+            if (!pattern.has_value()) return std::nullopt;
+            dispatch.switchCases.push_back(ir::SwitchCase { *pattern, armBlocks[index] });
+        }
+        emit(std::move(dispatch));
+
+        bool hasMergePredecessor = false;
+        for (size_t index = 0; index < expression->arms.size(); ++index) {
+            const auto& arm = expression->arms[index];
+            switchToBlock(armBlocks[index]);
+            bindPattern(arm->pattern, *scrutinee);
+            const auto value = lowerExpression(arm->body);
+            if (currentBlockTerminated()) continue;
+            if (resultAddress.has_value()) {
+                if (value.has_value()) {
+                    emitStore(*value, *resultAddress, arm->body->span);
+                } else {
+                    report(
+                            DiagnosticId::missingType,
+                            arm->body->span,
+                            "value-producing match arm did not lower a value");
+                }
+            }
+            emitBranch(mergeBlock, arm->span);
+            hasMergePredecessor = true;
+        }
+
+        switchToBlock(mergeBlock);
+        if (!hasMergePredecessor) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+            return std::nullopt;
+        }
+        if (!resultAddress.has_value()) return std::nullopt;
+        return emitValue(
+                ir::Opcode::load,
+                resultAddress->type,
+                ir::ValueCategory::value,
+                { resultAddress->id },
+                expression->span);
+    }
+
+    std::optional<ir::Pattern> lowerPattern(const syntax::PatternPtr& pattern) {
+        if (pattern == nullptr) return std::nullopt;
+        const auto type = model->typeOf(pattern);
+        if (!type.has_value()) {
+            report(DiagnosticId::missingType, pattern->span, "pattern has no type");
+            return std::nullopt;
+        }
+
+        ir::Pattern result;
+        result.type = *type;
+        switch (pattern->kind) {
+            case syntax::Kind::wildcardPattern:
+            case syntax::Kind::bindingPattern:
+                result.kind = ir::PatternKind::wildcard;
+                break;
+            case syntax::Kind::literalPattern: {
+                const auto literal = std::static_pointer_cast<syntax::LiteralPatternSyntax>(pattern);
+                if (literal->literal == nullptr) return std::nullopt;
+                switch (literal->literal->kind) {
+                    case decimalLiteral:
+                        result.kind = ir::PatternKind::integerLiteral;
+                        result.integerValue = literal->literal->intValue;
+                        break;
+                    case booleanLiteral:
+                        result.kind = ir::PatternKind::booleanLiteral;
+                        result.integerValue = literal->literal->rawValue == Literals::TRUE ? 1 : 0;
+                        break;
+                    case stringLiteral:
+                        result.kind = ir::PatternKind::stringLiteral;
+                        result.text = literal->literal->rawValue;
+                        break;
+                    case byteLiteral:
+                        result.kind = ir::PatternKind::byteLiteral;
+                        result.integerValue = literal->literal->intValue;
+                        break;
+                    case nilLiteral: {
+                        const auto none = findEnumCase(*type, "None");
+                        if (!none.has_value()) return std::nullopt;
+                        result.kind = ir::PatternKind::enumCase;
+                        result.symbol = *none;
+                        break;
+                    }
+                    default:
+                        report(
+                                DiagnosticId::unsupportedSyntax,
+                                pattern->span,
+                                "literal pattern is not supported by IR lowering");
+                        return std::nullopt;
+                }
+                break;
+            }
+            case syntax::Kind::enumCasePattern: {
+                const auto enumPattern =
+                        std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+                const auto caseSymbol = model->referencedSymbol(enumPattern);
+                if (!caseSymbol.has_value()) {
+                    report(
+                            DiagnosticId::missingSymbol,
+                            pattern->span,
+                            "enum pattern has no resolved case symbol");
+                    return std::nullopt;
+                }
+                result.kind = ir::PatternKind::enumCase;
+                result.symbol = *caseSymbol;
+                for (const auto& argument : enumPattern->arguments) {
+                    const auto payload = lowerPattern(argument->pattern);
+                    if (!payload.has_value()) return std::nullopt;
+                    result.payloads.push_back(*payload);
+                }
+                break;
+            }
+            default:
+                report(
+                        DiagnosticId::unsupportedSyntax,
+                        pattern->span,
+                        "pattern kind is not supported by IR lowering");
+                return std::nullopt;
+        }
+        return result;
+    }
+
+    void bindPattern(const syntax::PatternPtr& pattern, ir::Value value) {
+        if (pattern == nullptr) return;
+        if (pattern->kind == syntax::Kind::bindingPattern) {
+            const auto symbol = model->semanticModel()->declaredSymbol(pattern);
+            if (!symbol.has_value()) return;
+            const auto address = emitValue(
+                    ir::Opcode::stackAllocate,
+                    value.type,
+                    ir::ValueCategory::address,
+                    {},
+                    pattern->span,
+                    symbol);
+            emitStore(value, address, pattern->span, symbol);
+            slots[*symbol] = address;
+            return;
+        }
+        if (pattern->kind != syntax::Kind::enumCasePattern) return;
+
+        const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        const auto caseSymbol = model->referencedSymbol(enumPattern);
+        if (!caseSymbol.has_value()) return;
+        for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
+            const auto& payloadPattern = enumPattern->arguments[index]->pattern;
+            const auto payloadType = model->typeOf(payloadPattern);
+            if (!payloadType.has_value()) continue;
+            auto instruction = makeInstruction(
+                    ir::Opcode::extractPayload,
+                    payloadPattern->span);
+            instruction.result = makeValue(*payloadType, ir::ValueCategory::value);
+            instruction.operands = { value.id };
+            instruction.symbol = *caseSymbol;
+            instruction.integerValue = static_cast<int64_t>(index);
+            const auto payload = *instruction.result;
+            emit(std::move(instruction));
+            bindPattern(payloadPattern, payload);
+        }
     }
 
     std::optional<ir::Value> lowerIf(const syntax::IfExprSyntax::Ptr& expression) {

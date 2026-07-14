@@ -1,6 +1,7 @@
 #include "joyeer/ir/ir.h"
 
 #include <algorithm>
+#include <functional>
 #include <sstream>
 #include <unordered_map>
 
@@ -68,6 +69,42 @@ std::string typeName(
     return found == types.end()
             ? "<type#" + std::to_string(type) + ">"
             : found->second->name;
+}
+
+std::string patternText(
+        const Pattern& pattern,
+        const std::unordered_map<TypeId, const TypeName*>& types) {
+    std::ostringstream out;
+    switch (pattern.kind) {
+        case PatternKind::wildcard:
+            out << '_';
+            break;
+        case PatternKind::integerLiteral:
+            out << pattern.integerValue;
+            break;
+        case PatternKind::booleanLiteral:
+            out << (pattern.integerValue == 0 ? "false" : "true");
+            break;
+        case PatternKind::stringLiteral:
+            out << '"' << escape(pattern.text) << '"';
+            break;
+        case PatternKind::byteLiteral:
+            out << "byte(" << pattern.integerValue << ')';
+            break;
+        case PatternKind::enumCase:
+            out << "case#" << pattern.symbol.value_or(semantic::invalidSymbolId);
+            if (!pattern.payloads.empty()) {
+                out << '(';
+                for (size_t index = 0; index < pattern.payloads.size(); ++index) {
+                    if (index != 0) out << ", ";
+                    out << patternText(pattern.payloads[index], types);
+                }
+                out << ')';
+            }
+            break;
+    }
+    out << ':' << typeName(types, pattern.type);
+    return out.str();
 }
 
 } // namespace
@@ -374,6 +411,17 @@ VerificationResult Verifier::verify(const Module& module) const {
                     }
                 }
 
+                for (const auto& switchCase : instruction.switchCases) {
+                    if (!blocks.contains(switchCase.target)) {
+                        report(
+                                VerificationErrorId::invalidReference,
+                                functionId,
+                                block.id,
+                                location,
+                                "pattern switch references unknown block " +
+                                        std::to_string(switchCase.target));
+                    }
+                }
                 auto requireShape = [&](size_t operandCount, size_t targetCount) {
                     if (instruction.operands.size() == operandCount &&
                         instruction.targets.size() == targetCount) {
@@ -688,6 +736,51 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     "conditional branch condition must be an object value");
                         }
                         break;
+                    case Opcode::switchPattern: {
+                        const auto shapeMatches = requireShape(1, 0);
+                        bool matches = shapeMatches && operands[0] != nullptr &&
+                                operands[0]->category == ValueCategory::value &&
+                                !instruction.switchCases.empty();
+                        std::function<bool(const Pattern&, TypeId)> verifyPattern;
+                        verifyPattern = [&](const Pattern& pattern, TypeId expectedType) {
+                            if (pattern.type != expectedType || !types.contains(pattern.type)) {
+                                return false;
+                            }
+                            if (pattern.kind != PatternKind::enumCase) {
+                                return pattern.payloads.empty() && !pattern.symbol.has_value();
+                            }
+                            if (!pattern.symbol.has_value()) return false;
+                            const auto* enumCase = enumCaseFor(expectedType, *pattern.symbol);
+                            if (enumCase == nullptr ||
+                                pattern.payloads.size() != enumCase->payloadTypes.size()) {
+                                return false;
+                            }
+                            for (size_t payload = 0; payload < pattern.payloads.size(); ++payload) {
+                                if (!verifyPattern(
+                                            pattern.payloads[payload],
+                                            enumCase->payloadTypes[payload])) {
+                                    return false;
+                                }
+                            }
+                            return true;
+                        };
+                        if (matches) {
+                            for (const auto& switchCase : instruction.switchCases) {
+                                matches &= verifyPattern(
+                                        switchCase.pattern,
+                                        operands[0]->type);
+                            }
+                        }
+                        if (!matches) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId,
+                                    block.id,
+                                    location,
+                                    "pattern switch cases do not match the scrutinee type");
+                        }
+                        break;
+                    }
                     case Opcode::returnValue:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                             (!function.returnsValue ||
@@ -737,6 +830,7 @@ bool isTerminator(Opcode opcode) {
     switch (opcode) {
         case Opcode::branch:
         case Opcode::conditionalBranch:
+        case Opcode::switchPattern:
         case Opcode::returnValue:
         case Opcode::returnVoid:
         case Opcode::unreachable:
@@ -776,6 +870,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::subscriptAddress: return "subscript_addr";
         case Opcode::branch: return "br";
         case Opcode::conditionalBranch: return "cond_br";
+        case Opcode::switchPattern: return "switch_pattern";
         case Opcode::returnValue: return "ret";
         case Opcode::returnVoid: return "ret_void";
         case Opcode::unreachable: return "unreachable";
@@ -989,6 +1084,18 @@ std::string dump(const Module& module) {
                             out << ' ' << valueName(instruction.operands[0]);
                         }
                         for (const auto target : instruction.targets) out << ", ^" << target;
+                        break;
+                    case Opcode::switchPattern:
+                        if (!instruction.operands.empty()) {
+                            out << ' ' << valueName(instruction.operands[0]);
+                        }
+                        out << " [";
+                        for (size_t index = 0; index < instruction.switchCases.size(); ++index) {
+                            if (index != 0) out << ", ";
+                            out << patternText(instruction.switchCases[index].pattern, types)
+                                << " -> ^" << instruction.switchCases[index].target;
+                        }
+                        out << ']';
                         break;
                 }
                 if (instruction.symbol.has_value()) out << " symbol#" << *instruction.symbol;
