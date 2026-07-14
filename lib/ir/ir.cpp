@@ -128,13 +128,19 @@ VerificationResult Verifier::verify(const Module& module) const {
                         "parameter '" + parameter.name + "' references unknown type " +
                                 std::to_string(parameter.value.type));
             }
-            if (parameter.value.category != ValueCategory::value) {
+                const auto expectedCategory = parameter.isMutable
+                    ? ValueCategory::address
+                    : ValueCategory::value;
+                if (parameter.value.category != expectedCategory) {
                 report(
                         VerificationErrorId::invalidInstruction,
                         functionId,
                         std::nullopt,
                         std::nullopt,
-                        "parameter '" + parameter.name + "' must be an object value");
+                        "parameter '" + parameter.name +
+                            (parameter.isMutable
+                                ? "' must be an address for inout access"
+                                : "' must be an object value"));
             }
             if (!values.emplace(parameter.value.id, parameter.value).second) {
                 report(
@@ -392,8 +398,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 instruction.operands.size(),
                                 callee.parameters.size());
                         for (size_t argument = 0; argument < count; ++argument) {
-                            matches &= operands[argument] != nullptr &&
-                                    operands[argument]->category == ValueCategory::value &&
+                                matches &= operands[argument] != nullptr &&
+                                    operands[argument]->category ==
+                                        callee.parameters[argument].value.category &&
                                 (callee.parameters[argument].acceptsAnyType ||
                                  operands[argument]->type ==
                                      callee.parameters[argument].value.type);

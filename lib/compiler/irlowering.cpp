@@ -144,7 +144,9 @@ private:
                 ir::Value {
                     static_cast<ir::ValueId>(index),
                     *parameterType,
-                    ir::ValueCategory::value,
+                    parameter->inoutKeyword != nullptr
+                            ? ir::ValueCategory::address
+                            : ir::ValueCategory::value,
                 },
                 parameterSymbol,
                 parameter->name == nullptr ? std::string() : parameter->name->rawValue,
@@ -183,6 +185,10 @@ private:
         const auto diagnosticStart = diagnostics.size();
 
         for (const auto& parameter : function.parameters) {
+            if (parameter.isMutable) {
+                if (parameter.symbol.has_value()) slots[*parameter.symbol] = parameter.value;
+                continue;
+            }
             const auto address = emitValue(
                     ir::Opcode::stackAllocate,
                     parameter.value.type,
@@ -556,8 +562,14 @@ private:
         }
 
         std::vector<ir::ValueId> arguments;
-        for (const auto& argument : expression->arguments) {
-            const auto value = lowerExpression(argument->value);
+        const auto& callee = module->functions[functions.at(*target)];
+        for (size_t index = 0; index < expression->arguments.size(); ++index) {
+            const auto& argument = expression->arguments[index];
+            const auto expectsAddress = index < callee.parameters.size() &&
+                callee.parameters[index].value.category == ir::ValueCategory::address;
+            const auto value = expectsAddress
+                ? lowerAddress(argument->value)
+                : lowerExpression(argument->value);
             if (!value.has_value()) return std::nullopt;
             arguments.push_back(value->id);
         }

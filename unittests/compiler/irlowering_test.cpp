@@ -182,6 +182,50 @@ return value
     EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersInoutParametersAndArgumentsAsAddresses) {
+    lower(R"JOYEER(func increment(value: inout Int) {
+&value = value + 1
+}
+func run(): Int {
+var number = 0
+increment(value: &number)
+return number
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    const auto& increment = function("increment");
+    ASSERT_EQ(increment.parameters.size(), 1u);
+    EXPECT_TRUE(increment.parameters[0].isMutable);
+    EXPECT_EQ(
+            increment.parameters[0].value.category,
+            joyeer::ir::ValueCategory::address);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::stackAllocate), 0u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::store), 1u);
+
+    const auto& run = function("run");
+    const auto call = std::find_if(
+            run.blocks[0].instructions.begin(),
+            run.blocks[0].instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::call;
+            });
+    ASSERT_NE(call, run.blocks[0].instructions.end());
+    ASSERT_EQ(call->operands.size(), 1u);
+    const auto slot = std::find_if(
+            run.blocks[0].instructions.begin(),
+            run.blocks[0].instructions.end(),
+            [&call](const auto& instruction) {
+                return instruction.result.has_value() &&
+                        instruction.result->id == call->operands[0];
+            });
+    ASSERT_NE(slot, run.blocks[0].instructions.end());
+    EXPECT_EQ(slot->result->category, joyeer::ir::ValueCategory::address);
+}
+
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
     lower(R"JOYEER(func incomplete(value: Int): Int {
 let copy = value
