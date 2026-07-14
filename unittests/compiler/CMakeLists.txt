@@ -108,6 +108,43 @@ gtest_discover_tests(IRLoweringTests
         PROPERTIES LABELS ir-lowering
 )
 
+add_executable(LLVMBackendTests
+        llvm_test.cpp
+)
+
+target_link_libraries(LLVMBackendTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerLLVMBackend
+        JoyeerVM
+)
+
+gtest_discover_tests(LLVMBackendTests
+        PROPERTIES LABELS llvm-backend
+)
+
+if(JOYEER_CLANG_EXECUTABLE)
+    add_executable(LLVMFixtureGenerator
+            llvm_fixture.cpp
+    )
+    target_link_libraries(LLVMFixtureGenerator
+            JoyeerLLVMBackend
+    )
+
+    add_test(NAME LLVMBackendClangValidation
+            COMMAND ${CMAKE_COMMAND}
+                    -DGENERATOR=$<TARGET_FILE:LLVMFixtureGenerator>
+                    -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-llvm-validation.ll
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyLLVMIR.cmake
+    )
+    set_tests_properties(LLVMBackendClangValidation PROPERTIES
+            LABELS llvm-backend
+    )
+endif()
+
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

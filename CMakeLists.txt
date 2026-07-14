@@ -20,6 +20,20 @@ enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
 
+find_program(JOYEER_CLANG_EXECUTABLE
+        NAMES clang clang-22
+        HINTS
+            "$ENV{ProgramFiles}/LLVM/bin"
+            "/usr/local/opt/llvm/bin"
+            "/opt/homebrew/opt/llvm/bin"
+        DOC "Clang driver used to verify and compile generated LLVM IR"
+)
+if(JOYEER_CLANG_EXECUTABLE)
+    message(STATUS "Joyeer LLVM driver: ${JOYEER_CLANG_EXECUTABLE}")
+else()
+    message(STATUS "Joyeer LLVM driver not found; textual emission remains available")
+endif()
+
 # Use C++20.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
