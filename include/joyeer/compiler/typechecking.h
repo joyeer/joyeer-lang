@@ -131,6 +131,7 @@ enum class TypeCheckingDiagnosticId {
     invalidTypeArgumentCount,
     typeMismatch,
     missingContextualType,
+    invalidOperatorOperands,
 };
 
 struct TypeCheckingDiagnostic {

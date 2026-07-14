@@ -336,4 +336,104 @@ let absent = nil
             }));
 }
 
+TEST_F(TypeCheckingTest, TypesMvpUnaryBinaryAndLogicalOperators) {
+    check(R"JOYEER(func operators() {
+let arithmetic = 1 + 2 * 3
+let concatenated = "left" + "right"
+let ordered = 1 < 2
+let bytesEqual = b'a' != b'b'
+let conjunction = true && false
+let negative = -1
+}
+)JOYEER");
+
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const std::vector<std::string> expected {
+        "Int", "String", "Bool", "Bool", "Bool", "Int",
+    };
+    for (size_t index = 0; index < expected.size(); ++index) {
+        const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[index]);
+        EXPECT_EQ(
+                checking.model->types().displayName(declaredType(binding)),
+                expected[index]);
+    }
+}
+
+TEST_F(TypeCheckingTest, DiagnosesInvalidOperatorOperands) {
+    check(R"JOYEER(func invalid() {
+let mixed = 1 + "two"
+let strings = "one" - "two"
+let logical = 1 && 2
+let negated = -"text"
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 4u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(std::all_of(
+            checking.diagnostics.begin(),
+            checking.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::
+                        invalidOperatorOperands;
+            }));
+}
+
+TEST_F(TypeCheckingTest, ChecksControlFlowConditionsAndReturnValues) {
+    check(R"JOYEER(func valid(flag: Bool): Int {
+if flag { return 1 }
+return 2
+}
+func invalid(): Int {
+while 1 { }
+return "wrong"
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 2u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(std::all_of(
+            checking.diagnostics.begin(),
+            checking.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+            }));
+}
+
+TEST_F(TypeCheckingTest, UnifiesIfExpressionBranchesAndNever) {
+    check(R"JOYEER(func choose(flag: Bool): Int {
+let selected = if flag { 1 } else { 2 }
+let returned = if flag { return 3 } else { 4 }
+return selected + returned
+}
+)JOYEER");
+
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    for (size_t index = 0; index < 2; ++index) {
+        const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[index]);
+        EXPECT_EQ(
+                checking.model->types().displayName(declaredType(binding)),
+                "Int");
+    }
+}
+
+TEST_F(TypeCheckingTest, DiagnosesMismatchedIfExpressionBranches) {
+    check(R"JOYEER(func choose(flag: Bool) {
+let selected = if flag { 1 } else { "two" }
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 1u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(
+            checking.diagnostics[0].id,
+            joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+}
+
 } // namespace

@@ -301,6 +301,7 @@ public:
 private:
     TypeCheckedModel::Ptr model;
     std::vector<TypeCheckingDiagnostic> diagnostics;
+    std::optional<TypeId> currentReturnType;
 
     void report(TypeCheckingDiagnosticId id, SourceSpan span, std::string message) {
         diagnostics.push_back(TypeCheckingDiagnostic { id, span, std::move(message) });
@@ -548,8 +549,20 @@ private:
                 checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
                 break;
             case syntax::Kind::functionDecl:
-                checkBlock(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node)->body);
+                {
+                const auto function = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+                const auto functionSymbol = model->semanticModelValue->declaredSymbol(function);
+                const auto* signature = functionSymbol.has_value()
+                    ? model->callable(*functionSymbol)
+                    : nullptr;
+                const auto previousReturnType = currentReturnType;
+                currentReturnType = signature == nullptr
+                    ? model->typeContext.errorType()
+                    : signature->result;
+                checkBlock(function->body);
+                currentReturnType = previousReturnType;
                 break;
+                }
             case syntax::Kind::structDecl: {
                 const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 for (const auto& field : structure->fields) {
@@ -570,24 +583,30 @@ private:
         }
     }
 
-    void checkBlock(const syntax::BlockExprSyntax::Ptr& block) {
-        if (block == nullptr) return;
+    TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block) {
+        if (block == nullptr) return model->typeContext.errorType();
         TypeId result = model->typeContext.voidType();
         for (const auto& item : block->items) {
             result = checkNode(item);
         }
         recordNodeType(block, result);
+        return result;
     }
 
     TypeId checkNode(const syntax::NodePtr& node) {
         if (node == nullptr) return model->typeContext.errorType();
         if (node->kind == syntax::Kind::bindingDecl) {
             checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
-            return model->typeOf(node).value_or(model->typeContext.errorType());
+            return model->typeContext.voidType();
         }
         if (node->kind == syntax::Kind::whileStmt) {
             const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
-            checkExpression(statement->condition);
+            const auto condition = checkExpression(statement->condition).value_or(
+                    model->typeContext.errorType());
+            requireAssignable(
+                    condition,
+                    model->typeContext.boolType(),
+                    statement->condition->span);
             checkBlock(statement->body);
             recordNodeType(node, model->typeContext.voidType());
             return model->typeContext.voidType();
@@ -648,9 +667,8 @@ private:
                         expected).value_or(model->typeContext.errorType());
                 break;
             case syntax::Kind::prefixExpr:
-                result = checkExpression(
-                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
-                        expected).value_or(model->typeContext.errorType());
+                result = checkPrefix(
+                    std::static_pointer_cast<syntax::PrefixExprSyntax>(expression));
                 break;
             case syntax::Kind::accessExpr:
                 result = checkExpression(
@@ -700,19 +718,37 @@ private:
                 break;
             }
             case syntax::Kind::blockExpr:
-                checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
-                result = model->typeOf(expression).value_or(model->typeContext.voidType());
+                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
                 break;
             case syntax::Kind::ifExpr: {
                 const auto conditional = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
-                checkExpression(conditional->condition);
-                checkBlock(conditional->thenBranch);
-                checkExpression(conditional->elseBranch, expected);
+                const auto condition = checkExpression(conditional->condition).value_or(
+                    model->typeContext.errorType());
+                requireAssignable(
+                    condition,
+                    model->typeContext.boolType(),
+                    conditional->condition->span);
+                const auto thenType = checkBlock(conditional->thenBranch);
+                if (conditional->elseBranch == nullptr) {
+                    result = model->typeContext.voidType();
+                    break;
+                }
+                const auto elseType = checkExpression(conditional->elseBranch, expected).value_or(
+                    model->typeContext.errorType());
+                result = commonType(thenType, elseType, conditional->elseBranch->span);
                 break;
             }
             case syntax::Kind::returnExpr: {
                 const auto returned = std::static_pointer_cast<syntax::ReturnExprSyntax>(expression);
-                checkExpression(returned->value, expected);
+                const auto required = currentReturnType.value_or(model->typeContext.voidType());
+                const auto actual = returned->value == nullptr
+                    ? model->typeContext.voidType()
+                    : checkExpression(returned->value, required).value_or(
+                        model->typeContext.errorType());
+                requireAssignable(
+                    actual,
+                    required,
+                    returned->value == nullptr ? returned->span : returned->value->span);
                 result = model->typeContext.neverType();
                 break;
             }
@@ -723,9 +759,8 @@ private:
                 break;
             }
             case syntax::Kind::binaryExpr: {
-                const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
-                checkExpression(binary->left);
-                checkExpression(binary->right);
+                result = checkBinary(
+                        std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
                 break;
             }
             case syntax::Kind::subscriptExpr: {
@@ -767,6 +802,91 @@ private:
             default:
                 return model->typeContext.errorType();
         }
+    }
+
+    TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
+        const auto operand = checkExpression(expression->operand).value_or(
+                model->typeContext.errorType());
+        if (operand == model->typeContext.errorType()) return operand;
+        if (expression->op != nullptr && expression->op->kind == minus &&
+            operand == model->typeContext.intType()) {
+            return operand;
+        }
+        reportInvalidOperator(expression->op, { operand }, expression->span);
+        return model->typeContext.errorType();
+    }
+
+    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression) {
+        const auto left = checkExpression(expression->left).value_or(
+                model->typeContext.errorType());
+        const auto right = checkExpression(expression->right).value_or(
+                model->typeContext.errorType());
+        if (left == model->typeContext.errorType() ||
+            right == model->typeContext.errorType()) {
+            return model->typeContext.errorType();
+        }
+
+        const auto op = expression->op == nullptr ? invalid : expression->op->kind;
+        switch (op) {
+            case plus:
+                if (left == model->typeContext.intType() && left == right) return left;
+                if (left == model->typeContext.stringType() && left == right) return left;
+                break;
+            case minus:
+            case multiply:
+                if (left == model->typeContext.intType() && left == right) return left;
+                break;
+            case less:
+            case lessEqual:
+            case greater:
+            case greaterEqual:
+                if (left == right &&
+                    (left == model->typeContext.intType() ||
+                     left == model->typeContext.uint8Type() ||
+                     left == model->typeContext.stringType())) {
+                    return model->typeContext.boolType();
+                }
+                break;
+            case equalEqual:
+            case notEqual:
+                if (left == right) return model->typeContext.boolType();
+                break;
+            case andAnd:
+                if (left == model->typeContext.boolType() && left == right) return left;
+                break;
+            default:
+                break;
+        }
+
+        reportInvalidOperator(expression->op, { left, right }, expression->span);
+        return model->typeContext.errorType();
+    }
+
+    void reportInvalidOperator(
+            const Token::Ptr& op,
+            const std::vector<TypeId>& operands,
+            SourceSpan span) {
+        std::string message = "operator '" +
+                (op == nullptr ? std::string("<unknown>") : op->rawValue) +
+                "' cannot be applied to";
+        for (size_t index = 0; index < operands.size(); ++index) {
+            message += (index == 0 ? " '" : ", '") +
+                    model->typeContext.displayName(operands[index]) + "'";
+        }
+        report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message));
+    }
+
+    TypeId commonType(TypeId left, TypeId right, SourceSpan mismatchSpan) {
+        if (left == model->typeContext.errorType() ||
+            right == model->typeContext.errorType()) {
+            return model->typeContext.errorType();
+        }
+        if (left == model->typeContext.neverType()) return right;
+        if (right == model->typeContext.neverType()) return left;
+        if (model->typeContext.isAssignable(left, right)) return right;
+        if (model->typeContext.isAssignable(right, left)) return left;
+        requireAssignable(right, left, mismatchSpan);
+        return model->typeContext.errorType();
     }
 
     TypeId checkName(const syntax::NameExprSyntax::Ptr& expression) {
@@ -878,6 +998,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.type-mismatch";
         case TypeCheckingDiagnosticId::missingContextualType:
             return "type-checking.missing-contextual-type";
+        case TypeCheckingDiagnosticId::invalidOperatorOperands:
+            return "type-checking.invalid-operator-operands";
     }
     return "type-checking.unknown";
 }
