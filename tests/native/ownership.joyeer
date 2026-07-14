@@ -1,0 +1,20 @@
+func build(flag: Bool): String {
+    let prefix = "left"
+    if flag {
+        return prefix + "!"
+    }
+    return prefix
+}
+
+func main() {
+    let first = build(flag: true)
+    let second = first
+    print(value: first)
+    print(value: second)
+
+    let values: [String] = ["alpha", "beta"]
+    print(value: values[1])
+
+    let lookup: [String: String] = ["key": "value"]
+    print(value: lookup["key"])
+}

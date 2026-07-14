@@ -167,6 +167,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableHello PROPERTIES
             LABELS "native;llvm-backend;native-runtime"
     )
+
+    add_test(NAME NativeExecutableOwnership
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/ownership.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-ownership${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=left!\nleft!\nbeta\nvalue\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableOwnership PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
