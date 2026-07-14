@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -69,6 +70,7 @@ public:
             const std::vector<TypeId>& arguments = {});
     [[nodiscard]] std::optional<semantic::SymbolId> builtinSymbol(
             std::string_view name) const;
+        [[nodiscard]] std::optional<size_t> typeArity(semantic::SymbolId symbol) const;
 
     [[nodiscard]] const TypeRecord* type(TypeId id) const;
     [[nodiscard]] size_t size() const;
@@ -117,7 +119,66 @@ private:
     TypeId uint8TypeId = invalidTypeId;
 };
 
+struct TypedCallableSignature {
+    semantic::CallableKind kind;
+    bool acceptsArgumentClause = true;
+    std::vector<TypeId> parameters;
+    TypeId result = invalidTypeId;
+};
+
+enum class TypeCheckingDiagnosticId {
+    invalidTypeArgumentCount,
+};
+
+struct TypeCheckingDiagnostic {
+    TypeCheckingDiagnosticId id;
+    SourceSpan span;
+    std::string message;
+};
+
+class TypeCheckingBuilder;
+
+class TypeCheckedModel {
+public:
+    using Ptr = std::shared_ptr<TypeCheckedModel>;
+
+    [[nodiscard]] const semantic::SemanticModel::Ptr& semanticModel() const;
+    [[nodiscard]] TypeContext& types();
+    [[nodiscard]] const TypeContext& types() const;
+    [[nodiscard]] std::optional<TypeId> typeOf(const syntax::NodePtr& node) const;
+    [[nodiscard]] std::optional<TypeId> typeOf(semantic::SymbolId symbol) const;
+    [[nodiscard]] const TypedCallableSignature* callable(semantic::SymbolId symbol) const;
+
+private:
+    friend class TypeCheckingBuilder;
+
+    explicit TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel);
+
+    semantic::SemanticModel::Ptr semanticModelValue;
+    TypeContext typeContext;
+    std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
+    std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
+    std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;
+};
+
+struct TypeCheckingResult {
+    TypeCheckedModel::Ptr model;
+    std::vector<TypeCheckingDiagnostic> diagnostics;
+
+    [[nodiscard]] bool succeeded() const {
+        return diagnostics.empty();
+    }
+};
+
+class TypeChecker {
+public:
+    [[nodiscard]] TypeCheckingResult check(
+            const semantic::SemanticModel::Ptr& semanticModel) const;
+};
+
 [[nodiscard]] const char* typeKindName(TypeKind kind);
+[[nodiscard]] const char* diagnosticName(TypeCheckingDiagnosticId id);
+[[nodiscard]] std::string dump(const std::vector<TypeCheckingDiagnostic>& diagnostics);
 
 } // namespace joyeer::typing
 

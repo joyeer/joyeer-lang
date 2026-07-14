@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <functional>
+#include <sstream>
 #include <utility>
 
 namespace joyeer::typing {
@@ -143,6 +144,20 @@ std::optional<semantic::SymbolId> TypeContext::builtinSymbol(std::string_view na
     return found->second;
 }
 
+std::optional<size_t> TypeContext::typeArity(semantic::SymbolId symbolId) const {
+    if (zeroArgumentTypes.contains(symbolId)) return 0;
+    const auto generic = genericConstructors.find(symbolId);
+    if (generic != genericConstructors.end()) return generic->second.arity;
+
+    const auto* declaration = model.symbol(symbolId);
+    if (declaration != nullptr && !declaration->isInvalid &&
+        (declaration->kind == semantic::SymbolKind::structure ||
+         declaration->kind == semantic::SymbolKind::enumeration)) {
+        return 0;
+    }
+    return std::nullopt;
+}
+
 const TypeRecord* TypeContext::type(TypeId id) const {
     if (id >= types.size()) return nullptr;
     return &types[id];
@@ -216,6 +231,258 @@ void TypeContext::registerGenericBuiltin(
     genericConstructors.emplace(symbol, GenericConstructor { kind, arity });
 }
 
+TypeCheckedModel::TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel):
+        semanticModelValue(std::move(semanticModel)),
+        typeContext(*semanticModelValue) {
+}
+
+const semantic::SemanticModel::Ptr& TypeCheckedModel::semanticModel() const {
+    return semanticModelValue;
+}
+
+TypeContext& TypeCheckedModel::types() {
+    return typeContext;
+}
+
+const TypeContext& TypeCheckedModel::types() const {
+    return typeContext;
+}
+
+std::optional<TypeId> TypeCheckedModel::typeOf(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (!id.has_value()) return std::nullopt;
+    const auto found = nodeTypes.find(*id);
+    if (found == nodeTypes.end()) return std::nullopt;
+    return found->second;
+}
+
+std::optional<TypeId> TypeCheckedModel::typeOf(semantic::SymbolId symbol) const {
+    const auto found = symbolTypes.find(symbol);
+    if (found == symbolTypes.end()) return std::nullopt;
+    return found->second;
+}
+
+const TypedCallableSignature* TypeCheckedModel::callable(
+        semantic::SymbolId symbol) const {
+    const auto found = callables.find(symbol);
+    if (found == callables.end()) return nullptr;
+    return &found->second;
+}
+
+class TypeCheckingBuilder {
+public:
+    TypeCheckingResult build(const semantic::SemanticModel::Ptr& semanticModel) {
+        assert(semanticModel != nullptr);
+        model = TypeCheckedModel::Ptr(new TypeCheckedModel(semanticModel));
+
+        const auto& root = semanticModel->root();
+        if (root != nullptr) {
+            for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+        }
+        return TypeCheckingResult { model, std::move(diagnostics) };
+    }
+
+private:
+    TypeCheckedModel::Ptr model;
+    std::vector<TypeCheckingDiagnostic> diagnostics;
+
+    void report(TypeCheckingDiagnosticId id, SourceSpan span, std::string message) {
+        diagnostics.push_back(TypeCheckingDiagnostic { id, span, std::move(message) });
+    }
+
+    void recordNodeType(const syntax::NodePtr& node, TypeId type) {
+        const auto id = model->semanticModelValue->nodeId(node);
+        if (id.has_value()) model->nodeTypes[*id] = type;
+    }
+
+    void recordDeclaredType(const syntax::NodePtr& node, TypeId type) {
+        const auto symbol = model->semanticModelValue->declaredSymbol(node);
+        if (symbol.has_value()) model->symbolTypes[*symbol] = type;
+    }
+
+    std::optional<TypeId> resolveType(const syntax::TypePtr& syntaxType) {
+        if (syntaxType == nullptr) return std::nullopt;
+
+        auto result = model->typeContext.errorType();
+        switch (syntaxType->kind) {
+            case syntax::Kind::errorType:
+                break;
+            case syntax::Kind::nominalType: {
+                const auto nominal =
+                        std::static_pointer_cast<syntax::NominalTypeSyntax>(syntaxType);
+                std::vector<TypeId> arguments;
+                arguments.reserve(nominal->arguments.size());
+                for (const auto& argument : nominal->arguments) {
+                    arguments.push_back(resolveType(argument).value_or(
+                            model->typeContext.errorType()));
+                }
+
+                const auto symbol = model->semanticModelValue->referencedSymbol(syntaxType);
+                if (!symbol.has_value()) break;
+                const auto resolved = model->typeContext.typeForSymbol(*symbol, arguments);
+                if (resolved.has_value()) {
+                    result = *resolved;
+                    break;
+                }
+
+                const auto arity = model->typeContext.typeArity(*symbol);
+                const auto* declaration = model->semanticModelValue->symbol(*symbol);
+                if (arity.has_value() && declaration != nullptr) {
+                    report(
+                            TypeCheckingDiagnosticId::invalidTypeArgumentCount,
+                            syntaxType->span,
+                            "type '" + declaration->name + "' expects " +
+                                    std::to_string(*arity) + " type argument(s), but got " +
+                                    std::to_string(arguments.size()));
+                }
+                break;
+            }
+            case syntax::Kind::arrayType: {
+                const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(syntaxType);
+                result = model->typeContext.arrayType(resolveType(array->element).value_or(
+                        model->typeContext.errorType()));
+                break;
+            }
+            case syntax::Kind::dictionaryType: {
+                const auto dictionary =
+                        std::static_pointer_cast<syntax::DictionaryTypeSyntax>(syntaxType);
+                const auto key = resolveType(dictionary->key).value_or(
+                        model->typeContext.errorType());
+                const auto value = resolveType(dictionary->value).value_or(
+                        model->typeContext.errorType());
+                result = model->typeContext.dictionaryType(key, value);
+                break;
+            }
+            case syntax::Kind::optionalType: {
+                const auto optional =
+                        std::static_pointer_cast<syntax::OptionalTypeSyntax>(syntaxType);
+                result = model->typeContext.optionalType(resolveType(optional->wrapped).value_or(
+                        model->typeContext.errorType()));
+                break;
+            }
+            default:
+                break;
+        }
+
+        recordNodeType(syntaxType, result);
+        return result;
+    }
+
+    void resolveTopLevelDeclaration(const syntax::NodePtr& node) {
+        if (node == nullptr) return;
+        switch (node->kind) {
+            case syntax::Kind::bindingDecl:
+                resolveBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
+                break;
+            case syntax::Kind::functionDecl:
+                resolveFunction(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node));
+                break;
+            case syntax::Kind::structDecl:
+                resolveStructure(std::static_pointer_cast<syntax::StructDeclSyntax>(node));
+                break;
+            case syntax::Kind::enumDecl:
+                resolveEnumeration(std::static_pointer_cast<syntax::EnumDeclSyntax>(node));
+                break;
+            default:
+                break;
+        }
+    }
+
+    void resolveBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
+        const auto type = resolveType(declaration->annotation);
+        if (type.has_value()) recordDeclaredType(declaration, *type);
+    }
+
+    void resolveFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        const auto function = model->semanticModelValue->declaredSymbol(declaration);
+        if (!function.has_value()) return;
+
+        TypedCallableSignature signature {
+            semantic::CallableKind::function,
+            true,
+            {},
+            model->typeContext.voidType(),
+        };
+        signature.parameters.reserve(declaration->parameters.size());
+        for (const auto& parameter : declaration->parameters) {
+            const auto type = resolveType(parameter->type).value_or(
+                    model->typeContext.errorType());
+            recordDeclaredType(parameter, type);
+            signature.parameters.push_back(type);
+        }
+        if (declaration->returnType != nullptr) {
+            signature.result = resolveType(declaration->returnType).value_or(
+                    model->typeContext.errorType());
+        }
+
+        model->symbolTypes[*function] = signature.result;
+        model->callables[*function] = std::move(signature);
+    }
+
+    void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
+        const auto structure = model->semanticModelValue->declaredSymbol(declaration);
+        if (!structure.has_value()) return;
+        const auto structureType = model->typeContext.typeForSymbol(*structure).value_or(
+                model->typeContext.errorType());
+        model->symbolTypes[*structure] = structureType;
+        recordNodeType(declaration, structureType);
+
+        TypedCallableSignature initializer {
+            semantic::CallableKind::structureInitializer,
+            true,
+            {},
+            structureType,
+        };
+        initializer.parameters.reserve(declaration->fields.size());
+        for (const auto& field : declaration->fields) {
+            const auto fieldType = resolveType(field->type).value_or(
+                    model->typeContext.errorType());
+            recordDeclaredType(field, fieldType);
+            initializer.parameters.push_back(fieldType);
+        }
+
+        const auto* symbol = model->semanticModelValue->symbol(*structure);
+        if (symbol != nullptr && symbol->synthesizedInitializer.has_value()) {
+            model->symbolTypes[*symbol->synthesizedInitializer] = structureType;
+            model->callables[*symbol->synthesizedInitializer] = std::move(initializer);
+        }
+    }
+
+    void resolveEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
+        const auto enumeration = model->semanticModelValue->declaredSymbol(declaration);
+        if (!enumeration.has_value()) return;
+        const auto enumerationType = model->typeContext.typeForSymbol(*enumeration).value_or(
+                model->typeContext.errorType());
+        model->symbolTypes[*enumeration] = enumerationType;
+        recordNodeType(declaration, enumerationType);
+
+        for (const auto& enumCase : declaration->cases) {
+            const auto caseSymbol = model->semanticModelValue->declaredSymbol(enumCase);
+            if (!caseSymbol.has_value()) continue;
+
+            TypedCallableSignature signature {
+                semantic::CallableKind::enumCase,
+                enumCase->hasPayloadClause,
+                {},
+                enumerationType,
+            };
+            signature.parameters.reserve(enumCase->associatedTypes.size());
+            for (const auto& associatedType : enumCase->associatedTypes) {
+                signature.parameters.push_back(resolveType(associatedType->type).value_or(
+                        model->typeContext.errorType()));
+            }
+            model->symbolTypes[*caseSymbol] = enumerationType;
+            model->callables[*caseSymbol] = std::move(signature);
+        }
+    }
+};
+
+TypeCheckingResult TypeChecker::check(
+        const semantic::SemanticModel::Ptr& semanticModel) const {
+    assert(semanticModel != nullptr);
+    return TypeCheckingBuilder().build(semanticModel);
+}
+
 const char* typeKindName(TypeKind kind) {
     switch (kind) {
         case TypeKind::error: return "error";
@@ -234,6 +501,24 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::result: return "result";
     }
     return "unknown";
+}
+
+const char* diagnosticName(TypeCheckingDiagnosticId id) {
+    switch (id) {
+        case TypeCheckingDiagnosticId::invalidTypeArgumentCount:
+            return "type-checking.invalid-type-argument-count";
+    }
+    return "type-checking.unknown";
+}
+
+std::string dump(const std::vector<TypeCheckingDiagnostic>& diagnostics) {
+    std::ostringstream out;
+    for (const auto& diagnostic : diagnostics) {
+        out << diagnosticName(diagnostic.id) << '@'
+            << diagnostic.span.offset << ':' << diagnostic.span.length
+            << ": " << diagnostic.message << '\n';
+    }
+    return out.str();
 }
 
 } // namespace joyeer::typing
