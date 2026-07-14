@@ -715,4 +715,60 @@ let selected = if flag { 1 } else { "two" }
                         joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
                 }
 
+                    TEST_F(TypeCheckingTest, EnforcesAssignmentMutabilityAndAccessMarkers) {
+                        check(R"JOYEER(struct Box {
+                    var value: Int
+                    let fixed: Int = 0
+                    }
+                    func mutate(box: inout Box) {
+                    &box.value = 1
+                    var local = box
+                    local.value = 2
+                    let frozen = box
+                    frozen.value = 3
+                    local.fixed = 4
+                    box.value = 5
+                    &local.value = 6
+                    }
+                    )JOYEER");
+
+                        ASSERT_EQ(checking.diagnostics.size(), 4u)
+                            << joyeer::typing::dump(checking.diagnostics);
+                        EXPECT_EQ(
+                            checking.diagnostics[0].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+                        EXPECT_EQ(
+                            checking.diagnostics[1].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+                        EXPECT_EQ(
+                            checking.diagnostics[2].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker);
+                        EXPECT_EQ(
+                            checking.diagnostics[3].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker);
+                    }
+
+                    TEST_F(TypeCheckingTest, EnforcesInoutCallArgumentConventions) {
+                        check(R"JOYEER(func update(value: inout Int) { &value = 1 }
+                    func inspect(value: Int) { }
+                    func use() {
+                    var number = 0
+                    update(value: &number)
+                    update(value: number)
+                    update(value: &1)
+                    inspect(value: &number)
+                    }
+                    )JOYEER");
+
+                        ASSERT_EQ(checking.diagnostics.size(), 3u)
+                            << joyeer::typing::dump(checking.diagnostics);
+                        EXPECT_TRUE(std::all_of(
+                            checking.diagnostics.begin(),
+                            checking.diagnostics.end(),
+                            [](const auto& diagnostic) {
+                            return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::
+                                invalidInoutArgument;
+                            }));
+                    }
+
 } // namespace

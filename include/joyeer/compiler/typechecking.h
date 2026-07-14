@@ -137,6 +137,9 @@ enum class TypeCheckingDiagnosticId {
     unknownEnumCase,
     enumCaseArgumentMismatch,
     nonExhaustiveMatch,
+    assignmentToImmutable,
+    invalidAccessMarker,
+    invalidInoutArgument,
 };
 
 struct TypeCheckingDiagnostic {

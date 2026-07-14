@@ -742,6 +742,7 @@ private:
                 const auto assignment =
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
                 const auto target = checkExpression(assignment->target);
+                checkAssignmentAccess(assignment->target);
                 const auto value = checkExpression(assignment->value, target);
                 if (target.has_value() && value.has_value()) {
                     requireAssignable(*value, *target, assignment->value->span);
@@ -1030,12 +1031,124 @@ private:
                                   *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
+            if (semanticTarget != nullptr && parameterIndex.has_value()) {
+                checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
+            }
             const auto actual = checkExpression(argument->value, expected);
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
             }
         }
         return signature == nullptr ? model->typeContext.errorType() : signature->result;
+    }
+
+    struct StorageAccess {
+        bool writable = true;
+        bool requiresMarker = false;
+        std::string immutableName;
+    };
+
+    StorageAccess analyzeStorage(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return StorageAccess { false, false, "<invalid>" };
+        switch (expression->kind) {
+            case syntax::Kind::nameExpr: {
+                const auto referenced = model->referencedSymbol(expression);
+                const auto* symbol = referenced.has_value()
+                        ? model->semanticModelValue->symbol(*referenced)
+                        : nullptr;
+                if (symbol == nullptr) return StorageAccess { false, false, "<invalid>" };
+                return StorageAccess {
+                    symbol->isMutable,
+                    symbol->kind == semantic::SymbolKind::parameter && symbol->isMutable,
+                    symbol->name,
+                };
+            }
+            case syntax::Kind::memberExpr: {
+                const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+                auto result = analyzeStorage(member->base);
+                const auto referenced = model->referencedSymbol(member);
+                const auto* symbol = referenced.has_value()
+                        ? model->semanticModelValue->symbol(*referenced)
+                        : nullptr;
+                if (result.writable && (symbol == nullptr || !symbol->isMutable)) {
+                    result.writable = false;
+                    result.immutableName = symbol == nullptr ? "<invalid>" : symbol->name;
+                }
+                return result;
+            }
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript =
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                auto result = analyzeStorage(subscript->base);
+                result.requiresMarker = true;
+                return result;
+            }
+            case syntax::Kind::accessExpr:
+                return analyzeStorage(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::parenthesizedExpr:
+                return analyzeStorage(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+            default:
+                return StorageAccess { false, false, "<expression>" };
+        }
+    }
+
+    void checkAssignmentAccess(const syntax::ExprPtr& target) {
+        const auto hasMarker = target != nullptr && target->kind == syntax::Kind::accessExpr;
+        const auto storage = analyzeStorage(target);
+        if (!storage.writable) {
+            report(
+                    TypeCheckingDiagnosticId::assignmentToImmutable,
+                    target == nullptr ? SourceSpan {} : target->span,
+                    "cannot assign through immutable binding or field '" +
+                            storage.immutableName + "'");
+            return;
+        }
+        if (hasMarker != storage.requiresMarker) {
+            report(
+                    TypeCheckingDiagnosticId::invalidAccessMarker,
+                    target->span,
+                    storage.requiresMarker
+                            ? "assignment through an inout parameter or subscript requires '&'"
+                            : "assignment to directly owned mutable storage must not use '&'");
+        }
+    }
+
+    void checkCallArgumentAccess(
+            const semantic::Symbol& target,
+            size_t parameterIndex,
+            const syntax::CallArgumentSyntax& argument) {
+        assert(target.callable.has_value());
+        const auto& parameters = target.callable->parameters;
+        if (parameterIndex >= parameters.size()) return;
+
+        bool requiresInout = false;
+        if (parameters[parameterIndex].declaration.has_value()) {
+            const auto& declaration = model->semanticModelValue->node(
+                    *parameters[parameterIndex].declaration);
+            if (declaration != nullptr && declaration->kind == syntax::Kind::parameterDecl) {
+                requiresInout = std::static_pointer_cast<syntax::ParameterDeclSyntax>(
+                        declaration)->inoutKeyword != nullptr;
+            }
+        }
+
+        const auto hasMarker = argument.accessMarker != nullptr;
+        if (hasMarker != requiresInout) {
+            report(
+                    TypeCheckingDiagnosticId::invalidInoutArgument,
+                    argument.span,
+                    requiresInout
+                            ? "inout argument requires '&' at the call site"
+                            : "non-inout argument must not use '&'");
+            return;
+        }
+        if (requiresInout && !analyzeStorage(argument.value).writable) {
+            report(
+                    TypeCheckingDiagnosticId::invalidInoutArgument,
+                    argument.value->span,
+                    "inout argument must refer to mutable storage");
+        }
     }
 
     std::optional<size_t> parameterIndexForArgument(
@@ -1564,6 +1677,12 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.enum-case-argument-mismatch";
         case TypeCheckingDiagnosticId::nonExhaustiveMatch:
             return "type-checking.non-exhaustive-match";
+        case TypeCheckingDiagnosticId::assignmentToImmutable:
+            return "type-checking.assignment-to-immutable";
+        case TypeCheckingDiagnosticId::invalidAccessMarker:
+            return "type-checking.invalid-access-marker";
+        case TypeCheckingDiagnosticId::invalidInoutArgument:
+            return "type-checking.invalid-inout-argument";
     }
     return "type-checking.unknown";
 }
