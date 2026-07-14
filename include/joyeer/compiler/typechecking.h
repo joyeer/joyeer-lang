@@ -75,6 +75,7 @@ public:
     [[nodiscard]] const TypeRecord* type(TypeId id) const;
     [[nodiscard]] size_t size() const;
     [[nodiscard]] std::string displayName(TypeId id) const;
+    [[nodiscard]] bool isAssignable(TypeId source, TypeId destination) const;
 
 private:
     struct TypeKey {
@@ -128,6 +129,8 @@ struct TypedCallableSignature {
 
 enum class TypeCheckingDiagnosticId {
     invalidTypeArgumentCount,
+    typeMismatch,
+    missingContextualType,
 };
 
 struct TypeCheckingDiagnostic {

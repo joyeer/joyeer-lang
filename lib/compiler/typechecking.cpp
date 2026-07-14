@@ -191,6 +191,21 @@ std::string TypeContext::displayName(TypeId id) const {
     }
 }
 
+bool TypeContext::isAssignable(TypeId source, TypeId destination) const {
+    if (source == errorTypeId || destination == errorTypeId) return true;
+    if (source == destination || source == neverTypeId || destination == anyTypeId) return true;
+
+    const auto* destinationType = type(destination);
+    if (destinationType == nullptr || destinationType->kind != TypeKind::optional) {
+        return false;
+    }
+    const auto* sourceType = type(source);
+    if (sourceType != nullptr && sourceType->kind == TypeKind::optional) {
+        return isAssignable(sourceType->arguments[0], destinationType->arguments[0]);
+    }
+    return isAssignable(source, destinationType->arguments[0]);
+}
+
 TypeId TypeContext::intern(
         TypeKind kind,
         semantic::SymbolId symbol,
@@ -278,6 +293,7 @@ public:
         const auto& root = semanticModel->root();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+            for (const auto& item : root->items) checkTopLevelBody(item);
         }
         return TypeCheckingResult { model, std::move(diagnostics) };
     }
@@ -475,6 +491,357 @@ private:
             model->callables[*caseSymbol] = std::move(signature);
         }
     }
+
+    bool requireAssignable(TypeId source, TypeId destination, SourceSpan span) {
+        if (model->typeContext.isAssignable(source, destination)) return true;
+        report(
+                TypeCheckingDiagnosticId::typeMismatch,
+                span,
+                "cannot use value of type '" + model->typeContext.displayName(source) +
+                        "' where '" + model->typeContext.displayName(destination) +
+                        "' is required");
+        return false;
+    }
+
+    std::optional<TypeId> declaredAnnotationType(
+            const syntax::BindingDeclSyntax::Ptr& declaration) {
+        if (declaration->annotation == nullptr) return std::nullopt;
+        const auto symbol = model->semanticModelValue->declaredSymbol(declaration);
+        if (symbol.has_value()) {
+            const auto found = model->symbolTypes.find(*symbol);
+            if (found != model->symbolTypes.end()) return found->second;
+        }
+        return resolveType(declaration->annotation);
+    }
+
+    void checkBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
+        const auto annotation = declaredAnnotationType(declaration);
+        std::optional<TypeId> initializer;
+        if (declaration->initializer != nullptr) {
+            initializer = checkExpression(declaration->initializer, annotation);
+        }
+
+        TypeId bindingType = model->typeContext.errorType();
+        if (annotation.has_value()) {
+            bindingType = *annotation;
+            if (initializer.has_value()) {
+                requireAssignable(*initializer, bindingType, declaration->initializer->span);
+            }
+        } else if (initializer.has_value()) {
+            bindingType = *initializer;
+        } else {
+            report(
+                    TypeCheckingDiagnosticId::missingContextualType,
+                    declaration->span,
+                    "binding requires a type annotation or an initializer");
+        }
+
+        const auto symbol = model->semanticModelValue->declaredSymbol(declaration);
+        if (symbol.has_value()) model->symbolTypes[*symbol] = bindingType;
+        recordNodeType(declaration, bindingType);
+    }
+
+    void checkTopLevelBody(const syntax::NodePtr& node) {
+        if (node == nullptr) return;
+        switch (node->kind) {
+            case syntax::Kind::bindingDecl:
+                checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
+                break;
+            case syntax::Kind::functionDecl:
+                checkBlock(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node)->body);
+                break;
+            case syntax::Kind::structDecl: {
+                const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                for (const auto& field : structure->fields) {
+                    if (field->initializer == nullptr) continue;
+                    const auto symbol = model->semanticModelValue->declaredSymbol(field);
+                    const auto expected = symbol.has_value()
+                            ? model->typeOf(*symbol)
+                            : std::optional<TypeId>();
+                    const auto actual = checkExpression(field->initializer, expected);
+                    if (expected.has_value() && actual.has_value()) {
+                        requireAssignable(*actual, *expected, field->initializer->span);
+                    }
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    void checkBlock(const syntax::BlockExprSyntax::Ptr& block) {
+        if (block == nullptr) return;
+        TypeId result = model->typeContext.voidType();
+        for (const auto& item : block->items) {
+            result = checkNode(item);
+        }
+        recordNodeType(block, result);
+    }
+
+    TypeId checkNode(const syntax::NodePtr& node) {
+        if (node == nullptr) return model->typeContext.errorType();
+        if (node->kind == syntax::Kind::bindingDecl) {
+            checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
+            return model->typeOf(node).value_or(model->typeContext.errorType());
+        }
+        if (node->kind == syntax::Kind::whileStmt) {
+            const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
+            checkExpression(statement->condition);
+            checkBlock(statement->body);
+            recordNodeType(node, model->typeContext.voidType());
+            return model->typeContext.voidType();
+        }
+        if (isExpressionKind(node->kind)) {
+            return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node)).value_or(
+                    model->typeContext.errorType());
+        }
+        return model->typeContext.errorType();
+    }
+
+    bool isExpressionKind(syntax::Kind kind) const {
+        switch (kind) {
+            case syntax::Kind::errorExpr:
+            case syntax::Kind::nameExpr:
+            case syntax::Kind::literalExpr:
+            case syntax::Kind::parenthesizedExpr:
+            case syntax::Kind::prefixExpr:
+            case syntax::Kind::accessExpr:
+            case syntax::Kind::binaryExpr:
+            case syntax::Kind::assignmentExpr:
+            case syntax::Kind::memberExpr:
+            case syntax::Kind::callExpr:
+            case syntax::Kind::subscriptExpr:
+            case syntax::Kind::arrayExpr:
+            case syntax::Kind::dictionaryExpr:
+            case syntax::Kind::contextualCaseExpr:
+            case syntax::Kind::blockExpr:
+            case syntax::Kind::ifExpr:
+            case syntax::Kind::returnExpr:
+            case syntax::Kind::matchExpr:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    std::optional<TypeId> checkExpression(
+            const syntax::ExprPtr& expression,
+            std::optional<TypeId> expected = std::nullopt) {
+        if (expression == nullptr) return std::nullopt;
+
+        auto result = model->typeContext.errorType();
+        switch (expression->kind) {
+            case syntax::Kind::errorExpr:
+                break;
+            case syntax::Kind::literalExpr:
+                result = checkLiteral(
+                        std::static_pointer_cast<syntax::LiteralExprSyntax>(expression),
+                        expected);
+                break;
+            case syntax::Kind::nameExpr:
+                result = checkName(std::static_pointer_cast<syntax::NameExprSyntax>(expression));
+                break;
+            case syntax::Kind::parenthesizedExpr:
+                result = checkExpression(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression,
+                        expected).value_or(model->typeContext.errorType());
+                break;
+            case syntax::Kind::prefixExpr:
+                result = checkExpression(
+                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
+                        expected).value_or(model->typeContext.errorType());
+                break;
+            case syntax::Kind::accessExpr:
+                result = checkExpression(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        expected).value_or(model->typeContext.errorType());
+                break;
+            case syntax::Kind::assignmentExpr: {
+                const auto assignment =
+                        std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
+                const auto target = checkExpression(assignment->target);
+                const auto value = checkExpression(assignment->value, target);
+                if (target.has_value() && value.has_value()) {
+                    requireAssignable(*value, *target, assignment->value->span);
+                }
+                result = model->typeContext.voidType();
+                break;
+            }
+            case syntax::Kind::memberExpr: {
+                const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+                checkExpression(member->base);
+                result = referencedValueType(expression);
+                break;
+            }
+            case syntax::Kind::callExpr: {
+                const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
+                checkExpression(call->callee);
+                for (const auto& argument : call->arguments) checkExpression(argument->value);
+                const auto target = model->semanticModelValue->callTarget(call);
+                const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
+                if (signature != nullptr) result = signature->result;
+                break;
+            }
+            case syntax::Kind::arrayExpr:
+                result = checkArray(
+                        std::static_pointer_cast<syntax::ArrayExprSyntax>(expression),
+                        expected);
+                break;
+            case syntax::Kind::dictionaryExpr:
+                result = checkDictionary(
+                        std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression),
+                        expected);
+                break;
+            case syntax::Kind::contextualCaseExpr: {
+                const auto contextual =
+                        std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+                for (const auto& argument : contextual->arguments) checkExpression(argument->value);
+                break;
+            }
+            case syntax::Kind::blockExpr:
+                checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
+                result = model->typeOf(expression).value_or(model->typeContext.voidType());
+                break;
+            case syntax::Kind::ifExpr: {
+                const auto conditional = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
+                checkExpression(conditional->condition);
+                checkBlock(conditional->thenBranch);
+                checkExpression(conditional->elseBranch, expected);
+                break;
+            }
+            case syntax::Kind::returnExpr: {
+                const auto returned = std::static_pointer_cast<syntax::ReturnExprSyntax>(expression);
+                checkExpression(returned->value, expected);
+                result = model->typeContext.neverType();
+                break;
+            }
+            case syntax::Kind::matchExpr: {
+                const auto match = std::static_pointer_cast<syntax::MatchExprSyntax>(expression);
+                checkExpression(match->scrutinee);
+                for (const auto& arm : match->arms) checkExpression(arm->body, expected);
+                break;
+            }
+            case syntax::Kind::binaryExpr: {
+                const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
+                checkExpression(binary->left);
+                checkExpression(binary->right);
+                break;
+            }
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                checkExpression(subscript->base);
+                checkExpression(subscript->index);
+                break;
+            }
+            default:
+                break;
+        }
+
+        recordNodeType(expression, result);
+        return result;
+    }
+
+    TypeId checkLiteral(
+            const syntax::LiteralExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        if (expression->literal == nullptr) return model->typeContext.errorType();
+        switch (expression->literal->kind) {
+            case decimalLiteral: return model->typeContext.intType();
+            case booleanLiteral: return model->typeContext.boolType();
+            case stringLiteral: return model->typeContext.stringType();
+            case byteLiteral: return model->typeContext.uint8Type();
+            case nilLiteral: {
+                if (expected.has_value()) {
+                    const auto* expectedType = model->typeContext.type(*expected);
+                    if (expectedType != nullptr && expectedType->kind == TypeKind::optional) {
+                        return *expected;
+                    }
+                }
+                report(
+                        TypeCheckingDiagnosticId::missingContextualType,
+                        expression->span,
+                        "'nil' requires an optional contextual type");
+                return model->typeContext.errorType();
+            }
+            default:
+                return model->typeContext.errorType();
+        }
+    }
+
+    TypeId checkName(const syntax::NameExprSyntax::Ptr& expression) {
+        return referencedValueType(expression);
+    }
+
+    TypeId referencedValueType(const syntax::NodePtr& expression) {
+        const auto referenced = model->semanticModelValue->referencedSymbol(expression);
+        if (!referenced.has_value()) return model->typeContext.errorType();
+        const auto type = model->typeOf(*referenced);
+        return type.value_or(model->typeContext.errorType());
+    }
+
+    TypeId checkArray(
+            const syntax::ArrayExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        std::optional<TypeId> elementType;
+        if (expected.has_value()) {
+            const auto* expectedType = model->typeContext.type(*expected);
+            if (expectedType != nullptr && expectedType->kind == TypeKind::array) {
+                elementType = expectedType->arguments[0];
+            }
+        }
+        if (expression->elements.empty() && !elementType.has_value()) {
+            report(
+                    TypeCheckingDiagnosticId::missingContextualType,
+                    expression->span,
+                    "empty array literal requires a contextual element type");
+            return model->typeContext.errorType();
+        }
+
+        for (const auto& element : expression->elements) {
+            const auto actual = checkExpression(element, elementType).value_or(
+                    model->typeContext.errorType());
+            if (!elementType.has_value()) {
+                elementType = actual;
+            } else {
+                requireAssignable(actual, *elementType, element->span);
+            }
+        }
+        return model->typeContext.arrayType(*elementType);
+    }
+
+    TypeId checkDictionary(
+            const syntax::DictionaryExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        std::optional<TypeId> keyType;
+        std::optional<TypeId> valueType;
+        if (expected.has_value()) {
+            const auto* expectedType = model->typeContext.type(*expected);
+            if (expectedType != nullptr && expectedType->kind == TypeKind::dictionary) {
+                keyType = expectedType->arguments[0];
+                valueType = expectedType->arguments[1];
+            }
+        }
+        if (expression->entries.empty() && (!keyType.has_value() || !valueType.has_value())) {
+            report(
+                    TypeCheckingDiagnosticId::missingContextualType,
+                    expression->span,
+                    "empty dictionary literal requires contextual key and value types");
+            return model->typeContext.errorType();
+        }
+
+        for (const auto& entry : expression->entries) {
+            const auto actualKey = checkExpression(entry->key, keyType).value_or(
+                    model->typeContext.errorType());
+            const auto actualValue = checkExpression(entry->value, valueType).value_or(
+                    model->typeContext.errorType());
+            if (!keyType.has_value()) keyType = actualKey;
+            else requireAssignable(actualKey, *keyType, entry->key->span);
+            if (!valueType.has_value()) valueType = actualValue;
+            else requireAssignable(actualValue, *valueType, entry->value->span);
+        }
+        return model->typeContext.dictionaryType(*keyType, *valueType);
+    }
 };
 
 TypeCheckingResult TypeChecker::check(
@@ -507,6 +874,10 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
     switch (id) {
         case TypeCheckingDiagnosticId::invalidTypeArgumentCount:
             return "type-checking.invalid-type-argument-count";
+        case TypeCheckingDiagnosticId::typeMismatch:
+            return "type-checking.type-mismatch";
+        case TypeCheckingDiagnosticId::missingContextualType:
+            return "type-checking.missing-contextual-type";
     }
     return "type-checking.unknown";
 }

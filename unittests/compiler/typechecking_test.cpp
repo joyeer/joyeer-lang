@@ -248,4 +248,92 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
             }));
     }
 
+TEST_F(TypeCheckingTest, InfersLiteralAndNameBindingTypes) {
+    check(R"JOYEER(func values() {
+let integer = 42
+let boolean = true
+let string = "text"
+let byte = b'x'
+let copy = integer
+}
+)JOYEER");
+
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    ASSERT_EQ(function->body->items.size(), 5u);
+    const std::vector<std::string> expected {
+        "Int", "Bool", "String", "UInt8", "Int",
+    };
+    for (size_t index = 0; index < expected.size(); ++index) {
+        const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[index]);
+        EXPECT_EQ(
+                checking.model->types().displayName(declaredType(binding)),
+                expected[index]);
+        EXPECT_EQ(checking.model->typeOf(binding->initializer), declaredType(binding));
+    }
+}
+
+TEST_F(TypeCheckingTest, ContextuallyTypesEmptyCollectionsNilAndOptionalPromotion) {
+    check(R"JOYEER(func values() {
+let integers: [Int] = []
+let lookup: [String: Int] = [:]
+let absent: Int? = nil
+let present: Int? = 42
+}
+)JOYEER");
+
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const std::vector<std::string> expected {
+        "[Int]", "[String: Int]", "Int?", "Int?",
+    };
+    for (size_t index = 0; index < expected.size(); ++index) {
+        const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[index]);
+        EXPECT_EQ(
+                checking.model->types().displayName(declaredType(binding)),
+                expected[index]);
+    }
+}
+
+TEST_F(TypeCheckingTest, DiagnosesBindingAndCollectionElementMismatches) {
+    check(R"JOYEER(func invalid() {
+let text: String = 42
+let values: [Int] = [1, "two", 3]
+let lookup: [String: Int] = ["one": 1, "two": false]
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 3u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(std::all_of(
+            checking.diagnostics.begin(),
+            checking.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+            }));
+}
+
+TEST_F(TypeCheckingTest, DiagnosesAmbiguousLiteralsWithoutContext) {
+    check(R"JOYEER(func ambiguous() {
+let array = []
+let dictionary = [:]
+let absent = nil
+}
+)JOYEER");
+
+    ASSERT_EQ(checking.diagnostics.size(), 3u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(std::all_of(
+            checking.diagnostics.begin(),
+            checking.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::
+                        missingContextualType;
+            }));
+}
+
 } // namespace
