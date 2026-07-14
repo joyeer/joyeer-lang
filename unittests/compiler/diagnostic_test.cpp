@@ -22,4 +22,16 @@ TEST(DiagnosticsTest, DetectsFailuresAmongReports) {
 	EXPECT_TRUE(diagnostics.hasFailure());
 }
 
+TEST(DiagnosticsTest, PrintsReportsAsWarnings) {
+	Diagnostics diagnostics;
+	diagnostics.reportError(ErrorLevel::report, 3, 7, "unreachable code");
+
+	testing::internal::CaptureStdout();
+	diagnostics.printErrors();
+	const auto output = testing::internal::GetCapturedStdout();
+
+	EXPECT_NE(output.find("Warning(line: 3)"), std::string::npos);
+	EXPECT_EQ(output.find("SyntaxError"), std::string::npos);
+}
+
 } // namespace

@@ -52,5 +52,6 @@ void Diagnostics::printErrors() {
 }
 
 void Diagnostics::printError(ErrorMessage &error) {
-    std::cout << "SyntaxError(line: " << error.lineAt << "):\n    " << error.message << std::endl;
+    const auto* label = error.level == ErrorLevel::report ? "Warning" : "SyntaxError";
+    std::cout << label << "(line: " << error.lineAt << "):\n    " << error.message << std::endl;
 }
