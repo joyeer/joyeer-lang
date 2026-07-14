@@ -97,9 +97,11 @@ public:
         out << "; Joyeer LLVM backend\n"
             << "source_filename = \"" << escapeQuoted(source.sourceName) << "\"\n";
         if (usesString) out << "%joyeer.string = type { ptr, i64 }\n";
+        if (usesArray) out << "%joyeer.array = type { ptr, i64, i64 }\n";
+        if (usesDictionary) out << "%joyeer.dictionary = type { ptr, i64, i64 }\n";
         for (const auto& definition : typeDefinitions) out << definition << '\n';
-        if (usesString || !typeDefinitions.empty() || !stringGlobals.empty() ||
-            !runtimeDeclarations.empty()) {
+        if (usesString || usesArray || usesDictionary || !typeDefinitions.empty() ||
+            !stringGlobals.empty() || !runtimeDeclarations.empty()) {
             out << '\n';
         }
         for (const auto& global : stringGlobals) out << global << '\n';
@@ -142,6 +144,8 @@ private:
     size_t nextString = 0;
     size_t nextTemporary = 0;
     bool usesString = false;
+    bool usesArray = false;
+    bool usesDictionary = false;
 
     void report(
             DiagnosticId id,
@@ -200,6 +204,14 @@ private:
             case typing::TypeKind::string:
                 usesString = true;
                 result = Layout { 16, 8 };
+                break;
+            case typing::TypeKind::array:
+                usesArray = true;
+                result = Layout { 24, 8 };
+                break;
+            case typing::TypeKind::dictionary:
+                usesDictionary = true;
+                result = Layout { 24, 8 };
                 break;
             case typing::TypeKind::structure: {
                 const auto found = structures.find(id);
@@ -329,6 +341,12 @@ private:
             case typing::TypeKind::string:
                 usesString = true;
                 return "%joyeer.string";
+            case typing::TypeKind::array:
+                usesArray = true;
+                return "%joyeer.array";
+            case typing::TypeKind::dictionary:
+                usesDictionary = true;
+                return "%joyeer.dictionary";
             case typing::TypeKind::structure:
                 if (structures.contains(id)) {
                     return "%joyeer.struct." + std::to_string(id);
@@ -480,6 +498,10 @@ private:
                 return emitCall(out, instruction);
             case ir::Opcode::constructStruct:
                 return emitConstructStruct(out, instruction);
+            case ir::Opcode::constructArray:
+                return emitConstructArray(out, instruction);
+            case ir::Opcode::constructDictionary:
+                return emitConstructDictionary(out, instruction);
             case ir::Opcode::fieldAddress:
                 return emitFieldAddress(out, instruction);
             case ir::Opcode::extractField:
@@ -488,6 +510,12 @@ private:
                 return emitConstructEnum(out, instruction);
             case ir::Opcode::extractPayload:
                 return emitExtractPayload(out, instruction);
+            case ir::Opcode::count:
+                return emitCount(out, instruction);
+            case ir::Opcode::subscript:
+                return emitSubscript(out, instruction, false);
+            case ir::Opcode::subscriptAddress:
+                return emitSubscript(out, instruction, true);
             case ir::Opcode::branch:
                 out << "  br label %" << blockName(instruction.targets[0]) << "\n";
                 return true;
@@ -523,7 +551,7 @@ private:
         stringGlobals.push_back(global.str());
         usesString = true;
         operands[instruction.result->id] =
-                "%joyeer.string { ptr " + globalName + ", i64 " +
+            "{ ptr " + globalName + ", i64 " +
                 std::to_string(length) + " }";
         return true;
     }
@@ -558,6 +586,125 @@ private:
             aggregate = destination;
         }
         return true;
+    }
+
+    bool emitConstructArray(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        const auto* arrayType = type(instruction.result->type);
+        if (arrayType == nullptr || arrayType->kind != typing::TypeKind::array ||
+            arrayType->arguments.size() != 1) {
+            return false;
+        }
+        const auto elementType = llvmType(arrayType->arguments[0], instruction.span);
+        const auto elementLayout = layoutFor(arrayType->arguments[0]);
+        if (!elementType.has_value() || !elementLayout.has_value()) return false;
+        usesArray = true;
+        runtimeDeclarations.insert(
+                "declare %joyeer.array @joyeer_array_create(ptr, i64, i64)");
+
+        std::string data = "null";
+        if (!instruction.operands.empty()) {
+            data = temporary();
+            out << "  " << data << " = alloca [" << instruction.operands.size()
+                << " x " << *elementType << "]\n";
+            for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                const auto element = operand(instruction.operands[index]);
+                if (!element.has_value()) return false;
+                const auto address = temporary();
+                out << "  " << address << " = getelementptr inbounds ["
+                    << instruction.operands.size() << " x " << *elementType
+                    << "], ptr " << data << ", i32 0, i64 " << index << "\n"
+                    << "  store " << *elementType << ' ' << *element
+                    << ", ptr " << address << "\n";
+            }
+        }
+        out << "  " << valueName(instruction.result->id)
+            << " = call %joyeer.array @joyeer_array_create(ptr " << data
+            << ", i64 " << instruction.operands.size()
+            << ", i64 " << elementLayout->size << ")\n";
+        return true;
+    }
+
+    bool emitConstructDictionary(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        const auto* dictionaryType = type(instruction.result->type);
+        if (dictionaryType == nullptr ||
+            dictionaryType->kind != typing::TypeKind::dictionary ||
+            dictionaryType->arguments.size() != 2 ||
+            instruction.operands.size() % 2 != 0) {
+            return false;
+        }
+        const auto keyType = llvmType(dictionaryType->arguments[0], instruction.span);
+        const auto valueType = llvmType(dictionaryType->arguments[1], instruction.span);
+        const auto keyLayout = layoutFor(dictionaryType->arguments[0]);
+        const auto valueLayout = layoutFor(dictionaryType->arguments[1]);
+        if (!keyType.has_value() || !valueType.has_value() ||
+            !keyLayout.has_value() || !valueLayout.has_value()) {
+            return false;
+        }
+        usesDictionary = true;
+        runtimeDeclarations.insert(
+            "declare %joyeer.dictionary @joyeer_dictionary_create(ptr, i64, i64, i64, i64, i64, i32)");
+
+        const auto count = instruction.operands.size() / 2;
+        const auto entryType = "{ " + *keyType + ", " + *valueType + " }";
+        const auto valueOffset = alignTo(keyLayout->size, valueLayout->alignment);
+        const auto entrySize = alignTo(
+            valueOffset + valueLayout->size,
+            std::max(keyLayout->alignment, valueLayout->alignment));
+        const auto keyKind = runtimeKeyKind(dictionaryType->arguments[0]);
+        if (!keyKind.has_value()) return false;
+        std::string data = "null";
+        if (count != 0) {
+            data = temporary();
+            out << "  " << data << " = alloca [" << count << " x "
+                << entryType << "]\n";
+            for (size_t index = 0; index < count; ++index) {
+                const auto key = operand(instruction.operands[index * 2]);
+                const auto storedValue = operand(instruction.operands[index * 2 + 1]);
+                if (!key.has_value() || !storedValue.has_value()) return false;
+                const auto entryAddress = temporary();
+                const auto keyAddress = temporary();
+                const auto valueAddress = temporary();
+                out << "  " << entryAddress << " = getelementptr inbounds ["
+                    << count << " x " << entryType << "], ptr " << data
+                    << ", i32 0, i64 " << index << "\n"
+                    << "  " << keyAddress << " = getelementptr inbounds " << entryType
+                    << ", ptr " << entryAddress << ", i32 0, i32 0\n"
+                    << "  store " << *keyType << ' ' << *key << ", ptr "
+                    << keyAddress << "\n"
+                    << "  " << valueAddress << " = getelementptr inbounds " << entryType
+                    << ", ptr " << entryAddress << ", i32 0, i32 1\n"
+                    << "  store " << *valueType << ' ' << *storedValue << ", ptr "
+                    << valueAddress << "\n";
+            }
+        }
+        out << "  " << valueName(instruction.result->id)
+            << " = call %joyeer.dictionary @joyeer_dictionary_create(ptr " << data
+            << ", i64 " << count << ", i64 " << keyLayout->size
+            << ", i64 " << valueLayout->size << ", i64 " << entrySize
+            << ", i64 " << valueOffset << ", i32 " << *keyKind << ")\n";
+        return true;
+    }
+
+    std::optional<int> runtimeKeyKind(ir::TypeId id) {
+        const auto* keyType = type(id);
+        if (keyType == nullptr) return std::nullopt;
+        switch (keyType->kind) {
+            case typing::TypeKind::integer: return 1;
+            case typing::TypeKind::boolean: return 2;
+            case typing::TypeKind::string: return 3;
+            case typing::TypeKind::uint8: return 4;
+            default:
+                reportHere(
+                        DiagnosticId::unsupportedType,
+                        {},
+                        "dictionary keys are not yet supported for type '" +
+                                keyType->name + "'");
+                return std::nullopt;
+        }
     }
 
     bool emitFieldAddress(
@@ -714,6 +861,133 @@ private:
                 valueName(instruction.result->id)).has_value();
     }
 
+    bool emitCount(std::ostringstream& out, const ir::Instruction& instruction) {
+        const auto base = operand(instruction.operands[0]);
+        const auto* baseValue = value(instruction.operands[0]);
+        if (!base.has_value() || baseValue == nullptr) return false;
+        const auto baseType = llvmType(baseValue->type, instruction.span);
+        const auto* baseTypeInfo = type(baseValue->type);
+        if (!baseType.has_value() || baseTypeInfo == nullptr ||
+            (baseTypeInfo->kind != typing::TypeKind::string &&
+             baseTypeInfo->kind != typing::TypeKind::array &&
+             baseTypeInfo->kind != typing::TypeKind::dictionary)) {
+            return false;
+        }
+        out << "  " << valueName(instruction.result->id) << " = extractvalue "
+            << *baseType << ' ' << *base << ", 1\n";
+        return true;
+    }
+
+    bool emitSubscript(
+            std::ostringstream& out,
+            const ir::Instruction& instruction,
+            bool returnsAddress) {
+        const auto base = operand(instruction.operands[0]);
+        const auto index = operand(instruction.operands[1]);
+        const auto* baseValue = value(instruction.operands[0]);
+        if (!base.has_value() || !index.has_value() || baseValue == nullptr) return false;
+        const auto* baseType = type(baseValue->type);
+        if (baseType == nullptr) return false;
+
+        if (baseType->kind == typing::TypeKind::string && !returnsAddress) {
+            usesString = true;
+            runtimeDeclarations.insert(
+                    "declare i8 @joyeer_string_byte_at(%joyeer.string, i64)");
+            out << "  " << valueName(instruction.result->id)
+                << " = call i8 @joyeer_string_byte_at(%joyeer.string " << *base
+                << ", i64 " << *index << ")\n";
+            return true;
+        }
+
+        if (baseType->kind == typing::TypeKind::array) {
+            return emitArraySubscript(out, instruction, *base, *index, returnsAddress);
+        }
+        if (baseType->kind == typing::TypeKind::dictionary) {
+            return emitDictionarySubscript(
+                    out,
+                    instruction,
+                    *base,
+                    *index,
+                    returnsAddress);
+        }
+
+        reportHere(
+                DiagnosticId::unsupportedInstruction,
+                instruction.span,
+                "subscript is not implemented for type '" + baseType->name + "'");
+        return false;
+    }
+
+    bool emitArraySubscript(
+            std::ostringstream& out,
+            const ir::Instruction& instruction,
+            const std::string& base,
+            const std::string& index,
+            bool returnsAddress) {
+        usesArray = true;
+        runtimeDeclarations.insert(
+                "declare ptr @joyeer_array_at(%joyeer.array, i64)");
+        auto arrayValue = base;
+        if (returnsAddress) {
+            arrayValue = temporary();
+            out << "  " << arrayValue << " = load %joyeer.array, ptr " << base << "\n";
+        }
+        const auto elementAddress = returnsAddress
+                ? valueName(instruction.result->id)
+                : temporary();
+        out << "  " << elementAddress
+            << " = call ptr @joyeer_array_at(%joyeer.array " << arrayValue
+            << ", i64 " << index << ")\n";
+        if (returnsAddress) return true;
+        const auto resultType = llvmType(instruction.result->type, instruction.span);
+        if (!resultType.has_value()) return false;
+        out << "  " << valueName(instruction.result->id) << " = load "
+            << *resultType << ", ptr " << elementAddress << "\n";
+        return true;
+    }
+
+    bool emitDictionarySubscript(
+            std::ostringstream& out,
+            const ir::Instruction& instruction,
+            const std::string& base,
+            const std::string& key,
+            bool returnsAddress) {
+        const auto* dictionaryType = type(value(instruction.operands[0])->type);
+        if (dictionaryType == nullptr || dictionaryType->arguments.size() != 2) return false;
+        const auto keyType = llvmType(dictionaryType->arguments[0], instruction.span);
+        const auto keyLayout = layoutFor(dictionaryType->arguments[0]);
+        const auto keyKind = runtimeKeyKind(dictionaryType->arguments[0]);
+        if (!keyType.has_value() || !keyLayout.has_value() || !keyKind.has_value()) {
+            return false;
+        }
+        usesDictionary = true;
+        runtimeDeclarations.insert(
+                "declare ptr @joyeer_dictionary_at(%joyeer.dictionary, ptr, i64, i32)");
+
+        auto dictionaryValue = base;
+        if (returnsAddress) {
+            dictionaryValue = temporary();
+            out << "  " << dictionaryValue
+                << " = load %joyeer.dictionary, ptr " << base << "\n";
+        }
+        const auto keyAddress = temporary();
+        const auto valueAddress = returnsAddress
+                ? valueName(instruction.result->id)
+                : temporary();
+        out << "  " << keyAddress << " = alloca " << *keyType << "\n"
+            << "  store " << *keyType << ' ' << key << ", ptr " << keyAddress << "\n"
+            << "  " << valueAddress
+            << " = call ptr @joyeer_dictionary_at(%joyeer.dictionary "
+            << dictionaryValue << ", ptr " << keyAddress << ", i64 "
+            << keyLayout->size << ", i32 " << *keyKind << ")\n";
+        if (returnsAddress) return true;
+        const auto resultType = llvmType(instruction.result->type, instruction.span);
+        if (!resultType.has_value()) return false;
+        out << "  " << valueName(instruction.result->id) << " = load "
+            << *resultType << ", ptr " << valueAddress << "\n";
+        return true;
+    }
+
     std::string stringLiteralOperand(const std::string& text) {
         const auto globalName = "@.joyeer.string." + std::to_string(nextString++);
         std::ostringstream global;
@@ -721,7 +995,7 @@ private:
                << " x i8] c\"" << escapeQuoted(text) << "\", align 1";
         stringGlobals.push_back(global.str());
         usesString = true;
-        return "%joyeer.string { ptr " + globalName + ", i64 " +
+        return "{ ptr " + globalName + ", i64 " +
                 std::to_string(text.size()) + " }";
     }
 

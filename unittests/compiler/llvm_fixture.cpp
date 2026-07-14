@@ -32,6 +32,25 @@ int main(int argc, char** argv) {
             joyeer::typing::TypeKind::enumeration,
             200,
         },
+        joyeer::ir::TypeName {
+            4,
+            "String",
+            joyeer::typing::TypeKind::string,
+        },
+        joyeer::ir::TypeName {
+            5,
+            "[Int]",
+            joyeer::typing::TypeKind::array,
+            joyeer::semantic::invalidSymbolId,
+            { 1 },
+        },
+        joyeer::ir::TypeName {
+            6,
+            "[String: Int]",
+            joyeer::typing::TypeKind::dictionary,
+            joyeer::semantic::invalidSymbolId,
+            { 4, 1 },
+        },
     };
 
     module.structures.push_back(joyeer::ir::StructureDefinition {
@@ -239,6 +258,72 @@ int main(int argc, char** argv) {
         },
     };
     module.functions.push_back(std::move(readChoice));
+
+    joyeer::ir::Function collections;
+    collections.id = 3;
+    collections.name = "collections";
+    collections.resultType = 1;
+    collections.returnsValue = true;
+    collections.entry = 0;
+    collections.blocks = {
+        joyeer::ir::BasicBlock {
+            0,
+            "entry",
+            {
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Value { 0, 1, joyeer::ir::ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 0,
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Value { 1, 1, joyeer::ir::ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 2,
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::constructArray,
+                    joyeer::ir::Value { 2, 5, joyeer::ir::ValueCategory::value },
+                    { 0, 1 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::subscript,
+                    joyeer::ir::Value { 3, 1, joyeer::ir::ValueCategory::value },
+                    { 2, 0 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::stringConstant,
+                    joyeer::ir::Value { 4, 4, joyeer::ir::ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 0, "key",
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::integerConstant,
+                    joyeer::ir::Value { 5, 1, joyeer::ir::ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 42,
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::constructDictionary,
+                    joyeer::ir::Value { 6, 6, joyeer::ir::ValueCategory::value },
+                    { 4, 5 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::subscript,
+                    joyeer::ir::Value { 7, 1, joyeer::ir::ValueCategory::value },
+                    { 6, 4 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::add,
+                    joyeer::ir::Value { 8, 1, joyeer::ir::ValueCategory::value },
+                    { 3, 7 },
+                },
+                joyeer::ir::Instruction {
+                    joyeer::ir::Opcode::returnValue,
+                    std::nullopt,
+                    { 8 },
+                },
+            },
+        },
+    };
+    module.functions.push_back(std::move(collections));
 
     const auto result = joyeer::llvmbackend::Emitter().emit(module);
     if (!result.succeeded()) {

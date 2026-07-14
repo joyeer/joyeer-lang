@@ -119,18 +119,25 @@ return match choice {
     EXPECT_NE(result.text.find("pattern."), std::string::npos);
 }
 
-TEST_F(LLVMBackendTest, DiagnosesCollectionsUntilRuntimeAbiLands) {
-    emit(R"JOYEER(func first(): Int {
-let values: [Int] = [1]
-return values[0]
+TEST_F(LLVMBackendTest, EmitsArrayDictionaryCountAndSubscriptRuntimeAbi) {
+    emit(R"JOYEER(func read(): Int {
+let values: [Int] = [1, 2]
+let lookup: [String: Int] = ["answer": 42]
+print(value: values.count)
+return values[0] + lookup["answer"]
 }
 )JOYEER");
 
-    ASSERT_FALSE(result.succeeded());
-    ASSERT_FALSE(result.diagnostics.empty());
-    EXPECT_EQ(
-            result.diagnostics[0].id,
-            joyeer::llvmbackend::DiagnosticId::unsupportedInstruction);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("%joyeer.array = type { ptr, i64, i64 }"),
+              std::string::npos);
+    EXPECT_NE(result.text.find("%joyeer.dictionary = type { ptr, i64, i64 }"),
+              std::string::npos);
+    EXPECT_NE(result.text.find("@joyeer_array_create"), std::string::npos);
+    EXPECT_NE(result.text.find("@joyeer_dictionary_create"), std::string::npos);
+    EXPECT_NE(result.text.find("@joyeer_array_at"), std::string::npos);
+    EXPECT_NE(result.text.find("@joyeer_dictionary_at"), std::string::npos);
+    EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
 }
 
 } // namespace
