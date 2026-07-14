@@ -213,21 +213,22 @@ private:
         }
     }
 
-    void lowerBlock(const syntax::BlockExprSyntax::Ptr& block) {
-        if (block == nullptr) return;
+    std::optional<ir::Value> lowerBlock(const syntax::BlockExprSyntax::Ptr& block) {
+        if (block == nullptr) return std::nullopt;
+        std::optional<ir::Value> result;
         for (const auto& item : block->items) {
             if (currentBlockTerminated()) break;
             if (item->kind == syntax::Kind::bindingDecl) {
                 lowerBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
+                result.reset();
             } else if (item->kind == syntax::Kind::whileStmt) {
-                report(
-                        DiagnosticId::unsupportedSyntax,
-                        item->span,
-                        "while lowering is not implemented in the primitive IR milestone");
+                lowerWhile(std::static_pointer_cast<syntax::WhileStmtSyntax>(item));
+                result.reset();
             } else if (isExpressionKind(item->kind)) {
-                lowerExpression(std::static_pointer_cast<syntax::ExprSyntax>(item));
+                result = lowerExpression(std::static_pointer_cast<syntax::ExprSyntax>(item));
             }
         }
+        return result;
     }
 
     void lowerBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
@@ -288,8 +289,9 @@ private:
                 lowerReturn(std::static_pointer_cast<syntax::ReturnExprSyntax>(expression));
                 return std::nullopt;
             case syntax::Kind::blockExpr:
-                lowerBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
-                return std::nullopt;
+                return lowerBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
+            case syntax::Kind::ifExpr:
+                return lowerIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression));
             default:
                 report(
                         DiagnosticId::unsupportedSyntax,
@@ -448,6 +450,101 @@ private:
         return std::nullopt;
     }
 
+    std::optional<ir::Value> lowerIf(const syntax::IfExprSyntax::Ptr& expression) {
+        const auto condition = lowerExpression(expression->condition);
+        const auto resultType = model->typeOf(expression);
+        if (!condition.has_value() || !resultType.has_value()) return std::nullopt;
+
+        const auto producesResult = *resultType != model->types().voidType() &&
+                *resultType != model->types().neverType();
+        const auto resultAddress = producesResult
+                ? std::optional<ir::Value>(emitValue(
+                        ir::Opcode::stackAllocate,
+                        *resultType,
+                        ir::ValueCategory::address,
+                        {},
+                        expression->span))
+                : std::optional<ir::Value>();
+
+        const auto thenBlock = createBlock("if.then");
+        const auto elseBlock = createBlock("if.else");
+        const auto mergeBlock = createBlock("if.merge");
+        emitConditionalBranch(*condition, thenBlock, elseBlock, expression->condition->span);
+
+        bool hasMergePredecessor = false;
+        switchToBlock(thenBlock);
+        const auto thenValue = lowerBlock(expression->thenBranch);
+        if (!currentBlockTerminated()) {
+            if (resultAddress.has_value()) {
+                if (thenValue.has_value()) {
+                    emitStore(*thenValue, *resultAddress, expression->thenBranch->span);
+                } else {
+                    report(
+                            DiagnosticId::missingType,
+                            expression->thenBranch->span,
+                            "value-producing if branch did not lower a value");
+                }
+            }
+            emitBranch(mergeBlock, expression->thenBranch->span);
+            hasMergePredecessor = true;
+        }
+
+        switchToBlock(elseBlock);
+        const auto elseValue = lowerExpression(expression->elseBranch);
+        if (!currentBlockTerminated()) {
+            if (resultAddress.has_value()) {
+                if (elseValue.has_value()) {
+                    emitStore(*elseValue, *resultAddress, expression->elseBranch->span);
+                } else {
+                    report(
+                            DiagnosticId::missingType,
+                            expression->span,
+                            "value-producing else branch did not lower a value");
+                }
+            }
+            emitBranch(mergeBlock, expression->span);
+            hasMergePredecessor = true;
+        }
+
+        switchToBlock(mergeBlock);
+        if (!hasMergePredecessor) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+            return std::nullopt;
+        }
+        if (!resultAddress.has_value()) return std::nullopt;
+        return emitValue(
+                ir::Opcode::load,
+                resultAddress->type,
+                ir::ValueCategory::value,
+                { resultAddress->id },
+                expression->span);
+    }
+
+    void lowerWhile(const syntax::WhileStmtSyntax::Ptr& statement) {
+        const auto headerBlock = createBlock("while.header");
+        const auto bodyBlock = createBlock("while.body");
+        const auto exitBlock = createBlock("while.exit");
+        emitBranch(headerBlock, statement->span);
+
+        switchToBlock(headerBlock);
+        const auto condition = lowerExpression(statement->condition);
+        if (condition.has_value()) {
+            emitConditionalBranch(
+                    *condition,
+                    bodyBlock,
+                    exitBlock,
+                    statement->condition->span);
+        } else {
+            emit(makeInstruction(ir::Opcode::unreachable, statement->condition->span));
+        }
+
+        switchToBlock(bodyBlock);
+        lowerBlock(statement->body);
+        if (!currentBlockTerminated()) emitBranch(headerBlock, statement->body->span);
+
+        switchToBlock(exitBlock);
+    }
+
     std::optional<ir::Value> lowerCall(const syntax::CallExprSyntax::Ptr& expression) {
         const auto target = model->callTarget(expression);
         if (!target.has_value() || !functions.contains(*target)) {
@@ -514,6 +611,35 @@ private:
         auto instruction = makeInstruction(ir::Opcode::store, span);
         instruction.operands = { value.id, address.id };
         instruction.symbol = symbol;
+        emit(std::move(instruction));
+    }
+
+    ir::BlockId createBlock(std::string name) {
+        auto& blocks = currentFunction().blocks;
+        const auto id = static_cast<ir::BlockId>(blocks.size());
+        blocks.push_back(ir::BasicBlock { id, std::move(name), {} });
+        return id;
+    }
+
+    void switchToBlock(ir::BlockId block) {
+        assert(block < currentFunction().blocks.size());
+        currentBlockId = block;
+    }
+
+    void emitBranch(ir::BlockId target, SourceSpan span) {
+        auto instruction = makeInstruction(ir::Opcode::branch, span);
+        instruction.targets = { target };
+        emit(std::move(instruction));
+    }
+
+    void emitConditionalBranch(
+            ir::Value condition,
+            ir::BlockId trueBlock,
+            ir::BlockId falseBlock,
+            SourceSpan span) {
+        auto instruction = makeInstruction(ir::Opcode::conditionalBranch, span);
+        instruction.operands = { condition.id };
+        instruction.targets = { trueBlock, falseBlock };
         emit(std::move(instruction));
     }
 

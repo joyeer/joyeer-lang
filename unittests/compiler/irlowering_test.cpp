@@ -128,18 +128,58 @@ print(value: number)
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 1u);
 }
 
-TEST_F(IRLoweringTest, ReportsUnsupportedControlFlowWithoutInvalidIRClaims) {
+TEST_F(IRLoweringTest, LowersIfExpressionValuesThroughMergeSlots) {
     lower(R"JOYEER(func choose(flag: Bool): Int {
 return if flag { 1 } else { 2 }
 }
 )JOYEER");
 
-    ASSERT_FALSE(result.succeeded());
-    ASSERT_EQ(result.diagnostics.size(), 1u)
-            << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(
-            result.diagnostics[0].id,
-            joyeer::lowering::DiagnosticId::unsupportedSyntax);
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& choose = function("choose");
+    EXPECT_EQ(choose.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::branch), 2u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::stackAllocate), 2u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersIfBranchesThatReturnEarly) {
+    lower(R"JOYEER(func choose(flag: Bool): Int {
+if flag { return 1 }
+return 2
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& choose = function("choose");
+    EXPECT_EQ(choose.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::returnValue), 2u);
+}
+
+TEST_F(IRLoweringTest, LowersWhileHeadersBodiesExitsAndBackEdges) {
+    lower(R"JOYEER(func count(limit: Int): Int {
+var value = 0
+while value < limit {
+value = value + 1
+}
+return value
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& count = function("count");
+    EXPECT_EQ(count.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::branch), 2u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::less), 1u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::returnValue), 1u);
 }
 
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
