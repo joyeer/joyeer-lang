@@ -3,6 +3,7 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,10 +29,27 @@ typedef struct DictionaryHeader {
     JoyeerDestroyValueFn destroyValue;
 } DictionaryHeader;
 
+static _Atomic int64_t activeAllocations = 0;
+
 static void* checkedAllocate(size_t size) {
     void* value = malloc(size == 0 ? 1 : size);
     if (value == NULL) joyeer_panic("out of memory");
+    atomic_fetch_add_explicit(&activeAllocations, 1, memory_order_relaxed);
     return value;
+}
+
+static void checkedFree(void* value) {
+    if (value == NULL) return;
+    free(value);
+    const int64_t previous = atomic_fetch_sub_explicit(
+            &activeAllocations,
+            1,
+            memory_order_relaxed);
+    if (previous <= 0) joyeer_panic("runtime allocation counter underflow");
+}
+
+int64_t joyeer_runtime_active_allocations(void) {
+    return atomic_load_explicit(&activeAllocations, memory_order_relaxed);
 }
 
 static size_t checkedByteCount(int64_t count, int64_t stride) {
@@ -161,7 +179,7 @@ uint8_t joyeer_string_byte_at(JoyeerString value, int64_t index) {
 
 void joyeer_string_destroy(JoyeerString* value) {
     if (value == NULL) return;
-    free((void*)value->data);
+    checkedFree((void*)value->data);
     value->data = NULL;
     value->count = 0;
 }
@@ -266,7 +284,7 @@ void joyeer_array_destroy(JoyeerArray* array) {
                     checkedByteCount(index - 1, header->elementSize));
         }
     }
-    free(header);
+    checkedFree(header);
     array->data = NULL;
     array->count = 0;
     array->capacity = 0;
@@ -459,7 +477,7 @@ void joyeer_dictionary_destroy(JoyeerDictionary* dictionary) {
         }
         if (header->destroyKey != NULL) header->destroyKey(entry);
     }
-    free(header);
+    checkedFree(header);
     dictionary->data = NULL;
     dictionary->count = 0;
     dictionary->capacity = 0;

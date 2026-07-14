@@ -15,6 +15,7 @@ enum class DiagnosticId {
     missingType,
     missingSymbol,
     missingReturn,
+    ownershipViolation,
     verificationFailed,
 };
 

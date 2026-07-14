@@ -418,6 +418,72 @@ TEST_F(IRLoweringTest, LowersTheCompleteJsonParserMvpFixture) {
     EXPECT_GE(opcodeCount(function("parseValue"), joyeer::ir::Opcode::constructEnum), 7u);
 }
 
+TEST_F(IRLoweringTest, ClonesBorrowedValuesAndDestroysOwningLocals) {
+    lower(R"JOYEER(func main() {
+let first = "static"
+let second = first
+let values: [String] = [second]
+print(value: values.count)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& main = function("main");
+    EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::copyValue), 3u);
+    EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 3u);
+
+    const auto& instructions = main.blocks[0].instructions;
+    const auto returnInstruction = std::find_if(
+            instructions.begin(),
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::returnVoid;
+            });
+    ASSERT_NE(returnInstruction, instructions.end());
+    ASSERT_NE(returnInstruction, instructions.begin());
+    EXPECT_EQ((returnInstruction - 1)->opcode, joyeer::ir::Opcode::destroy);
+}
+
+TEST_F(IRLoweringTest, CleansAllActiveScopesBeforeEarlyReturn) {
+    lower(R"JOYEER(func run(flag: Bool) {
+let text = "owned"
+if flag { return }
+let values: [String] = [text]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::destroy), 3u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 2u);
+    for (const auto& block : run.blocks) {
+        for (size_t index = 0; index < block.instructions.size(); ++index) {
+            if (block.instructions[index].opcode != joyeer::ir::Opcode::returnVoid) continue;
+            ASSERT_GT(index, 0u);
+            EXPECT_EQ(block.instructions[index - 1].opcode, joyeer::ir::Opcode::destroy);
+        }
+    }
+}
+
+TEST_F(IRLoweringTest, TransfersOwnedReturnValuesToTheCaller) {
+    lower(R"JOYEER(func build(): String {
+let text = "left" + "right"
+return text
+}
+func main() {
+let value = build()
+print(value: value)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& build = function("build");
+    const auto& main = function("main");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::destroy), 1u);
+    EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 1u);
+}
+
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
     lower(R"JOYEER(func incomplete(value: Int): Int {
 let copy = value

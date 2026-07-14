@@ -74,6 +74,7 @@ TEST(NativeRuntimeTest, ConcatenatesComparesAndIndexesStrings) {
     joyeer_string_destroy(&joined);
     EXPECT_EQ(joined.data, nullptr);
     EXPECT_EQ(joined.count, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
@@ -92,6 +93,7 @@ TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
 
     joyeer_string_destroy_abi(&second);
     joyeer_string_destroy_abi(&first);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
@@ -115,6 +117,7 @@ TEST(NativeRuntimeTest, CopiesIndexesAndMutatesArrays) {
 
     joyeer_array_destroy(&array);
     EXPECT_EQ(array.data, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
@@ -145,6 +148,7 @@ TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
     joyeer_array_destroy_abi(&second);
     joyeer_array_destroy_abi(&first);
     EXPECT_EQ(destroyCount, 4);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 TEST(NativeRuntimeDeathTest, TrapsArrayBoundsFailures) {
@@ -183,6 +187,7 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByPrimitiveKey) {
 
     joyeer_dictionary_destroy(&dictionary);
     EXPECT_EQ(dictionary.data, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 struct StringEntry {
@@ -211,6 +216,7 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
     ASSERT_NE(value, nullptr);
     EXPECT_EQ(*value, 42);
     joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 struct OwnedStringEntry {
@@ -260,6 +266,7 @@ TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
     joyeer_dictionary_destroy_abi(&second);
     joyeer_dictionary_destroy_abi(&first);
     EXPECT_EQ(destroyCount, 4);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
 } // namespace

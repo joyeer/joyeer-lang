@@ -40,6 +40,7 @@ enum JoyeerDictionaryKeyKind {
 };
 
 JOYEER_NORETURN void joyeer_panic(const char* message);
+int64_t joyeer_runtime_active_allocations(void);
 
 int64_t joyeer_checked_add_int(int64_t left, int64_t right);
 int64_t joyeer_checked_sub_int(int64_t left, int64_t right);

@@ -4,6 +4,7 @@
 #include <cassert>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace joyeer::lowering {
@@ -37,17 +38,159 @@ public:
     }
 
 private:
+    enum class ValueOwnership {
+        trivial,
+        borrowed,
+        owned,
+    };
+
+    enum class CleanupKind {
+        storage,
+        temporary,
+    };
+
+    struct Cleanup {
+        CleanupKind kind;
+        ir::Value value;
+    };
+
+    struct ScopeFrame {
+        std::vector<Cleanup> cleanups;
+    };
+
     typing::TypeCheckedModel::Ptr model;
     std::shared_ptr<ir::Module> module;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
     std::unordered_map<semantic::SymbolId, ir::Value> slots;
+    std::unordered_map<ir::ValueId, ValueOwnership> ownership;
+    std::unordered_set<ir::ValueId> liveOwnedTemporaries;
+    std::vector<ScopeFrame> scopes;
     ir::FunctionId currentFunctionId = ir::invalidFunctionId;
     ir::BlockId currentBlockId = ir::invalidBlockId;
     ir::ValueId nextValue = 0;
 
     void report(DiagnosticId id, SourceSpan span, std::string message) {
         diagnostics.push_back(Diagnostic { id, span, std::move(message) });
+    }
+
+    bool requiresDestroy(typing::TypeId type) const {
+        return ir::requiresDestruction(*module, type);
+    }
+
+    void pushScope() {
+        scopes.push_back(ScopeFrame {});
+    }
+
+    void registerOwnedStorage(ir::Value address) {
+        assert(!scopes.empty());
+        if (requiresDestroy(address.type)) {
+            scopes.back().cleanups.push_back(Cleanup { CleanupKind::storage, address });
+        }
+    }
+
+    void recordValue(ir::Value value, ValueOwnership valueOwnership) {
+        if (!requiresDestroy(value.type)) valueOwnership = ValueOwnership::trivial;
+        ownership[value.id] = valueOwnership;
+        if (valueOwnership == ValueOwnership::owned) {
+            assert(!scopes.empty());
+            liveOwnedTemporaries.insert(value.id);
+            scopes.back().cleanups.push_back(Cleanup { CleanupKind::temporary, value });
+        }
+    }
+
+    ValueOwnership ownershipOf(ir::Value value) const {
+        if (!requiresDestroy(value.type)) return ValueOwnership::trivial;
+        const auto found = ownership.find(value.id);
+        return found == ownership.end() ? ValueOwnership::borrowed : found->second;
+    }
+
+    void adoptInParentScope(ir::Value value) {
+        if (!requiresDestroy(value.type)) return;
+        assert(!scopes.empty());
+        liveOwnedTemporaries.insert(value.id);
+        ownership[value.id] = ValueOwnership::owned;
+        scopes.back().cleanups.push_back(Cleanup { CleanupKind::temporary, value });
+    }
+
+    std::optional<ir::Value> acquireOwned(ir::Value value, SourceSpan span) {
+        if (!requiresDestroy(value.type)) return value;
+        if (ownershipOf(value) == ValueOwnership::owned) {
+            if (!liveOwnedTemporaries.erase(value.id)) {
+                report(
+                        DiagnosticId::ownershipViolation,
+                        span,
+                        "owned value is used after its ownership was transferred");
+                return std::nullopt;
+            }
+            return value;
+        }
+        auto copy = emitValue(
+                ir::Opcode::copyValue,
+                value.type,
+                ir::ValueCategory::value,
+                { value.id },
+                span);
+        liveOwnedTemporaries.erase(copy.id);
+        return copy;
+    }
+
+    void emitRawStore(
+            ir::Value value,
+            ir::Value address,
+            SourceSpan span,
+            std::optional<semantic::SymbolId> symbol = std::nullopt) {
+        auto instruction = makeInstruction(ir::Opcode::store, span);
+        instruction.operands = { value.id, address.id };
+        instruction.symbol = symbol;
+        emit(std::move(instruction));
+    }
+
+    void emitDestroyStorage(ir::Value address, SourceSpan span) {
+        if (!requiresDestroy(address.type)) return;
+        auto instruction = makeInstruction(ir::Opcode::destroy, span);
+        instruction.operands = { address.id };
+        emit(std::move(instruction));
+    }
+
+    void emitDestroyTemporary(ir::Value value, SourceSpan span) {
+        const auto address = emitValue(
+                ir::Opcode::stackAllocate,
+                value.type,
+                ir::ValueCategory::address,
+                {},
+                span);
+        emitRawStore(value, address, span);
+        emitDestroyStorage(address, span);
+    }
+
+    void emitScopeCleanup(const ScopeFrame& scope, SourceSpan span, bool mutateState) {
+        for (auto cleanup = scope.cleanups.rbegin(); cleanup != scope.cleanups.rend(); ++cleanup) {
+            if (cleanup->kind == CleanupKind::storage) {
+                emitDestroyStorage(cleanup->value, span);
+                continue;
+            }
+            if (!liveOwnedTemporaries.contains(cleanup->value.id)) continue;
+            emitDestroyTemporary(cleanup->value, span);
+            if (mutateState) liveOwnedTemporaries.erase(cleanup->value.id);
+        }
+    }
+
+    void cleanupAndPopScope(SourceSpan span) {
+        assert(!scopes.empty());
+        emitScopeCleanup(scopes.back(), span, true);
+        scopes.pop_back();
+    }
+
+    void discardScopeAfterTerminator() {
+        assert(!scopes.empty());
+        scopes.pop_back();
+    }
+
+    void emitAllScopeCleanupForReturn(SourceSpan span) {
+        for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+            emitScopeCleanup(*scope, span, false);
+        }
     }
 
     void snapshotTypes() {
@@ -311,12 +454,17 @@ private:
         currentFunctionId = functionId;
         currentBlockId = 0;
         slots.clear();
+        ownership.clear();
+        liveOwnedTemporaries.clear();
+        scopes.clear();
+        pushScope();
         auto& function = currentFunction();
         function.blocks.push_back(ir::BasicBlock { 0, "entry", {} });
         nextValue = static_cast<ir::ValueId>(function.parameters.size());
         const auto diagnosticStart = diagnostics.size();
 
         for (const auto& parameter : function.parameters) {
+            recordValue(parameter.value, ValueOwnership::borrowed);
             if (parameter.isMutable) {
                 if (parameter.symbol.has_value()) slots[*parameter.symbol] = parameter.value;
                 continue;
@@ -328,12 +476,16 @@ private:
                     {},
                     parameter.span,
                     parameter.symbol);
-            emitStore(parameter.value, address, parameter.span, parameter.symbol);
+            emitRawStore(parameter.value, address, parameter.span, parameter.symbol);
             if (parameter.symbol.has_value()) slots[*parameter.symbol] = address;
         }
 
         lowerBlock(declaration->body);
-        if (currentBlockTerminated()) return;
+        if (currentBlockTerminated()) {
+            discardScopeAfterTerminator();
+            return;
+        }
+        cleanupAndPopScope(declaration->span);
         if (function.returnsValue) {
             if (diagnostics.size() == diagnosticStart) {
                 report(
@@ -353,6 +505,7 @@ private:
 
     std::optional<ir::Value> lowerBlock(const syntax::BlockExprSyntax::Ptr& block) {
         if (block == nullptr) return std::nullopt;
+        pushScope();
         std::optional<ir::Value> result;
         for (const auto& item : block->items) {
             if (currentBlockTerminated()) break;
@@ -365,6 +518,21 @@ private:
             } else if (isExpressionKind(item->kind)) {
                 result = lowerExpression(std::static_pointer_cast<syntax::ExprSyntax>(item));
             }
+        }
+        if (currentBlockTerminated()) {
+            discardScopeAfterTerminator();
+            return std::nullopt;
+        }
+        if (result.has_value() && requiresDestroy(result->type)) {
+            result = acquireOwned(*result, block->span);
+            if (!result.has_value()) {
+                cleanupAndPopScope(block->span);
+                return std::nullopt;
+            }
+        }
+        cleanupAndPopScope(block->span);
+        if (result.has_value() && requiresDestroy(result->type)) {
+            adoptInParentScope(*result);
         }
         return result;
     }
@@ -388,7 +556,7 @@ private:
                     "bindings without initializers are not supported by primitive IR lowering");
             return;
         }
-        const auto initializer = lowerExpression(declaration->initializer);
+        auto initializer = lowerExpression(declaration->initializer);
         if (!initializer.has_value()) return;
         const auto address = emitValue(
                 ir::Opcode::stackAllocate,
@@ -397,7 +565,12 @@ private:
                 {},
                 declaration->span,
                 symbol);
-        emitStore(*initializer, address, declaration->span, symbol);
+            if (requiresDestroy(*type)) {
+                initializer = acquireOwned(*initializer, declaration->initializer->span);
+                if (!initializer.has_value()) return;
+            }
+            emitRawStore(*initializer, address, declaration->span, symbol);
+            registerOwnedStorage(address);
         slots[*symbol] = address;
     }
 
@@ -498,6 +671,11 @@ private:
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
+        recordValue(
+            result,
+            expression->literal->kind == stringLiteral
+                ? ValueOwnership::borrowed
+                : ValueOwnership::trivial);
         return result;
     }
 
@@ -586,9 +764,16 @@ private:
 
     void lowerAssignment(const syntax::AssignmentExprSyntax::Ptr& expression) {
         const auto address = lowerAddress(expression->target);
-        const auto value = lowerExpression(expression->value);
+        auto value = lowerExpression(expression->value);
         if (address.has_value() && value.has_value()) {
-            emitStore(*value, *address, expression->span);
+            value = coerce(*value, address->type, expression->value->span);
+            if (!value.has_value()) return;
+            if (requiresDestroy(address->type)) {
+                value = acquireOwned(*value, expression->value->span);
+                if (!value.has_value()) return;
+                emitDestroyStorage(*address, expression->target->span);
+            }
+            emitRawStore(*value, *address, expression->span);
         }
     }
 
@@ -766,12 +951,17 @@ private:
         for (const auto& element : expression->elements) {
             const auto value = lowerExpression(element);
             if (!value.has_value()) return std::nullopt;
-            const auto converted = coerce(*value, arrayType->arguments[0], element->span);
+            auto converted = coerce(*value, arrayType->arguments[0], element->span);
             if (!converted.has_value()) return std::nullopt;
+            if (requiresDestroy(arrayType->arguments[0])) {
+                converted = acquireOwned(*converted, element->span);
+                if (!converted.has_value()) return std::nullopt;
+            }
             instruction.operands.push_back(converted->id);
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
+        recordValue(result, ValueOwnership::owned);
         return result;
     }
 
@@ -798,14 +988,23 @@ private:
             const auto key = lowerExpression(entry->key);
             const auto value = lowerExpression(entry->value);
             if (!key.has_value() || !value.has_value()) return std::nullopt;
-            const auto convertedKey = coerce(
+                auto convertedKey = coerce(
                     *key,
                     dictionaryType->arguments[0],
                     entry->key->span);
-            const auto convertedValue = coerce(
+            auto convertedValue = coerce(
                     *value,
                     dictionaryType->arguments[1],
                     entry->value->span);
+            if (!convertedKey.has_value() || !convertedValue.has_value()) {
+                return std::nullopt;
+            }
+            if (requiresDestroy(dictionaryType->arguments[0])) {
+                convertedKey = acquireOwned(*convertedKey, entry->key->span);
+            }
+            if (requiresDestroy(dictionaryType->arguments[1])) {
+                convertedValue = acquireOwned(*convertedValue, entry->value->span);
+            }
             if (!convertedKey.has_value() || !convertedValue.has_value()) {
                 return std::nullopt;
             }
@@ -814,6 +1013,7 @@ private:
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
+        recordValue(result, ValueOwnership::owned);
         return result;
     }
 
@@ -885,12 +1085,17 @@ private:
         instruction.result = makeValue(type, ir::ValueCategory::value);
         instruction.symbol = caseSymbol;
         for (size_t index = 0; index < payloads.size(); ++index) {
-            const auto converted = coerce(payloads[index], enumCase->payloadTypes[index], span);
+            auto converted = coerce(payloads[index], enumCase->payloadTypes[index], span);
             if (!converted.has_value()) return std::nullopt;
+            if (requiresDestroy(enumCase->payloadTypes[index])) {
+                converted = acquireOwned(*converted, span);
+                if (!converted.has_value()) return std::nullopt;
+            }
             instruction.operands.push_back(converted->id);
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
+        recordValue(result, ValueOwnership::owned);
         return result;
     }
 
@@ -929,9 +1134,13 @@ private:
         for (size_t index = 0; index < expression->arms.size(); ++index) {
             const auto& arm = expression->arms[index];
             switchToBlock(armBlocks[index]);
+            pushScope();
             bindPattern(arm->pattern, *scrutinee);
             const auto value = lowerExpression(arm->body);
-            if (currentBlockTerminated()) continue;
+            if (currentBlockTerminated()) {
+                discardScopeAfterTerminator();
+                continue;
+            }
             if (resultAddress.has_value()) {
                 if (value.has_value()) {
                     emitStore(*value, *resultAddress, arm->body->span);
@@ -942,6 +1151,7 @@ private:
                             "value-producing match arm did not lower a value");
                 }
             }
+            cleanupAndPopScope(arm->span);
             emitBranch(mergeBlock, arm->span);
             hasMergePredecessor = true;
         }
@@ -952,6 +1162,7 @@ private:
             return std::nullopt;
         }
         if (!resultAddress.has_value()) return std::nullopt;
+        registerOwnedStorage(*resultAddress);
         return emitValue(
                 ir::Opcode::load,
                 resultAddress->type,
@@ -1053,7 +1264,7 @@ private:
                     {},
                     pattern->span,
                     symbol);
-            emitStore(value, address, pattern->span, symbol);
+                    emitRawStore(value, address, pattern->span, symbol);
             slots[*symbol] = address;
             return;
         }
@@ -1102,6 +1313,7 @@ private:
 
         bool hasMergePredecessor = false;
         switchToBlock(thenBlock);
+        pushScope();
         const auto thenValue = lowerBlock(expression->thenBranch);
         if (!currentBlockTerminated()) {
             if (resultAddress.has_value()) {
@@ -1114,11 +1326,15 @@ private:
                             "value-producing if branch did not lower a value");
                 }
             }
+            cleanupAndPopScope(expression->thenBranch->span);
             emitBranch(mergeBlock, expression->thenBranch->span);
             hasMergePredecessor = true;
+        } else {
+            discardScopeAfterTerminator();
         }
 
         switchToBlock(elseBlock);
+        pushScope();
         const auto elseValue = lowerExpression(expression->elseBranch);
         if (!currentBlockTerminated()) {
             if (resultAddress.has_value()) {
@@ -1131,8 +1347,11 @@ private:
                             "value-producing else branch did not lower a value");
                 }
             }
+            cleanupAndPopScope(expression->span);
             emitBranch(mergeBlock, expression->span);
             hasMergePredecessor = true;
+        } else {
+            discardScopeAfterTerminator();
         }
 
         switchToBlock(mergeBlock);
@@ -1141,6 +1360,7 @@ private:
             return std::nullopt;
         }
         if (!resultAddress.has_value()) return std::nullopt;
+        registerOwnedStorage(*resultAddress);
         return emitValue(
                 ir::Opcode::load,
                 resultAddress->type,
@@ -1156,20 +1376,29 @@ private:
         emitBranch(headerBlock, statement->span);
 
         switchToBlock(headerBlock);
+        pushScope();
         const auto condition = lowerExpression(statement->condition);
         if (condition.has_value()) {
+            cleanupAndPopScope(statement->condition->span);
             emitConditionalBranch(
                     *condition,
                     bodyBlock,
                     exitBlock,
                     statement->condition->span);
         } else {
+            cleanupAndPopScope(statement->condition->span);
             emit(makeInstruction(ir::Opcode::unreachable, statement->condition->span));
         }
 
         switchToBlock(bodyBlock);
+        pushScope();
         lowerBlock(statement->body);
-        if (!currentBlockTerminated()) emitBranch(headerBlock, statement->body->span);
+        if (!currentBlockTerminated()) {
+            cleanupAndPopScope(statement->body->span);
+            emitBranch(headerBlock, statement->body->span);
+        } else {
+            discardScopeAfterTerminator();
+        }
 
         switchToBlock(exitBlock);
     }
@@ -1241,6 +1470,13 @@ private:
         }
         const auto result = instruction.result;
         emit(std::move(instruction));
+        if (result.has_value()) {
+            recordValue(
+                *result,
+                requiresDestroy(result->type)
+                    ? ValueOwnership::owned
+                    : ValueOwnership::trivial);
+        }
         return result;
     }
 
@@ -1320,20 +1556,26 @@ private:
         instruction.result = makeValue(*type, ir::ValueCategory::value);
         instruction.symbol = structure->symbol;
         for (size_t index = 0; index < fieldValues.size(); ++index) {
-            const auto converted = coerce(
+            auto converted = coerce(
                 *fieldValues[index],
                 structure->fields[index].type,
                 expression->span);
             if (!converted.has_value()) return std::nullopt;
+            if (requiresDestroy(structure->fields[index].type)) {
+                converted = acquireOwned(*converted, expression->span);
+                if (!converted.has_value()) return std::nullopt;
+            }
             instruction.operands.push_back(converted->id);
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
+        recordValue(result, ValueOwnership::owned);
         return result;
     }
 
     void lowerReturn(const syntax::ReturnExprSyntax::Ptr& expression) {
         if (expression->value == nullptr) {
+            emitAllScopeCleanupForReturn(expression->span);
             emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
             return;
         }
@@ -1341,6 +1583,11 @@ private:
         if (!value.has_value()) return;
         value = coerce(*value, currentFunction().resultType, expression->value->span);
         if (!value.has_value()) return;
+        if (requiresDestroy(value->type)) {
+            value = acquireOwned(*value, expression->value->span);
+            if (!value.has_value()) return;
+        }
+        emitAllScopeCleanupForReturn(expression->span);
         auto instruction = makeInstruction(ir::Opcode::returnValue, expression->span);
         instruction.operands = { value->id };
         emit(std::move(instruction));
@@ -1359,6 +1606,14 @@ private:
         instruction.symbol = symbol;
         const auto result = *instruction.result;
         emit(std::move(instruction));
+        if (category == ir::ValueCategory::value) {
+            auto valueOwnership = ValueOwnership::borrowed;
+            if (opcode == ir::Opcode::copyValue || opcode == ir::Opcode::take ||
+                (opcode == ir::Opcode::add && requiresDestroy(type))) {
+                valueOwnership = ValueOwnership::owned;
+            }
+            recordValue(result, valueOwnership);
+        }
         return result;
     }
 
@@ -1367,12 +1622,13 @@ private:
             ir::Value address,
             SourceSpan span,
             std::optional<semantic::SymbolId> symbol = std::nullopt) {
-        const auto converted = coerce(value, address.type, span);
+        auto converted = coerce(value, address.type, span);
         if (!converted.has_value()) return;
-        auto instruction = makeInstruction(ir::Opcode::store, span);
-        instruction.operands = { converted->id, address.id };
-        instruction.symbol = symbol;
-        emit(std::move(instruction));
+        if (requiresDestroy(address.type)) {
+            converted = acquireOwned(*converted, span);
+            if (!converted.has_value()) return;
+        }
+        emitRawStore(*converted, address, span, symbol);
     }
 
     std::optional<ir::Value> coerce(
@@ -1510,6 +1766,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::missingType: return "ir-lowering.missing-type";
         case DiagnosticId::missingSymbol: return "ir-lowering.missing-symbol";
         case DiagnosticId::missingReturn: return "ir-lowering.missing-return";
+        case DiagnosticId::ownershipViolation: return "ir-lowering.ownership-violation";
         case DiagnosticId::verificationFailed: return "ir-lowering.verification-failed";
     }
     return "ir-lowering.unknown";
