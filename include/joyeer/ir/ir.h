@@ -43,6 +43,9 @@ enum class Opcode {
     stackAllocate,
     load,
     store,
+    copyValue,
+    take,
+    destroy,
 
     add,
     subtract,
@@ -212,6 +215,7 @@ public:
     [[nodiscard]] VerificationResult verify(const Module& module) const;
 };
 
+[[nodiscard]] bool requiresDestruction(const Module& module, TypeId type);
 [[nodiscard]] bool isTerminator(Opcode opcode);
 [[nodiscard]] const char* opcodeName(Opcode opcode);
 [[nodiscard]] const char* verificationErrorName(VerificationErrorId id);

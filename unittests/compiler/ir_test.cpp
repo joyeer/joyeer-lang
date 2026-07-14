@@ -205,4 +205,100 @@ TEST(IRModelTest, ReportsCallSignatureMismatches) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::callMismatch));
 }
 
+TEST(IRModelTest, ClassifiesNestedTypesThatRequireDestruction) {
+    Module module;
+    module.types = {
+        TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
+        TypeName { 1, "Int", joyeer::typing::TypeKind::integer },
+        TypeName { 2, "String", joyeer::typing::TypeKind::string },
+        TypeName { 3, "Box", joyeer::typing::TypeKind::structure, 30 },
+        TypeName { 4, "MaybeBox", joyeer::typing::TypeKind::enumeration, 40 },
+    };
+    module.structures = {
+        StructureDefinition {
+            30,
+            3,
+            "Box",
+            { FieldDefinition { 31, "text", 2, false } },
+        },
+    };
+    module.enumerations = {
+        EnumerationDefinition {
+            40,
+            4,
+            "MaybeBox",
+            {
+                EnumCaseDefinition { 41, "None", {} },
+                EnumCaseDefinition { 42, "Some", { 3 } },
+            },
+        },
+    };
+
+    EXPECT_FALSE(requiresDestruction(module, 0));
+    EXPECT_FALSE(requiresDestruction(module, 1));
+    EXPECT_TRUE(requiresDestruction(module, 2));
+    EXPECT_TRUE(requiresDestruction(module, 3));
+    EXPECT_TRUE(requiresDestruction(module, 4));
+}
+
+TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {
+    Module module;
+    module.sourceName = "ownership.joyeer";
+    module.types = {
+        TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
+        TypeName { 1, "String", joyeer::typing::TypeKind::string },
+    };
+    Function function;
+    function.id = 0;
+    function.name = "ownership";
+    function.resultType = 0;
+    function.entry = 0;
+    function.blocks = {
+        BasicBlock {
+            0,
+            "entry",
+            {
+                Instruction {
+                    Opcode::stringConstant,
+                    Value { 0, 1, ValueCategory::value },
+                    {}, {}, std::nullopt, std::nullopt, 0, "text",
+                },
+                Instruction {
+                    Opcode::copyValue,
+                    Value { 1, 1, ValueCategory::value },
+                    { 0 },
+                },
+                Instruction {
+                    Opcode::stackAllocate,
+                    Value { 2, 1, ValueCategory::address },
+                },
+                Instruction { Opcode::store, std::nullopt, { 1, 2 } },
+                Instruction {
+                    Opcode::take,
+                    Value { 3, 1, ValueCategory::value },
+                    { 2 },
+                },
+                Instruction { Opcode::store, std::nullopt, { 3, 2 } },
+                Instruction { Opcode::destroy, std::nullopt, { 2 } },
+                Instruction { Opcode::returnVoid },
+            },
+        },
+    };
+    module.functions.push_back(std::move(function));
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(verification.succeeded()) << dump(verification);
+}
+
+TEST(IRModelTest, RejectsDestroyingTrivialOrNonAddressValues) {
+    auto module = validAddModule();
+    auto& block = module.functions[0].blocks[0];
+    block.instructions.insert(
+            block.instructions.end() - 1,
+            Instruction { Opcode::destroy, std::nullopt, { 0 } });
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
+}
+
 } // namespace

@@ -4,6 +4,7 @@
 #include <functional>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace joyeer::ir {
 
@@ -17,6 +18,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::byteConstant:
         case Opcode::stackAllocate:
         case Opcode::load:
+        case Opcode::copyValue:
+        case Opcode::take:
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:
@@ -110,6 +113,71 @@ std::string patternText(
 }
 
 } // namespace
+
+bool requiresDestruction(const Module& module, TypeId requestedType) {
+    std::unordered_map<TypeId, const TypeName*> types;
+    std::unordered_map<TypeId, const StructureDefinition*> structures;
+    std::unordered_map<TypeId, const EnumerationDefinition*> enumerations;
+    for (const auto& type : module.types) types.emplace(type.id, &type);
+    for (const auto& structure : module.structures) {
+        structures.emplace(structure.type, &structure);
+    }
+    for (const auto& enumeration : module.enumerations) {
+        enumerations.emplace(enumeration.type, &enumeration);
+    }
+
+    std::unordered_map<TypeId, bool> memo;
+    std::unordered_set<TypeId> visiting;
+    std::function<bool(TypeId)> visit = [&](TypeId id) {
+        const auto cached = memo.find(id);
+        if (cached != memo.end()) return cached->second;
+        const auto found = types.find(id);
+        if (found == types.end()) return false;
+        if (!visiting.insert(id).second) return true;
+
+        bool result = false;
+        switch (found->second->kind) {
+            case typing::TypeKind::string:
+            case typing::TypeKind::array:
+            case typing::TypeKind::dictionary:
+                result = true;
+                break;
+            case typing::TypeKind::structure: {
+                const auto structure = structures.find(id);
+                if (structure != structures.end()) {
+                    result = std::any_of(
+                            structure->second->fields.begin(),
+                            structure->second->fields.end(),
+                            [&visit](const auto& field) { return visit(field.type); });
+                }
+                break;
+            }
+            case typing::TypeKind::enumeration:
+            case typing::TypeKind::optional:
+            case typing::TypeKind::result: {
+                const auto enumeration = enumerations.find(id);
+                if (enumeration != enumerations.end()) {
+                    result = std::any_of(
+                            enumeration->second->cases.begin(),
+                            enumeration->second->cases.end(),
+                            [&visit](const auto& enumCase) {
+                                return std::any_of(
+                                        enumCase.payloadTypes.begin(),
+                                        enumCase.payloadTypes.end(),
+                                        [&visit](TypeId payload) { return visit(payload); });
+                            });
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        visiting.erase(id);
+        memo.emplace(id, result);
+        return result;
+    };
+    return visit(requestedType);
+}
 
 VerificationResult Verifier::verify(const Module& module) const {
     VerificationResult result;
@@ -508,6 +576,46 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     block.id,
                                     location,
                                     "stored value and destination address types must match");
+                        }
+                        break;
+                    case Opcode::copyValue:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value() &&
+                            (operands[0]->category != ValueCategory::value ||
+                             instruction.result->category != ValueCategory::value ||
+                             operands[0]->type != instruction.result->type)) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId,
+                                    block.id,
+                                    location,
+                                    "copied value and result types must match");
+                        }
+                        break;
+                    case Opcode::take:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value() &&
+                            (operands[0]->category != ValueCategory::address ||
+                             instruction.result->category != ValueCategory::value ||
+                             operands[0]->type != instruction.result->type)) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId,
+                                    block.id,
+                                    location,
+                                    "taken storage and result types must match");
+                        }
+                        break;
+                    case Opcode::destroy:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            (operands[0]->category != ValueCategory::address ||
+                             !requiresDestruction(module, operands[0]->type))) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId,
+                                    block.id,
+                                    location,
+                                    "destroy requires addressable nontrivial storage");
                         }
                         break;
                     case Opcode::add:
@@ -975,6 +1083,9 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::stackAllocate: return "alloc_stack";
         case Opcode::load: return "load";
         case Opcode::store: return "store";
+        case Opcode::copyValue: return "copy";
+        case Opcode::take: return "take";
+        case Opcode::destroy: return "destroy";
         case Opcode::add: return "add";
         case Opcode::subtract: return "sub";
         case Opcode::multiply: return "mul";
@@ -1146,6 +1257,9 @@ std::string dump(const Module& module) {
                     case Opcode::unreachable:
                         break;
                     case Opcode::load:
+                    case Opcode::copyValue:
+                    case Opcode::take:
+                    case Opcode::destroy:
                     case Opcode::returnValue:
                         if (!instruction.operands.empty()) {
                             out << ' ' << valueName(instruction.operands[0]);
