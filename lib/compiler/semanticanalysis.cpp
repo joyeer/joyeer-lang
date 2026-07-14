@@ -3,13 +3,14 @@
 #include <algorithm>
 #include <cassert>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace joyeer::analysis {
 
 namespace {
 
-class Builder {
+class ControlFlowBuilder {
 public:
     Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
         assert(checkedModel != nullptr);
@@ -239,6 +240,390 @@ private:
     }
 };
 
+struct InitializationState {
+    std::unordered_set<semantic::SymbolId> initialized;
+    bool reachable = true;
+};
+
+class InitializationBuilder {
+public:
+    Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
+        assert(checkedModel != nullptr);
+        model = checkedModel;
+        const auto& root = model->semanticModel()->root();
+        if (root != nullptr) {
+            for (const auto& item : root->items) {
+                if (item->kind == syntax::Kind::functionDecl) {
+                    analyzeFunction(
+                            std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
+                }
+            }
+        }
+        return Result { std::move(diagnostics) };
+    }
+
+private:
+    typing::TypeCheckedModel::Ptr model;
+    std::vector<Diagnostic> diagnostics;
+    std::unordered_set<semantic::SymbolId> tracked;
+
+    void analyzeFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        tracked.clear();
+        InitializationState state;
+        for (const auto& parameter : declaration->parameters) {
+            const auto symbol = model->semanticModel()->declaredSymbol(parameter);
+            if (!symbol.has_value()) continue;
+            tracked.insert(*symbol);
+            state.initialized.insert(*symbol);
+        }
+        analyzeBlock(declaration->body, state);
+    }
+
+    void analyzeBlock(
+            const syntax::BlockExprSyntax::Ptr& block,
+            InitializationState& state) {
+        if (block == nullptr) return;
+        std::vector<semantic::SymbolId> locals;
+        for (const auto& item : block->items) {
+            if (!state.reachable) break;
+            if (item->kind == syntax::Kind::bindingDecl) {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::BindingDeclSyntax>(item);
+                const auto symbol = model->semanticModel()->declaredSymbol(declaration);
+                if (symbol.has_value()) {
+                    tracked.insert(*symbol);
+                    locals.push_back(*symbol);
+                }
+                analyzeExpression(declaration->initializer, state);
+                if (state.reachable && declaration->initializer != nullptr &&
+                    symbol.has_value()) {
+                    state.initialized.insert(*symbol);
+                }
+                continue;
+            }
+            if (item->kind == syntax::Kind::whileStmt) {
+                analyzeWhile(std::static_pointer_cast<syntax::WhileStmtSyntax>(item), state);
+                continue;
+            }
+            if (item->kind == syntax::Kind::blockExpr) {
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state);
+                continue;
+            }
+            if (isExpressionKind(item->kind)) {
+                analyzeExpression(std::static_pointer_cast<syntax::ExprSyntax>(item), state);
+            }
+        }
+        for (const auto symbol : locals) state.initialized.erase(symbol);
+    }
+
+    void analyzeWhile(
+            const syntax::WhileStmtSyntax::Ptr& statement,
+            InitializationState& state) {
+        analyzeExpression(statement->condition, state);
+        if (!state.reachable) return;
+        const auto afterCondition = state;
+        auto bodyState = afterCondition;
+        analyzeBlock(statement->body, bodyState);
+        state = afterCondition;
+    }
+
+    void analyzeExpression(
+            const syntax::ExprPtr& expression,
+            InitializationState& state) {
+        if (expression == nullptr || !state.reachable) return;
+        switch (expression->kind) {
+            case syntax::Kind::nameExpr:
+                analyzeName(std::static_pointer_cast<syntax::NameExprSyntax>(expression), state);
+                break;
+            case syntax::Kind::parenthesizedExpr:
+                analyzeExpression(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression,
+                        state);
+                break;
+            case syntax::Kind::prefixExpr:
+                analyzeExpression(
+                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
+                        state);
+                break;
+            case syntax::Kind::accessExpr:
+                analyzeExpression(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        state);
+                break;
+            case syntax::Kind::binaryExpr:
+                analyzeBinary(std::static_pointer_cast<syntax::BinaryExprSyntax>(expression), state);
+                break;
+            case syntax::Kind::assignmentExpr:
+                analyzeAssignment(
+                        std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression),
+                        state);
+                break;
+            case syntax::Kind::memberExpr:
+                analyzeExpression(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
+                        state);
+                break;
+            case syntax::Kind::callExpr: {
+                const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
+                analyzeExpression(call->callee, state);
+                for (const auto& argument : call->arguments) {
+                    analyzeExpression(argument->value, state);
+                }
+                break;
+            }
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript =
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                analyzeExpression(subscript->base, state);
+                analyzeExpression(subscript->index, state);
+                break;
+            }
+            case syntax::Kind::arrayExpr: {
+                const auto array = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression);
+                for (const auto& element : array->elements) {
+                    analyzeExpression(element, state);
+                }
+                break;
+            }
+            case syntax::Kind::dictionaryExpr: {
+                const auto dictionary =
+                        std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression);
+                for (const auto& entry : dictionary->entries) {
+                    analyzeExpression(entry->key, state);
+                    analyzeExpression(entry->value, state);
+                }
+                break;
+            }
+            case syntax::Kind::contextualCaseExpr: {
+                const auto enumCase =
+                        std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+                for (const auto& argument : enumCase->arguments) {
+                    analyzeExpression(argument->value, state);
+                }
+                break;
+            }
+            case syntax::Kind::blockExpr:
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state);
+                break;
+            case syntax::Kind::ifExpr:
+                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state);
+                break;
+            case syntax::Kind::returnExpr:
+                analyzeExpression(
+                        std::static_pointer_cast<syntax::ReturnExprSyntax>(expression)->value,
+                        state);
+                state.reachable = false;
+                break;
+            case syntax::Kind::matchExpr:
+                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state);
+                break;
+            default:
+                break;
+        }
+        if (state.reachable &&
+            model->typeOf(expression) == model->types().neverType()) {
+            state.reachable = false;
+        }
+    }
+
+    void analyzeName(
+            const syntax::NameExprSyntax::Ptr& expression,
+            const InitializationState& state) {
+        const auto symbol = model->referencedSymbol(expression);
+        if (!symbol.has_value() || !tracked.contains(*symbol) ||
+            state.initialized.contains(*symbol)) {
+            return;
+        }
+        const auto* declaration = model->semanticModel()->symbol(*symbol);
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::useBeforeInitialization,
+            Severity::error,
+            expression->span,
+            "binding '" +
+                    (declaration == nullptr ? std::string() : declaration->name) +
+                    "' is used before being initialized",
+        });
+    }
+
+    void analyzeBinary(
+            const syntax::BinaryExprSyntax::Ptr& expression,
+            InitializationState& state) {
+        analyzeExpression(expression->left, state);
+        if (!state.reachable) return;
+        if (expression->op != nullptr && expression->op->kind == andAnd) {
+            const auto skippedRight = state;
+            auto evaluatedRight = state;
+            analyzeExpression(expression->right, evaluatedRight);
+            state = merge({ skippedRight, evaluatedRight });
+            return;
+        }
+        analyzeExpression(expression->right, state);
+    }
+
+    void analyzeAssignment(
+            const syntax::AssignmentExprSyntax::Ptr& expression,
+            InitializationState& state) {
+        const auto assigned = directlyAssignedSymbol(expression->target);
+        analyzeAssignmentTarget(expression->target, state);
+        analyzeExpression(expression->value, state);
+        if (state.reachable && assigned.has_value() && tracked.contains(*assigned)) {
+            state.initialized.insert(*assigned);
+        }
+    }
+
+    void analyzeAssignmentTarget(
+            const syntax::ExprPtr& target,
+            InitializationState& state) {
+        if (target == nullptr || !state.reachable) return;
+        switch (target->kind) {
+            case syntax::Kind::nameExpr:
+                return;
+            case syntax::Kind::parenthesizedExpr:
+                analyzeAssignmentTarget(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression,
+                        state);
+                return;
+            case syntax::Kind::accessExpr:
+                analyzeAssignmentTarget(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand,
+                        state);
+                return;
+            case syntax::Kind::memberExpr:
+                analyzeExpression(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(target)->base,
+                        state);
+                return;
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript =
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
+                analyzeExpression(subscript->base, state);
+                analyzeExpression(subscript->index, state);
+                return;
+            }
+            default:
+                analyzeExpression(target, state);
+                return;
+        }
+    }
+
+    std::optional<semantic::SymbolId> directlyAssignedSymbol(
+            const syntax::ExprPtr& target) const {
+        if (target == nullptr) return std::nullopt;
+        if (target->kind == syntax::Kind::nameExpr) {
+            return model->referencedSymbol(target);
+        }
+        if (target->kind == syntax::Kind::parenthesizedExpr) {
+            return directlyAssignedSymbol(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression);
+        }
+        if (target->kind == syntax::Kind::accessExpr) {
+            return directlyAssignedSymbol(
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand);
+        }
+        return std::nullopt;
+    }
+
+    void analyzeIf(
+            const syntax::IfExprSyntax::Ptr& expression,
+            InitializationState& state) {
+        analyzeExpression(expression->condition, state);
+        if (!state.reachable) return;
+        auto thenState = state;
+        analyzeBlock(expression->thenBranch, thenState);
+        auto elseState = state;
+        if (expression->elseBranch != nullptr) {
+            analyzeExpression(expression->elseBranch, elseState);
+        }
+        state = merge({ std::move(thenState), std::move(elseState) });
+    }
+
+    void analyzeMatch(
+            const syntax::MatchExprSyntax::Ptr& expression,
+            InitializationState& state) {
+        analyzeExpression(expression->scrutinee, state);
+        if (!state.reachable) return;
+        std::vector<InitializationState> armStates;
+        armStates.reserve(expression->arms.size());
+        for (const auto& arm : expression->arms) {
+            auto armState = state;
+            std::vector<semantic::SymbolId> bindings;
+            initializePattern(arm->pattern, armState, bindings);
+            analyzeExpression(arm->body, armState);
+            for (const auto symbol : bindings) armState.initialized.erase(symbol);
+            armStates.push_back(std::move(armState));
+        }
+        if (!armStates.empty()) state = merge(std::move(armStates));
+    }
+
+    void initializePattern(
+            const syntax::PatternPtr& pattern,
+            InitializationState& state,
+            std::vector<semantic::SymbolId>& bindings) {
+        if (pattern == nullptr) return;
+        if (pattern->kind == syntax::Kind::bindingPattern) {
+            const auto symbol = model->semanticModel()->declaredSymbol(pattern);
+            if (symbol.has_value()) {
+                tracked.insert(*symbol);
+                state.initialized.insert(*symbol);
+                bindings.push_back(*symbol);
+            }
+            return;
+        }
+        if (pattern->kind != syntax::Kind::enumCasePattern) return;
+        const auto enumCase = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        for (const auto& argument : enumCase->arguments) {
+            initializePattern(argument->pattern, state, bindings);
+        }
+    }
+
+    InitializationState merge(std::vector<InitializationState> paths) const {
+        InitializationState result;
+        result.reachable = false;
+        for (const auto& path : paths) {
+            if (!path.reachable) continue;
+            if (!result.reachable) {
+                result = path;
+                continue;
+            }
+            for (auto symbol = result.initialized.begin();
+                 symbol != result.initialized.end();) {
+                if (!path.initialized.contains(*symbol)) {
+                    symbol = result.initialized.erase(symbol);
+                } else {
+                    ++symbol;
+                }
+            }
+        }
+        return result;
+    }
+
+    bool isExpressionKind(syntax::Kind kind) const {
+        switch (kind) {
+            case syntax::Kind::errorExpr:
+            case syntax::Kind::nameExpr:
+            case syntax::Kind::literalExpr:
+            case syntax::Kind::parenthesizedExpr:
+            case syntax::Kind::prefixExpr:
+            case syntax::Kind::accessExpr:
+            case syntax::Kind::binaryExpr:
+            case syntax::Kind::assignmentExpr:
+            case syntax::Kind::memberExpr:
+            case syntax::Kind::callExpr:
+            case syntax::Kind::subscriptExpr:
+            case syntax::Kind::arrayExpr:
+            case syntax::Kind::dictionaryExpr:
+            case syntax::Kind::contextualCaseExpr:
+            case syntax::Kind::blockExpr:
+            case syntax::Kind::ifExpr:
+            case syntax::Kind::returnExpr:
+            case syntax::Kind::matchExpr:
+                return true;
+            default:
+                return false;
+        }
+    }
+};
+
 } // namespace
 
 bool Result::succeeded() const {
@@ -248,13 +633,21 @@ bool Result::succeeded() const {
 }
 
 Result Analyzer::analyze(const typing::TypeCheckedModel::Ptr& model) const {
-    return Builder().build(model);
+    auto result = ControlFlowBuilder().build(model);
+    auto initialization = InitializationBuilder().build(model);
+    result.diagnostics.insert(
+            result.diagnostics.end(),
+            initialization.diagnostics.begin(),
+            initialization.diagnostics.end());
+    return result;
 }
 
 const char* diagnosticName(DiagnosticId id) {
     switch (id) {
         case DiagnosticId::missingReturn: return "semantic-analysis.missing-return";
         case DiagnosticId::unreachableCode: return "semantic-analysis.unreachable-code";
+        case DiagnosticId::useBeforeInitialization:
+            return "semantic-analysis.use-before-initialization";
     }
     return "semantic-analysis.unknown";
 }

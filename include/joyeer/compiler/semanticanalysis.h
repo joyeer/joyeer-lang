@@ -16,6 +16,7 @@ enum class Severity {
 enum class DiagnosticId {
     missingReturn,
     unreachableCode,
+    useBeforeInitialization,
 };
 
 struct Diagnostic {

@@ -146,6 +146,38 @@ TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
     EXPECT_TRUE(verification.succeeded()) << dump(verification);
 }
 
+TEST(IRModelTest, VerifiesAndDumpsZeroInitializedStorage) {
+    auto module = validAddModule();
+    auto& function = module.functions[0];
+    function.name = "zero";
+    function.parameters.clear();
+    function.resultType = 0;
+    function.returnsValue = false;
+    function.blocks[0].instructions = {
+        Instruction {
+            Opcode::stackAllocate,
+            Value { 0, 1, ValueCategory::address },
+        },
+        Instruction { Opcode::zeroInitialize, std::nullopt, { 0 } },
+        Instruction { Opcode::returnVoid },
+    };
+
+    const auto verification = Verifier().verify(module);
+    ASSERT_TRUE(verification.succeeded()) << dump(verification);
+    EXPECT_NE(dump(module).find("zero_init %0"), std::string::npos);
+}
+
+TEST(IRModelTest, RejectsZeroInitializationOfNonAddressValues) {
+    auto module = validAddModule();
+    auto& instructions = module.functions[0].blocks[0].instructions;
+    instructions.insert(
+            instructions.end() - 1,
+            Instruction { Opcode::zeroInitialize, std::nullopt, { 0 } });
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
+}
+
 TEST(IRModelTest, ReportsDuplicateAndUndefinedValueIds) {
     auto module = validAddModule();
     auto& add = module.functions[0].blocks[0].instructions[0];

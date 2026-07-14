@@ -727,6 +727,17 @@ private:
                     << " = alloca " << *typeText << "\n";
                 return true;
             }
+            case ir::Opcode::zeroInitialize: {
+                const auto address = requiredOperand(0);
+                const auto* storage = value(instruction.operands[0]);
+                const auto typeText = storage == nullptr
+                        ? std::optional<std::string>()
+                    : llvmType(storage->type, instruction.span);
+                if (!address.has_value() || !typeText.has_value()) return false;
+                out << "  store " << *typeText << " zeroinitializer, ptr "
+                    << *address << "\n";
+                return true;
+            }
             case ir::Opcode::load: {
                 const auto address = requiredOperand(0);
                 const auto typeText = llvmType(instruction.result->type, instruction.span);

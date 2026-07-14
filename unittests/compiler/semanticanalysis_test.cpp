@@ -128,4 +128,111 @@ return unreachable
             }));
 }
 
+TEST_F(SemanticAnalysisTest, RejectsDirectReadsBeforeInitialization) {
+    analyze(R"JOYEER(func value(): Int {
+var output: Int
+return output
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::useBeforeInitialization));
+}
+
+TEST_F(SemanticAnalysisTest, AcceptsInitializationBeforeUse) {
+    analyze(R"JOYEER(func value(): Int {
+var output: Int
+output = 42
+return output
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, RequiresEveryContinuingBranchToInitialize) {
+    analyze(R"JOYEER(func complete(flag: Bool): Int {
+var output: Int
+if flag { output = 1 } else { output = 2 }
+return output
+}
+func incomplete(flag: Bool): Int {
+var output: Int
+if flag { output = 1 }
+return output
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_EQ(
+            std::count_if(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.id ==
+                                joyeer::analysis::DiagnosticId::useBeforeInitialization;
+                    }),
+            1);
+}
+
+TEST_F(SemanticAnalysisTest, IgnoresTerminatedBranchesAtInitializationMerge) {
+    analyze(R"JOYEER(func value(flag: Bool): Int {
+var output: Int
+if flag { return 1 } else { output = 2 }
+return output
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, DoesNotAssumeWhileBodiesExecute) {
+    analyze(R"JOYEER(func value(flag: Bool): Int {
+var output: Int
+while flag { output = 1 }
+return output
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::useBeforeInitialization));
+}
+
+TEST_F(SemanticAnalysisTest, ChecksReadsOnAssignmentRightHandSides) {
+    analyze(R"JOYEER(func value(): Int {
+var output: Int
+output = output + 1
+return output
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::useBeforeInitialization));
+}
+
+TEST_F(SemanticAnalysisTest, RequiresInitializedAggregateStorageAndInoutArguments) {
+    analyze(R"JOYEER(func update(value: inout Int) { &value = 1 }
+func run() {
+var numbers: [Int]
+&numbers[0] = 1
+var number: Int
+update(value: &number)
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_EQ(
+            std::count_if(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.id ==
+                                joyeer::analysis::DiagnosticId::useBeforeInitialization;
+                    }),
+            2);
+}
+
 } // namespace

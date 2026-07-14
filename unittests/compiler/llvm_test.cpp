@@ -140,6 +140,20 @@ return values[0] + lookup["answer"]
     EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, EmitsZeroInitializationForDeferredOwnedStorage) {
+    emit(R"JOYEER(func value(): String {
+var text: String
+text = "ready"
+return text
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(
+            result.text.find("store %joyeer.string zeroinitializer, ptr"),
+            std::string::npos);
+}
+
 TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
     joyeer::ir::Module module;
     module.sourceName = "ownership.joyeer";

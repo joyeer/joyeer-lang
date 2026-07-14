@@ -220,6 +220,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableTrailingReturn PROPERTIES
             LABELS "native;llvm-backend;native-runtime;semantic-analysis"
     )
+
+    add_test(NAME NativeExecutableDeferredInitialization
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/deferred_initialization.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deferred-initialization${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=42\ninitialized\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableDeferredInitialization PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;semantic-analysis;ownership"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
@@ -252,6 +264,17 @@ add_test(NAME SemanticAnalysisCliRejectsMissingReturn
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
 )
 set_tests_properties(SemanticAnalysisCliRejectsMissingReturn PROPERTIES
+        LABELS semantic-analysis
+)
+
+add_test(NAME SemanticAnalysisCliRejectsUseBeforeInitialization
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/use_before_initialization.joyeer
+                -DEXPECTED_PATTERN=semantic-analysis.use-before-initialization
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(SemanticAnalysisCliRejectsUseBeforeInitialization PROPERTIES
         LABELS semantic-analysis
 )
 

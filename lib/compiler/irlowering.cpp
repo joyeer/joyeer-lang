@@ -564,15 +564,6 @@ private:
                     "binding is missing a typed symbol");
             return;
         }
-        if (declaration->initializer == nullptr) {
-            report(
-                    DiagnosticId::unsupportedSyntax,
-                    declaration->span,
-                    "bindings without initializers are not supported by primitive IR lowering");
-            return;
-        }
-        auto initializer = lowerExpression(declaration->initializer);
-        if (!initializer.has_value()) return;
         const auto address = emitValue(
                 ir::Opcode::stackAllocate,
                 *type,
@@ -580,13 +571,28 @@ private:
                 {},
                 declaration->span,
                 symbol);
-            if (requiresDestroy(*type)) {
-                initializer = acquireOwned(*initializer, declaration->initializer->span);
-                if (!initializer.has_value()) return;
-            }
-            emitRawStore(*initializer, address, declaration->span, symbol);
-            registerOwnedStorage(address);
         slots[*symbol] = address;
+        if (declaration->initializer == nullptr) {
+            if (requiresDestroy(*type)) {
+                auto initialize = makeInstruction(
+                        ir::Opcode::zeroInitialize,
+                        declaration->span);
+                initialize.operands = { address.id };
+                emit(std::move(initialize));
+                registerOwnedStorage(address);
+            }
+            return;
+        }
+        auto initializer = lowerExpression(declaration->initializer);
+        if (!initializer.has_value()) return;
+        if (requiresDestroy(*type)) {
+            initializer = acquireOwned(*initializer, declaration->initializer->span);
+            if (!initializer.has_value()) return;
+        }
+        emitRawStore(*initializer, address, declaration->span, symbol);
+        if (requiresDestroy(*type)) {
+            registerOwnedStorage(address);
+        }
     }
 
     std::optional<ir::Value> lowerExpression(const syntax::ExprPtr& expression) {

@@ -118,6 +118,26 @@ return current
     EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersDeferredInitializationForTrivialAndOwnedStorage) {
+    lower(R"JOYEER(func run(flag: Bool): String {
+var number: Int
+if flag { number = 1 } else { number = 2 }
+var text: String
+text = "ready"
+print(value: number)
+return text
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::stackAllocate), 3u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::zeroInitialize), 1u);
+    EXPECT_GE(opcodeCount(run, joyeer::ir::Opcode::destroy), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersUserCallsAndTypeErasedPrintCalls) {
     lower(R"JOYEER(func identity(value: Int): Int { return value }
 func run() {

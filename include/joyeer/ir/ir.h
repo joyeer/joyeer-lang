@@ -41,6 +41,7 @@ enum class Opcode {
     byteConstant,
 
     stackAllocate,
+    zeroInitialize,
     load,
     store,
     copyValue,

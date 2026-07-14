@@ -550,6 +550,17 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     "stack allocation result must be an address");
                         }
                         break;
+                    case Opcode::zeroInitialize:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            operands[0]->category != ValueCategory::address) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId,
+                                    block.id,
+                                    location,
+                                    "zero initialization requires addressable storage");
+                        }
+                        break;
                     case Opcode::load:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                             instruction.result.has_value() &&
@@ -1081,6 +1092,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::stringConstant: return "string";
         case Opcode::byteConstant: return "byte";
         case Opcode::stackAllocate: return "alloc_stack";
+        case Opcode::zeroInitialize: return "zero_init";
         case Opcode::load: return "load";
         case Opcode::store: return "store";
         case Opcode::copyValue: return "copy";
@@ -1256,6 +1268,7 @@ std::string dump(const Module& module) {
                     case Opcode::returnVoid:
                     case Opcode::unreachable:
                         break;
+                    case Opcode::zeroInitialize:
                     case Opcode::load:
                     case Opcode::copyValue:
                     case Opcode::take:
