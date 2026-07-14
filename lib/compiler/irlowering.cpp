@@ -780,10 +780,36 @@ private:
             semantic::SymbolId caseSymbol,
             const std::vector<ir::Value>& payloads,
             SourceSpan span) {
+        const auto enumeration = std::find_if(
+                module->enumerations.begin(),
+                module->enumerations.end(),
+                [type](const auto& candidate) { return candidate.type == type; });
+        const auto enumCase = enumeration == module->enumerations.end()
+                ? static_cast<const ir::EnumCaseDefinition*>(nullptr)
+                : [&]() -> const ir::EnumCaseDefinition* {
+                    const auto found = std::find_if(
+                            enumeration->cases.begin(),
+                            enumeration->cases.end(),
+                            [caseSymbol](const auto& candidate) {
+                                return candidate.symbol == caseSymbol;
+                            });
+                    return found == enumeration->cases.end() ? nullptr : &*found;
+                }();
+        if (enumCase == nullptr || enumCase->payloadTypes.size() != payloads.size()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    span,
+                    "enum construction has no matching concrete case definition");
+            return std::nullopt;
+        }
         auto instruction = makeInstruction(ir::Opcode::constructEnum, span);
         instruction.result = makeValue(type, ir::ValueCategory::value);
         instruction.symbol = caseSymbol;
-        for (const auto payload : payloads) instruction.operands.push_back(payload.id);
+        for (size_t index = 0; index < payloads.size(); ++index) {
+            const auto converted = coerce(payloads[index], enumCase->payloadTypes[index], span);
+            if (!converted.has_value()) return std::nullopt;
+            instruction.operands.push_back(converted->id);
+        }
         const auto result = *instruction.result;
         emit(std::move(instruction));
         return result;
@@ -1111,10 +1137,18 @@ private:
             const auto& argument = expression->arguments[index];
             const auto expectsAddress = index < callee.parameters.size() &&
                 callee.parameters[index].value.category == ir::ValueCategory::address;
-            const auto value = expectsAddress
+            auto value = expectsAddress
                 ? lowerAddress(argument->value)
                 : lowerExpression(argument->value);
             if (!value.has_value()) return std::nullopt;
+            if (!expectsAddress && index < callee.parameters.size() &&
+                !callee.parameters[index].acceptsAnyType) {
+                value = coerce(
+                        *value,
+                        callee.parameters[index].value.type,
+                        argument->value->span);
+                if (!value.has_value()) return std::nullopt;
+            }
             arguments.push_back(value->id);
         }
 
@@ -1206,7 +1240,14 @@ private:
         auto instruction = makeInstruction(ir::Opcode::constructStruct, expression->span);
         instruction.result = makeValue(*type, ir::ValueCategory::value);
         instruction.symbol = structure->symbol;
-        for (const auto& field : fieldValues) instruction.operands.push_back(field->id);
+        for (size_t index = 0; index < fieldValues.size(); ++index) {
+            const auto converted = coerce(
+                *fieldValues[index],
+                structure->fields[index].type,
+                expression->span);
+            if (!converted.has_value()) return std::nullopt;
+            instruction.operands.push_back(converted->id);
+        }
         const auto result = *instruction.result;
         emit(std::move(instruction));
         return result;
@@ -1217,7 +1258,9 @@ private:
             emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
             return;
         }
-        const auto value = lowerExpression(expression->value);
+        auto value = lowerExpression(expression->value);
+        if (!value.has_value()) return;
+        value = coerce(*value, currentFunction().resultType, expression->value->span);
         if (!value.has_value()) return;
         auto instruction = makeInstruction(ir::Opcode::returnValue, expression->span);
         instruction.operands = { value->id };
@@ -1245,10 +1288,36 @@ private:
             ir::Value address,
             SourceSpan span,
             std::optional<semantic::SymbolId> symbol = std::nullopt) {
+        const auto converted = coerce(value, address.type, span);
+        if (!converted.has_value()) return;
         auto instruction = makeInstruction(ir::Opcode::store, span);
-        instruction.operands = { value.id, address.id };
+        instruction.operands = { converted->id, address.id };
         instruction.symbol = symbol;
         emit(std::move(instruction));
+    }
+
+    std::optional<ir::Value> coerce(
+            ir::Value value,
+            typing::TypeId destination,
+            SourceSpan span) {
+        if (value.type == destination || destination == model->types().anyType()) return value;
+        const auto* destinationType = model->types().type(destination);
+        if (destinationType != nullptr &&
+            destinationType->kind == typing::TypeKind::optional &&
+            destinationType->arguments.size() == 1 &&
+            destinationType->arguments[0] == value.type) {
+            const auto some = findEnumCase(destination, "Some");
+            if (some.has_value()) {
+                return emitEnumConstruction(destination, *some, { value }, span);
+            }
+        }
+        report(
+                DiagnosticId::missingType,
+                span,
+                "typed conversion from '" + model->types().displayName(value.type) +
+                        "' to '" + model->types().displayName(destination) +
+                        "' has no IR representation");
+        return std::nullopt;
     }
 
     ir::BlockId createBlock(std::string name) {

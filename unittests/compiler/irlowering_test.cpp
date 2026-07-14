@@ -11,10 +11,22 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <fstream>
 #include <memory>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 
 namespace {
+
+std::string readFixture(const std::string& relativePath) {
+    const std::string path = std::string(JOYEER_TESTS_DIR) + "/" + relativePath;
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("cannot open IR lowering fixture: " + path);
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
+}
 
 class IRLoweringTest : public testing::Test {
 protected:
@@ -344,6 +356,19 @@ return match flag { .Bool(true) => 1, .Bool(false) => 0, }
     EXPECT_NE(text.find("byte(97):UInt8"), std::string::npos);
     EXPECT_NE(text.find("case#"), std::string::npos);
     EXPECT_NE(text.find("true:Bool"), std::string::npos);
+}
+
+TEST_F(IRLoweringTest, LowersTheCompleteJsonParserMvpFixture) {
+    lower(readFixture("parser/ok/json_mvp.joyeer"));
+
+    ASSERT_TRUE(result.succeeded())
+            << joyeer::lowering::dump(result.diagnostics)
+            << (result.module == nullptr ? std::string() : joyeer::ir::dump(*result.module));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::subscript), 1u);
+    EXPECT_EQ(opcodeCount(function("parseValue"), joyeer::ir::Opcode::switchPattern), 2u);
+    EXPECT_GE(opcodeCount(function("parseValue"), joyeer::ir::Opcode::constructEnum), 7u);
 }
 
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {

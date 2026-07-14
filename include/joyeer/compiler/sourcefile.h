@@ -12,6 +12,10 @@ namespace joyeer::typing {
 class TypeCheckedModel;
 }
 
+namespace joyeer::ir {
+struct Module;
+}
+
 // SourceFile contains all information of source file in disk
 class SourceFile {
 public:
@@ -52,6 +56,10 @@ public:
     // Exact v0.1 declaration/expression types and type-directed reference
     // completions. The legacy TypeGen/VM pipeline does not use this model.
     std::shared_ptr<joyeer::typing::TypeCheckedModel> typeCheckedModel;
+
+    // Backend-neutral high-level IR produced only after successful v0.1 type
+    // checking and structural verification. It is unrelated to legacy IRGen.
+    std::shared_ptr<joyeer::ir::Module> joyeerIR;
 
     ModuleClass* moduleClass;
     

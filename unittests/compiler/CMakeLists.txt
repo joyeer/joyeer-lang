@@ -100,6 +100,10 @@ target_link_libraries(IRLoweringTests
         JoyeerVM
 )
 
+target_compile_definitions(IRLoweringTests PRIVATE
+        JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
+)
+
 gtest_discover_tests(IRLoweringTests
         PROPERTIES LABELS ir-lowering
 )
@@ -126,13 +130,24 @@ set_tests_properties(TypeCheckingCliRejectsMismatch PROPERTIES
         LABELS type-checking
 )
 
+add_test(NAME IRLoweringCliRejectsMissingReturn
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/ir-lowering/err/missing_return.joyeer
+                -DEXPECTED_PATTERN=ir-lowering.missing-return
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(IRLoweringCliRejectsMissingReturn PROPERTIES
+        LABELS ir-lowering
+)
+
 add_test(NAME ParserMvpCliAcceptance
         COMMAND $<TARGET_FILE:joyeer>
                 --lang=v0.1
                 "${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer"
 )
 set_tests_properties(ParserMvpCliAcceptance PROPERTIES
-        LABELS "parser;name-resolution;type-checking"
+        LABELS "parser;name-resolution;type-checking;ir-lowering"
 )
 
 add_test(NAME ParserMvpCliRejectsInvalidSource

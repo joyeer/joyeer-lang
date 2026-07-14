@@ -67,7 +67,7 @@ Source (.joyeer)
 | 3. Name Resolution | ✅ Parser-MVP resolver; type-directed references handed to Stage 4 | `semantic.cpp`, `nameresolution.cpp`, [contract](../impl/name-resolution.md) |
 | 4. Type Checking | ✅ JSON-parser MVP typed model | `typechecking.cpp`, [contract](../impl/type-checking.md) |
 | 5. Semantic Analysis | ⚠️ Access/mutability checks implemented; flow/lint checks missing | `typechecking.cpp` |
-| 6. Own IR | ❌ Missing | Currently AST → bytecode directly |
+| 6. Own IR | ⚠️ JSON-parser MVP lowering implemented; layout/ABI incomplete | `irlowering.cpp`, `ir.cpp`, [contract](../impl/ir.md) |
 | 7. LLVM IR Gen | ❌ Missing | Currently generates custom bytecode |
 | 8-9. LLVM Optimization + CodeGen | ❌ Missing | Depends on LLVM integration |
 | 10. Linker | ❌ Native linking missing | Legacy compatibility lane executes via VM |
@@ -101,25 +101,23 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Lower the Typed MVP to Joyeer IR
+## Immediate Next Milestone: Lower Joyeer IR to LLVM IR
 
 The [Parser MVP](../impl/parser.md), [name-resolution model](../impl/name-resolution.md),
-and [type checker](../impl/type-checking.md) are implemented and wired into
-`--lang=v0.1`. The next work is a backend-neutral lowering path:
+[type checker](../impl/type-checking.md), and [Joyeer IR lowering](../impl/ir.md)
+are implemented and wired into `--lang=v0.1`. The complete JSON-parser MVP
+fixture now produces verified backend-neutral IR. The next work is native
+lowering:
 
-1. Define typed Joyeer IR values, blocks, branches, calls, aggregates, and
-  explicit ownership/access operations.
-2. Lower primitive expressions, functions, `if`, and `while` from
-  `TypeCheckedModel` without consulting legacy `Type` or AST descriptors.
-3. Define value layout for `struct`, tagged layout for `enum`/`Optional`/
-  `Result`, and lower exhaustive `match` dispatch.
-4. Add LLVM as the first native Joyeer IR backend, then emit objects and link
-  the minimal runtime.
+1. Define target-independent size/alignment and tagged aggregate ABI layout.
+2. Add LLVM as a dependency and map primitive, pointer, struct, enum, and
+   function types.
+3. Lower stack slots, operators, calls, CFG, aggregate operations, and
+   `switch_pattern` to LLVM IR.
+4. Emit objects and link a minimal runtime for `print`, strings, arrays,
+   dictionaries, bounds traps, and ownership operations.
 5. Retire the legacy VM lane after native golden tests cover its supported
-  v0.1 behavior.
-
-Match exhaustiveness is checked in Stage 4; enum representation, ownership,
-and code generation remain Stage 6+ responsibilities.
+   v0.1 behavior.
 
 ---
 
@@ -135,7 +133,7 @@ and code generation remain Stage 6+ responsibilities.
 - Full type inference for local variables
 - Type mismatch error reporting with source locations
 
-### Step 1.2 — Joyeer IR Foundation
+### Step 1.2 — Joyeer IR Foundation ✅
 
 - Typed SSA-like values and basic blocks
 - Explicit load/store, calls, branches, aggregate construction, and match
@@ -302,7 +300,7 @@ std/
 | Name Resolution | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Type Checking | ✅ | ✅ | ✅ | ✅ JSON-parser MVP |
 | Semantic Analysis | ✅ | ✅ | ✅ | Phase 2 |
-| Own IR | MIR | SIL | AIR | Phase 1 next |
+| Own IR | MIR | SIL | AIR | ⚠️ JSON-parser MVP |
 | LLVM IR Gen | ✅ | ✅ | ❌ (own backend) | Phase 1 |
 | Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | Phase 1-2 |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |

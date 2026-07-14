@@ -9,9 +9,9 @@
 The compiler is currently a **C++20 implementation**. Default/legacy mode
 lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its
 own bytecode. `--lang=v0.1` uses the new lexer, syntax-only Parser MVP,
-independent name-resolution semantic model, and canonical compile-time type
-model, then stops before Joyeer IR lowering and codegen; it does not construct
-the legacy VM.
+independent name-resolution semantic model, canonical compile-time type model,
+and verified backend-neutral Joyeer IR, then stops before LLVM/native codegen;
+it does not construct the legacy VM.
 LLVM-based native code-gen is on the roadmap but **not implemented**.
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
@@ -42,6 +42,7 @@ ctest --test-dir ./build --output-on-failure
 | v0.1 Parser MVP / syntax AST | [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | [lib/compiler/parser.cpp](lib/compiler/parser.cpp), [lib/compiler/syntax.cpp](lib/compiler/syntax.cpp) |
 | v0.1 name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | [lib/compiler/nameresolution.cpp](lib/compiler/nameresolution.cpp), [lib/compiler/semantic.cpp](lib/compiler/semantic.cpp) |
 | v0.1 type checking / typed model | [include/joyeer/compiler/typechecking.h](include/joyeer/compiler/typechecking.h) | [lib/compiler/typechecking.cpp](lib/compiler/typechecking.cpp) |
+| v0.1 Joyeer IR / lowering | [include/joyeer/ir/ir.h](include/joyeer/ir/ir.h), [include/joyeer/compiler/irlowering.h](include/joyeer/compiler/irlowering.h) | [lib/ir/ir.cpp](lib/ir/ir.cpp), [lib/compiler/irlowering.cpp](lib/compiler/irlowering.cpp) |
 | AST | [include/joyeer/compiler/node.h](include/joyeer/compiler/node.h), [include/joyeer/compiler/node+visitor.h](include/joyeer/compiler/node+visitor.h) | [lib/compiler/node.cpp](lib/compiler/node.cpp) |
 | Symbol / type binding | [include/joyeer/compiler/symtable.h](include/joyeer/compiler/symtable.h), [include/joyeer/compiler/typegen.h](include/joyeer/compiler/typegen.h), [include/joyeer/compiler/typebinding.h](include/joyeer/compiler/typebinding.h), [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) | matching `*.cpp` in [lib/compiler/](lib/compiler/) |
 | IR / bytecode gen | [include/joyeer/compiler/IRGen.h](include/joyeer/compiler/IRGen.h) | [lib/compiler/IRGen.cpp](lib/compiler/IRGen.cpp) |

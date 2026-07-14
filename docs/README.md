@@ -61,6 +61,7 @@ and type models intended for native lowering.
 | [parser.md](impl/parser.md) | Parser MVP grammar, AST boundary, recovery strategy, and parser-only test contract |
 | [name-resolution.md](impl/name-resolution.md) | v0.1 semantic IDs, scopes, symbols, binding order, diagnostics, and type-directed handoff |
 | [type-checking.md](impl/type-checking.md) | canonical compile-time types, typed overlays, inference, calls, patterns, and deferred-reference closure |
+| [ir.md](impl/ir.md) | backend-neutral typed IR, verifier, CFG/aggregate/pattern lowering, and remaining backend boundary |
 | [string.md](impl/string.md) | `String` runtime layout and builtin methods |
 
 ---
@@ -72,7 +73,7 @@ deleted, not preserved.
 
 | Doc | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (typed frontend complete; Joyeer IR/native lowering next) |
+| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (JSON MVP lowers to Joyeer IR; LLVM/native emission next) |
 | [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
 | [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
 | [feasibility.md](plan/feasibility.md) | Can the design be built? Per-feature prior art, combination risks, layered-verification ceiling |

@@ -6,6 +6,7 @@
 #include "joyeer/compiler/nameresolution.h"
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/typechecking.h"
+#include "joyeer/compiler/irlowering.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
 #include "joyeer/compiler/debugprinter.h"
@@ -96,6 +97,7 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
     if(options->languageMode == LanguageMode::v0_1) {
         sourcefile->semanticModel.reset();
         sourcefile->typeCheckedModel.reset();
+        sourcefile->joyeerIR.reset();
         joyeer::parser::Parser parser(sourcefile->tokens);
         auto result = parser.parse();
         for(const auto& diagnostic : result.diagnostics) {
@@ -124,6 +126,20 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         for (const auto& diagnostic : checking.diagnostics) {
             const std::string message =
                     std::string(joyeer::typing::diagnosticName(diagnostic.id)) +
+                    ": " + diagnostic.message;
+            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+        }
+        if (!checking.succeeded()) {
+            return nullptr;
+        }
+
+        const auto lowering = joyeer::lowering::Lowerer().lower(
+                checking.model,
+                sourcefile->getLocation());
+        sourcefile->joyeerIR = lowering.module;
+        for (const auto& diagnostic : lowering.diagnostics) {
+            const std::string message =
+                    std::string(joyeer::lowering::diagnosticName(diagnostic.id)) +
                     ": " + diagnostic.message;
             reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
         }
