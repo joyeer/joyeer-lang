@@ -1,5 +1,6 @@
 #include "joyeer/compiler/irlowering.h"
 
+#include <algorithm>
 #include <cassert>
 #include <sstream>
 #include <unordered_map>
@@ -18,6 +19,7 @@ public:
         module->sourceName = std::move(sourceName);
 
         snapshotTypes();
+        collectAggregateDefinitions();
         collectFunctions();
         lowerFunctions();
 
@@ -53,6 +55,128 @@ private:
         for (typing::TypeId id = 0; id < types.size(); ++id) {
             module->types.push_back(ir::TypeName { id, types.displayName(id) });
         }
+    }
+
+    void collectAggregateDefinitions() {
+        const auto& semanticModel = *model->semanticModel();
+        const auto& root = semanticModel.root();
+        if (root != nullptr) {
+            for (const auto& item : root->items) {
+                if (item->kind == syntax::Kind::structDecl) {
+                    collectStructure(
+                            std::static_pointer_cast<syntax::StructDeclSyntax>(item));
+                } else if (item->kind == syntax::Kind::enumDecl) {
+                    collectEnumeration(
+                            std::static_pointer_cast<syntax::EnumDeclSyntax>(item));
+                }
+            }
+        }
+        for (typing::TypeId id = 0; id < model->types().size(); ++id) {
+            const auto* type = model->types().type(id);
+            if (type != nullptr &&
+                (type->kind == typing::TypeKind::optional ||
+                 type->kind == typing::TypeKind::result)) {
+                collectBuiltinEnumeration(*type);
+            }
+        }
+    }
+
+    void collectStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
+        const auto& semanticModel = *model->semanticModel();
+        const auto symbol = semanticModel.declaredSymbol(declaration);
+        const auto type = symbol.has_value()
+                ? model->typeOf(*symbol)
+                : std::optional<typing::TypeId>();
+        if (!symbol.has_value() || !type.has_value()) return;
+
+        ir::StructureDefinition structure;
+        structure.symbol = *symbol;
+        structure.type = *type;
+        structure.name = declaration->name == nullptr
+                ? std::string()
+                : declaration->name->rawValue;
+        for (const auto& field : declaration->fields) {
+            const auto fieldSymbol = semanticModel.declaredSymbol(field);
+            const auto fieldType = fieldSymbol.has_value()
+                    ? model->typeOf(*fieldSymbol)
+                    : std::optional<typing::TypeId>();
+            if (!fieldSymbol.has_value() || !fieldType.has_value()) continue;
+            const auto* semanticField = semanticModel.symbol(*fieldSymbol);
+            structure.fields.push_back(ir::FieldDefinition {
+                *fieldSymbol,
+                field->name == nullptr ? std::string() : field->name->rawValue,
+                *fieldType,
+                semanticField != nullptr && semanticField->isMutable,
+            });
+        }
+        module->structures.push_back(std::move(structure));
+    }
+
+    void collectEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
+        const auto& semanticModel = *model->semanticModel();
+        const auto symbol = semanticModel.declaredSymbol(declaration);
+        const auto type = symbol.has_value()
+                ? model->typeOf(*symbol)
+                : std::optional<typing::TypeId>();
+        if (!symbol.has_value() || !type.has_value()) return;
+
+        ir::EnumerationDefinition enumeration;
+        enumeration.symbol = *symbol;
+        enumeration.type = *type;
+        enumeration.name = declaration->name == nullptr
+                ? std::string()
+                : declaration->name->rawValue;
+        for (const auto& enumCase : declaration->cases) {
+            const auto caseSymbol = semanticModel.declaredSymbol(enumCase);
+            if (!caseSymbol.has_value()) continue;
+            const auto* signature = model->callable(*caseSymbol);
+            enumeration.cases.push_back(ir::EnumCaseDefinition {
+                *caseSymbol,
+                enumCase->name == nullptr ? std::string() : enumCase->name->rawValue,
+                signature == nullptr
+                        ? std::vector<typing::TypeId>()
+                        : signature->parameters,
+            });
+        }
+        module->enumerations.push_back(std::move(enumeration));
+    }
+
+    void collectBuiltinEnumeration(const typing::TypeRecord& type) {
+        const auto& semanticModel = *model->semanticModel();
+        const auto* symbol = semanticModel.symbol(type.symbol);
+        if (symbol == nullptr || !symbol->memberScope.has_value()) return;
+        const auto* members = semanticModel.scope(*symbol->memberScope);
+        if (members == nullptr) return;
+
+        std::vector<semantic::SymbolId> caseSymbols;
+        for (const auto& [name, caseSymbol] : members->values) {
+            static_cast<void>(name);
+            caseSymbols.push_back(caseSymbol);
+        }
+        std::sort(caseSymbols.begin(), caseSymbols.end());
+
+        ir::EnumerationDefinition enumeration;
+        enumeration.symbol = type.symbol;
+        enumeration.type = type.id;
+        enumeration.name = model->types().displayName(type.id);
+        for (const auto caseSymbol : caseSymbols) {
+            const auto* enumCase = semanticModel.symbol(caseSymbol);
+            if (enumCase == nullptr) continue;
+            std::vector<typing::TypeId> payloadTypes;
+            if (type.kind == typing::TypeKind::optional && enumCase->name == "Some") {
+                payloadTypes.push_back(type.arguments[0]);
+            } else if (type.kind == typing::TypeKind::result && enumCase->name == "Ok") {
+                payloadTypes.push_back(type.arguments[0]);
+            } else if (type.kind == typing::TypeKind::result && enumCase->name == "Err") {
+                payloadTypes.push_back(type.arguments[1]);
+            }
+            enumeration.cases.push_back(ir::EnumCaseDefinition {
+                caseSymbol,
+                enumCase->name,
+                std::move(payloadTypes),
+            });
+        }
+        module->enumerations.push_back(std::move(enumeration));
     }
 
     void collectFunctions() {
@@ -289,8 +413,15 @@ private:
             case syntax::Kind::assignmentExpr:
                 lowerAssignment(std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression));
                 return std::nullopt;
+            case syntax::Kind::memberExpr:
+                return lowerMember(std::static_pointer_cast<syntax::MemberExprSyntax>(expression));
             case syntax::Kind::callExpr:
                 return lowerCall(std::static_pointer_cast<syntax::CallExprSyntax>(expression));
+            case syntax::Kind::subscriptExpr:
+                return lowerSubscript(std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression));
+            case syntax::Kind::contextualCaseExpr:
+                return lowerContextualCase(
+                        std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression));
             case syntax::Kind::returnExpr:
                 lowerReturn(std::static_pointer_cast<syntax::ReturnExprSyntax>(expression));
                 return std::nullopt;
@@ -322,6 +453,17 @@ private:
             case booleanLiteral: opcode = ir::Opcode::booleanConstant; break;
             case stringLiteral: opcode = ir::Opcode::stringConstant; break;
             case byteLiteral: opcode = ir::Opcode::byteConstant; break;
+            case nilLiteral: {
+                const auto none = findEnumCase(*type, "None");
+                if (!none.has_value()) {
+                    report(
+                            DiagnosticId::missingSymbol,
+                            expression->span,
+                            "nil type has no Optional.None case in IR");
+                    return std::nullopt;
+                }
+                return emitEnumConstruction(*type, *none, {}, expression->span);
+            }
             default:
                 report(
                         DiagnosticId::unsupportedSyntax,
@@ -449,11 +591,200 @@ private:
             const auto symbol = model->referencedSymbol(expression);
             if (symbol.has_value() && slots.contains(*symbol)) return slots.at(*symbol);
         }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            const auto symbol = model->referencedSymbol(member);
+            const auto* semanticSymbol = symbol.has_value()
+                    ? model->semanticModel()->symbol(*symbol)
+                    : nullptr;
+            if (semanticSymbol != nullptr &&
+                semanticSymbol->kind == semantic::SymbolKind::structureField) {
+                const auto base = lowerAddress(member->base);
+                const auto type = model->typeOf(member);
+                if (!base.has_value() || !type.has_value()) return std::nullopt;
+                return emitValue(
+                        ir::Opcode::fieldAddress,
+                        *type,
+                        ir::ValueCategory::address,
+                        { base->id },
+                        member->span,
+                        symbol);
+            }
+        }
+        if (expression->kind == syntax::Kind::subscriptExpr) {
+            const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(
+                    expression);
+            const auto base = lowerAddress(subscript->base);
+            const auto index = lowerExpression(subscript->index);
+            const auto type = model->typeOf(subscript);
+            if (!base.has_value() || !index.has_value() || !type.has_value()) {
+                return std::nullopt;
+            }
+            return emitValue(
+                    ir::Opcode::subscriptAddress,
+                    *type,
+                    ir::ValueCategory::address,
+                    { base->id, index->id },
+                    subscript->span);
+        }
         report(
                 DiagnosticId::unsupportedSyntax,
                 expression->span,
                 "assignment target is not supported by primitive IR lowering");
         return std::nullopt;
+    }
+
+    bool isAddressable(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        switch (expression->kind) {
+            case syntax::Kind::nameExpr: {
+                const auto symbol = model->referencedSymbol(expression);
+                return symbol.has_value() && slots.contains(*symbol);
+            }
+            case syntax::Kind::accessExpr:
+                return isAddressable(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::parenthesizedExpr:
+                return isAddressable(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+            case syntax::Kind::memberExpr:
+                return isAddressable(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base);
+            case syntax::Kind::subscriptExpr:
+                return isAddressable(
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression)->base);
+            default:
+                return false;
+        }
+    }
+
+    std::optional<ir::Value> lowerMember(const syntax::MemberExprSyntax::Ptr& expression) {
+        const auto symbol = model->referencedSymbol(expression);
+        const auto* semanticSymbol = symbol.has_value()
+                ? model->semanticModel()->symbol(*symbol)
+                : nullptr;
+        const auto type = model->typeOf(expression);
+        if (semanticSymbol == nullptr || !type.has_value()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "member has no typed resolved symbol");
+            return std::nullopt;
+        }
+
+        if (semanticSymbol->kind == semantic::SymbolKind::structureField) {
+            if (isAddressable(expression)) {
+                const auto address = lowerAddress(expression);
+                if (!address.has_value()) return std::nullopt;
+                return emitValue(
+                        ir::Opcode::load,
+                        *type,
+                        ir::ValueCategory::value,
+                        { address->id },
+                        expression->span,
+                        symbol);
+            }
+            const auto base = lowerExpression(expression->base);
+            if (!base.has_value()) return std::nullopt;
+            return emitValue(
+                    ir::Opcode::extractField,
+                    *type,
+                    ir::ValueCategory::value,
+                    { base->id },
+                    expression->span,
+                    symbol);
+        }
+
+        if (semanticSymbol->kind == semantic::SymbolKind::builtinMember &&
+            semanticSymbol->name == "count") {
+            const auto base = lowerExpression(expression->base);
+            if (!base.has_value()) return std::nullopt;
+            return emitValue(
+                    ir::Opcode::count,
+                    *type,
+                    ir::ValueCategory::value,
+                    { base->id },
+                    expression->span,
+                    symbol);
+        }
+
+        if (semanticSymbol->kind == semantic::SymbolKind::enumCase ||
+            semanticSymbol->kind == semantic::SymbolKind::builtinEnumCase) {
+            return emitEnumConstruction(*type, *symbol, {}, expression->span);
+        }
+
+        report(
+                DiagnosticId::unsupportedSyntax,
+                expression->span,
+                "member kind is not supported by aggregate IR lowering");
+        return std::nullopt;
+    }
+
+    std::optional<ir::Value> lowerSubscript(
+            const syntax::SubscriptExprSyntax::Ptr& expression) {
+        const auto base = lowerExpression(expression->base);
+        const auto index = lowerExpression(expression->index);
+        const auto type = model->typeOf(expression);
+        if (!base.has_value() || !index.has_value() || !type.has_value()) {
+            return std::nullopt;
+        }
+        return emitValue(
+                ir::Opcode::subscript,
+                *type,
+                ir::ValueCategory::value,
+                { base->id, index->id },
+                expression->span);
+    }
+
+    std::optional<ir::Value> lowerContextualCase(
+            const syntax::ContextualCaseExprSyntax::Ptr& expression) {
+        const auto caseSymbol = model->referencedSymbol(expression);
+        const auto type = model->typeOf(expression);
+        if (!caseSymbol.has_value() || !type.has_value()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "contextual enum case has no typed target");
+            return std::nullopt;
+        }
+        std::vector<ir::Value> payloads;
+        for (const auto& argument : expression->arguments) {
+            const auto payload = lowerExpression(argument->value);
+            if (!payload.has_value()) return std::nullopt;
+            payloads.push_back(*payload);
+        }
+        return emitEnumConstruction(*type, *caseSymbol, payloads, expression->span);
+    }
+
+    std::optional<semantic::SymbolId> findEnumCase(
+            typing::TypeId type,
+            const std::string& name) const {
+        const auto enumeration = std::find_if(
+                module->enumerations.begin(),
+                module->enumerations.end(),
+                [type](const auto& candidate) { return candidate.type == type; });
+        if (enumeration == module->enumerations.end()) return std::nullopt;
+        const auto enumCase = std::find_if(
+                enumeration->cases.begin(),
+                enumeration->cases.end(),
+                [&name](const auto& candidate) { return candidate.name == name; });
+        return enumCase == enumeration->cases.end()
+                ? std::nullopt
+                : std::optional<semantic::SymbolId>(enumCase->symbol);
+    }
+
+    std::optional<ir::Value> emitEnumConstruction(
+            typing::TypeId type,
+            semantic::SymbolId caseSymbol,
+            const std::vector<ir::Value>& payloads,
+            SourceSpan span) {
+        auto instruction = makeInstruction(ir::Opcode::constructEnum, span);
+        instruction.result = makeValue(type, ir::ValueCategory::value);
+        instruction.symbol = caseSymbol;
+        for (const auto payload : payloads) instruction.operands.push_back(payload.id);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        return result;
     }
 
     std::optional<ir::Value> lowerIf(const syntax::IfExprSyntax::Ptr& expression) {
@@ -553,7 +884,33 @@ private:
 
     std::optional<ir::Value> lowerCall(const syntax::CallExprSyntax::Ptr& expression) {
         const auto target = model->callTarget(expression);
-        if (!target.has_value() || !functions.contains(*target)) {
+        if (!target.has_value()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "call target has no resolved symbol");
+            return std::nullopt;
+        }
+
+        const auto* targetSymbol = model->semanticModel()->symbol(*target);
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::synthesizedInitializer) {
+            return lowerStructConstruction(expression, *target);
+        }
+        if (targetSymbol != nullptr &&
+            (targetSymbol->kind == semantic::SymbolKind::enumCase ||
+             targetSymbol->kind == semantic::SymbolKind::builtinEnumCase)) {
+            const auto type = model->typeOf(expression);
+            if (!type.has_value()) return std::nullopt;
+            std::vector<ir::Value> payloads;
+            for (const auto& argument : expression->arguments) {
+                const auto payload = lowerExpression(argument->value);
+                if (!payload.has_value()) return std::nullopt;
+                payloads.push_back(*payload);
+            }
+            return emitEnumConstruction(*type, *target, payloads, expression->span);
+        }
+        if (!functions.contains(*target)) {
             report(
                     DiagnosticId::missingSymbol,
                     expression->span,
@@ -583,6 +940,87 @@ private:
             instruction.result = makeValue(*type, ir::ValueCategory::value);
         }
         const auto result = instruction.result;
+        emit(std::move(instruction));
+        return result;
+    }
+
+    std::optional<ir::Value> lowerStructConstruction(
+            const syntax::CallExprSyntax::Ptr& expression,
+            semantic::SymbolId initializer) {
+        const auto* initializerSymbol = model->semanticModel()->symbol(initializer);
+        const auto type = model->typeOf(expression);
+        if (initializerSymbol == nullptr || !initializerSymbol->containingSymbol.has_value() ||
+            !type.has_value()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "struct initializer has no containing structure or result type");
+            return std::nullopt;
+        }
+        const auto structure = std::find_if(
+                module->structures.begin(),
+                module->structures.end(),
+                [initializerSymbol](const auto& candidate) {
+                    return candidate.symbol == *initializerSymbol->containingSymbol;
+                });
+        if (structure == module->structures.end()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "struct initializer has no IR structure definition");
+            return std::nullopt;
+        }
+
+        std::vector<std::optional<ir::Value>> fieldValues(structure->fields.size());
+        for (const auto& argument : expression->arguments) {
+            if (argument->label == nullptr) continue;
+            const auto field = std::find_if(
+                    structure->fields.begin(),
+                    structure->fields.end(),
+                    [&argument](const auto& candidate) {
+                        return candidate.name == argument->label->rawValue;
+                    });
+            if (field == structure->fields.end()) continue;
+            const auto value = lowerExpression(argument->value);
+            if (!value.has_value()) return std::nullopt;
+            fieldValues[static_cast<size_t>(
+                    std::distance(structure->fields.begin(), field))] = *value;
+        }
+
+        for (size_t index = 0; index < fieldValues.size(); ++index) {
+            if (fieldValues[index].has_value()) continue;
+            const auto* fieldSymbol = model->semanticModel()->symbol(
+                    structure->fields[index].symbol);
+            const auto& declaration = fieldSymbol != nullptr &&
+                    fieldSymbol->declaration.has_value()
+                    ? model->semanticModel()->node(*fieldSymbol->declaration)
+                    : syntax::NodePtr();
+            if (declaration == nullptr ||
+                declaration->kind != syntax::Kind::structFieldDecl) {
+                report(
+                        DiagnosticId::missingSymbol,
+                        expression->span,
+                        "omitted struct field has no default initializer");
+                return std::nullopt;
+            }
+            const auto fieldDeclaration =
+                    std::static_pointer_cast<syntax::StructFieldDeclSyntax>(declaration);
+            const auto value = lowerExpression(fieldDeclaration->initializer);
+            if (!value.has_value()) {
+                report(
+                        DiagnosticId::unsupportedSyntax,
+                        fieldDeclaration->span,
+                        "struct field default could not be lowered");
+                return std::nullopt;
+            }
+            fieldValues[index] = *value;
+        }
+
+        auto instruction = makeInstruction(ir::Opcode::constructStruct, expression->span);
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        instruction.symbol = structure->symbol;
+        for (const auto& field : fieldValues) instruction.operands.push_back(field->id);
+        const auto result = *instruction.result;
         emit(std::move(instruction));
         return result;
     }

@@ -26,6 +26,14 @@ bool producesValue(Opcode opcode) {
         case Opcode::equal:
         case Opcode::notEqual:
         case Opcode::logicalAnd:
+        case Opcode::constructStruct:
+        case Opcode::fieldAddress:
+        case Opcode::extractField:
+        case Opcode::constructEnum:
+        case Opcode::extractPayload:
+        case Opcode::count:
+        case Opcode::subscript:
+        case Opcode::subscriptAddress:
             return true;
         default:
             return false;
@@ -92,6 +100,103 @@ VerificationResult Verifier::verify(const Module& module) const {
                     "duplicate type id " + std::to_string(type.id));
         }
     }
+
+    std::unordered_map<TypeId, const StructureDefinition*> structures;
+    std::unordered_map<semantic::SymbolId, const FieldDefinition*> fields;
+    for (const auto& structure : module.structures) {
+        if (!types.contains(structure.type)) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "structure '" + structure.name + "' references an unknown type");
+        }
+        if (!structures.emplace(structure.type, &structure).second) {
+            report(
+                    VerificationErrorId::duplicateId,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "duplicate structure definition for type " +
+                            std::to_string(structure.type));
+        }
+        for (const auto& field : structure.fields) {
+            if (!types.contains(field.type)) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                        "field '" + field.name + "' references an unknown type");
+            }
+            if (!fields.emplace(field.symbol, &field).second) {
+                report(
+                        VerificationErrorId::duplicateId,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                        "duplicate field symbol " + std::to_string(field.symbol));
+            }
+        }
+    }
+
+    std::unordered_map<TypeId, const EnumerationDefinition*> enumerations;
+    for (const auto& enumeration : module.enumerations) {
+        if (!types.contains(enumeration.type)) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "enumeration '" + enumeration.name + "' references an unknown type");
+        }
+        if (!enumerations.emplace(enumeration.type, &enumeration).second) {
+            report(
+                    VerificationErrorId::duplicateId,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "duplicate enumeration definition for type " +
+                            std::to_string(enumeration.type));
+        }
+        std::unordered_map<semantic::SymbolId, const EnumCaseDefinition*> cases;
+        for (const auto& enumCase : enumeration.cases) {
+            if (!cases.emplace(enumCase.symbol, &enumCase).second) {
+                report(
+                        VerificationErrorId::duplicateId,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                        "duplicate enum case symbol " +
+                                std::to_string(enumCase.symbol) + " in type " +
+                                std::to_string(enumeration.type));
+            }
+            for (const auto payloadType : enumCase.payloadTypes) {
+                if (!types.contains(payloadType)) {
+                    report(
+                            VerificationErrorId::invalidReference,
+                            std::nullopt,
+                            std::nullopt,
+                            std::nullopt,
+                            "enum case '" + enumCase.name +
+                                    "' references an unknown payload type");
+                }
+            }
+        }
+    }
+
+    auto enumCaseFor = [&enumerations](
+            TypeId type,
+            semantic::SymbolId symbol) -> const EnumCaseDefinition* {
+        const auto enumeration = enumerations.find(type);
+        if (enumeration == enumerations.end()) return nullptr;
+        const auto found = std::find_if(
+                enumeration->second->cases.begin(),
+                enumeration->second->cases.end(),
+                [symbol](const auto& enumCase) { return enumCase.symbol == symbol; });
+        return found == enumeration->second->cases.end() ? nullptr : &*found;
+    };
 
     std::unordered_map<FunctionId, const Function*> functions;
     for (const auto& function : module.functions) {
@@ -420,6 +525,155 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                        case Opcode::constructStruct: {
+                        const auto* structure = instruction.result.has_value()
+                            ? (structures.contains(instruction.result->type)
+                                ? structures.at(instruction.result->type)
+                                : nullptr)
+                            : nullptr;
+                        bool matches = structure != nullptr && instruction.symbol.has_value() &&
+                            *instruction.symbol == structure->symbol &&
+                            instruction.result->category == ValueCategory::value &&
+                            instruction.operands.size() == structure->fields.size() &&
+                            instruction.targets.empty();
+                        const auto count = structure == nullptr
+                            ? 0
+                            : std::min(instruction.operands.size(), structure->fields.size());
+                        for (size_t field = 0; field < count; ++field) {
+                            matches &= operands[field] != nullptr &&
+                                operands[field]->category == ValueCategory::value &&
+                                operands[field]->type == structure->fields[field].type;
+                        }
+                        if (!matches) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "struct construction does not match its definition");
+                        }
+                        break;
+                        }
+                        case Opcode::fieldAddress:
+                        case Opcode::extractField: {
+                        const auto shapeMatches = requireShape(1, 0);
+                        const auto* structure = shapeMatches && operands[0] != nullptr &&
+                            structures.contains(operands[0]->type)
+                            ? structures.at(operands[0]->type)
+                            : nullptr;
+                        const auto field = structure == nullptr || !instruction.symbol.has_value()
+                            ? static_cast<const FieldDefinition*>(nullptr)
+                            : [&]() -> const FieldDefinition* {
+                                const auto found = std::find_if(
+                                    structure->fields.begin(),
+                                    structure->fields.end(),
+                                    [&instruction](const auto& candidate) {
+                                    return candidate.symbol == *instruction.symbol;
+                                    });
+                                return found == structure->fields.end() ? nullptr : &*found;
+                            }();
+                        const auto expectedCategory = instruction.opcode == Opcode::fieldAddress
+                            ? ValueCategory::address
+                            : ValueCategory::value;
+                        bool matches = field != nullptr && instruction.result.has_value() &&
+                            operands[0]->category == expectedCategory &&
+                            instruction.result->category == expectedCategory &&
+                            instruction.result->type == field->type;
+                        if (!matches) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "field projection does not match its structure definition");
+                        }
+                        break;
+                        }
+                        case Opcode::constructEnum: {
+                        const auto* enumCase = instruction.result.has_value() &&
+                            instruction.symbol.has_value()
+                            ? enumCaseFor(instruction.result->type, *instruction.symbol)
+                            : nullptr;
+                        bool matches = enumCase != nullptr && instruction.targets.empty() &&
+                            instruction.result->category == ValueCategory::value &&
+                            instruction.operands.size() == enumCase->payloadTypes.size();
+                        const auto count = enumCase == nullptr
+                            ? 0
+                            : std::min(
+                                instruction.operands.size(),
+                                enumCase->payloadTypes.size());
+                        for (size_t payload = 0; payload < count; ++payload) {
+                            matches &= operands[payload] != nullptr &&
+                                operands[payload]->category == ValueCategory::value &&
+                                operands[payload]->type == enumCase->payloadTypes[payload];
+                        }
+                        if (!matches) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "enum construction does not match its case definition");
+                        }
+                        break;
+                        }
+                        case Opcode::extractPayload: {
+                        const auto shapeMatches = requireShape(1, 0);
+                        const auto* enumCase = shapeMatches && operands[0] != nullptr &&
+                            instruction.symbol.has_value()
+                            ? enumCaseFor(operands[0]->type, *instruction.symbol)
+                            : nullptr;
+                        const auto index = instruction.integerValue;
+                        const auto indexIsValid = enumCase != nullptr && index >= 0 &&
+                            static_cast<size_t>(index) < enumCase->payloadTypes.size();
+                        if (!indexIsValid || !instruction.result.has_value() ||
+                            operands[0]->category != ValueCategory::value ||
+                            instruction.result->category != ValueCategory::value ||
+                            instruction.result->type !=
+                                enumCase->payloadTypes[static_cast<size_t>(index)]) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "enum payload extraction does not match its case definition");
+                        }
+                        break;
+                        }
+                        case Opcode::count:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value() &&
+                            (operands[0]->category != ValueCategory::value ||
+                             instruction.result->category != ValueCategory::value)) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "count operand and result must be object values");
+                        }
+                        break;
+                            case Opcode::subscript:
+                            case Opcode::subscriptAddress:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value() &&
+                                (operands[0]->category !=
+                                     (instruction.opcode == Opcode::subscript
+                                         ? ValueCategory::value
+                                         : ValueCategory::address) ||
+                             operands[1]->category != ValueCategory::value ||
+                                 instruction.result->category !=
+                                     (instruction.opcode == Opcode::subscript
+                                         ? ValueCategory::value
+                                         : ValueCategory::address))) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "subscript base, index, and result must be object values");
+                        }
+                        break;
                     case Opcode::branch:
                         requireShape(0, 1);
                         break;
@@ -512,6 +766,14 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::notEqual: return "ne";
         case Opcode::logicalAnd: return "and";
         case Opcode::call: return "call";
+        case Opcode::constructStruct: return "construct_struct";
+        case Opcode::fieldAddress: return "field_addr";
+        case Opcode::extractField: return "extract_field";
+        case Opcode::constructEnum: return "construct_enum";
+        case Opcode::extractPayload: return "extract_payload";
+        case Opcode::count: return "count";
+        case Opcode::subscript: return "subscript";
+        case Opcode::subscriptAddress: return "subscript_addr";
         case Opcode::branch: return "br";
         case Opcode::conditionalBranch: return "cond_br";
         case Opcode::returnValue: return "ret";
@@ -551,12 +813,66 @@ std::string dump(const Module& module) {
         return left->id < right->id;
     });
 
+    std::vector<const StructureDefinition*> sortedStructures;
+    for (const auto& structure : module.structures) sortedStructures.push_back(&structure);
+    std::sort(
+            sortedStructures.begin(),
+            sortedStructures.end(),
+            [](const auto* left, const auto* right) { return left->type < right->type; });
+
+    std::vector<const EnumerationDefinition*> sortedEnumerations;
+    for (const auto& enumeration : module.enumerations) {
+        sortedEnumerations.push_back(&enumeration);
+    }
+    std::sort(
+            sortedEnumerations.begin(),
+            sortedEnumerations.end(),
+            [](const auto* left, const auto* right) { return left->type < right->type; });
+
     std::ostringstream out;
     out << "module \"" << escape(module.sourceName) << "\" {\n";
     for (const auto* type : sortedTypes) {
         out << "  type !" << type->id << " = \"" << escape(type->name) << "\"\n";
     }
-    if (!sortedTypes.empty() && !sortedFunctions.empty()) out << '\n';
+    if (!sortedTypes.empty() &&
+        (!sortedStructures.empty() || !sortedEnumerations.empty() ||
+         !sortedFunctions.empty())) {
+        out << '\n';
+    }
+
+    for (const auto* structure : sortedStructures) {
+        out << "  struct !" << structure->type << " \"" << escape(structure->name)
+            << "\" symbol#" << structure->symbol << " {";
+        for (size_t index = 0; index < structure->fields.size(); ++index) {
+            const auto& field = structure->fields[index];
+            out << (index == 0 ? " " : ", ") << "\"" << escape(field.name) << "\": "
+                << typeName(types, field.type) << " symbol#" << field.symbol;
+            if (field.isMutable) out << " var";
+        }
+        out << (structure->fields.empty() ? "}\n" : " }\n");
+    }
+    for (const auto* enumeration : sortedEnumerations) {
+        out << "  enum !" << enumeration->type << " \"" << escape(enumeration->name)
+            << "\" symbol#" << enumeration->symbol << " {";
+        for (size_t caseIndex = 0; caseIndex < enumeration->cases.size(); ++caseIndex) {
+            const auto& enumCase = enumeration->cases[caseIndex];
+            out << (caseIndex == 0 ? " " : ", ") << "\"" << escape(enumCase.name)
+                << "\" symbol#" << enumCase.symbol;
+            if (!enumCase.payloadTypes.empty()) {
+                out << '(';
+                for (size_t payload = 0; payload < enumCase.payloadTypes.size(); ++payload) {
+                    if (payload != 0) out << ", ";
+                    out << typeName(types, enumCase.payloadTypes[payload]);
+                }
+                out << ')';
+            }
+        }
+        out << (enumeration->cases.empty() ? "}\n" : " }\n");
+    }
+    if ((!sortedStructures.empty() || !sortedEnumerations.empty()) &&
+        !sortedFunctions.empty()) {
+        out << '\n';
+    }
 
     for (size_t functionIndex = 0; functionIndex < sortedFunctions.size(); ++functionIndex) {
         const auto& function = *sortedFunctions[functionIndex];
@@ -635,6 +951,35 @@ std::string dump(const Module& module) {
                             out << valueName(instruction.operands[index]);
                         }
                         out << ')';
+                        break;
+                    case Opcode::constructStruct:
+                    case Opcode::constructEnum:
+                        out << '(';
+                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                            if (index != 0) out << ", ";
+                            out << valueName(instruction.operands[index]);
+                        }
+                        out << ')';
+                        break;
+                    case Opcode::fieldAddress:
+                    case Opcode::extractField:
+                    case Opcode::count:
+                        if (!instruction.operands.empty()) {
+                            out << ' ' << valueName(instruction.operands[0]);
+                        }
+                        break;
+                    case Opcode::extractPayload:
+                        if (!instruction.operands.empty()) {
+                            out << ' ' << valueName(instruction.operands[0]);
+                        }
+                        out << ", " << instruction.integerValue;
+                        break;
+                    case Opcode::subscript:
+                    case Opcode::subscriptAddress:
+                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                            out << (index == 0 ? " " : ", ")
+                                << valueName(instruction.operands[index]);
+                        }
                         break;
                     case Opcode::branch:
                         if (!instruction.targets.empty()) out << " ^" << instruction.targets[0];

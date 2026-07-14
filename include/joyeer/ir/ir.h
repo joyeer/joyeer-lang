@@ -56,6 +56,14 @@ enum class Opcode {
     logicalAnd,
 
     call,
+    constructStruct,
+    fieldAddress,
+    extractField,
+    constructEnum,
+    extractPayload,
+    count,
+    subscript,
+    subscriptAddress,
 
     branch,
     conditionalBranch,
@@ -108,9 +116,38 @@ struct TypeName {
     std::string name;
 };
 
+struct FieldDefinition {
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    std::string name;
+    TypeId type = typing::invalidTypeId;
+    bool isMutable = false;
+};
+
+struct StructureDefinition {
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    TypeId type = typing::invalidTypeId;
+    std::string name;
+    std::vector<FieldDefinition> fields;
+};
+
+struct EnumCaseDefinition {
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    std::string name;
+    std::vector<TypeId> payloadTypes;
+};
+
+struct EnumerationDefinition {
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    TypeId type = typing::invalidTypeId;
+    std::string name;
+    std::vector<EnumCaseDefinition> cases;
+};
+
 struct Module {
     std::string sourceName;
     std::vector<TypeName> types;
+    std::vector<StructureDefinition> structures;
+    std::vector<EnumerationDefinition> enumerations;
     std::vector<Function> functions;
 };
 

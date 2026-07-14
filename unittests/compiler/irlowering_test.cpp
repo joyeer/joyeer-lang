@@ -226,6 +226,65 @@ return number
     EXPECT_EQ(slot->result->category, joyeer::ir::ValueCategory::address);
 }
 
+TEST_F(IRLoweringTest, LowersStructConstructionFieldReadsAndWrites) {
+    lower(R"JOYEER(struct Box {
+var value: Int
+let fixed: Int = 7
+}
+func make(): Int {
+var box = Box(value: 1)
+box.value = box.value + box.fixed
+return box.value
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    ASSERT_EQ(result.module->structures.size(), 1u);
+    EXPECT_EQ(result.module->structures[0].fields.size(), 2u);
+
+    const auto& make = function("make");
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::constructStruct), 1u);
+    EXPECT_GE(opcodeCount(make, joyeer::ir::Opcode::fieldAddress), 3u);
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::add), 1u);
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersUserOptionalAndNilEnumConstruction) {
+    lower(R"JOYEER(enum Value { Empty, Number(Int), }
+func qualified(): Value { return Value.Number(1) }
+func contextual(): Value { return .Empty }
+func some(value: Int): Int? { return .Some(value) }
+func none(): Int? { return nil }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_GE(result.module->enumerations.size(), 2u);
+    EXPECT_EQ(opcodeCount(function("qualified"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("contextual"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("some"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("none"), joyeer::ir::Opcode::constructEnum), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersStringCountAndSubscript) {
+    lower(R"JOYEER(func first(text: String): UInt8 {
+let length = text.count
+print(value: length)
+return text[0]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& first = function("first");
+    EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::count), 1u);
+    EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::subscript), 1u);
+}
+
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
     lower(R"JOYEER(func incomplete(value: Int): Int {
 let copy = value
