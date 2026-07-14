@@ -484,6 +484,17 @@ print(value: value)
     EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
+    lower(R"JOYEER(func square(value: Int): Int { value * value }
+func text(): String { "left" + "right" }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("square"), joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::destroy), 0u);
+}
+
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
     lower(R"JOYEER(func incomplete(value: Int): Int {
 let copy = value

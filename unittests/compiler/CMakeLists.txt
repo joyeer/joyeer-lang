@@ -87,6 +87,22 @@ gtest_discover_tests(CompilerTypeCheckingTests
         PROPERTIES LABELS type-checking
 )
 
+add_executable(CompilerSemanticAnalysisTests
+        semanticanalysis_test.cpp
+)
+
+target_link_libraries(CompilerSemanticAnalysisTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerVM
+)
+
+gtest_discover_tests(CompilerSemanticAnalysisTests
+        PROPERTIES LABELS semantic-analysis
+)
+
 add_executable(IRModelTests
         ir_test.cpp
 )
@@ -192,6 +208,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableOwnership PROPERTIES
             LABELS "native;llvm-backend;native-runtime;ownership"
     )
+
+    add_test(NAME NativeExecutableTrailingReturn
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/trailing_return.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-trailing-return${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=42\ntrailing\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableTrailingReturn PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;semantic-analysis"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
@@ -216,15 +244,25 @@ set_tests_properties(TypeCheckingCliRejectsMismatch PROPERTIES
         LABELS type-checking
 )
 
-add_test(NAME IRLoweringCliRejectsMissingReturn
+add_test(NAME SemanticAnalysisCliRejectsMissingReturn
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                -DINPUT_FILE=${JOYEER_TESTS_DIR}/ir-lowering/err/missing_return.joyeer
-                -DEXPECTED_PATTERN=ir-lowering.missing-return
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/missing_return.joyeer
+                -DEXPECTED_PATTERN=semantic-analysis.missing-return
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
 )
-set_tests_properties(IRLoweringCliRejectsMissingReturn PROPERTIES
-        LABELS ir-lowering
+set_tests_properties(SemanticAnalysisCliRejectsMissingReturn PROPERTIES
+        LABELS semantic-analysis
+)
+
+add_test(NAME SemanticAnalysisCliReportsUnreachableWarning
+        COMMAND $<TARGET_FILE:joyeer>
+                --lang=v0.1
+                "${JOYEER_TESTS_DIR}/semantic-analysis/unreachable_warning.joyeer"
+)
+set_tests_properties(SemanticAnalysisCliReportsUnreachableWarning PROPERTIES
+        LABELS semantic-analysis
+        PASS_REGULAR_EXPRESSION semantic-analysis.unreachable-code
 )
 
 add_test(NAME NativeLinkerRejectsMissingMain

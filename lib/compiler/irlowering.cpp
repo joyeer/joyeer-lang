@@ -480,10 +480,25 @@ private:
             if (parameter.symbol.has_value()) slots[*parameter.symbol] = address;
         }
 
-        lowerBlock(declaration->body);
+        auto bodyValue = lowerBlock(declaration->body);
         if (currentBlockTerminated()) {
             discardScopeAfterTerminator();
             return;
+        }
+        if (function.returnsValue && bodyValue.has_value()) {
+            bodyValue = coerce(*bodyValue, function.resultType, declaration->body->span);
+            if (bodyValue.has_value() && requiresDestroy(bodyValue->type)) {
+                bodyValue = acquireOwned(*bodyValue, declaration->body->span);
+            }
+            if (bodyValue.has_value()) {
+                cleanupAndPopScope(declaration->body->span);
+                auto instruction = makeInstruction(
+                        ir::Opcode::returnValue,
+                        declaration->body->span);
+                instruction.operands = { bodyValue->id };
+                emit(std::move(instruction));
+                return;
+            }
         }
         cleanupAndPopScope(declaration->span);
         if (function.returnsValue) {

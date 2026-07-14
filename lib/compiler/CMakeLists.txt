@@ -9,6 +9,7 @@ add_joyeer_library(JoyeerCompiler STATIC
         node+visitor.cpp
         nameresolution.cpp
         parser.cpp
+        semanticanalysis.cpp
         semantic.cpp
         debugprinter.cpp
         sourcefile.cpp

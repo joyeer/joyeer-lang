@@ -7,6 +7,7 @@
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/compiler/irlowering.h"
+#include "joyeer/compiler/semanticanalysis.h"
 #include "joyeer/backend/llvm.h"
 #include "joyeer/compiler/syntaxparser.h"
 #include "joyeer/compiler/IRGen.h"
@@ -41,6 +42,25 @@ void reportSpannedFailure(
         column,
         "%s",
         message.c_str());
+}
+
+void reportSpannedDiagnostic(
+    Diagnostics* diagnostics,
+    const SourceFile::Ptr& sourcefile,
+    SourceSpan span,
+    ErrorLevel level,
+    const std::string& message) {
+    const auto upper = std::upper_bound(
+        sourcefile->lineStarts.begin(),
+        sourcefile->lineStarts.end(),
+        span.offset);
+    const auto line = upper == sourcefile->lineStarts.begin()
+        ? 0
+        : static_cast<int>(
+            std::distance(sourcefile->lineStarts.begin(), upper) - 1);
+    const auto column = static_cast<int>(
+        span.offset - sourcefile->lineStarts[static_cast<size_t>(line)]);
+    diagnostics->reportError(level, line, column, "%s", message.c_str());
 }
 
 } // namespace
@@ -135,6 +155,24 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
             reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
         }
         if (!checking.succeeded()) {
+            return nullptr;
+        }
+
+        const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+        for (const auto& diagnostic : analysis.diagnostics) {
+            const std::string message =
+                std::string(joyeer::analysis::diagnosticName(diagnostic.id)) +
+                ": " + diagnostic.message;
+            reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                diagnostic.severity == joyeer::analysis::Severity::warning
+                    ? ErrorLevel::report
+                    : ErrorLevel::failure,
+                message);
+        }
+        if (!analysis.succeeded()) {
             return nullptr;
         }
 
