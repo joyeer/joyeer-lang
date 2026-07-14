@@ -88,6 +88,7 @@ struct Parameter {
     std::string name;
     bool isMutable = false;
     SourceSpan span;
+    bool acceptsAnyType = false;
 };
 
 struct Function {

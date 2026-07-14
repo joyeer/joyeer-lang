@@ -394,8 +394,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                         for (size_t argument = 0; argument < count; ++argument) {
                             matches &= operands[argument] != nullptr &&
                                     operands[argument]->category == ValueCategory::value &&
-                                    operands[argument]->type ==
-                                            callee.parameters[argument].value.type;
+                                (callee.parameters[argument].acceptsAnyType ||
+                                 operands[argument]->type ==
+                                     callee.parameters[argument].value.type);
                         }
                         matches &= callee.returnsValue == instruction.result.has_value();
                         if (callee.returnsValue && instruction.result.has_value()) {
@@ -561,6 +562,7 @@ std::string dump(const Module& module) {
                 << typeName(types, parameter.value.type)
                 << " \"" << escape(parameter.name) << "\"";
             if (parameter.isMutable) out << " inout";
+            if (parameter.acceptsAnyType) out << " accepts-any";
         }
         out << ") -> " << typeName(types, function.resultType);
         if (function.isExternal) {

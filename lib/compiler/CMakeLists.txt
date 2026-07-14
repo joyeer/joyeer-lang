@@ -4,6 +4,7 @@ add_joyeer_library(JoyeerCompiler STATIC
         context.cpp
         lexparser.cpp
         IRGen.cpp
+        irlowering.cpp
         node.cpp
         node+visitor.cpp
         nameresolution.cpp
@@ -19,4 +20,6 @@ add_joyeer_library(JoyeerCompiler STATIC
         typegen.cpp
         typebinding.cpp
         )
+
+target_link_libraries(JoyeerCompiler PUBLIC JoyeerIR)
 

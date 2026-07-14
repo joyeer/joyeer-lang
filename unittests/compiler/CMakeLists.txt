@@ -87,6 +87,23 @@ gtest_discover_tests(IRModelTests
         PROPERTIES LABELS ir
 )
 
+add_executable(IRLoweringTests
+        irlowering_test.cpp
+)
+
+target_link_libraries(IRLoweringTests
+        GTest::gtest_main
+        JoyeerDiagnostic
+        JoyeerRuntime
+        JoyeerCompiler
+        JoyeerIR
+        JoyeerVM
+)
+
+gtest_discover_tests(IRLoweringTests
+        PROPERTIES LABELS ir-lowering
+)
+
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
