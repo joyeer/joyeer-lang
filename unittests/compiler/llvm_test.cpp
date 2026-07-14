@@ -100,16 +100,37 @@ func bytes(left: UInt8, right: UInt8): Bool { return left < right }
     EXPECT_NE(result.text.find("icmp ult i8"), std::string::npos);
 }
 
-TEST_F(LLVMBackendTest, DiagnosesAggregateTypesUntilAbiLoweringLands) {
+TEST_F(LLVMBackendTest, EmitsStructuresEnumsPayloadsAndPatternControlFlow) {
     emit(R"JOYEER(struct Box { var value: Int }
-func make(): Box { return Box(value: 1) }
+enum Choice { None, Some(Box), }
+func read(choice: Choice): Int {
+return match choice {
+.None => 0,
+.Some(box) => box.value,
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("%joyeer.struct."), std::string::npos);
+    EXPECT_NE(result.text.find("%joyeer.enum."), std::string::npos);
+    EXPECT_NE(result.text.find("extractvalue %joyeer.enum."), std::string::npos);
+    EXPECT_NE(result.text.find("getelementptr inbounds %joyeer.struct."), std::string::npos);
+    EXPECT_NE(result.text.find("pattern."), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, DiagnosesCollectionsUntilRuntimeAbiLands) {
+    emit(R"JOYEER(func first(): Int {
+let values: [Int] = [1]
+return values[0]
+}
 )JOYEER");
 
     ASSERT_FALSE(result.succeeded());
     ASSERT_FALSE(result.diagnostics.empty());
     EXPECT_EQ(
             result.diagnostics[0].id,
-            joyeer::llvmbackend::DiagnosticId::unsupportedType);
+            joyeer::llvmbackend::DiagnosticId::unsupportedInstruction);
 }
 
 } // namespace

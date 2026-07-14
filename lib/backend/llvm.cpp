@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
@@ -38,6 +40,15 @@ std::string functionName(const ir::Function& function) {
     return "@joyeer_fn_" + std::to_string(function.id);
 }
 
+size_t alignTo(size_t value, size_t alignment) {
+    return (value + alignment - 1) / alignment * alignment;
+}
+
+struct Layout {
+    size_t size = 0;
+    size_t alignment = 1;
+};
+
 class Builder {
 public:
     Result build(const ir::Module& source) {
@@ -57,9 +68,26 @@ public:
         }
 
         for (const auto& type : source.types) types.emplace(type.id, &type);
+        for (const auto& structure : source.structures) {
+            structures.emplace(structure.type, &structure);
+            for (size_t index = 0; index < structure.fields.size(); ++index) {
+                fields.emplace(
+                        structure.fields[index].symbol,
+                        std::make_pair(&structure, index));
+            }
+        }
+        for (const auto& enumeration : source.enumerations) {
+            enumerations.emplace(enumeration.type, &enumeration);
+            for (size_t index = 0; index < enumeration.cases.size(); ++index) {
+                cases.emplace(
+                        enumeration.cases[index].symbol,
+                        std::make_pair(&enumeration, index));
+            }
+        }
         for (const auto& function : source.functions) {
             functions.emplace(function.id, &function);
         }
+        emitAggregateTypeDefinitions();
         for (const auto& function : source.functions) {
             if (!function.isExternal) emitFunction(function);
         }
@@ -69,7 +97,9 @@ public:
         out << "; Joyeer LLVM backend\n"
             << "source_filename = \"" << escapeQuoted(source.sourceName) << "\"\n";
         if (usesString) out << "%joyeer.string = type { ptr, i64 }\n";
-        if (usesString || !stringGlobals.empty() || !runtimeDeclarations.empty()) {
+        for (const auto& definition : typeDefinitions) out << definition << '\n';
+        if (usesString || !typeDefinitions.empty() || !stringGlobals.empty() ||
+            !runtimeDeclarations.empty()) {
             out << '\n';
         }
         for (const auto& global : stringGlobals) out << global << '\n';
@@ -95,10 +125,19 @@ private:
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<ir::TypeId, const ir::TypeName*> types;
     std::unordered_map<ir::FunctionId, const ir::Function*> functions;
+    std::unordered_map<ir::TypeId, const ir::StructureDefinition*> structures;
+    std::unordered_map<ir::TypeId, const ir::EnumerationDefinition*> enumerations;
+    std::unordered_map<semantic::SymbolId,
+                       std::pair<const ir::StructureDefinition*, size_t>> fields;
+    std::unordered_map<semantic::SymbolId,
+                       std::pair<const ir::EnumerationDefinition*, size_t>> cases;
+    std::unordered_map<ir::TypeId, Layout> layouts;
+    std::unordered_set<ir::TypeId> layoutsInProgress;
     std::unordered_map<ir::ValueId, ir::Value> values;
     std::unordered_map<ir::ValueId, std::string> operands;
     std::unordered_set<std::string> runtimeDeclarations;
     std::vector<std::string> stringGlobals;
+    std::vector<std::string> typeDefinitions;
     std::vector<std::string> functionBodies;
     size_t nextString = 0;
     size_t nextTemporary = 0;
@@ -132,6 +171,142 @@ private:
                 std::move(message));
     }
 
+    std::optional<Layout> layoutFor(ir::TypeId id) {
+        const auto cached = layouts.find(id);
+        if (cached != layouts.end()) return cached->second;
+        const auto* value = type(id);
+        if (value == nullptr) return std::nullopt;
+        if (!layoutsInProgress.insert(id).second) {
+            reportHere(
+                    DiagnosticId::unsupportedType,
+                    {},
+                    "recursive inline layout for type '" + value->name + "'");
+            return std::nullopt;
+        }
+
+        std::optional<Layout> result;
+        switch (value->kind) {
+            case typing::TypeKind::voidType:
+            case typing::TypeKind::never:
+                result = Layout { 0, 1 };
+                break;
+            case typing::TypeKind::boolean:
+            case typing::TypeKind::uint8:
+                result = Layout { 1, 1 };
+                break;
+            case typing::TypeKind::integer:
+                result = Layout { 8, 8 };
+                break;
+            case typing::TypeKind::string:
+                usesString = true;
+                result = Layout { 16, 8 };
+                break;
+            case typing::TypeKind::structure: {
+                const auto found = structures.find(id);
+                if (found == structures.end()) break;
+                size_t size = 0;
+                size_t alignment = 1;
+                for (const auto& field : found->second->fields) {
+                    const auto fieldLayout = layoutFor(field.type);
+                    if (!fieldLayout.has_value()) {
+                        result.reset();
+                        break;
+                    }
+                    size = alignTo(size, fieldLayout->alignment) + fieldLayout->size;
+                    alignment = std::max(alignment, fieldLayout->alignment);
+                    result = Layout { alignTo(size, alignment), alignment };
+                }
+                if (found->second->fields.empty()) result = Layout { 0, 1 };
+                break;
+            }
+            case typing::TypeKind::enumeration:
+            case typing::TypeKind::optional:
+            case typing::TypeKind::result: {
+                const auto found = enumerations.find(id);
+                if (found == enumerations.end()) break;
+                size_t payloadSize = 0;
+                bool valid = true;
+                for (const auto& enumCase : found->second->cases) {
+                    size_t caseSize = 0;
+                    for (const auto payloadType : enumCase.payloadTypes) {
+                        const auto payloadLayout = layoutFor(payloadType);
+                        if (!payloadLayout.has_value()) {
+                            valid = false;
+                            break;
+                        }
+                        caseSize = alignTo(caseSize, payloadLayout->alignment) +
+                                payloadLayout->size;
+                    }
+                    if (!valid) break;
+                    payloadSize = std::max(payloadSize, alignTo(caseSize, 8));
+                }
+                if (valid) result = Layout { 8 + payloadSize, 8 };
+                break;
+            }
+            default:
+                break;
+        }
+
+        layoutsInProgress.erase(id);
+        if (result.has_value()) layouts.emplace(id, *result);
+        return result;
+    }
+
+    std::optional<std::vector<size_t>> payloadOffsets(
+            const ir::EnumCaseDefinition& enumCase) {
+        std::vector<size_t> result;
+        size_t offset = 0;
+        for (const auto payloadType : enumCase.payloadTypes) {
+            const auto payloadLayout = layoutFor(payloadType);
+            if (!payloadLayout.has_value()) return std::nullopt;
+            offset = alignTo(offset, payloadLayout->alignment);
+            result.push_back(offset);
+            offset += payloadLayout->size;
+        }
+        return result;
+    }
+
+    void emitAggregateTypeDefinitions() {
+        std::vector<ir::TypeId> structureTypes;
+        for (const auto& [id, structure] : structures) {
+            static_cast<void>(structure);
+            structureTypes.push_back(id);
+        }
+        std::sort(structureTypes.begin(), structureTypes.end());
+        for (const auto id : structureTypes) {
+            const auto* structure = structures.at(id);
+            std::ostringstream definition;
+            definition << "%joyeer.struct." << id << " = type { ";
+            for (size_t index = 0; index < structure->fields.size(); ++index) {
+                if (index != 0) definition << ", ";
+                const auto fieldType = llvmType(structure->fields[index].type);
+                if (!fieldType.has_value()) return;
+                definition << *fieldType;
+            }
+            definition << " }";
+            typeDefinitions.push_back(definition.str());
+            layoutFor(id);
+        }
+
+        std::vector<ir::TypeId> enumerationTypes;
+        for (const auto& [id, enumeration] : enumerations) {
+            static_cast<void>(enumeration);
+            enumerationTypes.push_back(id);
+        }
+        std::sort(enumerationTypes.begin(), enumerationTypes.end());
+        for (const auto id : enumerationTypes) {
+            const auto valueLayout = layoutFor(id);
+            if (!valueLayout.has_value()) return;
+            const auto payloadWords = valueLayout->size <= 8
+                    ? 0
+                    : (valueLayout->size - 8) / 8;
+            typeDefinitions.push_back(
+                    "%joyeer.enum." + std::to_string(id) +
+                    " = type { i32, [" + std::to_string(payloadWords) +
+                    " x i64] }");
+        }
+    }
+
     std::optional<std::string> llvmType(ir::TypeId id, SourceSpan span = {}) {
         const auto found = types.find(id);
         if (found == types.end()) {
@@ -154,14 +329,27 @@ private:
             case typing::TypeKind::string:
                 usesString = true;
                 return "%joyeer.string";
+            case typing::TypeKind::structure:
+                if (structures.contains(id)) {
+                    return "%joyeer.struct." + std::to_string(id);
+                }
+                break;
+            case typing::TypeKind::enumeration:
+            case typing::TypeKind::optional:
+            case typing::TypeKind::result:
+                if (enumerations.contains(id)) {
+                    return "%joyeer.enum." + std::to_string(id);
+                }
+                break;
             default:
-                reportHere(
-                        DiagnosticId::unsupportedType,
-                        span,
-                        "LLVM lowering is not implemented for type '" +
-                                found->second->name + "'");
-                return std::nullopt;
+                break;
         }
+        reportHere(
+                DiagnosticId::unsupportedType,
+                span,
+                "LLVM lowering is not implemented for type '" +
+                        found->second->name + "'");
+        return std::nullopt;
     }
 
     const ir::TypeName* type(ir::TypeId id) const {
@@ -290,6 +478,16 @@ private:
             }
             case ir::Opcode::call:
                 return emitCall(out, instruction);
+            case ir::Opcode::constructStruct:
+                return emitConstructStruct(out, instruction);
+            case ir::Opcode::fieldAddress:
+                return emitFieldAddress(out, instruction);
+            case ir::Opcode::extractField:
+                return emitExtractField(out, instruction);
+            case ir::Opcode::constructEnum:
+                return emitConstructEnum(out, instruction);
+            case ir::Opcode::extractPayload:
+                return emitExtractPayload(out, instruction);
             case ir::Opcode::branch:
                 out << "  br label %" << blockName(instruction.targets[0]) << "\n";
                 return true;
@@ -301,6 +499,8 @@ private:
                     << blockName(instruction.targets[1]) << "\n";
                 return true;
             }
+            case ir::Opcode::switchPattern:
+                return emitSwitchPattern(out, instruction);
             case ir::Opcode::returnValue:
                 return emitReturn(out, instruction);
             case ir::Opcode::returnVoid:
@@ -325,6 +525,318 @@ private:
         operands[instruction.result->id] =
                 "%joyeer.string { ptr " + globalName + ", i64 " +
                 std::to_string(length) + " }";
+        return true;
+    }
+
+    std::string temporary() {
+        return "%tmp" + std::to_string(nextTemporary++);
+    }
+
+    bool emitConstructStruct(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        const auto found = structures.find(instruction.result->type);
+        if (found == structures.end()) return false;
+        const auto typeText = llvmType(instruction.result->type, instruction.span);
+        if (!typeText.has_value()) return false;
+        if (instruction.operands.empty()) {
+            operands[instruction.result->id] = "zeroinitializer";
+            return true;
+        }
+
+        std::string aggregate = "poison";
+        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+            const auto fieldValue = operand(instruction.operands[index]);
+            const auto fieldType = llvmType(found->second->fields[index].type, instruction.span);
+            if (!fieldValue.has_value() || !fieldType.has_value()) return false;
+            const auto destination = index + 1 == instruction.operands.size()
+                    ? valueName(instruction.result->id)
+                    : temporary();
+            out << "  " << destination << " = insertvalue " << *typeText << ' '
+                << aggregate << ", " << *fieldType << ' ' << *fieldValue
+                << ", " << index << "\n";
+            aggregate = destination;
+        }
+        return true;
+    }
+
+    bool emitFieldAddress(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (!instruction.symbol.has_value()) return false;
+        const auto found = fields.find(*instruction.symbol);
+        const auto base = operand(instruction.operands[0]);
+        if (found == fields.end() || !base.has_value()) return false;
+        const auto typeText = llvmType(found->second.first->type, instruction.span);
+        if (!typeText.has_value()) return false;
+        out << "  " << valueName(instruction.result->id)
+            << " = getelementptr inbounds " << *typeText << ", ptr " << *base
+            << ", i32 0, i32 " << found->second.second << "\n";
+        return true;
+    }
+
+    bool emitExtractField(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (!instruction.symbol.has_value()) return false;
+        const auto found = fields.find(*instruction.symbol);
+        const auto base = operand(instruction.operands[0]);
+        if (found == fields.end() || !base.has_value()) return false;
+        const auto typeText = llvmType(found->second.first->type, instruction.span);
+        if (!typeText.has_value()) return false;
+        out << "  " << valueName(instruction.result->id)
+            << " = extractvalue " << *typeText << ' ' << *base
+            << ", " << found->second.second << "\n";
+        return true;
+    }
+
+    const ir::EnumCaseDefinition* enumCase(
+            semantic::SymbolId symbol,
+            const ir::EnumerationDefinition** owner = nullptr,
+            size_t* index = nullptr) const {
+        const auto found = cases.find(symbol);
+        if (found == cases.end()) return nullptr;
+        if (owner != nullptr) *owner = found->second.first;
+        if (index != nullptr) *index = found->second.second;
+        return &found->second.first->cases[found->second.second];
+    }
+
+    bool emitConstructEnum(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (!instruction.symbol.has_value()) return false;
+        const ir::EnumerationDefinition* enumeration = nullptr;
+        size_t caseIndex = 0;
+        const auto* selectedCase = enumCase(
+                *instruction.symbol,
+                &enumeration,
+                &caseIndex);
+        if (selectedCase == nullptr || enumeration == nullptr ||
+            enumeration->type != instruction.result->type) {
+            return false;
+        }
+        const auto typeText = llvmType(enumeration->type, instruction.span);
+        const auto offsets = payloadOffsets(*selectedCase);
+        if (!typeText.has_value() || !offsets.has_value()) return false;
+
+        const auto storage = temporary();
+        const auto tagAddress = temporary();
+        out << "  " << storage << " = alloca " << *typeText << "\n"
+            << "  store " << *typeText << " zeroinitializer, ptr " << storage << "\n"
+            << "  " << tagAddress << " = getelementptr inbounds " << *typeText
+            << ", ptr " << storage << ", i32 0, i32 0\n"
+            << "  store i32 " << caseIndex << ", ptr " << tagAddress << "\n";
+
+        if (!instruction.operands.empty()) {
+            const auto payloadBase = temporary();
+            out << "  " << payloadBase << " = getelementptr inbounds " << *typeText
+                << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
+            for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                const auto payload = operand(instruction.operands[index]);
+                const auto payloadType = llvmType(
+                        selectedCase->payloadTypes[index],
+                        instruction.span);
+                if (!payload.has_value() || !payloadType.has_value()) return false;
+                auto payloadAddress = payloadBase;
+                if ((*offsets)[index] != 0) {
+                    payloadAddress = temporary();
+                    out << "  " << payloadAddress << " = getelementptr inbounds i8, ptr "
+                        << payloadBase << ", i64 " << (*offsets)[index] << "\n";
+                }
+                out << "  store " << *payloadType << ' ' << *payload
+                    << ", ptr " << payloadAddress << "\n";
+            }
+        }
+        out << "  " << valueName(instruction.result->id) << " = load "
+            << *typeText << ", ptr " << storage << "\n";
+        return true;
+    }
+
+    std::optional<std::string> emitPayloadLoad(
+            std::ostringstream& out,
+            const std::string& enumValue,
+            ir::TypeId enumType,
+            semantic::SymbolId caseSymbol,
+            size_t payloadIndex,
+            SourceSpan span,
+            const std::string& requestedResult = {}) {
+        const ir::EnumerationDefinition* enumeration = nullptr;
+        const auto* selectedCase = enumCase(caseSymbol, &enumeration);
+        if (selectedCase == nullptr || enumeration == nullptr ||
+            enumeration->type != enumType ||
+            payloadIndex >= selectedCase->payloadTypes.size()) {
+            return std::nullopt;
+        }
+        const auto enumTypeText = llvmType(enumType, span);
+        const auto payloadTypeText = llvmType(
+                selectedCase->payloadTypes[payloadIndex],
+                span);
+        const auto offsets = payloadOffsets(*selectedCase);
+        if (!enumTypeText.has_value() || !payloadTypeText.has_value() ||
+            !offsets.has_value()) {
+            return std::nullopt;
+        }
+
+        const auto storage = temporary();
+        const auto payloadBase = temporary();
+        out << "  " << storage << " = alloca " << *enumTypeText << "\n"
+            << "  store " << *enumTypeText << ' ' << enumValue << ", ptr " << storage << "\n"
+            << "  " << payloadBase << " = getelementptr inbounds " << *enumTypeText
+            << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
+        auto payloadAddress = payloadBase;
+        if ((*offsets)[payloadIndex] != 0) {
+            payloadAddress = temporary();
+            out << "  " << payloadAddress << " = getelementptr inbounds i8, ptr "
+                << payloadBase << ", i64 " << (*offsets)[payloadIndex] << "\n";
+        }
+        const auto result = requestedResult.empty() ? temporary() : requestedResult;
+        out << "  " << result << " = load " << *payloadTypeText
+            << ", ptr " << payloadAddress << "\n";
+        return result;
+    }
+
+    bool emitExtractPayload(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (!instruction.symbol.has_value()) return false;
+        const auto source = operand(instruction.operands[0]);
+        const auto* sourceValue = value(instruction.operands[0]);
+        if (!source.has_value() || sourceValue == nullptr || instruction.integerValue < 0) {
+            return false;
+        }
+        return emitPayloadLoad(
+                out,
+                *source,
+                sourceValue->type,
+                *instruction.symbol,
+                static_cast<size_t>(instruction.integerValue),
+                instruction.span,
+                valueName(instruction.result->id)).has_value();
+    }
+
+    std::string stringLiteralOperand(const std::string& text) {
+        const auto globalName = "@.joyeer.string." + std::to_string(nextString++);
+        std::ostringstream global;
+        global << globalName << " = private unnamed_addr constant [" << text.size()
+               << " x i8] c\"" << escapeQuoted(text) << "\", align 1";
+        stringGlobals.push_back(global.str());
+        usesString = true;
+        return "%joyeer.string { ptr " + globalName + ", i64 " +
+                std::to_string(text.size()) + " }";
+    }
+
+    std::optional<std::string> emitPatternCondition(
+            std::ostringstream& out,
+            const ir::Pattern& pattern,
+            const std::string& testedValue,
+            SourceSpan span) {
+        switch (pattern.kind) {
+            case ir::PatternKind::wildcard:
+                return "true";
+            case ir::PatternKind::integerLiteral:
+            case ir::PatternKind::booleanLiteral:
+            case ir::PatternKind::byteLiteral: {
+                const auto typeText = llvmType(pattern.type, span);
+                if (!typeText.has_value()) return std::nullopt;
+                const auto condition = temporary();
+                const auto literal = pattern.kind == ir::PatternKind::booleanLiteral
+                        ? (pattern.integerValue == 0 ? std::string("false") : std::string("true"))
+                        : std::to_string(pattern.integerValue);
+                out << "  " << condition << " = icmp eq " << *typeText << ' '
+                    << testedValue << ", " << literal << "\n";
+                return condition;
+            }
+            case ir::PatternKind::stringLiteral: {
+                runtimeDeclarations.insert(
+                        "declare i1 @joyeer_string_equal(%joyeer.string, %joyeer.string)");
+                const auto condition = temporary();
+                out << "  " << condition
+                    << " = call i1 @joyeer_string_equal(%joyeer.string " << testedValue
+                    << ", %joyeer.string " << stringLiteralOperand(pattern.text) << ")\n";
+                return condition;
+            }
+            case ir::PatternKind::enumCase: {
+                if (!pattern.symbol.has_value()) return std::nullopt;
+                const ir::EnumerationDefinition* enumeration = nullptr;
+                size_t caseIndex = 0;
+                const auto* selectedCase = enumCase(
+                        *pattern.symbol,
+                        &enumeration,
+                        &caseIndex);
+                if (selectedCase == nullptr || enumeration == nullptr ||
+                    enumeration->type != pattern.type) {
+                    return std::nullopt;
+                }
+                const auto typeText = llvmType(pattern.type, span);
+                if (!typeText.has_value()) return std::nullopt;
+                const auto tag = temporary();
+                const auto tagMatches = temporary();
+                out << "  " << tag << " = extractvalue " << *typeText << ' '
+                    << testedValue << ", 0\n"
+                    << "  " << tagMatches << " = icmp eq i32 " << tag
+                    << ", " << caseIndex << "\n";
+                auto condition = tagMatches;
+                for (size_t index = 0; index < pattern.payloads.size(); ++index) {
+                    if (pattern.payloads[index].kind == ir::PatternKind::wildcard) continue;
+                    const auto payload = emitPayloadLoad(
+                            out,
+                            testedValue,
+                            pattern.type,
+                            *pattern.symbol,
+                            index,
+                            span);
+                    if (!payload.has_value()) return std::nullopt;
+                    const auto payloadMatches = emitPatternCondition(
+                            out,
+                            pattern.payloads[index],
+                            *payload,
+                            span);
+                    if (!payloadMatches.has_value()) return std::nullopt;
+                    const auto combined = temporary();
+                    out << "  " << combined << " = and i1 " << condition
+                        << ", " << *payloadMatches << "\n";
+                    condition = combined;
+                }
+                return condition;
+            }
+        }
+        return std::nullopt;
+    }
+
+    bool emitSwitchPattern(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        const auto scrutinee = operand(instruction.operands[0]);
+        if (!scrutinee.has_value() || instruction.switchCases.empty()) return false;
+
+        bool terminated = false;
+        for (size_t index = 0; index < instruction.switchCases.size(); ++index) {
+            if (index != 0) {
+                out << "pattern." << currentBlock->id << '.' << index << ":\n";
+            }
+            const auto& switchCase = instruction.switchCases[index];
+            const auto condition = emitPatternCondition(
+                    out,
+                    switchCase.pattern,
+                    *scrutinee,
+                    instruction.span);
+            if (!condition.has_value()) return false;
+            if (*condition == "true") {
+                out << "  br label %" << blockName(switchCase.target) << "\n";
+                terminated = true;
+                break;
+            }
+            const auto miss = index + 1 < instruction.switchCases.size()
+                    ? "pattern." + std::to_string(currentBlock->id) + '.' +
+                            std::to_string(index + 1)
+                    : "pattern." + std::to_string(currentBlock->id) + ".miss";
+            out << "  br i1 " << *condition << ", label %"
+                << blockName(switchCase.target) << ", label %" << miss << "\n";
+        }
+        if (!terminated) {
+            out << "pattern." << currentBlock->id << ".miss:\n"
+                << "  unreachable\n";
+        }
         return true;
     }
 
