@@ -74,6 +74,19 @@ gtest_discover_tests(CompilerTypeCheckingTests
         PROPERTIES LABELS type-checking
 )
 
+add_executable(IRModelTests
+        ir_test.cpp
+)
+
+target_link_libraries(IRModelTests
+        GTest::gtest_main
+        JoyeerIR
+)
+
+gtest_discover_tests(IRModelTests
+        PROPERTIES LABELS ir
+)
+
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

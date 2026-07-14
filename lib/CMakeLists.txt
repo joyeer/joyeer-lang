@@ -1,4 +1,5 @@
 add_subdirectory(runtime)
+add_subdirectory(ir)
 add_subdirectory(compiler)
 add_subdirectory(diagnostic)
 add_subdirectory(vm)
