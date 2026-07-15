@@ -567,16 +567,20 @@ private:
             discardScopeAfterTerminator();
             return;
         }
+        const auto trailingSpan = declaration->body != nullptr &&
+                !declaration->body->items.empty()
+                ? declaration->body->items.back()->span
+                : declaration->span;
         if (function.returnsValue && bodyValue.has_value()) {
-            bodyValue = coerce(*bodyValue, function.resultType, declaration->body->span);
+            bodyValue = coerce(*bodyValue, function.resultType, trailingSpan);
             if (bodyValue.has_value() && requiresDestroy(bodyValue->type)) {
-                bodyValue = acquireOwned(*bodyValue, declaration->body->span);
+                bodyValue = acquireOwned(*bodyValue, trailingSpan);
             }
             if (bodyValue.has_value()) {
                 cleanupAndPopScope(declaration->body->span);
                 auto instruction = makeInstruction(
                         ir::Opcode::returnValue,
-                        declaration->body->span);
+                        trailingSpan);
                 instruction.operands = { bodyValue->id };
                 emit(std::move(instruction));
                 return;
@@ -590,13 +594,14 @@ private:
                         declaration->span,
                         "value-returning function reaches the end without returning");
             }
-            emit(makeInstruction(ir::Opcode::unreachable, declaration->span));
+            emit(makeInstruction(ir::Opcode::unreachable, declaration->span, true));
         } else if (function.resultType == model->types().neverType()) {
-            emit(makeInstruction(ir::Opcode::unreachable, declaration->span));
+            emit(makeInstruction(ir::Opcode::unreachable, declaration->span, true));
         } else {
             emit(makeInstruction(
                     ir::Opcode::returnVoid,
-                    declaration->body == nullptr ? declaration->span : declaration->body->span));
+                    declaration->body == nullptr ? declaration->span : declaration->body->span,
+                    true));
         }
     }
 
@@ -621,7 +626,10 @@ private:
             return std::nullopt;
         }
         if (result.has_value() && requiresDestroy(result->type)) {
-            result = acquireOwned(*result, block->span);
+            const auto resultSpan = !block->items.empty()
+                    ? block->items.back()->span
+                    : block->span;
+            result = acquireOwned(*result, resultSpan);
             if (!result.has_value()) {
                 cleanupAndPopScope(block->span);
                 return std::nullopt;

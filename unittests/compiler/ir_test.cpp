@@ -142,6 +142,21 @@ TEST(IRModelTest, RejectsSourcesBeyondTheSourceSpanCapacity) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidSourceLocation));
 }
 
+TEST(IRModelTest, RejectsInstructionLocationsWithoutAFunctionLocation) {
+    auto module = validAddModule();
+    module.sourceInfo = SourceInfo {
+        "manual.joyeer",
+        "C:/source",
+        24,
+        { 0, 10, 20 },
+    };
+    module.functions[0].blocks[0].instructions[0].debugLocation =
+            DebugLocation { SourceSpan { 10, 3 }, false };
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidSourceLocation));
+}
+
 TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
     auto module = validAddModule();
     auto& function = module.functions[0];

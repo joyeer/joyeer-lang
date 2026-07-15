@@ -428,6 +428,26 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     for (const auto& function : module.functions) {
         const auto functionId = std::optional<FunctionId>(function.id);
+        const auto hasInstructionDebugLocations = std::any_of(
+                function.blocks.begin(),
+                function.blocks.end(),
+                [](const auto& block) {
+                    return std::any_of(
+                            block.instructions.begin(),
+                            block.instructions.end(),
+                            [](const auto& instruction) {
+                                return instruction.debugLocation.has_value();
+                            });
+                });
+        if (hasInstructionDebugLocations && !function.debugLocation.has_value()) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    functionId,
+                    std::nullopt,
+                    std::nullopt,
+                    "function '" + function.name +
+                            "' has instruction debug locations but no function location");
+        }
         if (function.debugLocation.has_value()) {
             verifyDebugLocation(
                     *function.debugLocation,

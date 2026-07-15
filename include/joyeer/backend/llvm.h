@@ -1,6 +1,7 @@
 #ifndef __joyeer_backend_llvm_h__
 #define __joyeer_backend_llvm_h__
 
+#include "joyeer/compiler/options.h"
 #include "joyeer/ir/ir.h"
 
 #include <optional>
@@ -8,6 +9,17 @@
 #include <vector>
 
 namespace joyeer::llvmbackend {
+
+enum class DebugInfoFormat {
+    dwarf,
+    codeView,
+};
+
+struct EmitOptions {
+    bool emitLineTables = false;
+    DebugInfoFormat debugInfoFormat = DebugInfoFormat::dwarf;
+    OptimizationLevel optimizationLevel = OptimizationLevel::O2;
+};
 
 enum class DiagnosticId {
     invalidModule,
@@ -40,7 +52,9 @@ struct Result {
 // the Joyeer compiler process.
 class Emitter {
 public:
-    [[nodiscard]] Result emit(const ir::Module& module) const;
+    [[nodiscard]] Result emit(
+            const ir::Module& module,
+            const EmitOptions& options = {}) const;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

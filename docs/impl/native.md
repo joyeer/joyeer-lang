@@ -182,7 +182,11 @@ The native path is an MVP, not the final zero-cost implementation:
   aligned payload buffer;
 - no Joyeer-specific LLVM pass pipeline or LTO policy is configured beyond the
   explicit Clang optimization level;
-- no DWARF/source debug information is emitted;
+- the textual emitter can generate source/function/instruction
+  line-tables-only metadata with DWARF 4 or CodeView module flags, including
+  all LLVM instructions expanded from a source operation; compiler-generated
+  cleanup/plumbing is suppressed from line rows. CLI selection and final
+  debug-artifact policy remain;
 - `print` supports primitive and string values, not arbitrary aggregates;
 - file input is synchronous and whole-file only; streaming, writing, metadata,
   and a typed I/O error enum are not provided;
@@ -203,6 +207,7 @@ ctest --test-dir build -L native-runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
 ctest --test-dir build -L file-io --output-on-failure
 ctest --test-dir build -L optimization --output-on-failure
+ctest --test-dir build -L debug-info --output-on-failure
 ```
 
 The tests make Clang compile generated LLVM IR, compile and run native Joyeer
@@ -210,7 +215,9 @@ programs, verify output and zero allocation balance, stress nested
 string/array/dictionary ownership, exercise runtime traps, and reject an
 executable request without `main`. File-input tests cover binary bytes,
 missing-file errors, exhaustive source-level handling, and zero allocation
-balance on both paths.
+balance on both paths. Debug-info tests validate metadata structure in both
+DWARF/CodeView modes and make the configured Clang emit objects containing the
+corresponding DWARF `.debug_line` and Windows CodeView `.debug$S` sections.
 
 `NativeExecutableJsonParser` is the integrated milestone: Joyeer source reads
 an external file, recursively parses nested null/Boolean/integer/string/array/

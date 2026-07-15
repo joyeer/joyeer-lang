@@ -739,6 +739,62 @@ func text(): String { "left" + "right" }
     EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::destroy), 0u);
 }
 
+TEST_F(IRLoweringTest, AnchorsImplicitReturnAtTheTrailingExpression) {
+    lower(R"JOYEER(func answer(): Int {
+42
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& answer = function("answer");
+    const auto& instructions = answer.blocks[0].instructions;
+    const auto returned = std::find_if(
+            instructions.begin(),
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::returnValue;
+            });
+    ASSERT_NE(returned, instructions.end());
+    ASSERT_TRUE(returned->debugLocation.has_value());
+    EXPECT_EQ(
+            source->content.substr(
+                    returned->debugLocation->span.offset,
+                    returned->debugLocation->span.length),
+            "42");
+}
+
+TEST_F(IRLoweringTest, AnchorsTrailingReturnPreparationAtTheExpression) {
+    lower(R"JOYEER(func maybe(): String? {
+"value"
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& maybe = function("maybe");
+    const auto expectedOffset = source->content.find("\"value\"");
+    ASSERT_NE(expectedOffset, std::string::npos);
+    bool foundCopy = false;
+    bool foundConstruction = false;
+    bool foundReturn = false;
+    for (const auto& block : maybe.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::copyValue &&
+                instruction.opcode != joyeer::ir::Opcode::constructEnum &&
+                instruction.opcode != joyeer::ir::Opcode::returnValue) {
+                continue;
+            }
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            EXPECT_EQ(instruction.debugLocation->span.offset, expectedOffset);
+            foundCopy |= instruction.opcode == joyeer::ir::Opcode::copyValue;
+            foundConstruction |= instruction.opcode == joyeer::ir::Opcode::constructEnum;
+            foundReturn |= instruction.opcode == joyeer::ir::Opcode::returnValue;
+        }
+    }
+    EXPECT_TRUE(foundCopy);
+    EXPECT_TRUE(foundConstruction);
+    EXPECT_TRUE(foundReturn);
+}
+
 TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
     lower(R"JOYEER(func incomplete(value: Int): Int {
 let copy = value

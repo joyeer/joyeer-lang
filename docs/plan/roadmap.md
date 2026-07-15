@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add source-level debug information and define Joyeer-specific LLVM passes/
-  LTO only when profiling justifies them.
+1. Expose the verified LLVM line-table emitter through CLI/native debug
+  artifacts, then add source-level variables/scopes separately.
 2. Retire the legacy
   VM lane after native golden coverage is equivalent.
 3. Add broader type-directed edits only where the recovery is unambiguous.

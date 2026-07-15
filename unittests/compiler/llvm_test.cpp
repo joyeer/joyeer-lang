@@ -12,13 +12,17 @@
 
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 
 namespace {
 
 class LLVMBackendTest : public testing::Test {
 protected:
-    void emit(const std::string& text, bool carrySourceInfo = false) {
+    void emit(
+            const std::string& text,
+            bool carrySourceInfo = false,
+            const joyeer::llvmbackend::EmitOptions& options = {}) {
         lexerDiagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
         const auto context = std::make_shared<CompileContext>(
@@ -51,7 +55,7 @@ protected:
             "test.joyeer",
             sourceInfo);
         ASSERT_TRUE(lowering.succeeded()) << joyeer::lowering::dump(lowering.diagnostics);
-        result = joyeer::llvmbackend::Emitter().emit(*lowering.module);
+        result = joyeer::llvmbackend::Emitter().emit(*lowering.module, options);
     }
 
     Diagnostics lexerDiagnostics;
@@ -71,6 +75,154 @@ print(value: 42)
     emit(text, true);
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_EQ(result.text, withoutLocations);
+}
+
+TEST_F(LLVMBackendTest, EmitsDwarfLineTablesForSourceFunctionsAndInstructions) {
+    emit(
+            R"JOYEER(func run(input: consuming String) {
+print(value: input)
+}
+)JOYEER",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("define void @joyeer_fn_"), std::string::npos);
+    EXPECT_NE(result.text.find(") !dbg !"), std::string::npos);
+    EXPECT_NE(result.text.find(", !dbg !"), std::string::npos);
+    EXPECT_NE(result.text.find("!llvm.dbg.cu = !{"), std::string::npos);
+    EXPECT_NE(result.text.find("emissionKind: LineTablesOnly"), std::string::npos);
+    EXPECT_NE(result.text.find("!\"Dwarf Version\", i32 4"), std::string::npos);
+    EXPECT_EQ(result.text.find("!\"CodeView\""), std::string::npos);
+    EXPECT_NE(
+            result.text.find(
+                    "!DIFile(filename: \"test.joyeer\", directory: \"C:/joyeer-tests\")"),
+            std::string::npos);
+    EXPECT_NE(result.text.find("isOptimized: false"), std::string::npos);
+    EXPECT_EQ(result.text.find("DISPFlagOptimized"), std::string::npos);
+    EXPECT_NE(result.text.find("!DILocation(line: 2, column: 1"), std::string::npos);
+    EXPECT_EQ(result.text.find("isImplicitCode: true"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, EmitsOptimizedCodeViewLineTables) {
+    emit(
+            "func run() { print(value: 42) }\n",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::llvmbackend::DebugInfoFormat::codeView,
+                joyeer::OptimizationLevel::O2,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("!\"CodeView\", i32 1"), std::string::npos);
+    EXPECT_EQ(result.text.find("!\"Dwarf Version\""), std::string::npos);
+    EXPECT_NE(result.text.find("isOptimized: true"), std::string::npos);
+    EXPECT_NE(result.text.find("DISPFlagOptimized"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, RejectsLineTablesWithoutSourceInfo) {
+    emit(
+            "func run() { print(value: 42) }\n",
+            false,
+            joyeer::llvmbackend::EmitOptions { true });
+
+    ASSERT_FALSE(result.succeeded());
+    ASSERT_EQ(result.diagnostics.size(), 1u);
+    EXPECT_EQ(
+            result.diagnostics[0].id,
+            joyeer::llvmbackend::DiagnosticId::invalidModule);
+}
+
+TEST_F(LLVMBackendTest, OmitsDebugScopesFromHelpersAndEntryTrampoline) {
+    emit(
+            R"JOYEER(func main() {
+let text = "value"
+print(value: text)
+}
+)JOYEER",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("define void @joyeer_destroy_type_"), std::string::npos);
+    EXPECT_NE(result.text.find("define void @joyeer_main() {"), std::string::npos);
+    EXPECT_EQ(result.text.find("define void @joyeer_main() !dbg"), std::string::npos);
+    const auto helper = result.text.find("define void @joyeer_destroy_type_");
+    const auto helperHeaderEnd = result.text.find('\n', helper);
+    ASSERT_NE(helperHeaderEnd, std::string::npos);
+    EXPECT_EQ(
+            result.text.substr(helper, helperHeaderEnd - helper).find("!dbg"),
+            std::string::npos);
+    const auto cleanup = result.text.find("  call void @joyeer_destroy_type_");
+    const auto cleanupEnd = result.text.find('\n', cleanup);
+    ASSERT_NE(cleanup, std::string::npos);
+    ASSERT_NE(cleanupEnd, std::string::npos);
+    EXPECT_EQ(
+            result.text.substr(cleanup, cleanupEnd - cleanup).find("!dbg"),
+            std::string::npos);
+        const auto sourceFunction = result.text.find("define void @joyeer_fn_");
+        const auto sourceFunctionEnd = result.text.find("\n}\n", sourceFunction);
+        ASSERT_NE(sourceFunction, std::string::npos);
+        ASSERT_NE(sourceFunctionEnd, std::string::npos);
+        const auto functionText = result.text.substr(
+            sourceFunction,
+            sourceFunctionEnd - sourceFunction);
+        EXPECT_NE(functionText.find("  ret void"), std::string::npos);
+        EXPECT_EQ(functionText.find("  ret void, !dbg"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, FallsBackToUnknownForOversizedColumns) {
+    const std::string indent(65536, ' ');
+    emit(
+            "func run() {\n" + indent + "print(value: 42)\n}\n",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("!DILocation(line: 2, column: 0"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, AnnotatesEveryInstructionExpandedFromAHighLevelOperation) {
+    emit(
+            R"JOYEER(func make(): [Int] {
+return [1, 2]
+}
+)JOYEER",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    const auto functionStart = result.text.find("define %joyeer.array @joyeer_fn_");
+    ASSERT_NE(functionStart, std::string::npos);
+    const auto functionEnd = result.text.find("\n}\n", functionStart);
+    ASSERT_NE(functionEnd, std::string::npos);
+    std::istringstream functionText(
+            result.text.substr(functionStart, functionEnd - functionStart));
+    std::string line;
+    size_t instructionLines = 0;
+    while (std::getline(functionText, line)) {
+        if (!line.starts_with("  ")) continue;
+        ++instructionLines;
+        EXPECT_NE(line.find(", !dbg !"), std::string::npos) << line;
+    }
+    EXPECT_GT(instructionLines, 5u);
 }
 
 TEST_F(LLVMBackendTest, EmitsPrimitiveFunctionsStackSlotsCallsAndControlFlow) {

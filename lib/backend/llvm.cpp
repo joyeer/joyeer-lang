@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -36,8 +37,12 @@ std::string blockName(ir::BlockId block) {
     return "b" + std::to_string(block);
 }
 
+std::string functionLinkageName(const ir::Function& function) {
+    return "joyeer_fn_" + std::to_string(function.id);
+}
+
 std::string functionName(const ir::Function& function) {
-    return "@joyeer_fn_" + std::to_string(function.id);
+    return '@' + functionLinkageName(function);
 }
 
 size_t alignTo(size_t value, size_t alignment) {
@@ -51,8 +56,9 @@ struct Layout {
 
 class Builder {
 public:
-    Result build(const ir::Module& source) {
+    Result build(const ir::Module& source, EmitOptions requestedOptions) {
         module = &source;
+        options = requestedOptions;
         const auto verification = ir::Verifier().verify(source);
         if (!verification.succeeded()) {
             for (const auto& error : verification.errors) {
@@ -87,6 +93,18 @@ public:
         for (const auto& function : source.functions) {
             functions.emplace(function.id, &function);
         }
+        if (options.emitLineTables) {
+            if (!source.sourceInfo.has_value()) {
+                report(
+                        DiagnosticId::invalidModule,
+                        {},
+                        std::nullopt,
+                        std::nullopt,
+                        "LLVM line-table emission requires module source info");
+                return Result { {}, std::move(diagnostics) };
+            }
+            initializeDebugMetadata();
+        }
         emitAggregateTypeDefinitions();
         emitOwnershipHelpers();
         for (const auto& function : source.functions) {
@@ -119,11 +137,13 @@ public:
             out << functionBodies[index];
             if (index + 1 < functionBodies.size()) out << '\n';
         }
+        emitDebugMetadata(out);
         return Result { out.str(), {}, hasEntryPoint };
     }
 
 private:
     const ir::Module* module = nullptr;
+    EmitOptions options;
     const ir::Function* currentFunction = nullptr;
     const ir::BasicBlock* currentBlock = nullptr;
     std::vector<Diagnostic> diagnostics;
@@ -143,6 +163,12 @@ private:
     std::vector<std::string> stringGlobals;
     std::vector<std::string> typeDefinitions;
     std::vector<std::string> functionBodies;
+    std::vector<std::string> metadataDefinitions;
+    std::vector<size_t> moduleFlagMetadata;
+    std::optional<size_t> compileUnitMetadata;
+    std::optional<size_t> debugFileMetadata;
+    std::optional<size_t> subroutineTypeMetadata;
+    std::optional<size_t> currentSubprogramMetadata;
     size_t nextString = 0;
     size_t nextTemporary = 0;
     bool usesString = false;
@@ -176,6 +202,150 @@ private:
                         ? std::optional<ir::BlockId>()
                         : std::optional<ir::BlockId>(currentBlock->id),
                 std::move(message));
+    }
+
+    size_t addMetadata(std::string definition) {
+        const auto id = metadataDefinitions.size();
+        metadataDefinitions.push_back(std::move(definition));
+        return id;
+    }
+
+    std::string metadataReference(size_t id) const {
+        return '!' + std::to_string(id);
+    }
+
+    bool isOptimized() const {
+        return options.optimizationLevel != OptimizationLevel::O0;
+    }
+
+    void initializeDebugMetadata() {
+        assert(module->sourceInfo.has_value());
+        const auto& source = *module->sourceInfo;
+        debugFileMetadata = addMetadata(
+                "!DIFile(filename: \"" + escapeQuoted(source.fileName) +
+                "\", directory: \"" + escapeQuoted(source.directory) + "\")");
+        subroutineTypeMetadata = addMetadata("!DISubroutineType(types: !{})");
+        compileUnitMetadata = addMetadata(
+                "distinct !DICompileUnit(language: DW_LANG_C, file: " +
+                metadataReference(*debugFileMetadata) +
+                ", producer: \"Joyeer\", isOptimized: " +
+                (isOptimized() ? "true" : "false") +
+                ", runtimeVersion: 0, emissionKind: LineTablesOnly)");
+        moduleFlagMetadata.push_back(addMetadata(
+                "!{i32 2, !\"Debug Info Version\", i32 3}"));
+        if (options.debugInfoFormat == DebugInfoFormat::codeView) {
+            moduleFlagMetadata.push_back(addMetadata(
+                    "!{i32 2, !\"CodeView\", i32 1}"));
+        } else {
+            moduleFlagMetadata.push_back(addMetadata(
+                    "!{i32 7, !\"Dwarf Version\", i32 4}"));
+        }
+    }
+
+    std::pair<uint32_t, uint32_t> sourcePosition(uint32_t offset) const {
+        assert(module->sourceInfo.has_value());
+        const auto& starts = module->sourceInfo->lineStarts;
+        const auto upper = std::upper_bound(starts.begin(), starts.end(), offset);
+        const auto lineIndex = upper == starts.begin()
+                ? size_t { 0 }
+                : static_cast<size_t>(std::distance(starts.begin(), upper) - 1);
+        const auto sourceLine = static_cast<uint64_t>(lineIndex) + 1;
+        const auto sourceColumn = static_cast<uint64_t>(offset) -
+            starts[lineIndex] + 1;
+        auto line = sourceLine <= std::numeric_limits<uint32_t>::max()
+            ? static_cast<uint32_t>(sourceLine)
+            : 0u;
+        auto column = sourceColumn <= std::numeric_limits<uint16_t>::max()
+            ? static_cast<uint32_t>(sourceColumn)
+            : 0u;
+        if (options.debugInfoFormat == DebugInfoFormat::codeView &&
+            (line > 0x00ffffffu || line == 0x00feefeeu || line == 0x00f00f00u)) {
+            line = 0;
+            column = 0;
+        }
+        return { line, column };
+    }
+
+    std::optional<size_t> addSubprogramMetadata(const ir::Function& function) {
+        if (!options.emitLineTables || !function.debugLocation.has_value()) {
+            return std::nullopt;
+        }
+        assert(debugFileMetadata.has_value());
+        assert(subroutineTypeMetadata.has_value());
+        assert(compileUnitMetadata.has_value());
+        const auto [line, column] = sourcePosition(function.debugLocation->span.offset);
+        (void)column;
+        auto flags = std::string("DISPFlagDefinition");
+        if (isOptimized()) flags += " | DISPFlagOptimized";
+        return addMetadata(
+                "distinct !DISubprogram(name: \"" + escapeQuoted(function.name) +
+                "\", linkageName: \"" + escapeQuoted(functionLinkageName(function)) +
+                "\", scope: " + metadataReference(*debugFileMetadata) +
+                ", file: " + metadataReference(*debugFileMetadata) +
+                ", line: " + std::to_string(line) +
+                ", type: " + metadataReference(*subroutineTypeMetadata) +
+                ", scopeLine: " + std::to_string(line) +
+                ", spFlags: " + flags +
+                ", unit: " + metadataReference(*compileUnitMetadata) + ")");
+    }
+
+    std::optional<size_t> addLocationMetadata(const ir::Instruction& instruction) {
+        if (!options.emitLineTables || !currentSubprogramMetadata.has_value() ||
+            !instruction.debugLocation.has_value() ||
+            instruction.debugLocation->implicitCode) {
+            return std::nullopt;
+        }
+        const auto [line, column] = sourcePosition(
+                instruction.debugLocation->span.offset);
+        return addMetadata(
+                "!DILocation(line: " + std::to_string(line) +
+                ", column: " + std::to_string(column) +
+            ", scope: " + metadataReference(*currentSubprogramMetadata) + ")");
+    }
+
+    bool isInstructionLine(std::string_view line) const {
+        if (line.size() <= 2 || !line.starts_with("  ") || line[2] == ' ') return false;
+        const auto body = line.substr(2);
+        return body.starts_with('%') || body.starts_with("store ") ||
+                body.starts_with("call ") || body.starts_with("br ") ||
+                body.starts_with("ret ") || body == "unreachable" ||
+                body.starts_with("switch ");
+    }
+
+    void appendInstructionText(
+            std::ostringstream& out,
+            const std::string& text,
+            std::optional<size_t> location) const {
+        size_t start = 0;
+        while (start < text.size()) {
+            const auto end = text.find('\n', start);
+            const auto length = end == std::string::npos
+                    ? text.size() - start
+                    : end - start;
+            const std::string_view line(text.data() + start, length);
+            out << line;
+            if (location.has_value() && isInstructionLine(line)) {
+                out << ", !dbg " << metadataReference(*location);
+            }
+            if (end == std::string::npos) break;
+            out << '\n';
+            start = end + 1;
+        }
+    }
+
+    void emitDebugMetadata(std::ostringstream& out) const {
+        if (!options.emitLineTables) return;
+        assert(compileUnitMetadata.has_value());
+        out << "\n!llvm.dbg.cu = !{" << metadataReference(*compileUnitMetadata) << "}\n"
+            << "!llvm.module.flags = !{";
+        for (size_t index = 0; index < moduleFlagMetadata.size(); ++index) {
+            if (index != 0) out << ", ";
+            out << metadataReference(moduleFlagMetadata[index]);
+        }
+        out << "}\n\n";
+        for (size_t id = 0; id < metadataDefinitions.size(); ++id) {
+            out << metadataReference(id) << " = " << metadataDefinitions[id] << '\n';
+        }
     }
 
     std::optional<Layout> layoutFor(ir::TypeId id) {
@@ -651,6 +821,7 @@ private:
     void emitFunction(const ir::Function& function) {
         currentFunction = &function;
         currentBlock = nullptr;
+        currentSubprogramMetadata = addSubprogramMetadata(function);
         values.clear();
         operands.clear();
 
@@ -683,12 +854,24 @@ private:
             out << parameterTypes[index] << ' '
                 << valueName(function.parameters[index].value.id);
         }
-        out << ") {\n";
+        out << ')';
+        if (currentSubprogramMetadata.has_value()) {
+            out << " !dbg " << metadataReference(*currentSubprogramMetadata);
+        }
+        out << " {\n";
         for (const auto& block : function.blocks) {
             currentBlock = &block;
             out << blockName(block.id) << ":\n";
             for (const auto& instruction : block.instructions) {
-                if (!emitInstruction(out, instruction)) return;
+                std::ostringstream instructionText;
+                if (!emitInstruction(instructionText, instruction)) return;
+                const auto text = instructionText.str();
+                appendInstructionText(
+                        out,
+                        text,
+                        text.empty()
+                                ? std::optional<size_t>()
+                                : addLocationMetadata(instruction));
             }
         }
         out << "}\n";
@@ -1896,8 +2079,8 @@ private:
 
 } // namespace
 
-Result Emitter::emit(const ir::Module& module) const {
-    return Builder().build(module);
+Result Emitter::emit(const ir::Module& module, const EmitOptions& options) const {
+    return Builder().build(module, options);
 }
 
 const char* diagnosticName(DiagnosticId id) {

@@ -155,6 +155,20 @@ gtest_discover_tests(LLVMBackendTests
 )
 
 if(JOYEER_CLANG_EXECUTABLE)
+        get_filename_component(JOYEER_LLVM_BIN_DIR "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
+        find_program(JOYEER_LLVM_READOBJ_EXECUTABLE
+                        NAMES
+                                        llvm-readobj llvm-readobj.exe
+                                        llvm-readobj-22 llvm-readobj-21 llvm-readobj-20
+                                        llvm-readobj-19 llvm-readobj-18 llvm-readobj-17
+                        HINTS "${JOYEER_LLVM_BIN_DIR}"
+        )
+        if(APPLE)
+                set(JOYEER_DWARF_LINE_SECTION __debug_line)
+        else()
+                set(JOYEER_DWARF_LINE_SECTION .debug_line)
+        endif()
+
     add_executable(LLVMFixtureGenerator
             llvm_fixture.cpp
     )
@@ -172,6 +186,39 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(LLVMBackendClangValidation PROPERTIES
             LABELS llvm-backend
     )
+
+    add_test(NAME LLVMBackendDebugInfoClangValidation
+            COMMAND ${CMAKE_COMMAND}
+                    -DGENERATOR=$<TARGET_FILE:LLVMFixtureGenerator>
+                    -DGENERATOR_ARGS=--debug-dwarf
+                    -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-llvm-debug-validation.ll
+                    -DEXPECTED_IR_PATTERN=!llvm.dbg.cu
+                    -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                    -DEXPECTED_OBJECT_PATTERNS=${JOYEER_DWARF_LINE_SECTION}
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyLLVMIR.cmake
+    )
+    set_tests_properties(LLVMBackendDebugInfoClangValidation PROPERTIES
+            LABELS "llvm-backend;debug-info"
+    )
+
+    if(WIN32)
+        add_test(NAME LLVMBackendCodeViewClangValidation
+                COMMAND ${CMAKE_COMMAND}
+                        -DGENERATOR=$<TARGET_FILE:LLVMFixtureGenerator>
+                        -DGENERATOR_ARGS=--debug-codeview
+                        -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-llvm-codeview-validation.ll
+                        "-DEXPECTED_IR_PATTERN=!\"CodeView\""
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        -DREADOBJ_CODEVIEW=ON
+                        "-DEXPECTED_OBJECT_PATTERNS=.debug$S;SubSectionType: Lines;clang-validation.joyeer;LinkageName: joyeer_fn_0;LineNumberStart: 1"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyLLVMIR.cmake
+        )
+        set_tests_properties(LLVMBackendCodeViewClangValidation PROPERTIES
+                LABELS "llvm-backend;debug-info"
+        )
+    endif()
 
     add_test(NAME LLVMBackendCompilerJsonMvpValidation
             COMMAND ${CMAKE_COMMAND}

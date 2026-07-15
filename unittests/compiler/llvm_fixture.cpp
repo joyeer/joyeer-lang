@@ -5,7 +5,11 @@
 #include <string>
 
 int main(int argc, char** argv) {
-    if (argc != 2) return 2;
+    if (argc < 2 || argc > 3) return 2;
+    const auto debugOption = argc == 3 ? std::string(argv[2]) : std::string();
+    const bool emitDebugInfo = debugOption == "--debug-dwarf" ||
+            debugOption == "--debug-codeview";
+    if (argc == 3 && !emitDebugInfo) return 2;
 
     joyeer::ir::Module module;
     module.sourceName = "clang-validation.joyeer";
@@ -379,7 +383,39 @@ int main(int argc, char** argv) {
     };
     module.functions.push_back(std::move(ownership));
 
-    const auto result = joyeer::llvmbackend::Emitter().emit(module);
+    if (emitDebugInfo) {
+        module.sourceInfo = joyeer::ir::SourceInfo {
+            "clang-validation.joyeer",
+            "C:/joyeer-tests",
+            64,
+            { 0, 16, 32, 48 },
+        };
+        for (auto& sourceFunction : module.functions) {
+            if (sourceFunction.isExternal) continue;
+            sourceFunction.debugLocation = joyeer::ir::DebugLocation {
+                SourceSpan { static_cast<uint32_t>(sourceFunction.id * 4), 1 },
+                false,
+            };
+            for (auto& block : sourceFunction.blocks) {
+                for (auto& instruction : block.instructions) {
+                    instruction.debugLocation = joyeer::ir::DebugLocation {
+                        SourceSpan { 16, 1 },
+                        instruction.opcode == joyeer::ir::Opcode::destroy,
+                    };
+                }
+            }
+        }
+    }
+
+    const auto result = joyeer::llvmbackend::Emitter().emit(
+            module,
+            joyeer::llvmbackend::EmitOptions {
+                emitDebugInfo,
+                debugOption == "--debug-codeview"
+                        ? joyeer::llvmbackend::DebugInfoFormat::codeView
+                        : joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+            });
     if (!result.succeeded()) {
         std::cerr << joyeer::llvmbackend::dump(result.diagnostics);
         return 3;
