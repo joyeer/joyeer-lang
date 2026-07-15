@@ -99,7 +99,9 @@ The v0.1 checker currently validates:
 - `initializing` signatures, mandatory `&`, and whole mutable owning-storage
   destination restrictions;
 - `type-checking.overlapping-access` for calls that combine an exclusive
-  inout/consuming/initializing projection with another overlapping access;
+  inout/consuming/initializing projection with another overlapping access; the
+  primary span identifies the later access and a secondary note identifies the
+  first conflicting access;
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
   on a mutable receiver;
 - mutable dictionary subscript insertion/update with concrete `K`/`V` checks
@@ -164,7 +166,8 @@ The suite covers canonical type construction, signatures, inference,
 operators, control flow, calls, members, subscripts, contextual cases,
 patterns, exhaustiveness, access conventions, deferred-reference closure, the
 JSON-parser MVP source, and CLI rejection of a type mismatch with expected/found
-guidance.
+guidance. Overlapping-access coverage verifies both independently rendered
+source spans.
 
 ---
 

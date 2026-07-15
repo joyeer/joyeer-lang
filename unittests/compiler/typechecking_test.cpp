@@ -991,6 +991,39 @@ let selected = if flag { 1 } else { "two" }
                                     }));
                             }
 
+                            TEST_F(TypeCheckingTest, RecordsTheConflictingAccessAsANote) {
+                                check(R"JOYEER(func update(dst: inout Int, src: borrowing Int) {
+                            &dst = src
+                            }
+                            func invalid() {
+                            var value = 1
+                            update(dst: &value, src: value)
+                            }
+                            )JOYEER");
+
+                                ASSERT_EQ(checking.diagnostics.size(), 1u)
+                                    << joyeer::typing::dump(checking.diagnostics);
+                                const auto& diagnostic = checking.diagnostics[0];
+                                EXPECT_EQ(
+                                    diagnostic.id,
+                                    joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+                                ASSERT_EQ(diagnostic.notes.size(), 1u);
+                                EXPECT_EQ(
+                                    source->content.substr(
+                                        diagnostic.span.offset,
+                                        diagnostic.span.length),
+                                    "value");
+                                EXPECT_EQ(
+                                    source->content.substr(
+                                        diagnostic.notes[0].offset,
+                                        diagnostic.notes[0].length),
+                                    "value");
+                                EXPECT_LT(diagnostic.notes[0].offset, diagnostic.span.offset);
+                                EXPECT_EQ(
+                                    diagnostic.notes[0].message,
+                                    "conflicting inout access occurs here");
+                            }
+
                                 TEST_F(TypeCheckingTest, ProvidesAccessMarkerFixIts) {
                                     check(R"JOYEER(func update(value: inout Int) { &value = 1 }
                                 func take(value: consuming String) { print(value: value) }

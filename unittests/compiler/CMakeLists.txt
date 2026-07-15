@@ -382,11 +382,13 @@ add_test(NAME TypeCheckingCliRejectsOverlappingAccess
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                 -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/overlapping_access.joyeer
-                -DEXPECTED_PATTERN=type-checking.overlapping-access
-                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+                "-DEXPECTED_HEADER=overlapping_access.joyeer:7:30: error[type-checking.overlapping-access]"
+                "-DEXPECTED_SOURCE=    update(dst: &value, src: value)"
+                "-DEXPECTED_NOTE_HEADER=overlapping_access.joyeer:7:18: note: conflicting inout access occurs here"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
 )
 set_tests_properties(TypeCheckingCliRejectsOverlappingAccess PROPERTIES
-        LABELS "type-checking;exclusivity"
+        LABELS "diagnostics;type-checking;exclusivity"
 )
 
 add_test(NAME DiagnosticsCliSuggestsConsumeMarkerFix

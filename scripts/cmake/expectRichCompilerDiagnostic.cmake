@@ -21,7 +21,7 @@ foreach(expected IN ITEMS "${EXPECTED_HEADER}" "${EXPECTED_SOURCE}" "^")
     endif()
 endforeach()
 
-foreach(optional_name IN ITEMS EXPECTED_HELP EXPECTED_FIX_IT)
+foreach(optional_name IN ITEMS EXPECTED_NOTE_HEADER EXPECTED_NOTE_SOURCE EXPECTED_HELP EXPECTED_FIX_IT)
     if(DEFINED ${optional_name})
         string(FIND "${combined}" "${${optional_name}}" location)
         if(location EQUAL -1)

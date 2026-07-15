@@ -334,13 +334,15 @@ private:
             SourceSpan span,
             std::string message,
             std::optional<std::string> help = std::nullopt,
-            std::optional<DiagnosticFixIt> fixIt = std::nullopt) {
+            std::optional<DiagnosticFixIt> fixIt = std::nullopt,
+            std::vector<DiagnosticSourceNote> notes = {}) {
         diagnostics.push_back(TypeCheckingDiagnostic {
             id,
             span,
             std::move(message),
             std::move(help),
             std::move(fixIt),
+            std::move(notes),
         });
     }
 
@@ -1453,7 +1455,16 @@ private:
                                 " and " + accessEffectName(accesses[right].effect) +
                                 " access to '" +
                                 (root == nullptr ? std::string("<storage>") : root->name) +
-                                "' in the same call");
+                                "' in the same call",
+                            std::nullopt,
+                            std::nullopt,
+                            { DiagnosticSourceNote {
+                                accesses[left].span.offset,
+                                accesses[left].span.length,
+                                "conflicting " +
+                                    std::string(accessEffectName(accesses[left].effect)) +
+                                    " access occurs here",
+                            } });
                 return;
             }
         }

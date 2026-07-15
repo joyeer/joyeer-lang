@@ -102,4 +102,44 @@ TEST(DiagnosticsTest, PrintsHelpAndSourceFixItEdits) {
 			"fix-it: sample.joyeer:1:13:0: \"consume \"\n");
 }
 
+TEST(DiagnosticsTest, PrintsSecondarySourceNotesInOrder) {
+	Diagnostics diagnostics;
+	const std::string source = "first access\nmiddle access\nlast access\n";
+	diagnostics.reportSourceDiagnostic(
+			ErrorLevel::failure,
+			"type-checking.overlapping-access",
+			"sample.joyeer",
+			source,
+			{ 0, 13, 27 },
+			27,
+			4,
+			"accesses overlap",
+			std::nullopt,
+			std::nullopt,
+			{
+				DiagnosticSourceNote { 0, 5, "first access occurs here" },
+				DiagnosticSourceNote { 13, 6, "another access occurs here" },
+			});
+
+	ASSERT_EQ(diagnostics.errors.size(), 1u);
+	EXPECT_TRUE(diagnostics.hasFailure());
+	ASSERT_EQ(diagnostics.errors[0].notes.size(), 2u);
+
+	testing::internal::CaptureStdout();
+	diagnostics.printErrors();
+	const auto output = testing::internal::GetCapturedStdout();
+
+	EXPECT_EQ(
+			output,
+			"sample.joyeer:3:1: error[type-checking.overlapping-access]: accesses overlap\n"
+			"  3 | last access\n"
+			"    | ^~~~\n"
+			"sample.joyeer:1:1: note: first access occurs here\n"
+			"  1 | first access\n"
+			"    | ^~~~~\n"
+			"sample.joyeer:2:1: note: another access occurs here\n"
+			"  2 | middle access\n"
+			"    | ^~~~~~\n");
+}
+
 } // namespace

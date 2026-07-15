@@ -73,7 +73,7 @@ Source (.joyeer)
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
 | Runtime Library | ✅ Primitive/string/collection/file-input MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
-| Error Diagnostics | ✅ v0.1 structured source output; ownership/access and parser insertion edits; type expected/found help; broader contextual guidance pending | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
+| Error Diagnostics | ✅ v0.1 structured source output; ownership/access and parser insertion edits; type expected/found help; secondary source notes; broader contextual guidance pending | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
 frontend work must consume `TypeCheckedModel` and must not add dependencies on
@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add context-aware replacement/deletion edits and secondary source notes to
-  the existing ownership, parser-insertion, and type-mismatch guidance.
+1. Add context-aware parser/type replacement and deletion edits to the existing
+  ownership, parser-insertion, type-mismatch, and secondary-note guidance.
 2. Add source-level debug information and define Joyeer-specific LLVM passes/
   LTO only when profiling justifies them.
 3. Retire the legacy
@@ -214,8 +214,8 @@ runtime/
 - ✅ parser recovery reports multiple errors per compilation
 - ✅ ownership/access edits, canonical parser-token insertions, and
   expected/found type help
-- context-aware replacements/deletions and secondary source notes remain
-  future quality work
+- ✅ independently located secondary notes for overlapping accesses
+- context-aware parser/type replacements/deletions remain future quality work
 
 ```
 error: type mismatch
@@ -329,6 +329,6 @@ std/
 | Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | ✅ native MVP clone/destroy; stdlib incomplete |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |
 | Package Manager | cargo | SPM | zig build | Phase 3 |
-| Error Diagnostics | Excellent | Good | Good | ✅ v0.1 source rendering and baseline fix-its/help; contextual guidance pending |
+| Error Diagnostics | Excellent | Good | Good | ✅ v0.1 source rendering, baseline fix-its/help, and secondary notes; contextual edits pending |
 | Incremental Compilation | ✅ | ✅ | ✅ | Phase 3 |
 | Debug Info (DWARF) | ✅ | ✅ | ✅ | Phase 3 |

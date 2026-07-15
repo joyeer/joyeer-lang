@@ -21,6 +21,20 @@ struct DiagnosticFixIt {
     std::string replacement;
 };
 
+struct DiagnosticSourceNote {
+    uint32_t offset = 0;
+    uint32_t length = 0;
+    std::string message;
+};
+
+struct ErrorMessageNote {
+    std::string message;
+    int lineAt = -1;
+    int columnAt = -1;
+    std::string sourceLine;
+    uint32_t length = 0;
+};
+
 struct ErrorMessage {
     ErrorMessage(ErrorLevel level, const char* message, int lineAt, int columnAt);
 
@@ -35,6 +49,7 @@ struct ErrorMessage {
     bool hasSourceContext = false;
     std::optional<std::string> help;
     std::optional<DiagnosticFixIt> fixIt;
+    std::vector<ErrorMessageNote> notes;
     int fixLineAt = -1;
     int fixColumnAt = -1;
 };
@@ -94,7 +109,8 @@ struct Diagnostics {
             uint32_t length,
             std::string message,
             std::optional<std::string> help = std::nullopt,
-            std::optional<DiagnosticFixIt> fixIt = std::nullopt);
+            std::optional<DiagnosticFixIt> fixIt = std::nullopt,
+            std::vector<DiagnosticSourceNote> notes = {});
 
     // print the error into consoles
     void printErrors();

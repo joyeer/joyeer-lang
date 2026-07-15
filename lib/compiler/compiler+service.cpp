@@ -29,7 +29,8 @@ void reportSpannedDiagnostic(
     std::string code,
     const std::string& message,
     std::optional<std::string> help = std::nullopt,
-    std::optional<DiagnosticFixIt> fixIt = std::nullopt) {
+    std::optional<DiagnosticFixIt> fixIt = std::nullopt,
+    std::vector<DiagnosticSourceNote> notes = {}) {
     diagnostics->reportSourceDiagnostic(
         level,
         std::move(code),
@@ -40,7 +41,8 @@ void reportSpannedDiagnostic(
         span.length,
         message,
         std::move(help),
-        std::move(fixIt));
+        std::move(fixIt),
+        std::move(notes));
 }
 
 } // namespace
@@ -146,7 +148,8 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 joyeer::typing::diagnosticName(diagnostic.id),
                     diagnostic.message,
                     diagnostic.help,
-                    diagnostic.fixIt);
+                    diagnostic.fixIt,
+                    diagnostic.notes);
         }
         if (!checking.succeeded()) {
             return nullptr;

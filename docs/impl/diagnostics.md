@@ -17,7 +17,9 @@
 - a source path;
 - internal zero-based line/byte-column and span length;
 - the source line used for rendering;
-- optional help text and one optional byte-based replacement edit.
+- optional help text and one optional byte-based replacement edit;
+- zero or more ordered secondary notes, each with its own source span and
+  message.
 
 Existing `reportError()` calls create compatibility diagnostics and continue to
 print as `SyntaxError(line: ...)` or `Warning(line: ...)`. This preserves the
@@ -48,6 +50,8 @@ The contract is:
 - the source excerpt is one physical line;
 - `^` identifies the first byte and `~` covers the remainder of the span;
 - tabs before the caret expand to four-column tab stops.
+- secondary locations render as `path:line:column: note: message` followed by
+  their own source excerpt and caret range, before help/fix-it output;
 - optional `help:` lines explain a recovery;
 - optional `fix-it:` lines encode `path:line:column:byte-length: "replacement"`.
 
@@ -74,6 +78,9 @@ reinitialization and all-path initializing obligations. Parser diagnostics
 provide zero-length insertion edits for missing canonical punctuation,
 delimiters, arrows, and list commas. Ordinary type mismatches provide explicit
 `expected` / `found` help while retaining the stable primary message and ID.
+Overlapping-access diagnostics retain the later access as the primary span and
+identify the first conflicting access with a secondary note. Notes remain
+grouped with the primary diagnostic and do not affect failure counts.
 Offsets remain byte based so editor tooling can apply edits without
 reinterpreting display width.
 
@@ -82,7 +89,8 @@ reinterpreting display width.
 ## 4. Remaining work
 
 - context-aware parser/type replacement and deletion edits;
-- secondary note locations for diagnostics involving multiple source spans;
+- cross-file secondary notes (the current transport resolves spans within the
+  primary source file);
 - multi-line span rendering;
 - Unicode display-column calculation (current columns are UTF-8 byte columns);
 - migration of the compatibility parser/VM diagnostics to stable IDs;
@@ -102,5 +110,6 @@ ctest --test-dir build -L diagnostics --output-on-failure
 Tests cover failure/warning severity, source-independent structured errors,
 exact one-based source rendering, help/fix-it escaping, and CLI output from the
 lexer, parser, and type checker. CLI cases include an applicable missing-`)`
-insertion, a `consume` insertion, and expected/found type guidance. Existing
-legacy formatting tests ensure the compatibility path does not change.
+insertion, a `consume` insertion, expected/found type guidance, and both source
+locations of an overlapping access. Existing legacy formatting tests ensure
+the compatibility path does not change.

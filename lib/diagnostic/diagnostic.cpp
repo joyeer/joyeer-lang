@@ -6,6 +6,71 @@
 
 #define BUF_SIZE 2048
 
+namespace {
+
+struct SourceContext {
+    int lineAt = 0;
+    int columnAt = 0;
+    std::string sourceLine;
+    uint32_t length = 1;
+};
+
+SourceContext resolveSourceContext(
+        const std::string& source,
+        const std::vector<uint32_t>& lineStarts,
+        uint32_t offset,
+        uint32_t length) {
+    const auto boundedOffset = static_cast<uint32_t>(std::min<size_t>(offset, source.size()));
+    const auto upper = std::upper_bound(
+            lineStarts.begin(),
+            lineStarts.end(),
+            boundedOffset);
+    const auto line = upper == lineStarts.begin()
+            ? 0
+            : static_cast<int>(std::distance(lineStarts.begin(), upper) - 1);
+    const auto lineStart = lineStarts.empty()
+            ? 0u
+            : lineStarts[static_cast<size_t>(line)];
+    auto lineEnd = source.find_first_of("\r\n", lineStart);
+    if (lineEnd == std::string::npos) lineEnd = source.size();
+    const auto remaining = lineEnd > boundedOffset ? lineEnd - boundedOffset : size_t { 0 };
+    return SourceContext {
+        line,
+        static_cast<int>(boundedOffset - lineStart),
+        source.substr(lineStart, lineEnd - lineStart),
+        static_cast<uint32_t>(std::max<size_t>(
+                1,
+                std::min<size_t>(length == 0 ? 1 : length, remaining))),
+    };
+}
+
+void printSourceExcerpt(
+        int lineAt,
+        int columnAt,
+        const std::string& sourceLine,
+        uint32_t length) {
+    std::string expanded;
+    size_t visualColumn = 0;
+    for (size_t index = 0; index < sourceLine.size(); ++index) {
+        if (sourceLine[index] == '\t') {
+            const auto spaces = 4 - (expanded.size() % 4);
+            expanded.append(spaces, ' ');
+            if (index < static_cast<size_t>(columnAt)) visualColumn += spaces;
+        } else {
+            expanded.push_back(sourceLine[index]);
+            if (index < static_cast<size_t>(columnAt)) ++visualColumn;
+        }
+    }
+    const auto lineText = std::to_string(lineAt + 1);
+    std::cout << "  " << lineText << " | " << expanded << '\n'
+              << std::string(lineText.size() + 3, ' ') << "| "
+              << std::string(visualColumn, ' ') << '^';
+    if (length > 1) std::cout << std::string(length - 1, '~');
+    std::cout << '\n';
+}
+
+} // namespace
+
 ErrorMessage::ErrorMessage(ErrorLevel level, const char* error, int lineAt, int columnAt):
 level(level),
 message(error),
@@ -64,37 +129,38 @@ void Diagnostics::reportError(ErrorLevel level, int lineAt, int columnAt, const 
         uint32_t length,
         std::string message,
         std::optional<std::string> help,
-        std::optional<DiagnosticFixIt> fixIt) {
-        const auto boundedOffset = static_cast<uint32_t>(std::min<size_t>(offset, source.size()));
-        const auto upper = std::upper_bound(
-            lineStarts.begin(),
-            lineStarts.end(),
-            boundedOffset);
-        const auto line = upper == lineStarts.begin()
-            ? 0
-            : static_cast<int>(std::distance(lineStarts.begin(), upper) - 1);
-        const auto lineStart = lineStarts.empty()
-            ? 0u
-            : lineStarts[static_cast<size_t>(line)];
-        auto lineEnd = source.find_first_of("\r\n", lineStart);
-        if (lineEnd == std::string::npos) lineEnd = source.size();
+        std::optional<DiagnosticFixIt> fixIt,
+        std::vector<DiagnosticSourceNote> notes) {
+        const auto context = resolveSourceContext(source, lineStarts, offset, length);
 
         ErrorMessage error(
             level,
             message.c_str(),
-            line,
-            static_cast<int>(boundedOffset - lineStart));
+            context.lineAt,
+            context.columnAt);
         error.code = std::move(code);
         error.path = std::move(path);
-        error.sourceLine = source.substr(lineStart, lineEnd - lineStart);
-        const auto remaining = lineEnd > boundedOffset ? lineEnd - boundedOffset : size_t { 0 };
-        error.length = static_cast<uint32_t>(std::max<size_t>(
-            1,
-            std::min<size_t>(length == 0 ? 1 : length, remaining)));
+        error.sourceLine = context.sourceLine;
+        error.length = context.length;
         error.hasSourceContext = true;
-            error.help = std::move(help);
-            error.fixIt = std::move(fixIt);
-            if (error.fixIt.has_value()) {
+        error.help = std::move(help);
+        error.fixIt = std::move(fixIt);
+        error.notes.reserve(notes.size());
+        for (auto& note : notes) {
+            const auto noteContext = resolveSourceContext(
+                    source,
+                    lineStarts,
+                    note.offset,
+                    note.length);
+            error.notes.push_back(ErrorMessageNote {
+                std::move(note.message),
+                noteContext.lineAt,
+                noteContext.columnAt,
+                noteContext.sourceLine,
+                noteContext.length,
+            });
+        }
+        if (error.fixIt.has_value()) {
             const auto fixOffset = static_cast<uint32_t>(std::min<size_t>(
                 error.fixIt->offset,
                 source.size()));
@@ -109,7 +175,7 @@ void Diagnostics::reportError(ErrorLevel level, int lineAt, int columnAt, const 
                 ? 0u
                 : lineStarts[static_cast<size_t>(error.fixLineAt)];
             error.fixColumnAt = static_cast<int>(fixOffset - fixLineStart);
-            }
+        }
         errors.push_back(std::move(error));
     }
 
@@ -128,24 +194,20 @@ void Diagnostics::printError(ErrorMessage &error) {
         if (!error.code.empty()) std::cout << '[' << error.code << ']';
         std::cout << ": " << error.message << '\n';
 
-        std::string expanded;
-        size_t visualColumn = 0;
-        for (size_t index = 0; index < error.sourceLine.size(); ++index) {
-            if (error.sourceLine[index] == '\t') {
-                const auto spaces = 4 - (expanded.size() % 4);
-                expanded.append(spaces, ' ');
-                if (index < static_cast<size_t>(error.columnAt)) visualColumn += spaces;
-            } else {
-                expanded.push_back(error.sourceLine[index]);
-                if (index < static_cast<size_t>(error.columnAt)) ++visualColumn;
-            }
+        printSourceExcerpt(
+                error.lineAt,
+                error.columnAt,
+                error.sourceLine,
+                error.length);
+        for (const auto& note : error.notes) {
+            std::cout << error.path << ':' << note.lineAt + 1 << ':' << note.columnAt + 1
+                      << ": note: " << note.message << '\n';
+            printSourceExcerpt(
+                    note.lineAt,
+                    note.columnAt,
+                    note.sourceLine,
+                    note.length);
         }
-        const auto lineText = std::to_string(error.lineAt + 1);
-        std::cout << "  " << lineText << " | " << expanded << '\n'
-                  << std::string(lineText.size() + 3, ' ') << "| "
-                  << std::string(visualColumn, ' ') << '^';
-        if (error.length > 1) std::cout << std::string(error.length - 1, '~');
-        std::cout << '\n';
         if (error.help.has_value()) {
             std::cout << "help: " << *error.help << '\n';
         }

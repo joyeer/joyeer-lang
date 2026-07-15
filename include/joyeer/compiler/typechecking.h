@@ -154,6 +154,7 @@ struct TypeCheckingDiagnostic {
     std::string message;
     std::optional<std::string> help;
     std::optional<DiagnosticFixIt> fixIt;
+    std::vector<DiagnosticSourceNote> notes;
 };
 
 class TypeCheckingBuilder;
