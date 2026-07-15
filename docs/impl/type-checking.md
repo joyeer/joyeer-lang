@@ -94,7 +94,7 @@ The v0.1 checker currently validates:
 - immutable bindings/fields and explicit `inout` access markers for assignment
   and calls;
 - `consuming` parameter signatures, mandatory `consume` call-site markers, and
-  owning-local/temporary source restrictions;
+  owning-local/parameter/projection/temporary source restrictions;
 - explicit `borrowing` signatures as the marker-free default projection;
 - `initializing` signatures, mandatory `&`, and whole mutable owning-storage
   destination restrictions;

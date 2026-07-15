@@ -319,6 +319,18 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime;ownership;initializing"
     )
 
+    add_test(NAME NativeExecutableProjectionConsume
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/projection_consume.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-projection-consume${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=left\nright\nnew-left\nfirst\nnew-first\nsecond\nold\nnew\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableProjectionConsume PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;consuming;projection-consume"
+    )
+
     add_test(NAME NativeOptimizedOverflowTrap
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

@@ -34,9 +34,9 @@ recursive clone/destroy support, deterministic scope and early-return cleanup,
 and a native-entry allocation-balance check. Whole-binding `consuming`
 parameters and mandatory `consume` markers work; explicit
 `borrowing` and `initializing` also work, and call-site access paths enforce
-exclusivity. Longer-lived exclusivity, consuming projections, debug
-information, and a complete standard library remain, so this is not a
-production release.
+exclusivity. Consuming field/array/dictionary projections are tracked through
+reinitialization. Longer-lived exclusivity, debug information, and a complete
+standard library remain, so this is not a production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions

@@ -363,6 +363,94 @@ return text
     EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
 }
 
+TEST_F(SemanticAnalysisTest, TracksConsumedStructFieldsIndependently) {
+    analyze(R"JOYEER(struct Pair { var left: String
+var right: String
+}
+func take(value: consuming String) { print(value: value) }
+func valid(): String {
+var pair = Pair(left: "left", right: "right")
+take(value: consume pair.left)
+print(value: pair.right)
+pair.left = "new"
+return pair.left + pair.right
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, RejectsWholeValueReadsAfterFieldConsumption) {
+    analyze(R"JOYEER(struct Pair { var left: String
+var right: String
+}
+func take(value: consuming String) { print(value: value) }
+func invalid() {
+var pair = Pair(left: "left", right: "right")
+take(value: consume pair.left)
+let copy = pair
+print(value: copy.right)
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+}
+
+TEST_F(SemanticAnalysisTest, ConservativelyTracksConsumedSubscripts) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func invalid() {
+var values = ["left", "right"]
+take(value: consume values[0])
+print(value: values[1])
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+}
+
+TEST_F(SemanticAnalysisTest, AllowsReinitializingConsumedSubscripts) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func valid(): String {
+var values = ["left", "right"]
+take(value: consume values[0])
+&values[0] = "new"
+return values[1]
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, MergesConsumedProjectionStateAcrossBranches) {
+    analyze(R"JOYEER(struct Pair { var left: String
+var right: String
+}
+func take(value: consuming String) { print(value: value) }
+func invalid(flag: Bool) {
+var pair = Pair(left: "left", right: "right")
+if flag { take(value: consume pair.left) }
+print(value: pair.left)
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+}
+
+TEST_F(SemanticAnalysisTest, RejectsProjectionConsumptionAcrossLoopBackEdges) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func invalid(flag: Bool) {
+var values = ["left"]
+while flag { take(value: consume values[0]) }
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+}
+
 TEST_F(SemanticAnalysisTest, ReportsUnusedLocalBindingsAsWarnings) {
     analyze(R"JOYEER(func run() {
 let first = 1

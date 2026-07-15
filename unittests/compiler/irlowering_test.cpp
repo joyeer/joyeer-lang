@@ -661,6 +661,29 @@ return text
     EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 1u);
 }
 
+TEST_F(IRLoweringTest, TakesAndReinitializesOwnedProjections) {
+    lower(R"JOYEER(struct Pair { var left: String
+var right: String
+}
+func take(value: consuming String) { print(value: value) }
+func run(): Pair {
+var pair = Pair(left: "left", right: "right")
+take(value: consume pair.left)
+print(value: pair.right)
+pair.left = "new"
+return pair
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::take), 1u);
+    EXPECT_GE(opcodeCount(run, joyeer::ir::Opcode::fieldAddress), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
     lower(R"JOYEER(func square(value: Int): Int { value * value }
 func text(): String { "left" + "right" }

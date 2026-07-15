@@ -857,13 +857,16 @@ let selected = if flag { 1 } else { "two" }
                     let text = "owned"
                     take(value: consume text)
                     take(value: consume ("temporary" + "!"))
+                    var values = ["item"]
+                    take(value: consume values[0])
+                    }
+                    func invalidBorrow(value: borrowing String) {
+                    take(value: consume value)
                     }
                     func invalid() {
                     let text = "owned"
                     take(value: text)
                     inspect(value: consume text)
-                    var values = ["item"]
-                    take(value: consume values[0])
                     }
                     )JOYEER");
 

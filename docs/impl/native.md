@@ -172,9 +172,9 @@ Unicode path API belongs to broader standard-library design.
 The native path is an MVP, not the final zero-cost implementation:
 
 - all four parameter effects are accepted; `consuming` supports owning locals,
-  consuming parameters, and temporaries, while `initializing` supports whole
-  mutable local/forwarded storage. Full exclusivity and projection consumption
-  remain;
+  consuming parameters, temporaries, and field/subscript projections, while
+  `initializing` supports whole mutable local/forwarded storage. Call-site
+  exclusivity works; longer-lived projection lifetimes remain;
 - allocation balance covers runtime-managed string/collection allocations,
   not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an

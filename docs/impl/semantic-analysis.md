@@ -74,6 +74,13 @@ continuing path consumed the binding. Loop analysis also validates the back
 edge, rejecting a value that would be consumed again on a later iteration.
 Direct assignment reinitializes consumed storage.
 
+Stored-field and collection-subscript consumption is path-sensitive. Distinct
+struct fields retain independent initialization state; reading the whole
+aggregate while any field is moved out is rejected. Collection indices use one
+conservative wildcard path, so any subscript overlaps until assignment
+reinitializes the moved-out slot. These states participate in branch joins and
+loop back-edge checks.
+
 An `initializing` parameter starts uninitialized and may only be read after a
 direct write or a forwarded initializing call. Every normal return/fallthrough
 path must establish initialization. At the caller, `&x` is accepted only while
@@ -107,8 +114,7 @@ remain deterministic.
 
 This pass does not yet implement the complete ownership language from the
 specification. Call-site access-path exclusivity is enforced by the type
-checker; longer-lived projection lifetimes and projection consumption remain
-future work. Explicit `borrowing` uses the existing immutable projection
+checker; longer-lived projection lifetimes remain future work. Explicit `borrowing` uses the existing immutable projection
 behavior. v0.1 has no `break` or `continue`, so the current loop-entry/back-edge
 rule is sufficient for consuming safety.
 

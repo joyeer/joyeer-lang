@@ -1502,20 +1502,13 @@ private:
 
     bool isConsumable(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return false;
-        if (expression->kind == syntax::Kind::parenthesizedExpr) {
-            return isConsumable(
-                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
-                            ->expression);
-        }
-        if (expression->kind != syntax::Kind::nameExpr) {
+        const auto path = storagePath(expression);
+        if (!path.has_value()) {
             return expression->kind != syntax::Kind::memberExpr &&
-                        expression->kind != syntax::Kind::subscriptExpr &&
-                        expression->kind != syntax::Kind::accessExpr;
+                expression->kind != syntax::Kind::subscriptExpr &&
+                expression->kind != syntax::Kind::accessExpr;
         }
-        const auto referenced = model->referencedSymbol(expression);
-        const auto* symbol = referenced.has_value()
-                ? model->semanticModelValue->symbol(*referenced)
-                : nullptr;
+        const auto* symbol = model->semanticModelValue->symbol(path->root);
         if (symbol == nullptr) return false;
         if (symbol->kind == semantic::SymbolKind::binding) return true;
         if (symbol->kind != semantic::SymbolKind::parameter ||

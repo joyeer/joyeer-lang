@@ -86,9 +86,10 @@ source-level read before initialization.
 
 A `consume` argument backed by local storage emits `take`, which loads and
 zeroes the caller slot before the call. Owned temporaries move directly;
-borrowed nontrivial values are not valid consuming sources. The current MVP
-consumes whole local bindings or consuming parameters, not member/subscript
-projections.
+borrowed nontrivial values are not valid consuming sources. Field, array, and
+dictionary projections lower through their existing address operations, then
+`take` zeroes the projected storage. Parent aggregate destruction remains safe,
+and a later assignment reinitializes the projection.
 
 `array_append` consumes its element operand. Lowering moves an owned temporary
 or clones a borrowed nontrivial value before the instruction, so runtime
@@ -152,7 +153,7 @@ The lowering suite includes the complete JSON-parser MVP fixture.
 
 The current IR/native pipeline intentionally leaves these to later commits:
 
-- exclusivity analysis and consuming member/subscript projections;
+- longer-lived exclusivity beyond a single call;
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native

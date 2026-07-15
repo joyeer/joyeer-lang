@@ -115,7 +115,7 @@ checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
 1. Extend implemented call-site access-path exclusivity to longer-lived
-  projections and projection consumption.
+  projections; consuming fields/subscripts and reinitialization work.
 2. Expand structured fix-it/help beyond ownership/access-marker diagnostics.
 3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.
 4. Retire the legacy
@@ -272,8 +272,7 @@ error: type mismatch
 
 - Extend the implemented value-semantics ownership model (see `memory.md`)
 - Keep deterministic clone/move/destroy lowering; no implicit ARC or GC
-- Extend implemented parameter effects with projection consumption and full
-  alias exclusivity
+- Extend implemented parameter effects with longer-lived projection lifetimes
 
 ### Step 3.4 — Optional Types
 

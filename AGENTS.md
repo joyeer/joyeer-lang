@@ -16,7 +16,7 @@ legacy VM. The native lane is an
 MVP with recursive value clone/destroy, deterministic scope cleanup, and
 control-flow semantic analysis. Whole-binding `consuming` ownership is
 implemented; explicit `borrowing` and `initializing` are supported. Full
-call-site exclusivity is enforced; longer-lived projections, consuming
+call-site exclusivity and projection consumption are enforced; longer-lived
 projections, optimization work beyond the current Clang
 `-O0`…`-O3` policy, debug info, and broader standard-library work remain.
 
