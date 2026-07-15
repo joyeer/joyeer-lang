@@ -76,8 +76,11 @@ Access-effect marker mismatches provide source edits to insert, replace, or
 remove `&` / `consume`. Ownership-flow diagnostics provide help for
 reinitialization and all-path initializing obligations. Parser diagnostics
 provide zero-length insertion edits for missing canonical punctuation,
-delimiters, arrows, and list commas. Ordinary type mismatches provide explicit
-`expected` / `found` help while retaining the stable primary message and ID.
+delimiters, arrows, and list commas. Parser context also provides safe
+mismatched-closer and match-arrow replacements plus empty enum payload
+declaration deletion, while preserving outer delimiters. Ordinary type mismatches provide
+explicit `expected` / `found` help while retaining the stable primary message
+and ID.
 Overlapping-access diagnostics retain the later access as the primary span and
 identify the first conflicting access with a secondary note. Notes remain
 grouped with the primary diagnostic and do not affect failure counts.
@@ -88,7 +91,7 @@ reinterpreting display width.
 
 ## 4. Remaining work
 
-- context-aware parser/type replacement and deletion edits;
+- broader type-directed edits where a unique recovery exists;
 - cross-file secondary notes (the current transport resolves spans within the
   primary source file);
 - multi-line span rendering;
@@ -110,6 +113,7 @@ ctest --test-dir build -L diagnostics --output-on-failure
 Tests cover failure/warning severity, source-independent structured errors,
 exact one-based source rendering, help/fix-it escaping, and CLI output from the
 lexer, parser, and type checker. CLI cases include an applicable missing-`)`
-insertion, a `consume` insertion, expected/found type guidance, and both source
-locations of an overlapping access. Existing legacy formatting tests ensure
-the compatibility path does not change.
+insertion, match-arrow replacement, empty-payload deletion, a `consume`
+insertion, expected/found type guidance, and both source locations of an
+overlapping access. Existing legacy formatting tests ensure the compatibility
+path does not change.

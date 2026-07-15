@@ -444,6 +444,34 @@ set_tests_properties(DiagnosticsCliSuggestsMissingDelimiterFix PROPERTIES
         LABELS "diagnostics;parser;fix-it"
 )
 
+add_test(NAME DiagnosticsCliSuggestsMatchArrowReplacement
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/err/wrong_match_arrow.joyeer
+                "-DEXPECTED_HEADER=wrong_match_arrow.joyeer:3:14: error[parser.expected-token]"
+                "-DEXPECTED_SOURCE=        true = 1,"
+                "-DEXPECTED_HELP=help: replace '=' with '=>'"
+                "-DEXPECTED_FIX_IT=fix-it: wrong_match_arrow.joyeer:3:14:1: \"=>\""
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliSuggestsMatchArrowReplacement PROPERTIES
+        LABELS "diagnostics;parser;fix-it"
+)
+
+add_test(NAME DiagnosticsCliSuggestsEmptyPayloadDeletion
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/err/empty_enum_payload.joyeer
+                "-DEXPECTED_HEADER=empty_enum_payload.joyeer:1:19: error[parser.missing-list-element]"
+                "-DEXPECTED_SOURCE=enum Value { None() }"
+                "-DEXPECTED_HELP=help: remove the empty payload clause"
+                "-DEXPECTED_FIX_IT=fix-it: empty_enum_payload.joyeer:1:18:2: \"\""
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliSuggestsEmptyPayloadDeletion PROPERTIES
+        LABELS "diagnostics;parser;fix-it"
+)
+
 add_test(NAME SemanticAnalysisCliRejectsMissingReturn
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

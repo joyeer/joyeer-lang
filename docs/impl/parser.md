@@ -539,6 +539,14 @@ zero-length insertion fix-it at the current cursor. Dedicated missing-comma
 diagnostics use the same edit contract. Identifier, type, and expression
 recovery does not guess source text.
 
+Context can make a replacement or deletion unambiguous. A mismatched bracket
+closer is replaced only when it does not belong to an active outer delimiter;
+otherwise the inner closer is inserted before it. In a match arm, `=` and a
+byte-contiguous `->` are replaced by `=>`. An adjacent empty enum declaration
+payload `()` is deleted because payload-free cases use no clause. These edits
+only annotate the existing diagnostic: token consumption, synchronization,
+synthetic nodes, stable IDs, and primary messages remain unchanged.
+
 ### 8.2 Synchronization sets
 
 | Context | Synchronize before/at |
@@ -685,8 +693,9 @@ Parser MVP is complete when:
 
 - [x] a clean build produces a parser-only test target;
 - [x] the parser-labeled regression suite covers the core grammar/recovery
-  matrix, deterministic dumps, diagnostic snapshots, applicable missing-token
-  insertions, and token deletion/insertion/replacement mutation;
+  matrix, deterministic dumps, diagnostic snapshots, applicable insertion/
+  replacement/deletion edits, and token deletion/insertion/replacement
+  mutation;
 - [x] positive and negative CLI acceptance tests run through
   `--lang=v0.1` without starting the legacy VM/runtime;
 - [x] the Parser MVP acceptance source parses with no lexical or parser diagnostic;

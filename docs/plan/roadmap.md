@@ -73,7 +73,7 @@ Source (.joyeer)
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
 | Runtime Library | ✅ Primitive/string/collection/file-input MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
-| Error Diagnostics | ✅ v0.1 structured source output; ownership/access and parser insertion edits; type expected/found help; secondary source notes; broader contextual guidance pending | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
+| Error Diagnostics | ✅ v0.1 structured source output; contextual parser/ownership edits; type expected/found help; secondary source notes | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
 frontend work must consume `TypeCheckedModel` and must not add dependencies on
@@ -102,7 +102,7 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Ownership Syntax and Native Quality
+## Immediate Next Milestone: Native Tooling and Legacy Retirement
 
 The [Parser MVP](../impl/parser.md), [name-resolution model](../impl/name-resolution.md),
 [type checker](../impl/type-checking.md), [Joyeer IR lowering](../impl/ir.md),
@@ -114,12 +114,11 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add context-aware parser/type replacement and deletion edits to the existing
-  ownership, parser-insertion, type-mismatch, and secondary-note guidance.
-2. Add source-level debug information and define Joyeer-specific LLVM passes/
+1. Add source-level debug information and define Joyeer-specific LLVM passes/
   LTO only when profiling justifies them.
-3. Retire the legacy
+2. Retire the legacy
   VM lane after native golden coverage is equivalent.
+3. Add broader type-directed edits only where the recovery is unambiguous.
 
 ---
 
@@ -215,7 +214,8 @@ runtime/
 - ✅ ownership/access edits, canonical parser-token insertions, and
   expected/found type help
 - ✅ independently located secondary notes for overlapping accesses
-- context-aware parser/type replacements/deletions remain future quality work
+- ✅ context-aware parser closer/arrow replacements and empty declaration-
+  payload deletion
 
 ```
 error: type mismatch
@@ -329,6 +329,6 @@ std/
 | Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | ✅ native MVP clone/destroy; stdlib incomplete |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |
 | Package Manager | cargo | SPM | zig build | Phase 3 |
-| Error Diagnostics | Excellent | Good | Good | ✅ v0.1 source rendering, baseline fix-its/help, and secondary notes; contextual edits pending |
+| Error Diagnostics | Excellent | Good | Good | ✅ v0.1 source rendering, contextual fix-its/help, and secondary notes |
 | Incremental Compilation | ✅ | ✅ | ✅ | Phase 3 |
 | Debug Info (DWARF) | ✅ | ✅ | ✅ | Phase 3 |

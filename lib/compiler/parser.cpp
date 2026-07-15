@@ -43,6 +43,28 @@ std::optional<std::string> canonicalTokenSpelling(TokenKind kind) {
     }
 }
 
+bool isBracketCloser(TokenKind kind) {
+    return kind == rightCurly || kind == rightParen || kind == rightSquare;
+}
+
+class DelimiterScope {
+public:
+    DelimiterScope(std::vector<TokenKind>& activeClosers, TokenKind closer)
+        : activeClosers(activeClosers) {
+        activeClosers.push_back(closer);
+    }
+
+    ~DelimiterScope() {
+        activeClosers.pop_back();
+    }
+
+    DelimiterScope(const DelimiterScope&) = delete;
+    DelimiterScope& operator=(const DelimiterScope&) = delete;
+
+private:
+    std::vector<TokenKind>& activeClosers;
+};
+
 } // namespace
 
 const char* diagnosticName(DiagnosticId id) {
@@ -248,6 +270,7 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl() {
         reportExpected(DiagnosticId::expectedToken, "'(' to begin the parameter clause");
         addExpectedTokenFixIt(leftParen);
     } else {
+        DelimiterScope delimiter(activeClosers, rightParen);
         if (!cursor.at(rightParen) && !cursor.atEnd()) {
             while (true) {
                 const size_t before = cursor.position();
@@ -262,7 +285,7 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl() {
                 }
                 if (cursor.at(rightParen) || cursor.atEnd()) break;
 
-                                reportMissingComma("expected ',' between function parameters");
+                reportMissingComma("expected ',' between function parameters");
                 synchronizeList(rightParen);
                 if (cursor.eat(comma) != nullptr) {
                     if (cursor.at(rightParen)) break;
@@ -320,6 +343,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
         return std::make_shared<syntax::StructDeclSyntax>(
                 spanFrom(start), std::move(name), std::vector<syntax::StructFieldDeclSyntax::Ptr> {});
     }
+    DelimiterScope delimiter(activeClosers, rightCurly);
 
     std::vector<syntax::StructFieldDeclSyntax::Ptr> fields;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
@@ -381,6 +405,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
         return std::make_shared<syntax::EnumDeclSyntax>(
                 spanFrom(start), std::move(name), std::vector<syntax::EnumCaseDeclSyntax::Ptr> {});
     }
+    DelimiterScope delimiter(activeClosers, rightCurly);
 
     std::vector<syntax::EnumCaseDeclSyntax::Ptr> cases;
     if (cursor.at(rightCurly)) {
@@ -426,14 +451,22 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
 syntax::EnumCaseDeclSyntax::Ptr Parser::parseEnumCaseDecl() {
     const size_t start = cursor.position();
     auto name = cursor.advance();
-    const bool hasPayloadClause = cursor.eat(leftParen) != nullptr;
+    const auto payloadOpen = cursor.eat(leftParen);
+    const bool hasPayloadClause = payloadOpen != nullptr;
     std::vector<syntax::AssociatedTypeSyntax::Ptr> associatedTypes;
 
     if (hasPayloadClause) {
+        DelimiterScope delimiter(activeClosers, rightParen);
         if (cursor.at(rightParen)) {
             report(DiagnosticId::missingListElement,
                    insertionSpan(),
                    "an enum payload clause cannot be empty");
+            const auto close = cursor.peek();
+            if (spanEnd(tokenSpan(payloadOpen)) == close->span.offset) {
+                addTokenDeletionFixIt(
+                        coveringSpan(tokenSpan(payloadOpen), tokenSpan(close)),
+                        "remove the empty payload clause");
+            }
         } else {
             while (!cursor.at(rightParen) && !cursor.atEnd()) {
                 const size_t before = cursor.position();
@@ -445,7 +478,7 @@ syntax::EnumCaseDeclSyntax::Ptr Parser::parseEnumCaseDecl() {
                     continue;
                 }
                 if (cursor.at(rightParen) || cursor.atEnd()) break;
-                                reportMissingComma("expected ',' between enum associated types");
+                reportMissingComma("expected ',' between enum associated types");
                 synchronizeList(rightParen);
                 if (cursor.eat(comma) == nullptr) break;
             }
@@ -498,6 +531,7 @@ syntax::TypePtr Parser::parseTypePrimary() {
         auto name = cursor.advance();
         std::vector<syntax::TypePtr> arguments;
         if (cursor.eat(less) != nullptr) {
+            DelimiterScope delimiter(activeClosers, greater);
             if (cursor.at(greater)) {
                 report(DiagnosticId::missingListElement,
                        insertionSpan(),
@@ -512,7 +546,7 @@ syntax::TypePtr Parser::parseTypePrimary() {
                         continue;
                     }
                     if (cursor.at(greater) || cursor.atEnd()) break;
-                      reportMissingComma("expected ',' between generic type arguments");
+                                        reportMissingComma("expected ',' between generic type arguments");
                     synchronizeList(greater);
                     if (cursor.eat(comma) == nullptr) break;
                 }
@@ -524,6 +558,7 @@ syntax::TypePtr Parser::parseTypePrimary() {
     }
 
     if (cursor.eat(leftSquare) != nullptr) {
+        DelimiterScope delimiter(activeClosers, rightSquare);
         auto first = parseType();
         if (cursor.eat(colon) != nullptr) {
             auto second = parseType();
@@ -545,6 +580,7 @@ syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
         return std::make_shared<syntax::BlockExprSyntax>(
                 insertionSpan(), std::vector<syntax::NodePtr> {});
     }
+    DelimiterScope delimiter(activeClosers, rightCurly);
 
     std::vector<syntax::NodePtr> items;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
@@ -710,6 +746,7 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
         }
 
         if (cursor.eat(leftSquare) != nullptr) {
+            DelimiterScope delimiter(activeClosers, rightSquare);
             auto index = parseExpression();
             if (index == nullptr) {
                 reportExpected(DiagnosticId::expectedExpression, "a subscript index");
@@ -768,6 +805,7 @@ syntax::ExprPtr Parser::parsePrimaryExpr() {
 syntax::ExprPtr Parser::parseParenthesizedExpr() {
     const size_t start = cursor.position();
     cursor.advance();
+    DelimiterScope delimiter(activeClosers, rightParen);
     auto expression = parseExpression();
     if (expression == nullptr) {
         reportExpected(DiagnosticId::expectedExpression, "an expression inside parentheses");
@@ -781,6 +819,7 @@ syntax::ExprPtr Parser::parseParenthesizedExpr() {
 syntax::ExprPtr Parser::parseArrayOrDictionaryExpr() {
     const size_t start = cursor.position();
     cursor.advance();
+    DelimiterScope delimiter(activeClosers, rightSquare);
 
     if (cursor.eat(colon) != nullptr) {
         expect(rightSquare, "']' to close the empty dictionary");
@@ -908,6 +947,7 @@ syntax::MatchExprSyntax::Ptr Parser::parseMatchExpr() {
                 std::move(scrutinee),
                 std::vector<syntax::MatchArmSyntax::Ptr> {});
     }
+    DelimiterScope delimiter(activeClosers, rightCurly);
 
     std::vector<syntax::MatchArmSyntax::Ptr> arms;
     if (cursor.at(rightCurly)) {
@@ -954,6 +994,7 @@ syntax::CallArgumentSyntax::Ptr Parser::parseCallArgument() {
 
 std::vector<syntax::CallArgumentSyntax::Ptr> Parser::parseArgumentClause() {
     cursor.advance();
+    DelimiterScope delimiter(activeClosers, rightParen);
     std::vector<syntax::CallArgumentSyntax::Ptr> arguments;
     if (cursor.eat(rightParen) != nullptr) {
         return arguments;
@@ -1012,6 +1053,7 @@ syntax::EnumCasePatternSyntax::Ptr Parser::parseEnumCasePattern() {
     const bool hasPayloadClause = cursor.eat(leftParen) != nullptr;
     std::vector<syntax::PatternArgumentSyntax::Ptr> arguments;
     if (hasPayloadClause) {
+        DelimiterScope delimiter(activeClosers, rightParen);
         if (cursor.at(rightParen)) {
             report(DiagnosticId::missingListElement,
                    insertionSpan(),
@@ -1026,7 +1068,7 @@ syntax::EnumCasePatternSyntax::Ptr Parser::parseEnumCasePattern() {
                     continue;
                 }
                 if (cursor.at(rightParen) || cursor.atEnd()) break;
-                                reportMissingComma("expected ',' between enum payload patterns");
+                reportMissingComma("expected ',' between enum payload patterns");
                 synchronizeList(rightParen);
                 if (cursor.eat(comma) == nullptr) break;
             }
@@ -1177,12 +1219,61 @@ void Parser::report(DiagnosticId id, SourceSpan span, std::string message) {
 void Parser::addExpectedTokenFixIt(TokenKind kind) {
     const auto spelling = canonicalTokenSpelling(kind);
     if (!spelling.has_value() || diagnostics.empty()) return;
+    if (tryAddExpectedTokenReplacementFixIt(kind)) return;
     const auto insertion = insertionSpan();
     auto& diagnostic = diagnostics.back();
     diagnostic.help = cursor.atEnd()
             ? "insert '" + *spelling + "' at end of file"
             : "insert '" + *spelling + "' before this token";
     diagnostic.fixIt = DiagnosticFixIt { insertion.offset, 0, *spelling };
+}
+
+bool Parser::tryAddExpectedTokenReplacementFixIt(TokenKind kind) {
+    if (diagnostics.empty() || cursor.atEnd()) return false;
+
+    const auto current = cursor.peek();
+    SourceSpan replacementSpan;
+    std::string actualSpelling;
+    const auto expectedSpelling = canonicalTokenSpelling(kind);
+    if (!expectedSpelling.has_value()) return false;
+
+    if (kind == fatArrow && current->kind == equal) {
+        replacementSpan = tokenSpan(current);
+        actualSpelling = "=";
+    } else if (kind == fatArrow && current->kind == minus && cursor.at(greater, 1)) {
+        const auto next = cursor.peek(1);
+        if (spanEnd(tokenSpan(current)) != next->span.offset) return false;
+        replacementSpan = coveringSpan(tokenSpan(current), tokenSpan(next));
+        actualSpelling = "->";
+    } else if (isBracketCloser(kind) && isBracketCloser(current->kind) &&
+               current->kind != kind && !activeClosers.empty() &&
+               activeClosers.back() == kind) {
+        const auto outerEnd = activeClosers.end() - 1;
+        if (std::find(activeClosers.begin(), outerEnd, current->kind) != outerEnd) {
+            return false;
+        }
+        replacementSpan = tokenSpan(current);
+        actualSpelling = canonicalTokenSpelling(current->kind).value_or(current->rawValue);
+    } else {
+        return false;
+    }
+
+    auto& diagnostic = diagnostics.back();
+    diagnostic.help = "replace '" + actualSpelling + "' with '" +
+            *expectedSpelling + "'";
+    diagnostic.fixIt = DiagnosticFixIt {
+        replacementSpan.offset,
+        replacementSpan.length,
+        *expectedSpelling,
+    };
+    return true;
+}
+
+void Parser::addTokenDeletionFixIt(SourceSpan span, std::string help) {
+    if (diagnostics.empty() || span.length == 0) return;
+    auto& diagnostic = diagnostics.back();
+    diagnostic.help = std::move(help);
+    diagnostic.fixIt = DiagnosticFixIt { span.offset, span.length, "" };
 }
 
 void Parser::reportMissingComma(std::string message) {

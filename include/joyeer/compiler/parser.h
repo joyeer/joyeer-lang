@@ -132,6 +132,8 @@ private:
     Token::Ptr synthetic(TokenKind kind) const;
     void report(DiagnosticId id, SourceSpan span, std::string message);
     void addExpectedTokenFixIt(TokenKind kind);
+    [[nodiscard]] bool tryAddExpectedTokenReplacementFixIt(TokenKind kind);
+    void addTokenDeletionFixIt(SourceSpan span, std::string help);
     void reportMissingComma(std::string message);
     void reportExpected(DiagnosticId id, const std::string& expected);
 
@@ -148,6 +150,7 @@ private:
 private:
     TokenCursor cursor;
     std::vector<Diagnostic> diagnostics;
+    std::vector<TokenKind> activeClosers;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

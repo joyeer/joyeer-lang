@@ -30,6 +30,11 @@ std::string readFixture(const std::string& relativePath) {
         return content.str();
 }
 
+std::string applyFixIt(std::string text, const DiagnosticFixIt& fixIt) {
+        text.replace(fixIt.offset, fixIt.length, fixIt.replacement);
+        return text;
+}
+
 class ParserTest : public testing::Test {
 protected:
     void parse(const std::string& text, bool requireValidLexing = true) {
@@ -176,6 +181,159 @@ return (1 + 2
     ASSERT_TRUE(found->help.has_value());
     EXPECT_EQ(found->fixIt->length, 0u);
     EXPECT_EQ(found->fixIt->replacement, ")");
+}
+
+TEST_F(ParserTest, SuggestsMismatchedCloserReplacement) {
+        const std::string text = R"JOYEER(func value(): Int {
+return (1 + 2]
+}
+)JOYEER";
+        parse(text);
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::expectedToken &&
+                                                diagnostic.fixIt.has_value() &&
+                                                diagnostic.fixIt->replacement == ")";
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        ASSERT_TRUE(found->help.has_value());
+        EXPECT_EQ(found->fixIt->length, 1u);
+
+        parse(applyFixIt(text, *found->fixIt));
+        EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
+TEST_F(ParserTest, PreservesClosersOwnedByAnyOuterDelimiter) {
+        parse(R"JOYEER(func value(): Int {
+return [(1 + 2}]
+}
+)JOYEER");
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::expectedToken &&
+                                                diagnostic.fixIt.has_value() &&
+                                                diagnostic.fixIt->replacement == ")";
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        EXPECT_EQ(found->fixIt->length, 0u);
+}
+
+TEST_F(ParserTest, SuggestsMatchArrowReplacement) {
+        const std::string text = R"JOYEER(func value(flag: Bool): Int {
+return match flag {
+true = 1,
+false => 0,
+}
+}
+)JOYEER";
+        parse(text);
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::expectedToken &&
+                                                diagnostic.fixIt.has_value() &&
+                                                diagnostic.fixIt->replacement == "=>";
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        ASSERT_TRUE(found->help.has_value());
+        EXPECT_EQ(found->fixIt->length, 1u);
+
+        parse(applyFixIt(text, *found->fixIt));
+        EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
+TEST_F(ParserTest, SuggestsContiguousMatchArrowReplacement) {
+        const std::string text = R"JOYEER(func value(flag: Bool): Int {
+return match flag {
+true -> 1,
+false => 0,
+}
+}
+)JOYEER";
+        parse(text);
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::expectedToken &&
+                                                diagnostic.fixIt.has_value() &&
+                                                diagnostic.fixIt->replacement == "=>";
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        EXPECT_EQ(found->fixIt->length, 2u);
+
+        parse(applyFixIt(text, *found->fixIt));
+        EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
+TEST_F(ParserTest, DoesNotReplaceMatchArrowAcrossTrivia) {
+        parse(R"JOYEER(func value(flag: Bool): Int {
+return match flag {
+true - > 1,
+false => 0,
+}
+}
+)JOYEER");
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::expectedToken &&
+                                                diagnostic.fixIt.has_value() &&
+                                                diagnostic.fixIt->replacement == "=>";
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        EXPECT_EQ(found->fixIt->length, 0u);
+}
+
+TEST_F(ParserTest, SuggestsEmptyEnumPayloadDeletion) {
+        const std::string text = "enum Value { None() }\n";
+        parse(text);
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::missingListElement &&
+                                                diagnostic.fixIt.has_value();
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        ASSERT_TRUE(found->help.has_value());
+        EXPECT_EQ(found->fixIt->length, 2u);
+        EXPECT_TRUE(found->fixIt->replacement.empty());
+
+        parse(applyFixIt(text, *found->fixIt));
+        EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
+TEST_F(ParserTest, DoesNotDeleteTriviaInsideEmptyEnumPayload) {
+        parse("enum Value { None( /* keep */ ) }\n");
+
+        const auto found = std::find_if(
+                        result.diagnostics.begin(),
+                        result.diagnostics.end(),
+                        [](const auto& diagnostic) {
+                                return diagnostic.id == DiagnosticId::missingListElement;
+                        });
+        ASSERT_NE(found, result.diagnostics.end())
+                        << joyeer::parser::dump(result.diagnostics);
+        EXPECT_FALSE(found->fixIt.has_value());
 }
 
 TEST_F(ParserTest, SuggestsMissingCommaInsertion) {
