@@ -234,6 +234,32 @@ TEST_F(ParserTest, ParsesExplicitBorrowingParameters) {
         EXPECT_EQ(function->parameters[0]->accessKeyword->kind, kwBorrowing);
 }
 
+        TEST_F(ParserTest, ParsesInitializingParametersAndArguments) {
+            parse(R"JOYEER(func initialize(out: initializing String) { &out = "value" }
+        func run() {
+        var text: String
+        initialize(out: &text)
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+            const auto initialize = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                    result.root->items[0]);
+            ASSERT_EQ(initialize->parameters.size(), 1u);
+            EXPECT_EQ(
+                    initialize->parameters[0]->accessEffect(),
+                    joyeer::syntax::AccessEffect::initializing);
+            ASSERT_NE(initialize->parameters[0]->accessKeyword, nullptr);
+            EXPECT_EQ(initialize->parameters[0]->accessKeyword->kind, kwInitializing);
+
+            const auto run = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                    result.root->items[1]);
+            const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                    run->body->items[1]);
+            ASSERT_NE(call->arguments[0]->accessMarker, nullptr);
+            EXPECT_EQ(call->arguments[0]->accessMarker->kind, ampersand);
+        }
+
 TEST_F(ParserTest, ParsesArraysAndDictionariesWithTrailingCommas) {
     parse(R"JOYEER(let array = [1, 2, 3,]
 let dictionary = ["one": 1, "two": 2,]

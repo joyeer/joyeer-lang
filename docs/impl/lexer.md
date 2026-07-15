@@ -123,7 +123,7 @@ Only these words need dedicated keyword tokens for the first milestone:
 | Branching | `if`, `else`, `match` | Control flow and enum/byte dispatch |
 | Loops | `while` | Byte and collection iteration |
 | Function exit | `return` | Normal and early returns |
-| Mutation convention | `inout` | Mutating parser state without reference types |
+| Access conventions | `borrowing`, `inout`, `consuming`, `initializing`, `consume` | Explicit projection/transfer intent without reference types |
 
 `true`, `false`, and `nil` are literal tokens rather than declaration/control
 keywords.
@@ -134,8 +134,8 @@ specification mentions them:
 - `public`, `internal`, `private`;
 - `for`, `in`;
 - `extension`, `subscript`, `init`, `deinit`;
-- `initializing`, `mutating` (`borrowing`, `consuming`, and `consume` are now
-  MVP keywords);
+- `mutating` (`borrowing`, `inout`, `consuming`, `initializing`, and `consume`
+  are now MVP keywords);
 - `yield`, `indirect`, `where`;
 - `import` and `as`;
 - all reserved future words.
@@ -282,13 +282,14 @@ The MVP recognizes:
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
 | Logical | `&&` |
 | Optional type marker | `?` |
-| Inout marker | `&` |
+| Inout/initializing marker | `&` |
 
 `?` is required initially for optional types such as `UInt8?`. Postfix error
 propagation, optional chaining, and `??` coalescing are deferred.
 
 `&` is only a token at the lexer level. The parser determines whether it marks
-an `inout` argument or mutation site. Bitwise-AND semantics are deferred.
+an `inout`/`initializing` argument or mutation site. `consume` is a keyword
+marker for ownership transfer. Bitwise-AND semantics are deferred.
 
 Compound assignment is omitted deliberately. The JSON parser writes:
 
@@ -703,7 +704,7 @@ layer for downstream code:
 | Token model | Explicit terminal kinds, `Invalid`, `DeferredKeyword`, wildcard, and absolute `SourceSpan` | Remove broad legacy categories and `rawValue` after parser migration |
 | Profiles | Default `legacy`; `jsonParserMvp` via `--lang=v0.1`; `--lang=v0.1-legacy` selects legacy explicitly | Decide when v0.1 becomes the default |
 | EOF/reset | Every scan resets cursor/output and appends exactly one EOF | Remove redundant parser end-iterator assumptions later |
-| Keywords/match | MVP/deferred classification plus `enum`, `match`, `borrowing`, `inout`, `consuming`, `consume`, `_`, and `=>` | Initializing effects remain deferred |
+| Keywords/match | MVP/deferred classification plus `enum`, `match`, all four parameter effects, `consume`, `_`, and `=>` | Method effects remain deferred |
 | Literals | Decimal `Int`, fixed string escapes, strict byte literals; unsupported numeric forms recover as one token | Integrate byte literals into Joyeer IR; move typed conversion out of lexer |
 | Operators | Longest-match MVP terminals; deferred compound, shift, range, optional-chain, and coalescing forms recover as one invalid token | Add syntax only when a later milestone requires it |
 | Trivia | LF, CR, CRLF, line comments, and nested block comments update line starts | None for Phase L |

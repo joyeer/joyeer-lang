@@ -35,7 +35,7 @@ The Parser MVP deliberately does **not** implement:
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
 - `class`, `for-in`, imports, extensions, explicit `init` / `deinit`, methods,
   subscript declarations, visibility, or user-defined generics;
-- `initializing`, `mutating`, `indirect`,
+- `mutating`, `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
@@ -143,7 +143,7 @@ binding_kind       ::= 'let' | 'var'
 func_decl          ::= 'func' identifier parameter_clause
                        [ ':' type ] block
 parameter_clause   ::= '(' [ parameter ( ',' parameter )* ','? ] ')'
-parameter          ::= identifier [ identifier ] ':' [ 'borrowing' | 'inout' | 'consuming' ] type
+parameter          ::= identifier [ identifier ] ':' [ 'borrowing' | 'inout' | 'consuming' | 'initializing' ] type
 
 struct_decl        ::= 'struct' identifier '{' struct_field* '}'
 struct_field       ::= binding_kind identifier ':' type
@@ -164,9 +164,9 @@ Rules and intentional restrictions:
 2. A function parameter always has an external label. With one identifier it
    is also the local name; `from source: String` uses `from` externally and
    `source` in the body.
-3. `borrowing`, `inout`, and `consuming` are access effects in the Parser MVP;
-  borrowing is also the implicit default. Calls spell `&` or `consume` for
-  inout/consuming respectively; borrowing has no marker.
+3. All four parameter access effects are in the Parser MVP; borrowing is also
+  the implicit default. Calls spell `&` for inout/initializing and `consume`
+  for consuming; borrowing has no marker.
 4. A Parser MVP `struct` contains stored fields only. Explicit initializers,
    methods, and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.
@@ -621,14 +621,14 @@ normalized syntax AST or diagnostic stream. They never execute the program.
 |---|---|
 | Empty/file | empty input, one and several top-level items |
 | Bindings | inferred/annotated, initialized/uninitialized, `let` vs `var` |
-| Parameters | one-name, external/local names, `inout`, `consuming`, empty/non-empty/trailing comma |
+| Parameters | one-name, external/local names, borrowing/inout/consuming/initializing, empty/non-empty/trailing comma |
 | Types | nominal, array, dictionary, optional, `Result<T, E>`, nesting through `[]` / `?`; adjacent angle closers after the documented lexer handshake |
 | Struct | typed fields, field initializer, multiline body |
 | Enum | empty-payload, positional payload, labeled payload, mixed payload, trailing comma |
 | Literals | every Lexer MVP literal kind, especially `byteLiteral` |
 | Collections | empty/non-empty arrays and dictionaries, nesting, trailing commas |
 | Postfix | member/call/subscript chains and multiline argument clauses |
-| Calls/cases | labeled function/initializer calls, `&`/`consume` arguments, positional/labeled enum payloads, contextual and qualified cases |
+| Calls/cases | labeled function/initializer calls, marker-free borrowing, `&` inout/initializing, `consume` arguments, positional/labeled enum payloads, contextual and qualified cases |
 | Precedence | every neighboring precedence pair, left/right/non-associativity |
 | Assignment | name, member, subscript, `&` target, right-associative chain |
 | Control | standalone/value `if`, else-if, `while`, empty/value blocks, early return |

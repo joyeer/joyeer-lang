@@ -766,7 +766,8 @@ private:
                     nodeId(parameter));
                 symbol(parameterSymbol).isMutable =
                     parameter->accessEffect() == syntax::AccessEffect::inout ||
-                    parameter->accessEffect() == syntax::AccessEffect::consuming;
+                    parameter->accessEffect() == syntax::AccessEffect::consuming ||
+                    parameter->accessEffect() == syntax::AccessEffect::initializing;
             symbol(parameterSymbol).declaredType = parameterType;
 
             auto& callable = *symbol(*functionSymbol).callable;

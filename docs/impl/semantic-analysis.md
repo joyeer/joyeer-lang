@@ -29,6 +29,8 @@ LLVM, or native output.
 | `semantic-analysis.unreachable-code` | warning | Statements following a terminating statement in the same block cannot execute. |
 | `semantic-analysis.use-before-initialization` | error | A local must be initialized on every continuing path before it is read, projected, subscripted, or passed `inout`. |
 | `semantic-analysis.use-after-consume` | error | A binding transferred with `consume` cannot be read or consumed again until direct assignment reinitializes it. |
+| `semantic-analysis.initializing-initialized-storage` | error | An `initializing` call requires uninitialized or consumed destination storage. |
+| `semantic-analysis.initializing-parameter-not-initialized` | error | Every normal return path must initialize each `initializing` parameter. |
 | `semantic-analysis.unused-binding` | warning | A local or pattern binding is never read; names beginning with `_` explicitly suppress this warning. |
 
 `let`/field immutability and `inout` access-marker checks remain type-checker
@@ -72,6 +74,12 @@ continuing path consumed the binding. Loop analysis also validates the back
 edge, rejecting a value that would be consumed again on a later iteration.
 Direct assignment reinitializes consumed storage.
 
+An `initializing` parameter starts uninitialized and may only be read after a
+direct write or a forwarded initializing call. Every normal return/fallthrough
+path must establish initialization. At the caller, `&x` is accepted only while
+`x` is uninitialized or consumed, and a successful returning call marks it
+initialized.
+
 Assignment to a plain local does not read its old value. Assignment through a
 member or subscript does read/project the base storage. The right-hand side and
 `inout` arguments are ordinary reads and therefore require prior
@@ -98,8 +106,8 @@ remain deterministic.
 ## 6. Remaining work
 
 This pass does not yet implement the complete ownership language from the
-specification. `initializing` and full exclusivity analysis remain future work.
-Explicit `borrowing` uses the existing immutable projection behavior. v0.1 has
+specification. Full alias exclusivity and projection consumption remain future
+work. Explicit `borrowing` uses the existing immutable projection behavior. v0.1 has
 no `break` or `continue`, so the current loop-entry/back-edge rule is sufficient
 for consuming safety.
 

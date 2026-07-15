@@ -241,6 +241,7 @@ struct ParameterDeclSyntax final : Node {
             case kwInout: return AccessEffect::inout;
             case kwBorrowing: return AccessEffect::borrowing;
             case kwConsuming: return AccessEffect::consuming;
+            case kwInitializing: return AccessEffect::initializing;
             default: return AccessEffect::borrowing;
         }
     }

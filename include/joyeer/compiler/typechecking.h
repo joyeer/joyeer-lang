@@ -141,6 +141,7 @@ enum class TypeCheckingDiagnosticId {
     invalidAccessMarker,
     invalidInoutArgument,
     invalidConsumeArgument,
+    invalidInitializingArgument,
     notCallable,
     unresolvedReference,
 };

@@ -49,6 +49,7 @@ enum TokenKind {
     kwInout,
     kwBorrowing,
     kwConsuming,
+    kwInitializing,
     kwConsume,
 
     leftCurly,
@@ -140,6 +141,7 @@ struct Keywords {
     static const std::string INOUT;
     static const std::string BORROWING;
     static const std::string CONSUMING;
+    static const std::string INITIALIZING;
     static const std::string CONSUME;
     
     static const std::unordered_set<std::string> map;

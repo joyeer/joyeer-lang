@@ -131,6 +131,7 @@ struct Parameter {
     SourceSpan span;
     bool acceptsAnyType = false;
     bool isConsuming = false;
+    bool isInitializing = false;
 };
 
 struct Function {

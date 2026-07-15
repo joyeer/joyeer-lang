@@ -376,6 +376,15 @@ VerificationResult Verifier::verify(const Module& module) const {
                         "parameter '" + parameter.name +
                                 "' cannot be both inout and consuming");
             }
+                        if (parameter.isInitializing && !parameter.isMutable) {
+                        report(
+                            VerificationErrorId::invalidInstruction,
+                            functionId,
+                            std::nullopt,
+                            std::nullopt,
+                            "initializing parameter '" + parameter.name +
+                                "' must be an address projection");
+                        }
             if (!values.emplace(parameter.value.id, parameter.value).second) {
                 report(
                         VerificationErrorId::duplicateId,
@@ -1288,7 +1297,8 @@ std::string dump(const Module& module) {
             out << valueName(parameter.value.id) << ": "
                 << typeName(types, parameter.value.type)
                 << " \"" << escape(parameter.name) << "\"";
-            if (parameter.isMutable) out << " inout";
+            if (parameter.isInitializing) out << " initializing";
+            else if (parameter.isMutable) out << " inout";
             if (parameter.isConsuming) out << " consuming";
             if (parameter.acceptsAnyType) out << " accepts-any";
         }

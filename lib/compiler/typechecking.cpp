@@ -1239,7 +1239,7 @@ private:
                     TypeCheckingDiagnosticId::invalidAccessMarker,
                     target->span,
                     storage.requiresMarker
-                            ? "assignment through an inout parameter or subscript requires '&'"
+                            ? "assignment through an inout/initializing parameter or subscript requires '&'"
                             : "assignment to directly owned mutable storage must not use '&'");
         }
     }
@@ -1254,25 +1254,32 @@ private:
 
         const auto required = parameters[parameterIndex].access;
         const auto marker = argument.accessMarker == nullptr
-            ? syntax::AccessEffect::borrowing
-            : argument.accessMarker->kind == kwConsume
-                ? syntax::AccessEffect::consuming
-                : syntax::AccessEffect::inout;
-        if (marker != required) {
+                ? syntax::AccessEffect::borrowing
+                : argument.accessMarker->kind == kwConsume
+                        ? syntax::AccessEffect::consuming
+                        : syntax::AccessEffect::inout;
+        const auto markerMatches = marker == required ||
+                (marker == syntax::AccessEffect::inout &&
+                 required == syntax::AccessEffect::initializing);
+        if (!markerMatches) {
             const auto consumeMismatch = marker == syntax::AccessEffect::consuming ||
-                required == syntax::AccessEffect::consuming;
+                    required == syntax::AccessEffect::consuming;
             report(
-                consumeMismatch
-                    ? TypeCheckingDiagnosticId::invalidConsumeArgument
-                    : TypeCheckingDiagnosticId::invalidInoutArgument,
+                    required == syntax::AccessEffect::initializing
+                            ? TypeCheckingDiagnosticId::invalidInitializingArgument
+                            : consumeMismatch
+                                    ? TypeCheckingDiagnosticId::invalidConsumeArgument
+                                    : TypeCheckingDiagnosticId::invalidInoutArgument,
                     argument.span,
-                required == syntax::AccessEffect::consuming
-                    ? "consuming argument requires 'consume' at the call site"
-                    : required == syntax::AccessEffect::inout
-                        ? "inout argument requires '&' at the call site"
-                        : marker == syntax::AccessEffect::consuming
-                            ? "non-consuming argument must not use 'consume'"
-                            : "non-inout argument must not use '&'");
+                    required == syntax::AccessEffect::consuming
+                            ? "consuming argument requires 'consume' at the call site"
+                            : required == syntax::AccessEffect::initializing
+                                    ? "initializing argument requires '&' at the call site"
+                                    : required == syntax::AccessEffect::inout
+                                            ? "inout argument requires '&' at the call site"
+                                            : marker == syntax::AccessEffect::consuming
+                                                    ? "non-consuming argument must not use 'consume'"
+                                                    : "non-inout argument must not use '&'");
             return;
         }
         if (required == syntax::AccessEffect::inout &&
@@ -1282,43 +1289,77 @@ private:
                     argument.value->span,
                     "inout argument must refer to mutable storage");
         }
-                if (required == syntax::AccessEffect::consuming &&
-                    !isConsumable(argument.value)) {
-                    report(
-                        TypeCheckingDiagnosticId::invalidConsumeArgument,
-                        argument.value->span,
-                        "consuming argument must be an owning local, consuming parameter, or temporary");
-                }
+        if (required == syntax::AccessEffect::initializing &&
+            !isInitializable(argument.value)) {
+            report(
+                    TypeCheckingDiagnosticId::invalidInitializingArgument,
+                    argument.value->span,
+                    "initializing argument must be a whole mutable owning local or consuming parameter");
+        }
+        if (required == syntax::AccessEffect::consuming &&
+            !isConsumable(argument.value)) {
+            report(
+                    TypeCheckingDiagnosticId::invalidConsumeArgument,
+                    argument.value->span,
+                    "consuming argument must be an owning local, consuming parameter, or temporary");
+        }
     }
 
-                bool isConsumable(const syntax::ExprPtr& expression) const {
-                if (expression == nullptr) return false;
-                if (expression->kind == syntax::Kind::parenthesizedExpr) {
-                    return isConsumable(
-                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+    bool isConsumable(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isConsumable(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
                             ->expression);
-                }
-                if (expression->kind != syntax::Kind::nameExpr) {
-                    return expression->kind != syntax::Kind::memberExpr &&
+        }
+        if (expression->kind != syntax::Kind::nameExpr) {
+            return expression->kind != syntax::Kind::memberExpr &&
                         expression->kind != syntax::Kind::subscriptExpr &&
                         expression->kind != syntax::Kind::accessExpr;
-                }
-                const auto referenced = model->referencedSymbol(expression);
-                const auto* symbol = referenced.has_value()
-                    ? model->semanticModelValue->symbol(*referenced)
-                    : nullptr;
-                if (symbol == nullptr) return false;
-                if (symbol->kind == semantic::SymbolKind::binding) return true;
-                if (symbol->kind != semantic::SymbolKind::parameter ||
-                    !symbol->declaration.has_value()) {
-                    return false;
-                }
-                const auto& declaration = model->semanticModelValue->node(*symbol->declaration);
-                return declaration != nullptr &&
-                    declaration->kind == syntax::Kind::parameterDecl &&
-                    std::static_pointer_cast<syntax::ParameterDeclSyntax>(declaration)
+        }
+        const auto referenced = model->referencedSymbol(expression);
+        const auto* symbol = referenced.has_value()
+                ? model->semanticModelValue->symbol(*referenced)
+                : nullptr;
+        if (symbol == nullptr) return false;
+        if (symbol->kind == semantic::SymbolKind::binding) return true;
+        if (symbol->kind != semantic::SymbolKind::parameter ||
+            !symbol->declaration.has_value()) {
+            return false;
+        }
+        const auto& declaration = model->semanticModelValue->node(*symbol->declaration);
+        return declaration != nullptr &&
+                declaration->kind == syntax::Kind::parameterDecl &&
+                std::static_pointer_cast<syntax::ParameterDeclSyntax>(declaration)
                         ->accessEffect() == syntax::AccessEffect::consuming;
-                }
+    }
+
+    bool isInitializable(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isInitializable(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                            ->expression);
+        }
+        if (expression->kind != syntax::Kind::nameExpr) return false;
+        const auto referenced = model->referencedSymbol(expression);
+        const auto* symbol = referenced.has_value()
+                ? model->semanticModelValue->symbol(*referenced)
+                : nullptr;
+        if (symbol == nullptr || !symbol->isMutable) return false;
+        if (symbol->kind == semantic::SymbolKind::binding) return true;
+        if (symbol->kind != semantic::SymbolKind::parameter ||
+            !symbol->declaration.has_value()) {
+            return false;
+        }
+        const auto& declaration = model->semanticModelValue->node(*symbol->declaration);
+        return declaration != nullptr &&
+                declaration->kind == syntax::Kind::parameterDecl &&
+            (std::static_pointer_cast<syntax::ParameterDeclSyntax>(declaration)
+                 ->accessEffect() == syntax::AccessEffect::consuming ||
+             std::static_pointer_cast<syntax::ParameterDeclSyntax>(declaration)
+                 ->accessEffect() == syntax::AccessEffect::initializing);
+    }
 
     std::optional<size_t> parameterIndexForArgument(
             const semantic::Symbol& target,
@@ -1855,6 +1896,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-inout-argument";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
+        case TypeCheckingDiagnosticId::invalidInitializingArgument:
+            return "type-checking.invalid-initializing-argument";
         case TypeCheckingDiagnosticId::notCallable:
             return "type-checking.not-callable";
         case TypeCheckingDiagnosticId::unresolvedReference:

@@ -96,6 +96,8 @@ The v0.1 checker currently validates:
 - `consuming` parameter signatures, mandatory `consume` call-site markers, and
   owning-local/temporary source restrictions;
 - explicit `borrowing` signatures as the marker-free default projection;
+- `initializing` signatures, mandatory `&`, and whole mutable owning-storage
+  destination restrictions;
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
   on a mutable receiver;
 - mutable dictionary subscript insertion/update with concrete `K`/`V` checks

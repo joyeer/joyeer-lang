@@ -295,6 +295,74 @@ while flag { take(value: consume text) }
     EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
 }
 
+TEST_F(SemanticAnalysisTest, TracksInitializingParametersAndCallerState) {
+    analyze(R"JOYEER(func initialize(out: initializing String) {
+&out = "value"
+}
+func forward(out: initializing String) {
+initialize(out: &out)
+}
+func valid(): String {
+var text: String
+forward(out: &text)
+return text
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, RejectsReadsBeforeInitializingWrites) {
+    analyze(R"JOYEER(func invalid(out: initializing String) {
+print(value: out)
+&out = "value"
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::useBeforeInitialization));
+}
+
+TEST_F(SemanticAnalysisTest, RequiresInitializingParametersOnEveryReturnPath) {
+    analyze(R"JOYEER(func invalid(out: initializing String, flag: Bool) {
+if flag { return }
+&out = "value"
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::initializingParameterNotInitialized));
+}
+
+TEST_F(SemanticAnalysisTest, RejectsInitializingAlreadyInitializedStorage) {
+    analyze(R"JOYEER(func initialize(out: initializing String) { &out = "value" }
+func invalid() {
+var text = "already"
+initialize(out: &text)
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::initializingInitializedStorage));
+}
+
+TEST_F(SemanticAnalysisTest, AllowsInitializingConsumedStorage) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func initialize(out: initializing String) { &out = "new" }
+func valid(): String {
+var text = "old"
+take(value: consume text)
+initialize(out: &text)
+return text
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, ReportsUnusedLocalBindingsAsWarnings) {
     analyze(R"JOYEER(func run() {
 let first = 1

@@ -307,6 +307,18 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime;ownership;consuming"
     )
 
+    add_test(NAME NativeExecutableInitializing
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/initializing.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-initializing${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=created!\ncreated!\nforwarded!\n2\nfirst\nsecond\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableInitializing PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;initializing"
+    )
+
     add_test(NAME NativeOptimizedOverflowTrap
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -409,6 +421,17 @@ add_test(NAME SemanticAnalysisCliRejectsUseAfterConsume
 )
 set_tests_properties(SemanticAnalysisCliRejectsUseAfterConsume PROPERTIES
         LABELS "semantic-analysis;consuming"
+)
+
+add_test(NAME SemanticAnalysisCliRequiresInitializingOnAllPaths
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/initializing_not_initialized.joyeer
+                -DEXPECTED_PATTERN=semantic-analysis.initializing-parameter-not-initialized
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(SemanticAnalysisCliRequiresInitializingOnAllPaths PROPERTIES
+        LABELS "semantic-analysis;initializing"
 )
 
 add_test(NAME SemanticAnalysisCliReportsUnreachableWarning

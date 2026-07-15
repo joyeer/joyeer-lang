@@ -267,17 +267,24 @@ private:
     typing::TypeCheckedModel::Ptr model;
     std::vector<Diagnostic> diagnostics;
     std::unordered_set<semantic::SymbolId> tracked;
+    std::unordered_set<semantic::SymbolId> initializingParameters;
 
     void analyzeFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
         tracked.clear();
+        initializingParameters.clear();
         InitializationState state;
         for (const auto& parameter : declaration->parameters) {
             const auto symbol = model->semanticModel()->declaredSymbol(parameter);
             if (!symbol.has_value()) continue;
             tracked.insert(*symbol);
-            state.initialized.insert(*symbol);
+            if (parameter->accessEffect() == syntax::AccessEffect::initializing) {
+                initializingParameters.insert(*symbol);
+            } else {
+                state.initialized.insert(*symbol);
+            }
         }
         analyzeBlock(declaration->body, state);
+        if (state.reachable) reportUninitializedParameters(declaration->span, state);
     }
 
     void analyzeBlock(
@@ -389,10 +396,21 @@ private:
             case syntax::Kind::callExpr: {
                 const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
                 analyzeExpression(call->callee, state);
-                for (const auto& argument : call->arguments) {
-                    if (argument->accessMarker != nullptr &&
-                        argument->accessMarker->kind == kwConsume) {
+                const auto target = model->callTarget(call);
+                const auto* callableSymbol = target.has_value()
+                        ? model->semanticModel()->symbol(*target)
+                        : nullptr;
+                for (size_t index = 0; index < call->arguments.size(); ++index) {
+                    const auto& argument = call->arguments[index];
+                    const auto effect = callableSymbol != nullptr &&
+                                        callableSymbol->callable.has_value() &&
+                                        index < callableSymbol->callable->parameters.size()
+                            ? callableSymbol->callable->parameters[index].access
+                            : syntax::AccessEffect::borrowing;
+                    if (effect == syntax::AccessEffect::consuming) {
                         analyzeConsume(argument->value, state);
+                    } else if (effect == syntax::AccessEffect::initializing) {
+                        analyzeInitialize(argument->value, state);
                     } else {
                         analyzeExpression(argument->value, state);
                     }
@@ -440,6 +458,9 @@ private:
                 analyzeExpression(
                         std::static_pointer_cast<syntax::ReturnExprSyntax>(expression)->value,
                         state);
+                if (state.reachable) {
+                    reportUninitializedParameters(expression->span, state);
+                }
                 state.reachable = false;
                 break;
             case syntax::Kind::matchExpr:
@@ -502,6 +523,44 @@ private:
         }
         state.initialized.erase(*symbol);
         state.consumed.insert(*symbol);
+    }
+
+    void analyzeInitialize(
+            const syntax::ExprPtr& expression,
+            InitializationState& state) {
+        const auto symbol = directlyAssignedSymbol(expression);
+        if (!symbol.has_value() || !tracked.contains(*symbol)) return;
+        if (state.initialized.contains(*symbol)) {
+            const auto* declaration = model->semanticModel()->symbol(*symbol);
+            diagnostics.push_back(Diagnostic {
+                DiagnosticId::initializingInitializedStorage,
+                Severity::error,
+                expression->span,
+                "binding '" +
+                        (declaration == nullptr ? std::string() : declaration->name) +
+                        "' is already initialized",
+            });
+            return;
+        }
+        state.initialized.insert(*symbol);
+        state.consumed.erase(*symbol);
+    }
+
+    void reportUninitializedParameters(
+            SourceSpan span,
+            const InitializationState& state) {
+        for (const auto symbol : initializingParameters) {
+            if (state.initialized.contains(symbol)) continue;
+            const auto* declaration = model->semanticModel()->symbol(symbol);
+            diagnostics.push_back(Diagnostic {
+                DiagnosticId::initializingParameterNotInitialized,
+                Severity::error,
+                span,
+                "initializing parameter '" +
+                        (declaration == nullptr ? std::string() : declaration->name) +
+                        "' is not initialized on this return path",
+            });
+        }
     }
 
     void analyzeBinary(
@@ -965,6 +1024,10 @@ const char* diagnosticName(DiagnosticId id) {
             return "semantic-analysis.use-before-initialization";
         case DiagnosticId::useAfterConsume:
             return "semantic-analysis.use-after-consume";
+        case DiagnosticId::initializingInitializedStorage:
+            return "semantic-analysis.initializing-initialized-storage";
+        case DiagnosticId::initializingParameterNotInitialized:
+            return "semantic-analysis.initializing-parameter-not-initialized";
         case DiagnosticId::unusedBinding: return "semantic-analysis.unused-binding";
     }
     return "semantic-analysis.unknown";

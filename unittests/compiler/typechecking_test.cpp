@@ -900,6 +900,39 @@ let selected = if flag { 1 } else { "two" }
                                 joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument);
                         }
 
+                        TEST_F(TypeCheckingTest, EnforcesInitializingCallArgumentConventions) {
+                            check(R"JOYEER(func initialize(out: initializing String) {
+                        &out = "value"
+                        }
+                        func forward(out: initializing String) {
+                        initialize(out: &out)
+                        }
+                        func valid() {
+                        var text: String
+                        initialize(out: &text)
+                        print(value: text)
+                        }
+                        func invalid() {
+                        var missingMarker: String
+                        initialize(out: missingMarker)
+                        let frozen: String
+                        initialize(out: &frozen)
+                        var values: [String] = ["item"]
+                        initialize(out: &values[0])
+                        }
+                        )JOYEER");
+
+                            ASSERT_EQ(checking.diagnostics.size(), 3u)
+                                << joyeer::typing::dump(checking.diagnostics);
+                            EXPECT_TRUE(std::all_of(
+                                checking.diagnostics.begin(),
+                                checking.diagnostics.end(),
+                                [](const auto& diagnostic) {
+                                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::
+                                    invalidInitializingArgument;
+                                }));
+                        }
+
                     TEST_F(TypeCheckingTest, TypesMutatingArrayAppendFromTheReceiverElement) {
                         check(R"JOYEER(func build() {
                     var values: [String] = []

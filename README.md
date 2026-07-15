@@ -33,8 +33,9 @@ The native lane is still experimental. The current heap-backed values have
 recursive clone/destroy support, deterministic scope and early-return cleanup,
 and a native-entry allocation-balance check. Whole-binding `consuming`
 parameters and mandatory `consume` markers work; explicit
-`borrowing` also works. `initializing`, full exclusivity, debug information,
-and a complete standard library remain, so this is not a production release.
+`borrowing` and `initializing` also work. Full alias exclusivity, consuming
+projections, debug information, and a complete standard library remain, so
+this is not a production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
@@ -44,7 +45,8 @@ and `inout`; structs; payload enums; exhaustive `match`; arrays, dictionaries,
 warnings, definite initialization, dictionary `count`/insertion/update, and
 explicit `byteToInt(value:)` / `byteToString(value:)` conversions;
 `consuming` ownership transfer/use-after-consume checking; and unused-binding
-warnings.
+warnings. Initializing parameters enforce write-before-read and initialization
+on every normal return path.
 
 v0.1 errors and warnings include stable stage IDs, file names, one-based
 line/column locations, source excerpts, and caret ranges. Legacy mode retains

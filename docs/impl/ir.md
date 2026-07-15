@@ -39,6 +39,9 @@ addresses, preserving aliasing instead of silently copying them.
 `consuming` parameters enter by value but become owned local storage in the
 callee; its normal/early-return cleanup destroys them unless ownership moves
 onward.
+`initializing` parameters are caller-owned addresses like `inout`, but Stage 5
+enforces write-before-read and all-path initialization; they never enter the
+callee cleanup stack.
 
 This is intentionally allocation-based rather than SSA. LLVM's `mem2reg` can
 promote eligible slots after lowering, while source variables retain simple
@@ -149,8 +152,7 @@ The lowering suite includes the complete JSON-parser MVP fixture.
 
 The current IR/native pipeline intentionally leaves these to later commits:
 
-- `initializing` conventions, exclusivity analysis, and
-  consuming member/subscript projections;
+- exclusivity analysis and consuming member/subscript projections;
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native

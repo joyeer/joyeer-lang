@@ -460,6 +460,10 @@ private:
 
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
             const auto& parameter = declaration->parameters[index];
+            const auto parameterEffect = parameter->accessEffect();
+            const auto isAddressProjection =
+                    parameterEffect == syntax::AccessEffect::inout ||
+                    parameterEffect == syntax::AccessEffect::initializing;
             const auto parameterSymbol = semanticModel.declaredSymbol(parameter);
             const auto parameterType = parameterSymbol.has_value()
                     ? model->typeOf(*parameterSymbol)
@@ -477,16 +481,17 @@ private:
                 ir::Value {
                     static_cast<ir::ValueId>(index),
                     *parameterType,
-                    parameter->accessEffect() == syntax::AccessEffect::inout
+                    isAddressProjection
                             ? ir::ValueCategory::address
                             : ir::ValueCategory::value,
                 },
                 parameterSymbol,
                 parameter->name == nullptr ? std::string() : parameter->name->rawValue,
-                parameter->accessEffect() == syntax::AccessEffect::inout,
+                isAddressProjection,
                 parameter->span,
                 false,
-                parameter->accessEffect() == syntax::AccessEffect::consuming,
+                parameterEffect == syntax::AccessEffect::consuming,
+                parameterEffect == syntax::AccessEffect::initializing,
             });
         }
 

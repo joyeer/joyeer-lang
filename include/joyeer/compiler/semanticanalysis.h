@@ -18,6 +18,8 @@ enum class DiagnosticId {
     unreachableCode,
     useBeforeInitialization,
     useAfterConsume,
+    initializingInitializedStorage,
+    initializingParameterNotInitialized,
     unusedBinding,
 };
 

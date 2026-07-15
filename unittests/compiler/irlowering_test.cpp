@@ -634,6 +634,33 @@ print(value: text)
     EXPECT_EQ(opcodeCount(inspect, joyeer::ir::Opcode::destroy), 0u);
 }
 
+TEST_F(IRLoweringTest, LowersInitializingParametersAsCallerOwnedAddresses) {
+    lower(R"JOYEER(func initialize(out: initializing String) {
+&out = "value"
+}
+func run(): String {
+var text: String
+initialize(out: &text)
+return text
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& initialize = function("initialize");
+    ASSERT_EQ(initialize.parameters.size(), 1u);
+    EXPECT_TRUE(initialize.parameters[0].isMutable);
+    EXPECT_TRUE(initialize.parameters[0].isInitializing);
+    EXPECT_FALSE(initialize.parameters[0].isConsuming);
+    EXPECT_EQ(
+            initialize.parameters[0].value.category,
+            joyeer::ir::ValueCategory::address);
+    EXPECT_EQ(opcodeCount(initialize, joyeer::ir::Opcode::stackAllocate), 0u);
+    EXPECT_EQ(opcodeCount(initialize, joyeer::ir::Opcode::store), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
     lower(R"JOYEER(func square(value: Int): Int { value * value }
 func text(): String { "left" + "right" }
