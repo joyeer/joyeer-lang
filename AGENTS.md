@@ -81,7 +81,7 @@ These conventions reflect the **AI-era direction**, not necessarily what every e
 - New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/impl/bytecode.md](docs/impl/bytecode.md).
 - Do not add bytecode opcodes for v0.1 native work. Extend Joyeer IR, its
 	verifier, LLVM lowering, and native runtime instead.
-- Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions.
+- Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions. v0.1 stages must preserve stable IDs and `SourceSpan` through `reportSourceDiagnostic()`; use legacy `reportError()` only for compatibility-lane code.
 - Add at least one end-to-end golden test in [tests/basis/](tests/basis/) for any user-visible feature change.
 - New v0.1 frontend work uses the syntax AST, semantic/type models, and direct tests under
 	[unittests/compiler/](unittests/compiler/) plus durable sources under

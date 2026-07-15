@@ -44,6 +44,10 @@ warnings, definite initialization, dictionary `count`/insertion/update, and
 explicit `byteToInt(value:)` / `byteToString(value:)` conversions, and
 unused-binding warnings.
 
+v0.1 errors and warnings include stable stage IDs, file names, one-based
+line/column locations, source excerpts, and caret ranges. Legacy mode retains
+its historical diagnostic text for golden-test compatibility.
+
 See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the full pipeline and current stage, and [docs/plan/v0.1.md](docs/plan/v0.1.md) for the v0.1 goal (a zero-overhead JSON parser written in Joyeer).
 
 ## A taste of Joyeer

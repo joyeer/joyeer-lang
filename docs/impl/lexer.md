@@ -505,7 +505,7 @@ Rules:
 
 - internal offsets and lengths are zero-based byte counts;
 - `Token::lineNumber` and `Token::columnAt` currently remain zero-based for
-  compatibility; a future diagnostic renderer should display them one-based;
+  compatibility; structured v0.1 diagnostics display them one-based;
 - CRLF adds one line start after both bytes;
 - token location is always its **first** byte, never its length;
 - `startsLine` is true for the first token and whenever skipped trivia
@@ -658,16 +658,15 @@ should still collect multiple independent errors where recovery is unambiguous.
 
 ### 7.2 Diagnostic shape
 
-The Phase L implementation uses the existing `Diagnostics` carrier and records
-severity, a targeted message, and zero-based line/column. The richer compiler
-diagnostic model should eventually contain:
+The Phase L implementation uses the existing `Diagnostics` carrier. v0.1
+diagnostics now contain:
 
 - stable diagnostic identifier;
 - file path;
 - source span;
 - one-based line and column for display;
 - concise message;
-- optional help text for deferred syntax.
+- optional help text for deferred syntax remains future work.
 
 Example:
 
@@ -680,9 +679,10 @@ error[LEX004]: floating-point literals are not supported in the JSON-parser MVP
 help: use an Int representation for the first milestone
 ```
 
-Stable diagnostic IDs, file paths, source-span rendering, one-based display,
-and fix-it/help text remain diagnostics-infrastructure work; they are not lexer
-tokenization blockers.
+Stable `lexer.*` IDs, file paths, source-span rendering, and one-based display
+are implemented by the shared [diagnostic renderer](diagnostics.md).
+Fix-it/help text remains diagnostics-infrastructure work; it is not a lexer
+tokenization blocker.
 
 ### 7.3 No silent default branch
 
@@ -707,7 +707,7 @@ layer for downstream code:
 | Operators | Longest-match MVP terminals; deferred compound, shift, range, optional-chain, and coalescing forms recover as one invalid token | Add syntax only when a later milestone requires it |
 | Trivia | LF, CR, CRLF, line comments, and nested block comments update line starts | None for Phase L |
 | Invalid input | Unknown and non-ASCII source bytes are diagnosed instead of disappearing | Unicode identifiers remain deferred |
-| Positions | 32-bit absolute byte spans plus temporary 32-bit line/column fields | Centralize rich source rendering in diagnostics |
+| Positions | 32-bit absolute byte spans plus compatibility line/column fields; rich v0.1 source rendering | Unicode display columns and multi-line spans later |
 
 The legacy compatibility pipeline remains:
 
@@ -917,7 +917,7 @@ or standard-library implementation requires it.
 | `??` coalescing | Deferred; use `match` on `Optional` / `Result` |
 | Compound assignment | Deferred; write explicit assignment |
 | Token text ownership | Source span is canonical; copied compatibility payload retained temporarily |
-| Source position | Absolute UTF-8 byte span; temporary zero-based line/column fields |
+| Source position | Absolute UTF-8 byte span internally; one-based structured CLI display |
 | Unknown characters | Always diagnostic |
 | EOF token | Mandatory |
 | First optimization target | Correctness and simplicity, not micro-optimization |

@@ -96,9 +96,9 @@ specification. In particular, source-level `borrowing`, `consuming`,
 no fixed-point refinement because v0.1 has no `break` or `continue`, and the
 current conservative rule is sufficient for safety.
 
-Diagnostic presentation also remains basic: stable diagnostic IDs exist, but
-file names, source excerpts, one-based locations, and fix-it hints are still
-pending.
+Diagnostics use the shared [structured source renderer](diagnostics.md), with
+stable IDs, file names, one-based locations, source excerpts, and caret ranges.
+Fix-it edits and structured help/notes remain pending.
 
 ---
 

@@ -73,7 +73,7 @@ Source (.joyeer)
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
 | Runtime Library | ✅ Primitive/string/collection/file-input MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
-| Error Diagnostics | ⚠️ Stable stage IDs and error/warning severity work; rich source rendering missing | `diagnostic.cpp` |
+| Error Diagnostics | ✅ v0.1 stable IDs, severity, file/one-based location, source excerpt, caret range; fix-its pending | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
 frontend work must consume `TypeCheckedModel` and must not add dependencies on
@@ -116,7 +116,8 @@ next work is product completeness and quality:
 
 1. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
   `consume` flow states.
-2. Improve diagnostic source rendering, one-based locations, and fix-it hints.
+2. Add structured fix-it/help diagnostics; rich one-based source rendering is
+  implemented for v0.1.
 3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.
 4. Retire the legacy
   VM lane after native golden coverage is equivalent.
@@ -207,11 +208,12 @@ runtime/
 - ✅ ownership-aware growth, clone, and reverse-order element destruction
 - fixed-size stack allocation remains a future optimization
 
-### Step 2.4 — Error Diagnostics
+### Step 2.4 — Error Diagnostics ✅ (v0.1 rendering)
 
-- Source location tracking (line, column) in all error messages
-- Error recovery in parser (report multiple errors per compilation)
-- Suggested fixes in error messages
+- ✅ stable stage-qualified IDs and error/warning severity
+- ✅ file path, one-based line/column, source excerpt, and caret range
+- ✅ parser recovery reports multiple errors per compilation
+- suggested fixes/help notes remain future quality work
 
 ```
 error: type mismatch
@@ -324,6 +326,6 @@ std/
 | Runtime Library | ✅ (C) | ✅ (C++) | ✅ (C) | ✅ native MVP clone/destroy; stdlib incomplete |
 | Standard Library | ✅ (Rust) | ✅ (Swift) | ✅ (Zig) | Phase 3 |
 | Package Manager | cargo | SPM | zig build | Phase 3 |
-| Error Diagnostics | Excellent | Good | Good | Phase 2 |
+| Error Diagnostics | Excellent | Good | Good | ✅ v0.1 source rendering; fix-its pending |
 | Incremental Compilation | ✅ | ✅ | ✅ | Phase 3 |
 | Debug Info (DWARF) | ✅ | ✅ | ✅ | Phase 3 |

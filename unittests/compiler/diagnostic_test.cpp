@@ -34,4 +34,44 @@ TEST(DiagnosticsTest, PrintsReportsAsWarnings) {
 	EXPECT_EQ(output.find("SyntaxError"), std::string::npos);
 }
 
+TEST(DiagnosticsTest, PrintsStructuredSourceDiagnosticsWithOneBasedLocations) {
+	Diagnostics diagnostics;
+	const std::string source = "first\n  bad value\n";
+	diagnostics.reportSourceDiagnostic(
+			ErrorLevel::failure,
+			"type-checking.type-mismatch",
+			"sample.joyeer",
+			source,
+			{ 0, 6 },
+			8,
+			3,
+			"cannot use this value");
+
+	testing::internal::CaptureStdout();
+	diagnostics.printErrors();
+	const auto output = testing::internal::GetCapturedStdout();
+
+	EXPECT_EQ(
+			output,
+			"sample.joyeer:2:3: error[type-checking.type-mismatch]: cannot use this value\n"
+			"  2 |   bad value\n"
+			"    |   ^~~\n");
+}
+
+TEST(DiagnosticsTest, PrintsStructuredDiagnosticsWithoutSourceContext) {
+	Diagnostics diagnostics;
+	diagnostics.reportDiagnostic(
+			ErrorLevel::failure,
+			"linker.missing-entry-point",
+			"native executable requires 'func main()'");
+
+	testing::internal::CaptureStdout();
+	diagnostics.printErrors();
+	const auto output = testing::internal::GetCapturedStdout();
+
+	EXPECT_EQ(
+			output,
+			"error[linker.missing-entry-point]: native executable requires 'func main()'\n");
+}
+
 } // namespace

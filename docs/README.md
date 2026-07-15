@@ -62,6 +62,7 @@ Joyeer IR, LLVM IR, a C runtime, and Clang linking.
 | [name-resolution.md](impl/name-resolution.md) | v0.1 semantic IDs, scopes, symbols, binding order, diagnostics, and type-directed handoff |
 | [type-checking.md](impl/type-checking.md) | canonical compile-time types, typed overlays, inference, calls, patterns, and deferred-reference closure |
 | [semantic-analysis.md](impl/semantic-analysis.md) | all-paths-return, reachability, definite initialization, unused-binding warnings, and pipeline severity behavior |
+| [diagnostics.md](impl/diagnostics.md) | structured v0.1 IDs, severity, one-based source locations, excerpts, caret ranges, and legacy compatibility |
 | [ir.md](impl/ir.md) | backend-neutral typed IR, verifier, CFG/aggregate/pattern lowering, and remaining backend boundary |
 | [native.md](impl/native.md) | LLVM text emission, native ABI/runtime, file input, Clang linking, CLI usage, and known limitations |
 | [string.md](impl/string.md) | `String` runtime layout and builtin methods |

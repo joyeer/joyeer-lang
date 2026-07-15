@@ -342,6 +342,30 @@ set_tests_properties(TypeCheckingCliRejectsMismatch PROPERTIES
         LABELS type-checking
 )
 
+add_test(NAME DiagnosticsCliRendersSourceContext
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/type_mismatch.joyeer
+                "-DEXPECTED_HEADER=type_mismatch.joyeer:2:12: error[type-checking.type-mismatch]"
+                "-DEXPECTED_SOURCE=    return \"not an integer\""
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRendersSourceContext PROPERTIES
+        LABELS "diagnostics;type-checking"
+)
+
+add_test(NAME DiagnosticsCliRendersLexerSourceContext
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/errors/ccomment_01.joyeer
+                "-DEXPECTED_HEADER=ccomment_01.joyeer:1:1: error[lexer.unterminated-comment]"
+                "-DEXPECTED_SOURCE=/*asdfasdf"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRendersLexerSourceContext PROPERTIES
+        LABELS "diagnostics;lexer"
+)
+
 add_test(NAME SemanticAnalysisCliRejectsMissingReturn
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

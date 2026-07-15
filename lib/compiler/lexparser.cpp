@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 
 namespace {
@@ -14,6 +15,46 @@ bool isDigit(char value) {
 
 bool isAscii(char value) {
     return static_cast<unsigned char>(value) <= 0x7f;
+}
+
+const char* lexerDiagnosticCode(const char* error) {
+    if (std::strcmp(error, Diagnostics::errorOctalNumberFormat) == 0) {
+        return "lexer.invalid-octal-number";
+    }
+    if (std::strcmp(error, Diagnostics::errorIntegerLiteralOverflow) == 0) {
+        return "lexer.integer-literal-overflow";
+    }
+    if (std::strcmp(error, Diagnostics::errorUnterminatedCComment) == 0) {
+        return "lexer.unterminated-comment";
+    }
+    if (std::strcmp(error, Diagnostics::errorUnterminatedStringLiteral) == 0) {
+        return "lexer.unterminated-string";
+    }
+    if (std::strcmp(error, Diagnostics::errorInvalidStringEscape) == 0) {
+        return "lexer.invalid-string-escape";
+    }
+    if (std::strcmp(error, Diagnostics::errorUnterminatedByteLiteral) == 0) {
+        return "lexer.unterminated-byte-literal";
+    }
+    if (std::strcmp(error, Diagnostics::errorInvalidByteLiteral) == 0) {
+        return "lexer.invalid-byte-literal";
+    }
+    if (std::strcmp(error, Diagnostics::errorInvalidByteEscape) == 0) {
+        return "lexer.invalid-byte-escape";
+    }
+    if (std::strcmp(error, Diagnostics::errorUnsupportedNumericLiteral) == 0) {
+        return "lexer.unsupported-numeric-literal";
+    }
+    if (std::strcmp(error, Diagnostics::errorInvalidNumericSuffix) == 0) {
+        return "lexer.invalid-numeric-suffix";
+    }
+    if (std::strcmp(error, Diagnostics::errorInvalidSourceCharacter) == 0) {
+        return "lexer.invalid-source-character";
+    }
+    if (std::strcmp(error, Diagnostics::errorUnsupportedSyntax) == 0) {
+        return "lexer.unsupported-syntax";
+    }
+    return "lexer.invalid-source";
 }
 
 } // namespace
@@ -623,11 +664,27 @@ void LexParser::report(size_t line, size_t column, const char* error, ...) {
     va_start(args, error);
     std::vsnprintf(message, sizeof(message), error, args);
     va_end(args);
-    diagnostics->reportError(ErrorLevel::failure,
-                             static_cast<int>(line),
-                             static_cast<int>(column),
-                             "%s",
-                             message);
+    const auto offset = line < sourcefile->lineStarts.size()
+            ? static_cast<size_t>(sourcefile->lineStarts[line]) + column
+            : position;
+    const auto length = position > offset ? position - offset : size_t { 1 };
+    if (profile == LexerProfile::jsonParserMvp) {
+        diagnostics->reportSourceDiagnostic(
+                ErrorLevel::failure,
+                lexerDiagnosticCode(error),
+                sourcefile->getLocation(),
+                sourcefile->content,
+                sourcefile->lineStarts,
+                static_cast<uint32_t>(offset),
+                static_cast<uint32_t>(length),
+                message);
+    } else {
+        diagnostics->reportError(ErrorLevel::failure,
+                                 static_cast<int>(line),
+                                 static_cast<int>(column),
+                                 "%s",
+                                 message);
+    }
 }
 
 bool LexParser::isIdentifierHead(char value) const {

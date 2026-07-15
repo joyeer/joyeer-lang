@@ -21,46 +21,22 @@
 
 namespace {
 
-void reportSpannedFailure(
-    Diagnostics* diagnostics,
-    const SourceFile::Ptr& sourcefile,
-    SourceSpan span,
-    const std::string& message) {
-    const auto upper = std::upper_bound(
-        sourcefile->lineStarts.begin(),
-        sourcefile->lineStarts.end(),
-        span.offset);
-    const auto line = upper == sourcefile->lineStarts.begin()
-        ? 0
-        : static_cast<int>(
-            std::distance(sourcefile->lineStarts.begin(), upper) - 1);
-    const auto column = static_cast<int>(
-        span.offset - sourcefile->lineStarts[static_cast<size_t>(line)]);
-    diagnostics->reportError(
-        ErrorLevel::failure,
-        line,
-        column,
-        "%s",
-        message.c_str());
-}
-
 void reportSpannedDiagnostic(
     Diagnostics* diagnostics,
     const SourceFile::Ptr& sourcefile,
     SourceSpan span,
     ErrorLevel level,
+    std::string code,
     const std::string& message) {
-    const auto upper = std::upper_bound(
-        sourcefile->lineStarts.begin(),
-        sourcefile->lineStarts.end(),
-        span.offset);
-    const auto line = upper == sourcefile->lineStarts.begin()
-        ? 0
-        : static_cast<int>(
-            std::distance(sourcefile->lineStarts.begin(), upper) - 1);
-    const auto column = static_cast<int>(
-        span.offset - sourcefile->lineStarts[static_cast<size_t>(line)]);
-    diagnostics->reportError(level, line, column, "%s", message.c_str());
+    diagnostics->reportSourceDiagnostic(
+        level,
+        std::move(code),
+        sourcefile->getLocation(),
+        sourcefile->content,
+        sourcefile->lineStarts,
+        span.offset,
+        span.length,
+        message);
 }
 
 } // namespace
@@ -126,9 +102,13 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         joyeer::parser::Parser parser(sourcefile->tokens);
         auto result = parser.parse();
         for(const auto& diagnostic : result.diagnostics) {
-            const std::string message = std::string(joyeer::parser::diagnosticName(diagnostic.id)) +
-                ": " + diagnostic.message;
-            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+            reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::parser::diagnosticName(diagnostic.id),
+                diagnostic.message);
         }
         if (!result.succeeded()) {
             return nullptr;
@@ -137,10 +117,13 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         const auto resolution = joyeer::semantic::NameResolver().resolve(result.root);
         sourcefile->semanticModel = resolution.model;
         for (const auto& diagnostic : resolution.diagnostics) {
-            const std::string message =
-                    std::string(joyeer::semantic::diagnosticName(diagnostic.id)) +
-                    ": " + diagnostic.message;
-            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+            reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::semantic::diagnosticName(diagnostic.id),
+                diagnostic.message);
         }
         if (!resolution.succeeded()) {
             return nullptr;
@@ -149,10 +132,13 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
         sourcefile->typeCheckedModel = checking.model;
         for (const auto& diagnostic : checking.diagnostics) {
-            const std::string message =
-                    std::string(joyeer::typing::diagnosticName(diagnostic.id)) +
-                    ": " + diagnostic.message;
-            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+            reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::typing::diagnosticName(diagnostic.id),
+                diagnostic.message);
         }
         if (!checking.succeeded()) {
             return nullptr;
@@ -160,9 +146,6 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
 
         const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
         for (const auto& diagnostic : analysis.diagnostics) {
-            const std::string message =
-                std::string(joyeer::analysis::diagnosticName(diagnostic.id)) +
-                ": " + diagnostic.message;
             reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
@@ -170,7 +153,8 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 diagnostic.severity == joyeer::analysis::Severity::warning
                     ? ErrorLevel::report
                     : ErrorLevel::failure,
-                message);
+                joyeer::analysis::diagnosticName(diagnostic.id),
+                diagnostic.message);
         }
         if (!analysis.succeeded()) {
             return nullptr;
@@ -181,10 +165,13 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 sourcefile->getLocation());
         sourcefile->joyeerIR = lowering.module;
         for (const auto& diagnostic : lowering.diagnostics) {
-            const std::string message =
-                    std::string(joyeer::lowering::diagnosticName(diagnostic.id)) +
-                    ": " + diagnostic.message;
-            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+            reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::lowering::diagnosticName(diagnostic.id),
+                diagnostic.message);
         }
         if (!lowering.succeeded()) {
             return nullptr;
@@ -194,10 +181,13 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         sourcefile->llvmIR = llvm.text;
         sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
         for (const auto& diagnostic : llvm.diagnostics) {
-            const std::string message =
-                    std::string(joyeer::llvmbackend::diagnosticName(diagnostic.id)) +
-                    ": " + diagnostic.message;
-            reportSpannedFailure(diagnostics, sourcefile, diagnostic.span, message);
+            reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::llvmbackend::diagnosticName(diagnostic.id),
+                diagnostic.message);
         }
         if (!llvm.succeeded()) {
             return nullptr;
@@ -206,10 +196,11 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
             std::ofstream output(options->outputFile, std::ios::binary);
             output << llvm.text;
             if (!output.good()) {
-                diagnostics->reportError(
+                diagnostics->reportDiagnostic(
                         ErrorLevel::failure,
-                        "cannot write LLVM IR output: %s",
-                        options->outputFile.string().c_str());
+                    "driver.output-file-error",
+                    "cannot write LLVM IR output: " +
+                        options->outputFile.string());
             }
         }
         return nullptr;

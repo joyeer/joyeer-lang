@@ -2,6 +2,7 @@
 #define __joyeer_diagnostic_diagnostic_h__
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,11 @@ struct ErrorMessage {
     std::string message;
     int lineAt;
     int columnAt;
+    std::string code;
+    std::string path;
+    std::string sourceLine;
+    uint32_t length = 0;
+    bool hasSourceContext = false;
 };
 
 #define DIAGNOSTICS_ERROR_MESSAGE(name, message) static constexpr const char* name = message;
@@ -63,6 +69,19 @@ struct Diagnostics {
 
     void reportError(ErrorLevel level, const char* error, ...);
     void reportError(ErrorLevel level, int lineAt, int columnAt, const char* error, ...);
+        void reportDiagnostic(
+            ErrorLevel level,
+            std::string code,
+            std::string message);
+        void reportSourceDiagnostic(
+            ErrorLevel level,
+            std::string code,
+            std::string path,
+            const std::string& source,
+            const std::vector<uint32_t>& lineStarts,
+            uint32_t offset,
+            uint32_t length,
+            std::string message);
 
     // print the error into consoles
     void printErrors();
