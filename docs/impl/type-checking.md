@@ -110,8 +110,15 @@ The v0.1 checker currently validates:
   the sole overlapping access for the duration of the call. Distinct stored
   struct fields are disjoint; subscript indices are conservative even when their
   syntax differs. A prior `let` snapshot produces independent storage and is the
-  documented workaround. Computed argument expressions are evaluated into
-  temporaries before the call and do not extend their input reads into the call.
+  documented workaround.
+
+  A direct formal storage projection begins while arguments are evaluated and
+  lasts until the call returns. Reads or nested exclusive calls in another
+  argument expression therefore conflict with it, including computed expressions
+  such as `x + 1`. Nested calls whose accesses both finish during sequential
+  argument evaluation do not overlap each other. v0.1 has no first-class or
+  escaping references, so this closes the access lifetime surface currently
+  expressible by the language.
 
 Ordinary call labels, ordering, required/default argument presence, and
 lexical declaration binding remain name-resolution responsibilities. The type

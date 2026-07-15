@@ -942,6 +942,9 @@ let selected = if flag { 1 } else { "two" }
                             func take(value: consuming Int, other: Int) { }
                             func initialize(out: initializing Int, other: Int) { &out = other }
                             func swap(first: inout Int, second: inout Int) { }
+                            func mutate(value: inout Int): Int { &value = value + 1
+                            return value
+                            }
                             func validBorrowing() {
                             let value = 1
                             inspect(first: value, second: value)
@@ -966,13 +969,17 @@ let selected = if flag { 1 } else { "two" }
                             var values = [1]
                             &values.append(element: values[0])
                             }
-                            func validTemporary(index: Int) {
+                            func invalidComputed(index: Int) {
                             var value = 1
                             update(dst: &value, src: value + index)
                             }
+                            func invalidNested() {
+                            var value = 1
+                            update(dst: &value, src: mutate(value: &value))
+                            }
                             )JOYEER");
 
-                                ASSERT_EQ(checking.diagnostics.size(), 5u)
+                                ASSERT_EQ(checking.diagnostics.size(), 7u)
                                     << joyeer::typing::dump(checking.diagnostics);
                                 EXPECT_TRUE(std::all_of(
                                     checking.diagnostics.begin(),
@@ -1049,6 +1056,22 @@ let selected = if flag { 1 } else { "two" }
                             var values = [1, 2]
                             let snapshot = values[1]
                             update(dst: &values[0], src: snapshot)
+                            }
+                            )JOYEER");
+
+                                EXPECT_TRUE(checking.succeeded())
+                                    << joyeer::typing::dump(checking.diagnostics);
+                            }
+
+                            TEST_F(TypeCheckingTest, AllowsSequentialNestedExclusiveEvaluation) {
+                                check(R"JOYEER(func mutate(value: inout Int): Int {
+                            &value = value + 1
+                            return value
+                            }
+                            func inspect(first: Int, second: Int) { }
+                            func valid() {
+                            var value = 0
+                            inspect(first: mutate(value: &value), second: mutate(value: &value))
                             }
                             )JOYEER");
 

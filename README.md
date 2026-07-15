@@ -35,8 +35,9 @@ and a native-entry allocation-balance check. Whole-binding `consuming`
 parameters and mandatory `consume` markers work; explicit
 `borrowing` and `initializing` also work, and call-site access paths enforce
 exclusivity. Consuming field/array/dictionary projections are tracked through
-reinitialization. Longer-lived exclusivity, debug information, and a complete
-standard library remain, so this is not a production release.
+reinitialization. The v0.1 non-escaping ownership surface is complete; debug
+information and a complete standard library remain, so this is not a
+production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions

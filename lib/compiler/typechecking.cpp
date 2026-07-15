@@ -1093,6 +1093,7 @@ private:
         AccessPath path;
         syntax::AccessEffect effect = syntax::AccessEffect::borrowing;
         SourceSpan span;
+        bool sustained = true;
     };
 
     TypeId checkCall(
@@ -1149,6 +1150,7 @@ private:
                     *path,
                     syntax::AccessEffect::inout,
                     member->base->span,
+                    true,
                 });
             }
         }
@@ -1179,7 +1181,7 @@ private:
                       *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
-                        const auto actual = checkExpression(argument->value, expected);
+            const auto actual = checkExpression(argument->value, expected);
             if (semanticTarget != nullptr && parameterIndex.has_value()) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
                 const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
@@ -1210,14 +1212,19 @@ private:
     void collectCallArgumentAccess(
             const syntax::CallArgumentSyntax& argument,
             syntax::AccessEffect effect,
-            std::vector<CallAccess>& accesses) const {
-        if (effect == syntax::AccessEffect::borrowing) {
-            collectReadAccesses(argument.value, accesses);
-            return;
-        }
+            std::vector<CallAccess>& accesses,
+            bool sustained = true) const {
         const auto path = storagePath(argument.value);
         if (path.has_value()) {
-            accesses.push_back(CallAccess { *path, effect, argument.value->span });
+            accesses.push_back(CallAccess {
+                *path,
+                effect,
+                argument.value->span,
+                sustained,
+            });
+            collectSubscriptIndexAccesses(argument.value, accesses);
+        } else {
+            collectEvaluationAccesses(argument.value, accesses);
         }
     }
 
@@ -1262,7 +1269,32 @@ private:
         return std::nullopt;
     }
 
-    void collectReadAccesses(
+    void collectSubscriptIndexAccesses(
+            const syntax::ExprPtr& expression,
+            std::vector<CallAccess>& accesses) const {
+        if (expression == nullptr) return;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            collectSubscriptIndexAccesses(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                            ->expression,
+                    accesses);
+        } else if (expression->kind == syntax::Kind::accessExpr) {
+            collectSubscriptIndexAccesses(
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                    accesses);
+        } else if (expression->kind == syntax::Kind::memberExpr) {
+            collectSubscriptIndexAccesses(
+                    std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
+                    accesses);
+        } else if (expression->kind == syntax::Kind::subscriptExpr) {
+            const auto subscript =
+                    std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+            collectSubscriptIndexAccesses(subscript->base, accesses);
+            collectEvaluationAccesses(subscript->index, accesses);
+        }
+    }
+
+    void collectEvaluationAccesses(
             const syntax::ExprPtr& expression,
             std::vector<CallAccess>& accesses) const {
         if (expression == nullptr) return;
@@ -1272,7 +1304,110 @@ private:
                 *path,
                 syntax::AccessEffect::borrowing,
                 expression->span,
+                false,
             });
+            collectSubscriptIndexAccesses(expression, accesses);
+            return;
+        }
+        switch (expression->kind) {
+            case syntax::Kind::parenthesizedExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                                ->expression,
+                        accesses);
+                break;
+            case syntax::Kind::prefixExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
+                        accesses);
+                break;
+            case syntax::Kind::accessExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        accesses);
+                break;
+            case syntax::Kind::binaryExpr: {
+                const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
+                collectEvaluationAccesses(binary->left, accesses);
+                collectEvaluationAccesses(binary->right, accesses);
+                break;
+            }
+            case syntax::Kind::assignmentExpr: {
+                const auto assignment =
+                        std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
+                const auto target = storagePath(assignment->target);
+                if (target.has_value()) {
+                    accesses.push_back(CallAccess {
+                        *target,
+                        syntax::AccessEffect::inout,
+                        assignment->target->span,
+                        false,
+                    });
+                }
+                collectEvaluationAccesses(assignment->value, accesses);
+                break;
+            }
+            case syntax::Kind::callExpr: {
+                const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
+                const auto target = model->callTarget(call);
+                const auto* symbol = target.has_value()
+                        ? model->semanticModelValue->symbol(*target)
+                        : nullptr;
+                const auto mutatingReceiver = symbol != nullptr &&
+                        symbol->kind == semantic::SymbolKind::builtinMember &&
+                        symbol->isMutable && call->callee->kind == syntax::Kind::memberExpr;
+                if (mutatingReceiver) {
+                    const auto receiver = storagePath(
+                            std::static_pointer_cast<syntax::MemberExprSyntax>(call->callee)->base);
+                    if (receiver.has_value()) {
+                        accesses.push_back(CallAccess {
+                            *receiver,
+                            syntax::AccessEffect::inout,
+                            call->callee->span,
+                            false,
+                        });
+                    }
+                }
+                for (size_t index = 0; index < call->arguments.size(); ++index) {
+                    const auto& argument = call->arguments[index];
+                    const auto parameterIndex = symbol == nullptr
+                            ? std::optional<size_t>()
+                            : parameterIndexForArgument(*symbol, *argument, index);
+                    const auto effect = symbol != nullptr &&
+                                        symbol->callable.has_value() &&
+                                        parameterIndex.has_value()
+                            ? symbol->callable->parameters[*parameterIndex].access
+                            : syntax::AccessEffect::borrowing;
+                    collectCallArgumentAccess(*argument, effect, accesses, false);
+                }
+                break;
+            }
+            case syntax::Kind::arrayExpr: {
+                const auto array = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression);
+                for (const auto& element : array->elements) {
+                    collectEvaluationAccesses(element, accesses);
+                }
+                break;
+            }
+            case syntax::Kind::dictionaryExpr: {
+                const auto dictionary =
+                        std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression);
+                for (const auto& entry : dictionary->entries) {
+                    collectEvaluationAccesses(entry->key, accesses);
+                    collectEvaluationAccesses(entry->value, accesses);
+                }
+                break;
+            }
+            case syntax::Kind::contextualCaseExpr: {
+                const auto enumCase =
+                        std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+                for (const auto& argument : enumCase->arguments) {
+                    collectEvaluationAccesses(argument->value, accesses);
+                }
+                break;
+            }
+            default:
+                break;
         }
     }
 
@@ -1305,6 +1440,7 @@ private:
                     accesses[right].effect == syntax::AccessEffect::borrowing) {
                     continue;
                 }
+                if (!accesses[left].sustained && !accesses[right].sustained) continue;
                 if (!pathsOverlap(accesses[left].path, accesses[right].path)) continue;
                 const auto* root = model->semanticModelValue->symbol(accesses[right].path.root);
                 report(
