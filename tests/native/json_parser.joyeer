@@ -1,0 +1,370 @@
+enum JsonValue {
+    Null,
+    Bool(Bool),
+    Number(Int),
+    Text(String),
+    Array([JsonValue]),
+    Object([String: JsonValue]),
+}
+
+struct JsonParser {
+    var input: String
+    var pos: Int
+    var failed: Bool
+}
+
+func hasMore(p: JsonParser): Bool {
+    return p.pos < p.input.count
+}
+
+func peek(p: JsonParser): UInt8 {
+    return p.input[p.pos]
+}
+
+func advance(p: inout JsonParser): UInt8 {
+    let byte = p.input[p.pos]
+    &p.pos = p.pos + 1
+    return byte
+}
+
+func fail(p: inout JsonParser) {
+    &p.failed = true
+}
+
+func expect(p: inout JsonParser, byte expected: UInt8) {
+    if p.pos >= p.input.count {
+        fail(p: &p)
+        return
+    }
+    let actual = advance(p: &p)
+    if actual != expected {
+        fail(p: &p)
+    }
+}
+
+func isWhitespace(byte: UInt8): Bool {
+    if byte == b' ' { return true }
+    if byte == b'\n' { return true }
+    if byte == b'\r' { return true }
+    return byte == b'\t'
+}
+
+func skipWhitespace(p: inout JsonParser) {
+    var scanning = true
+    while p.pos < p.input.count && scanning {
+        let byte = peek(p: p)
+        if isWhitespace(byte: byte) {
+            advance(p: &p)
+            scanning = true
+        } else {
+            scanning = false
+        }
+    }
+}
+
+func isDigit(byte: UInt8): Bool {
+    return byte >= b'0' && byte <= b'9'
+}
+
+func parseString(p: inout JsonParser): String {
+    expect(p: &p, byte: b'"')
+    var text = ""
+    while p.pos < p.input.count {
+        let byte = advance(p: &p)
+        if byte == b'"' {
+            return text
+        }
+        if byte == b'\\' {
+            if p.pos >= p.input.count {
+                fail(p: &p)
+                return text
+            }
+            let escaped = advance(p: &p)
+            if escaped == b'"' {
+                text = text + "\""
+            } else if escaped == b'\\' {
+                text = text + "\\"
+            } else if escaped == b'n' {
+                text = text + "\n"
+            } else if escaped == b'r' {
+                text = text + "\r"
+            } else if escaped == b't' {
+                text = text + "\t"
+            } else {
+                fail(p: &p)
+                return text
+            }
+        } else {
+            text = text + byteToString(value: byte)
+        }
+    }
+    fail(p: &p)
+    return text
+}
+
+func parseNumber(p: inout JsonParser): Int {
+    var negative = false
+    if p.pos < p.input.count {
+        if peek(p: p) == b'-' {
+            negative = true
+            advance(p: &p)
+        }
+    }
+
+    var number = 0
+    var digits = 0
+    var scanning = true
+    while p.pos < p.input.count && scanning {
+        let byte = peek(p: p)
+        if isDigit(byte: byte) {
+            advance(p: &p)
+            number = number * 10 + byteToInt(value: byte) - byteToInt(value: b'0')
+            digits = digits + 1
+        } else {
+            scanning = false
+        }
+    }
+    if digits == 0 {
+        fail(p: &p)
+    }
+    if negative {
+        return 0 - number
+    }
+    return number
+}
+
+func parseNull(p: inout JsonParser): JsonValue {
+    expect(p: &p, byte: b'n')
+    expect(p: &p, byte: b'u')
+    expect(p: &p, byte: b'l')
+    expect(p: &p, byte: b'l')
+    return .Null
+}
+
+func parseBool(p: inout JsonParser): JsonValue {
+    if peek(p: p) == b't' {
+        expect(p: &p, byte: b't')
+        expect(p: &p, byte: b'r')
+        expect(p: &p, byte: b'u')
+        expect(p: &p, byte: b'e')
+        return .Bool(true)
+    }
+    expect(p: &p, byte: b'f')
+    expect(p: &p, byte: b'a')
+    expect(p: &p, byte: b'l')
+    expect(p: &p, byte: b's')
+    expect(p: &p, byte: b'e')
+    return .Bool(false)
+}
+
+func parseValue(p: inout JsonParser): JsonValue {
+    skipWhitespace(p: &p)
+    if p.pos >= p.input.count {
+        fail(p: &p)
+        return .Null
+    }
+    let byte = peek(p: p)
+    if byte == b'"' {
+        return .Text(parseString(p: &p))
+    }
+    if byte == b'[' {
+        return parseArray(p: &p)
+    }
+    if byte == b'{' {
+        return parseObject(p: &p)
+    }
+    if byte == b't' {
+        return parseBool(p: &p)
+    }
+    if byte == b'f' {
+        return parseBool(p: &p)
+    }
+    if byte == b'n' {
+        return parseNull(p: &p)
+    }
+    if byte == b'-' {
+        return .Number(parseNumber(p: &p))
+    }
+    if isDigit(byte: byte) {
+        return .Number(parseNumber(p: &p))
+    }
+    fail(p: &p)
+    return .Null
+}
+
+func parseArray(p: inout JsonParser): JsonValue {
+    expect(p: &p, byte: b'[')
+    skipWhitespace(p: &p)
+    var values: [JsonValue] = []
+    if p.pos >= p.input.count {
+        fail(p: &p)
+        return .Array(values)
+    }
+    if peek(p: p) == b']' {
+        advance(p: &p)
+        return .Array(values)
+    }
+
+    var parsing = true
+    while p.pos < p.input.count && parsing {
+        let value = parseValue(p: &p)
+        &values.append(element: value)
+        skipWhitespace(p: &p)
+        if p.pos >= p.input.count {
+            fail(p: &p)
+            return .Array(values)
+        }
+        let delimiter = advance(p: &p)
+        if delimiter == b']' {
+            parsing = false
+        } else if delimiter == b',' {
+            skipWhitespace(p: &p)
+        } else {
+            fail(p: &p)
+            return .Array(values)
+        }
+    }
+    return .Array(values)
+}
+
+func parseObject(p: inout JsonParser): JsonValue {
+    expect(p: &p, byte: b'{')
+    skipWhitespace(p: &p)
+    var fields: [String: JsonValue] = [:]
+    if p.pos >= p.input.count {
+        fail(p: &p)
+        return .Object(fields)
+    }
+    if peek(p: p) == b'}' {
+        advance(p: &p)
+        return .Object(fields)
+    }
+
+    var parsing = true
+    while p.pos < p.input.count && parsing {
+        if peek(p: p) != b'"' {
+            fail(p: &p)
+            return .Object(fields)
+        }
+        let key = parseString(p: &p)
+        skipWhitespace(p: &p)
+        expect(p: &p, byte: b':')
+        skipWhitespace(p: &p)
+        let value = parseValue(p: &p)
+        &fields[key] = value
+        skipWhitespace(p: &p)
+        if p.pos >= p.input.count {
+            fail(p: &p)
+            return .Object(fields)
+        }
+        let delimiter = advance(p: &p)
+        if delimiter == b'}' {
+            parsing = false
+        } else if delimiter == b',' {
+            skipWhitespace(p: &p)
+        } else {
+            fail(p: &p)
+            return .Object(fields)
+        }
+    }
+    return .Object(fields)
+}
+
+func parseDocument(p: inout JsonParser): JsonValue {
+    let value = parseValue(p: &p)
+    skipWhitespace(p: &p)
+    if p.pos != p.input.count {
+        fail(p: &p)
+    }
+    return value
+}
+
+func numberValue(value: JsonValue): Int {
+    return match value {
+        .Number(number) => number,
+        _ => 0,
+    }
+}
+
+func printText(value: JsonValue) {
+    match value {
+        .Text(text) => print(value: text),
+        _ => print(value: "invalid text"),
+    }
+}
+
+func printBool(value: JsonValue) {
+    match value {
+        .Bool(boolean) => print(value: boolean),
+        _ => print(value: false),
+    }
+}
+
+func printArray(value: JsonValue) {
+    match value {
+        .Array(values) => {
+            var total = 0
+            var index = 0
+            while index < values.count {
+                total = total + numberValue(value: values[index])
+                index = index + 1
+            }
+            print(value: values.count)
+            print(value: total)
+        }
+        _ => print(value: "invalid array"),
+    }
+}
+
+func printNested(value: JsonValue) {
+    match value {
+        .Object(fields) => printText(value: fields["message"]),
+        _ => print(value: "invalid object"),
+    }
+}
+
+func printNull(value: JsonValue) {
+    print(value: match value {
+        .Null => true,
+        _ => false,
+    })
+}
+
+func printSummary(value: JsonValue) {
+    match value {
+        .Object(fields) => {
+            printText(value: fields["name"])
+            printBool(value: fields["active"])
+            printArray(value: fields["items"])
+            printNested(value: fields["nested"])
+            printNull(value: fields["none"])
+            print(value: numberValue(value: fields["negative"]))
+            printText(value: fields["escaped"])
+        }
+        _ => print(value: "invalid root"),
+    }
+}
+
+func main() {
+    match readFile(path: "json_parser_input.json") {
+        .Ok(input) => {
+            var parser = JsonParser(input: input, pos: 0, failed: false)
+            let value = parseDocument(p: &parser)
+            print(value: parser.failed == false)
+            printSummary(value: value)
+        }
+        .Err(error) => {
+            print(value: false)
+            print(value: error)
+        }
+    }
+
+    match readFile(path: "json_parser_invalid.json") {
+        .Ok(input) => {
+            var parser = JsonParser(input: input, pos: 0, failed: false)
+            parseDocument(p: &parser)
+            print(value: parser.failed)
+        }
+        .Err(error) => print(value: error == 0)
+    }
+}

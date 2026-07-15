@@ -75,7 +75,7 @@ deleted, not preserved.
 
 | Doc | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (ownership, Stage 5, and file input work; executable JSON parser/quality next) |
+| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (native v0.1 JSON parser works; ownership syntax, optimization, and quality next) |
 | [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
 | [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
 | [feasibility.md](plan/feasibility.md) | Can the design be built? Per-feature prior art, combination risks, layered-verification ceiling |

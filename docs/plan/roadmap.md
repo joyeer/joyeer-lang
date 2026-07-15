@@ -102,25 +102,24 @@ golden programs execute.
 
 ---
 
-## Immediate Next Milestone: Executable JSON Parser and Native Quality
+## Immediate Next Milestone: Ownership Syntax and Native Quality
 
 The [Parser MVP](../impl/parser.md), [name-resolution model](../impl/name-resolution.md),
 [type checker](../impl/type-checking.md), [Joyeer IR lowering](../impl/ir.md),
 and [native backend](../impl/native.md) are wired into `--lang=v0.1`. Clang
 compiles the complete JSON-parser MVP fixture, and `-o` builds/runs native
-programs using strings, arrays, and dictionaries. Explicit IR ownership,
+programs using strings, arrays, and dictionaries. A Joyeer-written parser now
+reads files and handles the complete v0.1 JSON value surface natively. Explicit IR ownership,
 recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Run the JSON parser against `readFile(path:)` as a native executable;
-  dynamic array append and dictionary insertion/update now work.
-2. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
+1. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
   `consume` flow states.
-3. Configure a deliberate LLVM optimization pipeline and verify overflow/
+2. Configure a deliberate LLVM optimization pipeline and verify overflow/
   bounds checks survive required optimization levels.
-4. Improve diagnostic source rendering, one-based locations, and fix-it hints.
-5. Retire the legacy
+3. Improve diagnostic source rendering, one-based locations, and fix-it hints.
+4. Retire the legacy
   VM lane after native golden coverage is equivalent.
 
 ---
@@ -238,6 +237,15 @@ error: type mismatch
   `print(value: x)` label.
 - Remove broad legacy token categories once the v0.1 parser consumes explicit
   terminal kinds exclusively.
+
+### Step 2.7 — Native JSON Parser ✅
+
+- ✅ reads external input with `readFile(path:)`
+- ✅ recursively parses null, Boolean, integer, UTF-8 byte string, array, and
+  object values using dynamic collections
+- ✅ validates nested values and malformed-input status in a native CTest
+- ✅ exits with zero runtime-managed allocations
+- floating-point numbers and `\uXXXX` escapes remain outside v0.1
 
 ---
 

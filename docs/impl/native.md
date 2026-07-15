@@ -201,3 +201,9 @@ string/array/dictionary ownership, exercise runtime traps, and reject an
 executable request without `main`. File-input tests cover binary bytes,
 missing-file errors, exhaustive source-level handling, and zero allocation
 balance on both paths.
+
+`NativeExecutableJsonParser` is the integrated milestone: Joyeer source reads
+an external file, recursively parses nested null/Boolean/integer/string/array/
+object values, checks representative results, rejects malformed input, and
+returns with no runtime-managed allocations. It intentionally matches the
+v0.1 scope: floating-point numbers and JSON `\uXXXX` decoding remain deferred.

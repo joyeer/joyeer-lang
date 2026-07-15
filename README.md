@@ -24,6 +24,11 @@ verified Joyeer IR, textual LLVM IR, a minimal C runtime, and Clang-based
 native linking. It compiles and runs the JSON-parser MVP language surface
 without starting the VM.
 
+The native integration suite includes a Joyeer-written parser that reads JSON
+from a file and parses nested null/Boolean/integer/string/array/object values,
+including the fixed v0.1 escape set. It also verifies malformed-input
+detection and zero runtime allocation balance.
+
 The native lane is still experimental. The current heap-backed values have
 recursive clone/destroy support, deterministic scope and early-return cleanup,
 and a native-entry allocation-balance check. Source-level consuming ownership,

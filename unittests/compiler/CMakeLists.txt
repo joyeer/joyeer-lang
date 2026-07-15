@@ -281,6 +281,19 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableByteConversion PROPERTIES
             LABELS "native;llvm-backend;native-runtime;ownership;byte-conversion"
     )
+
+    add_test(NAME NativeExecutableJsonParser
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/json_parser.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-json-parser${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_OUTPUT=true\njoyeer\ntrue\n4\n10\nok\ntrue\n-7\nline\nquote: \"ok\"\ntrue\n"
+                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/native
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableJsonParser PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;file-io;array;dictionary;byte-conversion;json-parser"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
