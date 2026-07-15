@@ -77,6 +77,8 @@ The v0.1 checker currently validates:
 
 - explicit and inferred binding types;
 - scalar, byte, array, dictionary, and `nil` literals;
+- explicit `byteToInt(value: UInt8) -> Int` and
+  `byteToString(value: UInt8) -> String` built-in calls;
 - optional value promotion and `Never` as the bottom type;
 - MVP arithmetic, string concatenation, comparison, and `&&` operators;
 - `if`/`while` conditions, `if` branch unification, and return values;

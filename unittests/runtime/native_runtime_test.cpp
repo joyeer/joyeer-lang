@@ -98,6 +98,16 @@ TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
+TEST(NativeRuntimeTest, ConvertsBytesToOwnedSingleByteStrings) {
+    JoyeerString text {};
+    joyeer_byte_to_string_abi(&text, static_cast<uint8_t>('J'));
+
+    ASSERT_EQ(text.count, 1);
+    EXPECT_EQ(text.data[0], static_cast<uint8_t>('J'));
+    joyeer_string_destroy_abi(&text);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
 TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
     EXPECT_DEATH(
             static_cast<void>(joyeer_string_byte_at(view(std::string("x")), 1)),

@@ -269,6 +269,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableDictionarySet PROPERTIES
             LABELS "native;llvm-backend;native-runtime;ownership;dictionary"
     )
+
+    add_test(NAME NativeExecutableByteConversion
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/byte_conversion.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-byte-conversion${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=7\nJ\nJoy\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableByteConversion PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;byte-conversion"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName

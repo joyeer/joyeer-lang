@@ -215,6 +215,23 @@ return text
             EXPECT_NE(result.text.find("store %joyeer.enum."), std::string::npos);
         }
 
+TEST_F(LLVMBackendTest, EmitsExplicitByteConversions) {
+    emit(R"JOYEER(func convert(value: UInt8): String {
+print(value: byteToInt(value: value))
+return byteToString(value: value)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("zext i8"), std::string::npos);
+    EXPECT_NE(
+            result.text.find("declare void @joyeer_byte_to_string_abi(ptr, i8)"),
+            std::string::npos);
+    EXPECT_NE(
+            result.text.find("call void @joyeer_byte_to_string_abi(ptr"),
+            std::string::npos);
+}
+
 TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
     joyeer::ir::Module module;
     module.sourceName = "ownership.joyeer";

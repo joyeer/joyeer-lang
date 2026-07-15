@@ -166,6 +166,28 @@ return readFile(path: "input.json")
             EXPECT_EQ(resolution.model->symbol(*target)->name, "append");
         }
 
+        TEST_F(NameResolutionTest, ResolvesExplicitByteConversionsFromThePrelude) {
+            resolve(R"JOYEER(func convert(value: UInt8): String {
+        print(value: byteToInt(value: value))
+        return byteToString(value: value)
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+            const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                    parseResult.root->items[0]);
+            const auto printCall = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                    function->body->items[0]);
+            const auto integerCall = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                    printCall->arguments[0]->value);
+            const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                    function->body->items[1]);
+            const auto stringCall = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                    returned->value);
+            EXPECT_EQ(referenced(integerCall->callee).name, "byteToInt");
+            EXPECT_EQ(referenced(stringCall->callee).name, "byteToString");
+        }
+
 TEST_F(NameResolutionTest, ResolvesMemberChainsThroughLaterTypeSignatures) {
     resolve(R"JOYEER(func read(node: Node): Int {
 return node.child.value

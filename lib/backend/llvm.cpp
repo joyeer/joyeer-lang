@@ -1711,6 +1711,10 @@ private:
             if (callee.name == "readFile" && instruction.operands.size() == 1) {
                 return emitReadFile(out, instruction, callee);
             }
+            if ((callee.name == "byteToInt" || callee.name == "byteToString") &&
+                instruction.operands.size() == 1) {
+                return emitByteConversion(out, instruction, callee);
+            }
             reportHere(
                     DiagnosticId::unsupportedExternal,
                     instruction.span,
@@ -1737,6 +1741,40 @@ private:
             out << *argumentType << ' ' << *argument;
         }
         out << ")\n";
+        return true;
+    }
+
+    bool emitByteConversion(
+            std::ostringstream& out,
+            const ir::Instruction& instruction,
+            const ir::Function& callee) {
+        if (!instruction.result.has_value()) return false;
+        const auto source = operand(instruction.operands[0]);
+        const auto* sourceValue = value(instruction.operands[0]);
+        const auto* sourceType = sourceValue == nullptr ? nullptr : type(sourceValue->type);
+        if (!source.has_value() || sourceType == nullptr ||
+            sourceType->kind != typing::TypeKind::uint8) {
+            reportHere(
+                    DiagnosticId::unsupportedExternal,
+                    instruction.span,
+                    callee.name + " requires a UInt8 argument");
+            return false;
+        }
+        if (callee.name == "byteToInt") {
+            out << "  " << valueName(instruction.result->id)
+                << " = zext i8 " << *source << " to i64\n";
+            return true;
+        }
+
+        usesString = true;
+        const auto resultAddress = temporary();
+        out << "  " << resultAddress << " = alloca %joyeer.string\n";
+        runtimeDeclarations.insert(
+                "declare void @joyeer_byte_to_string_abi(ptr, i8)");
+        out << "  call void @joyeer_byte_to_string_abi(ptr " << resultAddress
+            << ", i8 " << *source << ")\n"
+            << "  " << valueName(instruction.result->id)
+            << " = load %joyeer.string, ptr " << resultAddress << "\n";
         return true;
     }
 

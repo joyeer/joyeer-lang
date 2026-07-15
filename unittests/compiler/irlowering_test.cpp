@@ -183,6 +183,22 @@ return readFile(path: path)
     EXPECT_EQ(opcodeCount(function("load"), joyeer::ir::Opcode::call), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersExplicitByteConversionCalls) {
+    lower(R"JOYEER(func convert(value: UInt8): String {
+print(value: byteToInt(value: value))
+return byteToString(value: value)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_TRUE(function("byteToInt").isExternal);
+    EXPECT_TRUE(function("byteToString").isExternal);
+    EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::call), 3u);
+    EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::returnValue), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersIfExpressionValuesThroughMergeSlots) {
     lower(R"JOYEER(func choose(flag: Bool): Int {
 return if flag { 1 } else { 2 }

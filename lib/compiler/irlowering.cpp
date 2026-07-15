@@ -333,6 +333,7 @@ private:
     void collectFunctions() {
         collectPrint();
         collectReadFile();
+        collectByteConversions();
         const auto& semanticModel = *model->semanticModel();
         const auto& root = semanticModel.root();
         if (root == nullptr) return;
@@ -400,6 +401,35 @@ private:
         function.isExternal = true;
         functions.emplace(found->second, function.id);
         module->functions.push_back(std::move(function));
+    }
+
+    void collectByteConversions() {
+        const auto& semanticModel = *model->semanticModel();
+        const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
+        if (prelude == nullptr) return;
+        for (const auto* name : { "byteToInt", "byteToString" }) {
+            const auto found = prelude->values.find(name);
+            if (found == prelude->values.end()) continue;
+            const auto* signature = model->callable(found->second);
+            if (signature == nullptr || signature->parameters.size() != 1) continue;
+
+            ir::Function function;
+            function.id = static_cast<ir::FunctionId>(module->functions.size());
+            function.symbol = found->second;
+            function.name = name;
+            function.parameters.push_back(ir::Parameter {
+                ir::Value { 0, signature->parameters[0], ir::ValueCategory::value },
+                std::nullopt,
+                "value",
+                false,
+                {},
+            });
+            function.resultType = signature->result;
+            function.returnsValue = true;
+            function.isExternal = true;
+            functions.emplace(found->second, function.id);
+            module->functions.push_back(std::move(function));
+        }
     }
 
     void collectFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {

@@ -1,6 +1,7 @@
 #include "joyeer/compiler/typechecking.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <functional>
 #include <sstream>
@@ -401,6 +402,21 @@ private:
                 semantic::CallableKind::function,
                 true,
                 { model->typeContext.stringType() },
+                result,
+            };
+        }
+
+        for (const auto& [name, result] : std::array {
+                 std::pair { std::string_view("byteToInt"), model->typeContext.intType() },
+                 std::pair { std::string_view("byteToString"), model->typeContext.stringType() },
+             }) {
+            const auto conversion = prelude->values.find(std::string(name));
+            if (conversion == prelude->values.end()) continue;
+            model->symbolTypes[conversion->second] = result;
+            model->callables[conversion->second] = TypedCallableSignature {
+                semantic::CallableKind::function,
+                true,
+                { model->typeContext.uint8Type() },
                 result,
             };
         }

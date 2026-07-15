@@ -98,6 +98,7 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 - scalar and string printing;
 - string concatenation, equality, ordering, byte indexing, deep clone, and
   destroy;
+- explicit byte-to-integer conversion and owned single-byte string creation;
 - array construction, checked indexing, mutable element projection,
   ownership-transferring append/growth, recursive clone, and reverse-order
   element destruction;
@@ -118,6 +119,11 @@ owned storage and temporaries in reverse order on normal and early-return
 paths. The C entry point fails the process if runtime-managed allocation count
 is nonzero after `joyeer_main` returns, making leaks in native integration
 tests observable.
+
+The v0.1 prelude exposes `byteToInt(value:)` and `byteToString(value:)` rather
+than silently coercing `UInt8`. LLVM zero-extends the former to the signed
+64-bit `Int` representation. The latter allocates one owned byte through
+`joyeer_byte_to_string_abi`, so ordinary temporary and scope cleanup applies.
 
 The built-in mutating method
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.

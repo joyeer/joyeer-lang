@@ -317,6 +317,43 @@ let copy = integer
             "Result<String, Int>");
     }
 
+    TEST_F(TypeCheckingTest, TypesExplicitByteConversions) {
+        check(R"JOYEER(func convert(value: UInt8) {
+    let integer = byteToInt(value: value)
+    let text = byteToString(value: value)
+    print(value: integer)
+    print(value: text)
+    }
+    )JOYEER");
+
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[0]);
+        const auto integer = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[0]);
+        const auto text = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[1]);
+        EXPECT_EQ(checking.model->types().displayName(declaredType(integer)), "Int");
+        EXPECT_EQ(checking.model->types().displayName(declaredType(text)), "String");
+    }
+
+    TEST_F(TypeCheckingTest, RejectsNonByteConversionArguments) {
+        check(R"JOYEER(func invalid() {
+    let integer = byteToInt(value: 1)
+    let text = byteToString(value: "x")
+    }
+    )JOYEER");
+
+        ASSERT_EQ(checking.diagnostics.size(), 2u)
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_TRUE(std::all_of(
+                checking.diagnostics.begin(),
+                checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+                }));
+    }
+
 TEST_F(TypeCheckingTest, ContextuallyTypesEmptyCollectionsNilAndOptionalPromotion) {
     check(R"JOYEER(func values() {
 let integers: [Int] = []

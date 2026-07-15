@@ -138,6 +138,7 @@ int64_t joyeer_string_compare_abi(
     const uint8_t* rightData,
     int64_t rightCount);
 uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
+void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value);
 
 // Writes Result<String, Int> through separate tag/payload pointers. The
 // compiler supplies concrete Ok/Err tags so the runtime does not depend on

@@ -376,7 +376,7 @@ private:
         const auto intType = declareBuiltinType("Int");
         declareBuiltinType("Bool");
         const auto stringType = declareBuiltinType("String");
-        declareBuiltinType("UInt8");
+        const auto byteType = declareBuiltinType("UInt8");
         declareBuiltinType("Any");
         const auto arrayType = declareBuiltinType("Array");
         const auto dictionaryType = declareBuiltinType("Dict");
@@ -469,6 +469,34 @@ private:
                 {});
         symbol(readFile).declaredType = resultType;
         symbol(readFile).callable = std::move(readFileSignature);
+
+        CallableSignature byteConversionSignature {
+            CallableKind::function,
+            true,
+            { CallableParameter {
+                std::string("value"),
+                true,
+                std::nullopt,
+                std::nullopt,
+                byteType,
+            } },
+        };
+        const auto byteToInt = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "byteToInt",
+                {});
+        symbol(byteToInt).declaredType = intType;
+        symbol(byteToInt).callable = byteConversionSignature;
+        const auto byteToString = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "byteToString",
+                {});
+        symbol(byteToString).declaredType = stringType;
+        symbol(byteToString).callable = std::move(byteConversionSignature);
     }
 
     void collectTopLevelDeclarations(const syntax::SourceFileSyntax::Ptr& root) {

@@ -209,6 +209,14 @@ void joyeer_string_destroy_abi(JoyeerString* value) {
     joyeer_string_destroy(value);
 }
 
+void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value) {
+    if (result == NULL) joyeer_panic("byteToString result is null");
+    uint8_t* data = (uint8_t*)checkedAllocate(1);
+    data[0] = value;
+    result->data = data;
+    result->count = 1;
+}
+
 static void setReadFileError(
         int32_t* resultTag,
         void* resultPayload,
