@@ -149,7 +149,10 @@ observable rather than silent.
 
 Diagnostics have stable `type-checking.*` IDs and retain syntax spans. The CLI
 renders them only after lexing, parsing, and name resolution succeed, avoiding
-cross-stage cascades.
+cross-stage cascades. Every ordinary assignability mismatch retains its stable
+primary message and adds structured `expected '<destination>' but found
+'<source>'` help. Access-effect diagnostics may additionally carry applicable
+marker edits as described by the [diagnostics contract](diagnostics.md).
 
 Direct validation:
 
@@ -160,7 +163,8 @@ ctest --test-dir build -L type-checking --output-on-failure
 The suite covers canonical type construction, signatures, inference,
 operators, control flow, calls, members, subscripts, contextual cases,
 patterns, exhaustiveness, access conventions, deferred-reference closure, the
-JSON-parser MVP source, and CLI rejection of a type mismatch.
+JSON-parser MVP source, and CLI rejection of a type mismatch with expected/found
+guidance.
 
 ---
 

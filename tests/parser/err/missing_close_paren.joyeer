@@ -1,0 +1,3 @@
+func value(): Int {
+    return (1 + 2
+}

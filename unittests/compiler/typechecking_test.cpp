@@ -392,7 +392,8 @@ let lookup: [String: Int] = ["one": 1, "two": false]
             checking.diagnostics.begin(),
             checking.diagnostics.end(),
             [](const auto& diagnostic) {
-                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch &&
+                        diagnostic.help.has_value();
             }));
 }
 

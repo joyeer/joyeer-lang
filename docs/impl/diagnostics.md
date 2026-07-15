@@ -1,8 +1,9 @@
 # Diagnostics — Structured v0.1 Source Rendering
 
 > **Status:** Stable IDs, severity, file paths, one-based locations, source
-> excerpts, and caret ranges are implemented for the `--lang=v0.1` pipeline.
-> Legacy VM diagnostics retain their historical output format.
+> excerpts, caret ranges, structured help, and applicable source edits are
+> implemented for the `--lang=v0.1` pipeline. Legacy VM diagnostics retain
+> their historical output format.
 
 ---
 
@@ -15,7 +16,8 @@
 - a stable stage-qualified code;
 - a source path;
 - internal zero-based line/byte-column and span length;
-- the source line used for rendering.
+- the source line used for rendering;
+- optional help text and one optional byte-based replacement edit.
 
 Existing `reportError()` calls create compatibility diagnostics and continue to
 print as `SyntaxError(line: ...)` or `Warning(line: ...)`. This preserves the
@@ -68,14 +70,19 @@ successful link, or prints accumulated diagnostics once on failure.
 
 Access-effect marker mismatches provide source edits to insert, replace, or
 remove `&` / `consume`. Ownership-flow diagnostics provide help for
-reinitialization and all-path initializing obligations. Offsets remain byte
-based so editor tooling can apply edits without reinterpreting display width.
+reinitialization and all-path initializing obligations. Parser diagnostics
+provide zero-length insertion edits for missing canonical punctuation,
+delimiters, arrows, and list commas. Ordinary type mismatches provide explicit
+`expected` / `found` help while retaining the stable primary message and ID.
+Offsets remain byte based so editor tooling can apply edits without
+reinterpreting display width.
 
 ---
 
 ## 4. Remaining work
 
-- broader parser/type fix-it coverage and secondary note locations;
+- context-aware parser/type replacement and deletion edits;
+- secondary note locations for diagnostics involving multiple source spans;
 - multi-line span rendering;
 - Unicode display-column calculation (current columns are UTF-8 byte columns);
 - migration of the compatibility parser/VM diagnostics to stable IDs;
@@ -94,5 +101,6 @@ ctest --test-dir build -L diagnostics --output-on-failure
 
 Tests cover failure/warning severity, source-independent structured errors,
 exact one-based source rendering, help/fix-it escaping, and CLI output from the
-lexer and type checker (including an applicable `consume` insertion). Existing
+lexer, parser, and type checker. CLI cases include an applicable missing-`)`
+insertion, a `consume` insertion, and expected/found type guidance. Existing
 legacy formatting tests ensure the compatibility path does not change.

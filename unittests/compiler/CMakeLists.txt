@@ -409,6 +409,7 @@ add_test(NAME DiagnosticsCliRendersSourceContext
                 -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/type_mismatch.joyeer
                 "-DEXPECTED_HEADER=type_mismatch.joyeer:2:12: error[type-checking.type-mismatch]"
                 "-DEXPECTED_SOURCE=    return \"not an integer\""
+                "-DEXPECTED_HELP=help: expected 'Int' but found 'String'"
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
 )
 set_tests_properties(DiagnosticsCliRendersSourceContext PROPERTIES
@@ -425,6 +426,20 @@ add_test(NAME DiagnosticsCliRendersLexerSourceContext
 )
 set_tests_properties(DiagnosticsCliRendersLexerSourceContext PROPERTIES
         LABELS "diagnostics;lexer"
+)
+
+add_test(NAME DiagnosticsCliSuggestsMissingDelimiterFix
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/err/missing_close_paren.joyeer
+                "-DEXPECTED_HEADER=missing_close_paren.joyeer:3:1: error[parser.expected-token]"
+                "-DEXPECTED_SOURCE=}"
+                "-DEXPECTED_HELP=help: insert ')' before this token"
+                "-DEXPECTED_FIX_IT=fix-it: missing_close_paren.joyeer:3:1:0: \")\""
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliSuggestsMissingDelimiterFix PROPERTIES
+        LABELS "diagnostics;parser;fix-it"
 )
 
 add_test(NAME SemanticAnalysisCliRejectsMissingReturn

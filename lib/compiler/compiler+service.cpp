@@ -112,7 +112,9 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 diagnostic.span,
                 ErrorLevel::failure,
                 joyeer::parser::diagnosticName(diagnostic.id),
-                diagnostic.message);
+                diagnostic.message,
+                diagnostic.help,
+                diagnostic.fixIt);
         }
         if (!result.succeeded()) {
             return nullptr;

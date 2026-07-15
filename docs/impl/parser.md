@@ -528,9 +528,16 @@ At minimum, use stable IDs for:
 - unsupported Parser MVP syntax that reached parsing;
 - unexpected EOF while parsing a delimited construct.
 
-Diagnostics point at the unexpected token span; missing-token diagnostics use a
-zero-length insertion span. Human rendering may remain simple initially, but
-IDs and spans must be stable enough for snapshot tests.
+Diagnostics point at the unexpected token span (or a zero-length EOF span).
+Missing-token edits use a zero-length insertion span. Human rendering may
+remain simple initially, but IDs and spans must be stable enough for snapshot
+tests.
+
+When the missing token has a canonical spelling (`{}`, `()`, `[]`, `:`, `,`,
+`.`, `=>`, `?`, or a generic-closing `>`), the diagnostic also carries a
+zero-length insertion fix-it at the current cursor. Dedicated missing-comma
+diagnostics use the same edit contract. Identifier, type, and expression
+recovery does not guess source text.
 
 ### 8.2 Synchronization sets
 
@@ -677,9 +684,9 @@ contract for any future implementation rewrite.
 Parser MVP is complete when:
 
 - [x] a clean build produces a parser-only test target;
-- [x] 21 direct cases cover the core grammar/recovery matrix, deterministic
-  dumps, diagnostic snapshots, and token deletion/insertion/replacement
-  mutation;
+- [x] the parser-labeled regression suite covers the core grammar/recovery
+  matrix, deterministic dumps, diagnostic snapshots, applicable missing-token
+  insertions, and token deletion/insertion/replacement mutation;
 - [x] positive and negative CLI acceptance tests run through
   `--lang=v0.1` without starting the legacy VM/runtime;
 - [x] the Parser MVP acceptance source parses with no lexical or parser diagnostic;

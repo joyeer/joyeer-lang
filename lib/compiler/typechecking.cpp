@@ -633,7 +633,9 @@ private:
                 span,
                 "cannot use value of type '" + model->typeContext.displayName(source) +
                         "' where '" + model->typeContext.displayName(destination) +
-                        "' is required");
+                    "' is required",
+                "expected '" + model->typeContext.displayName(destination) +
+                    "' but found '" + model->typeContext.displayName(source) + "'");
         return false;
     }
 

@@ -2,8 +2,10 @@
 #define __joyeer_compiler_parser_h__
 
 #include "joyeer/compiler/syntax.h"
+#include "joyeer/diagnostic/diagnostic.h"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,6 +33,8 @@ struct Diagnostic {
     DiagnosticId id;
     SourceSpan span;
     std::string message;
+    std::optional<std::string> help;
+    std::optional<DiagnosticFixIt> fixIt;
 };
 
 struct ParseResult {
@@ -127,6 +131,8 @@ private:
     Token::Ptr expect(TokenKind kind, const std::string& spelling);
     Token::Ptr synthetic(TokenKind kind) const;
     void report(DiagnosticId id, SourceSpan span, std::string message);
+    void addExpectedTokenFixIt(TokenKind kind);
+    void reportMissingComma(std::string message);
     void reportExpected(DiagnosticId id, const std::string& expected);
 
     void enforceItemBoundary(bool topLevel);

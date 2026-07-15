@@ -158,6 +158,46 @@ let invalid = (a + b) = c
     EXPECT_EQ(result.root->items.size(), 2u);
 }
 
+TEST_F(ParserTest, SuggestsMissingDelimiterInsertion) {
+    parse(R"JOYEER(func value(): Int {
+return (1 + 2
+}
+)JOYEER");
+
+    const auto found = std::find_if(
+            result.diagnostics.begin(),
+            result.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == DiagnosticId::expectedToken &&
+                        diagnostic.fixIt.has_value();
+            });
+    ASSERT_NE(found, result.diagnostics.end())
+            << joyeer::parser::dump(result.diagnostics);
+    ASSERT_TRUE(found->help.has_value());
+    EXPECT_EQ(found->fixIt->length, 0u);
+    EXPECT_EQ(found->fixIt->replacement, ")");
+}
+
+TEST_F(ParserTest, SuggestsMissingCommaInsertion) {
+    parse(R"JOYEER(func value(left: Int right: Int): Int {
+return left
+}
+)JOYEER");
+
+    const auto found = std::find_if(
+            result.diagnostics.begin(),
+            result.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == DiagnosticId::missingComma &&
+                        diagnostic.fixIt.has_value();
+            });
+    ASSERT_NE(found, result.diagnostics.end())
+            << joyeer::parser::dump(result.diagnostics);
+    ASSERT_TRUE(found->help.has_value());
+    EXPECT_EQ(found->fixIt->length, 0u);
+    EXPECT_EQ(found->fixIt->replacement, ",");
+}
+
 TEST_F(ParserTest, ParsesPostfixChainsCallsAndContextualCases) {
     parse(R"JOYEER(func parse(p: inout Parser) {
 parseValue(p: &p)
