@@ -20,9 +20,18 @@ struct Module;
 class SourceFile {
 public:
     using Ptr = std::shared_ptr<SourceFile>;
+
+    enum class LoadError {
+        none,
+        notRegularFile,
+        sourceTooLarge,
+        readFailure,
+    };
     
 public:
-    SourceFile(const std::string& workingDirectory, const std::string& path);
+        SourceFile(
+            const std::filesystem::path& workingDirectory,
+            const std::filesystem::path& path);
     explicit SourceFile(std::string sourceContent);
     
     // get .joyeer file's relative locationInParent against the working directory
@@ -34,10 +43,22 @@ public:
     [[nodiscard]] std::string getAbstractLocation() const {
         return location.string();
     }
+
+    [[nodiscard]] const std::filesystem::path& getAbstractPath() const {
+        return location;
+    }
     
     // get .joyeer's parentTypeSlot folder
     [[nodiscard]] std::string getParentFolder() const {
         return location.parent_path().string();
+    }
+
+    [[nodiscard]] bool loaded() const {
+        return loadError == LoadError::none;
+    }
+
+    [[nodiscard]] LoadError loadingError() const {
+        return loadError;
     }
     
     // file content
@@ -74,8 +95,10 @@ protected:
     
     // file locationInParent
     std::filesystem::path location;
+
+    LoadError loadError = LoadError::none;
     
-    void open(const std::string& path);
+    void open(const std::filesystem::path& path);
 };
 
 #endif

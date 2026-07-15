@@ -24,7 +24,7 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
 }
 
 int Driver::run() {
-    auto module = compiler->compile(arguments->inputfile.string());
+    auto module = compiler->compile(arguments->inputfile);
     if(diagnostics->hasFailure()) {
         diagnostics->printErrors();
         return 1;

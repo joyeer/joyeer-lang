@@ -49,7 +49,15 @@ protected:
 
         const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
         ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
-        result = joyeer::lowering::Lowerer().lower(checking.model, "test.joyeer");
+        result = joyeer::lowering::Lowerer().lower(
+            checking.model,
+            "test.joyeer",
+            joyeer::ir::SourceInfo {
+                "test.joyeer",
+                "C:/joyeer-tests",
+                static_cast<uint64_t>(source->content.size()),
+                source->lineStarts,
+            });
     }
 
     const joyeer::ir::Function& function(const std::string& name) const {
@@ -99,6 +107,42 @@ return left + right
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::load), 2u);
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::add), 1u);
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
+    lower(R"JOYEER(func run(input: consuming String) {
+let text = "value"
+print(value: input)
+print(value: text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_TRUE(result.module->sourceInfo.has_value());
+    EXPECT_EQ(result.module->sourceInfo->fileName, "test.joyeer");
+    EXPECT_EQ(result.module->sourceInfo->directory, "C:/joyeer-tests");
+    EXPECT_EQ(result.module->sourceInfo->byteLength, source->content.size());
+    EXPECT_EQ(result.module->sourceInfo->lineStarts, source->lineStarts);
+
+    const auto& run = function("run");
+    ASSERT_TRUE(run.debugLocation.has_value());
+    EXPECT_FALSE(run.debugLocation->implicitCode);
+    bool foundImplicitCleanup = false;
+    bool foundImplicitParameterStorage = false;
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            if (instruction.opcode == joyeer::ir::Opcode::stackAllocate &&
+                instruction.symbol == run.parameters[0].symbol) {
+                foundImplicitParameterStorage = instruction.debugLocation->implicitCode;
+            }
+            if (instruction.opcode == joyeer::ir::Opcode::destroy) {
+                foundImplicitCleanup |= instruction.debugLocation->implicitCode;
+            }
+        }
+    }
+    EXPECT_TRUE(foundImplicitParameterStorage);
+    EXPECT_TRUE(foundImplicitCleanup);
 }
 
 TEST_F(IRLoweringTest, LowersBindingsAndMutableAssignmentsThroughStackSlots) {

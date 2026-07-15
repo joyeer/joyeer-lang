@@ -5,6 +5,7 @@
 #include "joyeer/ir/ir.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,7 +39,8 @@ class Lowerer {
 public:
     [[nodiscard]] Result lower(
             const typing::TypeCheckedModel::Ptr& model,
-            std::string sourceName = {}) const;
+            std::string sourceName = {},
+            std::optional<ir::SourceInfo> sourceInfo = std::nullopt) const;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

@@ -11,13 +11,14 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace {
 
 class LLVMBackendTest : public testing::Test {
 protected:
-    void emit(const std::string& text) {
+    void emit(const std::string& text, bool carrySourceInfo = false) {
         lexerDiagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
         const auto context = std::make_shared<CompileContext>(
@@ -37,7 +38,18 @@ protected:
         const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
         ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 
-        const auto lowering = joyeer::lowering::Lowerer().lower(checking.model, "test.joyeer");
+        const auto sourceInfo = carrySourceInfo
+            ? std::optional<joyeer::ir::SourceInfo>(joyeer::ir::SourceInfo {
+                "test.joyeer",
+                "C:/joyeer-tests",
+                static_cast<uint64_t>(source->content.size()),
+                source->lineStarts,
+            })
+            : std::nullopt;
+        const auto lowering = joyeer::lowering::Lowerer().lower(
+            checking.model,
+            "test.joyeer",
+            sourceInfo);
         ASSERT_TRUE(lowering.succeeded()) << joyeer::lowering::dump(lowering.diagnostics);
         result = joyeer::llvmbackend::Emitter().emit(*lowering.module);
     }
@@ -46,6 +58,20 @@ protected:
     SourceFile::Ptr source;
     joyeer::llvmbackend::Result result;
 };
+
+TEST_F(LLVMBackendTest, SourceLocationTransportDoesNotChangeLLVMWithoutDebugEmission) {
+    const std::string text = R"JOYEER(func run() {
+print(value: 42)
+}
+)JOYEER";
+    emit(text);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    const auto withoutLocations = result.text;
+
+    emit(text, true);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_EQ(result.text, withoutLocations);
+}
 
 TEST_F(LLVMBackendTest, EmitsPrimitiveFunctionsStackSlotsCallsAndControlFlow) {
     emit(R"JOYEER(func add(left: Int, right: Int): Int {

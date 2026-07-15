@@ -21,6 +21,30 @@
 
 namespace {
 
+std::string pathUtf8(const std::filesystem::path& path) {
+    const auto encoded = path.generic_u8string();
+    return std::string(
+            reinterpret_cast<const char*>(encoded.data()),
+            encoded.size());
+}
+
+joyeer::ir::SourceInfo sourceInfoFor(const SourceFile::Ptr& sourcefile) {
+    std::error_code error;
+    auto sourcePath = std::filesystem::absolute(
+            sourcefile->getAbstractPath(),
+            error);
+    if (error) {
+        sourcePath = sourcefile->getAbstractPath();
+    }
+    sourcePath = sourcePath.lexically_normal();
+    return joyeer::ir::SourceInfo {
+        pathUtf8(sourcePath.filename()),
+        pathUtf8(sourcePath.parent_path()),
+        static_cast<uint64_t>(sourcefile->content.size()),
+        sourcefile->lineStarts,
+    };
+}
+
 void reportSpannedDiagnostic(
     Diagnostics* diagnostics,
     const SourceFile::Ptr& sourcefile,
@@ -58,14 +82,16 @@ CompilerService::CompilerService(Diagnostics* diagnostics, CommandLineArguments:
     this->diagnostics = diagnostics;
 }
 
-ModuleClass* CompilerService::compile(const std::string& inputFile) {
+ModuleClass* CompilerService::compile(const std::filesystem::path& inputFile) {
     auto sourcefile = findSourceFile(inputFile);
     lastCompiledSourceFile = sourcefile;
     return compile(sourcefile);
 }
 
-SourceFile::Ptr CompilerService::findSourceFile(const std::string &path, const std::string& relativeFolder) {
-    auto sourcefile = std::filesystem::path(path);
+SourceFile::Ptr CompilerService::findSourceFile(
+        const std::filesystem::path& path,
+        const std::filesystem::path& relativeFolder) {
+    auto sourcefile = path;
     if(sourcefile.is_relative()) {
         // check the relative folder
         auto target = std::filesystem::path(relativeFolder) / path;
@@ -74,11 +100,12 @@ SourceFile::Ptr CompilerService::findSourceFile(const std::string &path, const s
         }
     }
 
-    auto sourcefilePath = sourcefile.string();
+    std::error_code error;
+    auto sourcefilePath = std::filesystem::absolute(sourcefile, error);
+    if (error) sourcefilePath = sourcefile;
+    sourcefilePath = sourcefilePath.lexically_normal();
     if(sourceFiles.find(sourcefilePath) == sourceFiles.end()) {
-
-        std::string folder = options->workingDirectory.string();
-        auto sf = std::make_shared<SourceFile>(folder, sourcefilePath);
+        auto sf = std::make_shared<SourceFile>(options->workingDirectory, sourcefilePath);
         sourceFiles.insert({sourcefilePath, sf});
     }
 
@@ -90,6 +117,17 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
     auto context= std::make_shared<CompileContext>(diagnostics, globalSymbols);
     context->sourcefile = sourcefile;
     context->compiler = this;
+
+    if (!sourcefile->loaded()) {
+        const auto tooLarge = sourcefile->loadingError() == SourceFile::LoadError::sourceTooLarge;
+        diagnostics->reportDiagnostic(
+                ErrorLevel::failure,
+                tooLarge ? "lexer.source-too-large" : "source-file.read-failed",
+                tooLarge
+                        ? Diagnostics::errorSourceTooLarge
+                        : "cannot read source file '" + sourcefile->getLocation() + "'");
+        return nullptr;
+    }
 
     // lex structure analyze
     const auto lexerProfile = options->languageMode == LanguageMode::v0_1
@@ -174,7 +212,8 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
 
         const auto lowering = joyeer::lowering::Lowerer().lower(
                 checking.model,
-                sourcefile->getLocation());
+            sourcefile->getLocation(),
+            sourceInfoFor(sourcefile));
         sourcefile->joyeerIR = lowering.module;
         for (const auto& diagnostic : lowering.diagnostics) {
             reportSpannedDiagnostic(

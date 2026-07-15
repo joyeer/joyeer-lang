@@ -78,6 +78,7 @@ struct Diagnostics {
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidNumericSuffix,                        "Invalid suffix on decimal integer literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidSourceCharacter,                      "Invalid source character '%s'")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedSyntax,                           "Syntax '%s' is not supported in the JSON-parser MVP")
+    DIAGNOSTICS_ERROR_MESSAGE(errorSourceTooLarge,                              "Source file exceeds the 32-bit source-location limit")
 
     /**
      * Syntax errors

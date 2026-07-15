@@ -5,6 +5,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace {
@@ -54,6 +55,9 @@ const char* lexerDiagnosticCode(const char* error) {
     if (std::strcmp(error, Diagnostics::errorUnsupportedSyntax) == 0) {
         return "lexer.unsupported-syntax";
     }
+    if (std::strcmp(error, Diagnostics::errorSourceTooLarge) == 0) {
+        return "lexer.source-too-large";
+    }
     return "lexer.invalid-source";
 }
 
@@ -76,6 +80,11 @@ void LexParser::parse(const SourceFile::Ptr& sourceFile) {
     tokenLine = 0;
     tokenColumn = 0;
     nextTokenStartsLine = true;
+
+    if (sourcefile->content.size() > std::numeric_limits<uint32_t>::max()) {
+        report(0, 0, Diagnostics::errorSourceTooLarge);
+        return;
+    }
 
     while (true) {
         skipTrivia();

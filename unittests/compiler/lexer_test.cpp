@@ -5,7 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <string>
@@ -35,6 +38,34 @@ protected:
     Diagnostics diagnostics;
     SourceFile::Ptr source;
 };
+
+TEST(SourceFileTest, PreservesCrLfBytesFromDisk) {
+    const auto unique = std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto directory = std::filesystem::temp_directory_path();
+    const auto path = directory / ("joyeer-sourcefile-crlf-" + unique + ".joyeer");
+    {
+        std::ofstream output(path, std::ios::binary);
+        ASSERT_TRUE(output.good());
+        output << "let first = 1\r\nlet second = 2\r\n";
+    }
+
+    const auto source = std::make_shared<SourceFile>(directory.string(), path.string());
+    ASSERT_TRUE(source->loaded());
+    EXPECT_EQ(source->content, "let first = 1\r\nlet second = 2\r\n");
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    EXPECT_FALSE(error);
+}
+
+TEST(SourceFileTest, RejectsDirectoriesAsSourceFiles) {
+    const auto directory = std::filesystem::temp_directory_path();
+    const auto source = std::make_shared<SourceFile>(directory, directory);
+
+    EXPECT_FALSE(source->loaded());
+    EXPECT_EQ(source->loadingError(), SourceFile::LoadError::notRegularFile);
+    EXPECT_TRUE(source->content.empty());
+}
 
 TEST_F(LexerTest, EmptySourceProducesOneEof) {
     lex("");

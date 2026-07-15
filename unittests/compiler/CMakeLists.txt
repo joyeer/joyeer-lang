@@ -472,6 +472,17 @@ set_tests_properties(DiagnosticsCliSuggestsEmptyPayloadDeletion PROPERTIES
         LABELS "diagnostics;parser;fix-it"
 )
 
+add_test(NAME SourceFileCliRejectsDirectory
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}
+                -DEXPECTED_PATTERN=source-file.read-failed
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(SourceFileCliRejectsDirectory PROPERTIES
+        LABELS "diagnostics;lexer"
+)
+
 add_test(NAME SemanticAnalysisCliRejectsMissingReturn
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

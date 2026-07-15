@@ -30,7 +30,21 @@ The module owns:
 - user enum and instantiated `Optional<T>` / `Result<T,E>` case definitions;
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
-  source-spanned instructions.
+  source-spanned instructions;
+- an optional immutable source map (file name, directory, byte length, and
+  UTF-8 byte offsets for line starts) plus function/instruction debug
+  locations.
+
+Debug locations are optional so hand-built/backend-only modules remain valid
+without source metadata and byte offset zero remains distinguishable from no
+location. Compiler-generated parameter plumbing and ownership cleanup retain a
+source anchor but are marked implicit, allowing a backend to avoid misleading
+source-level stepping stops.
+
+Source-map offsets index the exact binary-preserved `SourceFile::content`
+buffer. File name and directory are stored as UTF-8 strings; spans and line
+starts remain 32-bit, so the verifier rejects larger source maps before a
+backend can observe truncated coordinates.
 
 Values and addresses are different `ValueCategory` values. Mutable local
 storage uses `alloc_stack`, `load`, and `store`. Ordinary parameters enter by
@@ -130,6 +144,8 @@ tests without reconstructing source semantics.
   mismatches;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - malformed recursive patterns;
+- malformed source maps, out-of-bounds debug spans, or locations without a
+  module source map;
 - blocks without terminators or instructions after a terminator.
 
 Lowering returns an `ir-lowering.verification-failed` diagnostic if generated
@@ -158,6 +174,7 @@ The current IR/native pipeline intentionally leaves these to later commits:
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
   backend's explicit Clang optimization level;
-- source-level debug information.
+- LLVM line-table emission, debug artifact policy, lexical scopes, and variable
+  inspection (the backend-neutral source-location transport is complete).
 
 None of those should be implemented by extending the compatibility VM lane.

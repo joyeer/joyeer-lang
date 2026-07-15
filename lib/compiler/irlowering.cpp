@@ -13,11 +13,15 @@ namespace {
 
 class Builder {
 public:
-    Result build(const typing::TypeCheckedModel::Ptr& checkedModel, std::string sourceName) {
+    Result build(
+            const typing::TypeCheckedModel::Ptr& checkedModel,
+            std::string sourceName,
+            std::optional<ir::SourceInfo> sourceInfo) {
         assert(checkedModel != nullptr);
         model = checkedModel;
         module = std::make_shared<ir::Module>();
         module->sourceName = std::move(sourceName);
+        module->sourceInfo = std::move(sourceInfo);
 
         snapshotTypes();
         collectAggregateDefinitions();
@@ -139,8 +143,9 @@ private:
             ir::Value value,
             ir::Value address,
             SourceSpan span,
-            std::optional<semantic::SymbolId> symbol = std::nullopt) {
-        auto instruction = makeInstruction(ir::Opcode::store, span);
+            std::optional<semantic::SymbolId> symbol = std::nullopt,
+            bool implicitCode = false) {
+        auto instruction = makeInstruction(ir::Opcode::store, span, implicitCode);
         instruction.operands = { value.id, address.id };
         instruction.symbol = symbol;
         emit(std::move(instruction));
@@ -148,7 +153,7 @@ private:
 
     void emitDestroyStorage(ir::Value address, SourceSpan span) {
         if (!requiresDestroy(address.type)) return;
-        auto instruction = makeInstruction(ir::Opcode::destroy, span);
+        auto instruction = makeInstruction(ir::Opcode::destroy, span, true);
         instruction.operands = { address.id };
         emit(std::move(instruction));
     }
@@ -159,8 +164,10 @@ private:
                 value.type,
                 ir::ValueCategory::address,
                 {},
-                span);
-        emitRawStore(value, address, span);
+            span,
+            std::nullopt,
+            true);
+        emitRawStore(value, address, span, std::nullopt, true);
         emitDestroyStorage(address, span);
     }
 
@@ -453,6 +460,9 @@ private:
         function.symbol = symbol;
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
+        if (module->sourceInfo.has_value()) {
+            function.debugLocation = ir::DebugLocation { declaration->span, false };
+        }
         function.resultType = signature->result;
         function.returnsValue = signature->result != model->types().voidType() &&
                 signature->result != model->types().neverType();
@@ -540,8 +550,14 @@ private:
                     ir::ValueCategory::address,
                     {},
                     parameter.span,
-                    parameter.symbol);
-            emitRawStore(parameter.value, address, parameter.span, parameter.symbol);
+                    parameter.symbol,
+                    true);
+                emitRawStore(
+                    parameter.value,
+                    address,
+                    parameter.span,
+                    parameter.symbol,
+                    true);
             if (parameter.symbol.has_value()) slots[*parameter.symbol] = address;
             if (parameter.isConsuming) registerOwnedStorage(address);
         }
@@ -1801,8 +1817,9 @@ private:
             ir::ValueCategory category,
             std::vector<ir::ValueId> operands,
             SourceSpan span,
-            std::optional<semantic::SymbolId> symbol = std::nullopt) {
-        auto instruction = makeInstruction(opcode, span);
+            std::optional<semantic::SymbolId> symbol = std::nullopt,
+            bool implicitCode = false) {
+        auto instruction = makeInstruction(opcode, span, implicitCode);
         instruction.result = makeValue(type, category);
         instruction.operands = std::move(operands);
         instruction.symbol = symbol;
@@ -1886,9 +1903,15 @@ private:
         emit(std::move(instruction));
     }
 
-    ir::Instruction makeInstruction(ir::Opcode opcode, SourceSpan span) const {
+    ir::Instruction makeInstruction(
+            ir::Opcode opcode,
+            SourceSpan span,
+            bool implicitCode = false) const {
         auto instruction = ir::Instruction { opcode };
         instruction.span = span;
+        if (module->sourceInfo.has_value()) {
+            instruction.debugLocation = ir::DebugLocation { span, implicitCode };
+        }
         return instruction;
     }
 
@@ -1958,8 +1981,9 @@ private:
 
 Result Lowerer::lower(
         const typing::TypeCheckedModel::Ptr& model,
-        std::string sourceName) const {
-    return Builder().build(model, std::move(sourceName));
+        std::string sourceName,
+        std::optional<ir::SourceInfo> sourceInfo) const {
+    return Builder().build(model, std::move(sourceName), std::move(sourceInfo));
 }
 
 const char* diagnosticName(DiagnosticId id) {

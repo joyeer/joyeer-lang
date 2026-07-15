@@ -12,7 +12,7 @@ public:
     void bootstrap();
 
     // return the entry file module
-    ModuleClass* compile(const std::string& inputFile);
+    ModuleClass* compile(const std::filesystem::path& inputFile);
 
     [[nodiscard]] const SourceFile::Ptr& getLastCompiledSourceFile() const {
         return lastCompiledSourceFile;
@@ -45,10 +45,12 @@ private:
     // Compile an SourceFile
     ModuleClass* compile(const SourceFile::Ptr& sourcefile);
 
-    SourceFile::Ptr findSourceFile(const std::string& path, const std::string& relativeFolder = "");
+        SourceFile::Ptr findSourceFile(
+            const std::filesystem::path& path,
+            const std::filesystem::path& relativeFolder = {});
 
     CommandLineArguments::Ptr options;
-    std::unordered_map<std::string, SourceFile::Ptr> sourceFiles;
+    std::unordered_map<std::filesystem::path, SourceFile::Ptr> sourceFiles;
     SourceFile::Ptr lastCompiledSourceFile;
     
     // global symbols

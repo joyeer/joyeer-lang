@@ -506,13 +506,17 @@ std::vector<uint32_t> lineStarts; // starts with 0
 Rules:
 
 - internal offsets and lengths are zero-based byte counts;
+- disk sources are read in binary mode, so LF, CR, and CRLF bytes are preserved
+  exactly in the immutable source buffer;
 - `Token::lineNumber` and `Token::columnAt` currently remain zero-based for
   compatibility; structured v0.1 diagnostics display them one-based;
 - CRLF adds one line start after both bytes;
 - token location is always its **first** byte, never its length;
 - `startsLine` is true for the first token and whenever skipped trivia
   contains at least one line break;
-- source files and token spans use at least 32-bit fields, not `uint16_t`;
+- source files are limited to `UINT32_MAX` bytes by the current span model;
+  larger inputs fail with `lexer.source-too-large` instead of truncating
+  locations;
 - line/column derivation is centralized instead of recomputed inconsistently by
   individual scanner functions.
 

@@ -196,6 +196,102 @@ VerificationResult Verifier::verify(const Module& module) const {
         });
     };
 
+    if (module.sourceInfo.has_value()) {
+        const auto& source = *module.sourceInfo;
+        if (source.byteLength > std::numeric_limits<uint32_t>::max()) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "source byte length exceeds the 32-bit SourceSpan limit");
+        }
+        if (source.fileName.empty()) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "source info requires a file name");
+        }
+        if (source.lineStarts.empty() || source.lineStarts.front() != 0) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "source line starts must begin with byte offset 0");
+        }
+        for (size_t index = 0; index < source.lineStarts.size(); ++index) {
+            if (source.lineStarts[index] > source.byteLength) {
+                report(
+                        VerificationErrorId::invalidSourceLocation,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                        "source line start exceeds the source byte length");
+                break;
+            }
+            if (index > 0 && source.lineStarts[index - 1] >= source.lineStarts[index]) {
+                report(
+                        VerificationErrorId::invalidSourceLocation,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                        "source line starts must be strictly increasing");
+                break;
+            }
+        }
+    } else {
+        const auto hasDebugLocations = std::any_of(
+                module.functions.begin(),
+                module.functions.end(),
+                [](const auto& function) {
+                    if (function.debugLocation.has_value()) return true;
+                    return std::any_of(
+                            function.blocks.begin(),
+                            function.blocks.end(),
+                            [](const auto& block) {
+                                return std::any_of(
+                                        block.instructions.begin(),
+                                        block.instructions.end(),
+                                        [](const auto& instruction) {
+                                            return instruction.debugLocation.has_value();
+                                        });
+                            });
+                });
+        if (hasDebugLocations) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "module has debug locations but no source info");
+        }
+    }
+
+    auto verifyDebugLocation = [&module, &report](
+            const DebugLocation& location,
+            std::optional<FunctionId> function,
+            std::optional<BlockId> block,
+            std::optional<size_t> instruction,
+            const std::string& owner) {
+        if (!module.sourceInfo.has_value()) {
+            return;
+        }
+        const auto& source = *module.sourceInfo;
+        const auto end = static_cast<uint64_t>(location.span.offset) +
+                static_cast<uint64_t>(location.span.length);
+        if (location.span.offset > source.byteLength || end > source.byteLength) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    function,
+                    block,
+                    instruction,
+                    owner + " debug span exceeds the source byte length");
+        }
+    };
+
     std::unordered_map<TypeId, const TypeName*> types;
     for (const auto& type : module.types) {
         if (!types.emplace(type.id, &type).second) {
@@ -332,6 +428,14 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     for (const auto& function : module.functions) {
         const auto functionId = std::optional<FunctionId>(function.id);
+        if (function.debugLocation.has_value()) {
+            verifyDebugLocation(
+                    *function.debugLocation,
+                    functionId,
+                    std::nullopt,
+                    std::nullopt,
+                    "function '" + function.name + "'");
+        }
         if (!types.contains(function.resultType)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -419,6 +523,14 @@ VerificationResult Verifier::verify(const Module& module) const {
             }
             for (size_t index = 0; index < block.instructions.size(); ++index) {
                 const auto& instruction = block.instructions[index];
+                if (instruction.debugLocation.has_value()) {
+                    verifyDebugLocation(
+                            *instruction.debugLocation,
+                            functionId,
+                            block.id,
+                            index,
+                            std::string(opcodeName(instruction.opcode)) + " instruction");
+                }
                 if (!instruction.result.has_value()) continue;
                 if (!types.contains(instruction.result->type)) {
                     report(
@@ -1206,6 +1318,7 @@ const char* verificationErrorName(VerificationErrorId id) {
             return "ir.instruction-after-terminator";
         case VerificationErrorId::typeMismatch: return "ir.type-mismatch";
         case VerificationErrorId::callMismatch: return "ir.call-mismatch";
+        case VerificationErrorId::invalidSourceLocation: return "ir.invalid-source-location";
     }
     return "ir.unknown";
 }

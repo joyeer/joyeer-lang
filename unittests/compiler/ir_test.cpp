@@ -87,6 +87,61 @@ TEST(IRModelTest, VerifiesAndDumpsAWellFormedFunctionDeterministically) {
 )IR");
 }
 
+TEST(IRModelTest, VerifiesSourceMapsAndDebugLocations) {
+    auto module = validAddModule();
+    module.sourceInfo = SourceInfo {
+        "manual.joyeer",
+        "C:/source",
+        24,
+        { 0, 10, 20 },
+    };
+    module.functions[0].debugLocation = DebugLocation { SourceSpan { 0, 24 }, false };
+    for (auto& instruction : module.functions[0].blocks[0].instructions) {
+        instruction.debugLocation = DebugLocation { instruction.span, false };
+    }
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(verification.succeeded()) << dump(verification);
+}
+
+TEST(IRModelTest, RejectsMalformedSourceMapsAndOutOfBoundsDebugLocations) {
+    auto module = validAddModule();
+    module.sourceInfo = SourceInfo {
+        "manual.joyeer",
+        "C:/source",
+        24,
+        { 1, 20, 20 },
+    };
+    module.functions[0].debugLocation = DebugLocation { SourceSpan { 23, 2 }, false };
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidSourceLocation));
+}
+
+TEST(IRModelTest, RejectsDebugLocationsWithoutSourceInfo) {
+    auto module = validAddModule();
+    module.functions[0].debugLocation = DebugLocation { SourceSpan { 0, 1 }, false };
+    module.functions[0].blocks[0].instructions[0].debugLocation =
+            DebugLocation { SourceSpan { 10, 3 }, false };
+
+    const auto verification = Verifier().verify(module);
+    ASSERT_EQ(verification.errors.size(), 1u) << dump(verification);
+    EXPECT_EQ(verification.errors[0].id, VerificationErrorId::invalidSourceLocation);
+}
+
+TEST(IRModelTest, RejectsSourcesBeyondTheSourceSpanCapacity) {
+    auto module = validAddModule();
+    module.sourceInfo = SourceInfo {
+        "manual.joyeer",
+        "C:/source",
+        static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1,
+        { 0 },
+    };
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidSourceLocation));
+}
+
 TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {
     auto module = validAddModule();
     auto& function = module.functions[0];

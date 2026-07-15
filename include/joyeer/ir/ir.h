@@ -104,6 +104,18 @@ struct SwitchCase {
     BlockId target = invalidBlockId;
 };
 
+struct DebugLocation {
+    SourceSpan span;
+    bool implicitCode = false;
+};
+
+struct SourceInfo {
+    std::string fileName;
+    std::string directory;
+    uint64_t byteLength = 0;
+    std::vector<uint32_t> lineStarts;
+};
+
 struct Instruction {
     Opcode opcode;
     std::optional<Value> result;
@@ -115,6 +127,7 @@ struct Instruction {
     std::string text;
     SourceSpan span;
     std::vector<SwitchCase> switchCases;
+    std::optional<DebugLocation> debugLocation;
 };
 
 struct BasicBlock {
@@ -144,6 +157,7 @@ struct Function {
     bool isExternal = false;
     BlockId entry = invalidBlockId;
     std::vector<BasicBlock> blocks;
+    std::optional<DebugLocation> debugLocation;
 };
 
 struct TypeName {
@@ -187,6 +201,7 @@ struct Module {
     std::vector<StructureDefinition> structures;
     std::vector<EnumerationDefinition> enumerations;
     std::vector<Function> functions;
+    std::optional<SourceInfo> sourceInfo;
 };
 
 enum class VerificationErrorId {
@@ -197,6 +212,7 @@ enum class VerificationErrorId {
     instructionAfterTerminator,
     typeMismatch,
     callMismatch,
+    invalidSourceLocation,
 };
 
 struct VerificationError {
