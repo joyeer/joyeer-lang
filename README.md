@@ -33,8 +33,8 @@ The native lane is still experimental. The current heap-backed values have
 recursive clone/destroy support, deterministic scope and early-return cleanup,
 and a native-entry allocation-balance check. Whole-binding `consuming`
 parameters and mandatory `consume` markers work; explicit
-borrowing/initializing, full exclusivity, debug information, and a complete
-standard library remain, so this is not a production release.
+`borrowing` also works. `initializing`, full exclusivity, debug information,
+and a complete standard library remain, so this is not a production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions

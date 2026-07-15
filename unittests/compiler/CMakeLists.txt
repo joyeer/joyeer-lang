@@ -300,7 +300,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/consuming.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-consuming${CMAKE_EXECUTABLE_SUFFIX}
-                    -DEXPECTED_OUTPUT=first!\nsecond\ntemporary!\nforwarded!\n2\nreinitialized\n
+                    -DEXPECTED_OUTPUT=first!\nsecond\nsecond\ntemporary!\nforwarded!\n2\nreinitialized\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableConsuming PROPERTIES

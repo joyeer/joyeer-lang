@@ -35,7 +35,7 @@ The Parser MVP deliberately does **not** implement:
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
 - `class`, `for-in`, imports, extensions, explicit `init` / `deinit`, methods,
   subscript declarations, visibility, or user-defined generics;
-- explicit `borrowing`, `initializing`, `mutating`, `indirect`,
+- `initializing`, `mutating`, `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
@@ -143,7 +143,7 @@ binding_kind       ::= 'let' | 'var'
 func_decl          ::= 'func' identifier parameter_clause
                        [ ':' type ] block
 parameter_clause   ::= '(' [ parameter ( ',' parameter )* ','? ] ')'
-parameter          ::= identifier [ identifier ] ':' [ 'inout' | 'consuming' ] type
+parameter          ::= identifier [ identifier ] ':' [ 'borrowing' | 'inout' | 'consuming' ] type
 
 struct_decl        ::= 'struct' identifier '{' struct_field* '}'
 struct_field       ::= binding_kind identifier ':' type
@@ -164,9 +164,9 @@ Rules and intentional restrictions:
 2. A function parameter always has an external label. With one identifier it
    is also the local name; `from source: String` uses `from` externally and
    `source` in the body.
-3. `inout` and `consuming` are explicit access effects in the Parser MVP;
-  borrowing is the implicit default. Calls must spell `&` or `consume`
-  respectively.
+3. `borrowing`, `inout`, and `consuming` are access effects in the Parser MVP;
+  borrowing is also the implicit default. Calls spell `&` or `consume` for
+  inout/consuming respectively; borrowing has no marker.
 4. A Parser MVP `struct` contains stored fields only. Explicit initializers,
    methods, and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.

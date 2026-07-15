@@ -613,6 +613,27 @@ return moved
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, KeepsExplicitBorrowingParametersAsNonOwningValues) {
+    lower(R"JOYEER(func inspect(value: borrowing String) {
+print(value: value)
+}
+func run() {
+let text = "retained"
+inspect(value: text)
+print(value: text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& inspect = function("inspect");
+    ASSERT_EQ(inspect.parameters.size(), 1u);
+    EXPECT_FALSE(inspect.parameters[0].isMutable);
+    EXPECT_FALSE(inspect.parameters[0].isConsuming);
+    EXPECT_EQ(opcodeCount(inspect, joyeer::ir::Opcode::destroy), 0u);
+}
+
 TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
     lower(R"JOYEER(func square(value: Int): Int { value * value }
 func text(): String { "left" + "right" }

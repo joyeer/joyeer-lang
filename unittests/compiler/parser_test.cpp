@@ -219,6 +219,21 @@ take(value: consume text)
     EXPECT_EQ(call->arguments[0]->accessMarker->kind, kwConsume);
 }
 
+TEST_F(ParserTest, ParsesExplicitBorrowingParameters) {
+        parse(R"JOYEER(func inspect(value: borrowing String) { print(value: value) }
+)JOYEER");
+
+        ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                        result.root->items[0]);
+        ASSERT_EQ(function->parameters.size(), 1u);
+        EXPECT_EQ(
+                        function->parameters[0]->accessEffect(),
+                        joyeer::syntax::AccessEffect::borrowing);
+        ASSERT_NE(function->parameters[0]->accessKeyword, nullptr);
+        EXPECT_EQ(function->parameters[0]->accessKeyword->kind, kwBorrowing);
+}
+
 TEST_F(ParserTest, ParsesArraysAndDictionariesWithTrailingCommas) {
     parse(R"JOYEER(let array = [1, 2, 3,]
 let dictionary = ["one": 1, "two": 2,]

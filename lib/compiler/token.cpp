@@ -48,6 +48,7 @@ const std::string Keywords::RETURN = "return";
 const std::string Keywords::FILEIMPORT = "fileimport";
 const std::string Keywords::MATCH = "match";
 const std::string Keywords::INOUT = "inout";
+const std::string Keywords::BORROWING = "borrowing";
 const std::string Keywords::CONSUMING = "consuming";
 const std::string Keywords::CONSUME = "consume";
 
@@ -74,6 +75,7 @@ std::unordered_set<std::string> initKeywordMap() {
     map.insert(Keywords::FILEIMPORT);
     map.insert(Keywords::MATCH);
     map.insert(Keywords::INOUT);
+    map.insert(Keywords::BORROWING);
     map.insert(Keywords::CONSUMING);
     map.insert(Keywords::CONSUME);
 
@@ -105,6 +107,7 @@ TokenKind keywordKind(std::string_view value) {
     {"fileimport", kwFileImport},
     {"match", kwMatch},
     {"inout", kwInout},
+    {"borrowing", kwBorrowing},
     {"consuming", kwConsuming},
     {"consume", kwConsume},
   };
@@ -116,7 +119,7 @@ TokenKind keywordKind(std::string_view value) {
 bool isDeferredKeyword(std::string_view value) {
   static const std::unordered_set<std::string_view> words = {
     "extension", "subscript", "deinit", "typealias", "as", "indirect",
-    "borrowing", "initializing", "mutating",
+    "initializing", "mutating",
     "public", "internal", "private", "yield", "where",
     "async", "await", "actor", "throws", "catch", "defer", "break",
     "continue", "is", "protocol", "trait", "macro", "invariant",

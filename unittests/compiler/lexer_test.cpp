@@ -47,11 +47,11 @@ TEST_F(LexerTest, EmptySourceProducesOneEof) {
 }
 
 TEST_F(LexerTest, ClassifiesMvpKeywordsAndLiteralWords) {
-    lex("func struct enum let var if else while match return inout consuming consume true false nil");
+    lex("func struct enum let var if else while match return inout borrowing consuming consume true false nil");
 
     expectKinds({
         kwFunc, kwStruct, kwEnum, kwLet, kwVar, kwIf, kwElse, kwWhile,
-        kwMatch, kwReturn, kwInout, kwConsuming, kwConsume,
+        kwMatch, kwReturn, kwInout, kwBorrowing, kwConsuming, kwConsume,
         booleanLiteral, booleanLiteral, nilLiteral,
         endOfFile
     });

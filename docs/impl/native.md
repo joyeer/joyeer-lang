@@ -171,8 +171,8 @@ Unicode path API belongs to broader standard-library design.
 
 The native path is an MVP, not the final zero-cost implementation:
 
-- `consuming` parameters and mandatory `consume` markers are implemented for
-  owning locals, consuming parameters, and temporaries; explicit `borrowing`,
+- explicit `borrowing`, `consuming` parameters, and mandatory `consume` markers
+  are implemented for owning locals, consuming parameters, and temporaries;
   `initializing`, full exclusivity, and projection consumption remain;
 - allocation balance covers runtime-managed string/collection allocations,
   not arbitrary future unsafe/native allocations;

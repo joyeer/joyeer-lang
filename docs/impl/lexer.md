@@ -134,8 +134,8 @@ specification mentions them:
 - `public`, `internal`, `private`;
 - `for`, `in`;
 - `extension`, `subscript`, `init`, `deinit`;
-- `borrowing`, `initializing`, `mutating` (`consuming` / `consume` are now MVP
-  keywords);
+- `initializing`, `mutating` (`borrowing`, `consuming`, and `consume` are now
+  MVP keywords);
 - `yield`, `indirect`, `where`;
 - `import` and `as`;
 - all reserved future words.
@@ -703,7 +703,7 @@ layer for downstream code:
 | Token model | Explicit terminal kinds, `Invalid`, `DeferredKeyword`, wildcard, and absolute `SourceSpan` | Remove broad legacy categories and `rawValue` after parser migration |
 | Profiles | Default `legacy`; `jsonParserMvp` via `--lang=v0.1`; `--lang=v0.1-legacy` selects legacy explicitly | Decide when v0.1 becomes the default |
 | EOF/reset | Every scan resets cursor/output and appends exactly one EOF | Remove redundant parser end-iterator assumptions later |
-| Keywords/match | MVP/deferred classification plus `enum`, `match`, `inout`, `consuming`, `consume`, `_`, and `=>` | Explicit borrowing/initializing effects remain deferred |
+| Keywords/match | MVP/deferred classification plus `enum`, `match`, `borrowing`, `inout`, `consuming`, `consume`, `_`, and `=>` | Initializing effects remain deferred |
 | Literals | Decimal `Int`, fixed string escapes, strict byte literals; unsupported numeric forms recover as one token | Integrate byte literals into Joyeer IR; move typed conversion out of lexer |
 | Operators | Longest-match MVP terminals; deferred compound, shift, range, optional-chain, and coalescing forms recover as one invalid token | Add syntax only when a later milestone requires it |
 | Trivia | LF, CR, CRLF, line comments, and nested block comments update line starts | None for Phase L |

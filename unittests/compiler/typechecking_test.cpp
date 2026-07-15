@@ -878,6 +878,28 @@ let selected = if flag { 1 } else { "two" }
                             }));
                     }
 
+                        TEST_F(TypeCheckingTest, TreatsExplicitBorrowingAsTheDefaultEffect) {
+                            check(R"JOYEER(func inspect(value: borrowing String) {
+                        print(value: value)
+                        }
+                        func valid() {
+                        let text = "retained"
+                        inspect(value: text)
+                        print(value: text)
+                        }
+                        func invalid() {
+                        let text = "retained"
+                        inspect(value: &text)
+                        }
+                        )JOYEER");
+
+                            ASSERT_EQ(checking.diagnostics.size(), 1u)
+                                << joyeer::typing::dump(checking.diagnostics);
+                            EXPECT_EQ(
+                                checking.diagnostics[0].id,
+                                joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument);
+                        }
+
                     TEST_F(TypeCheckingTest, TypesMutatingArrayAppendFromTheReceiverElement) {
                         check(R"JOYEER(func build() {
                     var values: [String] = []

@@ -11,12 +11,17 @@ func forward(value: consuming String): String {
     return decorate(value: consume value)
 }
 
+func inspect(value: borrowing String) {
+    print(value: value)
+}
+
 func main() {
     var text = "first"
     let decorated = decorate(value: consume text)
     text = "second"
     print(value: decorated)
     print(value: text)
+    inspect(value: text)
 
     let temporary = decorate(value: consume ("temp" + "orary"))
     print(value: temporary)

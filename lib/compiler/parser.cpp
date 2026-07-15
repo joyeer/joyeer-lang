@@ -279,7 +279,7 @@ syntax::ParameterDeclSyntax::Ptr Parser::parseParameter() {
     }
     expect(colon, "':' after the parameter name");
     Token::Ptr accessKeyword;
-    if (cursor.at(kwInout) || cursor.at(kwConsuming)) {
+    if (cursor.at(kwInout) || cursor.at(kwBorrowing) || cursor.at(kwConsuming)) {
         accessKeyword = cursor.advance();
     }
     auto type = parseType();

@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add explicit `borrowing`/`initializing` and full exclusivity analysis;
-  whole-binding `consuming`/`consume` flow is implemented.
+1. Add `initializing` and full exclusivity analysis; explicit `borrowing` and
+  whole-binding `consuming`/`consume` are implemented.
 2. Add structured fix-it/help diagnostics; rich one-based source rendering is
   implemented for v0.1.
 3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.

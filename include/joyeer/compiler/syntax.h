@@ -239,6 +239,7 @@ struct ParameterDeclSyntax final : Node {
         if (accessKeyword == nullptr) return AccessEffect::borrowing;
         switch (accessKeyword->kind) {
             case kwInout: return AccessEffect::inout;
+            case kwBorrowing: return AccessEffect::borrowing;
             case kwConsuming: return AccessEffect::consuming;
             default: return AccessEffect::borrowing;
         }

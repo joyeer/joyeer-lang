@@ -149,7 +149,7 @@ The lowering suite includes the complete JSON-parser MVP fixture.
 
 The current IR/native pipeline intentionally leaves these to later commits:
 
-- explicit `borrowing`/`initializing` conventions, exclusivity analysis, and
+- `initializing` conventions, exclusivity analysis, and
   consuming member/subscript projections;
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;

@@ -47,6 +47,7 @@ enum TokenKind {
     kwFileImport,
     kwMatch,
     kwInout,
+    kwBorrowing,
     kwConsuming,
     kwConsume,
 
@@ -137,6 +138,7 @@ struct Keywords {
     static const std::string FILEIMPORT;
     static const std::string MATCH;
     static const std::string INOUT;
+    static const std::string BORROWING;
     static const std::string CONSUMING;
     static const std::string CONSUME;
     
