@@ -2,8 +2,9 @@
 
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
 > Clang validates it, generates machine code, and links native executables.
-> Deterministic cleanup works for the current heap-backed value surface; the
-> broader source-level ownership language remains experimental.
+> Deterministic cleanup and whole-binding `consuming` transfer work for the
+> current heap-backed value surface; the broader source-level ownership
+> language remains experimental.
 
 ---
 
@@ -170,9 +171,9 @@ Unicode path API belongs to broader standard-library design.
 
 The native path is an MVP, not the final zero-cost implementation:
 
-- `borrowing`, `consuming`, `initializing`, and explicit `consume` syntax are
-  not yet accepted by the v0.1 frontend; current ordinary value passing uses
-  copy-or-move lowering internally;
+- `consuming` parameters and mandatory `consume` markers are implemented for
+  owning locals, consuming parameters, and temporaries; explicit `borrowing`,
+  `initializing`, full exclusivity, and projection consumption remain;
 - allocation balance covers runtime-managed string/collection allocations,
   not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an

@@ -36,6 +36,9 @@ Values and addresses are different `ValueCategory` values. Mutable local
 storage uses `alloc_stack`, `load`, and `store`. Ordinary parameters enter by
 value and are copied to a local slot. `inout` parameters and arguments are
 addresses, preserving aliasing instead of silently copying them.
+`consuming` parameters enter by value but become owned local storage in the
+callee; its normal/early-return cleanup destroys them unless ownership moves
+onward.
 
 This is intentionally allocation-based rather than SSA. LLVM's `mem2reg` can
 promote eligible slots after lowering, while source variables retain simple
@@ -77,6 +80,12 @@ Early returns clean every active scope before transferring the result to the
 caller. A typed local declared without an initializer uses `zero_init` when its
 type requires destruction, making cleanup safe while Stage 5 rejects any
 source-level read before initialization.
+
+A `consume` argument backed by local storage emits `take`, which loads and
+zeroes the caller slot before the call. Owned temporaries move directly;
+borrowed nontrivial values are not valid consuming sources. The current MVP
+consumes whole local bindings or consuming parameters, not member/subscript
+projections.
 
 `array_append` consumes its element operand. Lowering moves an owned temporary
 or clones a borrowed nontrivial value before the instruction, so runtime
@@ -140,8 +149,8 @@ The lowering suite includes the complete JSON-parser MVP fixture.
 
 The current IR/native pipeline intentionally leaves these to later commits:
 
-- source-level `borrowing`/`consuming`/`initializing` conventions and
-  `consume` use-after-move analysis;
+- explicit `borrowing`/`initializing` conventions, exclusivity analysis, and
+  consuming member/subscript projections;
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native

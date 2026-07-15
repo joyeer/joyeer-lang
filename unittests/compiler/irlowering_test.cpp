@@ -584,6 +584,35 @@ print(value: value)
     EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 1u);
 }
 
+TEST_F(IRLoweringTest, TransfersConsumingArgumentsAndCleansCalleeOwnership) {
+    lower(R"JOYEER(func take(value: consuming String): String {
+&value = value + "!"
+return value
+}
+func run(): String {
+var text = "first"
+let moved = take(value: consume text)
+text = "second"
+print(value: text)
+return moved
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& take = function("take");
+    ASSERT_EQ(take.parameters.size(), 1u);
+    EXPECT_TRUE(take.parameters[0].isConsuming);
+    EXPECT_FALSE(take.parameters[0].isMutable);
+    EXPECT_GE(opcodeCount(take, joyeer::ir::Opcode::destroy), 1u);
+
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::take), 1u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
     lower(R"JOYEER(func square(value: Int): Int { value * value }
 func text(): String { "left" + "right" }

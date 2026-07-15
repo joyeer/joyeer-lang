@@ -28,6 +28,7 @@ LLVM, or native output.
 | `semantic-analysis.missing-return` | error | A non-`Void` function must terminate or produce an assignable trailing expression on every path. |
 | `semantic-analysis.unreachable-code` | warning | Statements following a terminating statement in the same block cannot execute. |
 | `semantic-analysis.use-before-initialization` | error | A local must be initialized on every continuing path before it is read, projected, subscripted, or passed `inout`. |
+| `semantic-analysis.use-after-consume` | error | A binding transferred with `consume` cannot be read or consumed again until direct assignment reinitializes it. |
 | `semantic-analysis.unused-binding` | warning | A local or pattern binding is never read; names beginning with `_` explicitly suppress this warning. |
 
 `let`/field immutability and `inout` access-marker checks remain type-checker
@@ -65,6 +66,12 @@ continuing paths. Terminated paths do not constrain the join. A loop body may
 execute zero times, so assignments made only in the body do not initialize a
 value after the loop.
 
+`consume` moves an owning local or consuming parameter into the callee and
+marks its source storage consumed. Branch joins retain consumed state if any
+continuing path consumed the binding. Loop analysis also validates the back
+edge, rejecting a value that would be consumed again on a later iteration.
+Direct assignment reinitializes consumed storage.
+
 Assignment to a plain local does not read its old value. Assignment through a
 member or subscript does read/project the base storage. The right-hand side and
 `inout` arguments are ordinary reads and therefore require prior
@@ -91,10 +98,9 @@ remain deterministic.
 ## 6. Remaining work
 
 This pass does not yet implement the complete ownership language from the
-specification. In particular, source-level `borrowing`, `consuming`,
-`initializing`, and `consume` flow states remain future work. Loop analysis has
-no fixed-point refinement because v0.1 has no `break` or `continue`, and the
-current conservative rule is sufficient for safety.
+specification. Explicit `borrowing`, `initializing`, and full exclusivity
+analysis remain future work. v0.1 has no `break` or `continue`, so the current
+loop-entry/back-edge rule is sufficient for consuming safety.
 
 Diagnostics use the shared [structured source renderer](diagnostics.md), with
 stable IDs, file names, one-based locations, source excerpts, and caret ranges.

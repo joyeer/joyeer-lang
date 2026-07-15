@@ -235,6 +235,66 @@ update(value: &number)
             2);
 }
 
+TEST_F(SemanticAnalysisTest, RejectsUseAndDoubleConsumeAfterOwnershipTransfer) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func invalid() {
+var text = "owned"
+take(value: consume text)
+print(value: text)
+take(value: consume text)
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_EQ(
+            std::count_if(
+                    result.diagnostics.begin(),
+                    result.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.id ==
+                                joyeer::analysis::DiagnosticId::useAfterConsume;
+                    }),
+            2);
+}
+
+TEST_F(SemanticAnalysisTest, AllowsAssignmentToReinitializeConsumedStorage) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func valid(): String {
+var text = "first"
+take(value: consume text)
+text = "second"
+return text
+}
+)JOYEER");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, MergesConsumedStateAcrossBranches) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func invalid(flag: Bool) {
+var text = "owned"
+if flag { take(value: consume text) }
+print(value: text)
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+}
+
+TEST_F(SemanticAnalysisTest, RejectsConsumptionAcrossLoopBackEdges) {
+    analyze(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func invalid(flag: Bool) {
+var text = "owned"
+while flag { take(value: consume text) }
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+}
+
 TEST_F(SemanticAnalysisTest, ReportsUnusedLocalBindingsAsWarnings) {
     analyze(R"JOYEER(func run() {
 let first = 1

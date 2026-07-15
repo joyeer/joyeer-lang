@@ -47,6 +47,8 @@ enum TokenKind {
     kwFileImport,
     kwMatch,
     kwInout,
+    kwConsuming,
+    kwConsume,
 
     leftCurly,
     rightCurly,
@@ -135,6 +137,8 @@ struct Keywords {
     static const std::string FILEIMPORT;
     static const std::string MATCH;
     static const std::string INOUT;
+    static const std::string CONSUMING;
+    static const std::string CONSUME;
     
     static const std::unordered_set<std::string> map;
 };

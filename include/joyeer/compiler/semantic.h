@@ -70,6 +70,7 @@ struct CallableParameter {
     std::optional<NodeId> declaration;
     std::optional<NodeId> typeSyntax;
     std::optional<SymbolId> type;
+    syntax::AccessEffect access = syntax::AccessEffect::borrowing;
 };
 
 struct CallableSignature {

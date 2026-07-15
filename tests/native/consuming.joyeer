@@ -1,0 +1,31 @@
+func decorate(value: consuming String): String {
+    &value = value + "!"
+    return value
+}
+
+func count(value: consuming [String]): Int {
+    return value.count
+}
+
+func forward(value: consuming String): String {
+    return decorate(value: consume value)
+}
+
+func main() {
+    var text = "first"
+    let decorated = decorate(value: consume text)
+    text = "second"
+    print(value: decorated)
+    print(value: text)
+
+    let temporary = decorate(value: consume ("temp" + "orary"))
+    print(value: temporary)
+
+    var forwarded = "forwarded"
+    print(value: forward(value: consume forwarded))
+
+    var values: [String] = ["left", "right"]
+    print(value: count(value: consume values))
+    values = ["reinitialized"]
+    print(value: values[0])
+}

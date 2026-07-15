@@ -93,6 +93,8 @@ The v0.1 checker currently validates:
   domains require a catch-all arm;
 - immutable bindings/fields and explicit `inout` access markers for assignment
   and calls;
+- `consuming` parameter signatures, mandatory `consume` call-site markers, and
+  owning-local/temporary source restrictions;
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
   on a mutable receiver;
 - mutable dictionary subscript insertion/update with concrete `K`/`V` checks

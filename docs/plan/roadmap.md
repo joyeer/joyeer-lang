@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
-  `consume` flow states.
+1. Add explicit `borrowing`/`initializing` and full exclusivity analysis;
+  whole-binding `consuming`/`consume` flow is implemented.
 2. Add structured fix-it/help diagnostics; rich one-based source rendering is
   implemented for v0.1.
 3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.
@@ -273,7 +273,8 @@ error: type mismatch
 
 - Extend the implemented value-semantics ownership model (see `memory.md`)
 - Keep deterministic clone/move/destroy lowering; no implicit ARC or GC
-- Add source-level `borrowing`, `consuming`, `initializing`, and `consume`
+- Extend whole-binding `consuming` with explicit `borrowing`, `initializing`,
+  projection consumption, and exclusivity
 
 ### Step 3.4 — Optional Types
 

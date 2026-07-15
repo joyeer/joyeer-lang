@@ -130,6 +130,7 @@ struct Parameter {
     bool isMutable = false;
     SourceSpan span;
     bool acceptsAnyType = false;
+    bool isConsuming = false;
 };
 
 struct Function {

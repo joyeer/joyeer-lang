@@ -242,6 +242,7 @@ private:
 
 struct InitializationState {
     std::unordered_set<semantic::SymbolId> initialized;
+    std::unordered_set<semantic::SymbolId> consumed;
     bool reachable = true;
 };
 
@@ -298,6 +299,7 @@ private:
                 if (state.reachable && declaration->initializer != nullptr &&
                     symbol.has_value()) {
                     state.initialized.insert(*symbol);
+                    state.consumed.erase(*symbol);
                 }
                 continue;
             }
@@ -313,7 +315,10 @@ private:
                 analyzeExpression(std::static_pointer_cast<syntax::ExprSyntax>(item), state);
             }
         }
-        for (const auto symbol : locals) state.initialized.erase(symbol);
+        for (const auto symbol : locals) {
+            state.initialized.erase(symbol);
+            state.consumed.erase(symbol);
+        }
     }
 
     void analyzeWhile(
@@ -324,6 +329,24 @@ private:
         const auto afterCondition = state;
         auto bodyState = afterCondition;
         analyzeBlock(statement->body, bodyState);
+        if (bodyState.reachable) {
+            for (const auto symbol : afterCondition.initialized) {
+                if (!bodyState.initialized.contains(symbol) &&
+                    bodyState.consumed.contains(symbol)) {
+                    const auto* declaration = model->semanticModel()->symbol(symbol);
+                    diagnostics.push_back(Diagnostic {
+                        DiagnosticId::useAfterConsume,
+                        Severity::error,
+                        statement->span,
+                        "binding '" +
+                                (declaration == nullptr
+                                        ? std::string()
+                                        : declaration->name) +
+                                "' may already be consumed on the next loop iteration",
+                    });
+                }
+            }
+        }
         state = afterCondition;
     }
 
@@ -367,7 +390,12 @@ private:
                 const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
                 analyzeExpression(call->callee, state);
                 for (const auto& argument : call->arguments) {
-                    analyzeExpression(argument->value, state);
+                    if (argument->accessMarker != nullptr &&
+                        argument->accessMarker->kind == kwConsume) {
+                        analyzeConsume(argument->value, state);
+                    } else {
+                        analyzeExpression(argument->value, state);
+                    }
                 }
                 break;
             }
@@ -435,14 +463,45 @@ private:
             return;
         }
         const auto* declaration = model->semanticModel()->symbol(*symbol);
+        const auto consumed = state.consumed.contains(*symbol);
         diagnostics.push_back(Diagnostic {
-            DiagnosticId::useBeforeInitialization,
+            consumed
+                    ? DiagnosticId::useAfterConsume
+                    : DiagnosticId::useBeforeInitialization,
             Severity::error,
             expression->span,
             "binding '" +
                     (declaration == nullptr ? std::string() : declaration->name) +
-                    "' is used before being initialized",
+                    (consumed
+                            ? "' is used after its ownership was consumed"
+                            : "' is used before being initialized"),
         });
+    }
+
+    void analyzeConsume(
+            const syntax::ExprPtr& expression,
+            InitializationState& state) {
+        if (expression == nullptr || !state.reachable) return;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            analyzeConsume(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                            ->expression,
+                    state);
+            return;
+        }
+        if (expression->kind != syntax::Kind::nameExpr) {
+            analyzeExpression(expression, state);
+            return;
+        }
+        const auto name = std::static_pointer_cast<syntax::NameExprSyntax>(expression);
+        const auto symbol = model->referencedSymbol(name);
+        analyzeName(name, state);
+        if (!symbol.has_value() || !tracked.contains(*symbol) ||
+            !state.initialized.contains(*symbol)) {
+            return;
+        }
+        state.initialized.erase(*symbol);
+        state.consumed.insert(*symbol);
     }
 
     void analyzeBinary(
@@ -468,6 +527,7 @@ private:
         analyzeExpression(expression->value, state);
         if (state.reachable && assigned.has_value() && tracked.contains(*assigned)) {
             state.initialized.insert(*assigned);
+            state.consumed.erase(*assigned);
         }
     }
 
@@ -565,6 +625,7 @@ private:
             if (symbol.has_value()) {
                 tracked.insert(*symbol);
                 state.initialized.insert(*symbol);
+                state.consumed.erase(*symbol);
                 bindings.push_back(*symbol);
             }
             return;
@@ -593,7 +654,9 @@ private:
                     ++symbol;
                 }
             }
+            result.consumed.insert(path.consumed.begin(), path.consumed.end());
         }
+        for (const auto symbol : result.initialized) result.consumed.erase(symbol);
         return result;
     }
 
@@ -900,6 +963,8 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::unreachableCode: return "semantic-analysis.unreachable-code";
         case DiagnosticId::useBeforeInitialization:
             return "semantic-analysis.use-before-initialization";
+        case DiagnosticId::useAfterConsume:
+            return "semantic-analysis.use-after-consume";
         case DiagnosticId::unusedBinding: return "semantic-analysis.unused-binding";
     }
     return "semantic-analysis.unknown";

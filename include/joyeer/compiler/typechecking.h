@@ -140,6 +140,7 @@ enum class TypeCheckingDiagnosticId {
     assignmentToImmutable,
     invalidAccessMarker,
     invalidInoutArgument,
+    invalidConsumeArgument,
     notCallable,
     unresolvedReference,
 };

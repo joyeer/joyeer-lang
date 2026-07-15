@@ -101,7 +101,7 @@ enum JsonError { UnexpectedEof, Unexpected(UInt8, at: Int), }
     ASSERT_EQ(function->parameters.size(), 2u);
     EXPECT_EQ(function->parameters[0]->label->rawValue, "p");
     EXPECT_EQ(function->parameters[0]->name->rawValue, "p");
-    ASSERT_NE(function->parameters[0]->inoutKeyword, nullptr);
+        ASSERT_NE(function->parameters[0]->accessKeyword, nullptr);
     EXPECT_EQ(function->parameters[1]->label->rawValue, "from");
     EXPECT_EQ(function->parameters[1]->name->rawValue, "source");
     EXPECT_EQ(function->returnType->kind, Kind::optionalType);
@@ -190,6 +190,33 @@ return parser.input[p.pos]
     const auto returnExpr = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
             function->body->items[3]);
     EXPECT_EQ(returnExpr->value->kind, Kind::subscriptExpr);
+}
+
+TEST_F(ParserTest, ParsesConsumingParametersAndArguments) {
+    parse(R"JOYEER(func take(value: consuming String) { print(value: value) }
+func run() {
+let text = "owned"
+take(value: consume text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto take = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(take->parameters.size(), 1u);
+    EXPECT_EQ(
+            take->parameters[0]->accessEffect(),
+            joyeer::syntax::AccessEffect::consuming);
+    ASSERT_NE(take->parameters[0]->accessKeyword, nullptr);
+    EXPECT_EQ(take->parameters[0]->accessKeyword->kind, kwConsuming);
+
+    const auto run = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[1]);
+    const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+            run->body->items[1]);
+    ASSERT_EQ(call->arguments.size(), 1u);
+    ASSERT_NE(call->arguments[0]->accessMarker, nullptr);
+    EXPECT_EQ(call->arguments[0]->accessMarker->kind, kwConsume);
 }
 
 TEST_F(ParserTest, ParsesArraysAndDictionariesWithTrailingCommas) {

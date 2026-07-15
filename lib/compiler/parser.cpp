@@ -278,13 +278,16 @@ syntax::ParameterDeclSyntax::Ptr Parser::parseParameter() {
         name = cursor.advance();
     }
     expect(colon, "':' after the parameter name");
-    auto inoutKeyword = cursor.eat(kwInout);
+    Token::Ptr accessKeyword;
+    if (cursor.at(kwInout) || cursor.at(kwConsuming)) {
+        accessKeyword = cursor.advance();
+    }
     auto type = parseType();
     return std::make_shared<syntax::ParameterDeclSyntax>(
             spanFrom(start),
             std::move(label),
             std::move(name),
-            std::move(inoutKeyword),
+            std::move(accessKeyword),
             std::move(type));
 }
 
@@ -653,11 +656,15 @@ syntax::ExprPtr Parser::parsePrefixExpr() {
         return std::make_shared<syntax::PrefixExprSyntax>(
                 spanFrom(start), std::move(op), std::move(operand));
     }
-    if (cursor.at(ampersand)) {
+    if (cursor.at(ampersand) || cursor.at(kwConsume)) {
         auto marker = cursor.advance();
         auto operand = parsePostfixExpr();
         if (operand == nullptr) {
-            reportExpected(DiagnosticId::expectedExpression, "an access path after '&'");
+                reportExpected(
+                    DiagnosticId::expectedExpression,
+                    marker->kind == kwConsume
+                        ? "an owned expression after 'consume'"
+                        : "an access path after '&'");
             operand = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         }
         return std::make_shared<syntax::AccessExprSyntax>(
@@ -919,7 +926,10 @@ syntax::CallArgumentSyntax::Ptr Parser::parseCallArgument() {
         label = cursor.advance();
         cursor.advance();
     }
-    auto accessMarker = cursor.eat(ampersand);
+    Token::Ptr accessMarker;
+    if (cursor.at(ampersand) || cursor.at(kwConsume)) {
+        accessMarker = cursor.advance();
+    }
     auto value = parseExpression();
     if (value == nullptr) {
         reportExpected(DiagnosticId::expectedExpression, "a call argument value");

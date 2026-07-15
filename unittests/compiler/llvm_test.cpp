@@ -232,6 +232,28 @@ return byteToString(value: value)
             std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, EmitsSourceLevelConsumingTransfers) {
+    emit(R"JOYEER(func take(value: consuming String): String {
+&value = value + "!"
+return value
+}
+func run(): String {
+var text = "first"
+let moved = take(value: consume text)
+text = "second"
+return moved
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(
+            result.text.find("store %joyeer.string zeroinitializer, ptr"),
+            std::string::npos);
+    EXPECT_NE(
+            result.text.find("call void @joyeer_destroy_type_"),
+            std::string::npos);
+}
+
 TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
     joyeer::ir::Module module;
     module.sourceName = "ownership.joyeer";

@@ -21,7 +21,8 @@ canonical JSON-parser slice in [the v0.1 plan](../plan/v0.1.md):
 - field-only `struct` declarations and memberwise construction;
 - payload-carrying `enum` declarations and construction;
 - minimal `match` expressions and enum patterns;
-- `inout` parameters plus the `&` call-site/access marker;
+- `inout` and `consuming` parameters plus mandatory `&` / `consume` call-site
+  markers;
 - nominal, array, dictionary, optional, and built-in generic types;
 - byte, integer, string, Boolean, and `nil` literals;
 - member access, calls, subscripts, arrays, dictionaries, `if`, `while`, and
@@ -34,7 +35,7 @@ The Parser MVP deliberately does **not** implement:
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
 - `class`, `for-in`, imports, extensions, explicit `init` / `deinit`, methods,
   subscript declarations, visibility, or user-defined generics;
-- `borrowing`, `consuming`, `initializing`, `consume`, `mutating`, `indirect`,
+- explicit `borrowing`, `initializing`, `mutating`, `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
@@ -59,7 +60,7 @@ reference, but it is not the foundation for the new grammar.
 |---|---|---|
 | Token access | raw iterators, `previous()`, broad legacy token categories, and string comparisons | bounded `TokenCursor`, explicit terminal kinds, checkpoints, and `expect()` |
 | Declarations | bindings, functions, legacy `class`, basic `struct`, legacy constructor/import | context-specific v0.1 declarations with dedicated parameter/field/case nodes |
-| Parameters | represented as binding `Pattern` nodes | `ParameterDecl` with external label, local name, `inout`, type, and span |
+| Parameters | represented as binding `Pattern` nodes | `ParameterDecl` with external label, local name, borrowing/inout/consuming effect, type, and span |
 | Types | identifier, `[T]`, and legacy `T?` / `T!` behavior | nominal/built-in generic, `[T]`, `[K: V]`, and `T?`; no `T!` type |
 | Expressions | flat prefix plus binary tail | fully shaped tree produced by a Pratt/precedence-climbing parser |
 | Precedence | later rewritten by `TypeGen` using only `high` / `low` buckets | parser owns all precedence and associativity; semantic passes never repair syntax |
@@ -75,9 +76,10 @@ keep old lowering alive.
 The implemented v0.1 path lives in `parser.h` / `parser.cpp` with its separate
 syntax-only AST in `syntax.h` / `syntax.cpp`. `--lang=v0.1` runs the MVP lexer
 and this parser, reports stable parser diagnostics, then passes a successful
-tree to the independent [name resolver](name-resolution.md). It still exits
-before type checking, lowering, or the old VM/runtime. Default/legacy mode
-continues through the old `SyntaxParser`, semantic passes, bytecode, and VM.
+tree through the independent name resolver, type checker, semantic analysis,
+Joyeer IR, and native backend. It never enters the old VM/runtime. Default/
+legacy mode continues through the old `SyntaxParser`, semantic passes,
+bytecode, and VM.
 
 ---
 
@@ -102,7 +104,7 @@ The parser decides only facts visible in the token stream:
 | Is `Foo.Bar(...)` an enum constructor, and is `.Bar(...)` contextually typed? | name resolution + type checking |
 | Do supplied labels match a function, initializer, or enum payload declaration? | name resolution + type checking |
 | Is a generic type one of the built-in generic containers allowed in v0.1? | type checking |
-| Does `&` match an `inout` parameter or mutable projection? | type checking + exclusivity checking |
+| Do `&` / `consume` match inout/consuming signatures and valid storage? | type checking + semantic ownership analysis |
 | Are assignment targets mutable and initialized correctly? | semantic analysis |
 | Do `if` branches and `match` arms have compatible types? | type checking |
 | Is a `match` exhaustive and are payload patterns valid? | pattern type checking + exhaustiveness |
@@ -141,7 +143,7 @@ binding_kind       ::= 'let' | 'var'
 func_decl          ::= 'func' identifier parameter_clause
                        [ ':' type ] block
 parameter_clause   ::= '(' [ parameter ( ',' parameter )* ','? ] ')'
-parameter          ::= identifier [ identifier ] ':' [ 'inout' ] type
+parameter          ::= identifier [ identifier ] ':' [ 'inout' | 'consuming' ] type
 
 struct_decl        ::= 'struct' identifier '{' struct_field* '}'
 struct_field       ::= binding_kind identifier ':' type
@@ -162,8 +164,9 @@ Rules and intentional restrictions:
 2. A function parameter always has an external label. With one identifier it
    is also the local name; `from source: String` uses `from` externally and
    `source` in the body.
-3. Only the `inout` access effect is in the Parser MVP. Borrowing is the
-   implicit default.
+3. `inout` and `consuming` are explicit access effects in the Parser MVP;
+  borrowing is the implicit default. Calls must spell `&` or `consume`
+  respectively.
 4. A Parser MVP `struct` contains stored fields only. Explicit initializers,
    methods, and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.
@@ -564,7 +567,7 @@ one EOF boundary, and no crash/hang.
 
 1. Parse MVP type syntax, including `Result<T, E>` and `[K: V]`.
 2. Parse bindings while retaining `let`/`var`.
-3. Parse functions, labels/local names, `inout`, and trailing commas.
+3. Parse functions, labels/local names, `inout`/`consuming`, and trailing commas.
 4. Parse field-only structs and payload-only enums.
 
 **Exit:** all declarations and signatures in the focused JSON source parse with
@@ -574,7 +577,7 @@ exact spans.
 
 1. Parse literals, names, parenthesized expressions, arrays, and dictionaries.
 2. Parse member/call/subscript chains and contextual `.Case` expressions.
-3. Parse call arguments with optional syntax labels and `&` markers.
+3. Parse call arguments with optional syntax labels and `&` / `consume` markers.
 4. Parse prefix/infix/assignment operators with the table in §4.4.
 5. Diagnose chained comparisons and invalid assignment targets.
 
@@ -618,14 +621,14 @@ normalized syntax AST or diagnostic stream. They never execute the program.
 |---|---|
 | Empty/file | empty input, one and several top-level items |
 | Bindings | inferred/annotated, initialized/uninitialized, `let` vs `var` |
-| Parameters | one-name, external/local names, `inout`, empty/non-empty/trailing comma |
+| Parameters | one-name, external/local names, `inout`, `consuming`, empty/non-empty/trailing comma |
 | Types | nominal, array, dictionary, optional, `Result<T, E>`, nesting through `[]` / `?`; adjacent angle closers after the documented lexer handshake |
 | Struct | typed fields, field initializer, multiline body |
 | Enum | empty-payload, positional payload, labeled payload, mixed payload, trailing comma |
 | Literals | every Lexer MVP literal kind, especially `byteLiteral` |
 | Collections | empty/non-empty arrays and dictionaries, nesting, trailing commas |
 | Postfix | member/call/subscript chains and multiline argument clauses |
-| Calls/cases | labeled function/initializer calls, `&` argument, positional/labeled enum payloads, contextual and qualified cases |
+| Calls/cases | labeled function/initializer calls, `&`/`consume` arguments, positional/labeled enum payloads, contextual and qualified cases |
 | Precedence | every neighboring precedence pair, left/right/non-associativity |
 | Assignment | name, member, subscript, `&` target, right-associative chain |
 | Control | standalone/value `if`, else-if, `while`, empty/value blocks, early return |
@@ -682,7 +685,7 @@ Parser MVP is complete when:
 - [x] the Parser MVP acceptance source parses with no lexical or parser diagnostic;
 - [x] expression ASTs encode precedence and associativity directly;
 - [x] `enum`, minimal `match`, byte literals, contextual cases, `Result<T, E>`,
-  optional types, `inout`, and `&` all reach stable syntax nodes;
+  optional types, `inout`, `consuming`, `&`, and `consume` all reach stable syntax nodes;
 - [x] malformed input yields stable diagnostic IDs/spans and parsing continues at
   documented boundaries;
 - [x] direct `ParserTest` cases enter no semantic pass, and no v0.1 test enters

@@ -10,6 +10,13 @@
 
 namespace joyeer::syntax {
 
+enum class AccessEffect {
+    borrowing,
+    inout,
+    consuming,
+    initializing,
+};
+
 enum class Kind {
     sourceFile,
 
@@ -214,19 +221,28 @@ struct ParameterDeclSyntax final : Node {
 
     Token::Ptr label;
     Token::Ptr name;
-    Token::Ptr inoutKeyword;
+    Token::Ptr accessKeyword;
     TypePtr type;
 
     ParameterDeclSyntax(SourceSpan span,
                         Token::Ptr label,
                         Token::Ptr name,
-                        Token::Ptr inoutKeyword,
+                        Token::Ptr accessKeyword,
                         TypePtr type):
             Node(Kind::parameterDecl, span),
             label(std::move(label)),
             name(std::move(name)),
-            inoutKeyword(std::move(inoutKeyword)),
+            accessKeyword(std::move(accessKeyword)),
             type(std::move(type)) {}
+
+    [[nodiscard]] AccessEffect accessEffect() const {
+        if (accessKeyword == nullptr) return AccessEffect::borrowing;
+        switch (accessKeyword->kind) {
+            case kwInout: return AccessEffect::inout;
+            case kwConsuming: return AccessEffect::consuming;
+            default: return AccessEffect::borrowing;
+        }
+    }
 };
 
 struct BlockExprSyntax;

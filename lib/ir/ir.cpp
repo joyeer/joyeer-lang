@@ -367,6 +367,15 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 ? "' must be an address for inout access"
                                 : "' must be an object value"));
             }
+            if (parameter.isMutable && parameter.isConsuming) {
+                report(
+                        VerificationErrorId::invalidInstruction,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "parameter '" + parameter.name +
+                                "' cannot be both inout and consuming");
+            }
             if (!values.emplace(parameter.value.id, parameter.value).second) {
                 report(
                         VerificationErrorId::duplicateId,
@@ -1280,6 +1289,7 @@ std::string dump(const Module& module) {
                 << typeName(types, parameter.value.type)
                 << " \"" << escape(parameter.name) << "\"";
             if (parameter.isMutable) out << " inout";
+            if (parameter.isConsuming) out << " consuming";
             if (parameter.acceptsAnyType) out << " accepts-any";
         }
         out << ") -> " << typeName(types, function.resultType);

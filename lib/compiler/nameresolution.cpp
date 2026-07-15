@@ -542,6 +542,7 @@ private:
                 nodeId(parameter),
                 nodeId(parameter->type),
                 std::nullopt,
+                parameter->accessEffect(),
             });
         }
 
@@ -763,7 +764,9 @@ private:
                     tokenText(parameter->name),
                     tokenSpan(parameter->name, parameter->span),
                     nodeId(parameter));
-            symbol(parameterSymbol).isMutable = parameter->inoutKeyword != nullptr;
+                symbol(parameterSymbol).isMutable =
+                    parameter->accessEffect() == syntax::AccessEffect::inout ||
+                    parameter->accessEffect() == syntax::AccessEffect::consuming;
             symbol(parameterSymbol).declaredType = parameterType;
 
             auto& callable = *symbol(*functionSymbol).callable;

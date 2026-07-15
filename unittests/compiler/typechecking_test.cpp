@@ -850,6 +850,34 @@ let selected = if flag { 1 } else { "two" }
                             }));
                     }
 
+                    TEST_F(TypeCheckingTest, EnforcesConsumingCallArgumentConventions) {
+                        check(R"JOYEER(func take(value: consuming String) { print(value: value) }
+                    func inspect(value: String) { print(value: value) }
+                    func valid() {
+                    let text = "owned"
+                    take(value: consume text)
+                    take(value: consume ("temporary" + "!"))
+                    }
+                    func invalid() {
+                    let text = "owned"
+                    take(value: text)
+                    inspect(value: consume text)
+                    var values = ["item"]
+                    take(value: consume values[0])
+                    }
+                    )JOYEER");
+
+                        ASSERT_EQ(checking.diagnostics.size(), 3u)
+                            << joyeer::typing::dump(checking.diagnostics);
+                        EXPECT_TRUE(std::all_of(
+                            checking.diagnostics.begin(),
+                            checking.diagnostics.end(),
+                            [](const auto& diagnostic) {
+                            return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::
+                                invalidConsumeArgument;
+                            }));
+                    }
+
                     TEST_F(TypeCheckingTest, TypesMutatingArrayAppendFromTheReceiverElement) {
                         check(R"JOYEER(func build() {
                     var values: [String] = []

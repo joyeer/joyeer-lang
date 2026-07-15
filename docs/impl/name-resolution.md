@@ -118,9 +118,8 @@ These are stored as `DeferredReference` entries with node, name, span, and
 reason. They are not errors and are not treated as successfully resolved. The
 type checker must consume every deferred entry or issue a diagnostic.
 
-Type compatibility, built-in generic arity, contextual case completion,
-`inout`/exclusivity, mutability, exhaustiveness, layout, and lowering remain
-outside this pass.
+Type compatibility, access-marker/exclusivity checks, consuming flow,
+mutability, exhaustiveness, layout, and lowering remain outside this pass.
 
 ---
 

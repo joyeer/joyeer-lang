@@ -477,14 +477,16 @@ private:
                 ir::Value {
                     static_cast<ir::ValueId>(index),
                     *parameterType,
-                    parameter->inoutKeyword != nullptr
+                    parameter->accessEffect() == syntax::AccessEffect::inout
                             ? ir::ValueCategory::address
                             : ir::ValueCategory::value,
                 },
                 parameterSymbol,
                 parameter->name == nullptr ? std::string() : parameter->name->rawValue,
-                parameter->inoutKeyword != nullptr,
+                parameter->accessEffect() == syntax::AccessEffect::inout,
                 parameter->span,
+                false,
+                parameter->accessEffect() == syntax::AccessEffect::consuming,
             });
         }
 
@@ -536,6 +538,7 @@ private:
                     parameter.symbol);
             emitRawStore(parameter.value, address, parameter.span, parameter.symbol);
             if (parameter.symbol.has_value()) slots[*parameter.symbol] = address;
+            if (parameter.isConsuming) registerOwnedStorage(address);
         }
 
         auto bodyValue = lowerBlock(declaration->body);
@@ -1576,9 +1579,24 @@ private:
             const auto& argument = expression->arguments[index];
             const auto expectsAddress = index < callee.parameters.size() &&
                 callee.parameters[index].value.category == ir::ValueCategory::address;
-            auto value = expectsAddress
-                ? lowerAddress(argument->value)
-                : lowerExpression(argument->value);
+            const auto consumesValue = index < callee.parameters.size() &&
+                    callee.parameters[index].isConsuming;
+            std::optional<ir::Value> value;
+            if (expectsAddress) {
+                value = lowerAddress(argument->value);
+            } else if (consumesValue && isAddressable(argument->value)) {
+                const auto address = lowerAddress(argument->value);
+                if (address.has_value()) {
+                    value = emitValue(
+                            ir::Opcode::take,
+                            address->type,
+                            ir::ValueCategory::value,
+                            { address->id },
+                            argument->span);
+                }
+            } else {
+                value = lowerExpression(argument->value);
+            }
             if (!value.has_value()) return std::nullopt;
             if (!expectsAddress && index < callee.parameters.size() &&
                 !callee.parameters[index].acceptsAnyType) {
@@ -1586,6 +1604,10 @@ private:
                         *value,
                         callee.parameters[index].value.type,
                         argument->value->span);
+                if (!value.has_value()) return std::nullopt;
+            }
+            if (consumesValue && requiresDestroy(value->type)) {
+                value = acquireOwned(*value, argument->span);
                 if (!value.has_value()) return std::nullopt;
             }
             arguments.push_back(value->id);

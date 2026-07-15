@@ -108,7 +108,9 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
             const auto value = std::static_pointer_cast<ParameterDeclSyntax>(node);
             out << " label=" << tokenText(value->label)
                 << " name=" << tokenText(value->name)
-                << " access=" << (value->inoutKeyword == nullptr ? "borrowing" : "inout")
+                << " access=" << (value->accessKeyword == nullptr
+                        ? "borrowing"
+                        : tokenText(value->accessKeyword))
                 << '\n';
             appendNode(out, value->type, depth + 1);
             return;

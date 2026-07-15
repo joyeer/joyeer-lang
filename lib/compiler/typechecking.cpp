@@ -795,6 +795,15 @@ private:
                     std::static_pointer_cast<syntax::PrefixExprSyntax>(expression));
                 break;
             case syntax::Kind::accessExpr:
+                if (std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
+                        ->marker != nullptr &&
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
+                        ->marker->kind == kwConsume) {
+                    report(
+                        TypeCheckingDiagnosticId::invalidConsumeArgument,
+                        expression->span,
+                        "'consume' is only valid on an argument to a consuming parameter");
+                }
                 result = checkExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
                         expected,
@@ -1243,33 +1252,73 @@ private:
         const auto& parameters = target.callable->parameters;
         if (parameterIndex >= parameters.size()) return;
 
-        bool requiresInout = false;
-        if (parameters[parameterIndex].declaration.has_value()) {
-            const auto& declaration = model->semanticModelValue->node(
-                    *parameters[parameterIndex].declaration);
-            if (declaration != nullptr && declaration->kind == syntax::Kind::parameterDecl) {
-                requiresInout = std::static_pointer_cast<syntax::ParameterDeclSyntax>(
-                        declaration)->inoutKeyword != nullptr;
-            }
-        }
-
-        const auto hasMarker = argument.accessMarker != nullptr;
-        if (hasMarker != requiresInout) {
+        const auto required = parameters[parameterIndex].access;
+        const auto marker = argument.accessMarker == nullptr
+            ? syntax::AccessEffect::borrowing
+            : argument.accessMarker->kind == kwConsume
+                ? syntax::AccessEffect::consuming
+                : syntax::AccessEffect::inout;
+        if (marker != required) {
+            const auto consumeMismatch = marker == syntax::AccessEffect::consuming ||
+                required == syntax::AccessEffect::consuming;
             report(
-                    TypeCheckingDiagnosticId::invalidInoutArgument,
+                consumeMismatch
+                    ? TypeCheckingDiagnosticId::invalidConsumeArgument
+                    : TypeCheckingDiagnosticId::invalidInoutArgument,
                     argument.span,
-                    requiresInout
-                            ? "inout argument requires '&' at the call site"
+                required == syntax::AccessEffect::consuming
+                    ? "consuming argument requires 'consume' at the call site"
+                    : required == syntax::AccessEffect::inout
+                        ? "inout argument requires '&' at the call site"
+                        : marker == syntax::AccessEffect::consuming
+                            ? "non-consuming argument must not use 'consume'"
                             : "non-inout argument must not use '&'");
             return;
         }
-        if (requiresInout && !analyzeStorage(argument.value).writable) {
+        if (required == syntax::AccessEffect::inout &&
+            !analyzeStorage(argument.value).writable) {
             report(
                     TypeCheckingDiagnosticId::invalidInoutArgument,
                     argument.value->span,
                     "inout argument must refer to mutable storage");
         }
+                if (required == syntax::AccessEffect::consuming &&
+                    !isConsumable(argument.value)) {
+                    report(
+                        TypeCheckingDiagnosticId::invalidConsumeArgument,
+                        argument.value->span,
+                        "consuming argument must be an owning local, consuming parameter, or temporary");
+                }
     }
+
+                bool isConsumable(const syntax::ExprPtr& expression) const {
+                if (expression == nullptr) return false;
+                if (expression->kind == syntax::Kind::parenthesizedExpr) {
+                    return isConsumable(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                            ->expression);
+                }
+                if (expression->kind != syntax::Kind::nameExpr) {
+                    return expression->kind != syntax::Kind::memberExpr &&
+                        expression->kind != syntax::Kind::subscriptExpr &&
+                        expression->kind != syntax::Kind::accessExpr;
+                }
+                const auto referenced = model->referencedSymbol(expression);
+                const auto* symbol = referenced.has_value()
+                    ? model->semanticModelValue->symbol(*referenced)
+                    : nullptr;
+                if (symbol == nullptr) return false;
+                if (symbol->kind == semantic::SymbolKind::binding) return true;
+                if (symbol->kind != semantic::SymbolKind::parameter ||
+                    !symbol->declaration.has_value()) {
+                    return false;
+                }
+                const auto& declaration = model->semanticModelValue->node(*symbol->declaration);
+                return declaration != nullptr &&
+                    declaration->kind == syntax::Kind::parameterDecl &&
+                    std::static_pointer_cast<syntax::ParameterDeclSyntax>(declaration)
+                        ->accessEffect() == syntax::AccessEffect::consuming;
+                }
 
     std::optional<size_t> parameterIndexForArgument(
             const semantic::Symbol& target,
@@ -1804,6 +1853,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-access-marker";
         case TypeCheckingDiagnosticId::invalidInoutArgument:
             return "type-checking.invalid-inout-argument";
+        case TypeCheckingDiagnosticId::invalidConsumeArgument:
+            return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::notCallable:
             return "type-checking.not-callable";
         case TypeCheckingDiagnosticId::unresolvedReference:

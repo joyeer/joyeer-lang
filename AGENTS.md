@@ -14,7 +14,8 @@ control-flow semantic analysis, verified backend-neutral Joyeer IR, textual
 LLVM IR, and Clang-based native codegen/linking. It does not construct the
 legacy VM. The native lane is an
 MVP with recursive value clone/destroy, deterministic scope cleanup, and
-control-flow semantic analysis. Source-level consuming ownership, optimization
+control-flow semantic analysis. Whole-binding `consuming` ownership is
+implemented; explicit borrowing/initializing, full exclusivity, optimization
 work beyond the current Clang `-O0`…`-O3` policy, debug info, and broader
 standard-library work remain.
 
