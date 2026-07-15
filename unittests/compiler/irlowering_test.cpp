@@ -391,6 +391,28 @@ return values
     EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersDictionaryInsertionAndUpdateWithOwnedEntries) {
+    lower(R"JOYEER(func build(): [String: String] {
+var lookup: [String: String] = [:]
+&lookup["key"] = "first" + "!"
+let key = "key"
+let value = "second"
+&lookup[key] = value
+print(value: lookup.count)
+return lookup
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& build = function("build");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::dictionarySet), 2u);
+    EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::count), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
     lower(R"JOYEER(func incrementFirst(values: inout [Int]): Int {
 &values[0] = values[0] + 1

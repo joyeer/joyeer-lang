@@ -379,12 +379,13 @@ private:
         declareBuiltinType("UInt8");
         declareBuiltinType("Any");
         const auto arrayType = declareBuiltinType("Array");
-        declareBuiltinType("Dict");
+        const auto dictionaryType = declareBuiltinType("Dict");
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
+        declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
         CallableSignature appendSignature {
             CallableKind::function,
             true,

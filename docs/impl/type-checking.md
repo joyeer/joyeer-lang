@@ -84,6 +84,7 @@ The v0.1 checker currently validates:
 - inferred and declared member access;
 - `String[Int] -> UInt8`, `Array<T>[Int] -> T`, and
   `Dict<K,V>[K] -> V` typing;
+- `count` on strings, arrays, and dictionaries;
 - contextual user enum, `Optional`, and `Result` construction;
 - enum pattern payload binding and match-arm result unification;
 - exhaustive user enum, `Optional`, `Result`, and `Bool` matches; other
@@ -91,7 +92,9 @@ The v0.1 checker currently validates:
 - immutable bindings/fields and explicit `inout` access markers for assignment
   and calls;
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
-  on a mutable receiver.
+  on a mutable receiver;
+- mutable dictionary subscript insertion/update with concrete `K`/`V` checks
+  and mandatory `&` on the subscript projection.
 
 Ordinary call labels, ordering, required/default argument presence, and
 lexical declaration binding remain name-resolution responsibilities. The type

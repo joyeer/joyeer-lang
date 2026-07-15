@@ -56,6 +56,8 @@ The current instruction set covers:
 - struct construction, field address, and field extraction;
 - enum construction and payload extraction;
 - mutating `array_append` with an addressable receiver and transferred element;
+- inserting/updating `dictionary_set` with an addressable receiver and
+  transferred key/value;
 - `String`/collection count and value/address subscript operations;
 - high-level recursive pattern switching.
 
@@ -80,6 +82,11 @@ source-level read before initialization.
 or clones a borrowed nontrivial value before the instruction, so runtime
 reallocation never aliases the caller's retained value and array destruction
 owns every appended element exactly once.
+
+`dictionary_set` likewise consumes a concrete key/value pair. Runtime lookup
+decides whether to insert or update: insertion transfers both into a new entry;
+update keeps the existing key, destroys the incoming duplicate key and old
+value, then transfers the replacement value.
 
 ---
 

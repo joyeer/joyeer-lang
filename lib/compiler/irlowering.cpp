@@ -812,6 +812,7 @@ private:
     }
 
     void lowerAssignment(const syntax::AssignmentExprSyntax::Ptr& expression) {
+        if (lowerDictionarySet(expression)) return;
         const auto address = lowerAddress(expression->target);
         auto value = lowerExpression(expression->value);
         if (address.has_value() && value.has_value()) {
@@ -824,6 +825,52 @@ private:
             }
             emitRawStore(*value, *address, expression->span);
         }
+    }
+
+    bool lowerDictionarySet(const syntax::AssignmentExprSyntax::Ptr& expression) {
+        auto target = expression->target;
+        while (target != nullptr &&
+               (target->kind == syntax::Kind::accessExpr ||
+                target->kind == syntax::Kind::parenthesizedExpr)) {
+            target = target->kind == syntax::Kind::accessExpr
+                    ? std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand
+                    : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression;
+        }
+        if (target == nullptr || target->kind != syntax::Kind::subscriptExpr) return false;
+
+        const auto subscript =
+                std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
+        const auto baseTypeId = model->typeOf(subscript->base);
+        const auto* dictionaryType = baseTypeId.has_value()
+                ? model->types().type(*baseTypeId)
+                : nullptr;
+        if (dictionaryType == nullptr ||
+            dictionaryType->kind != typing::TypeKind::dictionary ||
+            dictionaryType->arguments.size() != 2) {
+            return false;
+        }
+
+        const auto dictionary = lowerAddress(subscript->base);
+        auto key = lowerExpression(subscript->index);
+        auto value = lowerExpression(expression->value);
+        if (!dictionary.has_value() || !key.has_value() || !value.has_value()) {
+            return true;
+        }
+        key = coerce(*key, dictionaryType->arguments[0], subscript->index->span);
+        value = coerce(*value, dictionaryType->arguments[1], expression->value->span);
+        if (!key.has_value() || !value.has_value()) return true;
+        if (requiresDestroy(key->type)) {
+            key = acquireOwned(*key, subscript->index->span);
+        }
+        if (requiresDestroy(value->type)) {
+            value = acquireOwned(*value, expression->value->span);
+        }
+        if (!key.has_value() || !value.has_value()) return true;
+
+        auto instruction = makeInstruction(ir::Opcode::dictionarySet, expression->span);
+        instruction.operands = { dictionary->id, key->id, value->id };
+        emit(std::move(instruction));
+        return true;
     }
 
     std::optional<ir::Value> lowerAddress(const syntax::ExprPtr& expression) {

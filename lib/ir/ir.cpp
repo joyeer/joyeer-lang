@@ -814,6 +814,30 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                         }
+                        case Opcode::dictionarySet:
+                        if (requireShape(3, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && operands[2] != nullptr) {
+                            const auto found = types.find(operands[0]->type);
+                            const auto* dictionaryType = found == types.end()
+                                    ? nullptr
+                                    : found->second;
+                            if (operands[0]->category != ValueCategory::address ||
+                                operands[1]->category != ValueCategory::value ||
+                                operands[2]->category != ValueCategory::value ||
+                                dictionaryType == nullptr ||
+                                dictionaryType->kind != typing::TypeKind::dictionary ||
+                                dictionaryType->arguments.size() != 2 ||
+                                dictionaryType->arguments[0] != operands[1]->type ||
+                                dictionaryType->arguments[1] != operands[2]->type) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "dictionary set requires a dictionary address and matching key/value");
+                            }
+                        }
+                        break;
                         case Opcode::fieldAddress:
                         case Opcode::extractField: {
                         const auto shapeMatches = requireShape(1, 0);
@@ -913,7 +937,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         operands[0]->category == ValueCategory::value &&
                                         instruction.result->category == ValueCategory::value &&
                                         (baseType->kind == typing::TypeKind::string ||
-                                         baseType->kind == typing::TypeKind::array) &&
+                                         baseType->kind == typing::TypeKind::array ||
+                                         baseType->kind == typing::TypeKind::dictionary) &&
                                         resultType->kind == typing::TypeKind::integer;
                                 if (!matches) {
                                     report(
@@ -921,7 +946,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         functionId,
                                         block.id,
                                         location,
-                                        "count requires String/Array and produces Int");
+                                        "count requires String/Array/Dict and produces Int");
                                 }
                         }
                         break;
@@ -1135,6 +1160,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::constructArray: return "construct_array";
         case Opcode::arrayAppend: return "array_append";
         case Opcode::constructDictionary: return "construct_dictionary";
+        case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::fieldAddress: return "field_addr";
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
@@ -1303,6 +1329,7 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::store:
                     case Opcode::arrayAppend:
+                    case Opcode::dictionarySet:
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:

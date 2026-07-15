@@ -484,6 +484,9 @@ static JoyeerDictionary dictionaryCreateOwned(
         joyeer_panic("invalid dictionary layout");
     }
     const size_t bytes = checkedByteCount(count, entrySize);
+    if (bytes > SIZE_MAX - sizeof(DictionaryHeader)) {
+        joyeer_panic("dictionary allocation size overflow");
+    }
     DictionaryHeader* storage =
             (DictionaryHeader*)checkedAllocate(sizeof(DictionaryHeader) + bytes);
     storage->keySize = keySize;
@@ -595,6 +598,74 @@ void joyeer_dictionary_clone_abi(
             source->cloneValue,
             source->destroyValue,
             true);
+}
+
+void joyeer_dictionary_set_owned_abi(
+        JoyeerDictionary* dictionary,
+    void* key,
+        const void* value) {
+    if (dictionary == NULL || dictionary->data == NULL || key == NULL ||
+        dictionary->count < 0 || dictionary->capacity < dictionary->count) {
+        joyeer_panic("invalid dictionary set");
+    }
+    DictionaryHeader* header = ((DictionaryHeader*)dictionary->data) - 1;
+    if (header->keySize <= 0 || header->valueSize < 0 ||
+        (header->valueSize != 0 && value == NULL) ||
+        dictionary->count == INT64_MAX) {
+        joyeer_panic("invalid dictionary set");
+    }
+
+    for (int64_t index = 0; index < dictionary->count; ++index) {
+        uint8_t* entry = (uint8_t*)dictionary->data +
+                checkedByteCount(index, header->entrySize);
+        if (!dictionaryKeyEqual(entry, key, header->keySize, header->keyKind)) {
+            continue;
+        }
+        if (header->destroyKey != NULL) {
+            header->destroyKey(key);
+        }
+        if (header->destroyValue != NULL) {
+            header->destroyValue(entry + header->valueOffset);
+        }
+        if (header->valueSize != 0) {
+            memcpy(
+                    entry + header->valueOffset,
+                    value,
+                    (size_t)header->valueSize);
+        }
+        return;
+    }
+
+    if (dictionary->count == dictionary->capacity) {
+        int64_t capacity = dictionary->capacity < 4 ? 4 : dictionary->capacity;
+        if (capacity == dictionary->capacity) {
+            if (capacity > INT64_MAX / 2) {
+                joyeer_panic("dictionary capacity overflow");
+            }
+            capacity *= 2;
+        }
+        const size_t bytes = checkedByteCount(capacity, header->entrySize);
+        if (bytes > SIZE_MAX - sizeof(DictionaryHeader)) {
+            joyeer_panic("dictionary allocation size overflow");
+        }
+        header = (DictionaryHeader*)checkedReallocate(
+                header,
+                sizeof(DictionaryHeader) + bytes);
+        dictionary->data = header + 1;
+        dictionary->capacity = capacity;
+    }
+
+    uint8_t* entry = (uint8_t*)dictionary->data +
+            checkedByteCount(dictionary->count, header->entrySize);
+    memset(entry, 0, (size_t)header->entrySize);
+    memcpy(entry, key, (size_t)header->keySize);
+    if (header->valueSize != 0) {
+        memcpy(
+                entry + header->valueOffset,
+                value,
+                (size_t)header->valueSize);
+    }
+    ++dictionary->count;
 }
 
 void* joyeer_dictionary_at(

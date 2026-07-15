@@ -113,8 +113,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add dynamic dictionary insertion/update, then run the JSON parser against
-  `readFile(path:)` input as a native executable; dynamic array append works.
+1. Run the JSON parser against `readFile(path:)` as a native executable;
+  dynamic array append and dictionary insertion/update now work.
 2. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
   `consume` flow states.
 3. Configure a deliberate LLVM optimization pipeline and verify overflow/

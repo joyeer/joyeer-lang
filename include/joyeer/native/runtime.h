@@ -112,6 +112,10 @@ void joyeer_dictionary_clone_abi(
     JoyeerDictionary* result,
     const void* data,
     int64_t count);
+void joyeer_dictionary_set_owned_abi(
+    JoyeerDictionary* dictionary,
+    void* key,
+    const void* value);
 void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary);
 
 // Stable compiler ABI. These functions deliberately avoid passing or

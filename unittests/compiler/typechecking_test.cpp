@@ -850,6 +850,47 @@ let selected = if flag { 1 } else { "two" }
                             joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
                     }
 
+                    TEST_F(TypeCheckingTest, TypesMutableDictionaryInsertionAndCount) {
+                        check(R"JOYEER(func build() {
+                    var lookup: [String: Int] = [:]
+                    &lookup["answer"] = 42
+                    &lookup["answer"] = 43
+                    print(value: lookup.count)
+                    print(value: lookup["answer"])
+                    }
+                    )JOYEER");
+
+                        EXPECT_TRUE(checking.succeeded())
+                            << joyeer::typing::dump(checking.diagnostics);
+                    }
+
+                    TEST_F(TypeCheckingTest, EnforcesDictionaryWriteAccessAndTypes) {
+                        check(R"JOYEER(func invalid() {
+                    let frozen: [String: Int] = [:]
+                    &frozen["key"] = 1
+                    var lookup: [String: Int] = [:]
+                    lookup["key"] = 1
+                    &lookup[1] = 2
+                    &lookup["key"] = "wrong"
+                    }
+                    )JOYEER");
+
+                        ASSERT_EQ(checking.diagnostics.size(), 4u)
+                            << joyeer::typing::dump(checking.diagnostics);
+                        EXPECT_EQ(
+                            checking.diagnostics[0].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::assignmentToImmutable);
+                        EXPECT_EQ(
+                            checking.diagnostics[1].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker);
+                        EXPECT_EQ(
+                            checking.diagnostics[2].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+                        EXPECT_EQ(
+                            checking.diagnostics[3].id,
+                            joyeer::typing::TypeCheckingDiagnosticId::typeMismatch);
+                    }
+
                 TEST_F(TypeCheckingTest, ResolvesEverySuccessfulDeferredReference) {
                     check(R"JOYEER(enum Choice { Some(Int), None, }
                 struct Box { var value: Int }

@@ -783,6 +783,8 @@ private:
                 return emitArrayAppend(out, instruction);
             case ir::Opcode::constructDictionary:
                 return emitConstructDictionary(out, instruction);
+            case ir::Opcode::dictionarySet:
+                return emitDictionarySet(out, instruction);
             case ir::Opcode::fieldAddress:
                 return emitFieldAddress(out, instruction);
             case ir::Opcode::extractField:
@@ -1041,6 +1043,43 @@ private:
             << destroyValue << ")\n"
             << "  " << valueName(instruction.result->id)
             << " = load %joyeer.dictionary, ptr " << resultAddress << "\n";
+        return true;
+    }
+
+    bool emitDictionarySet(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (instruction.operands.size() != 3) return false;
+        const auto dictionary = operand(instruction.operands[0]);
+        const auto key = operand(instruction.operands[1]);
+        const auto storedValue = operand(instruction.operands[2]);
+        const auto* keyValue = value(instruction.operands[1]);
+        const auto* valueValue = value(instruction.operands[2]);
+        const auto keyType = keyValue == nullptr
+                ? std::optional<std::string>()
+                : llvmType(keyValue->type, instruction.span);
+        const auto valueType = valueValue == nullptr
+                ? std::optional<std::string>()
+                : llvmType(valueValue->type, instruction.span);
+        if (!dictionary.has_value() || !key.has_value() ||
+            !storedValue.has_value() || !keyType.has_value() ||
+            !valueType.has_value()) {
+            return false;
+        }
+
+        const auto keyAddress = temporary();
+        const auto valueAddress = temporary();
+        out << "  " << keyAddress << " = alloca " << *keyType << "\n"
+            << "  store " << *keyType << ' ' << *key
+            << ", ptr " << keyAddress << "\n"
+            << "  " << valueAddress << " = alloca " << *valueType << "\n"
+            << "  store " << *valueType << ' ' << *storedValue
+            << ", ptr " << valueAddress << "\n";
+        usesDictionary = true;
+        runtimeDeclarations.insert(
+                "declare void @joyeer_dictionary_set_owned_abi(ptr, ptr, ptr)");
+        out << "  call void @joyeer_dictionary_set_owned_abi(ptr " << *dictionary
+            << ", ptr " << keyAddress << ", ptr " << valueAddress << ")\n";
         return true;
     }
 

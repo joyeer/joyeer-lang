@@ -160,6 +160,28 @@ return values
     EXPECT_NE(result.text.find("call void @joyeer_clone_type_"), std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, EmitsDictionaryInsertAndUpdateRuntimeAbi) {
+    emit(R"JOYEER(func build(): [String: String] {
+var lookup: [String: String] = [:]
+&lookup["key"] = "first"
+let key = "key"
+let value = "second"
+&lookup[key] = value
+return lookup
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(
+            result.text.find(
+                    "declare void @joyeer_dictionary_set_owned_abi(ptr, ptr, ptr)"),
+            std::string::npos);
+    EXPECT_NE(
+            result.text.find("call void @joyeer_dictionary_set_owned_abi(ptr"),
+            std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_clone_type_"), std::string::npos);
+}
+
 TEST_F(LLVMBackendTest, EmitsZeroInitializationForDeferredOwnedStorage) {
     emit(R"JOYEER(func value(): String {
 var text: String

@@ -214,6 +214,47 @@ TEST(IRModelTest, VerifiesArrayAppendStorageAndElementTypes) {
     EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
 }
 
+TEST(IRModelTest, VerifiesDictionarySetStorageKeyAndValueTypes) {
+    auto module = validAddModule();
+    module.types.push_back(TypeName {
+        3,
+        "[Int: Bool]",
+        joyeer::typing::TypeKind::dictionary,
+        joyeer::semantic::invalidSymbolId,
+        { 1, 2 },
+    });
+    auto& function = module.functions[0];
+    function.name = "set";
+    function.parameters.clear();
+    function.resultType = 0;
+    function.returnsValue = false;
+    function.blocks[0].instructions = {
+        Instruction {
+            Opcode::stackAllocate,
+            Value { 0, 3, ValueCategory::address },
+        },
+        Instruction {
+            Opcode::integerConstant,
+            Value { 1, 1, ValueCategory::value },
+            {}, {}, std::nullopt, std::nullopt, 42,
+        },
+        Instruction {
+            Opcode::booleanConstant,
+            Value { 2, 2, ValueCategory::value },
+            {}, {}, std::nullopt, std::nullopt, 1,
+        },
+        Instruction { Opcode::dictionarySet, std::nullopt, { 0, 1, 2 } },
+        Instruction { Opcode::returnVoid },
+    };
+
+    const auto valid = Verifier().verify(module);
+    EXPECT_TRUE(valid.succeeded()) << dump(valid);
+
+    function.blocks[0].instructions[3].operands = { 0, 2, 1 };
+    const auto invalid = Verifier().verify(module);
+    EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
+}
+
 TEST(IRModelTest, ReportsDuplicateAndUndefinedValueIds) {
     auto module = validAddModule();
     auto& add = module.functions[0].blocks[0].instructions[0];

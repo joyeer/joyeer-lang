@@ -305,6 +305,11 @@ struct StringEntry {
     int64_t value;
 };
 
+struct OwnedStringEntry {
+    JoyeerString key;
+    JoyeerString value;
+};
+
 TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
     const std::string name = "answer";
     const StringEntry entry { view(name), 42 };
@@ -329,10 +334,86 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-struct OwnedStringEntry {
-    JoyeerString key;
-    JoyeerString value;
-};
+    TEST(NativeRuntimeTest, InsertsUpdatesAndGrowsDictionaryEntries) {
+        JoyeerDictionary dictionary {};
+        joyeer_dictionary_create_owned_abi(
+            &dictionary,
+            nullptr,
+            0,
+            sizeof(int64_t),
+            sizeof(int64_t),
+            sizeof(IntEntry),
+            offsetof(IntEntry, value),
+            JOYEER_DICTIONARY_KEY_INT,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr);
+
+        for (int64_t key = 0; key < 17; ++key) {
+        const int64_t value = key * 10;
+        joyeer_dictionary_set_owned_abi(&dictionary, &key, &value);
+        }
+        int64_t updatedKey = 5;
+        const int64_t updatedValue = 999;
+        joyeer_dictionary_set_owned_abi(&dictionary, &updatedKey, &updatedValue);
+
+        EXPECT_EQ(dictionary.count, 17);
+        EXPECT_GE(dictionary.capacity, dictionary.count);
+        EXPECT_EQ(
+            *static_cast<const int64_t*>(joyeer_dictionary_at(
+                dictionary,
+                &updatedKey,
+                sizeof(updatedKey),
+                JOYEER_DICTIONARY_KEY_INT)),
+            updatedValue);
+        joyeer_dictionary_destroy_abi(&dictionary);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+    }
+
+    TEST(NativeRuntimeTest, TakesAndDestroysOwnedDictionaryInsertionsAndUpdates) {
+        cloneCount = 0;
+        destroyCount = 0;
+        JoyeerDictionary dictionary {};
+        joyeer_dictionary_create_owned_abi(
+            &dictionary,
+            nullptr,
+            0,
+            sizeof(JoyeerString),
+            sizeof(JoyeerString),
+            sizeof(OwnedStringEntry),
+            offsetof(OwnedStringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING,
+            cloneString,
+            destroyString,
+            cloneString,
+            destroyString);
+        auto firstKey = owned(std::string("key"));
+        auto firstValue = owned(std::string("first"));
+        joyeer_dictionary_set_owned_abi(&dictionary, &firstKey, &firstValue);
+        auto replacementKey = owned(std::string("key"));
+        auto replacementValue = owned(std::string("second"));
+        joyeer_dictionary_set_owned_abi(
+            &dictionary,
+            &replacementKey,
+            &replacementValue);
+
+        EXPECT_EQ(dictionary.count, 1);
+        EXPECT_EQ(cloneCount, 0);
+        EXPECT_EQ(destroyCount, 2);
+        const std::string lookupText = "key";
+        const auto lookupKey = view(lookupText);
+        const auto* stored = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+            dictionary,
+            &lookupKey,
+            sizeof(lookupKey),
+            JOYEER_DICTIONARY_KEY_STRING));
+        EXPECT_TRUE(joyeer_string_equal(*stored, view(std::string("second"))));
+
+        joyeer_dictionary_destroy_abi(&dictionary);
+        EXPECT_EQ(destroyCount, 4);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+    }
 
 TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
     cloneCount = 0;

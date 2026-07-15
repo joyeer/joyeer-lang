@@ -101,8 +101,8 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 - array construction, checked indexing, mutable element projection,
   ownership-transferring append/growth, recursive clone, and reverse-order
   element destruction;
-- dictionary construction, linear lookup for primitive/string keys, recursive
-  key/value clone, and destruction;
+- dictionary construction, count, linear lookup for primitive/string keys,
+  mutable insert/update growth, recursive key/value clone, and destruction;
 - binary file input through `readFile(path:)`;
 - panic and bounds traps;
 - the process entry trampoline and active-allocation balance check.
@@ -125,6 +125,12 @@ Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`; the
 runtime grows geometrically and preserves the array's element clone/destroy
 callbacks. Borrowed heap-backed elements are cloned before transfer, while
 owned temporaries move directly into the array.
+
+Mutable `&dictionary[key] = value` lowers to
+`joyeer_dictionary_set_owned_abi`. Missing keys grow storage geometrically and
+take both key and value. Existing keys retain their original key storage,
+destroy the incoming duplicate key and previous value, and take the replacement
+value without changing `count`.
 
 ### File input
 

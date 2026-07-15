@@ -35,7 +35,8 @@ checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
 and `inout`; structs; payload enums; exhaustive `match`; arrays, dictionaries,
 `Optional`, `Result`, byte indexing, `print(value:)`, all-paths-return,
 `readFile(path:)`, mutating `&array.append(element:)`, unreachable-code
-warnings, definite initialization, and unused-binding warnings.
+warnings, definite initialization, dictionary `count`/insertion/update, and
+unused-binding warnings.
 
 See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the full pipeline and current stage, and [docs/plan/v0.1.md](docs/plan/v0.1.md) for the v0.1 goal (a zero-overhead JSON parser written in Joyeer).
 
