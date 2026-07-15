@@ -63,6 +63,12 @@ than delegated to the platform linker.
 The default mode remains the legacy VM for compatibility. Native output
 options require `--lang=v0.1`.
 
+Native executable linking has an explicit optimization policy: `-O2` is the
+default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
+selected flag is passed to Clang while it consumes the verified textual LLVM
+module. `--emit-llvm` intentionally writes the pre-optimization backend IR so
+it remains deterministic and inspectable.
+
 ---
 
 ## 3. LLVM type and ABI mapping
@@ -171,8 +177,8 @@ The native path is an MVP, not the final zero-cost implementation:
   not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an
   aligned payload buffer;
-- Clang runs at its default optimization level; a deliberate pass/optimization
-  pipeline is not configured;
+- no Joyeer-specific LLVM pass pipeline or LTO policy is configured beyond the
+  explicit Clang optimization level;
 - no DWARF/source debug information is emitted;
 - `print` supports primitive and string values, not arbitrary aggregates;
 - file input is synchronous and whole-file only; streaming, writing, metadata,
@@ -193,6 +199,7 @@ ctest --test-dir build -L llvm-backend --output-on-failure
 ctest --test-dir build -L native-runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
 ctest --test-dir build -L file-io --output-on-failure
+ctest --test-dir build -L optimization --output-on-failure
 ```
 
 The tests make Clang compile generated LLVM IR, compile and run native Joyeer
@@ -207,3 +214,10 @@ an external file, recursively parses nested null/Boolean/integer/string/array/
 object values, checks representative results, rejects malformed input, and
 returns with no runtime-managed allocations. It intentionally matches the
 v0.1 scope: floating-point numbers and JSON `\uXXXX` decoding remain deferred.
+
+Optimization tests verify the default and all accepted CLI levels, then compile
+at `-O2` and prove checked integer overflow and array bounds still terminate
+with their runtime diagnostics. Panic flushes stderr and uses C11 `_Exit` with
+a nonzero status, avoiding platform crash dialogs while remaining
+unrecoverable. Existing ownership-heavy native tests run at the default `-O2`
+and retain the zero-allocation-balance check.

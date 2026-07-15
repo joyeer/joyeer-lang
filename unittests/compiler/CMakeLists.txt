@@ -294,6 +294,30 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableJsonParser PROPERTIES
             LABELS "native;llvm-backend;native-runtime;ownership;file-io;array;dictionary;byte-conversion;json-parser"
     )
+
+    add_test(NAME NativeOptimizedOverflowTrap
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/optimized_overflow.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-optimized-overflow${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_PATTERN=integer addition overflow"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
+    )
+    set_tests_properties(NativeOptimizedOverflowTrap PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;optimization;safety"
+    )
+
+    add_test(NAME NativeOptimizedBoundsTrap
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/optimized_bounds.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-optimized-bounds${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_PATTERN=array index out of bounds"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
+    )
+    set_tests_properties(NativeOptimizedBoundsTrap PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;optimization;safety"
+    )
 endif()
 
 add_test(NAME NameResolutionCliRejectsUndefinedName

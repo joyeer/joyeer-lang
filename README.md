@@ -32,8 +32,8 @@ detection and zero runtime allocation balance.
 The native lane is still experimental. The current heap-backed values have
 recursive clone/destroy support, deterministic scope and early-return cleanup,
 and a native-entry allocation-balance check. Source-level consuming ownership,
-an explicit optimization policy, debug information, and a complete standard
-library are not yet complete, so this is not a production release.
+debug information, and a complete standard library are not yet complete, so
+this is not a production release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
@@ -94,6 +94,10 @@ The `joyeer` executable is written to `build/bin/joyeer`.
 ./build/bin/joyeer --lang=v0.1 -o ./hello path/to/program.joyeer
 ./hello
 ```
+
+Native executables default to `-O2`. Select `-O0`, `-O1`, `-O2`, or `-O3`
+before `-o` to override the Clang optimization level. Textual `--emit-llvm`
+output remains the verified pre-optimization Joyeer backend output.
 
 Emit textual LLVM IR instead:
 

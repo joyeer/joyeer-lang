@@ -25,6 +25,19 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             languageMode = LanguageMode::v0_1;
         } else if(*iterator == "--lang=v0.1-legacy") {
             languageMode = LanguageMode::legacy;
+        } else if(*iterator == "-O0") {
+            optimizationLevel = joyeer::OptimizationLevel::O0;
+        } else if(*iterator == "-O1") {
+            optimizationLevel = joyeer::OptimizationLevel::O1;
+        } else if(*iterator == "-O2") {
+            optimizationLevel = joyeer::OptimizationLevel::O2;
+        } else if(*iterator == "-O3") {
+            optimizationLevel = joyeer::OptimizationLevel::O3;
+        } else if(iterator->starts_with("-O")) {
+            diagnostics->reportError(
+                    ErrorLevel::failure,
+                    "unsupported optimization level '%s'; expected -O0, -O1, -O2, or -O3",
+                    iterator->c_str());
         } else if(*iterator == "--emit-llvm" || *iterator == "-o") {
             const auto option = *iterator;
             iterator++;
@@ -61,11 +74,12 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
 }
 
 void CommandLineArguments::printUsage() {
-    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
+    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] [-O0|-O1|-O2|-O3] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --lang=v0.1         compile with the typed native pipeline" << std::endl;
     std::cout << "  --lang=v0.1-legacy  compile and run with the legacy VM pipeline (default)" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
     std::cout << "  -o <file>           write a native executable" << std::endl;
+    std::cout << "  -O0|-O1|-O2|-O3    native Clang optimization level (default: -O2)" << std::endl;
 }
 
 void CommandLineArguments::parseInputFile(const std::string &inputpath) {

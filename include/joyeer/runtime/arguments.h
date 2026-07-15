@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 
+#include "joyeer/compiler/options.h"
 #include "joyeer/runtime/types.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
@@ -35,6 +36,7 @@ struct CommandLineArguments {
     bool accepted = false;
     LanguageMode languageMode = LanguageMode::legacy;
     OutputMode outputMode = OutputMode::validate;
+    joyeer::OptimizationLevel optimizationLevel = joyeer::OptimizationLevel::O2;
 
     Diagnostics* diagnostics;
 

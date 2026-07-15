@@ -72,7 +72,8 @@ _Noreturn void joyeer_panic(const char* message) {
     fputs("Joyeer runtime error: ", stderr);
     fputs(message == NULL ? "unknown error" : message, stderr);
     fputc('\n', stderr);
-    abort();
+    fflush(stderr);
+    _Exit(EXIT_FAILURE);
 }
 
 int64_t joyeer_checked_add_int(int64_t left, int64_t right) {

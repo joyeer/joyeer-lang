@@ -1,6 +1,8 @@
 #ifndef __joyeer_backend_linker_h__
 #define __joyeer_backend_linker_h__
 
+#include "joyeer/compiler/options.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@ struct LinkOptions {
     std::filesystem::path clangExecutable;
     std::filesystem::path runtimeLibrary;
     std::filesystem::path outputFile;
+    OptimizationLevel optimizationLevel = OptimizationLevel::O2;
 };
 
 struct LinkResult {

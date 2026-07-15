@@ -16,3 +16,17 @@ target_link_libraries(RuntimeTests
 gtest_discover_tests(RuntimeTests
         PROPERTIES LABELS native-runtime
 )
+
+add_executable(RuntimeOptionsTests
+        arguments_test.cpp
+)
+
+target_link_libraries(RuntimeOptionsTests
+        GTest::gtest_main
+        JoyeerRuntime
+        JoyeerDiagnostic
+)
+
+gtest_discover_tests(RuntimeOptionsTests
+        PROPERTIES LABELS "native-runtime\;optimization"
+)

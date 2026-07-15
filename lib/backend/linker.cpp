@@ -99,7 +99,8 @@ LinkResult Linker::link(
         return result;
     }
 
-        const auto commandBody = clang + " -Wno-override-module -x ir " + input +
+        const auto commandBody = clang + " " + optimizationFlag(options.optimizationLevel) +
+            " -Wno-override-module -x ir " + input +
             " -x none " + runtime + " -o " + output + " > " + log + " 2>&1";
     #if defined(_WIN32)
         const auto command = '"' + commandBody + '"';

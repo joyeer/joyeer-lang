@@ -42,7 +42,7 @@ Source (.joyeer)
   │
   ▼
 ┌──────────────────┐
-│ 8. LLVM Passes    │  LLVM optimization passes (automatic)
+│ 8. LLVM Passes    │  Explicit Clang -O0/-O1/-O2/-O3 policy (default -O2)
 └──────────────────┘
   │
   ▼
@@ -69,7 +69,7 @@ Source (.joyeer)
 | 5. Semantic Analysis | ✅ all-paths-return, unreachable warnings, definite initialization, unused bindings; access/mutability in Stage 4 | `semanticanalysis.cpp`, [contract](../impl/semantic-analysis.md) |
 | 6. Own IR | ✅ JSON-parser MVP lowering, ownership operations, cleanup, verifier | `irlowering.cpp`, `ir.cpp`, [contract](../impl/ir.md) |
 | 7. LLVM IR Gen | ✅ JSON-parser MVP textual LLVM IR | `backend/llvm.cpp`, [native contract](../impl/native.md) |
-| 8. LLVM Optimization | ❌ Deliberate pass/optimization policy missing | Clang currently uses its default level |
+| 8. LLVM Optimization | ✅ Explicit `-O0`…`-O3` policy; `-O2` default; safety traps tested | `backend/linker.cpp`, [native contract](../impl/native.md) |
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
 | Runtime Library | ✅ Primitive/string/collection/file-input MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
@@ -116,9 +116,8 @@ next work is product completeness and quality:
 
 1. Admit and enforce source-level `borrowing`, `consuming`, `initializing`, and
   `consume` flow states.
-2. Configure a deliberate LLVM optimization pipeline and verify overflow/
-  bounds checks survive required optimization levels.
-3. Improve diagnostic source rendering, one-based locations, and fix-it hints.
+2. Improve diagnostic source rendering, one-based locations, and fix-it hints.
+3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.
 4. Retire the legacy
   VM lane after native golden coverage is equivalent.
 

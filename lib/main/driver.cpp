@@ -43,6 +43,7 @@ int Driver::run() {
                         JOYEER_CLANG_EXECUTABLE_PATH,
                         JOYEER_NATIVE_RUNTIME_PATH,
                         arguments->outputFile,
+                        arguments->optimizationLevel,
                     });
             for (const auto& diagnostic : linking.diagnostics) {
                 diagnostics->reportError(

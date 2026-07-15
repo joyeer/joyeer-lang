@@ -144,7 +144,8 @@ The current IR/native pipeline intentionally leaves these to later commits:
   `consume` use-after-move analysis;
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
-- an explicit LLVM optimization pipeline;
+- Joyeer-specific optimization passes and an LTO policy beyond the native
+  backend's explicit Clang optimization level;
 - source-level debug information.
 
 None of those should be implemented by extending the compatibility VM lane.
