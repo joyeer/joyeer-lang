@@ -329,8 +329,19 @@ private:
     std::optional<TypeId> currentReturnType;
     std::unordered_set<semantic::NodeId> handledDeferredReferences;
 
-    void report(TypeCheckingDiagnosticId id, SourceSpan span, std::string message) {
-        diagnostics.push_back(TypeCheckingDiagnostic { id, span, std::move(message) });
+    void report(
+            TypeCheckingDiagnosticId id,
+            SourceSpan span,
+            std::string message,
+            std::optional<std::string> help = std::nullopt,
+            std::optional<DiagnosticFixIt> fixIt = std::nullopt) {
+        diagnostics.push_back(TypeCheckingDiagnostic {
+            id,
+            span,
+            std::move(message),
+            std::move(help),
+            std::move(fixIt),
+        });
     }
 
     void recordNodeType(const syntax::NodePtr& node, TypeId type) {
@@ -1403,6 +1414,7 @@ private:
         if (!markerMatches) {
             const auto consumeMismatch = marker == syntax::AccessEffect::consuming ||
                     required == syntax::AccessEffect::consuming;
+            const auto fix = accessMarkerFix(required, argument);
             report(
                     required == syntax::AccessEffect::initializing
                             ? TypeCheckingDiagnosticId::invalidInitializingArgument
@@ -1418,7 +1430,9 @@ private:
                                             ? "inout argument requires '&' at the call site"
                                             : marker == syntax::AccessEffect::consuming
                                                     ? "non-consuming argument must not use 'consume'"
-                                                    : "non-inout argument must not use '&'");
+                                                    : "non-inout argument must not use '&'",
+                    accessMarkerHelp(required, marker),
+                    fix);
             return;
         }
         if (required == syntax::AccessEffect::inout &&
@@ -1442,6 +1456,48 @@ private:
                     argument.value->span,
                     "consuming argument must be an owning local, consuming parameter, or temporary");
         }
+    }
+
+    std::optional<DiagnosticFixIt> accessMarkerFix(
+            syntax::AccessEffect required,
+            const syntax::CallArgumentSyntax& argument) const {
+        std::string replacement;
+        switch (required) {
+            case syntax::AccessEffect::borrowing: replacement = ""; break;
+            case syntax::AccessEffect::inout:
+            case syntax::AccessEffect::initializing: replacement = "&"; break;
+            case syntax::AccessEffect::consuming: replacement = "consume "; break;
+        }
+        if (argument.accessMarker != nullptr) {
+            return DiagnosticFixIt {
+                argument.accessMarker->span.offset,
+                argument.accessMarker->span.length,
+                std::move(replacement),
+            };
+        }
+        return DiagnosticFixIt {
+            argument.value->span.offset,
+            0,
+            std::move(replacement),
+        };
+    }
+
+    std::string accessMarkerHelp(
+            syntax::AccessEffect required,
+            syntax::AccessEffect supplied) const {
+        if (required == syntax::AccessEffect::borrowing) {
+            return "remove the access marker from this borrowing argument";
+        }
+        const auto expected = required == syntax::AccessEffect::consuming
+                ? "consume"
+                : "&";
+        if (supplied == syntax::AccessEffect::borrowing) {
+            return "insert '" + std::string(expected) + "' before this argument";
+        }
+        const auto actual = supplied == syntax::AccessEffect::consuming
+                ? "consume"
+                : "&";
+        return "replace '" + std::string(actual) + "' with '" + expected + "'";
     }
 
     bool isConsumable(const syntax::ExprPtr& expression) const {

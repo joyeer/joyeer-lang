@@ -74,4 +74,32 @@ TEST(DiagnosticsTest, PrintsStructuredDiagnosticsWithoutSourceContext) {
 			"error[linker.missing-entry-point]: native executable requires 'func main()'\n");
 }
 
+TEST(DiagnosticsTest, PrintsHelpAndSourceFixItEdits) {
+	Diagnostics diagnostics;
+	const std::string source = "take(value: text)\n";
+	diagnostics.reportSourceDiagnostic(
+			ErrorLevel::failure,
+			"type-checking.invalid-consume-argument",
+			"sample.joyeer",
+			source,
+			{ 0 },
+			12,
+			4,
+			"consuming argument requires 'consume' at the call site",
+			"insert 'consume' before this argument",
+			DiagnosticFixIt { 12, 0, "consume " });
+
+	testing::internal::CaptureStdout();
+	diagnostics.printErrors();
+	const auto output = testing::internal::GetCapturedStdout();
+
+	EXPECT_EQ(
+			output,
+			"sample.joyeer:1:13: error[type-checking.invalid-consume-argument]: consuming argument requires 'consume' at the call site\n"
+			"  1 | take(value: text)\n"
+			"    |             ^~~~\n"
+			"help: insert 'consume' before this argument\n"
+			"fix-it: sample.joyeer:1:13:0: \"consume \"\n");
+}
+
 } // namespace

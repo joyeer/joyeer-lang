@@ -62,7 +62,9 @@ void Diagnostics::reportError(ErrorLevel level, int lineAt, int columnAt, const 
         const std::vector<uint32_t>& lineStarts,
         uint32_t offset,
         uint32_t length,
-        std::string message) {
+        std::string message,
+        std::optional<std::string> help,
+        std::optional<DiagnosticFixIt> fixIt) {
         const auto boundedOffset = static_cast<uint32_t>(std::min<size_t>(offset, source.size()));
         const auto upper = std::upper_bound(
             lineStarts.begin(),
@@ -90,6 +92,24 @@ void Diagnostics::reportError(ErrorLevel level, int lineAt, int columnAt, const 
             1,
             std::min<size_t>(length == 0 ? 1 : length, remaining)));
         error.hasSourceContext = true;
+            error.help = std::move(help);
+            error.fixIt = std::move(fixIt);
+            if (error.fixIt.has_value()) {
+            const auto fixOffset = static_cast<uint32_t>(std::min<size_t>(
+                error.fixIt->offset,
+                source.size()));
+            const auto fixUpper = std::upper_bound(
+                lineStarts.begin(),
+                lineStarts.end(),
+                fixOffset);
+            error.fixLineAt = fixUpper == lineStarts.begin()
+                ? 0
+                : static_cast<int>(std::distance(lineStarts.begin(), fixUpper) - 1);
+            const auto fixLineStart = lineStarts.empty()
+                ? 0u
+                : lineStarts[static_cast<size_t>(error.fixLineAt)];
+            error.fixColumnAt = static_cast<int>(fixOffset - fixLineStart);
+            }
         errors.push_back(std::move(error));
     }
 
@@ -125,7 +145,24 @@ void Diagnostics::printError(ErrorMessage &error) {
                   << std::string(lineText.size() + 3, ' ') << "| "
                   << std::string(visualColumn, ' ') << '^';
         if (error.length > 1) std::cout << std::string(error.length - 1, '~');
-        std::cout << std::endl;
+        std::cout << '\n';
+        if (error.help.has_value()) {
+            std::cout << "help: " << *error.help << '\n';
+        }
+        if (error.fixIt.has_value()) {
+            std::cout << "fix-it: " << error.path << ':'
+                      << error.fixLineAt + 1 << ':' << error.fixColumnAt + 1
+                      << ':' << error.fixIt->length << ": \"";
+            for (const auto character : error.fixIt->replacement) {
+                if (character == '\\' || character == '"') std::cout << '\\';
+                if (character == '\n') std::cout << "\\n";
+                else if (character == '\r') std::cout << "\\r";
+                else if (character == '\t') std::cout << "\\t";
+                else std::cout << character;
+            }
+            std::cout << '"' << '\n';
+        }
+        std::cout.flush();
         return;
     }
     if (!error.code.empty()) {

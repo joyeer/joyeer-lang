@@ -27,7 +27,9 @@ void reportSpannedDiagnostic(
     SourceSpan span,
     ErrorLevel level,
     std::string code,
-    const std::string& message) {
+    const std::string& message,
+    std::optional<std::string> help = std::nullopt,
+    std::optional<DiagnosticFixIt> fixIt = std::nullopt) {
     diagnostics->reportSourceDiagnostic(
         level,
         std::move(code),
@@ -36,7 +38,9 @@ void reportSpannedDiagnostic(
         sourcefile->lineStarts,
         span.offset,
         span.length,
-        message);
+        message,
+        std::move(help),
+        std::move(fixIt));
 }
 
 } // namespace
@@ -138,7 +142,9 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 diagnostic.span,
                 ErrorLevel::failure,
                 joyeer::typing::diagnosticName(diagnostic.id),
-                diagnostic.message);
+                    diagnostic.message,
+                    diagnostic.help,
+                    diagnostic.fixIt);
         }
         if (!checking.succeeded()) {
             return nullptr;
@@ -154,7 +160,8 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                     ? ErrorLevel::report
                     : ErrorLevel::failure,
                 joyeer::analysis::diagnosticName(diagnostic.id),
-                diagnostic.message);
+                diagnostic.message,
+                diagnostic.help);
         }
         if (!analysis.succeeded()) {
             return nullptr;

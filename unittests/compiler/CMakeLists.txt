@@ -377,6 +377,20 @@ set_tests_properties(TypeCheckingCliRejectsOverlappingAccess PROPERTIES
         LABELS "type-checking;exclusivity"
 )
 
+add_test(NAME DiagnosticsCliSuggestsConsumeMarkerFix
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/missing_consume_marker.joyeer
+                "-DEXPECTED_HEADER=missing_consume_marker.joyeer:7:10: error[type-checking.invalid-consume-argument]"
+                "-DEXPECTED_SOURCE=    take(value: text)"
+                "-DEXPECTED_HELP=help: insert 'consume' before this argument"
+                "-DEXPECTED_FIX_IT=fix-it: missing_consume_marker.joyeer:7:17:0: \"consume \""
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliSuggestsConsumeMarkerFix PROPERTIES
+        LABELS "diagnostics;type-checking;fix-it;consuming"
+)
+
 add_test(NAME DiagnosticsCliRendersSourceContext
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

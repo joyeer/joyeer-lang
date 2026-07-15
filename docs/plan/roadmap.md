@@ -73,7 +73,7 @@ Source (.joyeer)
 | 9. Code Gen | ✅ Clang emits native objects/executables | `backend/linker.cpp` |
 | 10. Linker | ✅ `-o` links the C runtime and native module | `backend/linker.cpp` |
 | Runtime Library | ✅ Primitive/string/collection/file-input MVP with recursive clone/destroy and allocation-balance checks | `native/runtime.c` |
-| Error Diagnostics | ✅ v0.1 stable IDs, severity, file/one-based location, source excerpt, caret range; fix-its pending | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
+| Error Diagnostics | ✅ v0.1 structured source output; ownership/access marker help and fix-its; broader fix-it coverage pending | `diagnostic.cpp`, [contract](../impl/diagnostics.md) |
 
 The stack VM and bytecode pipeline are now compatibility-only. New v0.1
 frontend work must consume `TypeCheckedModel` and must not add dependencies on
@@ -116,8 +116,7 @@ next work is product completeness and quality:
 
 1. Extend implemented call-site access-path exclusivity to longer-lived
   projections and projection consumption.
-2. Add structured fix-it/help diagnostics; rich one-based source rendering is
-  implemented for v0.1.
+2. Expand structured fix-it/help beyond ownership/access-marker diagnostics.
 3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.
 4. Retire the legacy
   VM lane after native golden coverage is equivalent.

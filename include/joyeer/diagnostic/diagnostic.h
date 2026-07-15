@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,12 @@ enum ErrorLevel {
     report,
     // compiler will stop work
     failure
+};
+
+struct DiagnosticFixIt {
+    uint32_t offset = 0;
+    uint32_t length = 0;
+    std::string replacement;
 };
 
 struct ErrorMessage {
@@ -26,6 +33,10 @@ struct ErrorMessage {
     std::string sourceLine;
     uint32_t length = 0;
     bool hasSourceContext = false;
+    std::optional<std::string> help;
+    std::optional<DiagnosticFixIt> fixIt;
+    int fixLineAt = -1;
+    int fixColumnAt = -1;
 };
 
 #define DIAGNOSTICS_ERROR_MESSAGE(name, message) static constexpr const char* name = message;
@@ -81,7 +92,9 @@ struct Diagnostics {
             const std::vector<uint32_t>& lineStarts,
             uint32_t offset,
             uint32_t length,
-            std::string message);
+            std::string message,
+            std::optional<std::string> help = std::nullopt,
+            std::optional<DiagnosticFixIt> fixIt = std::nullopt);
 
     // print the error into consoles
     void printErrors();

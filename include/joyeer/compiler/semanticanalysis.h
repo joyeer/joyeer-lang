@@ -28,6 +28,7 @@ struct Diagnostic {
     Severity severity;
     SourceSpan span;
     std::string message;
+    std::optional<std::string> help;
 };
 
 struct Result {

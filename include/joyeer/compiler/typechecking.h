@@ -2,6 +2,7 @@
 #define __joyeer_compiler_typechecking_h__
 
 #include "joyeer/compiler/semantic.h"
+#include "joyeer/diagnostic/diagnostic.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -151,6 +152,8 @@ struct TypeCheckingDiagnostic {
     TypeCheckingDiagnosticId id;
     SourceSpan span;
     std::string message;
+    std::optional<std::string> help;
+    std::optional<DiagnosticFixIt> fixIt;
 };
 
 class TypeCheckingBuilder;

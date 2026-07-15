@@ -46,6 +46,8 @@ The contract is:
 - the source excerpt is one physical line;
 - `^` identifies the first byte and `~` covers the remainder of the span;
 - tabs before the caret expand to four-column tab stops.
+- optional `help:` lines explain a recovery;
+- optional `fix-it:` lines encode `path:line:column:byte-length: "replacement"`.
 
 Internal `SourceSpan` offsets remain zero-based UTF-8 byte offsets. Rendering
 never changes the semantic span model.
@@ -64,11 +66,16 @@ Warnings are rendered through the same path but do not set `hasFailure()` and
 do not stop LLVM/native output. The driver prints warnings once after a
 successful link, or prints accumulated diagnostics once on failure.
 
+Access-effect marker mismatches provide source edits to insert, replace, or
+remove `&` / `consume`. Ownership-flow diagnostics provide help for
+reinitialization and all-path initializing obligations. Offsets remain byte
+based so editor tooling can apply edits without reinterpreting display width.
+
 ---
 
 ## 4. Remaining work
 
-- fix-it edits and structured help/notes;
+- broader parser/type fix-it coverage and secondary note locations;
 - multi-line span rendering;
 - Unicode display-column calculation (current columns are UTF-8 byte columns);
 - migration of the compatibility parser/VM diagnostics to stable IDs;
@@ -86,6 +93,6 @@ ctest --test-dir build -L diagnostics --output-on-failure
 ```
 
 Tests cover failure/warning severity, source-independent structured errors,
-exact one-based source rendering, and CLI output from both the lexer and type
-checker. Existing legacy formatting tests ensure the compatibility path does
-not change.
+exact one-based source rendering, help/fix-it escaping, and CLI output from the
+lexer and type checker (including an applicable `consume` insertion). Existing
+legacy formatting tests ensure the compatibility path does not change.

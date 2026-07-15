@@ -980,6 +980,34 @@ let selected = if flag { 1 } else { "two" }
                                     }));
                             }
 
+                                TEST_F(TypeCheckingTest, ProvidesAccessMarkerFixIts) {
+                                    check(R"JOYEER(func update(value: inout Int) { &value = 1 }
+                                func take(value: consuming String) { print(value: value) }
+                                func inspect(value: borrowing String) { print(value: value) }
+                                func invalid() {
+                                var number = 0
+                                update(value: number)
+                                let text = "owned"
+                                take(value: &text)
+                                inspect(value: &text)
+                                }
+                                )JOYEER");
+
+                                    ASSERT_EQ(checking.diagnostics.size(), 3u)
+                                        << joyeer::typing::dump(checking.diagnostics);
+                                    const std::vector<std::string> replacements { "&", "consume ", "" };
+                                    for (size_t index = 0; index < replacements.size(); ++index) {
+                                        ASSERT_TRUE(checking.diagnostics[index].help.has_value());
+                                        ASSERT_TRUE(checking.diagnostics[index].fixIt.has_value());
+                                        EXPECT_EQ(
+                                            checking.diagnostics[index].fixIt->replacement,
+                                            replacements[index]);
+                                    }
+                                    EXPECT_EQ(checking.diagnostics[0].fixIt->length, 0u);
+                                    EXPECT_EQ(checking.diagnostics[1].fixIt->length, 1u);
+                                    EXPECT_EQ(checking.diagnostics[2].fixIt->length, 1u);
+                                }
+
                             TEST_F(TypeCheckingTest, AllowsDisjointStructFields) {
                                 check(R"JOYEER(struct Pair { var left: Int
                             var right: Int

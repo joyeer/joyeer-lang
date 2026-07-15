@@ -21,4 +21,14 @@ foreach(expected IN ITEMS "${EXPECTED_HEADER}" "${EXPECTED_SOURCE}" "^")
     endif()
 endforeach()
 
+foreach(optional_name IN ITEMS EXPECTED_HELP EXPECTED_FIX_IT)
+    if(DEFINED ${optional_name})
+        string(FIND "${combined}" "${${optional_name}}" location)
+        if(location EQUAL -1)
+            message(FATAL_ERROR
+                    "Compiler diagnostic is missing '${${optional_name}}':\n${combined}")
+        endif()
+    endif()
+endforeach()
+
 message(STATUS "Observed rich source diagnostic: ${EXPECTED_HEADER}")

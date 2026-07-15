@@ -350,6 +350,7 @@ private:
                                         ? std::string()
                                         : declaration->name) +
                                 "' may already be consumed on the next loop iteration",
+                            "reinitialize the binding before the loop back-edge",
                     });
                 }
             }
@@ -496,6 +497,11 @@ private:
                     (consumed
                             ? "' is used after its ownership was consumed"
                             : "' is used before being initialized"),
+                    consumed
+                        ? std::optional<std::string>(
+                            "assign a new value before using this binding again")
+                        : std::optional<std::string>(
+                            "initialize this binding on every continuing path before reading it"),
         });
     }
 
@@ -539,6 +545,7 @@ private:
                 "binding '" +
                         (declaration == nullptr ? std::string() : declaration->name) +
                         "' is already initialized",
+                    "pass uninitialized storage, or consume the old value before initializing it",
             });
             return;
         }
@@ -559,6 +566,7 @@ private:
                 "initializing parameter '" +
                         (declaration == nullptr ? std::string() : declaration->name) +
                         "' is not initialized on this return path",
+                    "assign to this initializing parameter on every normal return path",
             });
         }
     }
