@@ -228,7 +228,13 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
             return nullptr;
         }
 
-        const auto llvm = joyeer::llvmbackend::Emitter().emit(*lowering.module);
+        const auto llvm = joyeer::llvmbackend::Emitter().emit(
+            *lowering.module,
+            joyeer::llvmbackend::EmitOptions {
+                options->debugInfo.emitLineTables,
+                options->debugInfo.format,
+                options->optimizationLevel,
+            });
         sourcefile->llvmIR = llvm.text;
         sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
         for (const auto& diagnostic : llvm.diagnostics) {

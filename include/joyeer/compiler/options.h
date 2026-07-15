@@ -10,6 +10,24 @@ enum class OptimizationLevel {
     O3,
 };
 
+enum class DebugInfoFormat {
+    dwarf,
+    codeView,
+};
+
+[[nodiscard]] constexpr DebugInfoFormat defaultDebugInfoFormat() {
+#if defined(_WIN32)
+    return DebugInfoFormat::codeView;
+#else
+    return DebugInfoFormat::dwarf;
+#endif
+}
+
+struct DebugInfoOptions {
+    bool emitLineTables = false;
+    DebugInfoFormat format = defaultDebugInfoFormat();
+};
+
 [[nodiscard]] constexpr const char* optimizationFlag(OptimizationLevel level) {
     switch (level) {
         case OptimizationLevel::O0: return "-O0";

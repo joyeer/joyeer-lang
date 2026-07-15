@@ -226,11 +226,58 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -DCLANG=${JOYEER_CLANG_EXECUTABLE}
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-json-mvp.ll
+                    "-DUNEXPECTED_IR_PATTERNS=!llvm.dbg.cu;!DILocation"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
     )
     set_tests_properties(LLVMBackendCompilerJsonMvpValidation PROPERTIES
             LABELS "llvm-backend;ir-lowering;type-checking"
     )
+
+    add_test(NAME LLVMBackendCompilerDwarfO0Validation
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-dwarf-o0.ll
+                    "-DCOMPILER_ARGS=-O0;-gdwarf"
+                    "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;Dwarf Version;isOptimized: false;!DILocation"
+                    "-DUNEXPECTED_IR_PATTERNS=CodeView;DISPFlagOptimized"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+    )
+    set_tests_properties(LLVMBackendCompilerDwarfO0Validation PROPERTIES
+            LABELS "llvm-backend;debug-info;optimization"
+    )
+
+    add_test(NAME LLVMBackendCompilerDwarfO2Validation
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-dwarf-o2.ll
+                    "-DCOMPILER_ARGS=-O2;-gdwarf"
+                    "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;Dwarf Version;isOptimized: true;DISPFlagOptimized"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+    )
+    set_tests_properties(LLVMBackendCompilerDwarfO2Validation PROPERTIES
+            LABELS "llvm-backend;debug-info;optimization"
+    )
+
+    if(WIN32)
+        add_test(NAME LLVMBackendCompilerPlatformDebugValidation
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-platform.ll
+                        -DCOMPILER_ARGS=-g
+                        "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;CodeView;!DILocation"
+                        "-DUNEXPECTED_IR_PATTERNS=Dwarf Version"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+        )
+        set_tests_properties(LLVMBackendCompilerPlatformDebugValidation PROPERTIES
+                LABELS "llvm-backend;debug-info"
+        )
+    endif()
 
     add_test(NAME NativeExecutableHello
             COMMAND ${CMAKE_COMMAND}

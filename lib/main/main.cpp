@@ -7,6 +7,10 @@ int main(int argc, char** argv) {
     auto options = std::make_shared<CommandLineArguments>(diagnostics, argc, argv);
 
     if(!options->accepted) {
+        if (diagnostics->hasFailure()) {
+            diagnostics->printErrors();
+            return 1;
+        }
         options->printUsage();
         return 0;
     }

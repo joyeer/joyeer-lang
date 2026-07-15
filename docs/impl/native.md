@@ -48,6 +48,7 @@ Write LLVM IR:
 
 ```pwsh
 joyeer --lang=v0.1 --emit-llvm output.ll source.joyeer
+joyeer --lang=v0.1 -O0 -g --emit-llvm output.debug.ll source.joyeer
 ```
 
 Build a native executable:
@@ -69,6 +70,15 @@ default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
 selected flag is passed to Clang while it consumes the verified textual LLVM
 module. `--emit-llvm` intentionally writes the pre-optimization backend IR so
 it remains deterministic and inspectable.
+
+Debug line tables default to off (`-g0`). `-g` and
+`-gline-tables-only` enable the host format, `-gdwarf` selects DWARF 4, and
+`-gcodeview` selects CodeView on Windows. Format selection and enable/disable
+options compose in command-line order; for example `-gdwarf -g0 -g` produces
+DWARF line tables. Debug and optimization are orthogonal: `-O0` marks the
+compile unit unoptimized, while `-O1`…`-O3` carry optimized debug flags without
+changing the emitted pre-optimization instructions. The current debug level is
+line-tables-only; variables, types, and lexical scopes are not exposed.
 
 ---
 
@@ -185,8 +195,9 @@ The native path is an MVP, not the final zero-cost implementation:
 - the textual emitter can generate source/function/instruction
   line-tables-only metadata with DWARF 4 or CodeView module flags, including
   all LLVM instructions expanded from a source operation; compiler-generated
-  cleanup/plumbing is suppressed from line rows. CLI selection and final
-  debug-artifact policy remain;
+  cleanup/plumbing is suppressed from line rows. CLI selection works for
+  validation and `--emit-llvm`; deterministic final executable/PDB/dSYM policy
+  remains;
 - `print` supports primitive and string values, not arbitrary aggregates;
 - file input is synchronous and whole-file only; streaming, writing, metadata,
   and a typed I/O error enum are not provided;

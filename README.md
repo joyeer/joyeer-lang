@@ -36,8 +36,9 @@ parameters and mandatory `consume` markers work; explicit
 `borrowing` and `initializing` also work, and call-site access paths enforce
 exclusivity. Consuming field/array/dictionary projections are tracked through
 reinitialization. The v0.1 non-escaping ownership surface is complete; debug
-information and a complete standard library remain, so this is not a
-production release.
+line tables are available, while variable/type inspection, final debug artifact
+policy, and a complete standard library remain. This is not a production
+release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
 checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
@@ -109,10 +110,16 @@ Native executables default to `-O2`. Select `-O0`, `-O1`, `-O2`, or `-O3`
 before `-o` to override the Clang optimization level. Textual `--emit-llvm`
 output remains the verified pre-optimization Joyeer backend output.
 
+Debug line tables are off by default. `-g` and `-gline-tables-only` select the
+platform format (CodeView on Windows, DWARF elsewhere); `-gdwarf` selects DWARF
+4 explicitly and `-gcodeview` is available on Windows. `-g0` disables them.
+Debug selection is independent of `-O0`…`-O3`; line tables currently provide
+source/function/line locations, not variable inspection.
+
 Emit textual LLVM IR instead:
 
 ```shell
-./build/bin/joyeer --lang=v0.1 --emit-llvm ./hello.ll path/to/program.joyeer
+./build/bin/joyeer --lang=v0.1 -O0 -g --emit-llvm ./hello.ll path/to/program.joyeer
 ```
 
 Without an output option, `--lang=v0.1` validates and lowers the source without

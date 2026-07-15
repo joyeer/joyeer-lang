@@ -37,6 +37,7 @@ struct CommandLineArguments {
     LanguageMode languageMode = LanguageMode::legacy;
     OutputMode outputMode = OutputMode::validate;
     joyeer::OptimizationLevel optimizationLevel = joyeer::OptimizationLevel::O2;
+    joyeer::DebugInfoOptions debugInfo;
 
     Diagnostics* diagnostics;
 

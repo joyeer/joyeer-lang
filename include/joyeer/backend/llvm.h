@@ -10,10 +10,7 @@
 
 namespace joyeer::llvmbackend {
 
-enum class DebugInfoFormat {
-    dwarf,
-    codeView,
-};
+using DebugInfoFormat = joyeer::DebugInfoFormat;
 
 struct EmitOptions {
     bool emitLineTables = false;

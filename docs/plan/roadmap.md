@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Expose the verified LLVM line-table emitter through CLI/native debug
-  artifacts, then add source-level variables/scopes separately.
+1. Complete final executable/PDB/dSYM policy for the CLI-exposed line-table
+  emitter, then add source-level variables/scopes separately.
 2. Retire the legacy
   VM lane after native golden coverage is equivalent.
 3. Add broader type-directed edits only where the recovery is unambiguous.
@@ -296,9 +296,12 @@ std/
 
 ### Step 3.6 — Debug Information (DWARF)
 
-- Emit DWARF debug info via LLVM
-- Source-level debugging with gdb/lldb
-- Variable inspection, breakpoints, stack traces
+- ✅ Emit opt-in DWARF 4 / CodeView source line tables via textual LLVM
+- ✅ Expose `-g0`, `-g`, `-gline-tables-only`, `-gdwarf`, and Windows
+  `-gcodeview` independently of optimization
+- Final executable/PDB/dSYM artifact policy
+- Source-level breakpoints and stack frames with gdb/lldb/Visual Studio
+- Variable/type inspection and lexical scopes
 
 ### Step 3.7 — Build Tool & Package Manager
 

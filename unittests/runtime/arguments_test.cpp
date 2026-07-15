@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -35,12 +36,149 @@ std::vector<std::string> nativeArguments(const std::string& optimization = {}) {
     return result;
 }
 
+std::vector<std::string> nativeArguments(const std::vector<std::string>& options) {
+    std::vector<std::string> result {
+        "joyeer",
+        "--lang=v0.1",
+    };
+    result.insert(result.end(), options.begin(), options.end());
+    result.push_back("-o");
+    result.push_back(
+            (std::filesystem::temp_directory_path() / "joyeer-options-test").string());
+    result.push_back(std::filesystem::path(__FILE__).string());
+    return result;
+}
+
 TEST(CommandLineArgumentsTest, DefaultsNativeCompilationToO2) {
     Diagnostics diagnostics;
     const auto arguments = parseArguments(diagnostics, nativeArguments());
 
     EXPECT_FALSE(diagnostics.hasFailure());
     EXPECT_EQ(arguments->optimizationLevel, joyeer::OptimizationLevel::O2);
+    EXPECT_FALSE(arguments->debugInfo.emitLineTables);
+    EXPECT_EQ(arguments->debugInfo.format, joyeer::defaultDebugInfoFormat());
+}
+
+TEST(CommandLineArgumentsTest, ParsesDebugLineTableOptions) {
+    const std::vector<std::pair<std::string, joyeer::DebugInfoFormat>> cases {
+        { "-g", joyeer::defaultDebugInfoFormat() },
+        { "-gline-tables-only", joyeer::defaultDebugInfoFormat() },
+        { "-gdwarf", joyeer::DebugInfoFormat::dwarf },
+#if defined(_WIN32)
+        { "-gcodeview", joyeer::DebugInfoFormat::codeView },
+#endif
+    };
+    for (const auto& [option, expectedFormat] : cases) {
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(
+                diagnostics,
+                nativeArguments(std::vector<std::string> { option }));
+        EXPECT_FALSE(diagnostics.hasFailure()) << option;
+        EXPECT_TRUE(arguments->debugInfo.emitLineTables) << option;
+        EXPECT_EQ(arguments->debugInfo.format, expectedFormat) << option;
+    }
+}
+
+TEST(CommandLineArgumentsTest, AppliesDebugLevelAndFormatOptionsInOrder) {
+    {
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(
+                diagnostics,
+                nativeArguments(std::vector<std::string> {
+                    "-gdwarf", "-g0", "-gline-tables-only",
+                }));
+        EXPECT_FALSE(diagnostics.hasFailure());
+        EXPECT_TRUE(arguments->debugInfo.emitLineTables);
+        EXPECT_EQ(arguments->debugInfo.format, joyeer::DebugInfoFormat::dwarf);
+    }
+    {
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(
+                diagnostics,
+                nativeArguments(std::vector<std::string> { "-g", "-g0" }));
+        EXPECT_FALSE(diagnostics.hasFailure());
+        EXPECT_FALSE(arguments->debugInfo.emitLineTables);
+    }
+}
+
+TEST(CommandLineArgumentsTest, RejectsUnknownDebugOptions) {
+    Diagnostics diagnostics;
+    static_cast<void>(parseArguments(
+            diagnostics,
+            nativeArguments(std::vector<std::string> { "-g3" })));
+
+    ASSERT_TRUE(diagnostics.hasFailure());
+    ASSERT_FALSE(diagnostics.errors.empty());
+    EXPECT_NE(
+            diagnostics.errors[0].message.find("unsupported debug option"),
+            std::string::npos);
+}
+
+        TEST(CommandLineArgumentsTest, RejectsUnknownOptionsAndMultipleInputs) {
+            Diagnostics diagnostics;
+            auto values = nativeArguments(std::vector<std::string> { "--gdwarf" });
+            values.push_back(std::filesystem::path(__FILE__).string());
+            static_cast<void>(parseArguments(diagnostics, std::move(values)));
+
+            ASSERT_TRUE(diagnostics.hasFailure());
+            EXPECT_TRUE(std::any_of(
+                diagnostics.errors.begin(),
+                diagnostics.errors.end(),
+                [](const auto& error) {
+                return error.message.find("unknown option '--gdwarf'") !=
+                    std::string::npos;
+                }));
+            EXPECT_TRUE(std::any_of(
+                diagnostics.errors.begin(),
+                diagnostics.errors.end(),
+                [](const auto& error) {
+                return error.message.find("multiple input files") !=
+                    std::string::npos;
+                }));
+        }
+
+        TEST(CommandLineArgumentsTest, KeepsFailuresWhenNoInputWasProvided) {
+            Diagnostics diagnostics;
+            const auto arguments = parseArguments(
+                diagnostics,
+                { "joyeer", "--lang=v0.1", "-g3" });
+
+            EXPECT_TRUE(diagnostics.hasFailure());
+            EXPECT_FALSE(arguments->accepted);
+            ASSERT_EQ(diagnostics.errors.size(), 1u);
+            EXPECT_NE(
+                    diagnostics.errors[0].message.find("unsupported debug option"),
+                    std::string::npos);
+        }
+
+#if !defined(_WIN32)
+TEST(CommandLineArgumentsTest, RejectsEnabledCodeViewOutsideWindows) {
+    Diagnostics diagnostics;
+    static_cast<void>(parseArguments(
+            diagnostics,
+            nativeArguments(std::vector<std::string> { "-gcodeview" })));
+
+    ASSERT_TRUE(diagnostics.hasFailure());
+}
+#endif
+
+TEST(CommandLineArgumentsTest, RejectsEnabledDebugInfoForLegacyMode) {
+    Diagnostics diagnostics;
+    std::vector<std::string> values {
+        "joyeer",
+        "-g",
+        std::filesystem::path(__FILE__).string(),
+    };
+    static_cast<void>(parseArguments(diagnostics, std::move(values)));
+
+    ASSERT_TRUE(diagnostics.hasFailure());
+    EXPECT_TRUE(std::any_of(
+            diagnostics.errors.begin(),
+            diagnostics.errors.end(),
+            [](const auto& error) {
+                return error.message.find("debug information requires --lang=v0.1") !=
+                        std::string::npos;
+            }));
 }
 
 TEST(CommandLineArgumentsTest, ParsesEverySupportedOptimizationLevel) {

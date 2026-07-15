@@ -18,7 +18,8 @@ control-flow semantic analysis. Whole-binding `consuming` ownership is
 implemented; explicit `borrowing` and `initializing` are supported. Full
 call/argument-evaluation exclusivity and projection consumption are enforced
 for v0.1's non-escaping surface; optimization work beyond the current Clang
-`-O0`…`-O3` policy, debug info, and broader standard-library work remain.
+`-O0`…`-O3` policy, variable/type debug inspection, final debug artifact
+policy, and broader standard-library work remain.
 
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)

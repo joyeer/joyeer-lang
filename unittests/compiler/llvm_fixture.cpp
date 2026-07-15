@@ -412,8 +412,8 @@ int main(int argc, char** argv) {
             joyeer::llvmbackend::EmitOptions {
                 emitDebugInfo,
                 debugOption == "--debug-codeview"
-                        ? joyeer::llvmbackend::DebugInfoFormat::codeView
-                        : joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                    ? joyeer::DebugInfoFormat::codeView
+                    : joyeer::DebugInfoFormat::dwarf,
                 joyeer::OptimizationLevel::O0,
             });
     if (!result.succeeded()) {

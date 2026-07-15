@@ -28,5 +28,5 @@ target_link_libraries(RuntimeOptionsTests
 )
 
 gtest_discover_tests(RuntimeOptionsTests
-        PROPERTIES LABELS "native-runtime\;optimization"
+        PROPERTIES LABELS "native-runtime\;optimization\;debug-info"
 )

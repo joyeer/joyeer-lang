@@ -86,7 +86,7 @@ print(value: input)
             true,
             joyeer::llvmbackend::EmitOptions {
                 true,
-                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::DebugInfoFormat::dwarf,
                 joyeer::OptimizationLevel::O0,
             });
 
@@ -114,7 +114,7 @@ TEST_F(LLVMBackendTest, EmitsOptimizedCodeViewLineTables) {
             true,
             joyeer::llvmbackend::EmitOptions {
                 true,
-                joyeer::llvmbackend::DebugInfoFormat::codeView,
+                joyeer::DebugInfoFormat::codeView,
                 joyeer::OptimizationLevel::O2,
             });
 
@@ -148,7 +148,7 @@ print(value: text)
             true,
             joyeer::llvmbackend::EmitOptions {
                 true,
-                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::DebugInfoFormat::dwarf,
                 joyeer::OptimizationLevel::O0,
             });
 
@@ -187,7 +187,7 @@ TEST_F(LLVMBackendTest, FallsBackToUnknownForOversizedColumns) {
             true,
             joyeer::llvmbackend::EmitOptions {
                 true,
-                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::DebugInfoFormat::dwarf,
                 joyeer::OptimizationLevel::O0,
             });
 
@@ -204,7 +204,7 @@ return [1, 2]
             true,
             joyeer::llvmbackend::EmitOptions {
                 true,
-                joyeer::llvmbackend::DebugInfoFormat::dwarf,
+                joyeer::DebugInfoFormat::dwarf,
                 joyeer::OptimizationLevel::O0,
             });
 
