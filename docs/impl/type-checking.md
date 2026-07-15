@@ -98,10 +98,20 @@ The v0.1 checker currently validates:
 - explicit `borrowing` signatures as the marker-free default projection;
 - `initializing` signatures, mandatory `&`, and whole mutable owning-storage
   destination restrictions;
+- `type-checking.overlapping-access` for calls that combine an exclusive
+  inout/consuming/initializing projection with another overlapping access;
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
   on a mutable receiver;
 - mutable dictionary subscript insertion/update with concrete `K`/`V` checks
   and mandatory `&` on the subscript projection.
+
+  Call-site exclusivity compares typed access paths. Multiple borrowing
+  arguments may overlap. Any inout, consuming, or initializing argument must be
+  the sole overlapping access for the duration of the call. Distinct stored
+  struct fields are disjoint; subscript indices are conservative even when their
+  syntax differs. A prior `let` snapshot produces independent storage and is the
+  documented workaround. Computed argument expressions are evaluated into
+  temporaries before the call and do not extend their input reads into the call.
 
 Ordinary call labels, ordering, required/default argument presence, and
 lexical declaration binding remain name-resolution responsibilities. The type

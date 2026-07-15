@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Add full alias exclusivity and projection consumption; all four parameter
-  effects and whole-binding `consume` flow are implemented.
+1. Extend implemented call-site access-path exclusivity to longer-lived
+  projections and projection consumption.
 2. Add structured fix-it/help diagnostics; rich one-based source rendering is
   implemented for v0.1.
 3. Define Joyeer-specific LLVM passes/LTO only when profiling justifies them.

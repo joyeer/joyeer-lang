@@ -106,10 +106,11 @@ remain deterministic.
 ## 6. Remaining work
 
 This pass does not yet implement the complete ownership language from the
-specification. Full alias exclusivity and projection consumption remain future
-work. Explicit `borrowing` uses the existing immutable projection behavior. v0.1 has
-no `break` or `continue`, so the current loop-entry/back-edge rule is sufficient
-for consuming safety.
+specification. Call-site access-path exclusivity is enforced by the type
+checker; longer-lived projection lifetimes and projection consumption remain
+future work. Explicit `borrowing` uses the existing immutable projection
+behavior. v0.1 has no `break` or `continue`, so the current loop-entry/back-edge
+rule is sufficient for consuming safety.
 
 Diagnostics use the shared [structured source renderer](diagnostics.md), with
 stable IDs, file names, one-based locations, source excerpts, and caret ranges.

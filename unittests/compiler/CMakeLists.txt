@@ -366,6 +366,17 @@ set_tests_properties(TypeCheckingCliRejectsMismatch PROPERTIES
         LABELS type-checking
 )
 
+add_test(NAME TypeCheckingCliRejectsOverlappingAccess
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/overlapping_access.joyeer
+                -DEXPECTED_PATTERN=type-checking.overlapping-access
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+)
+set_tests_properties(TypeCheckingCliRejectsOverlappingAccess PROPERTIES
+        LABELS "type-checking;exclusivity"
+)
+
 add_test(NAME DiagnosticsCliRendersSourceContext
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

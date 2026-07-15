@@ -1073,11 +1073,22 @@ private:
         return found->second;
     }
 
-        TypeId checkCall(
+    struct AccessPath {
+        semantic::SymbolId root = semantic::invalidSymbolId;
+        std::vector<std::optional<semantic::SymbolId>> projections;
+    };
+
+    struct CallAccess {
+        AccessPath path;
+        syntax::AccessEffect effect = syntax::AccessEffect::borrowing;
+        SourceSpan span;
+    };
+
+    TypeId checkCall(
             const syntax::CallExprSyntax::Ptr& expression,
             bool hasReceiverAccessMarker = false) {
         const auto calleeType = checkExpression(expression->callee).value_or(
-            model->typeContext.errorType());
+                model->typeContext.errorType());
         auto target = model->callTarget(expression);
         if (!target.has_value()) {
             const auto callee = model->referencedSymbol(expression->callee);
@@ -1098,26 +1109,36 @@ private:
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
         const auto mutatingReceiver = semanticTarget != nullptr &&
-            semanticTarget->kind == semantic::SymbolKind::builtinMember &&
-            semanticTarget->isMutable;
+                semanticTarget->kind == semantic::SymbolKind::builtinMember &&
+                semanticTarget->isMutable;
         if (mutatingReceiver != hasReceiverAccessMarker) {
             report(
-                TypeCheckingDiagnosticId::invalidAccessMarker,
-                expression->callee->span,
-                mutatingReceiver
-                    ? "mutating method call requires '&' on the receiver"
-                    : "non-mutating call must not use '&' on the receiver");
+                    TypeCheckingDiagnosticId::invalidAccessMarker,
+                    expression->callee->span,
+                    mutatingReceiver
+                            ? "mutating method call requires '&' on the receiver"
+                            : "non-mutating call must not use '&' on the receiver");
         }
+
+        std::vector<CallAccess> accesses;
         if (mutatingReceiver && expression->callee->kind == syntax::Kind::memberExpr) {
             const auto member =
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+                    std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
             const auto storage = analyzeStorage(member->base);
             if (!storage.writable) {
-            report(
-                TypeCheckingDiagnosticId::assignmentToImmutable,
-                member->base->span,
-                "cannot call mutating method through immutable binding '" +
-                    storage.immutableName + "'");
+                report(
+                        TypeCheckingDiagnosticId::assignmentToImmutable,
+                        member->base->span,
+                        "cannot call mutating method through immutable binding '" +
+                                storage.immutableName + "'");
+            }
+            const auto path = storagePath(member->base);
+            if (path.has_value()) {
+                accesses.push_back(CallAccess {
+                    *path,
+                    syntax::AccessEffect::inout,
+                    member->base->span,
+                });
             }
         }
 
@@ -1125,14 +1146,14 @@ private:
         if (semanticTarget != nullptr && semanticTarget->name == "append" &&
             expression->callee->kind == syntax::Kind::memberExpr) {
             const auto member =
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+                    std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
             const auto base = model->typeOf(member->base);
             const auto* baseType = base.has_value()
-                ? model->typeContext.type(*base)
-                : nullptr;
+                    ? model->typeContext.type(*base)
+                    : nullptr;
             if (baseType != nullptr && baseType->kind == TypeKind::array &&
-            baseType->arguments.size() == 1) {
-            arrayElementType = baseType->arguments[0];
+                baseType->arguments.size() == 1) {
+                arrayElementType = baseType->arguments[0];
             }
         }
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
@@ -1140,35 +1161,153 @@ private:
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
-                        const auto expected = arrayElementType.has_value() &&
-                                                                    parameterIndex == std::optional<size_t>(0)
-                                        ? arrayElementType
-                                        : signature != nullptr && parameterIndex.has_value() &&
-                                            *parameterIndex < signature->parameters.size()
+            const auto expected = arrayElementType.has_value() &&
+                                  parameterIndex == std::optional<size_t>(0)
+                    ? arrayElementType
+                    : signature != nullptr && parameterIndex.has_value() &&
+                      *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
+                        const auto actual = checkExpression(argument->value, expected);
             if (semanticTarget != nullptr && parameterIndex.has_value()) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
+                const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
+                collectCallArgumentAccess(*argument, effect, accesses);
             }
-            const auto actual = checkExpression(argument->value, expected);
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
             }
         }
-            if (signature == nullptr && calleeType != model->typeContext.errorType()) {
-                const auto callee = model->referencedSymbol(expression->callee);
-                const auto* symbol = callee.has_value()
+        validateCallExclusivity(accesses);
+
+        if (signature == nullptr && calleeType != model->typeContext.errorType()) {
+            const auto callee = model->referencedSymbol(expression->callee);
+            const auto* symbol = callee.has_value()
                     ? model->semanticModelValue->symbol(*callee)
                     : nullptr;
-                report(
+            report(
                     TypeCheckingDiagnosticId::notCallable,
                     expression->callee->span,
                     "value '" +
-                        (symbol == nullptr ? std::string("<expression>") : symbol->name) +
-                        "' of type '" + model->typeContext.displayName(calleeType) +
-                        "' is not callable");
-            }
+                            (symbol == nullptr ? std::string("<expression>") : symbol->name) +
+                            "' of type '" + model->typeContext.displayName(calleeType) +
+                            "' is not callable");
+        }
         return signature == nullptr ? model->typeContext.errorType() : signature->result;
+    }
+
+    void collectCallArgumentAccess(
+            const syntax::CallArgumentSyntax& argument,
+            syntax::AccessEffect effect,
+            std::vector<CallAccess>& accesses) const {
+        if (effect == syntax::AccessEffect::borrowing) {
+            collectReadAccesses(argument.value, accesses);
+            return;
+        }
+        const auto path = storagePath(argument.value);
+        if (path.has_value()) {
+            accesses.push_back(CallAccess { *path, effect, argument.value->span });
+        }
+    }
+
+    std::optional<AccessPath> storagePath(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return std::nullopt;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return storagePath(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                            ->expression);
+        }
+        if (expression->kind == syntax::Kind::accessExpr) {
+            return storagePath(
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+        }
+        if (expression->kind == syntax::Kind::nameExpr) {
+            const auto symbol = model->referencedSymbol(expression);
+            if (!symbol.has_value()) return std::nullopt;
+            return AccessPath { *symbol, {} };
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            auto path = storagePath(member->base);
+            if (!path.has_value()) return std::nullopt;
+            const auto symbol = model->referencedSymbol(member);
+            const auto* semanticMember = symbol.has_value()
+                    ? model->semanticModelValue->symbol(*symbol)
+                    : nullptr;
+            if (semanticMember != nullptr &&
+                semanticMember->kind == semantic::SymbolKind::structureField) {
+                path->projections.push_back(*symbol);
+            }
+            return path;
+        }
+        if (expression->kind == syntax::Kind::subscriptExpr) {
+            const auto subscript =
+                    std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+            auto path = storagePath(subscript->base);
+            if (!path.has_value()) return std::nullopt;
+            path->projections.push_back(std::nullopt);
+            return path;
+        }
+        return std::nullopt;
+    }
+
+    void collectReadAccesses(
+            const syntax::ExprPtr& expression,
+            std::vector<CallAccess>& accesses) const {
+        if (expression == nullptr) return;
+        const auto path = storagePath(expression);
+        if (path.has_value()) {
+            accesses.push_back(CallAccess {
+                *path,
+                syntax::AccessEffect::borrowing,
+                expression->span,
+            });
+        }
+    }
+
+    bool pathsOverlap(const AccessPath& left, const AccessPath& right) const {
+        if (left.root != right.root) return false;
+        const auto count = std::min(left.projections.size(), right.projections.size());
+        for (size_t index = 0; index < count; ++index) {
+            const auto& leftProjection = left.projections[index];
+            const auto& rightProjection = right.projections[index];
+            if (!leftProjection.has_value() || !rightProjection.has_value()) return true;
+            if (*leftProjection != *rightProjection) return false;
+        }
+        return true;
+    }
+
+    const char* accessEffectName(syntax::AccessEffect effect) const {
+        switch (effect) {
+            case syntax::AccessEffect::borrowing: return "borrowing";
+            case syntax::AccessEffect::inout: return "inout";
+            case syntax::AccessEffect::consuming: return "consuming";
+            case syntax::AccessEffect::initializing: return "initializing";
+        }
+        return "unknown";
+    }
+
+    void validateCallExclusivity(const std::vector<CallAccess>& accesses) {
+        for (size_t right = 0; right < accesses.size(); ++right) {
+            for (size_t left = 0; left < right; ++left) {
+                if (accesses[left].effect == syntax::AccessEffect::borrowing &&
+                    accesses[right].effect == syntax::AccessEffect::borrowing) {
+                    continue;
+                }
+                if (!pathsOverlap(accesses[left].path, accesses[right].path)) continue;
+                const auto* root = model->semanticModelValue->symbol(accesses[right].path.root);
+                report(
+                        TypeCheckingDiagnosticId::overlappingAccess,
+                        accesses[right].span,
+                        "overlapping " +
+                                std::string(accessEffectName(accesses[left].effect)) +
+                                " and " + accessEffectName(accesses[right].effect) +
+                                " access to '" +
+                                (root == nullptr ? std::string("<storage>") : root->name) +
+                                "' in the same call");
+                return;
+            }
+        }
     }
 
     struct StorageAccess {
@@ -1898,6 +2037,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:
             return "type-checking.invalid-initializing-argument";
+        case TypeCheckingDiagnosticId::overlappingAccess:
+            return "type-checking.overlapping-access";
         case TypeCheckingDiagnosticId::notCallable:
             return "type-checking.not-callable";
         case TypeCheckingDiagnosticId::unresolvedReference:

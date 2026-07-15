@@ -933,6 +933,98 @@ let selected = if flag { 1 } else { "two" }
                                 }));
                         }
 
+                            TEST_F(TypeCheckingTest, EnforcesCallSiteExclusivity) {
+                                check(R"JOYEER(func inspect(first: Int, second: Int) { }
+                            func update(dst: inout Int, src: Int) { &dst = src }
+                            func take(value: consuming Int, other: Int) { }
+                            func initialize(out: initializing Int, other: Int) { &out = other }
+                            func swap(first: inout Int, second: inout Int) { }
+                            func validBorrowing() {
+                            let value = 1
+                            inspect(first: value, second: value)
+                            }
+                            func invalidInout() {
+                            var value = 1
+                            update(dst: &value, src: value)
+                            }
+                            func invalidConsuming() {
+                            var value = 1
+                            take(value: consume value, other: value)
+                            }
+                            func invalidInitializing(index: Int) {
+                            var value: Int
+                            initialize(out: &value, other: value)
+                            }
+                            func invalidExclusive() {
+                            var value = 1
+                            swap(first: &value, second: &value)
+                            }
+                            func invalidBuiltin() {
+                            var values = [1]
+                            &values.append(element: values[0])
+                            }
+                            func validTemporary(index: Int) {
+                            var value = 1
+                            update(dst: &value, src: value + index)
+                            }
+                            )JOYEER");
+
+                                ASSERT_EQ(checking.diagnostics.size(), 5u)
+                                    << joyeer::typing::dump(checking.diagnostics);
+                                EXPECT_TRUE(std::all_of(
+                                    checking.diagnostics.begin(),
+                                    checking.diagnostics.end(),
+                                    [](const auto& diagnostic) {
+                                    return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::
+                                        overlappingAccess;
+                                    }));
+                            }
+
+                            TEST_F(TypeCheckingTest, AllowsDisjointStructFields) {
+                                check(R"JOYEER(struct Pair { var left: Int
+                            var right: Int
+                            }
+                            func update(dst: inout Int, src: Int) { &dst = src }
+                            func swap(first: inout Int, second: inout Int) { }
+                            func valid() {
+                            var pair = Pair(left: 1, right: 2)
+                            update(dst: &pair.left, src: pair.right)
+                            swap(first: &pair.left, second: &pair.right)
+                            }
+                            )JOYEER");
+
+                                EXPECT_TRUE(checking.succeeded())
+                                    << joyeer::typing::dump(checking.diagnostics);
+                            }
+
+                            TEST_F(TypeCheckingTest, ConservativelyRejectsDifferentArrayIndices) {
+                                check(R"JOYEER(func update(dst: inout Int, src: Int) { &dst = src }
+                            func invalid() {
+                            var values = [1, 2]
+                            update(dst: &values[0], src: values[1])
+                            }
+                            )JOYEER");
+
+                                ASSERT_EQ(checking.diagnostics.size(), 1u)
+                                    << joyeer::typing::dump(checking.diagnostics);
+                                EXPECT_EQ(
+                                    checking.diagnostics[0].id,
+                                    joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+                            }
+
+                            TEST_F(TypeCheckingTest, AllowsSnapshotBeforeExclusiveArrayAccess) {
+                                check(R"JOYEER(func update(dst: inout Int, src: Int) { &dst = src }
+                            func valid() {
+                            var values = [1, 2]
+                            let snapshot = values[1]
+                            update(dst: &values[0], src: snapshot)
+                            }
+                            )JOYEER");
+
+                                EXPECT_TRUE(checking.succeeded())
+                                    << joyeer::typing::dump(checking.diagnostics);
+                            }
+
                     TEST_F(TypeCheckingTest, TypesMutatingArrayAppendFromTheReceiverElement) {
                         check(R"JOYEER(func build() {
                     var values: [String] = []
