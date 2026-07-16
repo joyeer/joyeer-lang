@@ -68,6 +68,51 @@ bool hasError(const VerificationResult& result, VerificationErrorId id) {
     });
 }
 
+void addValidVariableDebugInfo(Module& module) {
+    module.sourceInfo = SourceInfo {
+        "manual.joyeer",
+        "C:/source",
+        24,
+        { 0, 10, 20 },
+    };
+    module.debugScopes.push_back(DebugScope {
+        0,
+        DebugScopeKind::function,
+        0,
+        std::nullopt,
+        1,
+        SourceSpan { 0, 24 },
+    });
+    module.debugVariables.push_back(DebugVariable {
+        0,
+        DebugVariableKind::local,
+        0,
+        0,
+        10,
+        "value",
+        1,
+        SourceSpan { 10, 3 },
+        std::nullopt,
+        true,
+    });
+    auto& function = module.functions[0];
+    function.debugScope = 0;
+    function.debugLocation = DebugLocation { SourceSpan { 0, 24 }, false, 0 };
+    for (auto& instruction : function.blocks[0].instructions) {
+        instruction.debugLocation = DebugLocation { instruction.span, false, 0 };
+    }
+    Instruction allocate {
+        Opcode::stackAllocate,
+        Value { 3, 1, ValueCategory::address },
+    };
+    allocate.span = SourceSpan { 10, 3 };
+    allocate.debugLocation = DebugLocation { allocate.span, false, 0 };
+    allocate.debugVariableBindings.push_back(DebugVariableBinding { 0, 3 });
+    function.blocks[0].instructions.insert(
+            function.blocks[0].instructions.begin(),
+            std::move(allocate));
+}
+
 TEST(IRModelTest, VerifiesAndDumpsAWellFormedFunctionDeterministically) {
     const auto module = validAddModule();
     const auto verification = Verifier().verify(module);
@@ -155,6 +200,44 @@ TEST(IRModelTest, RejectsInstructionLocationsWithoutAFunctionLocation) {
 
     const auto verification = Verifier().verify(module);
     EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidSourceLocation));
+}
+
+TEST(IRModelTest, VerifiesLexicalScopesVariablesAndStorageBindings) {
+    auto module = validAddModule();
+    addValidVariableDebugInfo(module);
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(verification.succeeded()) << dump(verification);
+    const auto text = dump(module);
+    EXPECT_NE(text.find("debug_scope #0 function"), std::string::npos);
+    EXPECT_NE(text.find("debug_var #0 local \"value\""), std::string::npos);
+    EXPECT_NE(text.find("debug_bind #0 -> %3"), std::string::npos);
+}
+
+TEST(IRModelTest, RejectsCyclicDebugScopes) {
+    auto module = validAddModule();
+    addValidVariableDebugInfo(module);
+    module.debugScopes.push_back(DebugScope {
+        1,
+        DebugScopeKind::lexicalBlock,
+        0,
+        1,
+        2,
+        SourceSpan { 10, 3 },
+    });
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidReference));
+}
+
+TEST(IRModelTest, RejectsDuplicateAndNonAddressDebugBindings) {
+    auto module = validAddModule();
+    addValidVariableDebugInfo(module);
+    module.functions[0].blocks[0].instructions[1].debugVariableBindings.push_back(
+            DebugVariableBinding { 0, 2 });
+
+    const auto verification = Verifier().verify(module);
+    EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
 TEST(IRModelTest, AcceptsStackSlotsLoadsAndStores) {

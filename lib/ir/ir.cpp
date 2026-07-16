@@ -243,11 +243,15 @@ VerificationResult Verifier::verify(const Module& module) const {
             }
         }
     } else {
-        const auto hasDebugLocations = std::any_of(
+        const auto hasDebugLocations = !module.debugScopes.empty() ||
+                !module.debugVariables.empty() || std::any_of(
                 module.functions.begin(),
                 module.functions.end(),
                 [](const auto& function) {
-                    if (function.debugLocation.has_value()) return true;
+                    if (function.debugLocation.has_value() || function.debugScope.has_value() ||
+                        !function.entryDebugVariableBindings.empty()) {
+                        return true;
+                    }
                     return std::any_of(
                             function.blocks.begin(),
                             function.blocks.end(),
@@ -256,7 +260,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         block.instructions.begin(),
                                         block.instructions.end(),
                                         [](const auto& instruction) {
-                                            return instruction.debugLocation.has_value();
+                                            return instruction.debugLocation.has_value() ||
+                                                    !instruction.debugVariableBindings.empty();
                                         });
                             });
                 });
@@ -426,8 +431,215 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
+    std::unordered_map<DebugScopeId, const DebugScope*> debugScopes;
+    for (const auto& scope : module.debugScopes) {
+        if (!debugScopes.emplace(scope.id, &scope).second) {
+            report(
+                    VerificationErrorId::duplicateId,
+                    scope.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "duplicate debug scope id " + std::to_string(scope.id));
+        }
+        if (!functions.contains(scope.function)) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    scope.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "debug scope references unknown function " +
+                            std::to_string(scope.function));
+        }
+        verifyDebugLocation(
+                DebugLocation { scope.span },
+                scope.function,
+                std::nullopt,
+                std::nullopt,
+                "debug scope " + std::to_string(scope.id));
+    }
+    for (const auto& scope : module.debugScopes) {
+        if (scope.kind == DebugScopeKind::function && scope.parent.has_value()) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    scope.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "function debug scope must not have a parent");
+        }
+        if (scope.parent.has_value()) {
+            const auto parent = debugScopes.find(*scope.parent);
+            if (parent == debugScopes.end()) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        scope.function,
+                        std::nullopt,
+                        std::nullopt,
+                        "debug scope " + std::to_string(scope.id) +
+                                " references unknown parent " +
+                                std::to_string(*scope.parent));
+            } else if (parent->second->function != scope.function) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        scope.function,
+                        std::nullopt,
+                        std::nullopt,
+                        "debug scope parent belongs to another function");
+            }
+        } else if (scope.kind != DebugScopeKind::function) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    scope.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "lexical debug scope requires a parent");
+        }
+        std::unordered_set<DebugScopeId> visited;
+        auto current = std::optional<DebugScopeId>(scope.id);
+        while (current.has_value()) {
+            if (!visited.insert(*current).second) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        scope.function,
+                        std::nullopt,
+                        std::nullopt,
+                        "cyclic debug scope hierarchy at scope " +
+                                std::to_string(scope.id));
+                break;
+            }
+            const auto found = debugScopes.find(*current);
+            if (found == debugScopes.end()) break;
+            current = found->second->parent;
+        }
+    }
+
+    std::unordered_map<DebugVariableId, const DebugVariable*> debugVariables;
+    std::unordered_map<FunctionId, std::unordered_set<uint32_t>> parameterIndices;
+    for (const auto& variable : module.debugVariables) {
+        if (!debugVariables.emplace(variable.id, &variable).second) {
+            report(
+                    VerificationErrorId::duplicateId,
+                    variable.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "duplicate debug variable id " + std::to_string(variable.id));
+        }
+        const auto scope = debugScopes.find(variable.scope);
+        if (scope == debugScopes.end() || scope->second->function != variable.function) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    variable.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "debug variable '" + variable.name +
+                            "' references an invalid scope");
+        }
+        if (!types.contains(variable.type)) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    variable.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "debug variable '" + variable.name +
+                            "' references unknown type " + std::to_string(variable.type));
+        }
+        verifyDebugLocation(
+                DebugLocation { variable.span },
+                variable.function,
+                std::nullopt,
+                std::nullopt,
+                "debug variable '" + variable.name + "'");
+        if (variable.kind == DebugVariableKind::parameter) {
+            if (!variable.parameterIndex.has_value() || *variable.parameterIndex == 0 ||
+                !functions.contains(variable.function) ||
+                *variable.parameterIndex > functions.at(variable.function)->parameters.size() ||
+                !parameterIndices[variable.function].insert(*variable.parameterIndex).second) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        variable.function,
+                        std::nullopt,
+                        std::nullopt,
+                        "debug parameter '" + variable.name +
+                                "' has an invalid or duplicate parameter index");
+            }
+        } else if (variable.parameterIndex.has_value()) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    variable.function,
+                    std::nullopt,
+                    std::nullopt,
+                    "non-parameter debug variable '" + variable.name +
+                            "' has a parameter index");
+        }
+    }
+
     for (const auto& function : module.functions) {
         const auto functionId = std::optional<FunctionId>(function.id);
+        if (function.debugScope.has_value()) {
+            const auto scope = debugScopes.find(*function.debugScope);
+            if (scope == debugScopes.end() || scope->second->function != function.id ||
+                scope->second->kind != DebugScopeKind::function ||
+                scope->second->parent.has_value()) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "function '" + function.name +
+                                "' references an invalid root debug scope");
+            }
+        }
+        size_t functionScopeCount = 0;
+        for (const auto& scope : module.debugScopes) {
+            if (scope.function != function.id) continue;
+            if (scope.kind == DebugScopeKind::function) ++functionScopeCount;
+            if (!function.debugScope.has_value()) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "function '" + function.name +
+                                "' owns debug scopes but has no root scope");
+                continue;
+            }
+            std::unordered_set<DebugScopeId> visited;
+            auto current = std::optional<DebugScopeId>(scope.id);
+            DebugScopeId root = invalidDebugScopeId;
+            while (current.has_value() && visited.insert(*current).second) {
+                const auto found = debugScopes.find(*current);
+                if (found == debugScopes.end()) break;
+                root = found->second->id;
+                current = found->second->parent;
+            }
+            if (root != *function.debugScope) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "debug scope " + std::to_string(scope.id) +
+                                " is detached from the function root scope");
+            }
+            if (scope.id != *function.debugScope &&
+                scope.kind != DebugScopeKind::lexicalBlock) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "only the function root may have function debug-scope kind");
+            }
+        }
+        if (function.debugScope.has_value() && functionScopeCount != 1) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    functionId,
+                    std::nullopt,
+                    std::nullopt,
+                    "function '" + function.name + "' has " +
+                            std::to_string(functionScopeCount) +
+                            " function debug scopes; exactly one is required");
+        }
         const auto hasInstructionDebugLocations = std::any_of(
                 function.blocks.begin(),
                 function.blocks.end(),
@@ -455,6 +667,14 @@ VerificationResult Verifier::verify(const Module& module) const {
                     std::nullopt,
                     std::nullopt,
                     "function '" + function.name + "'");
+                    if (function.debugLocation->scope != function.debugScope) {
+                    report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "function location does not reference its root debug scope");
+                    }
         }
         if (!types.contains(function.resultType)) {
             report(
@@ -519,7 +739,38 @@ VerificationResult Verifier::verify(const Module& module) const {
             }
         }
 
+        bool hasFunctionDebugVariables = false;
+        for (const auto& variable : module.debugVariables) {
+            if (variable.function != function.id) continue;
+            hasFunctionDebugVariables = true;
+            if (variable.kind != DebugVariableKind::parameter) continue;
+            if (!variable.parameterIndex.has_value() || *variable.parameterIndex == 0 ||
+                *variable.parameterIndex > function.parameters.size()) {
+                continue;
+            }
+            const auto& parameter = function.parameters[*variable.parameterIndex - 1];
+            if (variable.type != parameter.value.type || variable.name != parameter.name ||
+                variable.scope != function.debugScope) {
+                report(
+                        VerificationErrorId::typeMismatch,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "debug parameter '" + variable.name +
+                                "' does not match its function parameter or root scope");
+            }
+        }
+
         if (function.isExternal) {
+            if (function.debugScope.has_value() || function.debugLocation.has_value() ||
+                hasFunctionDebugVariables || !function.entryDebugVariableBindings.empty()) {
+                report(
+                        VerificationErrorId::invalidInstruction,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "external function must not carry source debug scopes or variables");
+            }
             if (!function.blocks.empty() || function.entry != invalidBlockId) {
                 report(
                         VerificationErrorId::invalidInstruction,
@@ -550,6 +801,25 @@ VerificationResult Verifier::verify(const Module& module) const {
                             block.id,
                             index,
                             std::string(opcodeName(instruction.opcode)) + " instruction");
+                    if (instruction.debugLocation->scope.has_value()) {
+                        const auto scope = debugScopes.find(*instruction.debugLocation->scope);
+                        if (scope == debugScopes.end() ||
+                            scope->second->function != function.id) {
+                            report(
+                                    VerificationErrorId::invalidReference,
+                                    functionId,
+                                    block.id,
+                                    index,
+                                    "instruction location references a scope from another function");
+                        }
+                    } else if (!function.isExternal && function.debugScope.has_value()) {
+                        report(
+                                VerificationErrorId::invalidReference,
+                                functionId,
+                                block.id,
+                                index,
+                                "source instruction location has no lexical scope");
+                    }
                 }
                 if (!instruction.result.has_value()) continue;
                 if (!types.contains(instruction.result->type)) {
@@ -570,6 +840,240 @@ VerificationResult Verifier::verify(const Module& module) const {
                             "duplicate value id " +
                                     std::to_string(instruction.result->id));
                 }
+            }
+        }
+
+        std::unordered_map<DebugVariableId, size_t> debugBindingCounts;
+        std::unordered_map<ValueId, std::pair<BlockId, size_t>> valueDefinitions;
+        for (const auto& block : function.blocks) {
+            for (size_t index = 0; index < block.instructions.size(); ++index) {
+                const auto& instruction = block.instructions[index];
+                if (instruction.result.has_value()) {
+                    valueDefinitions.emplace(
+                            instruction.result->id,
+                            std::make_pair(block.id, index));
+                }
+            }
+        }
+        std::unordered_map<BlockId, std::unordered_set<BlockId>> predecessors;
+        for (const auto& block : function.blocks) {
+            if (block.instructions.empty()) continue;
+            for (const auto target : block.instructions.back().targets) {
+                if (blocks.contains(target)) predecessors[target].insert(block.id);
+            }
+            if (block.instructions.back().opcode == Opcode::switchPattern) {
+                for (const auto& switchCase : block.instructions.back().switchCases) {
+                    if (blocks.contains(switchCase.target)) {
+                        predecessors[switchCase.target].insert(block.id);
+                    }
+                }
+            }
+        }
+        std::unordered_map<BlockId, std::unordered_set<BlockId>> dominators;
+        std::unordered_set<BlockId> allBlocks;
+        for (const auto& [blockId, block] : blocks) allBlocks.insert(blockId);
+        for (const auto& [blockId, block] : blocks) {
+            dominators[blockId] = blockId == function.entry
+                    ? std::unordered_set<BlockId> { blockId }
+                    : allBlocks;
+        }
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (const auto& [blockId, block] : blocks) {
+                if (blockId == function.entry) continue;
+                std::unordered_set<BlockId> next = allBlocks;
+                const auto incoming = predecessors.find(blockId);
+                if (incoming == predecessors.end() || incoming->second.empty()) {
+                    next.clear();
+                } else {
+                    bool first = true;
+                    for (const auto predecessor : incoming->second) {
+                        if (first) {
+                            next = dominators[predecessor];
+                            first = false;
+                        } else {
+                            for (auto candidate = next.begin(); candidate != next.end();) {
+                                if (!dominators[predecessor].contains(*candidate)) {
+                                    candidate = next.erase(candidate);
+                                } else {
+                                    ++candidate;
+                                }
+                            }
+                        }
+                    }
+                }
+                next.insert(blockId);
+                if (next != dominators[blockId]) {
+                    dominators[blockId] = std::move(next);
+                    changed = true;
+                }
+            }
+        }
+        auto verifyDebugBinding = [&](const DebugVariableBinding& binding,
+                                      std::optional<BlockId> block,
+                                      std::optional<size_t> instruction,
+                                      bool entryBinding,
+                                      const Instruction* anchor) {
+            const auto variable = debugVariables.find(binding.variable);
+            const auto address = values.find(binding.address);
+            if (variable == debugVariables.end() ||
+                variable->second->function != function.id) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        block,
+                        instruction,
+                        "debug binding references an unknown variable in this function");
+                return;
+            }
+            if (address == values.end() ||
+                address->second.category != ValueCategory::address ||
+                address->second.type != variable->second->type) {
+                report(
+                        VerificationErrorId::typeMismatch,
+                        functionId,
+                        block,
+                        instruction,
+                        "debug binding for '" + variable->second->name +
+                                "' requires address storage of the variable type");
+                return;
+            }
+            if (entryBinding) {
+                const auto parameterIndex = variable->second->parameterIndex;
+                if (variable->second->kind != DebugVariableKind::parameter ||
+                    !parameterIndex.has_value() || *parameterIndex == 0 ||
+                    *parameterIndex > function.parameters.size() ||
+                    function.parameters[*parameterIndex - 1].value.id != binding.address ||
+                    function.parameters[*parameterIndex - 1].value.category !=
+                            ValueCategory::address) {
+                    report(
+                            VerificationErrorId::invalidReference,
+                            functionId,
+                            block,
+                            instruction,
+                            "entry debug binding does not match an address parameter");
+                    return;
+                }
+            } else {
+                if (anchor == nullptr || !block.has_value() || !instruction.has_value() ||
+                    !anchor->debugLocation.has_value() ||
+                    anchor->debugLocation->scope != variable->second->scope) {
+                    report(
+                            VerificationErrorId::invalidReference,
+                            functionId,
+                            block,
+                            instruction,
+                            "debug binding for '" + variable->second->name +
+                                    "' is not anchored in its lexical scope");
+                    return;
+                }
+                std::optional<ValueId> declaredAddress;
+                switch (anchor->opcode) {
+                    case Opcode::stackAllocate:
+                        if (anchor->result.has_value()) {
+                            declaredAddress = anchor->result->id;
+                        }
+                        break;
+                    case Opcode::zeroInitialize:
+                        if (!anchor->operands.empty()) declaredAddress = anchor->operands[0];
+                        break;
+                    case Opcode::store:
+                        if (anchor->operands.size() >= 2) declaredAddress = anchor->operands[1];
+                        break;
+                    default:
+                        break;
+                }
+                if (!declaredAddress.has_value() || *declaredAddress != binding.address) {
+                    report(
+                            VerificationErrorId::invalidInstruction,
+                            functionId,
+                            block,
+                            instruction,
+                            "debug binding for '" + variable->second->name +
+                                    "' is not attached to its storage declaration");
+                    return;
+                }
+                if (variable->second->kind == DebugVariableKind::parameter) {
+                    const auto parameterIndex = variable->second->parameterIndex;
+                    if (!parameterIndex.has_value() || *parameterIndex == 0 ||
+                        *parameterIndex > function.parameters.size()) {
+                        return;
+                    }
+                    const auto& parameter = function.parameters[*parameterIndex - 1];
+                    if (parameter.value.category == ValueCategory::address ||
+                        anchor->opcode != Opcode::store || anchor->operands.size() < 2 ||
+                        anchor->operands[0] != parameter.value.id) {
+                        report(
+                                VerificationErrorId::invalidInstruction,
+                                functionId,
+                                block,
+                                instruction,
+                                "value debug parameter '" + variable->second->name +
+                                        "' must bind at the store of its incoming parameter");
+                        return;
+                    }
+                }
+                const auto isParameterAddress = std::any_of(
+                        function.parameters.begin(),
+                        function.parameters.end(),
+                        [&binding](const auto& parameter) {
+                            return parameter.value.id == binding.address &&
+                                    parameter.value.category == ValueCategory::address;
+                        });
+                const auto definition = valueDefinitions.find(binding.address);
+                const auto definedEarlier = anchor->opcode == Opcode::stackAllocate ||
+                    isParameterAddress ||
+                    (definition != valueDefinitions.end() &&
+                     ((definition->second.first == *block &&
+                       definition->second.second < *instruction) ||
+                      (definition->second.first != *block &&
+                       dominators[*block].contains(definition->second.first))));
+                if (!definedEarlier) {
+                    report(
+                            VerificationErrorId::invalidReference,
+                            functionId,
+                            block,
+                            instruction,
+                            "debug binding for '" + variable->second->name +
+                                    "' uses storage not available at the declaration point");
+                    return;
+                }
+            }
+            ++debugBindingCounts[binding.variable];
+        };
+        for (const auto& binding : function.entryDebugVariableBindings) {
+            verifyDebugBinding(
+                    binding,
+                    std::nullopt,
+                    std::nullopt,
+                    true,
+                    nullptr);
+        }
+        for (const auto& block : function.blocks) {
+            for (size_t index = 0; index < block.instructions.size(); ++index) {
+                for (const auto& binding : block.instructions[index].debugVariableBindings) {
+                    verifyDebugBinding(
+                            binding,
+                            block.id,
+                            index,
+                            false,
+                            &block.instructions[index]);
+                }
+            }
+        }
+        for (const auto& variable : module.debugVariables) {
+            if (variable.function != function.id) continue;
+            const auto count = debugBindingCounts[variable.id];
+            if (count != 1) {
+                report(
+                        VerificationErrorId::invalidReference,
+                        functionId,
+                        std::nullopt,
+                        std::nullopt,
+                        "debug variable '" + variable.name + "' has " +
+                                std::to_string(count) +
+                                " storage bindings; exactly one is required");
             }
         }
 
@@ -1359,6 +1863,22 @@ std::string dump(const Module& module) {
         return left->id < right->id;
     });
 
+    std::vector<const DebugScope*> sortedDebugScopes;
+    for (const auto& scope : module.debugScopes) sortedDebugScopes.push_back(&scope);
+    std::sort(
+            sortedDebugScopes.begin(),
+            sortedDebugScopes.end(),
+            [](const auto* left, const auto* right) { return left->id < right->id; });
+
+    std::vector<const DebugVariable*> sortedDebugVariables;
+    for (const auto& variable : module.debugVariables) {
+        sortedDebugVariables.push_back(&variable);
+    }
+    std::sort(
+            sortedDebugVariables.begin(),
+            sortedDebugVariables.end(),
+            [](const auto* left, const auto* right) { return left->id < right->id; });
+
     std::vector<const StructureDefinition*> sortedStructures;
     for (const auto& structure : module.structures) sortedStructures.push_back(&structure);
     std::sort(
@@ -1415,8 +1935,39 @@ std::string dump(const Module& module) {
         }
         out << (enumeration->cases.empty() ? "}\n" : " }\n");
     }
+    for (const auto* scope : sortedDebugScopes) {
+        out << "  debug_scope #" << scope->id << ' '
+            << (scope->kind == DebugScopeKind::function ? "function" : "block")
+            << " function=@" << scope->function;
+        if (scope->parent.has_value()) out << " parent=#" << *scope->parent;
+        if (scope->semanticScope.has_value()) {
+            out << " semantic-scope#" << *scope->semanticScope;
+        }
+        out << " @" << scope->span.offset << ':' << scope->span.length << '\n';
+    }
+    for (const auto* variable : sortedDebugVariables) {
+        out << "  debug_var #" << variable->id << ' ';
+        switch (variable->kind) {
+            case DebugVariableKind::parameter: out << "parameter"; break;
+            case DebugVariableKind::local: out << "local"; break;
+            case DebugVariableKind::patternBinding: out << "pattern"; break;
+        }
+        out << " \"" << escape(variable->name) << "\" function=@"
+            << variable->function << " scope=#" << variable->scope
+            << " type=" << typeName(types, variable->type);
+        if (variable->parameterIndex.has_value()) {
+            out << " arg=" << *variable->parameterIndex;
+        }
+        if (variable->isMutable) out << " var";
+        if (variable->symbol.has_value()) out << " symbol#" << *variable->symbol;
+        out << " @" << variable->span.offset << ':' << variable->span.length << '\n';
+    }
     if ((!sortedStructures.empty() || !sortedEnumerations.empty()) &&
-        !sortedFunctions.empty()) {
+        (!sortedDebugScopes.empty() || !sortedDebugVariables.empty() ||
+         !sortedFunctions.empty())) {
+        out << '\n';
+    } else if ((!sortedDebugScopes.empty() || !sortedDebugVariables.empty()) &&
+               !sortedFunctions.empty()) {
         out << '\n';
     }
 
@@ -1440,7 +1991,12 @@ std::string dump(const Module& module) {
             out << "\n";
             continue;
         }
+        if (function.debugScope.has_value()) out << " debug_scope#" << *function.debugScope;
         out << " {\n";
+        for (const auto& binding : function.entryDebugVariableBindings) {
+            out << "    debug_bind #" << binding.variable << " -> "
+                << valueName(binding.address) << " entry\n";
+        }
 
         std::vector<const BasicBlock*> sortedBlocks;
         for (const auto& block : function.blocks) sortedBlocks.push_back(&block);
@@ -1560,7 +2116,15 @@ std::string dump(const Module& module) {
                         break;
                 }
                 if (instruction.symbol.has_value()) out << " symbol#" << *instruction.symbol;
+                if (instruction.debugLocation.has_value() &&
+                    instruction.debugLocation->scope.has_value()) {
+                    out << " scope#" << *instruction.debugLocation->scope;
+                }
                 out << " @" << instruction.span.offset << ':' << instruction.span.length << '\n';
+                for (const auto& binding : instruction.debugVariableBindings) {
+                    out << "        debug_bind #" << binding.variable << " -> "
+                        << valueName(binding.address) << '\n';
+                }
             }
         }
         out << "  }\n";

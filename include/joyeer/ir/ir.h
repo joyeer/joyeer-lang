@@ -16,10 +16,15 @@ using TypeId = typing::TypeId;
 using ValueId = uint32_t;
 using BlockId = uint32_t;
 using FunctionId = uint32_t;
+using DebugScopeId = uint32_t;
+using DebugVariableId = uint32_t;
 
 inline constexpr ValueId invalidValueId = std::numeric_limits<ValueId>::max();
 inline constexpr BlockId invalidBlockId = std::numeric_limits<BlockId>::max();
 inline constexpr FunctionId invalidFunctionId = std::numeric_limits<FunctionId>::max();
+inline constexpr DebugScopeId invalidDebugScopeId = std::numeric_limits<DebugScopeId>::max();
+inline constexpr DebugVariableId invalidDebugVariableId =
+    std::numeric_limits<DebugVariableId>::max();
 
 enum class ValueCategory {
     value,
@@ -107,6 +112,7 @@ struct SwitchCase {
 struct DebugLocation {
     SourceSpan span;
     bool implicitCode = false;
+    std::optional<DebugScopeId> scope;
 };
 
 struct SourceInfo {
@@ -114,6 +120,44 @@ struct SourceInfo {
     std::string directory;
     uint64_t byteLength = 0;
     std::vector<uint32_t> lineStarts;
+};
+
+enum class DebugScopeKind {
+    function,
+    lexicalBlock,
+};
+
+enum class DebugVariableKind {
+    parameter,
+    local,
+    patternBinding,
+};
+
+struct DebugScope {
+    DebugScopeId id = invalidDebugScopeId;
+    DebugScopeKind kind = DebugScopeKind::lexicalBlock;
+    FunctionId function = invalidFunctionId;
+    std::optional<DebugScopeId> parent;
+    std::optional<semantic::ScopeId> semanticScope;
+    SourceSpan span;
+};
+
+struct DebugVariable {
+    DebugVariableId id = invalidDebugVariableId;
+    DebugVariableKind kind = DebugVariableKind::local;
+    FunctionId function = invalidFunctionId;
+    DebugScopeId scope = invalidDebugScopeId;
+    std::optional<semantic::SymbolId> symbol;
+    std::string name;
+    TypeId type = typing::invalidTypeId;
+    SourceSpan span;
+    std::optional<uint32_t> parameterIndex;
+    bool isMutable = false;
+};
+
+struct DebugVariableBinding {
+    DebugVariableId variable = invalidDebugVariableId;
+    ValueId address = invalidValueId;
 };
 
 struct Instruction {
@@ -128,6 +172,7 @@ struct Instruction {
     SourceSpan span;
     std::vector<SwitchCase> switchCases;
     std::optional<DebugLocation> debugLocation;
+    std::vector<DebugVariableBinding> debugVariableBindings;
 };
 
 struct BasicBlock {
@@ -158,6 +203,8 @@ struct Function {
     BlockId entry = invalidBlockId;
     std::vector<BasicBlock> blocks;
     std::optional<DebugLocation> debugLocation;
+    std::optional<DebugScopeId> debugScope;
+    std::vector<DebugVariableBinding> entryDebugVariableBindings;
 };
 
 struct TypeName {
@@ -202,6 +249,8 @@ struct Module {
     std::vector<EnumerationDefinition> enumerations;
     std::vector<Function> functions;
     std::optional<SourceInfo> sourceInfo;
+    std::vector<DebugScope> debugScopes;
+    std::vector<DebugVariable> debugVariables;
 };
 
 enum class VerificationErrorId {

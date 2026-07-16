@@ -11,6 +11,27 @@ namespace joyeer::lowering {
 
 namespace {
 
+class DebugScopeGuard {
+public:
+    DebugScopeGuard(
+            std::optional<ir::DebugScopeId>& current,
+            std::optional<ir::DebugScopeId> next)
+        : current(current), previous(current) {
+        if (next.has_value()) current = next;
+    }
+
+    ~DebugScopeGuard() {
+        current = previous;
+    }
+
+    DebugScopeGuard(const DebugScopeGuard&) = delete;
+    DebugScopeGuard& operator=(const DebugScopeGuard&) = delete;
+
+private:
+    std::optional<ir::DebugScopeId>& current;
+    std::optional<ir::DebugScopeId> previous;
+};
+
 class Builder {
 public:
     Result build(
@@ -66,6 +87,8 @@ private:
     std::shared_ptr<ir::Module> module;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
+    std::unordered_map<semantic::ScopeId, ir::DebugScopeId> debugScopes;
+    std::unordered_map<semantic::SymbolId, ir::DebugVariableId> debugVariables;
     std::unordered_map<semantic::SymbolId, ir::Value> slots;
     std::unordered_map<ir::ValueId, ValueOwnership> ownership;
     std::unordered_set<ir::ValueId> liveOwnedTemporaries;
@@ -73,9 +96,109 @@ private:
     ir::FunctionId currentFunctionId = ir::invalidFunctionId;
     ir::BlockId currentBlockId = ir::invalidBlockId;
     ir::ValueId nextValue = 0;
+    std::optional<ir::DebugScopeId> currentDebugScope;
 
     void report(DiagnosticId id, SourceSpan span, std::string message) {
         diagnostics.push_back(Diagnostic { id, span, std::move(message) });
+    }
+
+    std::optional<ir::DebugScopeId> ensureDebugScope(
+            semantic::ScopeId semanticScopeId,
+            ir::FunctionId functionId) {
+        if (!module->sourceInfo.has_value()) return std::nullopt;
+        const auto existing = debugScopes.find(semanticScopeId);
+        if (existing != debugScopes.end()) return existing->second;
+
+        const auto* semanticScope = model->semanticModel()->scope(semanticScopeId);
+        if (semanticScope == nullptr) return std::nullopt;
+        if (semanticScope->kind != semantic::ScopeKind::function &&
+            semanticScope->kind != semantic::ScopeKind::block &&
+            semanticScope->kind != semantic::ScopeKind::matchArm) {
+            return std::nullopt;
+        }
+
+        std::optional<ir::DebugScopeId> parent;
+        auto semanticParent = semanticScope->parent;
+        while (semanticParent.has_value()) {
+            parent = ensureDebugScope(*semanticParent, functionId);
+            if (parent.has_value()) break;
+            const auto* parentScope = model->semanticModel()->scope(*semanticParent);
+            semanticParent = parentScope == nullptr
+                    ? std::optional<semantic::ScopeId>()
+                    : parentScope->parent;
+        }
+
+        SourceSpan span;
+        if (semanticScope->owner.has_value()) {
+            span = model->semanticModel()->node(*semanticScope->owner)->span;
+        }
+        const auto id = static_cast<ir::DebugScopeId>(module->debugScopes.size());
+        module->debugScopes.push_back(ir::DebugScope {
+            id,
+            semanticScope->kind == semantic::ScopeKind::function
+                    ? ir::DebugScopeKind::function
+                    : ir::DebugScopeKind::lexicalBlock,
+            functionId,
+            parent,
+            semanticScopeId,
+            span,
+        });
+        debugScopes.emplace(semanticScopeId, id);
+        return id;
+    }
+
+    std::optional<ir::DebugScopeId> debugScopeForNode(
+            const syntax::NodePtr& node,
+            ir::FunctionId functionId) {
+        if (node == nullptr) return std::nullopt;
+        const auto semanticScope = model->semanticModel()->introducedScope(node);
+        if (!semanticScope.has_value()) return std::nullopt;
+        return ensureDebugScope(*semanticScope, functionId);
+    }
+
+    std::optional<ir::DebugVariableId> ensureDebugVariable(
+            semantic::SymbolId symbolId,
+            ir::FunctionId functionId,
+            std::optional<uint32_t> parameterIndex = std::nullopt) {
+        if (!module->sourceInfo.has_value()) return std::nullopt;
+        const auto existing = debugVariables.find(symbolId);
+        if (existing != debugVariables.end()) return existing->second;
+
+        const auto* symbol = model->semanticModel()->symbol(symbolId);
+        const auto type = model->typeOf(symbolId);
+        if (symbol == nullptr || !type.has_value()) return std::nullopt;
+        ir::DebugVariableKind kind;
+        switch (symbol->kind) {
+            case semantic::SymbolKind::parameter:
+                kind = ir::DebugVariableKind::parameter;
+                break;
+            case semantic::SymbolKind::binding:
+                kind = ir::DebugVariableKind::local;
+                break;
+            case semantic::SymbolKind::patternBinding:
+                kind = ir::DebugVariableKind::patternBinding;
+                break;
+            default:
+                return std::nullopt;
+        }
+        const auto scope = ensureDebugScope(symbol->ownerScope, functionId);
+        if (!scope.has_value()) return std::nullopt;
+
+        const auto id = static_cast<ir::DebugVariableId>(module->debugVariables.size());
+        module->debugVariables.push_back(ir::DebugVariable {
+            id,
+            kind,
+            functionId,
+            *scope,
+            symbolId,
+            symbol->name,
+            *type,
+            symbol->span,
+            parameterIndex,
+            symbol->isMutable,
+        });
+        debugVariables.emplace(symbolId, id);
+        return id;
     }
 
     bool requiresDestroy(typing::TypeId type) const {
@@ -144,10 +267,17 @@ private:
             ir::Value address,
             SourceSpan span,
             std::optional<semantic::SymbolId> symbol = std::nullopt,
-            bool implicitCode = false) {
+            bool implicitCode = false,
+            std::optional<ir::DebugVariableId> debugVariable = std::nullopt) {
         auto instruction = makeInstruction(ir::Opcode::store, span, implicitCode);
         instruction.operands = { value.id, address.id };
         instruction.symbol = symbol;
+        if (debugVariable.has_value()) {
+            instruction.debugVariableBindings.push_back(ir::DebugVariableBinding {
+                *debugVariable,
+                address.id,
+            });
+        }
         emit(std::move(instruction));
     }
 
@@ -461,7 +591,12 @@ private:
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
         if (module->sourceInfo.has_value()) {
-            function.debugLocation = ir::DebugLocation { declaration->span, false };
+            function.debugScope = debugScopeForNode(declaration, function.id);
+            function.debugLocation = ir::DebugLocation {
+                declaration->span,
+                false,
+                function.debugScope,
+            };
         }
         function.resultType = signature->result;
         function.returnsValue = signature->result != model->types().voidType() &&
@@ -503,6 +638,16 @@ private:
                 parameterEffect == syntax::AccessEffect::consuming,
                 parameterEffect == syntax::AccessEffect::initializing,
             });
+            const auto debugVariable = ensureDebugVariable(
+                    *parameterSymbol,
+                    function.id,
+                    static_cast<uint32_t>(index + 1));
+            if (debugVariable.has_value() && isAddressProjection) {
+                function.entryDebugVariableBindings.push_back(ir::DebugVariableBinding {
+                    *debugVariable,
+                    static_cast<ir::ValueId>(index),
+                });
+            }
         }
 
         functions.emplace(*symbol, function.id);
@@ -534,6 +679,7 @@ private:
         scopes.clear();
         pushScope();
         auto& function = currentFunction();
+        currentDebugScope = function.debugScope;
         function.blocks.push_back(ir::BasicBlock { 0, "entry", {} });
         nextValue = static_cast<ir::ValueId>(function.parameters.size());
         const auto diagnosticStart = diagnostics.size();
@@ -552,12 +698,16 @@ private:
                     parameter.span,
                     parameter.symbol,
                     true);
+                    const auto debugVariable = parameter.symbol.has_value()
+                        ? ensureDebugVariable(*parameter.symbol, function.id)
+                        : std::optional<ir::DebugVariableId>();
                 emitRawStore(
                     parameter.value,
                     address,
                     parameter.span,
                     parameter.symbol,
-                    true);
+                        true,
+                        debugVariable);
             if (parameter.symbol.has_value()) slots[*parameter.symbol] = address;
             if (parameter.isConsuming) registerOwnedStorage(address);
         }
@@ -607,6 +757,9 @@ private:
 
     std::optional<ir::Value> lowerBlock(const syntax::BlockExprSyntax::Ptr& block) {
         if (block == nullptr) return std::nullopt;
+        DebugScopeGuard debugScope(
+            currentDebugScope,
+            debugScopeForNode(block, currentFunctionId));
         pushScope();
         std::optional<ir::Value> result;
         for (const auto& item : block->items) {
@@ -654,13 +807,22 @@ private:
                     "binding is missing a typed symbol");
             return;
         }
+            const auto uninitializedDebugVariable = declaration->initializer == nullptr
+                ? ensureDebugVariable(*symbol, currentFunctionId)
+                : std::optional<ir::DebugVariableId>();
+            const auto bindOnAllocation = declaration->initializer == nullptr &&
+                !requiresDestroy(*type);
         const auto address = emitValue(
                 ir::Opcode::stackAllocate,
                 *type,
                 ir::ValueCategory::address,
                 {},
                 declaration->span,
-                symbol);
+                symbol,
+                false,
+                bindOnAllocation
+                    ? uninitializedDebugVariable
+                    : std::optional<ir::DebugVariableId>());
         slots[*symbol] = address;
         if (declaration->initializer == nullptr) {
             if (requiresDestroy(*type)) {
@@ -668,6 +830,12 @@ private:
                         ir::Opcode::zeroInitialize,
                         declaration->span);
                 initialize.operands = { address.id };
+                if (uninitializedDebugVariable.has_value()) {
+                    initialize.debugVariableBindings.push_back(ir::DebugVariableBinding {
+                        *uninitializedDebugVariable,
+                        address.id,
+                    });
+                }
                 emit(std::move(initialize));
                 registerOwnedStorage(address);
             }
@@ -679,7 +847,14 @@ private:
             initializer = acquireOwned(*initializer, declaration->initializer->span);
             if (!initializer.has_value()) return;
         }
-        emitRawStore(*initializer, address, declaration->span, symbol);
+        const auto debugVariable = ensureDebugVariable(*symbol, currentFunctionId);
+        emitRawStore(
+            *initializer,
+            address,
+            declaration->span,
+            symbol,
+            false,
+            debugVariable);
         if (requiresDestroy(*type)) {
             registerOwnedStorage(address);
         }
@@ -1292,6 +1467,9 @@ private:
         for (size_t index = 0; index < expression->arms.size(); ++index) {
             const auto& arm = expression->arms[index];
             switchToBlock(armBlocks[index]);
+            DebugScopeGuard armDebugScope(
+                    currentDebugScope,
+                    debugScopeForNode(arm, currentFunctionId));
             pushScope();
             bindPattern(arm->pattern, *scrutinee);
             const auto value = lowerExpression(arm->body);
@@ -1422,7 +1600,14 @@ private:
                     {},
                     pattern->span,
                     symbol);
-                    emitRawStore(value, address, pattern->span, symbol);
+                    const auto debugVariable = ensureDebugVariable(*symbol, currentFunctionId);
+                    emitRawStore(
+                        value,
+                        address,
+                        pattern->span,
+                        symbol,
+                        false,
+                        debugVariable);
             slots[*symbol] = address;
             return;
         }
@@ -1826,12 +2011,19 @@ private:
             std::vector<ir::ValueId> operands,
             SourceSpan span,
             std::optional<semantic::SymbolId> symbol = std::nullopt,
-            bool implicitCode = false) {
+            bool implicitCode = false,
+            std::optional<ir::DebugVariableId> debugVariable = std::nullopt) {
         auto instruction = makeInstruction(opcode, span, implicitCode);
         instruction.result = makeValue(type, category);
         instruction.operands = std::move(operands);
         instruction.symbol = symbol;
         const auto result = *instruction.result;
+        if (debugVariable.has_value()) {
+            instruction.debugVariableBindings.push_back(ir::DebugVariableBinding {
+                *debugVariable,
+                result.id,
+            });
+        }
         emit(std::move(instruction));
         if (category == ir::ValueCategory::value) {
             auto valueOwnership = ValueOwnership::borrowed;
@@ -1918,7 +2110,11 @@ private:
         auto instruction = ir::Instruction { opcode };
         instruction.span = span;
         if (module->sourceInfo.has_value()) {
-            instruction.debugLocation = ir::DebugLocation { span, implicitCode };
+            instruction.debugLocation = ir::DebugLocation {
+                span,
+                implicitCode,
+                currentDebugScope,
+            };
         }
         return instruction;
     }

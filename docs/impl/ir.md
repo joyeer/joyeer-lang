@@ -46,6 +46,14 @@ buffer. File name and directory are stored as UTF-8 strings; spans and line
 starts remain 32-bit, so the verifier rejects larger source maps before a
 backend can observe truncated coordinates.
 
+The IR also snapshots source lexical scopes, parameters, local/pattern
+variables, and the exact event where each variable gains stable address
+storage. Function, block, and match-arm scopes preserve the semantic hierarchy
+independently of ownership-cleanup scopes. Address parameters bind at function
+entry; by-value parameters, initialized locals, deferred locals, and pattern
+bindings bind only when their storage becomes valid. Diverging initializers do
+not create a source variable.
+
 Values and addresses are different `ValueCategory` values. Mutable local
 storage uses `alloc_stack`, `load`, and `store`. Ordinary parameters enter by
 value and are copied to a local slot. `inout` parameters and arguments are
@@ -146,6 +154,11 @@ tests without reconstructing source semantics.
 - malformed recursive patterns;
 - malformed source maps, out-of-bounds debug spans, or locations without a
   module source map;
+- detached/cyclic/cross-function lexical scopes, invalid parameter indices,
+  untyped variables, or source locations using the wrong scope;
+- missing/duplicate variable bindings, non-address or wrong-typed storage,
+  non-dominating declaration storage, and parameter bindings unrelated to the
+  incoming parameter;
 - blocks without terminators or instructions after a terminator.
 
 Lowering returns an `ir-lowering.verification-failed` diagnostic if generated
@@ -174,8 +187,8 @@ The current IR/native pipeline intentionally leaves these to later commits:
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
   backend's explicit Clang optimization level;
-- lexical scopes and variable/type inspection. The backend-neutral source
-  transport, opt-in LLVM line-table emission, CLI policy, and native debug
-  artifacts are complete.
+- LLVM full-debug emission and variable/type inspection. Backend-neutral
+  lexical scopes/source variables, opt-in line tables, CLI policy, and native
+  debug artifacts are complete.
 
 None of those should be implemented by extending the compatibility VM lane.

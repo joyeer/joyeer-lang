@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace {
 
@@ -143,6 +144,114 @@ print(value: text)
     }
     EXPECT_TRUE(foundImplicitParameterStorage);
     EXPECT_TRUE(foundImplicitCleanup);
+}
+
+TEST_F(IRLoweringTest, CarriesLexicalScopesVariablesAndStorageBindings) {
+    lower(R"JOYEER(func run(plain: Int, borrowed: borrowing Int, target: inout Int, output: initializing Int) {
+let local = plain
+if true {
+let local = borrowed
+print(value: local)
+}
+&target = local
+&output = borrowed
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    ASSERT_TRUE(run.debugScope.has_value());
+
+    const auto variablesForRun = std::count_if(
+            result.module->debugVariables.begin(),
+            result.module->debugVariables.end(),
+            [&run](const auto& variable) { return variable.function == run.id; });
+    EXPECT_EQ(variablesForRun, 6u);
+    EXPECT_EQ(run.entryDebugVariableBindings.size(), 2u);
+
+    std::vector<const joyeer::ir::DebugVariable*> locals;
+    for (const auto& variable : result.module->debugVariables) {
+        if (variable.function != run.id) continue;
+        if (variable.name == "local") locals.push_back(&variable);
+        if (variable.kind == joyeer::ir::DebugVariableKind::parameter) {
+            ASSERT_TRUE(variable.parameterIndex.has_value());
+            EXPECT_GE(*variable.parameterIndex, 1u);
+            EXPECT_LE(*variable.parameterIndex, 4u);
+        }
+    }
+    ASSERT_EQ(locals.size(), 2u);
+    EXPECT_NE(locals[0]->scope, locals[1]->scope);
+
+    std::unordered_map<joyeer::ir::DebugVariableId, size_t> bindingCounts;
+    for (const auto& binding : run.entryDebugVariableBindings) {
+        ++bindingCounts[binding.variable];
+    }
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            ASSERT_TRUE(instruction.debugLocation->scope.has_value());
+            for (const auto& binding : instruction.debugVariableBindings) {
+                ++bindingCounts[binding.variable];
+            }
+        }
+    }
+    for (const auto& variable : result.module->debugVariables) {
+        if (variable.function == run.id) EXPECT_EQ(bindingCounts[variable.id], 1u);
+    }
+
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, CarriesMatchArmPatternVariables) {
+    lower(R"JOYEER(enum Choice { None, Some(Int) }
+func run(value: Choice) {
+match value {
+.Some(payload) => { print(value: payload) },
+.None => { print(value: 0) },
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    const auto pattern = std::find_if(
+            result.module->debugVariables.begin(),
+            result.module->debugVariables.end(),
+            [&run](const auto& variable) {
+                return variable.function == run.id &&
+                        variable.kind == joyeer::ir::DebugVariableKind::patternBinding &&
+                        variable.name == "payload";
+            });
+    ASSERT_NE(pattern, result.module->debugVariables.end());
+    const auto scope = std::find_if(
+            result.module->debugScopes.begin(),
+            result.module->debugScopes.end(),
+            [&pattern](const auto& candidate) { return candidate.id == pattern->scope; });
+    ASSERT_NE(scope, result.module->debugScopes.end());
+    EXPECT_EQ(scope->kind, joyeer::ir::DebugScopeKind::lexicalBlock);
+    EXPECT_TRUE(scope->parent.has_value());
+
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, OmitsVariablesWhoseInitializersDiverge) {
+    lower(R"JOYEER(func run(): Int {
+let value: Int = return 1
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    EXPECT_TRUE(std::none_of(
+            result.module->debugVariables.begin(),
+            result.module->debugVariables.end(),
+            [&run](const auto& variable) {
+                return variable.function == run.id && variable.name == "value";
+            }));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
 TEST_F(IRLoweringTest, LowersBindingsAndMutableAssignmentsThroughStackSlots) {
