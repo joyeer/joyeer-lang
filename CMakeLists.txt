@@ -30,6 +30,20 @@ find_program(JOYEER_CLANG_EXECUTABLE
 )
 if(JOYEER_CLANG_EXECUTABLE)
     message(STATUS "Joyeer LLVM driver: ${JOYEER_CLANG_EXECUTABLE}")
+    if(WIN32)
+        get_filename_component(JOYEER_LLVM_BIN_DIR "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
+        find_program(JOYEER_LLD_LINK_EXECUTABLE
+                NAMES lld-link lld-link.exe
+                HINTS "${JOYEER_LLVM_BIN_DIR}"
+                NO_DEFAULT_PATH
+                DOC "LLD linker required for Windows DWARF native output"
+        )
+        if(JOYEER_LLD_LINK_EXECUTABLE)
+            message(STATUS "Joyeer Windows DWARF linker: ${JOYEER_LLD_LINK_EXECUTABLE}")
+        else()
+            message(STATUS "LLD linker not found; Windows DWARF executable output is unavailable")
+        endif()
+    endif()
 else()
     message(STATUS "Joyeer LLVM driver not found; textual emission remains available")
 endif()

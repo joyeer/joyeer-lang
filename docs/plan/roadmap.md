@@ -114,8 +114,8 @@ recursive runtime clone/destroy, deterministic cleanup, allocation-balance
 checks, and Stage 5 control-flow analysis are complete for that surface. The
 next work is product completeness and quality:
 
-1. Complete final executable/PDB/dSYM policy for the CLI-exposed line-table
-  emitter, then add source-level variables/scopes separately.
+1. Add source-level variable/type inspection and lexical scopes on top of the
+  completed line-table and native PDB/DWARF/dSYM artifact pipeline.
 2. Retire the legacy
   VM lane after native golden coverage is equivalent.
 3. Add broader type-directed edits only where the recovery is unambiguous.
@@ -299,7 +299,8 @@ std/
 - ✅ Emit opt-in DWARF 4 / CodeView source line tables via textual LLVM
 - ✅ Expose `-g0`, `-g`, `-gline-tables-only`, `-gdwarf`, and Windows
   `-gcodeview` independently of optimization
-- Final executable/PDB/dSYM artifact policy
+- ✅ Retain final Windows PDB or embedded DWARF, ELF DWARF, and macOS dSYM
+  artifacts with deterministic cleanup and safe process invocation
 - Source-level breakpoints and stack frames with gdb/lldb/Visual Studio
 - Variable/type inspection and lexical scopes
 

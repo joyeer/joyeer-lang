@@ -1,7 +1,81 @@
 #include "joyeer/runtime/arguments.h"
 #include "joyeer/diagnostic/diagnostic.h"
 #include "joyeer/runtime/executor.h"
+#include <algorithm>
+#include <cwctype>
 #include <iostream>
+
+namespace {
+
+std::filesystem::path absoluteNormalized(const std::filesystem::path& path) {
+    std::error_code error;
+    auto result = std::filesystem::weakly_canonical(path, error);
+    if (!error) return result.lexically_normal();
+    error.clear();
+    result = std::filesystem::absolute(path, error);
+    if (error) result = path;
+    return result.lexically_normal();
+}
+
+#if defined(_WIN32)
+std::wstring windowsPathKey(const std::filesystem::path& path) {
+    auto text = absoluteNormalized(path).native();
+    std::replace(text.begin(), text.end(), L'/', L'\\');
+    std::wstring result;
+    size_t start = 0;
+    while (start <= text.size()) {
+        const auto end = text.find(L'\\', start);
+        auto component = text.substr(
+                start,
+                end == std::wstring::npos ? text.size() - start : end - start);
+        if (!component.empty() && component.back() != L':') {
+            while (!component.empty() &&
+                   (component.back() == L' ' || component.back() == L'.')) {
+                component.pop_back();
+            }
+        }
+        std::transform(
+                component.begin(),
+                component.end(),
+                component.begin(),
+                [](wchar_t character) {
+                    return static_cast<wchar_t>(std::towlower(character));
+                });
+        if (start != 0) result.push_back(L'\\');
+        result += component;
+        if (end == std::wstring::npos) break;
+        start = end + 1;
+    }
+    return result;
+}
+#endif
+
+bool pathsAlias(
+        const std::filesystem::path& left,
+        const std::filesystem::path& right) {
+    if (left.empty() || right.empty()) return false;
+    std::error_code error;
+    if (std::filesystem::exists(left, error) && !error) {
+        error.clear();
+        if (std::filesystem::exists(right, error) && !error) {
+            error.clear();
+            if (std::filesystem::equivalent(left, right, error) && !error) return true;
+        }
+    }
+#if defined(_WIN32)
+    return windowsPathKey(left) == windowsPathKey(right);
+#else
+    return absoluteNormalized(left) == absoluteNormalized(right);
+#endif
+}
+
+std::filesystem::path pdbPathFor(const std::filesystem::path& output) {
+    auto pdb = output;
+    pdb.replace_extension(".pdb");
+    return pdb;
+}
+
+} // namespace
 
 CommandLineArguments::CommandLineArguments(Diagnostics* diagnostics, int argc, char** argv) {
     this->diagnostics = diagnostics;
@@ -117,6 +191,27 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         diagnostics->reportError(
                 ErrorLevel::failure,
                 "-gcodeview is supported only for Windows native output");
+    }
+#endif
+
+    if (!inputfile.empty() && outputMode != OutputMode::validate &&
+        pathsAlias(inputfile, outputFile)) {
+        diagnostics->reportError(
+                ErrorLevel::failure,
+                "output path must not overwrite the input file");
+    }
+#if defined(_WIN32)
+    if (outputMode != OutputMode::validate &&
+        outputFile.filename().native().find(L':') != std::wstring::npos) {
+        diagnostics->reportError(
+                ErrorLevel::failure,
+                "output paths must not use Windows alternate data streams");
+    }
+    if (!inputfile.empty() && outputMode == OutputMode::executable &&
+        pathsAlias(inputfile, pdbPathFor(outputFile))) {
+        diagnostics->reportError(
+                ErrorLevel::failure,
+                "sibling PDB cleanup path must not overwrite the input file");
     }
 #endif
 

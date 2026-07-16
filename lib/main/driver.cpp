@@ -46,6 +46,8 @@ int Driver::run() {
                         JOYEER_NATIVE_RUNTIME_PATH,
                         arguments->outputFile,
                         arguments->optimizationLevel,
+                        arguments->debugInfo,
+                        arguments->inputfile,
                     });
             for (const auto& diagnostic : linking.diagnostics) {
                         diagnostics->reportDiagnostic(

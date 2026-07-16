@@ -80,6 +80,15 @@ compile unit unoptimized, while `-O1`…`-O3` carry optimized debug flags withou
 changing the emitted pre-optimization instructions. The current debug level is
 line-tables-only; variables, types, and lexical scopes are not exposed.
 
+Native artifacts follow the host format. Windows CodeView keeps a sibling PDB
+with the executable and embeds a CodeView debug-directory reference. Windows
+DWARF requires the `lld-link` executable beside the configured Clang and keeps
+DWARF sections in the PE executable. ELF keeps DWARF sections in the executable;
+macOS asks the Clang driver for a sibling dSYM bundle. `-O0` disables reference
+elimination and identical-code folding for Windows debug links; optimized
+levels retain them. Clang is launched with an argument vector rather than a
+shell command, so user paths are not subject to shell expansion.
+
 ---
 
 ## 3. LLVM type and ABI mapping
@@ -195,9 +204,8 @@ The native path is an MVP, not the final zero-cost implementation:
 - the textual emitter can generate source/function/instruction
   line-tables-only metadata with DWARF 4 or CodeView module flags, including
   all LLVM instructions expanded from a source operation; compiler-generated
-  cleanup/plumbing is suppressed from line rows. CLI selection works for
-  validation and `--emit-llvm`; deterministic final executable/PDB/dSYM policy
-  remains;
+  cleanup/plumbing is suppressed from line rows. CLI selection and deterministic
+  executable/PDB/DWARF/dSYM artifact policy are implemented;
 - `print` supports primitive and string values, not arbitrary aggregates;
 - file input is synchronous and whole-file only; streaming, writing, metadata,
   and a typed I/O error enum are not provided;
@@ -229,6 +237,9 @@ missing-file errors, exhaustive source-level handling, and zero allocation
 balance on both paths. Debug-info tests validate metadata structure in both
 DWARF/CodeView modes and make the configured Clang emit objects containing the
 corresponding DWARF `.debug_line` and Windows CodeView `.debug$S` sections.
+Native artifact tests additionally validate no-debug output, Windows PDB source
+and line records, embedded Windows DWARF sections, platform artifact retention,
+safe metacharacter paths, and refusal to overwrite output/PDB directories.
 
 `NativeExecutableJsonParser` is the integrated milestone: Joyeer source reads
 an external file, recursively parses nested null/Boolean/integer/string/array/

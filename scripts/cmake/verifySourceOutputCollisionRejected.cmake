@@ -1,0 +1,56 @@
+if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED SOURCE_TEMPLATE OR NOT DEFINED TEST_DIRECTORY OR NOT DEFINED COLLISION_KIND)
+    message(FATAL_ERROR "JOYEER_EXECUTABLE, SOURCE_TEMPLATE, TEST_DIRECTORY, and COLLISION_KIND are required")
+endif()
+
+file(MAKE_DIRECTORY "${TEST_DIRECTORY}")
+file(READ "${SOURCE_TEMPLATE}" original_source)
+
+if(COLLISION_KIND STREQUAL "OUTPUT")
+    set(input_file "${TEST_DIRECTORY}/protected-source.joyeer")
+    set(command "${JOYEER_EXECUTABLE}" --lang=v0.1 -g0 -o "${input_file}" "${input_file}")
+elseif(COLLISION_KIND STREQUAL "LLVM")
+    set(input_file "${TEST_DIRECTORY}/protected-llvm-source.joyeer")
+    set(command "${JOYEER_EXECUTABLE}" --lang=v0.1 --emit-llvm "${input_file}" "${input_file}")
+elseif(COLLISION_KIND STREQUAL "PDB")
+    set(input_file "${TEST_DIRECTORY}/protected-sidecar.pdb")
+    set(output_file "${TEST_DIRECTORY}/protected-sidecar.exe")
+    set(command "${JOYEER_EXECUTABLE}" --lang=v0.1 -gcodeview -o "${output_file}" "${input_file}")
+elseif(COLLISION_KIND STREQUAL "PDB_NODEBUG")
+    set(input_file "${TEST_DIRECTORY}/protected-nodebug-sidecar.pdb")
+    set(output_file "${TEST_DIRECTORY}/protected-nodebug-sidecar.exe")
+    set(command "${JOYEER_EXECUTABLE}" --lang=v0.1 -g0 -o "${output_file}" "${input_file}")
+else()
+    message(FATAL_ERROR "COLLISION_KIND must be OUTPUT, LLVM, PDB, or PDB_NODEBUG")
+endif()
+
+file(WRITE "${input_file}" "${original_source}")
+execute_process(
+        COMMAND ${command}
+        RESULT_VARIABLE compiler_result
+        OUTPUT_VARIABLE compiler_output
+        ERROR_VARIABLE compiler_error
+)
+set(combined "${compiler_output}${compiler_error}")
+
+if(compiler_result EQUAL 0)
+    file(REMOVE "${input_file}" "${output_file}")
+    message(FATAL_ERROR "Compilation unexpectedly accepted ${COLLISION_KIND} source collision")
+endif()
+if(NOT EXISTS "${input_file}")
+    file(REMOVE "${output_file}")
+    message(FATAL_ERROR "Rejected ${COLLISION_KIND} collision deleted the source file")
+endif()
+file(READ "${input_file}" preserved_source)
+if(NOT preserved_source STREQUAL original_source)
+    file(REMOVE "${input_file}" "${output_file}")
+    message(FATAL_ERROR "Rejected ${COLLISION_KIND} collision modified the source file")
+endif()
+string(FIND "${combined}" "input file" input_diagnostic_at)
+string(FIND "${combined}" "compiler input" linker_diagnostic_at)
+if(input_diagnostic_at EQUAL -1 AND linker_diagnostic_at EQUAL -1)
+    file(REMOVE "${input_file}" "${output_file}")
+    message(FATAL_ERROR "Collision failed without a specific diagnostic:\n${combined}")
+endif()
+
+file(REMOVE "${input_file}" "${output_file}")
+message(STATUS "${COLLISION_KIND} collision was rejected without modifying the source")

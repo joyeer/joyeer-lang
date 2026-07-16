@@ -6,11 +6,11 @@ int main(int argc, char** argv) {
     // command line arguments
     auto options = std::make_shared<CommandLineArguments>(diagnostics, argc, argv);
 
+    if (diagnostics->hasFailure()) {
+        diagnostics->printErrors();
+        return 1;
+    }
     if(!options->accepted) {
-        if (diagnostics->hasFailure()) {
-            diagnostics->printErrors();
-            return 1;
-        }
         options->printUsage();
         return 0;
     }

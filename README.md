@@ -36,8 +36,8 @@ parameters and mandatory `consume` markers work; explicit
 `borrowing` and `initializing` also work, and call-site access paths enforce
 exclusivity. Consuming field/array/dictionary projections are tracked through
 reinitialization. The v0.1 non-escaping ownership surface is complete; debug
-line tables are available, while variable/type inspection, final debug artifact
-policy, and a complete standard library remain. This is not a production
+line tables and native debug artifacts are available, while variable/type
+inspection and a complete standard library remain. This is not a production
 release.
 
 Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
@@ -114,7 +114,10 @@ Debug line tables are off by default. `-g` and `-gline-tables-only` select the
 platform format (CodeView on Windows, DWARF elsewhere); `-gdwarf` selects DWARF
 4 explicitly and `-gcodeview` is available on Windows. `-g0` disables them.
 Debug selection is independent of `-O0`…`-O3`; line tables currently provide
-source/function/line locations, not variable inspection.
+source/function/line locations, not variable inspection. Native `-g` on Windows
+keeps a sibling `.pdb`; `-gdwarf` embeds DWARF in the Windows executable using
+the `lld-link` shipped beside Clang. ELF executables retain DWARF, while macOS
+debug builds retain a sibling `.dSYM` bundle.
 
 Emit textual LLVM IR instead:
 

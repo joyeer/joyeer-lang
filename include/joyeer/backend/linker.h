@@ -4,6 +4,7 @@
 #include "joyeer/compiler/options.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,10 +27,13 @@ struct LinkOptions {
     std::filesystem::path runtimeLibrary;
     std::filesystem::path outputFile;
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;
+    DebugInfoOptions debugInfo;
+    std::filesystem::path sourceFile;
 };
 
 struct LinkResult {
     std::vector<LinkDiagnostic> diagnostics;
+    std::optional<std::filesystem::path> debugArtifact;
 
     [[nodiscard]] bool succeeded() const {
         return diagnostics.empty();

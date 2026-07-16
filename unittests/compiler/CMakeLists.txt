@@ -172,6 +172,14 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_executable(LLVMFixtureGenerator
             llvm_fixture.cpp
     )
+    find_program(JOYEER_LLVM_PDBUTIL_EXECUTABLE
+            NAMES llvm-pdbutil llvm-pdbutil.exe
+            HINTS "${JOYEER_LLVM_BIN_DIR}"
+    )
+    find_program(JOYEER_DSYMUTIL_EXECUTABLE
+            NAMES dsymutil
+            HINTS "${JOYEER_LLVM_BIN_DIR}" /usr/bin
+    )
     target_link_libraries(LLVMFixtureGenerator
             JoyeerLLVMBackend
     )
@@ -290,6 +298,232 @@ if(JOYEER_CLANG_EXECUTABLE)
     set_tests_properties(NativeExecutableHello PROPERTIES
             LABELS "native;llvm-backend;native-runtime"
     )
+
+    add_test(NAME NativeExecutableNoDebugArtifact
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-no-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O0;-g0"
+                    -DEXPECT_NO_DEBUG_ARTIFACT=ON
+                    -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableNoDebugArtifact PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+    )
+
+    add_test(NAME NativeExecutableMetacharacterPath
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer native $() %PATH% & safe${CMAKE_EXECUTABLE_SUFFIX}"
+                    -DEXPECT_NO_DEBUG_ARTIFACT=ON
+                    -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableMetacharacterPath PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;security"
+    )
+
+    add_test(NAME NativeLinkerPreservesOutputDirectory
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-protected-output
+                    -DARTIFACT_KIND=OUTPUT
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeArtifactDirectoryRejected.cmake
+    )
+    set_tests_properties(NativeLinkerPreservesOutputDirectory PROPERTIES
+            LABELS "native;llvm-backend;security"
+    )
+
+    add_test(NAME NativeLinkerRejectsSourceOutputCollision
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-output-collision
+                    -DCOLLISION_KIND=OUTPUT
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
+    )
+    set_tests_properties(NativeLinkerRejectsSourceOutputCollision PROPERTIES
+            LABELS "native;llvm-backend;security"
+    )
+
+    add_test(NAME LLVMEmitterRejectsSourceOutputCollision
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-llvm-collision
+                    -DCOLLISION_KIND=LLVM
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
+    )
+    set_tests_properties(LLVMEmitterRejectsSourceOutputCollision PROPERTIES
+            LABELS "llvm-backend;security"
+    )
+
+        if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE AND JOYEER_LLVM_PDBUTIL_EXECUTABLE)
+        add_test(NAME NativeExecutableCodeViewPdb
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-codeview${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O0;-gcodeview"
+                        -DEXPECT_PDB=ON
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        -DREADOBJ_COFF_DEBUG_DIRECTORY=ON
+                        "-DEXPECTED_DEBUG_PATTERNS=Type: CodeView;PDBFileName:"
+                        -DLLVM_PDBUTIL=${JOYEER_LLVM_PDBUTIL_EXECUTABLE}
+                        "-DEXPECTED_PDB_PATTERNS=hello.joyeer;Lines"
+                        -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableCodeViewPdb PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;debug-info"
+        )
+
+        add_test(NAME NativeLinkerPreservesPdbDirectory
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-protected-pdb.exe
+                        -DARTIFACT_KIND=PDB
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeArtifactDirectoryRejected.cmake
+        )
+        set_tests_properties(NativeLinkerPreservesPdbDirectory PROPERTIES
+                LABELS "native;llvm-backend;debug-info;security"
+        )
+
+        add_test(NAME NativeLinkerRejectsSourcePdbCollision
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-pdb-collision
+                        -DCOLLISION_KIND=PDB
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
+        )
+        set_tests_properties(NativeLinkerRejectsSourcePdbCollision PROPERTIES
+                LABELS "native;llvm-backend;debug-info;security"
+        )
+
+        add_test(NAME NativeLinkerRejectsNoDebugSourcePdbCollision
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-nodebug-pdb-collision
+                        -DCOLLISION_KIND=PDB_NODEBUG
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
+        )
+        set_tests_properties(NativeLinkerRejectsNoDebugSourcePdbCollision PROPERTIES
+                LABELS "native;llvm-backend;security"
+        )
+
+        add_test(NAME NativeLinkerRemovesStalePdb
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-transition.exe
+                        -DARTIFACT_KIND=PDB
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeDebugArtifactTransition.cmake
+        )
+        set_tests_properties(NativeLinkerRemovesStalePdb PROPERTIES
+                LABELS "native;llvm-backend;debug-info"
+        )
+
+        add_test(NAME NativeLinkerRejectsPdbOutputCollision
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-output-collision.PDB
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativePdbCollisionRejected.cmake
+        )
+        set_tests_properties(NativeLinkerRejectsPdbOutputCollision PROPERTIES
+                LABELS "native;llvm-backend;debug-info;security"
+        )
+
+        add_test(NAME NativeLinkerRejectsTrailingSpacePdbAlias
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-output-alias.pdb "
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativePdbCollisionRejected.cmake
+        )
+        set_tests_properties(NativeLinkerRejectsTrailingSpacePdbAlias PROPERTIES
+                LABELS "native;llvm-backend;debug-info;security"
+        )
+
+        add_test(NAME NativeLinkerRejectsAlternateDataStreamOutput
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/joyeer-output.exe:stream"
+                        "-DEXPECTED_PATTERN=alternate data streams"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+        )
+        set_tests_properties(NativeLinkerRejectsAlternateDataStreamOutput PROPERTIES
+                LABELS "native;llvm-backend;security"
+        )
+        endif()
+
+        if(WIN32 AND JOYEER_LLD_LINK_EXECUTABLE AND JOYEER_LLVM_READOBJ_EXECUTABLE)
+        add_test(NAME NativeExecutableDwarfArtifact
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dwarf${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O2;-gdwarf"
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        "-DEXPECTED_DEBUG_PATTERNS=.debug_info;.debug_line"
+                        -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+        )
+        elseif(APPLE AND JOYEER_LLVM_READOBJ_EXECUTABLE AND JOYEER_DSYMUTIL_EXECUTABLE)
+        add_test(NAME NativeExecutableDwarfArtifact
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dwarf${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O2;-gdwarf"
+                        -DEXPECT_DSYM=ON
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        -DEXPECTED_DEBUG_PATTERNS=__debug_line
+                        -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+        )
+
+        add_test(NAME NativeLinkerRemovesStaleDsym
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-transition
+                        -DARTIFACT_KIND=DSYM
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeDebugArtifactTransition.cmake
+        )
+        set_tests_properties(NativeLinkerRemovesStaleDsym PROPERTIES
+                LABELS "native;llvm-backend;debug-info"
+        )
+        elseif(UNIX AND NOT APPLE AND JOYEER_LLVM_READOBJ_EXECUTABLE)
+        add_test(NAME NativeExecutableDwarfArtifact
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dwarf${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O2;-gdwarf"
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        -DEXPECTED_DEBUG_PATTERNS=.debug_line
+                        -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+        )
+    endif()
 
     add_test(NAME NativeExecutableOwnership
             COMMAND ${CMAKE_COMMAND}

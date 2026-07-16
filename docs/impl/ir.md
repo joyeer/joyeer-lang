@@ -174,8 +174,8 @@ The current IR/native pipeline intentionally leaves these to later commits:
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
   backend's explicit Clang optimization level;
-- CLI/debug artifact policy, lexical scopes, and variable inspection. The
-  backend-neutral source transport and opt-in LLVM line-table emission are
-  complete.
+- lexical scopes and variable/type inspection. The backend-neutral source
+  transport, opt-in LLVM line-table emission, CLI policy, and native debug
+  artifacts are complete.
 
 None of those should be implemented by extending the compatibility VM lane.
