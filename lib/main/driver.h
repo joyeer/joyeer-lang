@@ -3,7 +3,6 @@
 
 #include "joyeer/runtime/arguments.h"
 #include "joyeer/compiler/compiler+service.h"
-#include "joyeer/vm/isolate.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
 class Driver {
@@ -13,7 +12,6 @@ public:
 
 private:
     CompilerService* compiler;
-    IsolateVM* vm = nullptr;
     CommandLineArguments::Ptr arguments;
     Diagnostics* diagnostics;
 };

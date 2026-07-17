@@ -924,7 +924,6 @@ set_tests_properties(NativeLinkerRejectsMissingMain PROPERTIES
 
 add_test(NAME ParserMvpCliAcceptance
         COMMAND $<TARGET_FILE:joyeer>
-                --lang=v0.1
                 "${JOYEER_TESTS_DIR}/parser/ok/json_mvp.joyeer"
 )
 set_tests_properties(ParserMvpCliAcceptance PROPERTIES

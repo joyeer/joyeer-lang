@@ -1,17 +1,12 @@
 #include "joyeer/compiler/compiler+service.h"
 
 #include "joyeer/compiler/lexparser.h"
-#include "joyeer/compiler/typegen.h"
-#include "joyeer/compiler/typebinding.h"
 #include "joyeer/compiler/nameresolution.h"
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/compiler/irlowering.h"
 #include "joyeer/compiler/semanticanalysis.h"
 #include "joyeer/backend/llvm.h"
-#include "joyeer/compiler/syntaxparser.h"
-#include "joyeer/compiler/IRGen.h"
-#include "joyeer/compiler/debugprinter.h"
 #include "joyeer/runtime/types.h"
 #include "joyeer/runtime/sys.h"
 
@@ -129,24 +124,19 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
         return nullptr;
     }
 
-    // lex structure analyze
-    const auto lexerProfile = options->languageMode == LanguageMode::v0_1
-            ? LexerProfile::jsonParserMvp
-            : LexerProfile::legacy;
-    LexParser lexParser(context, lexerProfile);
+    LexParser lexParser(context, LexerProfile::jsonParserMvp);
     lexParser.parse(sourcefile);
     CHECK_ERROR_RETURN_NULL
 
-    if(options->languageMode == LanguageMode::v0_1) {
-        sourcefile->semanticModel.reset();
-        sourcefile->typeCheckedModel.reset();
-        sourcefile->joyeerIR.reset();
-        sourcefile->llvmIR.clear();
-        sourcefile->llvmHasEntryPoint = false;
-        joyeer::parser::Parser parser(sourcefile->tokens);
-        auto result = parser.parse();
-        for(const auto& diagnostic : result.diagnostics) {
-            reportSpannedDiagnostic(
+    sourcefile->semanticModel.reset();
+    sourcefile->typeCheckedModel.reset();
+    sourcefile->joyeerIR.reset();
+    sourcefile->llvmIR.clear();
+    sourcefile->llvmHasEntryPoint = false;
+    joyeer::parser::Parser parser(sourcefile->tokens);
+    auto result = parser.parse();
+    for(const auto& diagnostic : result.diagnostics) {
+        reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
                 diagnostic.span,
@@ -155,30 +145,30 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 diagnostic.message,
                 diagnostic.help,
                 diagnostic.fixIt);
-        }
-        if (!result.succeeded()) {
-            return nullptr;
-        }
+    }
+    if (!result.succeeded()) {
+        return nullptr;
+    }
 
-        const auto resolution = joyeer::semantic::NameResolver().resolve(result.root);
-        sourcefile->semanticModel = resolution.model;
-        for (const auto& diagnostic : resolution.diagnostics) {
-            reportSpannedDiagnostic(
+    const auto resolution = joyeer::semantic::NameResolver().resolve(result.root);
+    sourcefile->semanticModel = resolution.model;
+    for (const auto& diagnostic : resolution.diagnostics) {
+        reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
                 diagnostic.span,
                 ErrorLevel::failure,
                 joyeer::semantic::diagnosticName(diagnostic.id),
                 diagnostic.message);
-        }
-        if (!resolution.succeeded()) {
-            return nullptr;
-        }
+    }
+    if (!resolution.succeeded()) {
+        return nullptr;
+    }
 
-        const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
-        sourcefile->typeCheckedModel = checking.model;
-        for (const auto& diagnostic : checking.diagnostics) {
-            reportSpannedDiagnostic(
+    const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
+    sourcefile->typeCheckedModel = checking.model;
+    for (const auto& diagnostic : checking.diagnostics) {
+        reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
                 diagnostic.span,
@@ -186,16 +176,16 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 joyeer::typing::diagnosticName(diagnostic.id),
                     diagnostic.message,
                     diagnostic.help,
-                    diagnostic.fixIt,
-                    diagnostic.notes);
-        }
-        if (!checking.succeeded()) {
-            return nullptr;
-        }
+                diagnostic.fixIt,
+                diagnostic.notes);
+    }
+    if (!checking.succeeded()) {
+        return nullptr;
+    }
 
-        const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
-        for (const auto& diagnostic : analysis.diagnostics) {
-            reportSpannedDiagnostic(
+    const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+    for (const auto& diagnostic : analysis.diagnostics) {
+        reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
                 diagnostic.span,
@@ -205,97 +195,63 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 joyeer::analysis::diagnosticName(diagnostic.id),
                 diagnostic.message,
                 diagnostic.help);
-        }
-        if (!analysis.succeeded()) {
-            return nullptr;
-        }
+    }
+    if (!analysis.succeeded()) {
+        return nullptr;
+    }
 
-        const auto lowering = joyeer::lowering::Lowerer().lower(
-                checking.model,
+    const auto lowering = joyeer::lowering::Lowerer().lower(
+            checking.model,
             sourcefile->getLocation(),
             sourceInfoFor(sourcefile));
-        sourcefile->joyeerIR = lowering.module;
-        for (const auto& diagnostic : lowering.diagnostics) {
-            reportSpannedDiagnostic(
+    sourcefile->joyeerIR = lowering.module;
+    for (const auto& diagnostic : lowering.diagnostics) {
+        reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
                 diagnostic.span,
                 ErrorLevel::failure,
                 joyeer::lowering::diagnosticName(diagnostic.id),
                 diagnostic.message);
-        }
-        if (!lowering.succeeded()) {
-            return nullptr;
-        }
+    }
+    if (!lowering.succeeded()) {
+        return nullptr;
+    }
 
-        const auto llvm = joyeer::llvmbackend::Emitter().emit(
+    const auto llvm = joyeer::llvmbackend::Emitter().emit(
             *lowering.module,
             joyeer::llvmbackend::EmitOptions {
                 options->debugInfo.emitLineTables,
                 options->debugInfo.format,
                 options->optimizationLevel,
-                    options->debugInfo.emitVariables,
+                options->debugInfo.emitVariables,
             });
-        sourcefile->llvmIR = llvm.text;
-        sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
-        for (const auto& diagnostic : llvm.diagnostics) {
-            reportSpannedDiagnostic(
+    sourcefile->llvmIR = llvm.text;
+    sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
+    for (const auto& diagnostic : llvm.diagnostics) {
+        reportSpannedDiagnostic(
                 diagnostics,
                 sourcefile,
                 diagnostic.span,
                 ErrorLevel::failure,
                 joyeer::llvmbackend::diagnosticName(diagnostic.id),
                 diagnostic.message);
-        }
-        if (!llvm.succeeded()) {
-            return nullptr;
-        }
-        if (options->outputMode == OutputMode::llvmIR) {
-            std::ofstream output(options->outputFile, std::ios::binary);
-            output << llvm.text;
-            if (!output.good()) {
-                diagnostics->reportDiagnostic(
-                        ErrorLevel::failure,
-                    "driver.output-file-error",
-                    "cannot write LLVM IR output: " +
-                        options->outputFile.string());
-            }
-        }
+    }
+    if (!llvm.succeeded()) {
         return nullptr;
     }
-
-    auto debugfile = sourcefile->getAbstractLocation() + ".xdump.yml";
-    NodeDebugPrinter debugPrinter(debugfile);
-
-    // syntax analyze
-    SyntaxParser syntaxParser(context, sourcefile);
-    auto block = syntaxParser.parse();
-    CHECK_ERROR_RETURN_NULL
-    debugPrinter.print("parsing-stage", block);
-
-    // gen the type from source code
-    TypeGen typeGen(context);
-    typeGen.visit(block);
-    CHECK_ERROR_RETURN_NULL
-    debugPrinter.print("typegen-stage", block);
-
-    // binding the types
-    TypeBinding typeBinding(context);
-    typeBinding.visit(std::static_pointer_cast<Node>(block));
-    CHECK_ERROR_RETURN_NULL
-    debugPrinter.print("typebinding-stage", block);
-
-    // generate IR code
-    IRGen irGen(context);
-    sourcefile->moduleClass = irGen.emit(block);
-    CHECK_ERROR_RETURN_NULL
-
-    // debug print the types after IR code generated
-    debugPrinter.print("IRGEN-stage", types->types);
-
-    debugPrinter.close();
-
-    return sourcefile->moduleClass;
+    if (options->outputMode == OutputMode::llvmIR) {
+        std::ofstream output(options->outputFile, std::ios::binary);
+        output << llvm.text;
+        if (!output.good()) {
+            diagnostics->reportDiagnostic(
+                        ErrorLevel::failure,
+                        "driver.output-file-error",
+                        "cannot write LLVM IR output: " +
+                        options->outputFile.string());
+        }
+    }
+    return nullptr;
 }
 
 int CompilerService::declare(Type* type) {

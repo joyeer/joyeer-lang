@@ -1,6 +1,5 @@
 #include "driver.h"
 #include "joyeer/backend/linker.h"
-#include "joyeer/vm/isolate.h"
 
 #ifndef JOYEER_CLANG_EXECUTABLE_PATH
 #define JOYEER_CLANG_EXECUTABLE_PATH ""
@@ -13,24 +12,15 @@
 Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):arguments(arguments) {
     this->diagnostics = diagnostics;
     compiler = new CompilerService(diagnostics, arguments);
-
-    if(arguments->languageMode == LanguageMode::legacy) {
-        vm = new InterpretedIsolatedVM();
-        compiler->strings = vm->strings;
-        compiler->types = vm->types;
-        compiler->bootstrap();
-        vm->bootstrap();
-    }
 }
 
 int Driver::run() {
-    auto module = compiler->compile(arguments->inputfile);
+    compiler->compile(arguments->inputfile);
     if(diagnostics->hasFailure()) {
         diagnostics->printErrors();
         return 1;
     }
-    if(arguments->languageMode == LanguageMode::v0_1 &&
-              arguments->outputMode == OutputMode::executable) {
+    if(arguments->outputMode == OutputMode::executable) {
         const auto& source = compiler->getLastCompiledSourceFile();
         if (source == nullptr) {
             diagnostics->reportDiagnostic(
@@ -62,8 +52,5 @@ int Driver::run() {
         }
     }
     if (!diagnostics->errors.empty()) diagnostics->printErrors();
-    if(arguments->languageMode == LanguageMode::legacy) {
-        ((InterpretedIsolatedVM*)vm)->run(module);
-    }
     return 0;
 }

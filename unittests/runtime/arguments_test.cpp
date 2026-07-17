@@ -26,7 +26,6 @@ std::unique_ptr<CommandLineArguments> parseArguments(
 std::vector<std::string> nativeArguments(const std::string& optimization = {}) {
     std::vector<std::string> result {
         "joyeer",
-        "--lang=v0.1",
     };
     if (!optimization.empty()) result.push_back(optimization);
     result.push_back("-o");
@@ -39,7 +38,6 @@ std::vector<std::string> nativeArguments(const std::string& optimization = {}) {
 std::vector<std::string> nativeArguments(const std::vector<std::string>& options) {
     std::vector<std::string> result {
         "joyeer",
-        "--lang=v0.1",
     };
     result.insert(result.end(), options.begin(), options.end());
     result.push_back("-o");
@@ -172,7 +170,7 @@ TEST(CommandLineArgumentsTest, RejectsUnknownDebugOptions) {
             Diagnostics diagnostics;
             const auto arguments = parseArguments(
                 diagnostics,
-                { "joyeer", "--lang=v0.1", "-g3" });
+                { "joyeer", "-g3" });
 
             EXPECT_TRUE(diagnostics.hasFailure());
             EXPECT_FALSE(arguments->accepted);
@@ -193,7 +191,7 @@ TEST(CommandLineArgumentsTest, RejectsEnabledCodeViewOutsideWindows) {
 }
 #endif
 
-TEST(CommandLineArgumentsTest, RejectsEnabledDebugInfoForLegacyMode) {
+TEST(CommandLineArgumentsTest, AcceptsDebugInfoInDefaultMode) {
     Diagnostics diagnostics;
     std::vector<std::string> values {
         "joyeer",
@@ -202,14 +200,28 @@ TEST(CommandLineArgumentsTest, RejectsEnabledDebugInfoForLegacyMode) {
     };
     static_cast<void>(parseArguments(diagnostics, std::move(values)));
 
+    EXPECT_FALSE(diagnostics.hasFailure());
+}
+
+TEST(CommandLineArgumentsTest, KeepsV01AsCompatibilityOption) {
+    Diagnostics diagnostics;
+    auto values = nativeArguments();
+    values.insert(values.begin() + 1, "--lang=v0.1");
+    static_cast<void>(parseArguments(diagnostics, std::move(values)));
+
+    EXPECT_FALSE(diagnostics.hasFailure());
+}
+
+TEST(CommandLineArgumentsTest, RejectsRemovedLegacyMode) {
+    Diagnostics diagnostics;
+    auto values = nativeArguments();
+    values.insert(values.begin() + 1, "--lang=v0.1-legacy");
+    static_cast<void>(parseArguments(diagnostics, std::move(values)));
+
     ASSERT_TRUE(diagnostics.hasFailure());
-    EXPECT_TRUE(std::any_of(
-            diagnostics.errors.begin(),
-            diagnostics.errors.end(),
-            [](const auto& error) {
-                return error.message.find("debug information requires --lang=v0.1") !=
-                        std::string::npos;
-            }));
+    EXPECT_NE(
+            diagnostics.errors[0].message.find("unknown option '--lang=v0.1-legacy'"),
+            std::string::npos);
 }
 
 TEST(CommandLineArgumentsTest, ParsesEverySupportedOptimizationLevel) {

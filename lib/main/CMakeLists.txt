@@ -6,7 +6,6 @@ add_joyeer_executable(joyeer
 
 add_dependencies(joyeer JoyeerRuntime)
 add_dependencies(joyeer JoyeerCompiler)
-add_dependencies(joyeer JoyeerVM)
 add_dependencies(joyeer JoyeerDiagnostic)
 add_dependencies(joyeer JoyeerNativeRuntime)
 
@@ -16,9 +15,8 @@ target_compile_definitions(joyeer PRIVATE
 )
 
 target_link_libraries(joyeer
-        JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
-        JoyeerVM
         JoyeerLLVMBackend
+        JoyeerRuntime
+        JoyeerDiagnostic
 )

@@ -10,11 +10,6 @@
 #include "joyeer/runtime/types.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
-enum class LanguageMode {
-    legacy,
-    v0_1
-};
-
 enum class OutputMode {
     validate,
     llvmIR,
@@ -32,9 +27,7 @@ struct CommandLineArguments {
     std::filesystem::path workingDirectory;
     std::filesystem::path outputFile;
     
-    bool vmDebug = true;
     bool accepted = false;
-    LanguageMode languageMode = LanguageMode::legacy;
     OutputMode outputMode = OutputMode::validate;
     joyeer::OptimizationLevel optimizationLevel = joyeer::OptimizationLevel::O2;
     joyeer::DebugInfoOptions debugInfo;
@@ -58,6 +51,5 @@ struct Arguments {
 private:
     Executor* executor;
 };
-
 
 #endif
