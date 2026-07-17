@@ -270,6 +270,21 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "llvm-backend;debug-info;optimization"
     )
 
+    add_test(NAME LLVMBackendCompilerFullDebugValidation
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DCLANG=${JOYEER_CLANG_EXECUTABLE}
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/full_debug.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-full-debug.ll
+                    "-DCOMPILER_ARGS=-O0;-gfull;-gdwarf"
+                    "-DEXPECTED_IR_PATTERNS=emissionKind: FullDebug;llvm.dbg.declare;DILocalVariable;DILexicalBlock;DIBasicType;DICompositeType"
+                    "-DUNEXPECTED_IR_PATTERNS=emissionKind: LineTablesOnly;#dbg_declare"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyCompilerLLVMOutput.cmake
+    )
+    set_tests_properties(LLVMBackendCompilerFullDebugValidation PROPERTIES
+            LABELS "llvm-backend;debug-info"
+    )
+
     if(WIN32)
         add_test(NAME LLVMBackendCompilerPlatformDebugValidation
                 COMMAND ${CMAKE_COMMAND}
@@ -379,6 +394,25 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableCodeViewPdb PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;debug-info"
+        )
+
+        add_test(NAME NativeExecutableFullDebugPdb
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/full_debug.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-full-debug${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O0;-gfull;-gcodeview"
+                        -DEXPECT_PDB=ON
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        -DREADOBJ_COFF_DEBUG_DIRECTORY=ON
+                        "-DEXPECTED_DEBUG_PATTERNS=Type: CodeView;PDBFileName:"
+                        -DLLVM_PDBUTIL=${JOYEER_LLVM_PDBUTIL_EXECUTABLE}
+                        "-DEXPECTED_PDB_PATTERNS=full_debug.joyeer;S_LOCAL;`plain`;`target`;`payload`;LF_STRUCTURE;`Pair`"
+                        -DEXPECTED_OUTPUT=3\n7\n5\n5\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableFullDebugPdb PROPERTIES
                 LABELS "native;llvm-backend;native-runtime;debug-info"
         )
 

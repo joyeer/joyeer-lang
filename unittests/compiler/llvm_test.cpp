@@ -225,6 +225,66 @@ return [1, 2]
     EXPECT_GT(instructionLines, 5u);
 }
 
+TEST_F(LLVMBackendTest, EmitsFullDebugScopesVariablesAndPhysicalTypes) {
+    emit(
+            R"JOYEER(func run(input: Int, target: inout Int) {
+let value = input
+if true {
+let value = target
+print(value: value)
+}
+&target = value
+}
+)JOYEER",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+                true,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("emissionKind: FullDebug"), std::string::npos);
+    EXPECT_NE(result.text.find("declare void @llvm.dbg.declare(metadata, metadata, metadata)"),
+              std::string::npos);
+    EXPECT_NE(result.text.find("call void @llvm.dbg.declare(metadata ptr %v"),
+              std::string::npos);
+    EXPECT_NE(result.text.find("!DILocalVariable(name: \"input\", arg: 1"),
+              std::string::npos);
+    EXPECT_NE(result.text.find("!DILocalVariable(name: \"target\", arg: 2"),
+              std::string::npos);
+    EXPECT_GE(std::count(
+                      result.text.begin(),
+                      result.text.end(),
+                      '\n'),
+              10);
+    EXPECT_NE(result.text.find("!DILocalVariable(name: \"value\""),
+              std::string::npos);
+    EXPECT_NE(result.text.find("!DILexicalBlock("), std::string::npos);
+    EXPECT_NE(result.text.find("!DIBasicType(name: \"Int\", size: 64"),
+              std::string::npos);
+    EXPECT_EQ(result.text.find("#dbg_declare"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, KeepsLineTablesFreeOfVariableMetadata) {
+    emit(
+            "func run(value: Int) { print(value: value) }\n",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true,
+                joyeer::DebugInfoFormat::dwarf,
+                joyeer::OptimizationLevel::O0,
+                false,
+            });
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("emissionKind: LineTablesOnly"), std::string::npos);
+    EXPECT_EQ(result.text.find("llvm.dbg.declare"), std::string::npos);
+    EXPECT_EQ(result.text.find("DILocalVariable"), std::string::npos);
+    EXPECT_EQ(result.text.find("DILexicalBlock"), std::string::npos);
+}
+
 TEST_F(LLVMBackendTest, EmitsPrimitiveFunctionsStackSlotsCallsAndControlFlow) {
     emit(R"JOYEER(func add(left: Int, right: Int): Int {
 return left + right

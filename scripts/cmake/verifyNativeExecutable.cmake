@@ -101,7 +101,7 @@ endif()
 
 if(LLVM_PDBUTIL AND EXPECT_PDB AND EXPECTED_PDB_PATTERNS)
     execute_process(
-            COMMAND "${LLVM_PDBUTIL}" dump -modules -files -l "${pdb_file}"
+            COMMAND "${LLVM_PDBUTIL}" dump -modules -files -l -symbols -types "${pdb_file}"
             RESULT_VARIABLE pdbutil_result
             OUTPUT_VARIABLE pdbutil_output
             ERROR_VARIABLE pdbutil_error

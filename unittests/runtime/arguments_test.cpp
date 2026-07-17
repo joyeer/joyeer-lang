@@ -56,6 +56,7 @@ TEST(CommandLineArgumentsTest, DefaultsNativeCompilationToO2) {
     EXPECT_FALSE(diagnostics.hasFailure());
     EXPECT_EQ(arguments->optimizationLevel, joyeer::OptimizationLevel::O2);
     EXPECT_FALSE(arguments->debugInfo.emitLineTables);
+    EXPECT_FALSE(arguments->debugInfo.emitVariables);
     EXPECT_EQ(arguments->debugInfo.format, joyeer::defaultDebugInfoFormat());
 }
 
@@ -75,8 +76,36 @@ TEST(CommandLineArgumentsTest, ParsesDebugLineTableOptions) {
                 nativeArguments(std::vector<std::string> { option }));
         EXPECT_FALSE(diagnostics.hasFailure()) << option;
         EXPECT_TRUE(arguments->debugInfo.emitLineTables) << option;
+        EXPECT_FALSE(arguments->debugInfo.emitVariables) << option;
         EXPECT_EQ(arguments->debugInfo.format, expectedFormat) << option;
     }
+}
+
+TEST(CommandLineArgumentsTest, ParsesFullDebugAndPreservesItAcrossFormatSelection) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(
+            diagnostics,
+            nativeArguments(std::vector<std::string> {
+                "-gfull", "-gdwarf",
+            }));
+
+    EXPECT_FALSE(diagnostics.hasFailure());
+    EXPECT_TRUE(arguments->debugInfo.emitLineTables);
+    EXPECT_TRUE(arguments->debugInfo.emitVariables);
+    EXPECT_EQ(arguments->debugInfo.format, joyeer::DebugInfoFormat::dwarf);
+}
+
+TEST(CommandLineArgumentsTest, LineTableOptionDowngradesFullDebugInOrder) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(
+            diagnostics,
+            nativeArguments(std::vector<std::string> {
+                "-gfull", "-gline-tables-only",
+            }));
+
+    EXPECT_FALSE(diagnostics.hasFailure());
+    EXPECT_TRUE(arguments->debugInfo.emitLineTables);
+    EXPECT_FALSE(arguments->debugInfo.emitVariables);
 }
 
 TEST(CommandLineArgumentsTest, AppliesDebugLevelAndFormatOptionsInOrder) {
@@ -89,6 +118,7 @@ TEST(CommandLineArgumentsTest, AppliesDebugLevelAndFormatOptionsInOrder) {
                 }));
         EXPECT_FALSE(diagnostics.hasFailure());
         EXPECT_TRUE(arguments->debugInfo.emitLineTables);
+        EXPECT_FALSE(arguments->debugInfo.emitVariables);
         EXPECT_EQ(arguments->debugInfo.format, joyeer::DebugInfoFormat::dwarf);
     }
     {
@@ -98,6 +128,7 @@ TEST(CommandLineArgumentsTest, AppliesDebugLevelAndFormatOptionsInOrder) {
                 nativeArguments(std::vector<std::string> { "-g", "-g0" }));
         EXPECT_FALSE(diagnostics.hasFailure());
         EXPECT_FALSE(arguments->debugInfo.emitLineTables);
+        EXPECT_FALSE(arguments->debugInfo.emitVariables);
     }
 }
 

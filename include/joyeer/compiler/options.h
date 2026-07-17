@@ -26,6 +26,7 @@ enum class DebugInfoFormat {
 struct DebugInfoOptions {
     bool emitLineTables = false;
     DebugInfoFormat format = defaultDebugInfoFormat();
+    bool emitVariables = false;
 };
 
 [[nodiscard]] constexpr const char* optimizationFlag(OptimizationLevel level) {

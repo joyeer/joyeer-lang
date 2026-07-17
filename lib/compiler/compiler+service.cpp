@@ -234,6 +234,7 @@ ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
                 options->debugInfo.emitLineTables,
                 options->debugInfo.format,
                 options->optimizationLevel,
+                    options->debugInfo.emitVariables,
             });
         sourcefile->llvmIR = llvm.text;
         sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;

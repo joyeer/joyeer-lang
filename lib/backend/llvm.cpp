@@ -93,6 +93,12 @@ public:
         for (const auto& function : source.functions) {
             functions.emplace(function.id, &function);
         }
+        for (const auto& scope : source.debugScopes) {
+            sourceDebugScopes.emplace(scope.id, &scope);
+        }
+        for (const auto& variable : source.debugVariables) {
+            sourceDebugVariables.emplace(variable.id, &variable);
+        }
         if (options.emitLineTables) {
             if (!source.sourceInfo.has_value()) {
                 report(
@@ -149,6 +155,8 @@ private:
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<ir::TypeId, const ir::TypeName*> types;
     std::unordered_map<ir::FunctionId, const ir::Function*> functions;
+    std::unordered_map<ir::DebugScopeId, const ir::DebugScope*> sourceDebugScopes;
+    std::unordered_map<ir::DebugVariableId, const ir::DebugVariable*> sourceDebugVariables;
     std::unordered_map<ir::TypeId, const ir::StructureDefinition*> structures;
     std::unordered_map<ir::TypeId, const ir::EnumerationDefinition*> enumerations;
     std::unordered_map<semantic::SymbolId,
@@ -169,6 +177,11 @@ private:
     std::optional<size_t> debugFileMetadata;
     std::optional<size_t> subroutineTypeMetadata;
     std::optional<size_t> currentSubprogramMetadata;
+    std::unordered_map<ir::TypeId, size_t> debugTypeMetadata;
+    std::unordered_map<ir::DebugScopeId, size_t> debugScopeMetadata;
+    std::unordered_map<ir::DebugVariableId, size_t> debugVariableMetadata;
+    std::unordered_map<ir::DebugVariableId, size_t> debugVariableLocationMetadata;
+    std::optional<size_t> debugExpressionMetadata;
     size_t nextString = 0;
     size_t nextTemporary = 0;
     bool usesString = false;
@@ -218,19 +231,30 @@ private:
         return options.optimizationLevel != OptimizationLevel::O0;
     }
 
+    bool emitsFullDebug() const {
+        return options.emitLineTables && options.emitVariables;
+    }
+
     void initializeDebugMetadata() {
         assert(module->sourceInfo.has_value());
         const auto& source = *module->sourceInfo;
         debugFileMetadata = addMetadata(
                 "!DIFile(filename: \"" + escapeQuoted(source.fileName) +
                 "\", directory: \"" + escapeQuoted(source.directory) + "\")");
-        subroutineTypeMetadata = addMetadata("!DISubroutineType(types: !{})");
+        if (!emitsFullDebug()) {
+            subroutineTypeMetadata = addMetadata("!DISubroutineType(types: !{})");
+        } else {
+            debugExpressionMetadata = addMetadata("!DIExpression()");
+            runtimeDeclarations.insert(
+                "declare void @llvm.dbg.declare(metadata, metadata, metadata)");
+        }
         compileUnitMetadata = addMetadata(
                 "distinct !DICompileUnit(language: DW_LANG_C, file: " +
                 metadataReference(*debugFileMetadata) +
                 ", producer: \"Joyeer\", isOptimized: " +
                 (isOptimized() ? "true" : "false") +
-                ", runtimeVersion: 0, emissionKind: LineTablesOnly)");
+                ", runtimeVersion: 0, emissionKind: " +
+                (emitsFullDebug() ? "FullDebug)" : "LineTablesOnly)"));
         moduleFlagMetadata.push_back(addMetadata(
                 "!{i32 2, !\"Debug Info Version\", i32 3}"));
         if (options.debugInfoFormat == DebugInfoFormat::codeView) {
@@ -266,27 +290,166 @@ private:
         return { line, column };
     }
 
+    std::optional<size_t> addDebugTypeMetadata(ir::TypeId id) {
+        if (!emitsFullDebug()) return std::nullopt;
+        const auto cached = debugTypeMetadata.find(id);
+        if (cached != debugTypeMetadata.end()) return cached->second;
+        const auto* valueType = type(id);
+        if (valueType == nullptr) return std::nullopt;
+
+        std::string definition;
+        switch (valueType->kind) {
+            case typing::TypeKind::integer:
+                definition = "!DIBasicType(name: \"Int\", size: 64, encoding: DW_ATE_signed)";
+                break;
+            case typing::TypeKind::boolean:
+                definition = "!DIBasicType(name: \"Bool\", size: 8, encoding: DW_ATE_boolean)";
+                break;
+            case typing::TypeKind::uint8:
+                definition = "!DIBasicType(name: \"UInt8\", size: 8, encoding: DW_ATE_unsigned_char)";
+                break;
+            case typing::TypeKind::voidType:
+            case typing::TypeKind::never:
+                return std::nullopt;
+            default: {
+                auto layout = layoutFor(id);
+                if (!layout.has_value()) {
+                    if (valueType->kind == typing::TypeKind::any) {
+                        layout = Layout { 8, 8 };
+                    } else {
+                        return std::nullopt;
+                    }
+                }
+                assert(debugFileMetadata.has_value());
+                definition =
+                        "!DICompositeType(tag: DW_TAG_structure_type, name: \"" +
+                        escapeQuoted(valueType->name) + "\", file: " +
+                        metadataReference(*debugFileMetadata) +
+                        ", line: 0, size: " + std::to_string(layout->size * 8) +
+                        ", elements: !{})";
+                break;
+            }
+        }
+        const auto metadata = addMetadata(std::move(definition));
+        debugTypeMetadata.emplace(id, metadata);
+        return metadata;
+    }
+
+    size_t addFunctionTypeMetadata(const ir::Function& function) {
+        std::ostringstream typeList;
+        typeList << "!{";
+        const auto resultType = addDebugTypeMetadata(function.resultType);
+        typeList << (resultType.has_value()
+                ? metadataReference(*resultType)
+                : std::string("null"));
+        for (const auto& parameter : function.parameters) {
+            const auto parameterType = addDebugTypeMetadata(parameter.value.type);
+            typeList << ", " << (parameterType.has_value()
+                    ? metadataReference(*parameterType)
+                    : std::string("null"));
+        }
+        typeList << '}';
+        const auto tuple = addMetadata(typeList.str());
+        return addMetadata(
+                "!DISubroutineType(types: " + metadataReference(tuple) + ")");
+    }
+
+    std::optional<size_t> metadataForDebugScope(ir::DebugScopeId id) {
+        if (!emitsFullDebug()) return currentSubprogramMetadata;
+        const auto cached = debugScopeMetadata.find(id);
+        if (cached != debugScopeMetadata.end()) return cached->second;
+        const auto found = sourceDebugScopes.find(id);
+        if (found == sourceDebugScopes.end()) return std::nullopt;
+        const auto& scope = *found->second;
+        if (scope.kind == ir::DebugScopeKind::function) {
+            return std::nullopt;
+        }
+        if (!scope.parent.has_value()) return std::nullopt;
+        const auto parent = metadataForDebugScope(*scope.parent);
+        if (!parent.has_value()) return std::nullopt;
+        assert(debugFileMetadata.has_value());
+        const auto [line, column] = sourcePosition(scope.span.offset);
+        const auto metadata = addMetadata(
+                "distinct !DILexicalBlock(scope: " + metadataReference(*parent) +
+                ", file: " + metadataReference(*debugFileMetadata) +
+                ", line: " + std::to_string(line) +
+                ", column: " + std::to_string(column) + ")");
+        debugScopeMetadata.emplace(id, metadata);
+        return metadata;
+    }
+
+    std::optional<size_t> addDebugVariableMetadata(ir::DebugVariableId id) {
+        if (!emitsFullDebug()) return std::nullopt;
+        const auto cached = debugVariableMetadata.find(id);
+        if (cached != debugVariableMetadata.end()) return cached->second;
+        const auto found = sourceDebugVariables.find(id);
+        if (found == sourceDebugVariables.end()) return std::nullopt;
+        const auto& variable = *found->second;
+        const auto scope = metadataForDebugScope(variable.scope);
+        const auto variableType = addDebugTypeMetadata(variable.type);
+        if (!scope.has_value() || !variableType.has_value()) return std::nullopt;
+        assert(debugFileMetadata.has_value());
+        const auto [line, column] = sourcePosition(variable.span.offset);
+        (void)column;
+        std::string definition =
+                "!DILocalVariable(name: \"" + escapeQuoted(variable.name) + "\"";
+        if (variable.parameterIndex.has_value()) {
+            definition += ", arg: " + std::to_string(*variable.parameterIndex);
+        }
+        definition +=
+                ", scope: " + metadataReference(*scope) +
+                ", file: " + metadataReference(*debugFileMetadata) +
+                ", line: " + std::to_string(line) +
+                ", type: " + metadataReference(*variableType) + ")";
+        const auto metadata = addMetadata(std::move(definition));
+        debugVariableMetadata.emplace(id, metadata);
+        return metadata;
+    }
+
+    std::optional<size_t> addDebugVariableLocationMetadata(ir::DebugVariableId id) {
+        if (!emitsFullDebug()) return std::nullopt;
+        const auto cached = debugVariableLocationMetadata.find(id);
+        if (cached != debugVariableLocationMetadata.end()) return cached->second;
+        const auto found = sourceDebugVariables.find(id);
+        if (found == sourceDebugVariables.end()) return std::nullopt;
+        const auto scope = metadataForDebugScope(found->second->scope);
+        if (!scope.has_value()) return std::nullopt;
+        const auto [line, column] = sourcePosition(found->second->span.offset);
+        const auto metadata = addMetadata(
+                "!DILocation(line: " + std::to_string(line) +
+                ", column: " + std::to_string(column) +
+                ", scope: " + metadataReference(*scope) + ")");
+        debugVariableLocationMetadata.emplace(id, metadata);
+        return metadata;
+    }
+
     std::optional<size_t> addSubprogramMetadata(const ir::Function& function) {
         if (!options.emitLineTables || !function.debugLocation.has_value()) {
             return std::nullopt;
         }
         assert(debugFileMetadata.has_value());
-        assert(subroutineTypeMetadata.has_value());
         assert(compileUnitMetadata.has_value());
+        const auto functionType = emitsFullDebug()
+            ? addFunctionTypeMetadata(function)
+            : *subroutineTypeMetadata;
         const auto [line, column] = sourcePosition(function.debugLocation->span.offset);
         (void)column;
         auto flags = std::string("DISPFlagDefinition");
         if (isOptimized()) flags += " | DISPFlagOptimized";
-        return addMetadata(
+        const auto metadata = addMetadata(
                 "distinct !DISubprogram(name: \"" + escapeQuoted(function.name) +
                 "\", linkageName: \"" + escapeQuoted(functionLinkageName(function)) +
                 "\", scope: " + metadataReference(*debugFileMetadata) +
                 ", file: " + metadataReference(*debugFileMetadata) +
                 ", line: " + std::to_string(line) +
-                ", type: " + metadataReference(*subroutineTypeMetadata) +
+                ", type: " + metadataReference(functionType) +
                 ", scopeLine: " + std::to_string(line) +
                 ", spFlags: " + flags +
                 ", unit: " + metadataReference(*compileUnitMetadata) + ")");
+        if (function.debugScope.has_value()) {
+            debugScopeMetadata.emplace(*function.debugScope, metadata);
+        }
+        return metadata;
     }
 
     std::optional<size_t> addLocationMetadata(const ir::Instruction& instruction) {
@@ -297,10 +460,15 @@ private:
         }
         const auto [line, column] = sourcePosition(
                 instruction.debugLocation->span.offset);
+        auto scope = currentSubprogramMetadata;
+        if (emitsFullDebug() && instruction.debugLocation->scope.has_value()) {
+            scope = metadataForDebugScope(*instruction.debugLocation->scope);
+        }
+        if (!scope.has_value()) return std::nullopt;
         return addMetadata(
                 "!DILocation(line: " + std::to_string(line) +
                 ", column: " + std::to_string(column) +
-            ", scope: " + metadataReference(*currentSubprogramMetadata) + ")");
+            ", scope: " + metadataReference(*scope) + ")");
     }
 
     bool isInstructionLine(std::string_view line) const {
@@ -346,6 +514,24 @@ private:
         for (size_t id = 0; id < metadataDefinitions.size(); ++id) {
             out << metadataReference(id) << " = " << metadataDefinitions[id] << '\n';
         }
+    }
+
+    bool emitDebugVariableBinding(
+            std::ostringstream& out,
+            const ir::DebugVariableBinding& binding) {
+        if (!emitsFullDebug()) return true;
+        const auto variable = addDebugVariableMetadata(binding.variable);
+        const auto location = addDebugVariableLocationMetadata(binding.variable);
+        const auto address = operand(binding.address);
+        if (!variable.has_value() || !location.has_value() || !address.has_value() ||
+            !debugExpressionMetadata.has_value()) {
+            return false;
+        }
+        out << "  call void @llvm.dbg.declare(metadata ptr " << *address
+            << ", metadata " << metadataReference(*variable)
+            << ", metadata " << metadataReference(*debugExpressionMetadata)
+            << "), !dbg " << metadataReference(*location) << '\n';
+        return true;
     }
 
     std::optional<Layout> layoutFor(ir::TypeId id) {
@@ -862,6 +1048,11 @@ private:
         for (const auto& block : function.blocks) {
             currentBlock = &block;
             out << blockName(block.id) << ":\n";
+            if (block.id == function.entry) {
+                for (const auto& binding : function.entryDebugVariableBindings) {
+                    if (!emitDebugVariableBinding(out, binding)) return;
+                }
+            }
             for (const auto& instruction : block.instructions) {
                 std::ostringstream instructionText;
                 if (!emitInstruction(instructionText, instruction)) return;
@@ -872,6 +1063,9 @@ private:
                         text.empty()
                                 ? std::optional<size_t>()
                                 : addLocationMetadata(instruction));
+                for (const auto& binding : instruction.debugVariableBindings) {
+                    if (!emitDebugVariableBinding(out, binding)) return;
+                }
             }
         }
         out << "}\n";

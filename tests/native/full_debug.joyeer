@@ -1,0 +1,28 @@
+enum Choice { None, Some(Int) }
+
+struct Pair {
+    var left: Int
+    var right: Bool
+}
+
+func inspect(plain: Int, target: inout Int, choice: Choice) {
+    let local = plain
+    if true {
+        let local = target
+        print(value: local)
+    }
+    match choice {
+        .Some(payload) => { print(value: payload) },
+        .None => { print(value: 0) },
+    }
+    let pair = Pair(left: local, right: true)
+    print(value: pair.left)
+    &target = pair.left
+}
+
+func main() {
+    var number = 3
+    let choice: Choice = .Some(7)
+    inspect(plain: 5, target: &number, choice: choice)
+    print(value: number)
+}

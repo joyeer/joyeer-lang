@@ -565,7 +565,8 @@ LinkResult Linker::link(
                     });
         }
 #elif defined(__APPLE__)
-        clangArguments.emplace_back("-gline-tables-only");
+    clangArguments.emplace_back(
+        options.debugInfo.emitVariables ? "-g" : "-gline-tables-only");
 #endif
     }
 

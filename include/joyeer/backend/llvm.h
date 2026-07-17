@@ -16,6 +16,7 @@ struct EmitOptions {
     bool emitLineTables = false;
     DebugInfoFormat debugInfoFormat = DebugInfoFormat::dwarf;
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;
+    bool emitVariables = false;
 };
 
 enum class DiagnosticId {

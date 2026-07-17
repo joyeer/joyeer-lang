@@ -117,8 +117,13 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     iterator->c_str());
         } else if(parseOptions && *iterator == "-g0") {
             debugInfo.emitLineTables = false;
+            debugInfo.emitVariables = false;
         } else if(parseOptions && (*iterator == "-g" || *iterator == "-gline-tables-only")) {
             debugInfo.emitLineTables = true;
+            debugInfo.emitVariables = false;
+        } else if(parseOptions && *iterator == "-gfull") {
+            debugInfo.emitLineTables = true;
+            debugInfo.emitVariables = true;
         } else if(parseOptions && *iterator == "-gdwarf") {
             debugInfo.emitLineTables = true;
             debugInfo.format = joyeer::DebugInfoFormat::dwarf;
@@ -128,7 +133,7 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         } else if(parseOptions && iterator->starts_with("-g")) {
             diagnostics->reportError(
                     ErrorLevel::failure,
-                    "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gdwarf, or -gcodeview",
+                    "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gfull, -gdwarf, or -gcodeview",
                     iterator->c_str());
         } else if(parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o")) {
             const auto option = *iterator;
@@ -221,7 +226,7 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
 }
 
 void CommandLineArguments::printUsage() {
-    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
+    std::cout << "Usage: joyeer [--lang=v0.1|--lang=v0.1-legacy] [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --lang=v0.1         compile with the typed native pipeline" << std::endl;
     std::cout << "  --lang=v0.1-legacy  compile and run with the legacy VM pipeline (default)" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
@@ -229,6 +234,7 @@ void CommandLineArguments::printUsage() {
     std::cout << "  -O0|-O1|-O2|-O3    native Clang optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
     std::cout << "  -g|-gline-tables-only emit source line tables using the platform format" << std::endl;
+    std::cout << "  -gfull               emit line tables plus source variables and physical types" << std::endl;
     std::cout << "  -gdwarf              emit DWARF 4 line tables" << std::endl;
     std::cout << "  -gcodeview           emit Windows CodeView line tables" << std::endl;
 }
