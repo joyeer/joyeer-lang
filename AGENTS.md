@@ -25,8 +25,22 @@ artifacts are supported.
 - Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)
 - Grammar: [docs/spec.md](docs/spec.md) §1 & §17
-- Bytecode opcodes: [docs/impl/bytecode.md](docs/impl/bytecode.md)
 - Native backend: [docs/impl/native.md](docs/impl/native.md)
+
+## Active migration decision (2026-07-16)
+
+The legacy parser, AST passes, bytecode runtime, VM, CLI mode, and golden tests
+no longer require compatibility. The next migration should **delete them** and
+make the typed Joyeer IR/LLVM/native pipeline the only/default pipeline. Do not
+repair legacy-only failures or preserve legacy output merely to keep old tests
+green. Historical legacy descriptions below explain the pre-removal tree; they
+are not ongoing product requirements.
+
+Until the legacy tests are removed, **do not run unfiltered `ctest` on
+Windows**. `tests/basis/array_01.joyeer` reaches the old `TypeBinding` path and
+hits an intentional `assert(false)`, which opens a blocking Microsoft Visual
+C++ Runtime `abort()` dialog. Use the bounded native/frontend label command in
+[the current session handoff](docs/plan/session-handoff-2026-07-16.md).
 
 > The repository contains a stray `Cargo.lock` from an abandoned Rust experiment. **Ignore it.** Do not propose Rust files or `cargo` commands — the build is CMake + C++.
 
@@ -35,8 +49,11 @@ artifacts are supported.
 ```pwsh
 cmake -B ./build -G Ninja
 cmake --build ./build
-ctest --test-dir ./build --output-on-failure
+ctest --test-dir ./build -L "diagnostics|fix-it|lexer|parser|name-resolution|type-checking|semantic-analysis|ir|ir-lowering|llvm-backend|native-runtime|native|ownership|file-io|array|dictionary|byte-conversion|json-parser|optimization|safety|consuming|initializing|exclusivity|projection-consume|debug-info|security" --output-on-failure
 ```
+
+Restore unfiltered `ctest` as the final gate after legacy test registration is
+deleted.
 
 - Requires: CMake ≥ 3.16, a C++20 compiler (clang ≥ 13 or MSVC), Ninja,
   Python ≥ 3.10. Native output also requires a Clang driver; on Windows the
