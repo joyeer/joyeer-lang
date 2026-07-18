@@ -13,12 +13,14 @@
 #include <string>
 #include <vector>
 
+namespace {
+
 class LexerTest : public testing::Test {
 protected:
-    void lex(const std::string& text, LexerProfile profile = LexerProfile::jsonParserMvp) {
+    void lex(const std::string& text) {
         diagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
-        LexParser lexer(&diagnostics, profile);
+        LexParser lexer(&diagnostics);
         lexer.parse(source);
     }
 
@@ -250,7 +252,6 @@ func parseValue(p: inout Parser): Result<JsonValue, JsonError> {
         _ => .Number(0),
     }
 }
-
 var sample = "{\"n\":42}"
 )JOYEER");
 
@@ -323,7 +324,6 @@ TEST_F(LexerTest, RejectsCompoundAndShiftOperatorsAsWholeTokens) {
         EXPECT_EQ(source->tokens[index]->span.length, expected[index].size());
     }
 }
-
 TEST_F(LexerTest, DiagnosesMalformedLiteralsAndUnknownCharacters) {
     lex("b'' b'ab' b'\\q' \"bad\\q\" `");
 
@@ -417,15 +417,8 @@ TEST_F(LexerTest, ArbitraryByteBuffersAlwaysEndWithOrderedSpansAndOneEof) {
         EXPECT_EQ(eofCount, 1u) << "sample " << sample;
         EXPECT_EQ(source->tokens.back()->kind, endOfFile) << "sample " << sample;
         EXPECT_EQ(source->tokens.back()->span.offset, source->content.size())
-                << "sample " << sample;
+            << "sample " << sample;
     }
 }
 
-TEST_F(LexerTest, LegacyProfileKeepsExistingKeywordAndOperatorSurface) {
-    lex("class for in init self 09 / || !", LexerProfile::legacy);
-
-    expectKinds({kwClass, kwFor, kwIn, kwInit, kwSelf, decimalLiteral,
-                 divide, orOr, bang, endOfFile});
-    ASSERT_EQ(diagnostics.errors.size(), 1u);
-    EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorOctalNumberFormat);
-}
+} // namespace

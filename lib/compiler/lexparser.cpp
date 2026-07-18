@@ -63,9 +63,8 @@ const char* lexerDiagnosticCode(const char* error) {
 
 } // namespace
 
-LexParser::LexParser(Diagnostics* diagnostics, LexerProfile profile):
-    diagnostics(diagnostics),
-        profile(profile) {
+LexParser::LexParser(Diagnostics* diagnostics):
+    diagnostics(diagnostics) {
 }
 
 void LexParser::parse(const SourceFile::Ptr& sourceFile) {
@@ -253,17 +252,15 @@ void LexParser::parseIdentifier() {
     }
 
     const TokenKind kind = keywordKind(value);
-    if (profile == LexerProfile::jsonParserMvp) {
-        if (kind != identifier && !isMvpKeyword(kind)) {
-            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
-            emit(deferredKeyword, start, value);
-            return;
-        }
-        if (kind == identifier && isDeferredKeyword(value)) {
-            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
-            emit(deferredKeyword, start, value);
-            return;
-        }
+    if (kind != identifier && !isMvpKeyword(kind)) {
+        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
+        emit(deferredKeyword, start, value);
+        return;
+    }
+    if (kind == identifier && isDeferredKeyword(value)) {
+        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
+        emit(deferredKeyword, start, value);
+        return;
     }
 
     emit(kind, start, value);
@@ -317,11 +314,6 @@ void LexParser::parseNumberLiteral() {
     }
 
     const std::string value = sourcefile->content.substr(start, position - start);
-    if (profile == LexerProfile::legacy && value.size() > 1 && value.front() == '0' &&
-        value.find_first_of("89") != std::string::npos) {
-        report(tokenLine, tokenColumn, Diagnostics::errorOctalNumberFormat);
-    }
-
     int64_t parsed = 0;
     const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed, 10);
     if (result.ec == std::errc::result_out_of_range) {
@@ -466,7 +458,7 @@ void LexParser::parseOperatorOrPunctuation() {
     };
 
     auto emitMvpOperator = [this, start](TokenKind kind) {
-        if (profile == LexerProfile::jsonParserMvp && !isMvpOperator(kind)) {
+        if (!isMvpOperator(kind)) {
             const std::string text = sourcefile->content.substr(start, position - start);
             report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, text.c_str());
             emitInvalid(start, text);
@@ -485,7 +477,7 @@ void LexParser::parseOperatorOrPunctuation() {
         case ':': emit(colon, start); return;
         case ',': emit(comma, start); return;
         case '.':
-            if (profile == LexerProfile::jsonParserMvp && (peek() == '.' || isDigit(peek()))) {
+            if (peek() == '.' || isDigit(peek())) {
                 while (peek() == '.' || isDigit(peek())) {
                     advance();
                 }
@@ -497,28 +489,16 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(dot, start);
             return;
         case ';':
-            if (profile == LexerProfile::jsonParserMvp) {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, ";");
-                emitInvalid(start);
-            } else {
-                emit(semicolon, start);
-            }
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, ";");
+            emitInvalid(start);
             return;
         case '@':
-            if (profile == LexerProfile::jsonParserMvp) {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "@");
-                emitInvalid(start);
-            } else {
-                emit(atSign, start);
-            }
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "@");
+            emitInvalid(start);
             return;
         case '#':
-            if (profile == LexerProfile::jsonParserMvp) {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "#");
-                emitInvalid(start);
-            } else {
-                emit(hash, start);
-            }
+            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "#");
+            emitInvalid(start);
             return;
         case '=':
             if (consumeIf('>')) { emit(fatArrow, start); return; }
@@ -530,7 +510,7 @@ void LexParser::parseOperatorOrPunctuation() {
             emitMvpOperator(bang);
             return;
         case '<':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('<')) {
+            if (consumeIf('<')) {
                 consumeIf('=');
                 emitUnsupported();
                 return;
@@ -539,7 +519,7 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(less, start);
             return;
         case '>':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('>')) {
+            if (consumeIf('>')) {
                 consumeIf('=');
                 emitUnsupported();
                 return;
@@ -549,14 +529,14 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '&':
             if (consumeIf('&')) {
-                if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+                if (consumeIf('=')) {
                     emitUnsupported();
                 } else {
                     emit(andAnd, start);
                 }
                 return;
             }
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+            if (consumeIf('=')) {
                 emitUnsupported();
                 return;
             }
@@ -564,19 +544,15 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '|':
             if (consumeIf('|')) {
-                if (profile == LexerProfile::jsonParserMvp) {
-                    consumeIf('=');
-                }
+                consumeIf('=');
                 emitMvpOperator(orOr);
             } else {
-                if (profile == LexerProfile::jsonParserMvp) {
-                    consumeIf('=');
-                }
+                consumeIf('=');
                 emitUnsupported();
             }
             return;
         case '?':
-            if (profile == LexerProfile::jsonParserMvp && (peek() == '?' || peek() == '.')) {
+            if (peek() == '?' || peek() == '.') {
                 advance();
                 report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax,
                        sourcefile->content.substr(start, position - start).c_str());
@@ -586,7 +562,7 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(question, start);
             return;
         case '+':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+            if (consumeIf('=')) {
                 report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "+=");
                 emitInvalid(start);
                 return;
@@ -594,7 +570,7 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(plus, start);
             return;
         case '-':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+            if (consumeIf('=')) {
                 report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "-=");
                 emitInvalid(start);
                 return;
@@ -602,7 +578,7 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(minus, start);
             return;
         case '*':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+            if (consumeIf('=')) {
                 report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "*=");
                 emitInvalid(start);
                 return;
@@ -610,14 +586,14 @@ void LexParser::parseOperatorOrPunctuation() {
             emit(multiply, start);
             return;
         case '/':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+            if (consumeIf('=')) {
                 emitUnsupported();
                 return;
             }
             emitMvpOperator(divide);
             return;
         case '%':
-            if (profile == LexerProfile::jsonParserMvp && consumeIf('=')) {
+            if (consumeIf('=')) {
                 emitUnsupported();
                 return;
             }
@@ -625,9 +601,7 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '^':
         case '~':
-            if (profile == LexerProfile::jsonParserMvp) {
-                consumeIf('=');
-            }
+            consumeIf('=');
             emitUnsupported();
             return;
         case '\'':
@@ -677,23 +651,15 @@ void LexParser::report(size_t line, size_t column, const char* error, ...) {
             ? static_cast<size_t>(sourcefile->lineStarts[line]) + column
             : position;
     const auto length = position > offset ? position - offset : size_t { 1 };
-    if (profile == LexerProfile::jsonParserMvp) {
-        diagnostics->reportSourceDiagnostic(
-                ErrorLevel::failure,
-                lexerDiagnosticCode(error),
-                sourcefile->getLocation(),
-                sourcefile->content,
-                sourcefile->lineStarts,
-                static_cast<uint32_t>(offset),
-                static_cast<uint32_t>(length),
-                message);
-    } else {
-        diagnostics->reportError(ErrorLevel::failure,
-                                 static_cast<int>(line),
-                                 static_cast<int>(column),
-                                 "%s",
-                                 message);
-    }
+    diagnostics->reportSourceDiagnostic(
+            ErrorLevel::failure,
+            lexerDiagnosticCode(error),
+            sourcefile->getLocation(),
+            sourcefile->content,
+            sourcefile->lineStarts,
+            static_cast<uint32_t>(offset),
+            static_cast<uint32_t>(length),
+            message);
 }
 
 bool LexParser::isIdentifierHead(char value) const {

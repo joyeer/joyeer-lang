@@ -10,8 +10,8 @@
 #include <cstdint>
 
 enum TokenKind {
-    // Legacy parser categories. The lexer emits the explicit terminal kinds
-    // below; SyntaxParser accepts these categories during the migration.
+    // Broad token categories retained for source compatibility. The lexer
+    // emits the explicit terminal kinds below.
   identifier,
   keyword,
   punctuation,

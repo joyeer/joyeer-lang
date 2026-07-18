@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdarg>
+#include <cstring>
 #include <algorithm>
 
 #define BUF_SIZE 2048

@@ -44,8 +44,7 @@ struct TypeRecord {
     std::vector<TypeId> arguments;
 };
 
-// Owns canonical compile-time types for one SemanticModel. This is deliberately
-// independent of the legacy runtime Type hierarchy used by the bytecode VM.
+// Owns canonical compile-time types for one SemanticModel.
 class TypeContext {
 public:
     explicit TypeContext(const semantic::SemanticModel& model);

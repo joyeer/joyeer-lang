@@ -2,7 +2,6 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/symtable.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/diagnostic/diagnostic.h"
 

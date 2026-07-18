@@ -4,15 +4,9 @@
 #include "joyeer/compiler/sourcefile.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
-enum class LexerProfile {
-    legacy,
-    jsonParserMvp
-};
-
 class LexParser {
 public:
-    explicit LexParser(Diagnostics* diagnostics,
-                       LexerProfile profile = LexerProfile::jsonParserMvp);
+    explicit LexParser(Diagnostics* diagnostics);
 
     // Tokenize the source file. Existing output and cursor state are reset.
     void parse(const SourceFile::Ptr& sourceFile);
@@ -55,7 +49,6 @@ private:
     SourceFile::Ptr sourcefile;
 
     Diagnostics* diagnostics;
-    LexerProfile profile;
 };
 
 

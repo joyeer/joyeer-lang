@@ -1,19 +1,14 @@
 
-add_executable(RuntimeTests
-        descriptor_test.cpp
-        heaps_test.cpp
+add_executable(NativeRuntimeTests
         native_runtime_test.cpp
 )
 
-target_link_libraries(RuntimeTests
+target_link_libraries(NativeRuntimeTests
         GTest::gtest_main
-        JoyeerRuntime
-        JoyeerCompiler
-        JoyeerVM
         JoyeerNativeRuntime
 )
 
-gtest_discover_tests(RuntimeTests
+gtest_discover_tests(NativeRuntimeTests
         PROPERTIES LABELS native-runtime
 )
 
