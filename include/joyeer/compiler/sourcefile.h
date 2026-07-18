@@ -1,8 +1,13 @@
 #ifndef __joyeer_compiler_sourcefile_h__
 #define __joyeer_compiler_sourcefile_h__
 
-#include "joyeer/runtime/arguments.h"
-#include "joyeer/compiler/node.h"
+#include "joyeer/compiler/token.h"
+
+#include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace joyeer::semantic {
 class SemanticModel;
@@ -70,24 +75,22 @@ public:
     // UTF-8 byte offsets at which source lines begin. Always starts with 0.
     std::vector<uint32_t> lineStarts { 0 };
 
-    // v0.1 syntax tree ownership and all name-resolution annotations live in
-    // the semantic model. The legacy pipeline does not populate this field.
+    // Syntax tree ownership and all name-resolution annotations live in the
+    // semantic model.
     std::shared_ptr<joyeer::semantic::SemanticModel> semanticModel;
 
-    // Exact v0.1 declaration/expression types and type-directed reference
-    // completions. The legacy TypeGen/VM pipeline does not use this model.
+    // Exact declaration/expression types and type-directed reference
+    // completions.
     std::shared_ptr<joyeer::typing::TypeCheckedModel> typeCheckedModel;
 
-    // Backend-neutral high-level IR produced only after successful v0.1 type
-    // checking and structural verification. It is unrelated to legacy IRGen.
+    // Backend-neutral high-level IR produced only after successful type
+    // checking and structural verification.
     std::shared_ptr<joyeer::ir::Module> joyeerIR;
 
     // Textual LLVM IR emitted from verified Joyeer IR. Empty when LLVM
     // lowering did not run or failed.
     std::string llvmIR;
     bool llvmHasEntryPoint = false;
-
-    ModuleClass* moduleClass;
     
 protected:
     // the path relative to the working directory

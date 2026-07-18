@@ -11,7 +11,15 @@
 
 Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):arguments(arguments) {
     this->diagnostics = diagnostics;
-    compiler = new CompilerService(diagnostics, arguments);
+    compiler = new CompilerService(
+            diagnostics,
+            joyeer::CompileOptions {
+                arguments->workingDirectory,
+                arguments->outputFile,
+                arguments->outputMode,
+                arguments->optimizationLevel,
+                arguments->debugInfo,
+            });
 }
 
 int Driver::run() {
@@ -20,7 +28,7 @@ int Driver::run() {
         diagnostics->printErrors();
         return 1;
     }
-    if(arguments->outputMode == OutputMode::executable) {
+    if(arguments->outputMode == joyeer::OutputMode::executable) {
         const auto& source = compiler->getLastCompiledSourceFile();
         if (source == nullptr) {
             diagnostics->reportDiagnostic(

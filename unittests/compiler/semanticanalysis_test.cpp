@@ -3,7 +3,6 @@
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/semanticanalysis.h"
 #include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/symtable.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
@@ -20,10 +19,7 @@ protected:
     void analyze(const std::string& text) {
         Diagnostics lexerDiagnostics;
         const auto source = std::make_shared<SourceFile>(text);
-        const auto context = std::make_shared<CompileContext>(
-                &lexerDiagnostics,
-                std::make_shared<SymbolTable>());
-        LexParser lexer(context, LexerProfile::jsonParserMvp);
+        LexParser lexer(&lexerDiagnostics);
         lexer.parse(source);
         ASSERT_FALSE(lexerDiagnostics.hasFailure());
 

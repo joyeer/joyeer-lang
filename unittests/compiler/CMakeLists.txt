@@ -18,9 +18,7 @@ gtest_discover_tests(CompilerDiagnosticTests
 target_link_libraries(CompilerLexerTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
-        JoyeerVM
 )
 
 gtest_discover_tests(CompilerLexerTests
@@ -34,9 +32,7 @@ add_executable(CompilerParserTests
 target_link_libraries(CompilerParserTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
-        JoyeerVM
 )
 
 target_compile_definitions(CompilerParserTests PRIVATE
@@ -54,9 +50,7 @@ add_executable(CompilerNameResolutionTests
 target_link_libraries(CompilerNameResolutionTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
-        JoyeerVM
 )
 
 target_compile_definitions(CompilerNameResolutionTests PRIVATE
@@ -74,9 +68,7 @@ add_executable(CompilerTypeCheckingTests
 target_link_libraries(CompilerTypeCheckingTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
-        JoyeerVM
 )
 
 target_compile_definitions(CompilerTypeCheckingTests PRIVATE
@@ -94,9 +86,7 @@ add_executable(CompilerSemanticAnalysisTests
 target_link_libraries(CompilerSemanticAnalysisTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
-        JoyeerVM
 )
 
 gtest_discover_tests(CompilerSemanticAnalysisTests
@@ -123,10 +113,8 @@ add_executable(IRLoweringTests
 target_link_libraries(IRLoweringTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
         JoyeerIR
-        JoyeerVM
 )
 
 target_compile_definitions(IRLoweringTests PRIVATE
@@ -144,10 +132,8 @@ add_executable(LLVMBackendTests
 target_link_libraries(LLVMBackendTests
         GTest::gtest_main
         JoyeerDiagnostic
-        JoyeerRuntime
         JoyeerCompiler
         JoyeerLLVMBackend
-        JoyeerVM
 )
 
 gtest_discover_tests(LLVMBackendTests

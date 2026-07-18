@@ -1,7 +1,6 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/symtable.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
 #include <gtest/gtest.h>
@@ -40,10 +39,7 @@ protected:
     void parse(const std::string& text, bool requireValidLexing = true) {
         lexerDiagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
-        auto context = std::make_shared<CompileContext>(
-                &lexerDiagnostics,
-                std::make_shared<SymbolTable>());
-        LexParser lexer(context, LexerProfile::jsonParserMvp);
+        LexParser lexer(&lexerDiagnostics);
         lexer.parse(source);
                 if (requireValidLexing && !lexerDiagnostics.errors.empty()) {
                         for (const auto& error : lexerDiagnostics.errors) {

@@ -3,7 +3,6 @@
 #include "joyeer/compiler/nameresolution.h"
 #include "joyeer/compiler/parser.h"
 #include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/symtable.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/diagnostic/diagnostic.h"
 #include "joyeer/ir/ir.h"
@@ -34,10 +33,7 @@ protected:
     void lower(const std::string& text) {
         lexerDiagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
-        const auto context = std::make_shared<CompileContext>(
-                &lexerDiagnostics,
-                std::make_shared<SymbolTable>());
-        LexParser lexer(context, LexerProfile::jsonParserMvp);
+        LexParser lexer(&lexerDiagnostics);
         lexer.parse(source);
         ASSERT_TRUE(lexerDiagnostics.errors.empty());
 

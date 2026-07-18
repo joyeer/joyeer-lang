@@ -1,8 +1,8 @@
 #ifndef __joyeer_compiler_lexer_lexparser_h__
 #define __joyeer_compiler_lexer_lexparser_h__
 
-#include "joyeer/compiler/token.h"
-#include "joyeer/compiler/context.h"
+#include "joyeer/compiler/sourcefile.h"
+#include "joyeer/diagnostic/diagnostic.h"
 
 enum class LexerProfile {
     legacy,
@@ -11,8 +11,8 @@ enum class LexerProfile {
 
 class LexParser {
 public:
-    explicit LexParser(const CompileContext::Ptr& context,
-                       LexerProfile profile = LexerProfile::legacy);
+    explicit LexParser(Diagnostics* diagnostics,
+                       LexerProfile profile = LexerProfile::jsonParserMvp);
 
     // Tokenize the source file. Existing output and cursor state are reset.
     void parse(const SourceFile::Ptr& sourceFile);

@@ -1,6 +1,8 @@
 #ifndef __joyeer_compiler_options_h__
 #define __joyeer_compiler_options_h__
 
+#include <filesystem>
+
 namespace joyeer {
 
 enum class OptimizationLevel {
@@ -27,6 +29,20 @@ struct DebugInfoOptions {
     bool emitLineTables = false;
     DebugInfoFormat format = defaultDebugInfoFormat();
     bool emitVariables = false;
+};
+
+enum class OutputMode {
+    validate,
+    llvmIR,
+    executable,
+};
+
+struct CompileOptions {
+    std::filesystem::path workingDirectory;
+    std::filesystem::path outputFile;
+    OutputMode outputMode = OutputMode::validate;
+    OptimizationLevel optimizationLevel = OptimizationLevel::O2;
+    DebugInfoOptions debugInfo;
 };
 
 [[nodiscard]] constexpr const char* optimizationFlag(OptimizationLevel level) {

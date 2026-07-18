@@ -23,7 +23,7 @@ add_executable(RuntimeOptionsTests
 
 target_link_libraries(RuntimeOptionsTests
         GTest::gtest_main
-        JoyeerRuntime
+        JoyeerCLI
         JoyeerDiagnostic
 )
 

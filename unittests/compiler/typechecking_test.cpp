@@ -113,10 +113,7 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         void check(const std::string& text) {
         lexerDiagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
-        const auto context = std::make_shared<CompileContext>(
-            &lexerDiagnostics,
-            std::make_shared<SymbolTable>());
-        LexParser lexer(context, LexerProfile::jsonParserMvp);
+        LexParser lexer(&lexerDiagnostics);
         lexer.parse(source);
         ASSERT_TRUE(lexerDiagnostics.errors.empty());
 

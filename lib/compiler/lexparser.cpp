@@ -63,8 +63,8 @@ const char* lexerDiagnosticCode(const char* error) {
 
 } // namespace
 
-LexParser::LexParser(const CompileContext::Ptr& context, LexerProfile profile):
-        diagnostics(context->diagnostics),
+LexParser::LexParser(Diagnostics* diagnostics, LexerProfile profile):
+    diagnostics(diagnostics),
         profile(profile) {
 }
 

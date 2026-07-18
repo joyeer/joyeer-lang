@@ -1,7 +1,7 @@
 #ifndef __joyeer_driver_driver_h__
 #define __joyeer_driver_driver_h__
 
-#include "joyeer/runtime/arguments.h"
+#include "joyeer/main/arguments.h"
 #include "joyeer/compiler/compiler+service.h"
 #include "joyeer/diagnostic/diagnostic.h"
 

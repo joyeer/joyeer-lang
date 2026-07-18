@@ -1,6 +1,5 @@
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/symtable.h"
 #include "joyeer/diagnostic/diagnostic.h"
 
 #include <gtest/gtest.h>
@@ -19,10 +18,7 @@ protected:
     void lex(const std::string& text, LexerProfile profile = LexerProfile::jsonParserMvp) {
         diagnostics.errors.clear();
         source = std::make_shared<SourceFile>(text);
-        auto context = std::make_shared<CompileContext>(
-                &diagnostics,
-                std::make_shared<SymbolTable>());
-        LexParser lexer(context, profile);
+        LexParser lexer(&diagnostics, profile);
         lexer.parse(source);
     }
 
@@ -379,10 +375,7 @@ TEST_F(LexerTest, LineCommentsMayEndAtEof) {
 TEST_F(LexerTest, RetokenizingDoesNotDuplicateTokens) {
     diagnostics.errors.clear();
     source = std::make_shared<SourceFile>("let x = 1");
-    auto context = std::make_shared<CompileContext>(
-            &diagnostics,
-            std::make_shared<SymbolTable>());
-    LexParser lexer(context, LexerProfile::jsonParserMvp);
+        LexParser lexer(&diagnostics);
 
     lexer.parse(source);
     const size_t count = source->tokens.size();
