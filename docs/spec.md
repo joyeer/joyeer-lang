@@ -2,9 +2,9 @@
 
 > **Status:** Draft v0.1-spec. This document defines the future language. Some
 > annotations are marked **syntax-only** (parsed and stored, but not yet
-> executed). Legacy syntax that exists in the current parser (`class`,
-> `print(message: x)`) and forms removed from earlier drafts (including
-> positional/unlabeled function calls) are listed in §14.
+> executed). Removed syntax from earlier implementations or drafts (including
+> `class`, `print(message: x)`, and positional/unlabeled calls) is listed in
+> §14.
 
 This specification is split into one file per chapter under
 [spec/](spec/). Section numbers (`§N`, `§N.M`) are stable across the split;
@@ -42,6 +42,9 @@ chapter file below.
 
 ## Appendix: change log
 
+- **2026-07-18** — Synchronized §14 with the native-only implementation:
+  `class` is reserved and rejected in v0.1; the retired parser/VM compatibility
+  behavior is no longer part of the implementation contract.
 - **2026-07-13** — Consolidated parser-facing grammar. Made enum construction
   and associated-value labels explicit, added labeled enum pattern payloads,
   and reconciled `return` as the same `Never`-typed expression in standalone,

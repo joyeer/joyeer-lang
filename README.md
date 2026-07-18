@@ -1,63 +1,58 @@
 # Joyeer
 
-Joyeer is an **AI-era systems programming language** with a Swift-inspired syntax — built for a world where AI writes most of the code and humans review and assist. Its long-term goal is to **replace C++ for new code**.
+Joyeer is an **AI-era systems programming language** with Swift-inspired
+syntax. It is designed for a workflow where AI writes most code and humans
+review and assist, with the long-term goal of replacing C++ for new code.
 
-> ⚠️ **Status: early development.** The language and toolchain are evolving rapidly and not released yet.
+> **Status:** early development. The language and toolchain are not released
+> and may change without compatibility guarantees.
 
-## Why Joyeer
+## Design goals
 
-- **AI-first, strongly typed** — explicit types and strong guarantees act as guardrails for AI-generated code.
-- **No garbage collector** — value semantics, stack allocation, and RAII by default; heap allocations must be justified.
-- **Zero-cost abstractions** — you don't pay at runtime for what you don't use.
-- **Swift-like syntax** — familiar, readable, and concise.
-- **`struct`-first** — aggregates are value types; `class` is legacy and being phased out.
+- **AI-first, strongly typed:** explicit types and strong guarantees act as
+  guardrails for generated code.
+- **No garbage collector:** value semantics, stack allocation, and RAII are
+  the default model.
+- **Zero-cost abstractions:** unused features should not impose runtime cost.
+- **Swift-like syntax:** familiar, readable, and concise.
+- **`struct`-first:** aggregates are value types; `class` is not part of the
+  implemented language surface.
 
-The design philosophy and trade-offs are documented under [docs/rationale/](docs/rationale/) — start with [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md) and [docs/rationale/memory.md](docs/rationale/memory.md). The normative language definition lives in [docs/spec.md](docs/spec.md).
+The normative language definition is [docs/spec.md](docs/spec.md). Design
+trade-offs live under [docs/rationale/](docs/rationale/), starting with
+[ai-era-design.md](docs/rationale/ai-era-design.md) and
+[memory.md](docs/rationale/memory.md).
 
-## Project status
+## Implementation status
 
-The "no GC / zero-cost / native" points above describe the **design direction**.
-The current implementation is a **C++20 compiler**. Default/legacy mode
-executes on a custom stack-based VM. The new `--lang=v0.1` lane has an isolated
-lexer/parser, name resolution, type checking, control-flow semantic analysis,
-verified Joyeer IR, textual LLVM IR, a minimal C runtime, and Clang-based
-native linking. It compiles and runs the JSON-parser MVP language surface
-without starting the VM.
+The compiler is implemented in C++20 and has one pipeline:
 
-The native integration suite includes a Joyeer-written parser that reads JSON
-from a file and parses nested null/Boolean/integer/string/array/object values,
-including the fixed v0.1 escape set. It also verifies malformed-input
-detection and zero runtime allocation balance.
+```text
+source -> lexer -> parser -> name resolution -> type checking
+       -> semantic analysis -> verified Joyeer IR -> textual LLVM IR
+       -> Clang + native C runtime -> executable
+```
 
-The native lane is still experimental. The current heap-backed values have
-recursive clone/destroy support, deterministic scope and early-return cleanup,
-and a native-entry allocation-balance check. Whole-binding `consuming`
-parameters and mandatory `consume` markers work; explicit
-`borrowing` and `initializing` also work, and call-site access paths enforce
-exclusivity. Consuming field/array/dictionary projections are tracked through
-reinitialization. The v0.1 non-escaping ownership surface is complete; debug
-line tables and native debug artifacts are available, while variable/type
-inspection and a complete standard library remain. This is not a production
-release.
+There is no bytecode backend, VM, legacy parser mode, or language-mode CLI
+switch. Invoking `joyeer` without an output option validates and lowers the
+source. `--emit-llvm` writes verified textual LLVM IR, and `-o` asks Clang to
+build a native executable.
 
-Working in the native MVP: integers, booleans, bytes and strings; `let`/`var`;
-checked arithmetic, comparisons and `&&`; `if`/`else`; `while`; typed functions
-and `inout`; structs; payload enums; exhaustive `match`; arrays, dictionaries,
-`Optional`, `Result`, byte indexing, `print(value:)`, all-paths-return,
-`readFile(path:)`, mutating `&array.append(element:)`, unreachable-code
-warnings, definite initialization, dictionary `count`/insertion/update, and
-explicit `byteToInt(value:)` / `byteToString(value:)` conversions;
-`consuming` ownership transfer/use-after-consume checking; and unused-binding
-warnings. Initializing parameters enforce write-before-read and initialization
-on every normal return path.
+The current MVP can compile and run a Joyeer-written JSON parser. Implemented
+features include integers, booleans, bytes, strings, `let`/`var`, checked
+arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
+conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
+`Optional`, `Result`, file input, deterministic ownership cleanup, projection
+consumption, exclusivity checking, and structured diagnostics.
 
-v0.1 errors and warnings include stable stage IDs, file names, one-based
-line/column locations, source excerpts, and caret ranges. Legacy mode retains
-its historical diagnostic text for golden-test compatibility.
+Debug support includes line tables, lexical scopes, source variables, physical
+types, and native PDB/DWARF/dSYM artifact handling. The standard library,
+optimization policy, and broader language surface remain incomplete.
 
-See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the full pipeline and current stage, and [docs/plan/v0.1.md](docs/plan/v0.1.md) for the v0.1 goal (a zero-overhead JSON parser written in Joyeer).
+See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the current pipeline and
+[docs/plan/v0.1.md](docs/plan/v0.1.md) for the JSON-parser milestone.
 
-## A taste of Joyeer
+## Example
 
 ```swift
 func add(left: Int, right: Int): Int {
@@ -77,100 +72,100 @@ func main() {
 
 ## Requirements
 
-- macOS or Windows
-- CMake ≥ 3.16
-- Clang ≥ 13, or MSVC (Visual Studio 2022/2026)
-- Ninja ≥ 1.11
-- Python ≥ 3.10 (for the test runner)
-- Clang for `--emit-llvm` validation and native `-o` output
+- Windows or macOS
+- CMake 3.16 or newer
+- Ninja 1.11 or newer
+- A C++20 compiler: Clang, GCC, or MSVC
+- A Clang driver for LLVM validation and native `-o` output
 
-## Getting Started
+On Windows, CodeView/PDB inspection tests also use `llvm-pdbutil` and
+`llvm-readobj`; DWARF executable output requires `lld-link` beside Clang.
 
-### Building
+## Build
 
-The build is **out-of-source only**:
+The build is out-of-source only:
 
-```shell
-cmake -B ./build -G Ninja
-cmake --build ./build
+```pwsh
+cmake -S . -B build -G Ninja `
+  -DJOYEER_BUILD_UNITTESTS=ON `
+  -DJOYEER_CLANG_EXECUTABLE='C:/Program Files/LLVM/bin/clang.exe'
+cmake --build build
 ```
 
-The `joyeer` executable is written to `build/bin/joyeer`.
+The executable is written to `build/bin/joyeer` on single-config generators.
+If Clang is not configured, the compiler and textual backend unit tests still
+build, but Clang/native integration tests are not registered.
 
-> On Windows, run the commands from a Visual Studio Developer prompt (or after loading the MSVC environment) so that the compiler and `ninja` are on `PATH`.
+## CLI
 
-### Compiling and running a native program
+Validate and lower a source file:
 
-```shell
-./build/bin/joyeer --lang=v0.1 -o ./hello path/to/program.joyeer
-./hello
+```pwsh
+build/bin/joyeer path/to/program.joyeer
 ```
 
-Native executables default to `-O2`. Select `-O0`, `-O1`, `-O2`, or `-O3`
-before `-o` to override the Clang optimization level. Textual `--emit-llvm`
-output remains the verified pre-optimization Joyeer backend output.
+Emit textual LLVM IR:
 
-Debug line tables are off by default. `-g` and `-gline-tables-only` select the
-platform format (CodeView on Windows, DWARF elsewhere); `-gdwarf` selects DWARF
-4 explicitly and `-gcodeview` is available on Windows. `-g0` disables them.
-Debug selection is independent of `-O0`…`-O3`; line tables currently provide
-source/function/line locations, not variable inspection. Native `-g` on Windows
-keeps a sibling `.pdb`; `-gdwarf` embeds DWARF in the Windows executable using
-the `lld-link` shipped beside Clang. ELF executables retain DWARF, while macOS
-debug builds retain a sibling `.dSYM` bundle.
-
-Emit textual LLVM IR instead:
-
-```shell
-./build/bin/joyeer --lang=v0.1 -O0 -g --emit-llvm ./hello.ll path/to/program.joyeer
+```pwsh
+build/bin/joyeer -O0 -gfull -gdwarf --emit-llvm output.ll path/to/program.joyeer
 ```
 
-Without an output option, `--lang=v0.1` validates and lowers the source without
-writing an artifact. The default mode remains the legacy VM for compatibility.
+Build and run a native executable:
 
-### Testing
-
-```shell
-ctest --test-dir ./build --output-on-failure
+```pwsh
+build/bin/joyeer -O2 -o hello.exe path/to/program.joyeer
+./hello.exe
 ```
 
-Focused frontend validation avoids the legacy VM/runtime:
+Optimization defaults to `-O2`; `-O0` through `-O3` are supported. Debug
+information is off by default. `-g` and `-gline-tables-only` emit line tables,
+while `-gfull` also emits source variables, lexical scopes, and physical types.
+Use `-gdwarf` or `-gcodeview` to select the format.
 
-```shell
-ctest --test-dir ./build --output-on-failure -L lexer
-ctest --test-dir ./build --output-on-failure -L parser
-ctest --test-dir ./build --output-on-failure -L llvm-backend
-ctest --test-dir ./build --output-on-failure -L native
+## Test
+
+The complete test suite is safe and is the normal acceptance gate:
+
+```pwsh
+ctest --test-dir build --output-on-failure
 ```
 
-Tests are golden-output: [tests/testRunner.py](tests/testRunner.py) runs the compiled `joyeer` on `tests/**/*.joyeer` and diffs stdout against the sibling `*.result.txt`. After adding or removing `*.joyeer` test files, re-run `cmake -B ./build -G Ninja` so the test list is regenerated.
+Focused labels are available when iterating:
 
-## Project Layout
+```pwsh
+ctest --test-dir build -L lexer --output-on-failure
+ctest --test-dir build -L type-checking --output-on-failure
+ctest --test-dir build -L native --output-on-failure
+ctest --test-dir build -L debug-info --output-on-failure
+```
+
+C++ unit tests use GoogleTest. End-to-end compiler and native fixtures live in
+stage-specific folders under [tests/](tests/) and are registered in
+[unittests/compiler/CMakeLists.txt](unittests/compiler/CMakeLists.txt).
+
+## Project layout
 
 | Path | Contents |
 |---|---|
-| [include/joyeer/](include/joyeer/) | Public headers: frontend, Joyeer IR, LLVM backend, native/legacy runtimes |
-| [lib/](lib/) | Implementation: `compiler/`, `ir/`, `backend/`, `native/`, legacy `runtime/` and `vm/` |
-| [docs/](docs/) | Language spec, design rationale, and plans (index: [docs/README.md](docs/README.md)) |
-| [tests/](tests/) | Golden end-to-end tests: `basis/`, `errors/`, `leetcode/`, `target/` |
-| [unittests/](unittests/) | C++ unit tests (GoogleTest) |
+| [include/joyeer/](include/joyeer/) | Public compiler, IR, backend, CLI, diagnostic, and native runtime headers |
+| [lib/](lib/) | C++ compiler/backend and C11 native runtime implementations |
+| [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
+| [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
+| [docs/](docs/) | Specification, rationale, implementation notes, and plans |
+
+Useful examples include the
+[native JSON parser](tests/native/json_parser.joyeer) and the
+[parser MVP fixture](tests/parser/ok/json_mvp.joyeer).
 
 ## Documentation
 
-- [docs/README.md](docs/README.md) — documentation index
-- [docs/spec.md](docs/spec.md) — normative language specification
-- [docs/rationale/](docs/rationale/) — why Joyeer is the way it is
-- [docs/plan/roadmap.md](docs/plan/roadmap.md) — implementation roadmap
-- [docs/plan/v0.1.md](docs/plan/v0.1.md) — v0.1 scope and status
+- [docs/README.md](docs/README.md): documentation index
+- [docs/spec.md](docs/spec.md): normative language specification
+- [docs/rationale/](docs/rationale/): design rationale
+- [docs/plan/roadmap.md](docs/plan/roadmap.md): implementation roadmap
+- [docs/impl/native.md](docs/impl/native.md): LLVM/native backend details
 
-## Examples
-
-- [Quick Sort in Joyeer](tests/leetcode/quick_sort.joyeer)
-- [More language examples](tests/)
-
-## Contributing
-
-Build, test, and contribution conventions are described in [AGENTS.md](AGENTS.md).
+Build, test, and contribution conventions are in [AGENTS.md](AGENTS.md).
 
 ## License
 

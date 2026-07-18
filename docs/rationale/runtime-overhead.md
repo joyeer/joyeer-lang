@@ -22,7 +22,7 @@
 | Hidden globals (`atexit`, ctors) | yes (`static` init order fiasco) | **forbidden** — see §4 |
 | Smallest "hello world" binary (release, stripped) | 14–50 KB | ≤ 16 KB |
 
-The line "replace C++ for new code" in [AGENTS.md](../AGENTS.md) implies we must be
+The line "replace C++ for new code" in [AGENTS.md](../../AGENTS.md) implies we must be
 **within noise** of these numbers, not 2×, not 5×.
 
 ---

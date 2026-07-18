@@ -1,7 +1,6 @@
 # Joyeer IR — Typed Backend-Neutral Lowering
 
-> **Status:** Core model and JSON-parser MVP lowering implemented and wired
-> into `--lang=v0.1`.
+> **Status:** Core model and JSON-parser MVP lowering implemented.
 > **Input:** `typing::TypeCheckedModel`.
 > **Output:** a structurally verified `ir::Module`.
 
@@ -9,14 +8,13 @@
 
 ## 1. Boundary
 
-Joyeer IR is the replacement frontend's first backend-neutral representation.
-It does not reuse legacy `IRGen`, runtime `Type`, bytecode instructions, or VM
-objects. The public model is in `include/joyeer/ir/ir.h`; typed AST lowering is
-in `include/joyeer/compiler/irlowering.h` and
+Joyeer IR is the compiler's backend-neutral representation. The public model
+is in `include/joyeer/ir/ir.h`; typed AST lowering is in
+`include/joyeer/compiler/irlowering.h` and
 `lib/compiler/irlowering.cpp`.
 
-A successful `--lang=v0.1` compilation stores the result in
-`SourceFile::joyeerIR`. The LLVM/native backend consumes it for
+A successful compilation stores the result in `SourceFile::joyeerIR`. The
+LLVM/native backend consumes it for
 `--emit-llvm` and `-o`; see [native.md](native.md).
 
 ---
@@ -187,8 +185,8 @@ The current IR/native pipeline intentionally leaves these to later commits:
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
   backend's explicit Clang optimization level;
-- LLVM full-debug emission and variable/type inspection. Backend-neutral
-  lexical scopes/source variables, opt-in line tables, CLI policy, and native
-  debug artifacts are complete.
+- optimized-debug value tracking beyond the current lexical scope, source
+  variable, physical type, and `llvm.dbg.declare` metadata.
 
-None of those should be implemented by extending the compatibility VM lane.
+These belong in Joyeer IR, LLVM lowering, or the native ABI rather than a
+second execution pipeline.

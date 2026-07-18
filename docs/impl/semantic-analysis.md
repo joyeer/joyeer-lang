@@ -1,7 +1,7 @@
 # Semantic Analysis — Control Flow, Initialization, and Lints
 
-> **Status:** Implemented for the `--lang=v0.1` language surface and wired
-> between type checking and Joyeer IR lowering.
+> **Status:** Implemented for the v0.1 language surface and wired between type
+> checking and Joyeer IR lowering.
 > **Input:** `typing::TypeCheckedModel`.
 > **Output:** source-spanned errors and warnings; the typed model is unchanged.
 
@@ -12,8 +12,7 @@
 The Stage 5 pass lives in
 `include/joyeer/compiler/semanticanalysis.h` and
 `lib/compiler/semanticanalysis.cpp`. It consumes resolved symbols and canonical
-types from `TypeCheckedModel`; it does not mutate the syntax tree or route work
-through legacy `TypeGen`, bytecode, or the VM.
+types from `TypeCheckedModel` and does not mutate the syntax tree.
 
 The compiler runs the pass after successful type checking and before Joyeer IR
 lowering. Errors stop the pipeline. Warnings are printed but do not prevent IR,

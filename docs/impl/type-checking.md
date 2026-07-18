@@ -1,7 +1,6 @@
 # Type Checking — Resolved Parser MVP AST
 
-> **Status:** Implemented for the v0.1 JSON-parser frontend and wired into
-> `--lang=v0.1`.
+> **Status:** Implemented for the v0.1 JSON-parser frontend.
 > **Input:** `semantic::SemanticModel`.
 > **Output:** `typing::TypeCheckedModel` plus stable, spanned diagnostics.
 
@@ -10,9 +9,7 @@
 ## 1. Boundary
 
 The type checker consumes the syntax tree and all bindings produced by name
-resolution. It is independent of the legacy runtime `Type`, bytecode, and VM
-classes. The new frontend stops after producing a typed model; native IR
-lowering is the next pipeline stage.
+resolution. Joyeer IR lowering is the next pipeline stage.
 
 The public API lives in `include/joyeer/compiler/typechecking.h`; the
 implementation is in `lib/compiler/typechecking.cpp`. A successful result is
@@ -179,4 +176,4 @@ generics, function values, all-paths-return analysis, unreachable/unused
 diagnostics, or enum representation. Control-flow and lint checks now live in
 the dedicated [semantic-analysis pass](semantic-analysis.md); representation
 and ownership decisions live in later lowering stages. None of these may be
-routed through the legacy VM to reuse its runtime descriptors.
+smuggled into type checking merely to reuse backend implementation details.

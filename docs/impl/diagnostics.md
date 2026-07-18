@@ -2,12 +2,11 @@
 
 > **Status:** Stable IDs, severity, file paths, one-based locations, source
 > excerpts, caret ranges, structured help, and applicable source edits are
-> implemented for the `--lang=v0.1` pipeline. Legacy VM diagnostics retain
-> their historical output format.
+> implemented across the compiler pipeline.
 
 ---
 
-## 1. Model and compatibility boundary
+## 1. Model
 
 `Diagnostics` remains the shared carrier in
 `include/joyeer/diagnostic/diagnostic.h`. An `ErrorMessage` may now contain:
@@ -21,11 +20,9 @@
 - zero or more ordered secondary notes, each with its own source span and
   message.
 
-Existing `reportError()` calls create compatibility diagnostics and continue to
-print as `SyntaxError(line: ...)` or `Warning(line: ...)`. This preserves the
-legacy parser/VM golden corpus. New frontend stages call
-`reportSourceDiagnostic()`; source-independent failures such as linker errors
-call `reportDiagnostic()`.
+Frontend stages call `reportSourceDiagnostic()`. Source-independent failures
+such as linker errors call `reportDiagnostic()`. `reportError()` remains for
+unspanned argument and infrastructure failures that have no source buffer.
 
 ---
 
@@ -96,7 +93,6 @@ reinterpreting display width.
   primary source file);
 - multi-line span rendering;
 - Unicode display-column calculation (current columns are UTF-8 byte columns);
-- migration of the compatibility parser/VM diagnostics to stable IDs;
 - machine-readable JSON/SARIF output.
 
 These additions should extend the structured model without changing existing
@@ -115,5 +111,4 @@ exact one-based source rendering, help/fix-it escaping, and CLI output from the
 lexer, parser, and type checker. CLI cases include an applicable missing-`)`
 insertion, match-arrow replacement, empty-payload deletion, a `consume`
 insertion, expected/found type guidance, and both source locations of an
-overlapping access. Existing legacy formatting tests ensure the compatibility
-path does not change.
+overlapping access.

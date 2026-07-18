@@ -1,95 +1,68 @@
 # Joyeer Documentation Index
 
-> Joyeer is an **AI-era systems language**: AI writes most code, humans review
-> and assist. Goal: replace C++ for new code. **No GC. Zero-cost abstractions.
-> Swift-like syntax. Initially no `class` — use `struct`.**
->
-> See the repository [AGENTS.md](../AGENTS.md) for build, test, and contribution rules.
+The normative language definition is [spec.md](spec.md). Rationale explains
+why decisions were made, implementation notes describe the current compiler,
+and plan documents track incomplete work. If they disagree, the specification
+wins.
 
----
+## Start here
 
-## Where to Start
-
-| You want to… | Read this |
+| Goal | Document |
 |---|---|
-| Know **what the language is** (normative) | [spec.md](spec.md) |
-| Understand **why** Joyeer exists | [rationale/ai-era-design.md](rationale/ai-era-design.md) |
-| Know **what's shipping next** | [plan/v0.1.md](plan/v0.1.md) |
-| Add or change a **language feature** | edit [spec.md](spec.md); record the *why* in [rationale/](rationale/) |
-| Add or change a **compiler / VM internal** | [impl/](impl/) + [plan/roadmap.md](plan/roadmap.md) |
+| Learn the language | [spec.md](spec.md) |
+| Understand the design | [rationale/ai-era-design.md](rationale/ai-era-design.md) |
+| Understand memory and ownership | [rationale/memory.md](rationale/memory.md) |
+| See the implemented pipeline | [plan/roadmap.md](plan/roadmap.md) |
+| See the v0.1 scope | [plan/v0.1.md](plan/v0.1.md) |
+| Build or contribute | [AGENTS.md](../AGENTS.md) |
 
----
+## Specification
 
-## `spec.md` — The Normative Specification
+The split files under [spec/](spec/) mirror the sections assembled in
+[spec.md](spec.md): lexical structure, types, declarations, memory, expressions,
+statements, patterns, errors, contracts, modules, naming, examples, and grammar.
 
-The single source of truth for **what the language is**: lexical structure,
-types, declarations, memory model, expressions, statements, patterns,
-contracts, modules, grammar, and the explicit removal of general effects. All
-other docs defer to it.
+## Rationale
 
-| Doc | Topic |
+| Document | Topic |
 |---|---|
-| [spec.md](spec.md) | Full language specification (§1–§17) |
+| [ai-era-design.md](rationale/ai-era-design.md) | Strong types, ownership, and contracts as AI guardrails |
+| [memory.md](rationale/memory.md) | Value semantics, deterministic destruction, no GC/ARC |
+| [parameter-passing.md](rationale/parameter-passing.md) | Access conventions and call semantics |
+| [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost and ABI constraints |
 
----
+## Implementation
 
-## `rationale/` — Why Joyeer Is the Way It Is
+The current compiler has one typed Joyeer IR/LLVM/native pipeline. There is no
+bytecode backend or VM.
 
-The reasoning behind the spec: design surveys, trade-offs, and rejected
-alternatives. These explain *why*; the spec defines *what*. Where the two
-disagree, the spec wins.
-
-| Doc | Topic |
+| Document | Topic |
 |---|---|
-| [ai-era-design.md](rationale/ai-era-design.md) | Philosophy: strong types, explicit ownership, and contracts as AI guardrails |
-| [memory.md](rationale/memory.md) | Memory model rationale: value semantics, RAII, no GC, no ARC (normative: spec §4) |
-| [parameter-passing.md](rationale/parameter-passing.md) | Call-convention rationale: Hylo-style MVS (normative: spec §4.2–§4.3) |
-| [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost contract: runtime size budget, no-hidden-work rules, ABI |
+| [lexer.md](impl/lexer.md) | Token model, spans, recovery, and supported lexical surface |
+| [parser.md](impl/parser.md) | Parser grammar, syntax AST, and recovery contract |
+| [name-resolution.md](impl/name-resolution.md) | Scopes, symbols, references, and diagnostics |
+| [type-checking.md](impl/type-checking.md) | Canonical compile-time types and typed overlays |
+| [semantic-analysis.md](impl/semantic-analysis.md) | Return, reachability, initialization, and warning analysis |
+| [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
+| [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
+| [native.md](impl/native.md) | LLVM text emission, Clang linking, native ABI, runtime, and debug artifacts |
+| [string.md](impl/string.md) | String representation and operations |
 
----
+## Plans
 
-## `impl/` — Current Implementation Details
+Plan documents should be updated or removed when they stop describing active
+work.
 
-How the current C++ implementation works. The legacy bytecode/VM lane remains
-for compatibility tests; v0.1 has an independent typed native pipeline through
-Joyeer IR, LLVM IR, a C runtime, and Clang linking.
-
-| Doc | Topic |
+| Document | Topic |
 |---|---|
-| [bytecode.md](impl/bytecode.md) | VM bytecode opcode reference |
-| [lexer.md](impl/lexer.md) | Implemented minimal C++ lexer profile for the first JSON-parser milestone |
-| [parser.md](impl/parser.md) | Parser MVP grammar, AST boundary, recovery strategy, and parser-only test contract |
-| [name-resolution.md](impl/name-resolution.md) | v0.1 semantic IDs, scopes, symbols, binding order, diagnostics, and type-directed handoff |
-| [type-checking.md](impl/type-checking.md) | canonical compile-time types, typed overlays, inference, calls, patterns, and deferred-reference closure |
-| [semantic-analysis.md](impl/semantic-analysis.md) | all-paths-return, reachability, definite initialization, unused-binding warnings, and pipeline severity behavior |
-| [diagnostics.md](impl/diagnostics.md) | structured v0.1 IDs, severity, one-based source locations, excerpts, caret ranges, and legacy compatibility |
-| [ir.md](impl/ir.md) | backend-neutral typed IR, verifier, CFG/aggregate/pattern lowering, and remaining backend boundary |
-| [native.md](impl/native.md) | LLVM text emission, native ABI/runtime, file input, Clang linking, CLI usage, and known limitations |
-| [string.md](impl/string.md) | `String` runtime layout and builtin methods |
+| [roadmap.md](plan/roadmap.md) | Current pipeline status and next milestones |
+| [v0.1.md](plan/v0.1.md) | JSON-parser milestone scope and gaps |
+| [session-handoff-2026-07-16.md](plan/session-handoff-2026-07-16.md) | Native-only migration completion record |
+| [feasibility.md](plan/feasibility.md) | Feasibility and combined-risk analysis |
 
----
+## Conventions
 
-## `plan/` — Roadmap and Active Work
-
-Short-lived planning documents. Updated frequently; outdated entries should be
-deleted, not preserved.
-
-| Doc | Topic |
-|---|---|
-| [roadmap.md](plan/roadmap.md) | Multi-phase pipeline plan (native v0.1 JSON parser works; ownership syntax, optimization, and quality next) |
-| [v0.1.md](plan/v0.1.md) | v0.1 goal, feature checklist, blockers, gaps |
-| [session-handoff-2026-07-16.md](plan/session-handoff-2026-07-16.md) | Active handoff: delete the legacy lane, avoid the Windows CRT abort test, preserve dirty `-gfull` work |
-| [spec-impl-plan.md](plan/spec-impl-plan.md) | Phased plan for implementing the spec in the compiler/VM |
-| [feasibility.md](plan/feasibility.md) | Can the design be built? Per-feature prior art, combination risks, layered-verification ceiling |
-
----
-
-## Cross-Doc Conventions
-
-- **One topic per doc.** If a feature needs splitting, link rather than duplicate.
-- **The spec is the single source of truth.** If a `rationale/` or `plan/` doc
-  disagrees with [spec.md](spec.md) on a committed decision, the spec wins; fix
-  the other doc.
-- **Plan docs may go stale; the spec and rationale may not.** Treat any drift
-  between the spec and a `rationale/` file as a bug.
-- **No year stamps in titles.** Docs are dated by git history.
+- Keep one topic per document and link instead of duplicating.
+- Treat drift between spec and rationale as a bug.
+- Keep short-lived plans current; delete obsolete implementation plans.
+- Use repository-relative links and verify them when deleting source areas.

@@ -1,9 +1,6 @@
 # Parser MVP — JSON-Parser Grammar and Implementation Contract
 
 > **Status:** Parser MVP implemented and parser-only validation green.
-> **Profile:** `--lang=v0.1` only. The existing parser remains a legacy
-> compatibility implementation while this parser is built and tested in
-> isolation.
 > **Normative source:** [the language specification](../spec.md). This document
 > narrows that future language to the parser surface required by the first
 > Joyeer JSON parser; it does not redefine the language.
@@ -50,36 +47,25 @@ only when a later milestone has a concrete consumer.
 
 ---
 
-## 2. Audit of the current parser
+## 2. Historical parser audit
 
-The current C++ parser in
-[`syntaxparser.cpp`](../../lib/compiler/syntaxparser.cpp) is a useful legacy
-reference, but it is not the foundation for the new grammar.
+The original parser was replaced rather than extended. The audit below records
+the design differences that motivated the current parser.
 
 | Area | Current behavior | Parser MVP requirement |
 |---|---|---|
-| Token access | raw iterators, `previous()`, broad legacy token categories, and string comparisons | bounded `TokenCursor`, explicit terminal kinds, checkpoints, and `expect()` |
-| Declarations | bindings, functions, legacy `class`, basic `struct`, legacy constructor/import | context-specific v0.1 declarations with dedicated parameter/field/case nodes |
-| Parameters | represented as binding `Pattern` nodes | `ParameterDecl` with external label, local name, borrowing/inout/consuming effect, type, and span |
-| Types | identifier, `[T]`, and legacy `T?` / `T!` behavior | nominal/built-in generic, `[T]`, `[K: V]`, and `T?`; no `T!` type |
-| Expressions | flat prefix plus binary tail | fully shaped tree produced by a Pratt/precedence-climbing parser |
-| Precedence | later rewritten by `TypeGen` using only `high` / `low` buckets | parser owns all precedence and associativity; semantic passes never repair syntax |
-| Patterns | identifier plus optional type annotation | tagged wildcard/literal/binding/enum-case pattern syntax |
-| Errors | mostly generic `"Error"`; first failure often returns `nullptr` for the file | stable diagnostic IDs, error nodes, synchronization, and continued parsing |
-| AST | carries symbol tables, type slots, and runtime descriptors | syntax-only nodes with source spans; semantic state belongs to later layers |
-| Tests | no direct parser target | isolated AST/diagnostic snapshots that never enter the VM/runtime |
+| Area | Replaced behavior | Current parser requirement |
+|---|---|---|
+| Token access | raw iterators and broad token categories | bounded `TokenCursor`, explicit terminals, checkpoints, and `expect()` |
+| Declarations | shared nodes for unrelated declaration roles | dedicated parameter, field, case, and binding nodes |
+| Expressions | flat prefix plus binary tail | fully shaped Pratt/precedence-climbing tree |
+| Patterns | identifier plus optional type annotation | wildcard/literal/binding/enum-case pattern syntax |
+| Errors | first-failure parsing | stable IDs, error nodes, synchronization, and continued parsing |
+| AST | semantic and runtime state mixed into syntax | syntax-only nodes with source spans |
 
-The legacy parser remains available to legacy golden tests. New syntax should
-not be threaded through its flat `Expr::binaries` representation merely to
-keep old lowering alive.
-
-The implemented v0.1 path lives in `parser.h` / `parser.cpp` with its separate
-syntax-only AST in `syntax.h` / `syntax.cpp`. `--lang=v0.1` runs the MVP lexer
-and this parser, reports stable parser diagnostics, then passes a successful
-tree through the independent name resolver, type checker, semantic analysis,
-Joyeer IR, and native backend. It never enters the old VM/runtime. Default/
-legacy mode continues through the old `SyntaxParser`, semantic passes,
-bytecode, and VM.
+The implementation lives in `parser.h` / `parser.cpp`, with its syntax-only
+AST in `syntax.h` / `syntax.cpp`. A successful tree flows through name
+resolution, type checking, semantic analysis, Joyeer IR, and the native backend.
 
 ---
 
@@ -425,15 +411,14 @@ expression token. A newline does **not** terminate a construct:
 
 Delimited lists consistently permit a trailing comma. This includes function
 parameters, call/constructor arguments, generic arguments, enum payloads,
-array/dictionary elements, enum cases, and pattern payloads. Consistency is
-more important than preserving the legacy parser's per-list differences.
+array/dictionary elements, enum cases, and pattern payloads.
 
 ---
 
 ## 6. Syntax AST contract
 
-The new syntax AST is independent of symbol tables, runtime descriptors,
-bytecode types, and VM objects. Every node owns a `SourceSpan` or a token range
+The syntax AST is independent of semantic and backend state. Every node owns a
+`SourceSpan` or a token range
 from which that span is derived.
 
 Minimum node families:
@@ -571,8 +556,7 @@ malformed inner item does not consume the remainder of the file.
 1. Introduce the syntax-only AST and node spans.
 2. Introduce `TokenCursor`, diagnostic IDs, error nodes, and a parser-only test
    executable labeled `parser`.
-3. Select the new parser only for `--lang=v0.1`; leave legacy lowering on the
-   legacy parser.
+3. Integrate the parser as the compiler's only syntax parser.
 4. Add deterministic AST and diagnostic dump formats.
 
 **Exit:** empty input and malformed token streams always produce a file node,
@@ -596,8 +580,7 @@ exact spans.
 4. Parse prefix/infix/assignment operators with the table in §4.4.
 5. Diagnose chained comparisons and invalid assignment targets.
 
-**Exit:** precedence and postfix-chain snapshots are exact; `TypeGen` is not
-involved.
+**Exit:** precedence and postfix-chain snapshots are exact.
 
 ### P3 — Control flow and patterns ✅
 
@@ -617,8 +600,8 @@ diagnostics.
 4. Verify every malformed case terminates, stays within token bounds, and
    reports later independent errors when recovery permits.
 
-**Exit:** all direct parser tests pass without invoking name resolution,
-type checking, IR, VM, or runtime.
+**Exit:** all direct parser tests pass without invoking name resolution, type
+checking, IR, or the native runtime.
 
 Only after P0–P4 are green should later phases add AST consumers for enum
 layout, match exhaustiveness, ownership, and lowering.
@@ -678,7 +661,7 @@ For every input:
 7. a recovered parse retains all later top-level declarations it can safely
    identify;
 8. AST shape is independent of name resolution and type checking;
-9. no user input reaches an assertion or old VM/runtime path.
+9. no user input reaches an assertion or bypasses structured diagnostics.
 
 A cross-implementation corpus should eventually live under
 `tests/parser/{ok,err}/` with source plus normalized `.ast.txt` or `.diag.txt`
@@ -696,18 +679,15 @@ Parser MVP is complete when:
   matrix, deterministic dumps, diagnostic snapshots, applicable insertion/
   replacement/deletion edits, and token deletion/insertion/replacement
   mutation;
-- [x] positive and negative CLI acceptance tests run through
-  `--lang=v0.1` without starting the legacy VM/runtime;
+- [x] positive and negative CLI acceptance tests run through the default
+  compiler pipeline;
 - [x] the Parser MVP acceptance source parses with no lexical or parser diagnostic;
 - [x] expression ASTs encode precedence and associativity directly;
 - [x] `enum`, minimal `match`, byte literals, contextual cases, `Result<T, E>`,
   optional types, `inout`, `consuming`, `&`, and `consume` all reach stable syntax nodes;
 - [x] malformed input yields stable diagnostic IDs/spans and parsing continues at
   documented boundaries;
-- [x] direct `ParserTest` cases enter no semantic pass, and no v0.1 test enters
-  legacy `TypeGen`, `TypeBinding`, bytecode, VM, or runtime code;
-- [x] the existing legacy parser remains isolated until its tests are intentionally
-  migrated or archived.
+- [x] direct `ParserTest` cases enter no semantic pass.
 
 Validate this milestone with:
 

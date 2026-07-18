@@ -10,11 +10,11 @@
 
 ## 1. Pipeline
 
-The native lane is independent of the compatibility VM:
+The compiler pipeline is:
 
 ```text
 source
-  -> v0.1 lexer / parser
+  -> lexer / parser
   -> name resolution
   -> type checking
   -> control-flow semantic analysis
@@ -41,20 +41,20 @@ LLVM module and `JoyeerNativeRuntime` archive.
 Validation only:
 
 ```pwsh
-joyeer --lang=v0.1 source.joyeer
+joyeer source.joyeer
 ```
 
 Write LLVM IR:
 
 ```pwsh
-joyeer --lang=v0.1 --emit-llvm output.ll source.joyeer
-joyeer --lang=v0.1 -O0 -g --emit-llvm output.debug.ll source.joyeer
+joyeer --emit-llvm output.ll source.joyeer
+joyeer -O0 -gfull --emit-llvm output.debug.ll source.joyeer
 ```
 
 Build a native executable:
 
 ```pwsh
-joyeer --lang=v0.1 -o output.exe source.joyeer
+joyeer -o output.exe source.joyeer
 ```
 
 A native executable requires one parameterless `func main()` returning
@@ -62,23 +62,20 @@ A native executable requires one parameterless `func main()` returning
 runtime entry point. Missing or invalid entry signatures are diagnosed rather
 than delegated to the platform linker.
 
-The default mode remains the legacy VM for compatibility. Native output
-options require `--lang=v0.1`.
-
 Native executable linking has an explicit optimization policy: `-O2` is the
 default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
 selected flag is passed to Clang while it consumes the verified textual LLVM
 module. `--emit-llvm` intentionally writes the pre-optimization backend IR so
 it remains deterministic and inspectable.
 
-Debug line tables default to off (`-g0`). `-g` and
-`-gline-tables-only` enable the host format, `-gdwarf` selects DWARF 4, and
+Debug information defaults to off (`-g0`). `-g` and `-gline-tables-only`
+enable line tables in the host format; `-gfull` adds lexical scopes, source
+variables, and physical type metadata. `-gdwarf` selects DWARF 4, and
 `-gcodeview` selects CodeView on Windows. Format selection and enable/disable
 options compose in command-line order; for example `-gdwarf -g0 -g` produces
 DWARF line tables. Debug and optimization are orthogonal: `-O0` marks the
 compile unit unoptimized, while `-O1`…`-O3` carry optimized debug flags without
-changing the emitted pre-optimization instructions. The current debug level is
-line-tables-only; variables, types, and lexical scopes are not exposed.
+changing the emitted pre-optimization instructions.
 
 Native artifacts follow the host format. Windows CodeView keeps a sibling PDB
 with the executable and embeds a CodeView debug-directory reference. Windows
@@ -201,18 +198,14 @@ The native path is an MVP, not the final zero-cost implementation:
   aligned payload buffer;
 - no Joyeer-specific LLVM pass pipeline or LTO policy is configured beyond the
   explicit Clang optimization level;
-- the textual emitter can generate source/function/instruction
-  line-tables-only metadata with DWARF 4 or CodeView module flags, including
-  all LLVM instructions expanded from a source operation; compiler-generated
-  cleanup/plumbing is suppressed from line rows. CLI selection and deterministic
-  executable/PDB/DWARF/dSYM artifact policy are implemented;
+- the textual emitter can generate source/function/instruction line tables or
+  full lexical-scope/variable/type metadata with DWARF 4 or CodeView module
+  flags; compiler-generated cleanup/plumbing is suppressed from line rows;
 - `print` supports primitive and string values, not arbitrary aggregates;
 - file input is synchronous and whole-file only; streaming, writing, metadata,
   and a typed I/O error enum are not provided;
-- the default CLI mode is still the legacy VM.
-
-These gaps must be addressed without adding new dependencies from v0.1 code to
-legacy bytecode or VM runtime descriptors.
+These gaps must be addressed in Joyeer IR, LLVM lowering, or the native runtime
+without creating a second execution pipeline.
 
 ---
 

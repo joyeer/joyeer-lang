@@ -1,125 +1,104 @@
-# AGENTS.md — Joyeer Language
+# AGENTS.md - Joyeer Language
 
-> Joyeer is an **AI-era systems language**: AI writes most code, humans review and assist.
-> Goal: replace C++ for new code. **No GC. Zero-cost abstractions. Swift-like syntax.**
-> Initially **no `class`** — use `struct` for aggregates. See [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md) and [docs/rationale/memory.md](docs/rationale/memory.md) for the design philosophy, and [docs/spec.md](docs/spec.md) for the normative language spec. The full doc index lives in [docs/README.md](docs/README.md).
+> Joyeer is an AI-era systems language: AI writes most code, humans review and
+> assist. Goal: replace C++ for new code. No GC. Zero-cost abstractions.
+> Swift-like syntax. Use `struct` for aggregates; do not add `class`.
 
-## Repository reality vs. vision
+The normative language definition is [docs/spec.md](docs/spec.md). Design
+rationale lives in [docs/rationale/](docs/rationale/), and the documentation
+index is [docs/README.md](docs/README.md).
 
-The compiler is currently a **C++20 implementation**. Default/legacy mode
-lexes/parses Joyeer source and runs it on a custom **stack-based VM** with its
-own bytecode. `--lang=v0.1` uses the new lexer, syntax-only Parser MVP,
-independent name-resolution semantic model, canonical compile-time type model,
-control-flow semantic analysis, verified backend-neutral Joyeer IR, textual
-LLVM IR, and Clang-based native codegen/linking. It does not construct the
-legacy VM. The native lane is an
-MVP with recursive value clone/destroy, deterministic scope cleanup, and
-control-flow semantic analysis. Whole-binding `consuming` ownership is
-implemented; explicit `borrowing` and `initializing` are supported. Full
-call/argument-evaluation exclusivity and projection consumption are enforced
-for v0.1's non-escaping surface; optimization work beyond the current Clang
-`-O0`…`-O3` policy, variable/type debug inspection, and broader
-standard-library work remain. Source line tables and native PDB/DWARF/dSYM
-artifacts are supported.
+## Repository reality
 
-- Current state and pipeline: [docs/plan/roadmap.md](docs/plan/roadmap.md)
-- v0.1 target (minimal language able to write a JSON parser): [docs/plan/v0.1.md](docs/plan/v0.1.md)
-- Grammar: [docs/spec.md](docs/spec.md) §1 & §17
-- Native backend: [docs/impl/native.md](docs/impl/native.md)
+The compiler is a C++20 implementation with one supported pipeline:
 
-## Active migration decision (2026-07-16)
-
-The legacy parser, AST passes, bytecode runtime, VM, CLI mode, and golden tests
-no longer require compatibility. The next migration should **delete them** and
-make the typed Joyeer IR/LLVM/native pipeline the only/default pipeline. Do not
-repair legacy-only failures or preserve legacy output merely to keep old tests
-green. Historical legacy descriptions below explain the pre-removal tree; they
-are not ongoing product requirements.
-
-Until the legacy tests are removed, **do not run unfiltered `ctest` on
-Windows**. `tests/basis/array_01.joyeer` reaches the old `TypeBinding` path and
-hits an intentional `assert(false)`, which opens a blocking Microsoft Visual
-C++ Runtime `abort()` dialog. Use the bounded native/frontend label command in
-[the current session handoff](docs/plan/session-handoff-2026-07-16.md).
-
-> The repository contains a stray `Cargo.lock` from an abandoned Rust experiment. **Ignore it.** Do not propose Rust files or `cargo` commands — the build is CMake + C++.
-
-## Build & test (Windows / macOS)
-
-```pwsh
-cmake -B ./build -G Ninja
-cmake --build ./build
-ctest --test-dir ./build -L "diagnostics|fix-it|lexer|parser|name-resolution|type-checking|semantic-analysis|ir|ir-lowering|llvm-backend|native-runtime|native|ownership|file-io|array|dictionary|byte-conversion|json-parser|optimization|safety|consuming|initializing|exclusivity|projection-consume|debug-info|security" --output-on-failure
+```text
+source -> lexer -> parser -> name resolution -> type checking
+       -> semantic analysis -> verified Joyeer IR -> textual LLVM IR
+       -> Clang + JoyeerNativeRuntime -> native executable
 ```
 
-Restore unfiltered `ctest` as the final gate after legacy test registration is
-deleted.
+The old parser/AST passes, bytecode runtime, VM, language-mode switch, and
+golden-output corpus were removed in July 2026. Do not reintroduce compatibility
+paths, VM opcodes, runtime descriptors, or `--lang` modes.
 
-- Requires: CMake ≥ 3.16, a C++20 compiler (clang ≥ 13 or MSVC), Ninja,
-  Python ≥ 3.10. Native output also requires a Clang driver; on Windows the
-  official LLVM package is supported.
-- The `joyeer` executable is written to `build/bin/joyeer` (or under a config dir on multi-config generators).
-- Tests are golden-output: [tests/testRunner.py](tests/testRunner.py) runs the compiled `joyeer` on `tests/**/*.joyeer` and diffs stdout against the sibling `*.result.txt`. To add a test, drop both files in [tests/basis/](tests/basis/) (or `leetcode/`, `errors/`) and re-run CMake configure so they're picked up by [tests/CMakeLists.txt](tests/CMakeLists.txt).
+The repository contains a stray `Cargo.lock` from an abandoned experiment.
+Ignore it. The build is CMake + C++20 + the C11 native runtime; do not propose
+Rust files or Cargo commands.
+
+## Build and test
+
+```pwsh
+cmake -S . -B build -G Ninja `
+  -DJOYEER_BUILD_UNITTESTS=ON `
+  -DJOYEER_CLANG_EXECUTABLE='C:/Program Files/LLVM/bin/clang.exe'
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+- Requires CMake 3.16+, Ninja, a C++20 compiler, and a Clang driver for native
+  integration tests and `-o` output.
+- On Windows, run MSVC builds from a configured developer shell. GCC/Clang
+  builds are also supported.
+- The executable is under `build/bin/` for single-config generators.
+- Unfiltered CTest is the required final gate. Label filters are for focused
+  iteration only.
+- C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
+  live under stage-specific directories in [tests/](tests/).
 
 ## Source layout
 
 | Area | Headers | Sources |
 |---|---|---|
-| Driver / `main` | [lib/main/driver.h](lib/main/driver.h) | [lib/main/main.cpp](lib/main/main.cpp), [lib/main/driver.cpp](lib/main/driver.cpp) |
-| Lexer / parser | [include/joyeer/compiler/lexparser.h](include/joyeer/compiler/lexparser.h), [include/joyeer/compiler/syntaxparser.h](include/joyeer/compiler/syntaxparser.h) | [lib/compiler/lexparser.cpp](lib/compiler/lexparser.cpp), [lib/compiler/syntaxparser.cpp](lib/compiler/syntaxparser.cpp) |
-| v0.1 Parser MVP / syntax AST | [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | [lib/compiler/parser.cpp](lib/compiler/parser.cpp), [lib/compiler/syntax.cpp](lib/compiler/syntax.cpp) |
-| v0.1 name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | [lib/compiler/nameresolution.cpp](lib/compiler/nameresolution.cpp), [lib/compiler/semantic.cpp](lib/compiler/semantic.cpp) |
-| v0.1 type checking / typed model | [include/joyeer/compiler/typechecking.h](include/joyeer/compiler/typechecking.h) | [lib/compiler/typechecking.cpp](lib/compiler/typechecking.cpp) |
-| v0.1 control-flow semantic analysis | [include/joyeer/compiler/semanticanalysis.h](include/joyeer/compiler/semanticanalysis.h) | [lib/compiler/semanticanalysis.cpp](lib/compiler/semanticanalysis.cpp) |
-| v0.1 Joyeer IR / lowering | [include/joyeer/ir/ir.h](include/joyeer/ir/ir.h), [include/joyeer/compiler/irlowering.h](include/joyeer/compiler/irlowering.h) | [lib/ir/ir.cpp](lib/ir/ir.cpp), [lib/compiler/irlowering.cpp](lib/compiler/irlowering.cpp) |
-| LLVM/native backend | [include/joyeer/backend/llvm.h](include/joyeer/backend/llvm.h), [include/joyeer/backend/linker.h](include/joyeer/backend/linker.h) | [lib/backend/llvm.cpp](lib/backend/llvm.cpp), [lib/backend/linker.cpp](lib/backend/linker.cpp) |
-| Native runtime | [include/joyeer/native/runtime.h](include/joyeer/native/runtime.h) | [lib/native/runtime.c](lib/native/runtime.c), [lib/native/entry.c](lib/native/entry.c) |
-| AST | [include/joyeer/compiler/node.h](include/joyeer/compiler/node.h), [include/joyeer/compiler/node+visitor.h](include/joyeer/compiler/node+visitor.h) | [lib/compiler/node.cpp](lib/compiler/node.cpp) |
-| Symbol / type binding | [include/joyeer/compiler/symtable.h](include/joyeer/compiler/symtable.h), [include/joyeer/compiler/typegen.h](include/joyeer/compiler/typegen.h), [include/joyeer/compiler/typebinding.h](include/joyeer/compiler/typebinding.h), [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) | matching `*.cpp` in [lib/compiler/](lib/compiler/) |
-| IR / bytecode gen | [include/joyeer/compiler/IRGen.h](include/joyeer/compiler/IRGen.h) | [lib/compiler/IRGen.cpp](lib/compiler/IRGen.cpp) |
-| Runtime (types, GC, loader, sys) | [include/joyeer/runtime/](include/joyeer/runtime/) | [lib/runtime/](lib/runtime/) |
-| VM interpreter | [include/joyeer/vm/](include/joyeer/vm/) | [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), [lib/vm/frame.cpp](lib/vm/frame.cpp) |
+| CLI / driver | [include/joyeer/main/arguments.h](include/joyeer/main/arguments.h), [lib/main/driver.h](lib/main/driver.h) | [lib/main/](lib/main/) |
+| Lexer / parser / syntax AST | [include/joyeer/compiler/lexparser.h](include/joyeer/compiler/lexparser.h), [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | matching files in [lib/compiler/](lib/compiler/) |
+| Name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | matching files in [lib/compiler/](lib/compiler/) |
+| Type / control-flow analysis | [include/joyeer/compiler/typechecking.h](include/joyeer/compiler/typechecking.h), [include/joyeer/compiler/semanticanalysis.h](include/joyeer/compiler/semanticanalysis.h) | matching files in [lib/compiler/](lib/compiler/) |
+| Joyeer IR / lowering | [include/joyeer/ir/ir.h](include/joyeer/ir/ir.h), [include/joyeer/compiler/irlowering.h](include/joyeer/compiler/irlowering.h) | [lib/ir/](lib/ir/), [lib/compiler/irlowering.cpp](lib/compiler/irlowering.cpp) |
+| LLVM/native backend | [include/joyeer/backend/](include/joyeer/backend/) | [lib/backend/](lib/backend/) |
+| Native runtime | [include/joyeer/native/runtime.h](include/joyeer/native/runtime.h) | [lib/native/](lib/native/) |
 | Diagnostics | [include/joyeer/diagnostic/diagnostic.h](include/joyeer/diagnostic/diagnostic.h) | [lib/diagnostic/diagnostic.cpp](lib/diagnostic/diagnostic.cpp) |
 
-The compiler pipeline drives stages via `CompileStage` in [include/joyeer/compiler/context.h](include/joyeer/compiler/context.h) — match its existing pattern when adding new stages.
+## Joyeer source conventions
 
-## Conventions when writing **Joyeer source** (`*.joyeer`)
+- Prefer `let`; use `var` only for mutation.
+- Use `struct` for aggregates. `class` is outside the implemented surface.
+- Put explicit types on public function signatures.
+- Use `Optional` for absence and `Result` for recoverable failure.
+- Assume value semantics, deterministic destruction, and no GC.
+- Named calls use the syntax accepted by current parser fixtures, for example
+  `print(value: result)`.
 
-These conventions reflect the **AI-era direction**, not necessarily what every existing test does.
+## Compiler and runtime conventions
 
-- Prefer **`struct`** for new aggregates. **Do not introduce new `class` declarations** — `class` exists only for legacy tests in [tests/basis/class_*.joyeer](tests/basis/) and will be removed.
-- Use `let` for immutable bindings, `var` only when mutation is needed.
-- Be explicit about types on public function signatures — strong types are the AI-era guardrail (see [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md) §1).
-- No exceptions, no `errno`, no nullable-by-default. Use `Optional` ([docs/spec.md](docs/spec.md) §2.4) for absence; future error handling is `Result`.
-- **No GC**: assume value semantics and stack allocation by default. Heap allocations should be justified.
-- Tests today still write `print(message: x)` (named arg). New tests may use whichever form the parser accepts — verify by running before committing. See `tests/basis/` for current syntax-in-use.
+- C++20, four-space indentation, and surrounding header/source naming.
+- Keep syntax, semantic, type, and IR models separate. Syntax nodes carry
+  spans; semantic annotations belong in `SemanticModel`/`TypeCheckedModel`.
+- User-visible frontend work normally requires changes through parser or
+  semantic ownership, Joyeer IR lowering/verifier, LLVM emission, and the
+  native runtime only where the feature crosses those boundaries.
+- Report compiler failures through `Diagnostics` with stable IDs and
+  `SourceSpan`; do not write ad hoc errors to `std::cerr`.
+- Do not add VM or bytecode abstractions. Extend Joyeer IR, its verifier, LLVM
+  lowering, and `JoyeerNativeRuntime`.
+- Add focused GoogleTests and at least one durable stage/native fixture for a
+  user-visible feature.
+- Preserve source locations and debug scopes when adding or expanding IR
+  operations.
 
-## Conventions when writing **compiler/runtime code** (C++)
+## Pitfalls
 
-- C++20, no exceptions in hot paths; follow the surrounding style (4-space indent, header-pair naming `foo.h` / `foo.cpp` or `foo+suffix.cpp` for partial impls).
-- AST changes: update the node type in [node.h](include/joyeer/compiler/node.h), the visitor in [node+visitor.h](include/joyeer/compiler/node+visitor.h), then all three pipeline passes (`typegen`, `typebinding`, `IRGen`) — missing any of these silently breaks codegen.
-- `match` remains part of the language. The lexer only recognizes `match`, `where`, `indirect`, `=>`, and ordinary pattern components; pattern structure and exhaustiveness belong to the parser and type checker. The general `performs` / `pure` effect system is removed; ownership access conventions remain.
-- New bytecode opcodes: add to [include/joyeer/runtime/bytecode.h](include/joyeer/runtime/bytecode.h), implement in [lib/vm/interpreter.cpp](lib/vm/interpreter.cpp), document in [docs/impl/bytecode.md](docs/impl/bytecode.md).
-- Do not add bytecode opcodes for v0.1 native work. Extend Joyeer IR, its
-	verifier, LLVM lowering, and native runtime instead.
-- Diagnostics: report errors via the `Diagnostics*` carried on `CompileContext` rather than `std::cerr` / exceptions. v0.1 stages must preserve stable IDs and `SourceSpan` through `reportSourceDiagnostic()`; use legacy `reportError()` only for compatibility-lane code.
-- Add at least one end-to-end golden test in [tests/basis/](tests/basis/) for any user-visible feature change.
-- New v0.1 frontend work uses the syntax AST, semantic/type models, and direct tests under
-	[unittests/compiler/](unittests/compiler/) plus durable sources under
-	[tests/parser/](tests/parser/), [tests/type-checking/](tests/type-checking/),
-	[tests/ir-lowering/](tests/ir-lowering/), and [tests/native/](tests/native/).
-	Do not route it through legacy `TypeGen`,
-	bytecode, or VM merely to reuse old tests.
-
-## Pitfalls (don't repeat these)
-
-- The **CMake build is out-of-source only** (`CMAKE_DISABLE_IN_SOURCE_BUILD ON`). Never `cmake .` at the repo root.
-- After adding/removing `*.joyeer` test files you **must re-run** `cmake -B ./build ...` because the test list is glob-expanded at configure time.
-- The README still says "macOS > 12.0" — that's outdated; CMake + Ninja works on Windows too.
-- Don't propose a Rust port — `Cargo.lock` is a leftover artifact (see above).
+- The build is out-of-source only. Never run `cmake .` at the repository root.
+- Re-run CMake configure after adding or removing registered fixtures or test
+  targets.
+- Native output needs a configured Clang driver even when the compiler itself
+  is built with MSVC or GCC.
+- Do not fix historical behavior by creating a second language mode.
 
 ## When in doubt
 
-- Language design questions → [docs/rationale/ai-era-design.md](docs/rationale/ai-era-design.md), [docs/rationale/memory.md](docs/rationale/memory.md), [docs/rationale/parameter-passing.md](docs/rationale/parameter-passing.md), [docs/rationale/runtime-overhead.md](docs/rationale/runtime-overhead.md)
-- "Should this feature be in v0.1?" → [docs/plan/v0.1.md](docs/plan/v0.1.md) checklist
-- "What stage of the pipeline owns this?" → [docs/plan/roadmap.md](docs/plan/roadmap.md) §Current Status
+- Language design: [docs/spec.md](docs/spec.md) and
+  [docs/rationale/](docs/rationale/)
+- v0.1 scope: [docs/plan/v0.1.md](docs/plan/v0.1.md)
+- Pipeline ownership: [docs/plan/roadmap.md](docs/plan/roadmap.md)
+- Native ABI/debug behavior: [docs/impl/native.md](docs/impl/native.md)

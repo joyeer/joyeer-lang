@@ -1,7 +1,7 @@
 # Name Resolution — Parser MVP Semantic Model
 
 > **Status:** Implemented for the type-independent portion of the v0.1
-> Parser MVP AST and wired into `--lang=v0.1`.
+> Parser MVP AST.
 > **Input:** `syntax::SourceFileSyntax`.
 > **Output:** `semantic::SemanticModel` plus stable, spanned diagnostics.
 
@@ -9,9 +9,8 @@
 
 ## 1. Boundary
 
-The resolver answers which declaration a syntactic name denotes. It does not
-mutate the syntax AST and does not reuse the legacy `Node::symtable` or
-runtime `typeSlot` model.
+The resolver answers which declaration a syntactic name denotes without
+mutating the syntax AST.
 
 The semantic model assigns compilation-local identities:
 
@@ -138,4 +137,4 @@ ctest --test-dir build -L name-resolution --output-on-failure
 The test target covers forward references, nested shadowing, type/member
 resolution, synthesized initializers, enum cases, labels, match-arm bindings,
 deferred contextual cases, diagnostics, and the JSON-parser fixture. A CLI
-negative test verifies that `--lang=v0.1` reports resolver failures.
+negative test verifies that the default compiler reports resolver failures.
