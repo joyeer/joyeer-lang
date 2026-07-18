@@ -57,7 +57,7 @@ work.
 |---|---|
 | [roadmap.md](plan/roadmap.md) | Current pipeline status and next milestones |
 | [v0.1.md](plan/v0.1.md) | JSON-parser milestone scope and gaps |
-| [session-handoff-2026-07-16.md](plan/session-handoff-2026-07-16.md) | Native-only migration completion record |
+| [session-handoff-2026-07-18-macos.md](plan/session-handoff-2026-07-18-macos.md) | Resume the native-only branch on macOS |
 | [feasibility.md](plan/feasibility.md) | Feasibility and combined-risk analysis |
 
 ## Conventions
