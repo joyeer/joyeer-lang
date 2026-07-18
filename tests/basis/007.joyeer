@@ -1,5 +1,0 @@
-var i = 10
-while i > 0 && i > 0 {
-    print(message: i)
-    i = i - 1
-}

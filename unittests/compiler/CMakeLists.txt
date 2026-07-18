@@ -769,8 +769,8 @@ set_tests_properties(DiagnosticsCliRendersSourceContext PROPERTIES
 add_test(NAME DiagnosticsCliRendersLexerSourceContext
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                -DINPUT_FILE=${JOYEER_TESTS_DIR}/errors/ccomment_01.joyeer
-                "-DEXPECTED_HEADER=ccomment_01.joyeer:1:1: error[lexer.unterminated-comment]"
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/lexer/err/unterminated_comment.joyeer
+                "-DEXPECTED_HEADER=unterminated_comment.joyeer:1:1: error[lexer.unterminated-comment]"
                 "-DEXPECTED_SOURCE=/*asdfasdf"
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
 )
@@ -877,7 +877,6 @@ set_tests_properties(SemanticAnalysisCliRequiresInitializingOnAllPaths PROPERTIE
 
 add_test(NAME SemanticAnalysisCliReportsUnreachableWarning
         COMMAND $<TARGET_FILE:joyeer>
-                --lang=v0.1
                 "${JOYEER_TESTS_DIR}/semantic-analysis/unreachable_warning.joyeer"
 )
 set_tests_properties(SemanticAnalysisCliReportsUnreachableWarning PROPERTIES
@@ -887,7 +886,6 @@ set_tests_properties(SemanticAnalysisCliReportsUnreachableWarning PROPERTIES
 
 add_test(NAME SemanticAnalysisCliReportsUnusedBindingWarning
         COMMAND $<TARGET_FILE:joyeer>
-                --lang=v0.1
                 "${JOYEER_TESTS_DIR}/semantic-analysis/unused_warning.joyeer"
 )
 set_tests_properties(SemanticAnalysisCliReportsUnusedBindingWarning PROPERTIES

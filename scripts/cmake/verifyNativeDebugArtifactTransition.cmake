@@ -29,7 +29,7 @@ else()
 endif()
 
 execute_process(
-        COMMAND "${JOYEER_EXECUTABLE}" --lang=v0.1 "${debug_argument}" -o "${OUTPUT_FILE}" "${INPUT_FILE}"
+        COMMAND "${JOYEER_EXECUTABLE}" "${debug_argument}" -o "${OUTPUT_FILE}" "${INPUT_FILE}"
         RESULT_VARIABLE debug_result
         OUTPUT_VARIABLE debug_output
         ERROR_VARIABLE debug_error
@@ -41,7 +41,7 @@ if(NOT debug_result EQUAL 0 OR NOT EXISTS "${debug_artifact}")
 endif()
 
 execute_process(
-        COMMAND "${JOYEER_EXECUTABLE}" --lang=v0.1 -g0 -o "${OUTPUT_FILE}" "${INPUT_FILE}"
+        COMMAND "${JOYEER_EXECUTABLE}" -g0 -o "${OUTPUT_FILE}" "${INPUT_FILE}"
         RESULT_VARIABLE nodebug_result
         OUTPUT_VARIABLE nodebug_output
         ERROR_VARIABLE nodebug_error

@@ -1,8 +1,0 @@
-func returnArrayValue(): [Int] {
-    return [-1, -2]
-}
-
-var result = returnArrayValue()
-
-print(message: result[0])
-print(message: result[1])

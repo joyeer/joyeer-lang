@@ -1,2 +1,0 @@
-SyntaxError(line: -1):
-    value of optional type 'A?' must be unwrapped to refer to member 'i' of wrapped base type 'A'

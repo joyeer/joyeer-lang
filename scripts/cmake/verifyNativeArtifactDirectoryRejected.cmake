@@ -23,7 +23,7 @@ file(REMOVE_RECURSE "${artifact_directory}")
 file(MAKE_DIRECTORY "${artifact_directory}")
 
 execute_process(
-        COMMAND "${JOYEER_EXECUTABLE}" --lang=v0.1 "${debug_argument}" -o "${OUTPUT_FILE}" "${INPUT_FILE}"
+        COMMAND "${JOYEER_EXECUTABLE}" "${debug_argument}" -o "${OUTPUT_FILE}" "${INPUT_FILE}"
         RESULT_VARIABLE compiler_result
         OUTPUT_VARIABLE compiler_output
         ERROR_VARIABLE compiler_error

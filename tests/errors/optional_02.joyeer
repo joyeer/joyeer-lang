@@ -1,7 +1,0 @@
-
-class A {
-    var i: Int ? = 10
-}
-
-var a: A? = A()
-a.i = 12

@@ -35,7 +35,7 @@ if(EXPECTED_PDB_PATTERNS AND NOT LLVM_PDBUTIL)
     fail_native_validation("LLVM_PDBUTIL is required to inspect PDB line records")
 endif()
 
-set(compiler_command "${JOYEER_EXECUTABLE}" --lang=v0.1)
+set(compiler_command "${JOYEER_EXECUTABLE}")
 if(DEFINED COMPILER_ARGS)
     list(APPEND compiler_command ${COMPILER_ARGS})
 endif()

@@ -4,7 +4,7 @@ endif()
 
 set(object_file "${OUTPUT_FILE}.obj")
 
-set(compiler_command "${JOYEER_EXECUTABLE}" --lang=v0.1)
+set(compiler_command "${JOYEER_EXECUTABLE}")
 if(DEFINED COMPILER_ARGS)
     list(APPEND compiler_command ${COMPILER_ARGS})
 endif()

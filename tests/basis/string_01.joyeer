@@ -1,6 +1,0 @@
-print(message: "hello world")
-
-var string = "hello world2"
-
-string = string + " 12"
-print(message: string)

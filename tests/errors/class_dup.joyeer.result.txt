@@ -1,2 +1,0 @@
-SyntaxError(line: -1):
-    Invalid redeclaration of A

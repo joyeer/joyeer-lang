@@ -99,8 +99,6 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     for (; iterator != arguments.end(); ++iterator) {
         if (parseOptions && *iterator == "--") {
             parseOptions = false;
-        } else if (parseOptions && *iterator == "--lang=v0.1") {
-            // Accepted temporarily while scripts migrate to the default pipeline.
         } else if (parseOptions && *iterator == "-O0") {
             optimizationLevel = joyeer::OptimizationLevel::O0;
         } else if (parseOptions && *iterator == "-O1") {
@@ -210,8 +208,7 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
 }
 
 void CommandLineArguments::printUsage() {
-    std::cout << "Usage: joyeer [--lang=v0.1] [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
-    std::cout << "  --lang=v0.1         accepted as a temporary compatibility option" << std::endl;
+    std::cout << "Usage: joyeer [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
     std::cout << "  -o <file>           write a native executable" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native Clang optimization level (default: -O2)" << std::endl;

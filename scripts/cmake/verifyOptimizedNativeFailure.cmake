@@ -3,7 +3,7 @@ if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED INPUT_FILE OR NOT DEFINED OUTPUT
 endif()
 
 execute_process(
-        COMMAND "${JOYEER_EXECUTABLE}" --lang=v0.1 -O2 -o "${OUTPUT_FILE}" "${INPUT_FILE}"
+        COMMAND "${JOYEER_EXECUTABLE}" -O2 -o "${OUTPUT_FILE}" "${INPUT_FILE}"
         RESULT_VARIABLE compiler_result
         OUTPUT_VARIABLE compiler_output
         ERROR_VARIABLE compiler_error

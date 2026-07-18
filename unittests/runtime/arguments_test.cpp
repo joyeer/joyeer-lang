@@ -203,25 +203,19 @@ TEST(CommandLineArgumentsTest, AcceptsDebugInfoInDefaultMode) {
     EXPECT_FALSE(diagnostics.hasFailure());
 }
 
-TEST(CommandLineArgumentsTest, KeepsV01AsCompatibilityOption) {
-    Diagnostics diagnostics;
-    auto values = nativeArguments();
-    values.insert(values.begin() + 1, "--lang=v0.1");
-    static_cast<void>(parseArguments(diagnostics, std::move(values)));
+TEST(CommandLineArgumentsTest, RejectsRemovedLanguageModes) {
+    for (const auto& option : { "--lang=v0.1", "--lang=v0.1-legacy" }) {
+        Diagnostics diagnostics;
+        auto values = nativeArguments();
+        values.insert(values.begin() + 1, option);
+        static_cast<void>(parseArguments(diagnostics, std::move(values)));
 
-    EXPECT_FALSE(diagnostics.hasFailure());
-}
-
-TEST(CommandLineArgumentsTest, RejectsRemovedLegacyMode) {
-    Diagnostics diagnostics;
-    auto values = nativeArguments();
-    values.insert(values.begin() + 1, "--lang=v0.1-legacy");
-    static_cast<void>(parseArguments(diagnostics, std::move(values)));
-
-    ASSERT_TRUE(diagnostics.hasFailure());
-    EXPECT_NE(
-            diagnostics.errors[0].message.find("unknown option '--lang=v0.1-legacy'"),
-            std::string::npos);
+        ASSERT_TRUE(diagnostics.hasFailure()) << option;
+        EXPECT_NE(
+                diagnostics.errors[0].message.find("unknown option '" +
+                                                   std::string(option) + "'"),
+                std::string::npos) << option;
+    }
 }
 
 TEST(CommandLineArgumentsTest, ParsesEverySupportedOptimizationLevel) {
