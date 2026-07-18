@@ -34,6 +34,7 @@ variables, lexical scopes, physical types, and `llvm.dbg.declare` metadata.
 | `11f4db6` | decouple frontend and CLI from legacy runtime infrastructure |
 | `63e5b5f` | remove legacy compiler passes, runtime, VM, and lexer profile |
 | `eb6b9df` | remove golden corpus, runner, dead tests, and `--lang` no-op |
+| `2196ee3` | update documentation for the native-only compiler |
 
 All commits use `Qing Xu <xuqing@decompile.io>` and were pushed to
 `origin/feature/init_version`.
@@ -50,9 +51,16 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-A clean GCC 16 build without compatibility include flags passed the complete
-non-Clang-gated suite on Windows. Clang-dependent native/debug tests require a
-toolchain containing `clang`, `lld-link`, `llvm-readobj`, and `llvm-pdbutil`.
+A clean GCC 16 build without compatibility include flags succeeded on Windows.
+Official LLVM 22.1.8 was installed without administrator privileges and
+configured with the existing WinLibs UCRT sysroot. The final unfiltered suite
+passed **328/328** tests, including:
+
+- Clang validation of generated LLVM IR;
+- native JSON parser, ownership, collection, file-I/O, and safety tests;
+- CodeView/PDB and Windows DWARF artifacts;
+- `-gfull` lexical scopes, variables, and physical types;
+- all frontend, diagnostics, Joyeer IR, and LLVM backend unit tests.
 
 ## Continuing work
 
