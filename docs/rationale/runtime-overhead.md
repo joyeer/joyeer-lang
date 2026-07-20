@@ -101,15 +101,23 @@ The phrase "zero-cost abstraction" is overused. Joyeer commits to these
 Every line of Joyeer source must have a **predictable mapping to machine work**.
 The following are **forbidden**, regardless of how convenient they would be:
 
-- Implicit heap allocation. `let s = "abc" + "def"` must not allocate unless
-  the programmer can see the allocation (e.g. `String` builder API).
-- Implicit copies of types larger than 2 machine words. Large types are
-  passed/returned by reference; assignment of `var b = a` for a large `a`
-  must be `move`, not `copy`, unless the type opts in to `Copy`.
+- Heap allocation unrelated to the specified operation. Constructing,
+  concatenating, or copying a heap-backed value may allocate because producing
+  independent owned storage is part of that operation's value semantics.
+- Ownership transfer inferred as a source-level effect. Ordinary assignment
+  copies and leaves its source initialized; `consume` is required when a call
+  takes the source away. The compiler may remove a materialized copy under the
+  as-if rule, but optimization never changes source validity.
 - Implicit refcount increment. Joyeer has **no ARC**. Period.
 - Implicit conversion that allocates (e.g. `Int → String` on `print`).
 - Implicit construction of any type (no C++-style converting constructors).
 - Hidden global initializers — see §4.
+
+For `String`, `Array`, `Dict`, and recursively nontrivial aggregates, an
+ordinary copy is conservatively O(n) in the copied storage and may allocate.
+That cost follows directly from the source-level copy and concrete type; an
+owned temporary can transfer without cloning. Performance diagnostics may
+surface materialized copies, but they do not alter these semantics.
 
 ### 3.3 Inlining contract
 

@@ -17,4 +17,8 @@ func main() {
 
     let lookup: [String: String] = ["key": "value"]
     print(value: lookup["key"])
+
+    var selfAssigned = "same"
+    selfAssigned = selfAssigned
+    print(value: selfAssigned)
 }

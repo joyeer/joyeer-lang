@@ -37,6 +37,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::extractField:
         case Opcode::constructEnum:
         case Opcode::extractPayload:
+        case Opcode::stringUtf8:
         case Opcode::count:
         case Opcode::subscript:
         case Opcode::subscriptAddress:
@@ -1578,6 +1579,37 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                         }
+                        case Opcode::stringUtf8:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value()) {
+                            const auto* sourceType = types.contains(operands[0]->type)
+                                ? types.at(operands[0]->type)
+                                : nullptr;
+                            const auto* resultType = types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                            const auto* elementType = resultType != nullptr &&
+                                resultType->kind == typing::TypeKind::array &&
+                                resultType->arguments.size() == 1 &&
+                                types.contains(resultType->arguments[0])
+                                ? types.at(resultType->arguments[0])
+                                : nullptr;
+                            const auto matches = sourceType != nullptr &&
+                                sourceType->kind == typing::TypeKind::string &&
+                                operands[0]->category == ValueCategory::value &&
+                                instruction.result->category == ValueCategory::value &&
+                                elementType != nullptr &&
+                                elementType->kind == typing::TypeKind::uint8;
+                            if (!matches) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "string_utf8 requires String and produces [UInt8]");
+                            }
+                        }
+                        break;
                         case Opcode::count:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                                 instruction.result.has_value()) {
@@ -1819,6 +1851,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
         case Opcode::extractPayload: return "extract_payload";
+        case Opcode::stringUtf8: return "string_utf8";
         case Opcode::count: return "count";
         case Opcode::subscript: return "subscript";
         case Opcode::subscriptAddress: return "subscript_addr";
@@ -2075,6 +2108,7 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::fieldAddress:
                     case Opcode::extractField:
+                    case Opcode::stringUtf8:
                     case Opcode::count:
                         if (!instruction.operands.empty()) {
                             out << ' ' << valueName(instruction.operands[0]);

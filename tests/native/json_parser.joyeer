@@ -353,9 +353,9 @@ func main() {
             print(value: parser.failed == false)
             printSummary(value: value)
         }
-        .Err(error) => {
+        .Err(_) => {
             print(value: false)
-            print(value: error)
+            print(value: "read error")
         }
     }
 
@@ -365,6 +365,6 @@ func main() {
             parseDocument(p: &parser)
             print(value: parser.failed)
         }
-        .Err(error) => print(value: error == 0)
+        .Err(_) => print(value: false)
     }
 }

@@ -128,19 +128,16 @@ TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
             }
 
             const auto pathText = path.string();
-            int32_t tag = -1;
-            alignas(JoyeerString) std::array<uint8_t, sizeof(JoyeerString)> payload {};
-            joyeer_read_file_abi(
-                &tag,
-                payload.data(),
-                7,
-                9,
+            JoyeerString contents {};
+            int64_t errorCode = -1;
+            const auto errorKind = joyeer_read_file_abi(
+                &contents,
+                &errorCode,
                 reinterpret_cast<const uint8_t*>(pathText.data()),
                 static_cast<int64_t>(pathText.size()));
 
-            EXPECT_EQ(tag, 7);
-            JoyeerString contents {};
-            std::memcpy(&contents, payload.data(), sizeof(contents));
+            EXPECT_EQ(errorKind, JOYEER_IO_ERROR_NONE);
+            EXPECT_EQ(errorCode, 0);
             ASSERT_EQ(contents.count, static_cast<int64_t>(expected.size()));
             EXPECT_EQ(std::memcmp(contents.data, expected.data(), expected.size()), 0);
             joyeer_string_destroy_abi(&contents);
@@ -153,20 +150,36 @@ TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
                 "joyeer-native-runtime-definitely-missing.txt";
             std::filesystem::remove(path);
             const auto pathText = path.string();
-            int32_t tag = -1;
-            alignas(JoyeerString) std::array<uint8_t, sizeof(JoyeerString)> payload {};
-            joyeer_read_file_abi(
-                &tag,
-                payload.data(),
-                7,
-                9,
+            JoyeerString contents {};
+            int64_t errorCode = 0;
+            const auto errorKind = joyeer_read_file_abi(
+                &contents,
+                &errorCode,
                 reinterpret_cast<const uint8_t*>(pathText.data()),
                 static_cast<int64_t>(pathText.size()));
 
-            EXPECT_EQ(tag, 9);
-            int64_t error = 0;
-            std::memcpy(&error, payload.data(), sizeof(error));
-            EXPECT_NE(error, 0);
+            EXPECT_EQ(errorKind, JOYEER_IO_ERROR_NOT_FOUND);
+            EXPECT_NE(errorCode, 0);
+            EXPECT_EQ(contents.data, nullptr);
+            EXPECT_EQ(contents.count, 0);
+            EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+        }
+
+        TEST(NativeRuntimeTest, ClassifiesEmbeddedNullPathsAsInvalid) {
+            const std::array<uint8_t, 3> path { 'a', 0, 'b' };
+            JoyeerString contents {};
+            int64_t errorCode = 0;
+
+            const auto errorKind = joyeer_read_file_abi(
+                    &contents,
+                    &errorCode,
+                    path.data(),
+                    static_cast<int64_t>(path.size()));
+
+            EXPECT_EQ(errorKind, JOYEER_IO_ERROR_INVALID_PATH);
+            EXPECT_NE(errorCode, 0);
+            EXPECT_EQ(contents.data, nullptr);
+            EXPECT_EQ(contents.count, 0);
             EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
         }
 

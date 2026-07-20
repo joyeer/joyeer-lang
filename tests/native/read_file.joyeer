@@ -1,11 +1,22 @@
 func main() {
-    match readFile(path: "read_file_input.txt") {
+    let loaded = readFile(path: "read_file_input.txt")
+    let copied = loaded
+    match copied {
         .Ok(contents) => print(value: contents),
-        .Err(error) => print(value: error),
+        .Err(_) => print(value: "read failed"),
     }
 
     match readFile(path: "missing-read-file-input.txt") {
         .Ok(contents) => print(value: contents),
-        .Err(error) => print(value: error != 0),
+        .Err(error) => match error {
+            .NotFound(code) => {
+                print(value: "not found")
+                print(value: code != 0)
+            }
+            _ => {
+                print(value: "unexpected error")
+                print(value: false)
+            }
+        },
     }
 }

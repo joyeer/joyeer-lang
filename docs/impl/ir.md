@@ -84,7 +84,8 @@ The current instruction set covers:
 - mutating `array_append` with an addressable receiver and transferred element;
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
-- `String`/collection count and value/address subscript operations;
+- `String`/collection count and value/address subscript operations, plus owned
+  `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
 
 `if` expressions merge values through a typed temporary slot. `while` emits a
@@ -96,9 +97,12 @@ Optional promotion is explicit in IR: a type-checked conversion from `T` to
 boundaries. `nil` emits `Optional.None`.
 
 Heap-backed and recursively nontrivial values have explicit ownership in the
-IR. Borrowed values are cloned before entering owned storage; owned temporaries
-are moved when possible; overwriting storage destroys the previous value; and
-scope exits destroy owned storage and live temporaries in reverse order.
+IR. Borrowed values are cloned before entering owned storage, so ordinary
+binding initialization and assignment leave the source usable. Owned
+temporaries transfer directly. An overwrite first acquires the owned
+replacement, then destroys the previous value, then stores the replacement;
+this ordering keeps self-assignment valid. Scope exits destroy owned storage
+and live temporaries in reverse order.
 Early returns clean every active scope before transferring the result to the
 caller. A typed local declared without an initializer uses `zero_init` when its
 type requires destruction, making cleanup safe while Stage 5 rejects any

@@ -283,7 +283,7 @@ let copy = integer
     }
 }
 
-    TEST_F(TypeCheckingTest, TypesReadFileAsResultOfOwnedStringOrErrorCode) {
+    TEST_F(TypeCheckingTest, TypesReadFileAsResultOfOwnedStringOrTypedIOError) {
         check(R"JOYEER(func load() {
     let loaded = readFile(path: "input.json")
     }
@@ -296,7 +296,7 @@ let copy = integer
             function->body->items[0]);
         EXPECT_EQ(
             checking.model->types().displayName(declaredType(binding)),
-            "Result<String, Int>");
+            "Result<String, IOError>");
 
         const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
             binding->initializer);
@@ -310,7 +310,53 @@ let copy = integer
             "String");
         EXPECT_EQ(
             checking.model->types().displayName(signature->result),
-            "Result<String, Int>");
+            "Result<String, IOError>");
+    }
+
+            TEST_F(TypeCheckingTest, TypesStringUtf8AsOwnedByteArray) {
+            check(R"JOYEER(func bytes(text: String): [UInt8] {
+            return text.utf8()
+        }
+        )JOYEER");
+
+            ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+            const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[0]);
+            const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                function->body->items[0]);
+            const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+                returned->value);
+            ASSERT_TRUE(checking.model->typeOf(call).has_value());
+            EXPECT_EQ(
+                checking.model->types().displayName(*checking.model->typeOf(call)),
+                "[UInt8]");
+            const auto target = checking.model->callTarget(call);
+            ASSERT_TRUE(target.has_value());
+            const auto* signature = checking.model->callable(*target);
+            ASSERT_NE(signature, nullptr);
+            EXPECT_TRUE(signature->parameters.empty());
+            EXPECT_EQ(
+                checking.model->types().displayName(signature->result),
+                "[UInt8]");
+            }
+
+    TEST_F(TypeCheckingTest, TypesBuiltinIOErrorCasesAndExhaustiveMatch) {
+        check(R"JOYEER(func errorCode(error: IOError): Int {
+    return match error {
+        .NotFound(code) => code,
+        .PermissionDenied(code) => code,
+        .InvalidPath(code) => code,
+        .Other(code) => code,
+    }
+}
+)JOYEER");
+
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[0]);
+        const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                function->body->items[0]);
+        EXPECT_EQ(checking.model->typeOf(returned->value), checking.model->types().intType());
     }
 
     TEST_F(TypeCheckingTest, TypesExplicitByteConversions) {

@@ -1,4 +1,5 @@
 #include "joyeer/backend/llvm.h"
+#include "joyeer/native/runtime.h"
 
 #include <algorithm>
 #include <cassert>
@@ -1170,6 +1171,8 @@ private:
                 return emitConstructEnum(out, instruction);
             case ir::Opcode::extractPayload:
                 return emitExtractPayload(out, instruction);
+            case ir::Opcode::stringUtf8:
+                return emitStringUtf8(out, instruction);
             case ir::Opcode::count:
                 return emitCount(out, instruction);
             case ir::Opcode::subscript:
@@ -1310,6 +1313,40 @@ private:
             << ", ptr " << data << ", i64 " << instruction.operands.size()
             << ", i64 " << elementLayout->size << ", " << clone << ", "
             << destroy << ")\n"
+            << "  " << valueName(instruction.result->id)
+            << " = load %joyeer.array, ptr " << resultAddress << "\n";
+        return true;
+    }
+
+    bool emitStringUtf8(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (!instruction.result.has_value() || instruction.operands.size() != 1) {
+            return false;
+        }
+        const auto source = operand(instruction.operands[0]);
+        const auto* resultType = type(instruction.result->type);
+        if (!source.has_value() || resultType == nullptr ||
+            resultType->kind != typing::TypeKind::array ||
+            resultType->arguments.size() != 1) {
+            return false;
+        }
+        const auto* elementType = type(resultType->arguments[0]);
+        if (elementType == nullptr || elementType->kind != typing::TypeKind::uint8) {
+            return false;
+        }
+
+        usesArray = true;
+        const auto sourceParts = emitHandleParts(out, "%joyeer.string", *source);
+        if (!sourceParts.has_value()) return false;
+        const auto resultAddress = temporary();
+        runtimeDeclarations.insert(
+                "declare void @joyeer_array_create_owned_abi(ptr, ptr, i64, i64, ptr, ptr)");
+        out << "  " << resultAddress << " = alloca %joyeer.array\n"
+            << "  call void @joyeer_array_create_owned_abi(ptr " << resultAddress
+            << ", ptr " << sourceParts->data
+            << ", i64 " << sourceParts->count
+            << ", i64 1, ptr null, ptr null)\n"
             << "  " << valueName(instruction.result->id)
             << " = load %joyeer.array, ptr " << resultAddress << "\n";
         return true;
@@ -2170,12 +2207,13 @@ private:
             reportHere(
                     DiagnosticId::unsupportedExternal,
                     instruction.span,
-                    "readFile requires String -> Result<String, Int>");
+                    "readFile requires String -> Result<String, IOError>");
             return false;
         }
 
         std::optional<size_t> okTag;
         std::optional<size_t> errorTag;
+        std::optional<ir::TypeId> errorType;
         for (size_t index = 0; index < enumeration->second->cases.size(); ++index) {
             const auto& enumCase = enumeration->second->cases[index];
             if (enumCase.name == "Ok" && enumCase.payloadTypes.size() == 1) {
@@ -2185,39 +2223,139 @@ private:
                 }
             } else if (enumCase.name == "Err" && enumCase.payloadTypes.size() == 1) {
                 const auto* payload = type(enumCase.payloadTypes[0]);
-                if (payload != nullptr && payload->kind == typing::TypeKind::integer) {
+                if (payload != nullptr && payload->kind == typing::TypeKind::enumeration) {
                     errorTag = index;
+                    errorType = enumCase.payloadTypes[0];
                 }
             }
         }
+
+        const auto errorEnumeration = errorType.has_value()
+                ? enumerations.find(*errorType)
+                : enumerations.end();
+        std::optional<size_t> notFoundTag;
+        std::optional<size_t> permissionDeniedTag;
+        std::optional<size_t> invalidPathTag;
+        std::optional<size_t> otherTag;
+        if (errorEnumeration != enumerations.end()) {
+            for (size_t index = 0;
+                 index < errorEnumeration->second->cases.size();
+                 ++index) {
+                const auto& enumCase = errorEnumeration->second->cases[index];
+                if (enumCase.payloadTypes.size() != 1) continue;
+                const auto* payload = type(enumCase.payloadTypes[0]);
+                if (payload == nullptr || payload->kind != typing::TypeKind::integer) continue;
+                if (enumCase.name == "NotFound") notFoundTag = index;
+                else if (enumCase.name == "PermissionDenied") permissionDeniedTag = index;
+                else if (enumCase.name == "InvalidPath") invalidPathTag = index;
+                else if (enumCase.name == "Other") otherTag = index;
+            }
+        }
         const auto resultType = llvmType(callee.resultType, instruction.span);
+        const auto errorTypeText = errorType.has_value()
+                ? llvmType(*errorType, instruction.span)
+                : std::optional<std::string>();
         const auto pathParts = emitHandleParts(out, "%joyeer.string", *path);
         if (!okTag.has_value() || !errorTag.has_value() ||
-            !resultType.has_value() || !pathParts.has_value()) {
+            !notFoundTag.has_value() || !permissionDeniedTag.has_value() ||
+            !invalidPathTag.has_value() || !otherTag.has_value() ||
+            !resultType.has_value() || !errorTypeText.has_value() ||
+            !pathParts.has_value()) {
             reportHere(
                     DiagnosticId::unsupportedExternal,
                     instruction.span,
-                    "readFile result must be Result<String, Int>");
+                    "readFile result must be Result<String, IOError>");
             return false;
         }
 
-        const auto storage = "%tmp" + std::to_string(nextTemporary++);
-        const auto tagAddress = "%tmp" + std::to_string(nextTemporary++);
-        const auto payloadAddress = "%tmp" + std::to_string(nextTemporary++);
+        const auto storage = temporary();
+        const auto tagAddress = temporary();
+        const auto payloadAddress = temporary();
+        const auto stringAddress = temporary();
+        const auto errorCodeAddress = temporary();
+        const auto errorKind = temporary();
+        const auto succeeded = temporary();
+        const auto labelSuffix = std::to_string(nextTemporary++);
+        const auto successLabel = "readfile.ok." + labelSuffix;
+        const auto errorLabel = "readfile.error." + labelSuffix;
+        const auto doneLabel = "readfile.done." + labelSuffix;
         out << "  " << storage << " = alloca " << *resultType << "\n"
             << "  store " << *resultType << " zeroinitializer, ptr " << storage << "\n"
             << "  " << tagAddress << " = getelementptr inbounds " << *resultType
             << ", ptr " << storage << ", i32 0, i32 0\n"
             << "  " << payloadAddress << " = getelementptr inbounds " << *resultType
-            << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
+            << ", ptr " << storage << ", i32 0, i32 1, i32 0\n"
+            << "  " << stringAddress << " = alloca %joyeer.string\n"
+            << "  store %joyeer.string zeroinitializer, ptr " << stringAddress << "\n"
+            << "  " << errorCodeAddress << " = alloca i64\n"
+            << "  store i64 0, ptr " << errorCodeAddress << "\n";
         runtimeDeclarations.insert(
-                "declare void @joyeer_read_file_abi(ptr, ptr, i32, i32, ptr, i64)");
-        out << "  call void @joyeer_read_file_abi(ptr " << tagAddress
-            << ", ptr " << payloadAddress
-            << ", i32 " << *okTag
-            << ", i32 " << *errorTag
+                "declare i32 @joyeer_read_file_abi(ptr, ptr, ptr, i64)");
+        out << "  " << errorKind << " = call i32 @joyeer_read_file_abi(ptr "
+            << stringAddress << ", ptr " << errorCodeAddress
             << ", ptr " << pathParts->data
             << ", i64 " << pathParts->count << ")\n"
+            << "  " << succeeded << " = icmp eq i32 " << errorKind << ", "
+            << JOYEER_IO_ERROR_NONE << "\n"
+            << "  br i1 " << succeeded << ", label %" << successLabel
+            << ", label %" << errorLabel << "\n"
+            << successLabel << ":\n";
+        const auto stringValue = temporary();
+        out << "  store i32 " << *okTag << ", ptr " << tagAddress << "\n"
+            << "  " << stringValue << " = load %joyeer.string, ptr "
+            << stringAddress << "\n"
+            << "  store %joyeer.string " << stringValue << ", ptr "
+            << payloadAddress << "\n"
+            << "  br label %" << doneLabel << "\n"
+            << errorLabel << ":\n"
+            << "  store i32 " << *errorTag << ", ptr " << tagAddress << "\n";
+
+        const auto isNotFound = temporary();
+        const auto afterNotFound = temporary();
+        const auto isPermissionDenied = temporary();
+        const auto afterPermissionDenied = temporary();
+        const auto isInvalidPath = temporary();
+        const auto selectedErrorTag = temporary();
+        out << "  " << isNotFound << " = icmp eq i32 " << errorKind << ", "
+            << JOYEER_IO_ERROR_NOT_FOUND << "\n"
+            << "  " << afterNotFound << " = select i1 " << isNotFound
+            << ", i32 " << *notFoundTag << ", i32 " << *otherTag << "\n"
+            << "  " << isPermissionDenied << " = icmp eq i32 " << errorKind << ", "
+            << JOYEER_IO_ERROR_PERMISSION_DENIED << "\n"
+            << "  " << afterPermissionDenied << " = select i1 "
+            << isPermissionDenied << ", i32 " << *permissionDeniedTag
+            << ", i32 " << afterNotFound << "\n"
+            << "  " << isInvalidPath << " = icmp eq i32 " << errorKind << ", "
+            << JOYEER_IO_ERROR_INVALID_PATH << "\n"
+            << "  " << selectedErrorTag << " = select i1 " << isInvalidPath
+            << ", i32 " << *invalidPathTag << ", i32 "
+            << afterPermissionDenied << "\n";
+
+        const auto nestedErrorStorage = temporary();
+        const auto nestedErrorTagAddress = temporary();
+        const auto nestedErrorPayloadAddress = temporary();
+        const auto errorCode = temporary();
+        const auto nestedErrorValue = temporary();
+        out << "  " << nestedErrorStorage << " = alloca " << *errorTypeText << "\n"
+            << "  store " << *errorTypeText << " zeroinitializer, ptr "
+            << nestedErrorStorage << "\n"
+            << "  " << nestedErrorTagAddress << " = getelementptr inbounds "
+            << *errorTypeText << ", ptr " << nestedErrorStorage
+            << ", i32 0, i32 0\n"
+            << "  store i32 " << selectedErrorTag << ", ptr "
+            << nestedErrorTagAddress << "\n"
+            << "  " << nestedErrorPayloadAddress << " = getelementptr inbounds "
+            << *errorTypeText << ", ptr " << nestedErrorStorage
+            << ", i32 0, i32 1, i32 0\n"
+            << "  " << errorCode << " = load i64, ptr " << errorCodeAddress << "\n"
+            << "  store i64 " << errorCode << ", ptr "
+            << nestedErrorPayloadAddress << "\n"
+            << "  " << nestedErrorValue << " = load " << *errorTypeText
+            << ", ptr " << nestedErrorStorage << "\n"
+            << "  store " << *errorTypeText << ' ' << nestedErrorValue
+            << ", ptr " << payloadAddress << "\n"
+            << "  br label %" << doneLabel << "\n"
+            << doneLabel << ":\n"
             << "  " << valueName(instruction.result->id) << " = load "
             << *resultType << ", ptr " << storage << "\n";
         return true;

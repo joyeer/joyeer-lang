@@ -57,6 +57,7 @@ public:
     [[nodiscard]] TypeId boolType() const;
     [[nodiscard]] TypeId stringType() const;
     [[nodiscard]] TypeId uint8Type() const;
+    [[nodiscard]] TypeId ioErrorType() const;
 
     [[nodiscard]] TypeId arrayType(TypeId element);
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
@@ -118,6 +119,7 @@ private:
     TypeId boolTypeId = invalidTypeId;
     TypeId stringTypeId = invalidTypeId;
     TypeId uint8TypeId = invalidTypeId;
+    TypeId ioErrorTypeId = invalidTypeId;
 };
 
 struct TypedCallableSignature {

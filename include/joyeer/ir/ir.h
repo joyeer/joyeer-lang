@@ -74,6 +74,7 @@ enum class Opcode {
     extractField,
     constructEnum,
     extractPayload,
+    stringUtf8,
     count,
     subscript,
     subscriptAddress,

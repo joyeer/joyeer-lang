@@ -2,9 +2,10 @@
 
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
 > Clang validates it, generates machine code, and links native executables.
-> Deterministic cleanup and whole-binding `consuming` transfer work for the
-> current heap-backed value surface; the broader source-level ownership
-> language remains experimental.
+> Ordinary copies, deterministic cleanup, overwrite ordering, and
+> whole-binding `consuming` transfer work for the current heap-backed value
+> surface. User-defined `deinit` and explicit copy initializers are outside the
+> implemented v0.1 surface.
 
 ---
 
@@ -120,7 +121,7 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 - checked `Int` add/subtract/multiply;
 - scalar and string printing;
 - string concatenation, equality, ordering, byte indexing, deep clone, and
-  destroy;
+  destroy, plus owned UTF-8 byte-array extraction;
 - explicit byte-to-integer conversion and owned single-byte string creation;
 - array construction, checked indexing, mutable element projection,
   ownership-transferring append/growth, recursive clone, and reverse-order
@@ -166,20 +167,23 @@ value without changing `count`.
 The v0.1 prelude exposes:
 
 ```joyeer
-readFile(path: String): Result<String, Int>
+readFile(path: String): Result<String, IOError>
 ```
 
 `Ok` contains an owned byte-preserving `String`, including embedded NUL bytes;
-normal ownership cleanup destroys it. `Err` contains a nonzero platform C I/O
-error code. Callers handle both cases with exhaustive `match` because postfix
-propagation is outside the v0.1 surface.
+normal ownership cleanup destroys it. `Err` contains `.NotFound(code)`,
+`.PermissionDenied(code)`, `.InvalidPath(code)`, or `.Other(code)`. Categories
+are stable across platforms; each payload preserves the nonzero platform C I/O
+error code. Callers handle both enum layers with exhaustive `match` because
+postfix propagation is outside the v0.1 surface.
 
-LLVM passes the path as pointer/count and passes separate result tag and
-payload pointers to `joyeer_read_file_abi`. It also supplies the concrete
-`Ok`/`Err` tags, so the runtime does not hard-code frontend case ordering or
-pass a tagged aggregate by value. Embedded NUL bytes in a path return an error.
-Windows paths currently use the active narrow-character CRT encoding; a future
-Unicode path API belongs to broader standard-library design.
+LLVM passes the path as pointer/count and separate owned-string/error-code out
+pointers to `joyeer_read_file_abi`. The runtime returns a stable C ABI error
+category. LLVM then constructs the concrete `IOError` and `Result` tags, so the
+runtime does not depend on frontend case ordering or target aggregate layout.
+Embedded NUL bytes in a path produce `InvalidPath`. Windows paths currently
+use the active narrow-character CRT encoding; a future Unicode path API belongs
+to broader standard-library design.
 
 ---
 
@@ -187,6 +191,9 @@ Unicode path API belongs to broader standard-library design.
 
 The native path is an MVP, not the final zero-cost implementation:
 
+- copy/destroy helpers cover compiler-known heap-backed values and recursive
+  aggregates; user-defined `deinit`, noncopyable user types, and explicit copy
+  initializers are not implemented;
 - all four parameter effects are accepted; `consuming` supports owning locals,
   consuming parameters, temporaries, and field/subscript projections, while
   `initializing` supports whole mutable local/forwarded storage. Call-site
@@ -202,8 +209,8 @@ The native path is an MVP, not the final zero-cost implementation:
   full lexical-scope/variable/type metadata with DWARF 4 or CodeView module
   flags; compiler-generated cleanup/plumbing is suppressed from line rows;
 - `print` supports primitive and string values, not arbitrary aggregates;
-- file input is synchronous and whole-file only; streaming, writing, metadata,
-  and a typed I/O error enum are not provided;
+- file input is synchronous and whole-file only; streaming, writing, and
+  metadata are not provided;
 These gaps must be addressed in Joyeer IR, LLVM lowering, or the native runtime
 without creating a second execution pipeline.
 

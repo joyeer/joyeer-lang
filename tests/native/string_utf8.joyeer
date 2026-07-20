@@ -1,0 +1,18 @@
+func main() {
+    let text = "Joy"
+    var bytes = text.utf8()
+    &bytes[0] = b'B'
+
+    print(value: text)
+    print(value: bytes.count)
+    print(value: byteToInt(value: bytes[0]))
+    print(value: byteToInt(value: bytes[1]))
+    print(value: byteToInt(value: bytes[2]))
+    print(value: "".utf8().count)
+
+    let unicode = "hé".utf8()
+    print(value: unicode.count)
+    print(value: byteToInt(value: unicode[0]))
+    print(value: byteToInt(value: unicode[1]))
+    print(value: byteToInt(value: unicode[2]))
+}

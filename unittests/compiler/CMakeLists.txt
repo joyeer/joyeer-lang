@@ -550,7 +550,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/ownership.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-ownership${CMAKE_EXECUTABLE_SUFFIX}
-                    -DEXPECTED_OUTPUT=left!\nleft!\nbeta\nvalue\n
+                    -DEXPECTED_OUTPUT=left!\nleft!\nbeta\nvalue\nsame\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableOwnership PROPERTIES
@@ -586,7 +586,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/read_file.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-read-file${CMAKE_EXECUTABLE_SUFFIX}
-                    "-DEXPECTED_OUTPUT=file contents\ntrue\n"
+                    "-DEXPECTED_OUTPUT=file contents\nnot found\ntrue\n"
                     -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/native
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
@@ -628,6 +628,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
     set_tests_properties(NativeExecutableByteConversion PROPERTIES
             LABELS "native;llvm-backend;native-runtime;ownership;byte-conversion"
+    )
+
+    add_test(NAME NativeExecutableStringUtf8
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/string_utf8.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-string-utf8${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=Joy\n3\n66\n111\n121\n0\n3\n104\n195\n169\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableStringUtf8 PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;string;utf8"
     )
 
     add_test(NAME NativeExecutableJsonParser

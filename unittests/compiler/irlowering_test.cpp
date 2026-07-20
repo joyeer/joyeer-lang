@@ -267,6 +267,46 @@ return current
     EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, AcquiresOwnedReplacementBeforeDestroyingOverwrittenStorage) {
+    lower(R"JOYEER(func run() {
+var text = "before"
+text = text
+print(value: text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& instructions = function("run").blocks[0].instructions;
+    const auto initialStore = std::find_if(
+            instructions.begin(),
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::store;
+            });
+    ASSERT_NE(initialStore, instructions.end());
+    const auto replacementCopy = std::find_if(
+            initialStore + 1,
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::copyValue;
+            });
+    ASSERT_NE(replacementCopy, instructions.end());
+    const auto overwrittenDestroy = std::find_if(
+            replacementCopy + 1,
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::destroy;
+            });
+    ASSERT_NE(overwrittenDestroy, instructions.end());
+    const auto replacementStore = std::find_if(
+            overwrittenDestroy + 1,
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::store;
+            });
+    EXPECT_NE(replacementStore, instructions.end());
+}
+
 TEST_F(IRLoweringTest, LowersDeferredInitializationForTrivialAndOwnedStorage) {
     lower(R"JOYEER(func run(flag: Bool): String {
 var number: Int
@@ -310,7 +350,7 @@ print(value: number)
 }
 
 TEST_F(IRLoweringTest, LowersReadFileAsAnOwnedExternalResult) {
-    lower(R"JOYEER(func load(path: String): Result<String, Int> {
+    lower(R"JOYEER(func load(path: String): Result<String, IOError> {
 return readFile(path: path)
 }
 )JOYEER");
@@ -329,6 +369,31 @@ return readFile(path: path)
     EXPECT_EQ(
             result.module->types[readFile.resultType].kind,
             joyeer::typing::TypeKind::result);
+    const auto& resultType = result.module->types[readFile.resultType];
+    ASSERT_EQ(resultType.arguments.size(), 2u);
+    const auto errorType = resultType.arguments[1];
+    EXPECT_EQ(
+            result.module->types[errorType].kind,
+            joyeer::typing::TypeKind::enumeration);
+    const auto errorEnumeration = std::find_if(
+            result.module->enumerations.begin(),
+            result.module->enumerations.end(),
+            [errorType](const auto& enumeration) {
+                return enumeration.type == errorType;
+            });
+    ASSERT_NE(errorEnumeration, result.module->enumerations.end());
+    ASSERT_EQ(errorEnumeration->cases.size(), 4u);
+    const auto integerType = std::find_if(
+            result.module->types.begin(),
+            result.module->types.end(),
+            [](const auto& type) {
+                return type.kind == joyeer::typing::TypeKind::integer;
+            });
+    ASSERT_NE(integerType, result.module->types.end());
+    for (const auto& enumCase : errorEnumeration->cases) {
+        ASSERT_EQ(enumCase.payloadTypes.size(), 1u);
+        EXPECT_EQ(enumCase.payloadTypes[0], integerType->id);
+    }
     EXPECT_EQ(opcodeCount(function("load"), joyeer::ir::Opcode::call), 1u);
 }
 
@@ -503,6 +568,20 @@ return text[0]
     const auto& first = function("first");
     EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::count), 1u);
     EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::subscript), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersStringUtf8ToOwnedByteArray) {
+    lower(R"JOYEER(func bytes(text: String): [UInt8] {
+return text.utf8()
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& bytes = function("bytes");
+    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::stringUtf8), 1u);
+    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::returnValue), 1u);
 }
 
 TEST_F(IRLoweringTest, LowersArrayAndDictionaryLiteralsWithStructuredTypes) {

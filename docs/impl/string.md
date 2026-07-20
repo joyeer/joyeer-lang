@@ -1,8 +1,9 @@
 # String Implementation
 
 > **Status:** The native v0.1 string representation, ownership operations,
-> comparisons, byte indexing, concatenation, printing, and file-input path are
-> implemented. `utf8()` and broader formatting remain future work.
+> comparisons, byte indexing, owned `utf8()` byte arrays, concatenation,
+> printing, and file-input path are implemented. Broader formatting remains
+> future work.
 
 ## Representation
 
@@ -46,7 +47,9 @@ The current surface includes:
 - concatenation, equality, and ordering;
 - `print(value:)`;
 - explicit `byteToInt(value:)` and `byteToString(value:)` conversions;
-- `readFile(path:) -> Result<String, Int>`;
+- `String.utf8() -> [UInt8]`, producing an independent owned byte array;
+- `readFile(path:) -> Result<String, IOError>` with stable categories and the
+  original platform code;
 - recursive storage inside structs, enums, arrays, and dictionaries.
 
 Byte indexing is deliberate: Joyeer does not currently claim Unicode scalar or
@@ -65,7 +68,7 @@ standard library rather than the core string layout.
 
 ## Remaining work
 
-- `utf8()` and an explicit zero-copy/read-only byte-view design;
+- an explicit scoped zero-copy/read-only byte-view design;
 - Unicode scalar/grapheme APIs;
 - formatting and aggregate printing;
 - small-string or other layout optimization after the value-copy model is

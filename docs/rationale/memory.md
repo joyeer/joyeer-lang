@@ -20,7 +20,7 @@ Opt-in tools (regions, raw pointers, `unsafe`) cover the rest.
 
 | Piece | Defined in |
 |---|---|
-| Value semantics by default, stack allocation | this doc §1 |
+| Value semantics and explicit ownership | this doc §1 |
 | Deterministic destruction via `deinit` (RAII) | this doc §2 |
 | Region allocator (opt-in for bulk patterns) | this doc §3 |
 | Escape analysis (transparent optimization) | this doc §4 |
@@ -29,24 +29,26 @@ Opt-in tools (regions, raw pointers, `unsafe`) cover the rest.
 | **No** GC | [runtime-overhead.md](runtime-overhead.md) §1 |
 | **No** ARC / refcounting | [runtime-overhead.md](runtime-overhead.md) §3.2 |
 | **No** first-class references (`&T`) | [parameter-passing.md](parameter-passing.md) |
-| **No** hidden allocations | [runtime-overhead.md](runtime-overhead.md) §3.2 |
+| **No** work unrelated to the specified operation | [runtime-overhead.md](runtime-overhead.md) §3.2 |
 
 ---
 
-## 1. Value Semantics by Default (Stack-allocated, Zero Overhead)
+## 1. Value Semantics by Default
 
-All types are value types by default, allocated on the stack with copy or move
-semantics.
+All types have value semantics. Ordinary initialization and assignment copy
+the value and leave the source initialized; an explicit consuming boundary
+transfers ownership.
 
 ```
 let a = Vec3(1, 2, 3)    // stack-allocated
-var b = a                 // move (last use of a) — no copy
-                          // or copy if a is used again later
+var b = a                 // semantic copy; a remains usable
 ```
 
-Heap allocation is **never implicit**. To put something on the heap, the
-programmer uses an explicit container (`Box<T>`, region allocator, or a stdlib
-type like `Array<T>` that allocates internally).
+Scalar and fixed-layout aggregate storage is stack-allocated by default.
+Heap-owning standard-library values such as `String`, `Array`, and `Dict`
+allocate as part of construction, concatenation, growth, or copying. The
+source operation and concrete type make that cost predictable; Joyeer does not
+insert allocations unrelated to the operation's specified value semantics.
 
 ## 2. Deterministic Destruction (RAII)
 
@@ -195,62 +197,40 @@ rejects ARC for.
 
 ---
 
-## Open Discussion: Implicit move/copy Hides Performance Behavior
+## Decision: Predictable Copies and Explicit Consumption
 
-> **Status: unresolved objection.** This records a concern about a *committed*
-> decision (spec §4.1, §4.6); it is not yet a change to the spec.
+> **Status: resolved 2026-07-20.** Ordinary initialization and assignment keep
+> value semantics; `consume` remains the only source-visible ownership
+> transfer across a call boundary.
 
-### The objection
+`var b = a` is a copy operation. After it completes, `a` and `b` are
+independent and `a` remains initialized. For v0.1 heap-backed values, that
+means an eager recursive clone into uniquely owned storage. Joyeer does not
+use copy-on-write or reference counting to make the operation appear cheaper.
 
-Spec §4.1 says assignment is *semantically* a copy, and §4.6 lets the compiler
-silently lower it to a **move**, a **copy-on-write**, or an **in-place reuse**
-based on last-use analysis. The programmer cannot see, at the assignment site,
-whether `var b = a` is an O(1) move or an O(n) deep copy:
+This makes the conservative cost visible from the operation and type: copying
+a heap-backed value can be O(n) and can allocate. An already-owned temporary
+can transfer directly into its destination. A compiler may also elide a copy
+under the as-if rule, but that optimization cannot turn ordinary assignment
+into a source-level consume or make later use of the source invalid.
+
+The explicit marker still carries the important semantic distinction:
 
 ```joyeer
-var b = a     // move? copy? COW? — invisible at the use site
+let copy = value                    // value remains initialized
+store(value: consume value)         // value becomes uninitialized
 ```
 
-For a language that aims to **replace C++** and advertises a *zero-hidden-cost*
-contract ([runtime-overhead.md](runtime-overhead.md) "no hidden work"), an
-invisible O(n)-vs-O(1) performance cliff is a real wart. You cannot review or
-grep for "where do copies happen?"
+Types with custom `deinit` are noncopyable by default. Synthesizing a
+fieldwise copy could make two values release the same resource, so such a type
+must move through consuming paths until a future explicit copy-initializer
+design lets it define an independent copy. Structs and enums without custom
+destruction are recursively copyable only when all stored values are
+copyable.
 
-### Why this is also an *internal inconsistency*
-
-The spec already commits to the opposite principle everywhere else:
-
-- §4.3 **Decision**: `consume x` and `&x` are **mandatory, always-
-  visible** call-site markers, precisely so that ownership transfer and
-  mutation are "trivially greppable" and there is no "did the compiler move or
-  copy here?" ambiguity.
-
-Yet plain assignment `b = a` reintroduces exactly that ambiguity — the one
-§4.3 went out of its way to forbid. The two rules are in tension: ownership
-transfer through a *parameter* is explicit, but ownership transfer (or
-duplication) through an *assignment* is implicit.
-
-### Candidate directions (not decided)
-
-| Direction | Idea | Cost |
-|---|---|---|
-| **1. Make copies explicit** | A true copy of a heap-backed value requires `a.copy()` / `clone a`; a bare `b = a` is **always a move** (last-use not required), and using `a` afterward is a compile error — Rust-like, but consistent with §4.3's "explicit transfer". | More keystrokes; breaks the "value semantics by default" simplicity claim |
-| **2. Make the choice visible, keep it cheap** | Keep last-use move elision, but require a marker (e.g. `copy a`) wherever the compiler would otherwise emit a real copy; flag implicit copies as a warning/lint. | Compiler must surface its decision; some annotation churn |
-| **3. Keep implicit, add tooling** | Leave §4.1/§4.6 as-is but mandate editor/CLI surfacing of every materialized copy (cost annotations), so the behavior is *discoverable* even if not *syntactic*. | Relies on tooling, not the language; weakest guarantee |
-| **4. Status quo** | Accept implicit lowering; document that value semantics is the contract and performance is a compiler-quality matter. | The current wart stands |
-
-Direction **1** is the most consistent with §4.3's philosophy (explicit,
-greppable ownership), at the price of the "copy is the default mental model"
-ergonomics. Direction **2** is a middle ground.
-
-### Spec work this would require (when picked up)
-
-- Revisit spec §4.1 (assignment semantics) and §4.6 (last-use optimization) to
-  decide whether move/copy must be **syntactically visible**.
-- If yes, define the copy marker (`copy a` / `a.copy()`) and the rule that bare
-  assignment is a move, aligning with the §4.3 call-site marker philosophy.
-- Update [runtime-overhead.md](runtime-overhead.md) "no hidden work" to state
-  explicitly whether implicit copies count as "hidden work."
+Tooling may later report materialized copies for performance review, but
+correctness and ownership do not depend on that tooling. The normative rules
+are in spec §4.1 and §4.6.
 
 ---
 

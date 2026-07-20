@@ -32,9 +32,9 @@ file, before any declaration.
 The standard library implicitly imports the following into every file:
 
 - `Bool`, `Int`, `UInt`, `Float`, `Double`, `Char`, `String`, `Void`, `Never`
-- `Optional`, `Result`
+- `Optional`, `Result`, `IOError`
 - `Array`, `Dict`, `Tuple`
-- `print`, `assert`, `precondition`, `fatalError`
+- `print`, `readFile`, `assert`, `precondition`, `fatalError`
 
 The names `Display`, `Equatable`, `Comparable` are reserved for a future
 protocol system (§15) but are **not** usable as constraints or conformances

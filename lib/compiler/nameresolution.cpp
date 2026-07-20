@@ -382,10 +382,18 @@ private:
         const auto dictionaryType = declareBuiltinType("Dict");
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
+        const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
+        CallableSignature utf8Signature { CallableKind::function, true, {} };
+        declareBuiltinMember(
+            stringType,
+            SymbolKind::builtinMember,
+            "utf8",
+            arrayType,
+            std::move(utf8Signature));
         CallableSignature appendSignature {
             CallableKind::function,
             true,
@@ -435,6 +443,28 @@ private:
                 "Err",
                 resultType,
                 singlePayload);
+
+        CallableSignature ioErrorCase {
+            CallableKind::enumCase,
+            true,
+            { CallableParameter {
+                std::nullopt,
+                true,
+                std::nullopt,
+                std::nullopt,
+                intType,
+            } },
+        };
+        for (const auto* name : {
+                 "NotFound", "PermissionDenied", "InvalidPath", "Other",
+             }) {
+            declareBuiltinMember(
+                    ioErrorType,
+                    SymbolKind::builtinEnumCase,
+                    name,
+                    ioErrorType,
+                    ioErrorCase);
+        }
 
         CallableSignature printSignature {
             CallableKind::function,

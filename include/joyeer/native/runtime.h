@@ -39,6 +39,14 @@ enum JoyeerDictionaryKeyKind {
     JOYEER_DICTIONARY_KEY_BYTE = 4,
 };
 
+enum JoyeerIOErrorKind {
+    JOYEER_IO_ERROR_NONE = 0,
+    JOYEER_IO_ERROR_NOT_FOUND = 1,
+    JOYEER_IO_ERROR_PERMISSION_DENIED = 2,
+    JOYEER_IO_ERROR_INVALID_PATH = 3,
+    JOYEER_IO_ERROR_OTHER = 4,
+};
+
 JOYEER_NORETURN void joyeer_panic(const char* message);
 int64_t joyeer_runtime_active_allocations(void);
 
@@ -140,14 +148,13 @@ int64_t joyeer_string_compare_abi(
 uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
 void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value);
 
-// Writes Result<String, Int> through separate tag/payload pointers. The
-// compiler supplies concrete Ok/Err tags so the runtime does not depend on
-// frontend enum-case ordering or target aggregate calling conventions.
-void joyeer_read_file_abi(
-    int32_t* resultTag,
-    void* resultPayload,
-    int32_t okTag,
-    int32_t errorTag,
+// Returns a stable JoyeerIOErrorKind and writes either an owned String or the
+// original platform error code. The compiler constructs Result<String,
+// IOError>, so this ABI does not depend on frontend enum tags or aggregate
+// layout.
+int32_t joyeer_read_file_abi(
+    JoyeerString* result,
+    int64_t* errorCode,
     const uint8_t* pathData,
     int64_t pathCount);
 

@@ -563,4 +563,53 @@ TEST(IRModelTest, RejectsDestroyingTrivialOrNonAddressValues) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch));
 }
 
+TEST(IRModelTest, VerifiesStringUtf8ProducesAByteArray) {
+    Module module;
+    module.sourceName = "utf8.joyeer";
+    module.types = {
+        TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
+        TypeName { 1, "String", joyeer::typing::TypeKind::string },
+        TypeName { 2, "UInt8", joyeer::typing::TypeKind::uint8 },
+        TypeName {
+            3,
+            "[UInt8]",
+            joyeer::typing::TypeKind::array,
+            joyeer::semantic::invalidSymbolId,
+            { 2 },
+        },
+    };
+    Function function;
+    function.id = 0;
+    function.name = "bytes";
+    function.parameters = {
+        Parameter { Value { 0, 1, ValueCategory::value }, std::nullopt, "text" },
+    };
+    function.resultType = 3;
+    function.returnsValue = true;
+    function.entry = 0;
+    function.blocks = {
+        BasicBlock {
+            0,
+            "entry",
+            {
+                Instruction {
+                    Opcode::stringUtf8,
+                    Value { 1, 3, ValueCategory::value },
+                    { 0 },
+                },
+                Instruction { Opcode::returnValue, std::nullopt, { 1 } },
+            },
+        },
+    };
+    module.functions.push_back(std::move(function));
+
+    const auto valid = Verifier().verify(module);
+    ASSERT_TRUE(valid.succeeded()) << dump(valid);
+    EXPECT_NE(dump(module).find("string_utf8 %0"), std::string::npos);
+
+    module.functions[0].blocks[0].instructions[0].result->type = 1;
+    const auto invalid = Verifier().verify(module);
+    EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
+}
+
 } // namespace

@@ -37,6 +37,7 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerConcreteBuiltin("Bool", TypeKind::boolean, boolTypeId);
     registerConcreteBuiltin("String", TypeKind::string, stringTypeId);
     registerConcreteBuiltin("UInt8", TypeKind::uint8, uint8TypeId);
+    registerConcreteBuiltin("IOError", TypeKind::enumeration, ioErrorTypeId);
 
     registerGenericBuiltin("Array", TypeKind::array, 1);
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
@@ -74,6 +75,10 @@ TypeId TypeContext::stringType() const {
 
 TypeId TypeContext::uint8Type() const {
     return uint8TypeId;
+}
+
+TypeId TypeContext::ioErrorType() const {
+    return ioErrorTypeId;
 }
 
 TypeId TypeContext::arrayType(TypeId element) {
@@ -409,7 +414,7 @@ private:
         if (readFile != prelude->values.end()) {
             const auto result = model->typeContext.resultType(
                     model->typeContext.stringType(),
-                    model->typeContext.intType());
+                    model->typeContext.ioErrorType());
             model->symbolTypes[readFile->second] = result;
             model->callables[readFile->second] = TypedCallableSignature {
                 semantic::CallableKind::function,
@@ -435,10 +440,20 @@ private:
         }
 
         for (const auto& symbol : model->semanticModelValue->symbols()) {
-            if (symbol.kind != semantic::SymbolKind::builtinMember ||
-                !symbol.declaredType.has_value()) {
+            if (symbol.kind != semantic::SymbolKind::builtinMember) continue;
+            if (symbol.name == "utf8" && symbol.callable.has_value()) {
+                const auto result = model->typeContext.arrayType(
+                        model->typeContext.uint8Type());
+                model->symbolTypes[symbol.id] = result;
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    {},
+                    result,
+                };
                 continue;
             }
+            if (!symbol.declaredType.has_value()) continue;
             const auto type = model->typeContext.typeForSymbol(*symbol.declaredType);
             if (type.has_value()) model->symbolTypes[symbol.id] = *type;
             if (symbol.name == "append" && symbol.callable.has_value()) {
@@ -1835,6 +1850,13 @@ private:
             signature.parameters.push_back(type->arguments[0]);
         } else if (type->kind == TypeKind::result && symbol->name == "Err") {
             signature.parameters.push_back(type->arguments[1]);
+        } else if (type->kind == TypeKind::enumeration) {
+            for (const auto& parameter : symbol->callable->parameters) {
+                if (!parameter.type.has_value()) return std::nullopt;
+                const auto payload = model->typeContext.typeForSymbol(*parameter.type);
+                if (!payload.has_value()) return std::nullopt;
+                signature.parameters.push_back(*payload);
+            }
         } else if (type->kind != TypeKind::optional && type->kind != TypeKind::result) {
             return std::nullopt;
         }

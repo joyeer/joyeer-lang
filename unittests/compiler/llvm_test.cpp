@@ -374,6 +374,23 @@ return values[0] + lookup["answer"]
     EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, EmitsStringUtf8AsOwnedByteArray) {
+    emit(R"JOYEER(func bytes(text: String): [UInt8] {
+return text.utf8()
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(
+            result.text.find(
+                    "declare void @joyeer_array_create_owned_abi(ptr, ptr, i64, i64, ptr, ptr)"),
+            std::string::npos);
+    EXPECT_NE(result.text.find("extractvalue %joyeer.string"), std::string::npos);
+    EXPECT_NE(
+            result.text.find("i64 1, ptr null, ptr null)"),
+            std::string::npos);
+}
+
 TEST_F(LLVMBackendTest, EmitsMutatingArrayAppendRuntimeAbi) {
     emit(R"JOYEER(func build(): [String] {
 var values: [String] = []
@@ -430,8 +447,8 @@ return text
             std::string::npos);
 }
 
-        TEST_F(LLVMBackendTest, EmitsReadFileThroughTagAndPayloadOutPointers) {
-            emit(R"JOYEER(func load(path: String): Result<String, Int> {
+        TEST_F(LLVMBackendTest, EmitsTypedReadFileResultFromLayoutIndependentABI) {
+            emit(R"JOYEER(func load(path: String): Result<String, IOError> {
         return readFile(path: path)
         }
         )JOYEER");
@@ -439,11 +456,14 @@ return text
             ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
             EXPECT_NE(
                 result.text.find(
-                    "declare void @joyeer_read_file_abi(ptr, ptr, i32, i32, ptr, i64)"),
+                    "declare i32 @joyeer_read_file_abi(ptr, ptr, ptr, i64)"),
                 std::string::npos);
             EXPECT_NE(
-                result.text.find("call void @joyeer_read_file_abi(ptr"),
+                result.text.find("call i32 @joyeer_read_file_abi(ptr"),
                 std::string::npos);
+            EXPECT_NE(result.text.find("readfile.ok."), std::string::npos);
+            EXPECT_NE(result.text.find("readfile.error."), std::string::npos);
+            EXPECT_NE(result.text.find("select i1"), std::string::npos);
             EXPECT_NE(result.text.find("getelementptr inbounds %joyeer.enum."),
                   std::string::npos);
             EXPECT_NE(result.text.find("store %joyeer.enum."), std::string::npos);

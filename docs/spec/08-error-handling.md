@@ -23,6 +23,26 @@ func parseInt(s: String): Result<Int, ParseError> {
 }
 ```
 
+#### 8.2.1 Typed I/O errors
+
+The prelude defines a stable error enum for file operations:
+
+```joyeer
+enum IOError {
+  NotFound(Int),
+  PermissionDenied(Int),
+  InvalidPath(Int),
+  Other(Int),
+}
+
+func readFile(path: String): Result<String, IOError>
+```
+
+The case identifies a portable category. Its `Int` payload preserves the
+nonzero platform error code for diagnostics; programs must branch on the case,
+not on a particular numeric value. Embedded NUL paths are `InvalidPath`.
+Unclassified open, read, size, or close failures are `Other`.
+
 ### 8.3 `?` propagation 📌
 
 > **📌 Decision.** *Postfix `?` on `Result<T,E>` (and `Optional<T>`)

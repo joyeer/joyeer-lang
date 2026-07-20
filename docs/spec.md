@@ -42,6 +42,16 @@ chapter file below.
 
 ## Appendix: change log
 
+- **2026-07-20** — Fixed the heap-value ownership contract. Ordinary binding
+  initialization and assignment are semantic copies backed by unique storage;
+  owned temporaries transfer directly, copy elision follows the as-if rule,
+  and overwrite acquires the replacement before destroying the old value.
+  Types with custom `deinit` are noncopyable by default (§4.1, §4.6, §4.7),
+  superseding the earlier description of last-use movement as a source-level
+  effect. Added typed file errors: `readFile` now returns
+  `Result<String, IOError>` with stable categories and preserved platform
+  codes (§8.2.1). Defined `String.utf8()` as an independent owned `[UInt8]`
+  copy rather than an escaping zero-copy view (§2.1.1).
 - **2026-07-18** — Synchronized §14 with the native-only implementation:
   `class` is reserved and rejected in v0.1; the retired parser/VM compatibility
   behavior is no longer part of the implementation contract.
@@ -110,7 +120,7 @@ chapter file below.
   references/projections with subscript `yield` as the in-place substitute
   (§4.10.3), and `Result` / `Optional` / `Never` results (§4.10.4). Linked from
   §3.2.2.
-- **2026-06-23b** — Clarified ownership vocabulary. Added §4.1.1 (Ownership
+- **2026-06-23b** — Clarified ownership vocabulary. Added §4.1.2 (Ownership
   state vs. access effect): "owned" is a **state** (responsible for `deinit`),
   while `consuming` is the only **effect** that transfers it — `borrowing` /
   `inout` / `initializing` are projections that leave ownership with the

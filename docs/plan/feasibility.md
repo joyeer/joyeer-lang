@@ -4,7 +4,8 @@
 > that are easy to conflate:
 >
 > 1. **Is the design theoretically/engineering-wise possible?** — mostly *yes*.
-> 2. **Is the v0.1 implementation there yet?** — mostly *no* (see
+> 2. **Is the v0.1 implementation there yet?** — the scoped native JSON-parser
+>    acceptance target is complete; the broader future language is not (see
 >    [v0.1.md](v0.1.md) and [roadmap.md](roadmap.md)).
 >
 > This document answers **(1)**. It records the current conclusion so we can
@@ -64,10 +65,11 @@ A conservative checker is the *easiest* to implement; the open question is
 whether it is *pleasant enough* to use.
 
 This is a **tunable parameter, not a yes/no problem**. Rust itself evolved from
-"borrow checking is annoying" to NLL to Polonius. Joyeer can ship coarse and
-refine later (add NLL, finer alias analysis). Recommended: **prototype a
-minimal exclusivity checker early** and stress-test it on real code (JSON
-parser, quicksort) before locking the spec.
+"borrow checking is annoying" to NLL to Polonius. Joyeer now has the minimal
+checker: it enforces call-site and argument-evaluation exclusivity for the
+v0.1 non-escaping projection surface, with direct diagnostics tests and the
+native JSON parser as an integration workload. Longer-lived `yield`
+projections and broader ergonomic stress cases remain future work.
 
 ### 2.2 Index-alias safety — *solvable, known answer*
 
@@ -147,11 +149,15 @@ feature**.
 
 ## Open items (to revisit later)
 
-- [ ] Prototype a minimal exclusivity checker; stress-test ergonomics (§2.1).
+- [x] Prototype the minimal v0.1 exclusivity checker and validate call-site and
+  argument-evaluation conflicts (§2.1).
+- [ ] Stress-test exclusivity ergonomics on broader mutation-heavy workloads
+  before adding longer-lived projections (§2.1).
 - [ ] Design the checked `Handle<T>` / arena abstraction for index-alias
       safety, or document the unsafe boundary explicitly (§2.2).
 - [ ] Decide the layered-verification commitment and reflect it in
       [../rationale/ai-era-design.md](../rationale/ai-era-design.md) and
       [../spec/09-contracts.md](../spec/09-contracts.md) (§2.3, §4).
-- [ ] Resolve build-dependent semantics (integer-overflow wrap on release,
-      `assert` elision) that conflict with the safety positioning.
+- [x] Make integer overflow trap in every build mode.
+- [ ] Decide whether optimized builds may elide `assert` without weakening the
+  safety positioning.

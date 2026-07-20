@@ -38,8 +38,13 @@ let b: UInt8 = s[0]   // 0x68 ('h'), O(1)
 |----------|--------|------|-------|
 | `s[i]` | `UInt8` | O(1) | byte at offset `i`; traps if out of range |
 | `s.count` | `Int` | O(1) | number of **bytes** |
-| `s.utf8()` | `[UInt8]` view | O(1) | the underlying bytes |
+| `s.utf8()` | `[UInt8]` | O(n) | independent owned copy of the bytes |
 | `s.chars()` 🔬 | iterator of `Char` | O(n) | decodes Unicode scalars; v0.2 |
+
+`utf8()` returns an ordinary owned `Array<UInt8>`. Mutating that array does
+not mutate the source string, and the array remains valid after the source is
+destroyed. A zero-copy byte view would require a scoped non-escaping projection
+type; v0.1 does not expose one as a first-class value (§4.8).
 
 For ASCII-oriented work (parsing JSON, tokenizing source, protocol framing)
 byte indexing is exactly what is wanted: ASCII structural characters compare

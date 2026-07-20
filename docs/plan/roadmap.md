@@ -31,7 +31,7 @@ runtime, VM, golden corpus, and language-mode CLI options were removed in July
 | Joyeer IR | verified CFG, aggregates, ownership operations, source/debug scopes | `lib/compiler/irlowering.cpp`, `lib/ir/ir.cpp` |
 | LLVM backend | textual LLVM IR, checked operations, ownership helpers, debug metadata | `lib/backend/llvm.cpp` |
 | Native linking | explicit `-O0` through `-O3`, artifact collision policy | `lib/backend/linker.cpp` |
-| Native runtime | strings, arrays, dictionaries, file input, checked arithmetic, allocation balance | `lib/native/runtime.c` |
+| Native runtime | strings, owned UTF-8 byte arrays, collections, typed file input, checked arithmetic, allocation balance | `lib/native/runtime.c` |
 | Diagnostics | stable stage IDs, excerpts, fix-its, help, secondary notes | `lib/diagnostic/diagnostic.cpp` |
 
 The complete JSON parser fixture builds and runs natively with recursive value
@@ -47,19 +47,22 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 - Compiler tests do not link a VM or obsolete runtime.
 - The legacy source directories, tests, and documentation were removed.
 - Unfiltered CTest is safe and is the required final gate.
+- The v0.1 heap-value ownership baseline is fixed: ordinary copies recursively
+  clone unique storage, owned temporaries transfer directly, overwrite acquires
+  the replacement before destroying the old value, and `consume` is the only
+  source-visible ownership transfer across a call.
 
 ## Next milestones
 
-1. Reconcile remaining normative memory-model questions around copying,
-   deinitialization, and heap-backed value representation before expanding the
-   language surface.
-2. Broaden the standard library beyond the JSON-parser acceptance surface,
-   with typed I/O errors and incremental/streaming APIs.
-3. Define a Joyeer-specific optimization and LTO policy while preserving
+1. Broaden the standard library beyond the typed whole-file I/O surface with
+  incremental/streaming APIs, writing, metadata, and Unicode paths.
+2. Define a Joyeer-specific optimization and LTO policy while preserving
    checked arithmetic, bounds, ownership, and debug semantics.
-4. Expand modules, generics, error propagation, and contracts only after their
+3. Expand modules, generics, error propagation, and contracts only after their
    syntax/semantic ownership is specified and tested end to end.
-5. Improve debugger inspection for optimized values and aggregate projections.
+4. Improve debugger inspection for optimized values and aggregate projections.
+5. Design user-defined destruction and explicit copy initialization without
+  weakening the noncopyable-by-default rule for resource-owning values.
 
 ## Validation
 

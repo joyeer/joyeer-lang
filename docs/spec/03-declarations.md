@@ -100,7 +100,7 @@ future version (§15).
 |-----------------|-------------|----------------|-------------------|
 | `borrowing` (default) | `func peek(): UInt8` | read-only | none: `b.peek()` |
 | `mutating` | `mutating func append(s: String)` | mutable, exclusive | `&`: `&b.append(s: s)` |
-| `consuming` | `consuming func build(): String` | owned, mutable in place (§4.1.1); consumed | `consume`: `consume b.build()` |
+| `consuming` | `consuming func build(): String` | owned, mutable in place (§4.1.2); consumed | `consume`: `consume b.build()` |
 
 ```joyeer
 extension StringBuilder {
@@ -329,6 +329,8 @@ deinit_decl     ::= 'deinit' '(' ')' function_body
   exactly once before the body ends (data-flow checked).
 - `deinit` runs when a value is destroyed: end of scope, overwritten, or
   consumed by a `consuming` parameter. Destruction order is deterministic (§4.7).
+- Declaring `deinit` makes the type noncopyable by default. The compiler does
+  not synthesize a fieldwise copy for it (§4.1.1).
 - Preconditions inside `init` are expressed with `precondition(...)` (§9),
   not declaration-level clauses.
 

@@ -119,7 +119,7 @@ return item.count
 }
 
 TEST_F(NameResolutionTest, ResolvesReadFileFromThePrelude) {
-        resolve(R"JOYEER(func load(): Result<String, Int> {
+        resolve(R"JOYEER(func load(): Result<String, IOError> {
 return readFile(path: "input.json")
 }
 )JOYEER");
@@ -137,6 +137,29 @@ return readFile(path: "input.json")
         const auto target = resolution.model->callTarget(call);
         ASSERT_TRUE(target.has_value());
         EXPECT_EQ(resolution.model->symbol(*target)->name, "readFile");
+}
+
+TEST_F(NameResolutionTest, ResolvesStringUtf8FromTheBuiltinMemberScope) {
+    resolve(R"JOYEER(func bytes(text: String): [UInt8] {
+return text.utf8()
+}
+)JOYEER");
+
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+            returned->value);
+    const auto member = std::static_pointer_cast<joyeer::syntax::MemberExprSyntax>(
+            call->callee);
+
+    EXPECT_EQ(referenced(member).kind, SymbolKind::builtinMember);
+    EXPECT_EQ(referenced(member).name, "utf8");
+    const auto target = resolution.model->callTarget(call);
+    ASSERT_TRUE(target.has_value());
+    EXPECT_EQ(resolution.model->symbol(*target)->name, "utf8");
 }
 
         TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheBuiltinMemberScope) {

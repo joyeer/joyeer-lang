@@ -361,9 +361,15 @@ private:
         }
         for (typing::TypeId id = 0; id < model->types().size(); ++id) {
             const auto* type = model->types().type(id);
+            const auto* symbol = type == nullptr
+                    ? nullptr
+                    : semanticModel.symbol(type->symbol);
             if (type != nullptr &&
                 (type->kind == typing::TypeKind::optional ||
-                 type->kind == typing::TypeKind::result)) {
+                 type->kind == typing::TypeKind::result ||
+                 (type->kind == typing::TypeKind::enumeration &&
+                  symbol != nullptr &&
+                  symbol->kind == semantic::SymbolKind::builtinType))) {
                 collectBuiltinEnumeration(*type);
             }
         }
@@ -457,6 +463,13 @@ private:
                 payloadTypes.push_back(type.arguments[0]);
             } else if (type.kind == typing::TypeKind::result && enumCase->name == "Err") {
                 payloadTypes.push_back(type.arguments[1]);
+            } else if (type.kind == typing::TypeKind::enumeration &&
+                       enumCase->callable.has_value()) {
+                for (const auto& parameter : enumCase->callable->parameters) {
+                    if (!parameter.type.has_value()) continue;
+                    const auto payload = model->types().typeForSymbol(*parameter.type);
+                    if (payload.has_value()) payloadTypes.push_back(*payload);
+                }
             }
             enumeration.cases.push_back(ir::EnumCaseDefinition {
                 caseSymbol,
@@ -1779,6 +1792,11 @@ private:
             targetSymbol->name == "append") {
             return lowerArrayAppend(expression);
         }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "utf8") {
+            return lowerStringUtf8(expression);
+        }
         if (!functions.contains(*target)) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1844,6 +1862,31 @@ private:
                     ? ValueOwnership::owned
                     : ValueOwnership::trivial);
         }
+        return result;
+    }
+
+    std::optional<ir::Value> lowerStringUtf8(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            !expression->arguments.empty()) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "String.utf8 requires no arguments");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto string = lowerExpression(member->base);
+        const auto type = model->typeOf(expression);
+        if (!string.has_value() || !type.has_value()) return std::nullopt;
+
+        auto instruction = makeInstruction(ir::Opcode::stringUtf8, expression->span);
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        instruction.operands = { string->id };
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, ValueOwnership::owned);
         return result;
     }
 

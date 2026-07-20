@@ -218,15 +218,28 @@ void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value) {
     result->count = 1;
 }
 
-static void setReadFileError(
-        int32_t* resultTag,
-        void* resultPayload,
-        int32_t errorTag,
+static int32_t classifyIOError(int errorCode) {
+    if (errorCode == ENOENT) return JOYEER_IO_ERROR_NOT_FOUND;
+    if (errorCode == EACCES) return JOYEER_IO_ERROR_PERMISSION_DENIED;
+#if defined(EPERM)
+    if (errorCode == EPERM) return JOYEER_IO_ERROR_PERMISSION_DENIED;
+#endif
+    if (errorCode == EINVAL) return JOYEER_IO_ERROR_INVALID_PATH;
+#if defined(ENAMETOOLONG)
+    if (errorCode == ENAMETOOLONG) return JOYEER_IO_ERROR_INVALID_PATH;
+#endif
+    return JOYEER_IO_ERROR_OTHER;
+}
+
+static int32_t setReadFileError(
+        JoyeerString* result,
+        int64_t* resultErrorCode,
         int errorCode) {
     const int64_t value = errorCode == 0 ? EIO : errorCode;
-    *resultTag = errorTag;
-    memset(resultPayload, 0, sizeof(JoyeerString));
-    memcpy(resultPayload, &value, sizeof(value));
+    result->data = NULL;
+    result->count = 0;
+    *resultErrorCode = value;
+    return classifyIOError((int)value);
 }
 
 static FILE* openBinaryFile(const char* path, int* errorCode) {
@@ -243,21 +256,20 @@ static FILE* openBinaryFile(const char* path, int* errorCode) {
 #endif
 }
 
-void joyeer_read_file_abi(
-        int32_t* resultTag,
-        void* resultPayload,
-        int32_t okTag,
-        int32_t errorTag,
+int32_t joyeer_read_file_abi(
+        JoyeerString* result,
+        int64_t* resultErrorCode,
         const uint8_t* pathData,
         int64_t pathCount) {
-    if (resultTag == NULL || resultPayload == NULL) {
+    if (result == NULL || resultErrorCode == NULL) {
         joyeer_panic("invalid readFile result storage");
     }
-    memset(resultPayload, 0, sizeof(JoyeerString));
+    result->data = NULL;
+    result->count = 0;
+    *resultErrorCode = 0;
     if (pathCount < 0 || (pathCount != 0 && pathData == NULL) ||
         (uint64_t)pathCount >= SIZE_MAX) {
-        setReadFileError(resultTag, resultPayload, errorTag, EINVAL);
-        return;
+        return setReadFileError(result, resultErrorCode, EINVAL);
     }
 
     char* path = (char*)checkedAllocate((size_t)pathCount + 1);
@@ -265,16 +277,14 @@ void joyeer_read_file_abi(
     path[pathCount] = '\0';
     if (memchr(path, '\0', (size_t)pathCount) != NULL) {
         checkedFree(path);
-        setReadFileError(resultTag, resultPayload, errorTag, EINVAL);
-        return;
+        return setReadFileError(result, resultErrorCode, EINVAL);
     }
 
     int openError = 0;
     FILE* file = openBinaryFile(path, &openError);
     checkedFree(path);
     if (file == NULL) {
-        setReadFileError(resultTag, resultPayload, errorTag, openError);
-        return;
+        return setReadFileError(result, resultErrorCode, openError);
     }
 
     size_t capacity = 4096;
@@ -290,8 +300,7 @@ void joyeer_read_file_abi(
                 const int readError = errno;
                 fclose(file);
                 checkedFree(data);
-                setReadFileError(resultTag, resultPayload, errorTag, readError);
-                return;
+                return setReadFileError(result, resultErrorCode, readError);
             }
             break;
         }
@@ -299,8 +308,7 @@ void joyeer_read_file_abi(
         if (capacity > SIZE_MAX / 2 || (uint64_t)capacity * 2 > INT64_MAX) {
             fclose(file);
             checkedFree(data);
-            setReadFileError(resultTag, resultPayload, errorTag, EFBIG);
-            return;
+            return setReadFileError(result, resultErrorCode, EFBIG);
         }
         capacity *= 2;
         data = (uint8_t*)checkedReallocate(data, capacity);
@@ -310,13 +318,12 @@ void joyeer_read_file_abi(
     if (fclose(file) != 0) {
         const int closeError = errno;
         checkedFree(data);
-        setReadFileError(resultTag, resultPayload, errorTag, closeError);
-        return;
+        return setReadFileError(result, resultErrorCode, closeError);
     }
 
-    const JoyeerString value = { data, (int64_t)count };
-    *resultTag = okTag;
-    memcpy(resultPayload, &value, sizeof(value));
+    result->data = data;
+    result->count = (int64_t)count;
+    return JOYEER_IO_ERROR_NONE;
 }
 
 static JoyeerArray arrayCreateOwned(

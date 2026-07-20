@@ -15,17 +15,43 @@ print(value: a)       // [1, 2, 3]
 print(value: b)       // [99, 2, 3]
 ```
 
-The compiler is free to implement this as a move, a copy-on-write, or an
-in-place reuse, **as long as the observable behavior is value semantics**.
-Programmers do not see and do not control this — the compiler picks the
-optimal lowering using last-use analysis (§4.6).
+Ordinary initialization or assignment from an existing binding is a copy
+operation. The source remains initialized and usable afterward. For the v0.1
+heap-backed types (`String`, `Array`, `Dict`, and aggregates containing them),
+copying recursively clones the owned storage. The source and destination never
+share mutable storage, and the implementation does not use copy-on-write or
+reference counting.
+
+An already-owned temporary may instead be transferred directly into its
+destination because no independently usable source binding exists. The
+compiler may also elide a materialized copy under the as-if rule in §4.6, but
+that optimization never changes whether a source binding is initialized.
+Only a consuming operation has that source-visible effect (§4.2.3).
 
 There are **no reference types** in Joyeer. No `&T`, no pointers, no
 `Box`/`Rc`/`Arc`. The closest equivalents are *access effects* on
 parameters (§4.2) and *projections* via subscripts (§4.5), neither of
 which is a first-class value.
 
-#### 4.1.1 Ownership state vs. access effect (two axes)
+#### 4.1.1 Copyability
+
+A type is **copyable** when an ordinary copy can produce an independent value
+with its own destruction obligation:
+
+- scalar built-ins are trivially copyable;
+- `String`, `Array`, `Dict`, `Optional`, and `Result` are copyable when their
+  contained types are copyable; heap-backed storage is cloned recursively;
+- a `struct` or `enum` is copyable when all of its stored fields or payloads
+  are copyable and it does not declare a custom `deinit`.
+
+A type that declares `deinit` is noncopyable by default. Ordinary
+initialization or assignment from a binding of that type is rejected rather
+than synthesizing a fieldwise copy that could release the same resource twice.
+Such a value may still be passed through a consuming boundary or produced as
+an owned temporary. A future explicit copy-initializer design may let a type
+opt back into copying; it is not part of v0.1.
+
+#### 4.1.2 Ownership state vs. access effect (two axes)
 
 Two **orthogonal** classifications govern every binding. Keeping them apart
 removes a common confusion: *owned* is a **state** (who must destroy the
@@ -90,7 +116,7 @@ must match it explicitly at the call site (§4.3).
 |--------|---------|-------------------|----------------|
 | `borrowing` (default) | Read-only projection. Multiple `borrowing` projections of the same value may coexist. | Pass without marker (may write `borrowing x` for emphasis). | Use as immutable value. |
 | `inout` | **Exclusive** mutable projection. While held, the original storage is inaccessible to anyone else. | Mark with `&x` at call site. | Use and mutate like a local `var`. |
-| `consuming` | **Consume** the argument. Caller's binding becomes uninitialized after the call. | Mark with `consume x` at call site; caller must own the value. | Owned outright — a `var`-like, mutable binding (§4.1.1); may be **mutated in place**, moved into the return value, passed to another `consuming` parameter, or destroyed. |
+| `consuming` | **Consume** the argument. Caller's binding becomes uninitialized after the call. | Mark with `consume x` at call site; caller must own the value. | Owned outright — a `var`-like, mutable binding (§4.1.2); may be **mutated in place**, moved into the return value, passed to another `consuming` parameter, or destroyed. |
 | `initializing` | Write-only into uninitialized storage. | Mark with `&x` at call site, where `x` is uninitialized or has been consumed. | Must initialize before the body ends. |
 
 #### 4.2.1 `borrowing` (default)
@@ -135,7 +161,7 @@ After the call, `greeting` is in an **uninitialized state**. The compiler
 rejects any subsequent read. A subsequent assignment (`greeting = "world"`)
 re-initializes the storage and re-enables reads.
 
-Inside `store`, `s` is an owning, `var`-like binding (§4.1.1): the body may
+Inside `store`, `s` is an owning, `var`-like binding (§4.1.2): the body may
 **mutate `s` in place** (e.g. `&s.append(s: "!")`) as well as move or destroy
 it. Ownership — not a `mutating` keyword — is what grants in-body mutation.
 
@@ -302,20 +328,29 @@ Paths are sequences of `.field` and `[index]` steps. Two paths are
 overlapping* when they only differ at `[index]` steps (the compiler does
 not solve index equality in v0.1).
 
-### 4.6 Last-use optimization (move elision)
+### 4.6 Copy elision
 
-When the compiler proves the source of a copy is **not used afterward**,
-the copy is downgraded to a move (storage transfer). Example:
+Copy elision is an implementation optimization, not a source-level ownership
+operation. An ordinary copy keeps its value-semantics contract even when the
+compiler proves that transferring storage produces the same observable
+behavior. In particular, ordinary assignment never places the source in the
+uninitialized state tracked for `consume` (§4.2.3).
+
+The v0.1 implementation transfers already-owned temporaries and materializes
+copies from borrowed heap-backed storage. A future liveness optimization may
+transfer storage for a provably dead source when doing so cannot change
+program behavior:
 
 ```joyeer
 var src = makeBigArray()
-var dst = src        // last use of src → move, not copy
+var dst = src        // semantically a copy; storage transfer may be elided
 print(value: dst.count)
 ```
 
-If `print(value: src.count)` were added between the two lines, the compiler
-would instead emit a true copy. Programmers never write `move(x)` — the
-compiler infers it.
+Adding any later read of `src` requires an independent value and therefore
+prevents the transfer. Code that must semantically relinquish a caller-owned
+value uses the explicit `consume` marker at a consuming boundary; optimization
+must never infer that source-level state transition.
 
 ### 4.7 Deinitialization & destruction order
 
@@ -330,6 +365,12 @@ A value's `deinit` runs when:
 Order within a scope is **reverse declaration order**, for stored fields
 of a struct as well. Order is fully deterministic; no finalizer queue,
 no GC.
+
+For an overwrite, the right-hand side is evaluated and converted into an
+owned replacement before the previous value is destroyed. The old value is
+then destroyed and the replacement is stored. This ordering makes
+self-assignment and assignments whose right-hand side reads the destination
+well-defined: the old storage remains valid until the replacement is ready.
 
 ```joyeer
 public struct FileHandle {
@@ -383,31 +424,27 @@ produced it.
 > the value lives until the caller's binding that receives it goes out of
 > scope.
 
-Returning a locally-owned binding is a **move** at its last use (§4.6), not a
-copy, so the moved-out value's `deinit` does **not** run at the `return` site:
+An already-owned result temporary transfers directly to the caller. Returning
+a borrowed value first produces an owned copy. Copy elision may replace that
+copy with a storage transfer under §4.6; either lowering leaves exactly one
+destruction obligation for each owned value that remains alive:
 
 ```joyeer
-struct FileHandle {
-  var fd: Int32
-  init(path: String) { fd = sys.open(path: path) }
-  deinit() { sys.close(fd: fd) }
-}
-
-func openLog(): FileHandle {
-  let f = FileHandle(path: "log.txt")
-  f                 // last use of f → moved out; f.deinit() does NOT run here
+func greeting(): String {
+  let value = "hello"
+  value              // owned result; the caller receives an independent value
 }
 
 func use() {
-  let log = openLog()    // caller now owns the handle
+  let text = greeting()  // caller now owns the result
   // ...
-}                         // log.deinit() runs here — exactly once
+}                         // text is destroyed here — exactly once
 ```
 
 #### 4.10.1 Returning through `consuming`
 
 A `consuming` parameter or `consuming self` (§4.2.3, §3.2.4) owns its argument
-outright. Because an owning binding is mutable in place (§4.1.1), the body may
+outright. Because an owning binding is mutable in place (§4.1.2), the body may
 mutate `self` directly and then move it into the return value — no rebinding to
 a local `var` is needed. Ownership flows in at the call site (marked `consume`,
 §4.3) and back out through the result:
@@ -417,7 +454,7 @@ struct PathBuilder { var buf: String }
 
 extension PathBuilder {
   consuming func join(part: String): PathBuilder {
-    &self.buf.append(s: "/")     // self is owned in-body → mutable in place (§4.1.1)
+    &self.buf.append(s: "/")     // self is owned in-body → mutable in place (§4.1.2)
     &self.buf.append(s: part)
     self                         // move out: ownership returns to the caller
   }
