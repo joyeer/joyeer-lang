@@ -322,6 +322,16 @@ LinkResult Linker::link(
                         options.runtimeLibrary.string() + "'");
         return result;
     }
+#if defined(__APPLE__)
+    filesystemError.clear();
+    if (!options.sdkRoot.empty() &&
+        (!std::filesystem::is_directory(options.sdkRoot, filesystemError) || filesystemError)) {
+        report(
+                LinkDiagnosticId::missingTool,
+                "macOS SDK was not found at '" + options.sdkRoot.string() + "'");
+        return result;
+    }
+#endif
     if (options.outputFile.empty()) {
         report(LinkDiagnosticId::fileError, "native output path is empty");
         return result;
@@ -569,6 +579,12 @@ LinkResult Linker::link(
         options.debugInfo.emitVariables ? "-g" : "-gline-tables-only");
 #endif
     }
+#if defined(__APPLE__)
+    if (!options.sdkRoot.empty()) {
+        clangArguments.emplace_back("-isysroot");
+        clangArguments.emplace_back(options.sdkRoot);
+    }
+#endif
 
     const auto process = runProcess(options.clangExecutable, clangArguments, logFile);
     const auto toolOutput = readText(logFile);

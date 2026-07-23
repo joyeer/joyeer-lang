@@ -35,6 +35,15 @@ The native linker lives in `include/joyeer/backend/linker.h` and
 `lib/backend/linker.cpp`. It invokes the configured Clang executable with the
 LLVM module and `JoyeerNativeRuntime` archive.
 
+On macOS, CMake resolves the active SDK with `xcrun --sdk macosx
+--show-sdk-path`. The driver passes that path to the native linker, which adds
+an explicit `-isysroot` after any Clang configuration-file arguments. This
+avoids depending on a package-manager Clang's build-time SDK path.
+
+The proposed release architecture replaces that external installation
+dependency with a private, statically linked code-generation helper. See
+[Self-Contained Native Toolchain Distribution](../plan/toolchain-distribution.md).
+
 ---
 
 ## 2. CLI

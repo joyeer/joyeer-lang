@@ -1,4 +1,5 @@
 build/
+.deps/
 .vscode/*
 !.vscode/settings.json
 .idea/
@@ -6,7 +7,6 @@ xcode/
 *.debug.txt
 *.xdump.yml
 *.pyc
-xcode-build
 cmake-build-debug
 .vs/
 *.code-workspace

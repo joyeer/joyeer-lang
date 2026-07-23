@@ -56,12 +56,16 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 
 1. Broaden the standard library beyond the typed whole-file I/O surface with
   incremental/streaming APIs, writing, metadata, and Unicode paths.
-2. Define a Joyeer-specific optimization and LTO policy while preserving
+2. Package a pinned LLVM/LLD backend behind a private code-generation helper so
+  released toolchains do not require a user-installed LLVM. Follow the
+  [toolchain distribution plan](toolchain-distribution.md) without adding a
+  second language mode or permanent backend switch.
+3. Define a Joyeer-specific optimization and LTO policy while preserving
    checked arithmetic, bounds, ownership, and debug semantics.
-3. Expand modules, generics, error propagation, and contracts only after their
+4. Expand modules, generics, error propagation, and contracts only after their
    syntax/semantic ownership is specified and tested end to end.
-4. Improve debugger inspection for optimized values and aggregate projections.
-5. Design user-defined destruction and explicit copy initialization without
+5. Improve debugger inspection for optimized values and aggregate projections.
+6. Design user-defined destruction and explicit copy initialization without
   weakening the noncopyable-by-default rule for resource-owning values.
 
 ## Validation

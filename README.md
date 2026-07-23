@@ -77,24 +77,41 @@ func main() {
 - Ninja 1.11 or newer
 - A C++20 compiler: Clang, GCC, or MSVC
 - A Clang driver for LLVM validation and native `-o` output
+- Python 3.9 or newer for source-checkout bootstrap and toolchain automation
 
 On Windows, CodeView/PDB inspection tests also use `llvm-pdbutil` and
 `llvm-readobj`; DWARF executable output requires `lld-link` beside Clang.
+Python is not required by released Joyeer compiler binaries or compiled Joyeer
+programs.
 
 ## Build
 
-The build is out-of-source only:
+The build is out-of-source only. The cross-platform bootstrap configures the
+default CMake + Ninja build without modifying the global environment:
 
-```pwsh
-cmake -S . -B build -G Ninja `
-  -DJOYEER_BUILD_UNITTESTS=ON `
-  -DJOYEER_CLANG_EXECUTABLE='C:/Program Files/LLVM/bin/clang.exe'
+```text
+python3 bootstrap.py
 cmake --build build
 ```
+
+On Windows, `py -3 bootstrap.py` is the equivalent invocation. Pass
+`--clang /path/to/clang` when automatic Clang discovery is not sufficient.
 
 The executable is written to `build/bin/joyeer` on single-config generators.
 If Clang is not configured, the compiler and textual backend unit tests still
 build, but Clang/native integration tests are not registered.
+
+LLVM backend development can fetch the exact source release pinned in
+`third_party/llvm.lock.json`:
+
+```text
+python3 scripts/toolchain.py status
+python3 scripts/toolchain.py fetch-llvm
+```
+
+Downloads honor the standard `https_proxy`, `http_proxy`, and `all_proxy`
+environment variables. Archives are checked against the pinned size and
+SHA-256 before safe extraction under the ignored `.deps/` directory.
 
 ## CLI
 
@@ -124,10 +141,11 @@ Use `-gdwarf` or `-gcodeview` to select the format.
 
 ## Test
 
-The complete test suite is safe and is the normal acceptance gate:
+The complete acceptance command runs the Python automation tests, builds
+Joyeer, and then runs unfiltered CTest:
 
-```pwsh
-ctest --test-dir build --output-on-failure
+```text
+python3 scripts/toolchain.py test
 ```
 
 Focused labels are available when iterating:
@@ -151,6 +169,8 @@ stage-specific folders under [tests/](tests/) and are registered in
 | [lib/](lib/) | C++ compiler/backend and C11 native runtime implementations |
 | [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
+| [scripts/](scripts/) | Cross-platform Python toolchain automation and CMake test helpers |
+| [third_party/](third_party/) | Pinned external source metadata; downloaded content is not checked in |
 | [docs/](docs/) | Specification, rationale, implementation notes, and plans |
 
 Useful examples include the

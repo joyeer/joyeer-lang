@@ -18,6 +18,7 @@ add_dependencies(joyeer JoyeerNativeRuntime)
 target_compile_definitions(joyeer PRIVATE
         JOYEER_CLANG_EXECUTABLE_PATH="${JOYEER_CLANG_EXECUTABLE}"
         JOYEER_NATIVE_RUNTIME_PATH="$<TARGET_FILE:JoyeerNativeRuntime>"
+        JOYEER_SDK_ROOT_PATH="${JOYEER_MACOS_SDK_PATH}"
 )
 
 target_link_libraries(joyeer

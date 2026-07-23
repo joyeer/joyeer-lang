@@ -43,6 +43,31 @@ if(JOYEER_CLANG_EXECUTABLE)
         else()
             message(STATUS "LLD linker not found; Windows DWARF executable output is unavailable")
         endif()
+    elseif(APPLE)
+        set(JOYEER_MACOS_SDK_PATH "" CACHE PATH
+                "macOS SDK passed to the Clang driver for native output")
+        if(NOT JOYEER_MACOS_SDK_PATH OR NOT IS_DIRECTORY "${JOYEER_MACOS_SDK_PATH}")
+            find_program(JOYEER_XCRUN_EXECUTABLE NAMES xcrun)
+            if(JOYEER_XCRUN_EXECUTABLE)
+                execute_process(
+                        COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --sdk macosx --show-sdk-path
+                        RESULT_VARIABLE JOYEER_XCRUN_RESULT
+                        OUTPUT_VARIABLE JOYEER_XCRUN_SDK_PATH
+                        OUTPUT_STRIP_TRAILING_WHITESPACE
+                )
+                if(JOYEER_XCRUN_RESULT EQUAL 0 AND IS_DIRECTORY "${JOYEER_XCRUN_SDK_PATH}")
+                    set(JOYEER_MACOS_SDK_PATH "${JOYEER_XCRUN_SDK_PATH}"
+                            CACHE PATH
+                            "macOS SDK passed to the Clang driver for native output"
+                            FORCE)
+                endif()
+            endif()
+        endif()
+        if(JOYEER_MACOS_SDK_PATH)
+            message(STATUS "Joyeer macOS SDK: ${JOYEER_MACOS_SDK_PATH}")
+        else()
+            message(STATUS "Joyeer macOS SDK not found; native linking relies on the Clang default")
+        endif()
     endif()
 else()
     message(STATUS "Joyeer LLVM driver not found; textual emission remains available")

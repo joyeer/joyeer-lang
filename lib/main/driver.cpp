@@ -9,6 +9,10 @@
 #define JOYEER_NATIVE_RUNTIME_PATH ""
 #endif
 
+#ifndef JOYEER_SDK_ROOT_PATH
+#define JOYEER_SDK_ROOT_PATH ""
+#endif
+
 Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):arguments(arguments) {
     this->diagnostics = diagnostics;
     compiler = new CompilerService(
@@ -42,6 +46,7 @@ int Driver::run() {
                     joyeer::native::LinkOptions {
                         JOYEER_CLANG_EXECUTABLE_PATH,
                         JOYEER_NATIVE_RUNTIME_PATH,
+                        JOYEER_SDK_ROOT_PATH,
                         arguments->outputFile,
                         arguments->optimizationLevel,
                         arguments->debugInfo,

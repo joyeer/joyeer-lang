@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "build_schema_version": 1,
+  "patch_set": "none",
+  "llvm": {
+    "version": "22.1.8",
+    "tag": "llvmorg-22.1.8",
+    "commit": "ca7933e47d3a3451d81e72ac174dcb5aa28b59d1",
+    "source": {
+      "filename": "llvm-project-22.1.8.src.tar.xz",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz",
+      "size": 167061596,
+      "sha256": "922f1817a0df7b1489272d18134ee0087a8b068828f87ac63b9861b1a9965888",
+      "provenance_url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/llvm-project-22.1.8.src.tar.xz.jsonl"
+    },
+    "projects": [
+      "lld"
+    ],
+    "targets": {
+      "macos-arm64": [
+        "AArch64"
+      ],
+      "macos-x86_64": [
+        "X86"
+      ],
+      "windows-x86_64": [
+        "X86"
+      ],
+      "linux-x86_64": [
+        "X86"
+      ],
+      "linux-arm64": [
+        "AArch64"
+      ]
+    },
+    "cmake_options": {
+      "BUILD_SHARED_LIBS": "OFF",
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
+      "LLVM_BUILD_LLVM_DYLIB": "OFF",
+      "LLVM_ENABLE_ASSERTIONS": "OFF",
+      "LLVM_ENABLE_LIBEDIT": "OFF",
+      "LLVM_ENABLE_LIBXML2": "OFF",
+      "LLVM_ENABLE_TERMINFO": "OFF",
+      "LLVM_ENABLE_ZLIB": "OFF",
+      "LLVM_ENABLE_ZSTD": "OFF",
+      "LLVM_INCLUDE_BENCHMARKS": "OFF",
+      "LLVM_INCLUDE_DOCS": "OFF",
+      "LLVM_INCLUDE_EXAMPLES": "OFF",
+      "LLVM_INCLUDE_TESTS": "OFF",
+      "LLVM_INCLUDE_UTILS": "OFF"
+    }
+  }
+}

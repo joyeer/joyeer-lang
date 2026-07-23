@@ -28,21 +28,21 @@ Rust files or Cargo commands.
 
 ## Build and test
 
-```pwsh
-cmake -S . -B build -G Ninja `
-  -DJOYEER_BUILD_UNITTESTS=ON `
-  -DJOYEER_CLANG_EXECUTABLE='C:/Program Files/LLVM/bin/clang.exe'
-cmake --build build
-ctest --test-dir build --output-on-failure
+```text
+python3 bootstrap.py
+python3 scripts/toolchain.py test
 ```
 
 - Requires CMake 3.16+, Ninja, a C++20 compiler, and a Clang driver for native
   integration tests and `-o` output.
+- Requires Python 3.9+ for checked-in source-build automation. On Windows, use
+  `py -3` when `python3` is not an installed command.
 - On Windows, run MSVC builds from a configured developer shell. GCC/Clang
   builds are also supported.
 - The executable is under `build/bin/` for single-config generators.
 - Unfiltered CTest is the required final gate. Label filters are for focused
-  iteration only.
+  iteration only; `scripts/toolchain.py test` runs it after Python tests and the
+  CMake build.
 - C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
   live under stage-specific directories in [tests/](tests/).
 
@@ -94,6 +94,17 @@ ctest --test-dir build --output-on-failure
 - Native output needs a configured Clang driver even when the compiler itself
   is built with MSVC or GCC.
 - Do not fix historical behavior by creating a second language mode.
+
+## Repository automation
+
+- Write checked-in build, bootstrap, packaging, and release automation in
+  cross-platform Python 3.9+ using the standard library.
+- Do not maintain parallel `.sh` and `.ps1` implementations. Command examples
+  may use the host shell, but reusable workflow logic belongs in Python.
+- Launch tools with argument arrays and `subprocess.run`; do not use
+  `shell=True` or construct shell command strings.
+- Python is a source-build and release dependency only. Released Joyeer
+  compiler binaries and programs must not require Python.
 
 ## When in doubt
 
