@@ -260,51 +260,42 @@ The implemented bootstrap foundation uses this source layout:
 
 ```text
 bootstrap.py
+pixi.toml
+pixi.lock
 scripts/
   toolchain.py
   toolchain_support/
     cli.py
-    config.py
-    llvm.py
-    lock.py
-    paths.py
+    pixi.py
     process.py
     targets.py
-third_party/
-  llvm.lock.json
-  llvm-patches/
+.pixi/                         # ignored locked development environment
 .deps/                         # ignored build state
-  downloads/
-  llvm-project/
-  llvm-build/
-  llvm-install/
+  pixi/                        # optional bootstrapped Pixi executable
 ```
 
-`bootstrap.py` is the discoverable first-run entry point. It verifies Python,
-CMake, Ninja, the host, and the checked-in lock, then configures an
-out-of-source CMake + Ninja build. `--offline` also sets CMake FetchContent to
-fully disconnected mode. `--fetch-llvm-source` opts into the large source
-download; the current external-Clang build does not require that source tree.
+`bootstrap.py` is the discoverable first-run entry point. It downloads the
+pinned Pixi executable when needed, enters the environment described by
+`pixi.toml`/`pixi.lock`, and configures an out-of-source CMake + Ninja build.
+Pixi owns dependency resolution, package verification, caching, and upgrades.
+On Windows, the host compiler and linker are MSVC; Visual Studio's C++ workload
+and Windows SDK remain system prerequisites.
 
 `scripts/toolchain.py` is the ongoing human and CI entry point. The currently
 implemented commands are:
 
 ```text
 python3 bootstrap.py
-python3 bootstrap.py --offline --fetch-llvm-source
+python3 bootstrap.py --offline
 python3 scripts/toolchain.py status
-python3 scripts/toolchain.py fetch-llvm
+python3 scripts/toolchain.py build
 python3 scripts/toolchain.py test
 ```
 
-`fetch-llvm` honors standard proxy environment variables, verifies the pinned
-archive size and SHA-256, safely extracts regular files and archive-internal
-links, and serializes concurrent access with an advisory lock. `test` runs the
-Python automation tests, builds Joyeer, and runs unfiltered CTest.
-
-The `build-llvm`, `build-codegen`, `package`, and `verify-package` command names
-are reserved but deliberately fail as unimplemented until their corresponding
-migration stages are built and tested.
+Each command automatically enters the locked Pixi environment. `test` runs the
+Python automation tests, builds Joyeer, and runs unfiltered CTest. Source LLVM
+fetching and reduced-SDK packaging remain design work; no placeholder commands
+or unused implementation are checked in for them.
 
 On Windows, the same file may be launched with `py -3` when `python3` is not an
 installed command. This is an invocation spelling difference, not a second
@@ -315,24 +306,16 @@ The Python implementation must:
 - use `pathlib` for paths and never assume `/` or drive-letter spelling;
 - launch tools with argument arrays through `subprocess.run(..., check=True)`;
 - never use `shell=True`, shell pipelines, or generated command files;
-- download only HTTPS URLs recorded in `llvm.lock.json` and verify SHA-256
-  before extraction;
-- reject archive entries that escape the destination or traverse symlinks;
-- use atomic temporary files and renames for downloads and produced archives;
-- keep downloaded source, build trees, and installed SDKs under `.deps/`;
+- download only pinned HTTPS assets and verify SHA-256;
+- use atomic temporary files and renames for downloads;
 - emit the exact command, target triple, pinned revision, and build ID in
   verbose mode and machine-readable provenance;
 - return nonzero on every failed or incomplete step.
 
-`llvm.lock.json` records the exact upstream release or commit, source URL,
-SHA-256 digest, patch-set version, enabled projects and targets, and the
-toolchain build-schema version. The bootstrap never follows a mutable branch or
-uses the newest available LLVM implicitly.
-
-The initial lock pins LLVM 22.1.8 at commit
-`ca7933e47d3a3451d81e72ac174dcb5aa28b59d1`. Its source archive SHA-256 is
-taken from LLVM's published SLSA provenance rather than inferred from a mutable
-package-manager installation.
+`pixi.lock` records development tool binaries and transitive packages and never
+implicitly selects the newest LLVM. Future release-tooling work must add its own
+source/provenance lock when that source build is implemented; no unused source
+lock is kept in the repository meanwhile.
 
 Python is a developer, source-build, and release dependency. It is not included
 in the Joyeer package and is not required to run `joyeer`, `joyeer-codegen`, or

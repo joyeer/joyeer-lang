@@ -72,46 +72,44 @@ func main() {
 
 ## Requirements
 
-- Windows or macOS
-- CMake 3.16 or newer
-- Ninja 1.11 or newer
-- A C++20 compiler: Clang, GCC, or MSVC
-- A Clang driver for LLVM validation and native `-o` output
-- Python 3.9 or newer for source-checkout bootstrap and toolchain automation
+- Windows, macOS, or Linux
+- Python 3.9 or newer to run the source-checkout bootstrap
+- Network access on the first run
+- Windows: Visual Studio with the **Desktop development with C++** workload and
+  a Windows SDK
+- macOS: Xcode command-line tools
 
-On Windows, CodeView/PDB inspection tests also use `llvm-pdbutil` and
-`llvm-readobj`; DWARF executable output requires `lld-link` beside Clang.
-Python is not required by released Joyeer compiler binaries or compiled Joyeer
-programs.
+The bootstrap obtains a pinned Pixi executable when necessary. Pixi installs
+Python, CMake, Ninja, Clang/LLVM 22.1.8, LLD, inspection tools, and Linux GCC
+from [pixi.lock](pixi.lock). Windows builds always use the system MSVC compiler;
+there is no GCC fallback. Python is not required by released Joyeer binaries or
+compiled Joyeer programs.
 
 ## Build
 
-The build is out-of-source only. The cross-platform bootstrap configures the
-default CMake + Ninja build without modifying the global environment:
+The build is out-of-source only. Bootstrap installs or updates the locked Pixi
+environment and configures the default CMake + Ninja build:
 
 ```text
 python3 bootstrap.py
-cmake --build build
+python3 scripts/toolchain.py build
 ```
 
-On Windows, `py -3 bootstrap.py` is the equivalent invocation. Pass
-`--clang /path/to/clang` when automatic Clang discovery is not sufficient.
+On Windows, use `py -3 bootstrap.py` and `py -3 scripts/toolchain.py build`.
+Changes to [pixi.toml](pixi.toml) are resolved on the next run and recorded in
+the lock file. `--offline` requires both Pixi and all locked packages to be
+available locally.
 
 The executable is written to `build/bin/joyeer` on single-config generators.
-If Clang is not configured, the compiler and textual backend unit tests still
-build, but Clang/native integration tests are not registered.
-
-LLVM backend development can fetch the exact source release pinned in
-`third_party/llvm.lock.json`:
+Manual CMake configurations may omit Clang; in that case, the compiler and
+textual backend unit tests still build, but Clang/native integration tests are
+not registered. The bootstrap path always supplies or selects Clang.
 
 ```text
 python3 scripts/toolchain.py status
-python3 scripts/toolchain.py fetch-llvm
+python3 scripts/toolchain.py build
+python3 scripts/toolchain.py test
 ```
-
-Downloads honor the standard `https_proxy`, `http_proxy`, and `all_proxy`
-environment variables. Archives are checked against the pinned size and
-SHA-256 before safe extraction under the ignored `.deps/` directory.
 
 ## CLI
 
@@ -170,7 +168,6 @@ stage-specific folders under [tests/](tests/) and are registered in
 | [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
 | [scripts/](scripts/) | Cross-platform Python toolchain automation and CMake test helpers |
-| [third_party/](third_party/) | Pinned external source metadata; downloaded content is not checked in |
 | [docs/](docs/) | Specification, rationale, implementation notes, and plans |
 
 Useful examples include the

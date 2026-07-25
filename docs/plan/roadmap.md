@@ -73,11 +73,8 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 The normal acceptance sequence is:
 
 ```pwsh
-cmake -S . -B build -G Ninja `
-  -DJOYEER_BUILD_UNITTESTS=ON `
-  -DJOYEER_CLANG_EXECUTABLE='C:/Program Files/LLVM/bin/clang.exe'
-cmake --build build
-ctest --test-dir build --output-on-failure
+python3 bootstrap.py
+python3 scripts/toolchain.py test
 ```
 
 Use labels such as `lexer`, `parser`, `type-checking`, `ir-lowering`,

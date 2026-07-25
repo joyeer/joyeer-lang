@@ -30,15 +30,15 @@ Rust files or Cargo commands.
 
 ```text
 python3 bootstrap.py
+python3 scripts/toolchain.py build
 python3 scripts/toolchain.py test
 ```
 
-- Requires CMake 3.16+, Ninja, a C++20 compiler, and a Clang driver for native
-  integration tests and `-o` output.
-- Requires Python 3.9+ for checked-in source-build automation. On Windows, use
-  `py -3` when `python3` is not an installed command.
-- On Windows, run MSVC builds from a configured developer shell. GCC/Clang
-  builds are also supported.
+- `bootstrap.py` self-bootstraps Pixi; `pixi.toml` and `pixi.lock` own Python,
+  CMake, Ninja, Clang/LLVM, LLD, inspection tools, and Linux GCC versions.
+- Requires Python 3.9+ and the platform SDK. On Windows, use `py -3` and install
+  Visual Studio's Desktop development with C++ workload plus a Windows SDK.
+- Windows builds use MSVC exclusively. Do not add a MinGW/GCC fallback.
 - The executable is under `build/bin/` for single-config generators.
 - Unfiltered CTest is the required final gate. Label filters are for focused
   iteration only; `scripts/toolchain.py test` runs it after Python tests and the
