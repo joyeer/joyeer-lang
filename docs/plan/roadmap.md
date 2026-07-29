@@ -73,10 +73,12 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 The normal acceptance sequence is:
 
 ```pwsh
-python3 bootstrap.py
-python3 scripts/toolchain.py test
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Use labels such as `lexer`, `parser`, `type-checking`, `ir-lowering`,
 `llvm-backend`, `native-runtime`, `native`, and `debug-info` only for focused
-iteration.
+iteration. Source-build prerequisites and the transitional Pixi convenience
+path are documented in [building.md](../building.md).

@@ -73,43 +73,58 @@ func main() {
 ## Requirements
 
 - Windows, macOS, or Linux
-- Python 3.9 or newer to run the source-checkout bootstrap
-- Network access on the first run
+- CMake 3.16 or newer
+- Ninja
+- A host C and C++ compiler with C++20 support
+- Network access on the first dependency population, or a prepared offline
+  dependency cache
 - Windows: Visual Studio with the **Desktop development with C++** workload and
   a Windows SDK
-- macOS: Xcode command-line tools
+- Linux: GCC or Clang plus libc development files and binutils
+- macOS: Xcode Command Line Tools and the active macOS SDK
 
-The bootstrap obtains a pinned Pixi executable when necessary. Pixi installs
-Python, CMake, Ninja, Clang/LLVM 22.1.8, LLD, inspection tools, and Linux GCC
-from [pixi.lock](pixi.lock). Windows builds always use the system MSVC compiler;
-there is no GCC fallback. Python is not required by released Joyeer binaries or
-compiled Joyeer programs.
+Windows builds use MSVC; there is no MinGW/GCC fallback. The current native
+pipeline also requires Clang/LLVM 22.1.8, including `lld-link` for Windows
+DWARF output and LLVM inspection tools for complete backend test coverage.
+This external LLVM requirement is transitional: the planned CMake superbuild
+will build a pinned LLVM/LLD SDK and link it privately into the packaged Joyeer
+backend. See [building.md](docs/building.md) for dependency ownership, platform
+prerequisites, and the migration plan.
 
 ## Build
 
-The build is out-of-source only. Bootstrap installs or updates the locked Pixi
-environment and configures the default CMake + Ninja build:
+The build is out-of-source only. Run CMake from an environment where the host
+compiler and platform SDK are active:
+
+```text
+cmake -S . -B build -G Ninja
+cmake --build build
+```
+
+Set `JOYEER_CLANG_EXECUTABLE` when Clang 22 is not discoverable through `PATH`
+or the platform locations checked by CMake:
+
+```text
+cmake -S . -B build -G Ninja \
+  -DJOYEER_CLANG_EXECUTABLE=/absolute/path/to/clang
+```
+
+The executable is written to `build/bin/joyeer` on single-config generators.
+Configurations without Clang still build the frontend and textual backend, but
+do not register Clang/native integration tests.
+
+The existing Pixi bootstrap remains available as a transitional convenience.
+It installs the currently pinned tools and configures the same CMake build:
 
 ```text
 python3 bootstrap.py
-python3 scripts/toolchain.py build
-```
-
-On Windows, use `py -3 bootstrap.py` and `py -3 scripts/toolchain.py build`.
-Changes to [pixi.toml](pixi.toml) are resolved on the next run and recorded in
-the lock file. `--offline` requires both Pixi and all locked packages to be
-available locally.
-
-The executable is written to `build/bin/joyeer` on single-config generators.
-Manual CMake configurations may omit Clang; in that case, the compiler and
-textual backend unit tests still build, but Clang/native integration tests are
-not registered. The bootstrap path always supplies or selects Clang.
-
-```text
 python3 scripts/toolchain.py status
 python3 scripts/toolchain.py build
 python3 scripts/toolchain.py test
 ```
+
+On Windows, use `py -3` when `python3` is unavailable. Python and Pixi are not
+requirements for a direct CMake build or for released Joyeer binaries.
 
 ## CLI
 
@@ -139,12 +154,15 @@ Use `-gdwarf` or `-gcodeview` to select the format.
 
 ## Test
 
-The complete acceptance command runs the Python automation tests, builds
-Joyeer, and then runs unfiltered CTest:
+The required CMake acceptance gate is an unfiltered CTest run:
 
 ```text
-python3 scripts/toolchain.py test
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
+
+During the Pixi transition, `python3 scripts/toolchain.py test` additionally
+runs the Python bootstrap tests before the build and CTest.
 
 Focused labels are available when iterating:
 

@@ -29,20 +29,25 @@ Rust files or Cargo commands.
 ## Build and test
 
 ```text
-python3 bootstrap.py
-python3 scripts/toolchain.py build
-python3 scripts/toolchain.py test
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
-- `bootstrap.py` self-bootstraps Pixi; `pixi.toml` and `pixi.lock` own Python,
-  CMake, Ninja, Clang/LLVM, LLD, inspection tools, and Linux GCC versions.
-- Requires Python 3.9+ and the platform SDK. On Windows, use `py -3` and install
-  Visual Studio's Desktop development with C++ workload plus a Windows SDK.
+- Source builders install CMake 3.16+, Ninja, a C++20 host compiler, and the
+  platform SDK before configuring. See [docs/building.md](docs/building.md).
+- The current native path additionally requires Clang/LLVM 22.1.8. Pass a
+  non-default driver as `-DJOYEER_CLANG_EXECUTABLE=/path/to/clang`.
+- The target dependency architecture is a CMake superbuild that creates a
+  pinned LLVM/LLD SDK; the main build consumes it with `find_package`. Do not
+  add LLVM as a Git submodule, `add_subdirectory`, or main-build `FetchContent`.
+- `bootstrap.py` and `scripts/toolchain.py` remain transitional Pixi-backed
+  convenience entry points. Python/Pixi are not requirements for direct CMake
+  builds or released Joyeer tools.
 - Windows builds use MSVC exclusively. Do not add a MinGW/GCC fallback.
 - The executable is under `build/bin/` for single-config generators.
 - Unfiltered CTest is the required final gate. Label filters are for focused
-  iteration only; `scripts/toolchain.py test` runs it after Python tests and the
-  CMake build.
+  iteration only.
 - C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
   live under stage-specific directories in [tests/](tests/).
 
@@ -99,6 +104,8 @@ python3 scripts/toolchain.py test
 
 - Write checked-in build, bootstrap, packaging, and release automation in
   cross-platform Python 3.9+ using the standard library.
+- Keep dependency acquisition and build relationships in CMake. Python may
+  orchestrate CI and packaging but must not become a second package resolver.
 - Do not maintain parallel `.sh` and `.ps1` implementations. Command examples
   may use the host shell, but reusable workflow logic belongs in Python.
 - Launch tools with argument arrays and `subprocess.run`; do not use

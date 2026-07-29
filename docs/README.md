@@ -14,7 +14,8 @@ wins.
 | Understand memory and ownership | [rationale/memory.md](rationale/memory.md) |
 | See the implemented pipeline | [plan/roadmap.md](plan/roadmap.md) |
 | See the v0.1 scope | [plan/v0.1.md](plan/v0.1.md) |
-| Build or contribute | [AGENTS.md](../AGENTS.md) |
+| Build from source | [building.md](building.md) |
+| Contribute | [AGENTS.md](../AGENTS.md) |
 
 ## Specification
 

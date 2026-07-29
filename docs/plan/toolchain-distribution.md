@@ -29,7 +29,8 @@ projects.
 
 ## 2. Decision
 
-The default release architecture is two private executables:
+The release architecture separates the frontend, process-isolation helper,
+and dynamically loaded Joyeer backend:
 
 ```text
 Joyeer source
@@ -38,26 +39,33 @@ Joyeer source
        verified Joyeer IR
        textual LLVM IR
   -> joyeer-codegen
+      versioned frontend/helper protocol
+      loads the matching backend relative to its installation
+    -> joyeer-backend-llvm
+      Joyeer-owned versioned C ABI
        LLVM IR parser and verifier
-       optimization pipeline
-       target object generation
-       native runtime payload
-       linker integration
+      optimization and target object generation
+      native runtime payload and linker integration
   -> native executable + debug artifacts
 ```
 
-`joyeer-codegen` statically links a pinned, reduced LLVM and LLD build. It is a
-private implementation component, not a user-selected backend. The normal
-`joyeer` command locates it relative to its own installation directory.
+  `joyeer-backend-llvm` is a Joyeer-owned dynamic library that statically contains
+  a pinned, reduced LLVM and LLD build. LLVM's C++ ABI and package-manager dynamic
+  libraries are never exposed across the backend boundary. `joyeer-codegen` is a
+  private helper that loads this library and provides process-level crash
+  isolation; IDEs and approved embedding tools may use the same C ABI directly.
+  The normal `joyeer` command locates the helper relative to its own installation
+  directory, and the helper locates the matching backend the same way.
 
 This is preferred over linking LLVM directly into `joyeer` because a malformed
 module, LLVM assertion, fatal error, or linker failure then terminates only the
 code-generation helper. The frontend can translate that failure into a stable
 Joyeer diagnostic.
 
-It is also preferred over distributing LLVM dynamic libraries. A release must
-not inherit package-manager paths, LLVM C++ ABI compatibility, or a collection
-of independently signed LLVM libraries.
+It is also preferred over linking the backend to LLVM dynamic libraries. A
+release must not inherit package-manager paths, LLVM C++ ABI compatibility, or
+a collection of independently signed LLVM libraries. The intentional Joyeer
+backend dynamic library exposes only the stable Joyeer C ABI.
 
 Textual LLVM IR remains the boundary because it is already emitted, tested,
 inspectable through `--emit-llvm`, and independent of LLVM's C++ object model.
@@ -74,20 +82,24 @@ Joyeer.pkg payload
     joyeer
   libexec/joyeer/
     joyeer-codegen
+  lib/joyeer/backends/
+    libjoyeer-backend-llvm.dylib
   share/joyeer/licenses/
     LLVM-LICENSE.txt
     THIRD-PARTY-NOTICES.txt
 ```
 
-Both programs are Mach-O executables. LLVM, the selected target backend, and
-LLD are statically linked into `joyeer-codegen`. Target-specific Joyeer runtime
-bitcode or objects should be embedded in the helper when practical; if they
-remain separate, they live under `libexec/joyeer/runtime/<target-triple>/` and
-are found relative to the helper rather than through an environment variable.
+Both programs and the backend are Mach-O artifacts. LLVM, the selected target
+backend, and LLD are statically linked into the Joyeer backend library.
+Target-specific Joyeer runtime bitcode or objects should be embedded in the
+backend when practical; if they remain separate, they live under
+`libexec/joyeer/runtime/<target-triple>/` and are found relative to the helper
+rather than through an environment variable.
 
-The normal package should not contain LLVM `.dylib` files. Expected dynamic
+The normal package should not contain LLVM `.dylib` files. The Joyeer backend
+is the only intentional non-system `.dylib`; other expected dynamic
 dependencies are Apple-provided system libraries such as `libSystem` and,
-while the helper is implemented in C++, `libc++`.
+while the implementation is in C++, `libc++`.
 
 Ship separate arm64 and x86_64 packages initially. A universal package nearly
 doubles the LLVM payload and should be added only if distribution data shows
@@ -101,15 +113,17 @@ Joyeer installation
     joyeer.exe
   libexec/joyeer/
     joyeer-codegen.exe
+  lib/joyeer/backends/
+    joyeer-backend-llvm.dll
   share/joyeer/licenses/
     LLVM-LICENSE.txt
     THIRD-PARTY-NOTICES.txt
 ```
 
-LLVM and LLD/COFF are statically linked into the helper. A static runtime
+LLVM and LLD/COFF are statically linked into the backend DLL. A static runtime
 library choice should avoid requiring an additional Visual C++ redistributable
 when licensing and platform policy allow it. PDB generation remains part of
-the helper's contract.
+the backend contract and helper protocol.
 
 ### Linux
 
@@ -119,15 +133,17 @@ Joyeer installation
     joyeer
   libexec/joyeer/
     joyeer-codegen
+  lib/joyeer/backends/
+    libjoyeer-backend-llvm.so
   share/joyeer/licenses/
     LLVM-LICENSE.txt
     THIRD-PARTY-NOTICES.txt
 ```
 
-LLVM and LLD/ELF are statically linked into the helper. The initial package may
-target the host distribution's glibc ABI. A later portable Linux SDK can use a
-versioned sysroot or a musl-based target; that is not required to eliminate the
-LLVM dependency.
+LLVM and LLD/ELF are statically linked into the backend shared object. The
+initial package may target the host distribution's glibc ABI. A later portable
+Linux SDK can use a versioned sysroot or a musl-based target; that is not
+required to eliminate the LLVM dependency.
 
 ## 4. Component Responsibilities
 
@@ -153,6 +169,18 @@ but it must not become a user-visible backend selection mode.
 The helper owns:
 
 - protocol and build-version validation;
+- locating and loading the matching backend relative to its installation;
+- converting backend failures and crashes into structured protocol responses;
+- atomic output replacement and cleanup after failure.
+
+The helper must not accept unrestricted linker arguments from source code or
+environment variables. All options cross an allow-listed, typed protocol.
+
+### `joyeer-backend-llvm`
+
+The backend owns:
+
+- backend ABI and build-version validation;
 - LLVM target initialization;
 - parsing and verifying textual LLVM IR;
 - target triple, data layout, CPU, and feature selection;
@@ -161,22 +189,21 @@ The helper owns:
 - inclusion of the target-specific Joyeer native runtime;
 - final native linking or invocation of the approved platform linker;
 - PDB, DWARF, and dSYM artifact production;
-- atomic output replacement and cleanup after failure;
 - structured diagnostics without ad hoc terminal output.
 
-The helper must not accept unrestricted linker arguments from source code or
-environment variables. All options cross an allow-listed, typed protocol.
+The backend catches C++ exceptions and never exposes LLVM objects, allocators,
+or C++ standard-library ownership through its C ABI.
 
 ### Joyeer native runtime
 
 The current C11 runtime is linked as a static archive by Clang. The packaged
 backend should replace that file dependency with one of these representations:
 
-1. target-specific LLVM bitcode embedded in `joyeer-codegen`, preferred when
+1. target-specific LLVM bitcode embedded in `joyeer-backend-llvm`, preferred when
    whole-program optimization is enabled;
-2. target-specific object data embedded in the helper and materialized only for
+2. target-specific object data embedded in the backend and materialized only for
    linking;
-3. a private, versioned archive installed beside the helper as an intermediate
+3. a private, versioned archive installed beside the backend as an intermediate
    migration step.
 
 Each payload is keyed by an exact target triple and runtime ABI version. The
@@ -224,11 +251,12 @@ The helper rejects a request when its protocol version, frontend build ID, or
 runtime ABI is incompatible. There is no attempt to load a different system
 LLVM as a fallback.
 
-## 6. Optional Dynamic Library API
+## 6. Dynamic Library API
 
-A `joyeer-backend.dll`, `libjoyeer-backend.dylib`, or
-`libjoyeer-backend.so` may be produced later for IDEs and third-party build
-systems. It is not the default CLI deployment boundary.
+A `joyeer-backend-llvm.dll`, `libjoyeer-backend-llvm.dylib`, or
+`libjoyeer-backend-llvm.so` is the native backend deployment boundary. The CLI
+reaches it through `joyeer-codegen` for crash isolation; IDEs and approved
+embedding tools may load the same library directly.
 
 That library must:
 
@@ -240,87 +268,35 @@ That library must:
 - statically contain its matching LLVM implementation.
 
 Joyeer IR C++ classes, `std::string`, `std::filesystem::path`, and C++ standard
-library ownership must not cross this ABI. The process helper should wrap the
-same internal backend core so the two products cannot diverge semantically.
+library ownership must not cross this ABI. The process helper must wrap the
+same backend API so direct and isolated use cannot diverge semantically.
 
 ## 7. LLVM and LLD Build
 
-Release CI builds LLVM from a pinned release tag or commit. System Homebrew,
-APT, or Visual Studio LLVM layouts are development conveniences and are not
-release inputs.
+The dependency policy and complete source-build prerequisites are defined in
+[Building Joyeer](../building.md). Source builders install CMake, Ninja, the
+host compiler, and the platform SDK before configuration. CMake owns project
+dependencies, including the pinned LLVM/LLD SDK and GoogleTest.
+
+LLVM is not a Git submodule and is not part of the main build through
+`add_subdirectory` or `FetchContent_MakeAvailable`. A CMake superbuild uses
+`ExternalProject_Add` to download an exact LLVM release archive, verify its
+SHA-256, and build/install a reduced SDK in a separate tree. The main Joyeer
+project consumes that prepared SDK with `find_package(LLVM CONFIG REQUIRED)`
+and `find_package(LLD CONFIG REQUIRED)`. Developers and offline builds may
+supply an equivalent prepared SDK through `CMAKE_PREFIX_PATH`.
+
+System Homebrew, APT, package-manager, or Visual Studio LLVM layouts are
+transitional development conveniences and are not release inputs.
 
 ### Automation policy
 
-All checked-in bootstrap, dependency, packaging, signing, and release workflow
-logic is implemented once in cross-platform Python 3.9+ using the standard
-library. Do not add paired `.sh` and `.ps1` implementations. Platform-specific
-tool names and flags are data selected by Python, not separate workflow logic.
-
-The implemented bootstrap foundation uses this source layout:
-
-```text
-bootstrap.py
-pixi.toml
-pixi.lock
-scripts/
-  toolchain.py
-  toolchain_support/
-    cli.py
-    pixi.py
-    process.py
-    targets.py
-.pixi/                         # ignored locked development environment
-.deps/                         # ignored build state
-  pixi/                        # optional bootstrapped Pixi executable
-```
-
-`bootstrap.py` is the discoverable first-run entry point. It downloads the
-pinned Pixi executable when needed, enters the environment described by
-`pixi.toml`/`pixi.lock`, and configures an out-of-source CMake + Ninja build.
-Pixi owns dependency resolution, package verification, caching, and upgrades.
-On Windows, the host compiler and linker are MSVC; Visual Studio's C++ workload
-and Windows SDK remain system prerequisites.
-
-`scripts/toolchain.py` is the ongoing human and CI entry point. The currently
-implemented commands are:
-
-```text
-python3 bootstrap.py
-python3 bootstrap.py --offline
-python3 scripts/toolchain.py status
-python3 scripts/toolchain.py build
-python3 scripts/toolchain.py test
-```
-
-Each command automatically enters the locked Pixi environment. `test` runs the
-Python automation tests, builds Joyeer, and runs unfiltered CTest. Source LLVM
-fetching and reduced-SDK packaging remain design work; no placeholder commands
-or unused implementation are checked in for them.
-
-On Windows, the same file may be launched with `py -3` when `python3` is not an
-installed command. This is an invocation spelling difference, not a second
-implementation. CI calls the same subcommands as developers.
-
-The Python implementation must:
-
-- use `pathlib` for paths and never assume `/` or drive-letter spelling;
-- launch tools with argument arrays through `subprocess.run(..., check=True)`;
-- never use `shell=True`, shell pipelines, or generated command files;
-- download only pinned HTTPS assets and verify SHA-256;
-- use atomic temporary files and renames for downloads;
-- emit the exact command, target triple, pinned revision, and build ID in
-  verbose mode and machine-readable provenance;
-- return nonzero on every failed or incomplete step.
-
-`pixi.lock` records development tool binaries and transitive packages and never
-implicitly selects the newest LLVM. Future release-tooling work must add its own
-source/provenance lock when that source build is implemented; no unused source
-lock is kept in the repository meanwhile.
-
-Python is a developer, source-build, and release dependency. It is not included
-in the Joyeer package and is not required to run `joyeer`, `joyeer-codegen`, or
-programs compiled by Joyeer. Main CMake builds that consume a prepared LLVM SDK
-must also remain usable without invoking Python automatically.
+CMake is the dependency build graph and package configuration authority.
+Checked-in Python may orchestrate CI, signing, and packaging, but it must not
+become a parallel dependency resolver. Do not add paired `.sh` and `.ps1`
+implementations. The current Pixi-backed bootstrap remains a transitional
+convenience until the CMake LLVM superbuild is implemented and validated; it is
+not required by the final source-build or release-user contract.
 
 The reduced build should:
 
@@ -337,7 +313,7 @@ The required LLVM surface includes IR parsing and verification, the new pass
 manager, target initialization, target-machine object emission, object-file
 support, and the selected native target. LLD is built from the same source
 revision. LLVM and LLD C++ interfaces may change between releases; those
-changes are absorbed inside `joyeer-codegen` and never alter the frontend
+changes are absorbed inside `joyeer-backend-llvm` and never alter the frontend
 protocol without an explicit Joyeer protocol revision.
 
 Do not set a package-size promise until a reduced prototype has been measured.
@@ -406,32 +382,30 @@ no LLVM `.dylib` files.
 
 ## 11. Migration Plan
 
-Foundation completed on 2026-07-23:
+Foundation currently available:
 
 - cross-platform Python 3.9 bootstrap and toolchain entry points;
-- strict, versioned LLVM lock parsing and host target selection;
-- proxy-aware, atomic, digest-verified LLVM source download;
-- safe and serialized source extraction under `.deps/`;
-- offline and dry-run modes plus unified Python/CMake/CTest validation;
+- a Pixi-locked transitional development environment;
+- direct out-of-source CMake and Ninja builds;
+- unfiltered CTest validation;
 - explicit macOS SDK discovery for the transitional external-Clang linker.
 
-1. Introduce an internal code-generation request/result abstraction around the
+1. Add the CMake superbuild and pinned, digest-verified reduced LLVM/LLD SDK.
+2. Introduce an internal code-generation request/result abstraction around the
    current linker call. Preserve all current diagnostics and artifact checks.
-2. Define and test the versioned frontend/helper protocol independently of
-   LLVM.
-3. Build a pinned, reduced LLVM toolchain in CI and create
-   `joyeer-codegen` with IR verification and object emission for macOS arm64.
-4. package the Joyeer native runtime as target-specific bitcode or object data.
-5. Add final linking and dSYM behavior, initially using the Apple SDK tools
+3. Define and test the versioned backend C ABI and frontend/helper protocol
+  independently of LLVM.
+4. Build `joyeer-backend-llvm` and `joyeer-codegen` with IR verification and
+  object emission for macOS arm64.
+5. Package the Joyeer native runtime as target-specific bitcode or object data.
+6. Add final linking and dSYM behavior, initially using the Apple SDK tools
    where required.
-6. Run the existing unfiltered compiler/native suite through the helper and
+7. Run the existing unfiltered compiler/native suite through the helper and
    add clean-machine package tests.
-7. Switch the single production path to the packaged helper and remove
+8. Switch the single production path to the packaged helper and remove
    `JOYEER_CLANG_EXECUTABLE`, the configured runtime archive path, and the
    external-Clang linker implementation together.
-8. Repeat the vertical slice for Windows x64, Linux x64, and then arm64 hosts.
-9. Add the optional dynamic C API only after the process protocol and backend
-   semantics are stable.
+9. Repeat the vertical slice for Windows x64, Linux x64, and then arm64 hosts.
 
 There must be no permanent user-visible switch between external Clang and the
 packaged backend. During development, the unfinished helper remains an isolated
@@ -450,8 +424,8 @@ The macOS arm64 cutover requires:
 - compilation succeeds when LLVM and Clang are absent from `PATH`;
 - package binaries have no Homebrew, Cellar, build-tree, or source-tree load
   paths;
-- dynamic dependencies are restricted to an explicit allow-list of macOS
-  system libraries;
+- dynamic dependencies are restricted to the Joyeer-owned backend and an
+  explicit allow-list of macOS system libraries;
 - helper absence, version mismatch, crash, and malformed output produce stable
   diagnostics and no partial artifacts;
 - a clean macOS machine with the documented minimum system tools can install,
