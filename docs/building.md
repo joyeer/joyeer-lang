@@ -16,30 +16,33 @@ CMake owns project dependencies:
 - installation and packaging of Joyeer-owned binaries and libraries.
 
 LLVM is not a Git submodule and must not be added to the main build with
-`add_subdirectory` or `FetchContent_MakeAvailable`. The planned dependency path
-is a CMake superbuild: `ExternalProject_Add` obtains a release archive pinned by
-version and SHA-256, builds a reduced LLVM/LLD SDK in a separate build tree, and
-then configures the main Joyeer project against that SDK with `find_package`.
-A prepared SDK may be supplied instead for offline and iterative builds.
+`add_subdirectory` or `FetchContent_MakeAvailable`. The CMake superbuild uses
+`ExternalProject_Add` to obtain a release archive pinned by version and
+SHA-256, build a reduced LLVM/LLD SDK in a separate build tree, and configure
+the main Joyeer project against that SDK with `find_package`. A prepared SDK
+may be supplied instead for offline and iterative builds.
 
-The superbuild is not implemented yet. During the transition, native output and
-its integration tests use an externally installed Clang/LLVM 22 toolchain.
-The existing Pixi bootstrap remains a convenience path until the CMake-managed
-LLVM SDK replaces it; it is not the target dependency boundary.
+During the backend migration, native output and its integration tests still use
+an external Clang/LLVM 22 driver. The Superbuild and SDK link are implemented,
+but the production backend has not yet replaced textual IR plus Clang with the
+linked LLVM and LLD APIs. The existing Pixi bootstrap remains a convenience
+path during that transition; it is not the target dependency boundary.
 
 ## Source-build prerequisites
 
 All platforms require:
 
-- CMake 3.18 or newer;
+- CMake 3.20 or newer;
 - Ninja as the canonical generator;
+- curl 7.71 or newer for resumable, retryable LLVM source downloads;
 - a host C and C++ compiler with C++20 support;
 - network access for the first dependency population, or a populated CMake
   download cache and prepared LLVM SDK for an offline build;
 - enough local resources to build LLVM when a prepared SDK is unavailable.
 
-Python 3.9 or newer is required only for the current `bootstrap.py`,
-`scripts/toolchain.py`, and their automation tests. A direct CMake build does
+Python 3.8 or newer is required by an LLVM source build. Python 3.9 or newer is
+required by the current `bootstrap.py`, `scripts/toolchain.py`, and their
+automation tests. A direct main-project build against a prepared LLVM SDK does
 not require Python, and released Joyeer tools must not require it.
 
 Platform prerequisites are:
@@ -96,10 +99,10 @@ python3 scripts/toolchain.py test
 
 On Windows, use `py -3` in place of `python3` when necessary.
 
-## Planned LLVM superbuild
+## LLVM superbuild
 
-The dependency build and the main project must remain separate CMake configure
-steps. The superbuild will:
+The dependency build and the main project remain separate CMake configure
+steps. The superbuild:
 
 1. download an exact LLVM release archive and verify its SHA-256;
 2. build `llvm` and `lld` without Clang, tests, examples, or documentation;
@@ -107,7 +110,28 @@ steps. The superbuild will:
    selected package targets;
 4. install `LLVMConfig.cmake`, `LLDConfig.cmake`, headers, libraries, licenses,
    and provenance into a private SDK prefix;
-5. configure Joyeer with that prefix in `CMAKE_PREFIX_PATH`.
+5. configures Joyeer with explicit `LLVM_DIR` and `LLD_DIR` paths.
+
+Configure and build the complete dependency and Joyeer graph:
+
+```text
+cmake -S cmake/superbuild -B build/superbuild -G Ninja
+cmake --build build/superbuild
+```
+
+The first build downloads an approximately 159 MB source archive and compiles a
+Release LLVM/LLD SDK for the native target. LLVM is a large C++ project; allow
+substantial build time and several gigabytes of disk space. The download,
+source, LLVM build, installed SDK, and Joyeer build remain under the selected
+Superbuild binary directory and are reused by later invocations.
+
+The download and LLVM configure phases can be validated without compiling the
+SDK:
+
+```text
+cmake --build build/superbuild --target JoyeerLLVM-download
+cmake --build build/superbuild --target JoyeerLLVM-configure
+```
 
 The main project will consume the prepared SDK rather than download sources:
 
@@ -115,6 +139,22 @@ The main project will consume the prepared SDK rather than download sources:
 find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED)
 find_package(LLD 22.1.8 EXACT CONFIG REQUIRED)
 ```
+
+For a previously installed SDK, configure the main project directly:
+
+```text
+cmake -S . -B build -G Ninja \
+  -DJOYEER_USE_LLVM_SDK=ON \
+  -DJOYEER_VERIFY_LLVM_SDK=ON \
+  -DLLVM_DIR=/path/to/llvm-sdk/lib/cmake/llvm \
+  -DLLD_DIR=/path/to/llvm-sdk/lib/cmake/lld
+cmake --build build
+ctest --test-dir build -L llvm-sdk --output-on-failure
+```
+
+`JOYEER_VERIFY_LLVM_SDK` builds a probe that parses LLVM IR through the LLVM
+API and references the host LLD driver, proving that headers, component
+libraries, CMake exports, and the C++ ABI are usable together.
 
 The Joyeer LLVM backend is a Joyeer-owned dynamic library with a versioned C
 ABI. LLVM and LLD are private implementation details statically linked into

@@ -73,9 +73,11 @@ func main() {
 ## Requirements
 
 - Windows, macOS, or Linux
-- CMake 3.18 or newer
+- CMake 3.20 or newer
 - Ninja
+- curl 7.71 or newer for resumable LLVM source downloads
 - A host C and C++ compiler with C++20 support
+- Python 3.8 or newer when building the LLVM/LLD SDK from source
 - Network access on the first dependency population, or a prepared offline
   dependency cache
 - Windows: Visual Studio with the **Desktop development with C++** workload and
@@ -129,6 +131,25 @@ python3 scripts/toolchain.py test
 
 On Windows, use `py -3` when `python3` is unavailable. Python and Pixi are not
 requirements for a direct CMake build or for released Joyeer binaries.
+
+### LLVM SDK superbuild
+
+CMake can download, verify, build, and install the pinned LLVM/LLD 22.1.8 SDK,
+then configure and build Joyeer against the generated CMake packages:
+
+```text
+cmake -S cmake/superbuild -B build/superbuild -G Ninja
+cmake --build build/superbuild
+```
+
+On Windows, run these commands from a Visual Studio Developer shell. The first
+build compiles LLVM and can take substantial time and disk space. The source
+archive is pinned by SHA-256, and subsequent builds reuse the Superbuild tree.
+See [building.md](docs/building.md) for staged and prepared-SDK workflows.
+
+The SDK link is migration infrastructure: the current production backend still
+emits textual LLVM IR and invokes Clang while its implementation is moved to
+the linked LLVM and LLD APIs.
 
 ## CLI
 

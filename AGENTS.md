@@ -34,11 +34,11 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-- Source builders install CMake 3.18+, Ninja, a C++20 host compiler, and the
+- Source builders install CMake 3.20+, Ninja, a C++20 host compiler, and the
   platform SDK before configuring. See [docs/building.md](docs/building.md).
 - The current native path additionally requires Clang/LLVM 22.1.8. Pass a
   non-default driver as `-DJOYEER_CLANG_EXECUTABLE=/path/to/clang`.
-- The target dependency architecture is a CMake superbuild that creates a
+- The CMake superbuild under [cmake/superbuild/](cmake/superbuild/) creates a
   pinned LLVM/LLD SDK; the main build consumes it with `find_package`. Do not
   add LLVM as a Git submodule, `add_subdirectory`, or main-build `FetchContent`.
 - `bootstrap.py` and `scripts/toolchain.py` remain transitional Pixi-backed
