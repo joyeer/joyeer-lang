@@ -8,7 +8,7 @@ target_link_libraries(NativeRuntimeTests
         JoyeerNativeRuntime
 )
 
-gtest_discover_tests(NativeRuntimeTests
+joyeer_discover_tests(NativeRuntimeTests
         PROPERTIES LABELS native-runtime
 )
 
@@ -22,6 +22,6 @@ target_link_libraries(RuntimeOptionsTests
         JoyeerDiagnostic
 )
 
-gtest_discover_tests(RuntimeOptionsTests
+joyeer_discover_tests(RuntimeOptionsTests
         PROPERTIES LABELS "native-runtime\;optimization\;debug-info"
 )

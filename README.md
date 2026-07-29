@@ -73,7 +73,7 @@ func main() {
 ## Requirements
 
 - Windows, macOS, or Linux
-- CMake 3.16 or newer
+- CMake 3.18 or newer
 - Ninja
 - A host C and C++ compiler with C++20 support
 - Network access on the first dependency population, or a prepared offline
@@ -83,9 +83,13 @@ func main() {
 - Linux: GCC or Clang plus libc development files and binutils
 - macOS: Xcode Command Line Tools and the active macOS SDK
 
-Windows builds use MSVC; there is no MinGW/GCC fallback. The current native
-pipeline also requires Clang/LLVM 22.1.8, including `lld-link` for Windows
-DWARF output and LLVM inspection tools for complete backend test coverage.
+Windows builds use the MSVC compiler toolset installed by Visual Studio; CMake
+rejects MinGW, GCC, clang-cl, and other non-MSVC compilers. Ninja remains the
+build generator and does not replace the compiler. Run CMake from a Visual
+Studio Developer PowerShell or Developer Command Prompt so `cl.exe`, the C/C++
+headers, libraries, and Windows SDK are active. The current native pipeline
+also requires Clang/LLVM 22.1.8, including `lld-link` for Windows DWARF output
+and LLVM inspection tools for complete backend test coverage.
 This external LLVM requirement is transitional: the planned CMake superbuild
 will build a pinned LLVM/LLD SDK and link it privately into the packaged Joyeer
 backend. See [building.md](docs/building.md) for dependency ownership, platform

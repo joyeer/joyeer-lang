@@ -9,6 +9,10 @@
 #define JOYEER_NATIVE_RUNTIME_PATH ""
 #endif
 
+#ifndef JOYEER_MSVC_RUNTIME_LIBRARY
+#define JOYEER_MSVC_RUNTIME_LIBRARY ""
+#endif
+
 #ifndef JOYEER_SDK_ROOT_PATH
 #define JOYEER_SDK_ROOT_PATH ""
 #endif
@@ -46,6 +50,7 @@ int Driver::run() {
                     joyeer::native::LinkOptions {
                         JOYEER_CLANG_EXECUTABLE_PATH,
                         JOYEER_NATIVE_RUNTIME_PATH,
+                        JOYEER_MSVC_RUNTIME_LIBRARY,
                         JOYEER_SDK_ROOT_PATH,
                         arguments->outputFile,
                         arguments->optimizationLevel,

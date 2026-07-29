@@ -25,6 +25,7 @@ struct LinkDiagnostic {
 struct LinkOptions {
     std::filesystem::path clangExecutable;
     std::filesystem::path runtimeLibrary;
+    std::string msvcRuntimeLibrary;
     std::filesystem::path sdkRoot;
     std::filesystem::path outputFile;
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;

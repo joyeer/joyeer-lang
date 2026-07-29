@@ -34,7 +34,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-- Source builders install CMake 3.16+, Ninja, a C++20 host compiler, and the
+- Source builders install CMake 3.18+, Ninja, a C++20 host compiler, and the
   platform SDK before configuring. See [docs/building.md](docs/building.md).
 - The current native path additionally requires Clang/LLVM 22.1.8. Pass a
   non-default driver as `-DJOYEER_CLANG_EXECUTABLE=/path/to/clang`.
@@ -44,7 +44,9 @@ ctest --test-dir build --output-on-failure
 - `bootstrap.py` and `scripts/toolchain.py` remain transitional Pixi-backed
   convenience entry points. Python/Pixi are not requirements for direct CMake
   builds or released Joyeer tools.
-- Windows builds use MSVC exclusively. Do not add a MinGW/GCC fallback.
+- Windows builds use Visual Studio's MSVC compiler exclusively. CMake enforces
+  this even when Ninja is the generator; do not add MinGW, GCC, or clang-cl
+  fallbacks.
 - The executable is under `build/bin/` for single-config generators.
 - Unfiltered CTest is the required final gate. Label filters are for focused
   iteration only.

@@ -109,13 +109,30 @@ class PixiBootstrapTest(unittest.TestCase):
             with patch.dict(os.environ, {"ProgramFiles(x86)": str(root)}), patch(
                 "scripts.toolchain_support.pixi.subprocess.run",
                 side_effect=(query, activation),
-            ), patch(
+            ) as run_process, patch(
                 "scripts.toolchain_support.pixi.shutil.which",
                 return_value=str(root / "cl.exe"),
             ):
                 _activate_msvc()
                 self.assertEqual(os.environ["CC"], "cl.exe")
                 self.assertEqual(os.environ["CXX"], "cl.exe")
+                self.assertEqual(
+                    run_process.call_args_list[1].args[0],
+                    [
+                        "cmd.exe",
+                        "/d",
+                        "/s",
+                        "/c",
+                        "call",
+                        str(developer_command),
+                        "-no_logo",
+                        "-arch=x64",
+                        "-host_arch=x64",
+                        ">nul",
+                        "&&",
+                        "set",
+                    ],
+                )
 
 
 if __name__ == "__main__":

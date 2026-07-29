@@ -31,7 +31,7 @@ LLVM SDK replaces it; it is not the target dependency boundary.
 
 All platforms require:
 
-- CMake 3.16 or newer;
+- CMake 3.18 or newer;
 - Ninja as the canonical generator;
 - a host C and C++ compiler with C++20 support;
 - network access for the first dependency population, or a populated CMake
@@ -50,9 +50,13 @@ Platform prerequisites are:
 | Linux | GCC or Clang with C++20 support, libc development files, binutils, CMake, and Ninja |
 | macOS | Xcode Command Line Tools and the active macOS SDK, CMake, and Ninja |
 
-Windows uses MSVC for the Joyeer implementation. MinGW is not a supported
-fallback. Platform SDKs, sysroots, startup objects, and system libraries remain
-system prerequisites even after LLVM and LLD are built by CMake.
+Windows uses the MSVC compiler toolset installed by Visual Studio for the
+Joyeer implementation. CMake rejects MinGW, GCC, clang-cl, and other non-MSVC
+compilers. Ninja is the canonical build generator on Windows, but it only
+schedules compiler and linker commands; it does not replace `cl.exe` or the
+Visual Studio toolchain. Platform SDKs, sysroots, startup objects, and system
+libraries remain system prerequisites even after LLVM and LLD are built by
+CMake.
 
 During the external-Clang transition, install Clang/LLVM 22.1.8 as well.
 `clang` is required for native output, `lld-link` is required for Windows DWARF
@@ -64,6 +68,8 @@ coverage. Pass a non-default Clang location through
 
 Run CMake from a shell in which the host compiler and SDK are active. On
 Windows, use a Visual Studio Developer PowerShell or Developer Command Prompt.
+The Windows presets explicitly select `cl.exe`; configuration fails when the
+Visual Studio C++ workload or Windows SDK is missing.
 
 ```text
 cmake -S . -B build -G Ninja \

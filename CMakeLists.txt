@@ -1,8 +1,14 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.18)
 
 project (joyeer 
         VERSION 0.0.1
         LANGUAGES C CXX)
+
+if(WIN32 AND NOT MSVC)
+    message(FATAL_ERROR
+        "Joyeer on Windows requires the MSVC compiler from Visual Studio. "
+        "Run CMake from a Visual Studio Developer shell.")
+endif()
 
 cmake_policy(SET CMP0110 NEW)
 cmake_policy(SET CMP0114 NEW)

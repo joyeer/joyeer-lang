@@ -11,7 +11,7 @@ target_link_libraries(CompilerDiagnosticTests
         JoyeerDiagnostic
 )
 
-gtest_discover_tests(CompilerDiagnosticTests
+joyeer_discover_tests(CompilerDiagnosticTests
         PROPERTIES LABELS diagnostics
 )
 
@@ -21,7 +21,7 @@ target_link_libraries(CompilerLexerTests
         JoyeerCompiler
 )
 
-gtest_discover_tests(CompilerLexerTests
+joyeer_discover_tests(CompilerLexerTests
         PROPERTIES LABELS lexer
 )
 
@@ -39,7 +39,7 @@ target_compile_definitions(CompilerParserTests PRIVATE
         JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
 )
 
-gtest_discover_tests(CompilerParserTests
+joyeer_discover_tests(CompilerParserTests
         PROPERTIES LABELS parser
 )
 
@@ -57,7 +57,7 @@ target_compile_definitions(CompilerNameResolutionTests PRIVATE
         JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
 )
 
-gtest_discover_tests(CompilerNameResolutionTests
+joyeer_discover_tests(CompilerNameResolutionTests
         PROPERTIES LABELS name-resolution
 )
 
@@ -75,7 +75,7 @@ target_compile_definitions(CompilerTypeCheckingTests PRIVATE
         JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
 )
 
-gtest_discover_tests(CompilerTypeCheckingTests
+joyeer_discover_tests(CompilerTypeCheckingTests
         PROPERTIES LABELS type-checking
 )
 
@@ -89,7 +89,7 @@ target_link_libraries(CompilerSemanticAnalysisTests
         JoyeerCompiler
 )
 
-gtest_discover_tests(CompilerSemanticAnalysisTests
+joyeer_discover_tests(CompilerSemanticAnalysisTests
         PROPERTIES LABELS semantic-analysis
 )
 
@@ -102,7 +102,7 @@ target_link_libraries(IRModelTests
         JoyeerIR
 )
 
-gtest_discover_tests(IRModelTests
+joyeer_discover_tests(IRModelTests
         PROPERTIES LABELS ir
 )
 
@@ -121,7 +121,7 @@ target_compile_definitions(IRLoweringTests PRIVATE
         JOYEER_TESTS_DIR="${JOYEER_TESTS_DIR}"
 )
 
-gtest_discover_tests(IRLoweringTests
+joyeer_discover_tests(IRLoweringTests
         PROPERTIES LABELS ir-lowering
 )
 
@@ -136,7 +136,7 @@ target_link_libraries(LLVMBackendTests
         JoyeerLLVMBackend
 )
 
-gtest_discover_tests(LLVMBackendTests
+joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
 

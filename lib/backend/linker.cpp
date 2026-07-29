@@ -539,10 +539,27 @@ LinkResult Linker::link(
         llvmFile,
         "-x",
         "none",
+#if defined(_WIN32)
+        "-Xlinker",
+        std::filesystem::path(L"/WHOLEARCHIVE:" + options.runtimeLibrary.native()),
+#else
         options.runtimeLibrary,
+#endif
         "-o",
         options.outputFile,
     };
+#if defined(_WIN32)
+    if (!options.msvcRuntimeLibrary.empty()) {
+        clangArguments.insert(
+                clangArguments.begin() + 1,
+                "-fms-runtime-lib=" + options.msvcRuntimeLibrary);
+        if (options.msvcRuntimeLibrary.starts_with("dll")) {
+            clangArguments.insert(
+                    clangArguments.begin() + 2,
+                    { "-Xlinker", "/NODEFAULTLIB:libcmt" });
+        }
+    }
+#endif
     if (options.debugInfo.emitLineTables) {
 #if defined(_WIN32)
         const auto optimizeReferences = options.optimizationLevel == OptimizationLevel::O0
