@@ -40,9 +40,9 @@ On macOS, CMake resolves the active SDK with `xcrun --sdk macosx
 an explicit `-isysroot` after any Clang configuration-file arguments. This
 avoids depending on a package-manager Clang's build-time SDK path.
 
-The proposed release architecture replaces that external installation
-dependency with a private, statically linked code-generation helper. See
-[Self-Contained Native Toolchain Distribution](../plan/toolchain-distribution.md).
+The external Clang/LLVM installation is an intentional dependency boundary.
+Joyeer does not download, build, package, or link LLVM. Supported tool versions
+and platform prerequisites are documented in [Building Joyeer](../building.md).
 
 ---
 

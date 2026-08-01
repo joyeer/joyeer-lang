@@ -70,45 +70,73 @@ func main() {
 }
 ```
 
-## Requirements
+## Getting Started
 
-- Windows, macOS, or Linux
-- CMake 3.20 or newer
-- Ninja
-- curl 7.71 or newer for resumable LLVM source downloads
-- A host C and C++ compiler with C++20 support
-- Python 3.8 or newer when building the LLVM/LLD SDK from source
-- Network access on the first dependency population, or a prepared offline
-  dependency cache
-- Windows: Visual Studio with the **Desktop development with C++** workload and
-  a Windows SDK
-- Linux: GCC or Clang plus libc development files and binutils
-- macOS: Xcode Command Line Tools and the active macOS SDK
+Joyeer does not download, build, or manage LLVM or the platform toolchain.
+Contributors install the required tools before configuring the project.
 
-Windows builds use the MSVC compiler toolset installed by Visual Studio; CMake
-rejects MinGW, GCC, clang-cl, and other non-MSVC compilers. Ninja remains the
-build generator and does not replace the compiler. Run CMake from a Visual
-Studio Developer PowerShell or Developer Command Prompt so `cl.exe`, the C/C++
-headers, libraries, and Windows SDK are active. The current native pipeline
-also requires Clang/LLVM 22.1.8, including `lld-link` for Windows DWARF output
-and LLVM inspection tools for complete backend test coverage.
-This external LLVM requirement is transitional: the planned CMake superbuild
-will build a pinned LLVM/LLD SDK and link it privately into the packaged Joyeer
-backend. See [building.md](docs/building.md) for dependency ownership, platform
-prerequisites, and the migration plan.
+| Tool | Requirement |
+|---|---|
+| [CMake](https://cmake.org/download/) | 3.20 or newer |
+| [Ninja](https://github.com/ninja-build/ninja/releases) | Required build generator |
+| Host compiler | C and C++ compiler with C++20 support |
+| [LLVM toolchain](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Clang/LLVM 22.1.8; use tools from the same installation |
+| Platform SDK | Windows SDK, macOS SDK, or Linux libc development files |
+| [Git](https://git-scm.com/downloads) and network access | Required when CMake fetches GoogleTest for unit tests |
 
-## Build
+The LLVM installation must provide `clang` for native output.
+`llvm-readobj` enables complete debug-artifact tests. Windows development also
+uses `lld-link` for DWARF output and `llvm-pdbutil` for PDB tests; macOS uses
+`dsymutil` for dSYM tests.
 
-The build is out-of-source only. Run CMake from an environment where the host
-compiler and platform SDK are active:
+On Windows x64, download the official
+[`LLVM-22.1.8-win64.exe`](https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-win64.exe)
+installer. Joyeer invokes LLVM command-line tools and does not need the larger
+`clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz` development archive or the
+LLVM source archive.
+
+Platform requirements are:
+
+| Platform | Required environment |
+|---|---|
+| Windows | [Visual Studio](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, the MSVC x64 toolset, and a Windows SDK |
+| Linux | GCC or Clang with C++20 support, libc development files, and binutils |
+| macOS | Xcode Command Line Tools and the active macOS SDK |
+
+Windows builds use MSVC exclusively. Run CMake from a Visual Studio Developer
+PowerShell or Developer Command Prompt so `cl.exe`, the standard library, and
+the Windows SDK are available. Ninja schedules the build but does not replace
+the host compiler.
+
+Verify the common tools before configuring:
+
+```text
+cmake --version
+ninja --version
+clang --version
+git --version
+```
+
+For the complete native debug test suite, also verify the tools relevant to
+your platform:
+
+```text
+llvm-readobj --version
+lld-link --version       # Windows
+llvm-pdbutil --version   # Windows
+dsymutil --version       # macOS
+```
+
+The build is out-of-source only. If Clang 22 is on `PATH`, configure and build
+with:
 
 ```text
 cmake -S . -B build -G Ninja
 cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
-Set `JOYEER_CLANG_EXECUTABLE` when Clang 22 is not discoverable through `PATH`
-or the platform locations checked by CMake:
+Otherwise, pass its absolute path explicitly:
 
 ```text
 cmake -S . -B build -G Ninja \
@@ -116,40 +144,9 @@ cmake -S . -B build -G Ninja \
 ```
 
 The executable is written to `build/bin/joyeer` on single-config generators.
-Configurations without Clang still build the frontend and textual backend, but
-do not register Clang/native integration tests.
-
-The existing Pixi bootstrap remains available as a transitional convenience.
-It installs the currently pinned tools and configures the same CMake build:
-
-```text
-python3 bootstrap.py
-python3 scripts/toolchain.py status
-python3 scripts/toolchain.py build
-python3 scripts/toolchain.py test
-```
-
-On Windows, use `py -3` when `python3` is unavailable. Python and Pixi are not
-requirements for a direct CMake build or for released Joyeer binaries.
-
-### LLVM SDK superbuild
-
-CMake can download, verify, build, and install the pinned LLVM/LLD 22.1.8 SDK,
-then configure and build Joyeer against the generated CMake packages:
-
-```text
-cmake -S cmake/superbuild -B build/superbuild -G Ninja
-cmake --build build/superbuild
-```
-
-On Windows, run these commands from a Visual Studio Developer shell. The first
-build compiles LLVM and can take substantial time and disk space. The source
-archive is pinned by SHA-256, and subsequent builds reuse the Superbuild tree.
-See [building.md](docs/building.md) for staged and prepared-SDK workflows.
-
-The SDK link is migration infrastructure: the current production backend still
-emits textual LLVM IR and invokes Clang while its implementation is moved to
-the linked LLVM and LLD APIs.
+A configuration without Clang can still build the frontend and textual LLVM
+emitter, but native output and Clang-based integration tests are unavailable.
+See [building.md](docs/building.md) for platform details and troubleshooting.
 
 ## CLI
 
@@ -186,9 +183,6 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-During the Pixi transition, `python3 scripts/toolchain.py test` additionally
-runs the Python bootstrap tests before the build and CTest.
-
 Focused labels are available when iterating:
 
 ```pwsh
@@ -210,7 +204,7 @@ stage-specific folders under [tests/](tests/) and are registered in
 | [lib/](lib/) | C++ compiler/backend and C11 native runtime implementations |
 | [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
-| [scripts/](scripts/) | Cross-platform Python toolchain automation and CMake test helpers |
+| [scripts/](scripts/) | CMake integration-test helpers |
 | [docs/](docs/) | Specification, rationale, implementation notes, and plans |
 
 Useful examples include the

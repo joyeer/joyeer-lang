@@ -1,7 +1,5 @@
 build/
 /out/
-.deps/
-.pixi/
 .vscode/*
 !.vscode/settings.json
 .idea/

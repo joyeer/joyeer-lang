@@ -56,10 +56,8 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 
 1. Broaden the standard library beyond the typed whole-file I/O surface with
   incremental/streaming APIs, writing, metadata, and Unicode paths.
-2. Package a pinned LLVM/LLD backend behind a private code-generation helper so
-  released toolchains do not require a user-installed LLVM. Follow the
-  [toolchain distribution plan](toolchain-distribution.md) without adding a
-  second language mode or permanent backend switch.
+2. Stabilize the external Clang/LLVM compatibility contract, including version
+  checks, tool discovery diagnostics, and a documented upgrade process.
 3. Define a Joyeer-specific optimization and LTO policy while preserving
    checked arithmetic, bounds, ownership, and debug semantics.
 4. Expand modules, generics, error propagation, and contracts only after their
@@ -80,5 +78,5 @@ ctest --test-dir build --output-on-failure
 
 Use labels such as `lexer`, `parser`, `type-checking`, `ir-lowering`,
 `llvm-backend`, `native-runtime`, `native`, and `debug-info` only for focused
-iteration. Source-build prerequisites and the transitional Pixi convenience
-path are documented in [building.md](../building.md).
+iteration. Developer-managed toolchain prerequisites are documented in
+[building.md](../building.md).

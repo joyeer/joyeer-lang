@@ -36,14 +36,13 @@ ctest --test-dir build --output-on-failure
 
 - Source builders install CMake 3.20+, Ninja, a C++20 host compiler, and the
   platform SDK before configuring. See [docs/building.md](docs/building.md).
-- The current native path additionally requires Clang/LLVM 22.1.8. Pass a
-  non-default driver as `-DJOYEER_CLANG_EXECUTABLE=/path/to/clang`.
-- The CMake superbuild under [cmake/superbuild/](cmake/superbuild/) creates a
-  pinned LLVM/LLD SDK; the main build consumes it with `find_package`. Do not
-  add LLVM as a Git submodule, `add_subdirectory`, or main-build `FetchContent`.
-- `bootstrap.py` and `scripts/toolchain.py` remain transitional Pixi-backed
-  convenience entry points. Python/Pixi are not requirements for direct CMake
-  builds or released Joyeer tools.
+- Native development additionally requires a developer-installed Clang/LLVM
+  22.1.8 toolchain. Pass a non-default driver as
+  `-DJOYEER_CLANG_EXECUTABLE=/path/to/clang`.
+- CMake must not download, build, package, or link LLVM/LLD. Do not add an LLVM
+  superbuild, package-manager environment, Git submodule, `add_subdirectory`,
+  `FetchContent`, or SDK link mode. Joyeer emits textual LLVM IR and invokes
+  the external Clang driver.
 - Windows builds use Visual Studio's MSVC compiler exclusively. CMake enforces
   this even when Ninja is the generator; do not add MinGW, GCC, or clang-cl
   fallbacks.
@@ -104,16 +103,19 @@ ctest --test-dir build --output-on-failure
 
 ## Repository automation
 
-- Write checked-in build, bootstrap, packaging, and release automation in
-  cross-platform Python 3.9+ using the standard library.
-- Keep dependency acquisition and build relationships in CMake. Python may
-  orchestrate CI and packaging but must not become a second package resolver.
+- Keep external tool prerequisites in [docs/building.md](docs/building.md);
+  checked-in automation must not install or resolve the host compiler, platform
+  SDK, CMake, Ninja, LLVM, Clang, or LLD.
+- CMake may acquire project test dependencies such as GoogleTest, but LLVM and
+  platform toolchains remain developer-managed external prerequisites.
+- Write checked-in packaging and release automation in cross-platform Python
+  3.9+ using the standard library when scripting is necessary.
 - Do not maintain parallel `.sh` and `.ps1` implementations. Command examples
   may use the host shell, but reusable workflow logic belongs in Python.
 - Launch tools with argument arrays and `subprocess.run`; do not use
   `shell=True` or construct shell command strings.
-- Python is a source-build and release dependency only. Released Joyeer
-  compiler binaries and programs must not require Python.
+- Python is not a source-build requirement. Released Joyeer compiler binaries
+  and programs must not require Python.
 
 ## When in doubt
 

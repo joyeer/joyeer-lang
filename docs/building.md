@@ -1,32 +1,20 @@
 # Building Joyeer
 
-This document defines the source-build prerequisites and dependency ownership
-policy. It distinguishes tools required before CMake can run from project
-dependencies that CMake owns.
+Joyeer uses the host platform toolchain plus an external LLVM installation.
+The repository does not download, build, package, or select those tools.
 
 ## Dependency policy
 
-Source builders install the build driver, generator, host compiler, and platform
-SDK. CMake validates and uses those prerequisites; it does not install them.
+Contributors install and update CMake, Ninja, the host compiler, the platform
+SDK, and Clang/LLVM. CMake discovers and uses them but does not install them.
+LLVM is not a Git submodule, a CMake `FetchContent` dependency, or a project
+superbuild. Joyeer deliberately emits textual LLVM IR and invokes the external
+Clang driver instead of linking the LLVM C++ libraries.
 
-CMake owns project dependencies:
-
-- GoogleTest for C++ unit tests;
-- the pinned LLVM and LLD SDK used by the packaged native backend;
-- installation and packaging of Joyeer-owned binaries and libraries.
-
-LLVM is not a Git submodule and must not be added to the main build with
-`add_subdirectory` or `FetchContent_MakeAvailable`. The CMake superbuild uses
-`ExternalProject_Add` to obtain a release archive pinned by version and
-SHA-256, build a reduced LLVM/LLD SDK in a separate build tree, and configure
-the main Joyeer project against that SDK with `find_package`. A prepared SDK
-may be supplied instead for offline and iterative builds.
-
-During the backend migration, native output and its integration tests still use
-an external Clang/LLVM 22 driver. The Superbuild and SDK link are implemented,
-but the production backend has not yet replaced textual IR plus Clang with the
-linked LLVM and LLD APIs. The existing Pixi bootstrap remains a convenience
-path during that transition; it is not the target dependency boundary.
+When `JOYEER_BUILD_UNITTESTS=ON`, CMake fetches GoogleTest 1.15.2. That is a
+project test dependency, so the first unit-test configuration requires Git and
+network access. Set `JOYEER_BUILD_UNITTESTS=OFF` when configuring without unit
+tests or without network access.
 
 ## Source-build prerequisites
 
@@ -34,16 +22,32 @@ All platforms require:
 
 - CMake 3.20 or newer;
 - Ninja as the canonical generator;
-- curl 7.71 or newer for resumable, retryable LLVM source downloads;
 - a host C and C++ compiler with C++20 support;
-- network access for the first dependency population, or a populated CMake
-  download cache and prepared LLVM SDK for an offline build;
-- enough local resources to build LLVM when a prepared SDK is unavailable.
+- a developer-installed Clang/LLVM 22.1.8 toolchain;
+- the platform SDK and native linker inputs;
+- Git and network access when unit tests need to fetch GoogleTest.
 
-Python 3.8 or newer is required by an LLVM source build. Python 3.9 or newer is
-required by the current `bootstrap.py`, `scripts/toolchain.py`, and their
-automation tests. A direct main-project build against a prepared LLVM SDK does
-not require Python, and released Joyeer tools must not require it.
+Use `clang` and the LLVM inspection tools from the same LLVM installation.
+Mixing versions or package-manager prefixes is unsupported. The tools serve
+these roles:
+
+| Tool | Purpose |
+|---|---|
+| `clang` | Validate generated LLVM IR, generate machine code, and link `-o` output |
+| `llvm-readobj` | Inspect object and executable debug sections in the full test suite |
+| `lld-link` | Link Windows DWARF output |
+| `llvm-pdbutil` | Inspect Windows PDB output in the full test suite |
+| `dsymutil` | Produce and inspect macOS dSYM artifacts |
+
+Only `clang` is required for ordinary native output. Missing inspection tools
+cause their platform-specific tests to be omitted. Python, curl, LLVM headers,
+and LLVM C++ libraries are not Joyeer source-build requirements.
+
+For Windows x64, use the official
+[`LLVM-22.1.8-win64.exe`](https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-win64.exe)
+installer. The `clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz` archive also
+contains LLVM development libraries that Joyeer does not link and is therefore
+unnecessary for normal development.
 
 Platform prerequisites are:
 
@@ -58,21 +62,28 @@ Joyeer implementation. CMake rejects MinGW, GCC, clang-cl, and other non-MSVC
 compilers. Ninja is the canonical build generator on Windows, but it only
 schedules compiler and linker commands; it does not replace `cl.exe` or the
 Visual Studio toolchain. Platform SDKs, sysroots, startup objects, and system
-libraries remain system prerequisites even after LLVM and LLD are built by
-CMake.
+libraries remain external prerequisites.
 
-During the external-Clang transition, install Clang/LLVM 22.1.8 as well.
-`clang` is required for native output, `lld-link` is required for Windows DWARF
-output, and LLVM inspection tools are required for complete backend/debug test
-coverage. Pass a non-default Clang location through
-`JOYEER_CLANG_EXECUTABLE`.
+Before configuring, verify the tools supplied by your environment:
+
+```text
+cmake --version
+ninja --version
+clang --version
+git --version
+```
+
+For the complete native debug test suite, also check `llvm-readobj`, plus
+`lld-link` and `llvm-pdbutil` on Windows or `dsymutil` on macOS. On Windows,
+run `cl` from a Visual Studio Developer shell as well. Ensure the reported
+Clang and LLVM tool versions and installation paths match.
 
 ## Configure, build, and test
 
-Run CMake from a shell in which the host compiler and SDK are active. On
-Windows, use a Visual Studio Developer PowerShell or Developer Command Prompt.
-The Windows presets explicitly select `cl.exe`; configuration fails when the
-Visual Studio C++ workload or Windows SDK is missing.
+Run CMake from a shell in which the host compiler and platform SDK are active.
+On Windows, use a Visual Studio Developer PowerShell or Developer Command
+Prompt. The Windows presets explicitly select `cl.exe`; configuration fails
+when the Visual Studio C++ workload or Windows SDK is missing.
 
 ```text
 cmake -S . -B build -G Ninja \
@@ -84,88 +95,48 @@ ctest --test-dir build --output-on-failure
 PowerShell uses a backtick instead of a backslash for line continuation, or the
 configure command can be written on one line. Omit
 `JOYEER_CLANG_EXECUTABLE` only when the intended Clang is discoverable through
-`PATH` or the platform locations encoded by the current CMake build.
+`PATH` or one of CMake's platform hints.
+
+Windows contributors may use the checked-in presets:
+
+```text
+cmake --preset x64-debug -DJOYEER_CLANG_EXECUTABLE=C:/absolute/path/to/clang.exe
+cmake --build --preset x64-debug
+ctest --preset x64-debug
+```
 
 The build is out-of-source only. The executable is under `build/bin/` for
 single-config generators. Unfiltered CTest is the required final CMake gate;
 labels are for focused iteration.
 
-The transitional convenience path remains:
+## Tool discovery
+
+CMake searches `PATH` and common LLVM installation locations. Prefer an
+explicit path when multiple LLVM installations exist:
 
 ```text
-python3 bootstrap.py
-python3 scripts/toolchain.py test
+-DJOYEER_CLANG_EXECUTABLE=/absolute/path/to/llvm/bin/clang
 ```
 
-On Windows, use `py -3` in place of `python3` when necessary.
+The LLVM inspection tools are searched beside that executable and then on
+`PATH`. On macOS, CMake obtains the active SDK from `xcrun`; use
+`JOYEER_MACOS_SDK_PATH` only when an explicit SDK is necessary.
 
-## LLVM superbuild
+A configuration without Clang is allowed for frontend development and textual
+LLVM emission. CMake reports that native integration tests are unavailable,
+and `joyeer -o` reports a missing-tool diagnostic at runtime.
 
-The dependency build and the main project remain separate CMake configure
-steps. The superbuild:
+## Troubleshooting
 
-1. download an exact LLVM release archive and verify its SHA-256;
-2. build `llvm` and `lld` without Clang, tests, examples, or documentation;
-3. build static position-independent LLVM/LLD component libraries for the
-   selected package targets;
-4. install `LLVMConfig.cmake`, `LLDConfig.cmake`, headers, libraries, licenses,
-   and provenance into a private SDK prefix;
-5. configures Joyeer with explicit `LLVM_DIR` and `LLD_DIR` paths.
-
-Configure and build the complete dependency and Joyeer graph:
-
-```text
-cmake -S cmake/superbuild -B build/superbuild -G Ninja
-cmake --build build/superbuild
-```
-
-The first build downloads an approximately 159 MB source archive and compiles a
-Release LLVM/LLD SDK for the native target. LLVM is a large C++ project; allow
-substantial build time and several gigabytes of disk space. The download,
-source, LLVM build, installed SDK, and Joyeer build remain under the selected
-Superbuild binary directory and are reused by later invocations.
-
-The download and LLVM configure phases can be validated without compiling the
-SDK:
-
-```text
-cmake --build build/superbuild --target JoyeerLLVM-download
-cmake --build build/superbuild --target JoyeerLLVM-configure
-```
-
-The main project will consume the prepared SDK rather than download sources:
-
-```cmake
-find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED)
-find_package(LLD 22.1.8 EXACT CONFIG REQUIRED)
-```
-
-For a previously installed SDK, configure the main project directly:
-
-```text
-cmake -S . -B build -G Ninja \
-  -DJOYEER_USE_LLVM_SDK=ON \
-  -DJOYEER_VERIFY_LLVM_SDK=ON \
-  -DLLVM_DIR=/path/to/llvm-sdk/lib/cmake/llvm \
-  -DLLD_DIR=/path/to/llvm-sdk/lib/cmake/lld
-cmake --build build
-ctest --test-dir build -L llvm-sdk --output-on-failure
-```
-
-`JOYEER_VERIFY_LLVM_SDK` builds a probe that parses LLVM IR through the LLVM
-API and references the host LLD driver, proving that headers, component
-libraries, CMake exports, and the C++ ABI are usable together.
-
-The Joyeer LLVM backend is a Joyeer-owned dynamic library with a versioned C
-ABI. LLVM and LLD are private implementation details statically linked into
-that library; LLVM C++ types, exceptions, allocators, and standard-library
-objects never cross the ABI. The CLI may invoke a private helper that loads the
-same backend library to preserve process-level crash isolation.
-
-## Release users
-
-A released Joyeer package contains the compiler, the matching Joyeer LLVM
-backend, the native runtime payload, licenses, and any private helper. Release
-users do not install CMake, Ninja, Python, Clang, LLVM, or LLD. They may still
-need operating-system SDK components when native linking requires inputs that
-cannot legally or technically be redistributed.
+- **CMake selects the wrong Clang:** clear the build directory or use
+  `cmake --fresh`, then set `JOYEER_CLANG_EXECUTABLE` explicitly.
+- **Windows rejects the compiler:** reopen a Visual Studio Developer shell and
+  verify `cl` and the Windows SDK before running CMake.
+- **Native debug tests are missing:** install the matching LLVM inspection
+  tools and reconfigure so CMake can register those tests.
+- **GoogleTest cannot be fetched:** restore Git/network access, provide it
+  through the normal CMake dependency cache, or configure with
+  `-DJOYEER_BUILD_UNITTESTS=OFF`.
+- **macOS native linking cannot find system libraries:** run `xcode-select -p`
+  and `xcrun --sdk macosx --show-sdk-path`, then repair or select Xcode Command
+  Line Tools before reconfiguring.

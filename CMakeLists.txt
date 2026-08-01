@@ -11,7 +11,6 @@ if(WIN32 AND NOT MSVC)
 endif()
 
 cmake_policy(SET CMP0110 NEW)
-cmake_policy(SET CMP0114 NEW)
 
 set(CMAKE_DISABLE_IN_SOURCE_BUILD ON)
 set(CTEST_OUTPUT_ON_FAILURE TRUE)
@@ -25,19 +24,6 @@ enable_testing()
 enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
-option(JOYEER_USE_LLVM_SDK "Link the Joyeer backend to an installed LLVM/LLD SDK" OFF)
-option(JOYEER_VERIFY_LLVM_SDK "Build and test the LLVM/LLD SDK link probe" OFF)
-
-if(JOYEER_VERIFY_LLVM_SDK AND NOT JOYEER_USE_LLVM_SDK)
-    message(FATAL_ERROR "JOYEER_VERIFY_LLVM_SDK requires JOYEER_USE_LLVM_SDK=ON")
-endif()
-
-if(JOYEER_USE_LLVM_SDK)
-    find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED)
-    find_package(LLD 22.1.8 EXACT CONFIG REQUIRED)
-    message(STATUS "Joyeer LLVM SDK: ${LLVM_PACKAGE_VERSION} (${LLVM_DIR})")
-    message(STATUS "Joyeer LLD SDK: ${LLD_DIR}")
-endif()
 
 find_program(JOYEER_CLANG_EXECUTABLE
         NAMES clang clang-22
