@@ -188,7 +188,7 @@ The current IR/native pipeline intentionally leaves these to later commits:
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
-  backend's explicit Clang optimization level;
+  native backend's explicit LLVM optimization level;
 - optimized-debug value tracking beyond the current lexical scope, source
   variable, physical type, and `llvm.dbg.declare` metadata.
 

@@ -15,7 +15,7 @@ The compiler is a C++20 implementation with one supported pipeline:
 ```text
 source -> lexer -> parser -> name resolution -> type checking
        -> semantic analysis -> verified Joyeer IR -> textual LLVM IR
-       -> Clang + JoyeerNativeRuntime -> native executable
+  -> LLVM code generation + LLD + JoyeerNativeRuntime -> native executable
 ```
 
 The old parser/AST passes, bytecode runtime, VM, language-mode switch, and
@@ -36,13 +36,16 @@ ctest --test-dir build --output-on-failure
 
 - Source builders install CMake 3.20+, Ninja, a C++20 host compiler, and the
   platform SDK before configuring. See [docs/building.md](docs/building.md).
-- Native development additionally requires a developer-installed Clang/LLVM
-  22.1.8 toolchain. Pass a non-default driver as
-  `-DJOYEER_CLANG_EXECUTABLE=/path/to/clang`.
-- CMake must not download, build, package, or link LLVM/LLD. Do not add an LLVM
-  superbuild, package-manager environment, Git submodule, `add_subdirectory`,
-  `FetchContent`, or SDK link mode. Joyeer emits textual LLVM IR and invokes
-  the external Clang driver.
+- Windows native development requires the full LLVM/LLD 22.1.8 development
+  SDK. Set `LLVM_HOME` or pass `-DJOYEER_LLVM_ROOT=/path/to/sdk`. CMake must not
+  download or build LLVM itself.
+- Windows packages LLVM/LLD statically inside `joyeer-native-backend.dll`.
+  Keep the boundary as a versioned C ABI: never expose LLVM C++ types,
+  exceptions, allocators, or ownership to `joyeer.exe`.
+- The Windows release set is `joyeer.exe`, `joyeer-native-backend.dll`,
+  `JoyeerNativeRuntime.lib`, and licenses. Do not add LLVM executables or DLLs
+  to it. macOS/Linux retain the external Clang driver until their backend
+  libraries are implemented.
 - Windows builds use Visual Studio's MSVC compiler exclusively. CMake enforces
   this even when Ninja is the generator; do not add MinGW, GCC, or clang-cl
   fallbacks.
@@ -97,8 +100,9 @@ ctest --test-dir build --output-on-failure
 - The build is out-of-source only. Never run `cmake .` at the repository root.
 - Re-run CMake configure after adding or removing registered fixtures or test
   targets.
-- Native output needs a configured Clang driver even when the compiler itself
-  is built with MSVC or GCC.
+- Windows source builds need compatible `/MT` static LLVM/LLD libraries and
+  the MSVC DIA SDK. Packaged native linking still needs MSVC Build Tools and a
+  Windows SDK, but never an LLVM installation.
 - Do not fix historical behavior by creating a second language mode.
 
 ## Repository automation
@@ -106,7 +110,8 @@ ctest --test-dir build --output-on-failure
 - Keep external tool prerequisites in [docs/building.md](docs/building.md);
   checked-in automation must not install or resolve the host compiler, platform
   SDK, CMake, Ninja, LLVM, Clang, or LLD.
-- CMake may acquire project test dependencies such as GoogleTest, but LLVM and
+- CMake may acquire pinned project dependencies such as GoogleTest and the
+  static LibXml2 needed by the official Windows LLD libraries. LLVM and
   platform toolchains remain developer-managed external prerequisites.
 - Write checked-in packaging and release automation in cross-platform Python
   3.9+ using the standard library when scripting is necessary.

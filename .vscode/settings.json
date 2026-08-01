@@ -1,4 +1,5 @@
 {
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/out/build/x64-debug/compile_commands.json",
     "workbench.editorAssociations": {
         "*.md": "vscode.markdown.preview.editor"
     }

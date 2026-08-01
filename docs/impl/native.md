@@ -1,7 +1,8 @@
 # LLVM and Native Backend
 
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
-> Clang validates it, generates machine code, and links native executables.
+> the Windows backend DLL validates it, generates machine code, and links
+> native executables with embedded LLVM/LLD. macOS and Linux still use Clang.
 > Ordinary copies, deterministic cleanup, overwrite ordering, and
 > whole-binding `consuming` transfer work for the current heap-backed value
 > surface. User-defined `deinit` and explicit copy initializers are outside the
@@ -21,28 +22,36 @@ source
   -> control-flow semantic analysis
   -> verified Joyeer IR
   -> textual LLVM IR
-  -> Clang object generation + link
+  -> platform native backend object generation + link
   -> native executable
 ```
 
 The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
-`lib/backend/llvm.cpp`. It emits text instead of linking LLVM's unstable C++
-ABI into the compiler. The configured Clang driver parses and verifies that
-text before machine-code generation. On Windows, the official LLVM package is
-supported even though it does not ship the LLVM C++ development libraries.
+`lib/backend/llvm.cpp`. It emits text so verified Joyeer IR remains separated
+from LLVM's C++ model by an inspectable format.
 
 The native linker lives in `include/joyeer/backend/linker.h` and
-`lib/backend/linker.cpp`. It invokes the configured Clang executable with the
-LLVM module and `JoyeerNativeRuntime` archive.
+`lib/backend/linker.cpp`. On Windows it calls the versioned C ABI in
+`include/joyeer/backend/native_backend.h`. `joyeer-native-backend.dll` parses
+and verifies textual IR, runs the selected LLVM optimization pipeline, emits a
+COFF object, and invokes LLD in-process. LLVM, LLD, and LibXml2 are statically
+linked private implementation details; no LLVM executable or DLL is loaded at
+runtime. A mutex serializes LLD because its library entry point has global
+process state.
+
+The DLL discovers MSVC, the Universal CRT, and Windows SDK library directories
+through LLVM's Visual Studio Setup Configuration and registry helpers. It then
+links the generated object with the sibling `JoyeerNativeRuntime.lib`. The
+release package keeps the DLL, runtime archive, and `joyeer.exe` together.
 
 On macOS, CMake resolves the active SDK with `xcrun --sdk macosx
 --show-sdk-path`. The driver passes that path to the native linker, which adds
 an explicit `-isysroot` after any Clang configuration-file arguments. This
 avoids depending on a package-manager Clang's build-time SDK path.
 
-The external Clang/LLVM installation is an intentional dependency boundary.
-Joyeer does not download, build, package, or link LLVM. Supported tool versions
-and platform prerequisites are documented in [Building Joyeer](../building.md).
+macOS and Linux retain the configured external Clang driver and SDK behavior.
+Supported build SDK versions, release files, and platform prerequisites are
+documented in [Building Joyeer](../building.md).
 
 ---
 
@@ -74,9 +83,10 @@ than delegated to the platform linker.
 
 Native executable linking has an explicit optimization policy: `-O2` is the
 default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
-selected flag is passed to Clang while it consumes the verified textual LLVM
-module. `--emit-llvm` intentionally writes the pre-optimization backend IR so
-it remains deterministic and inspectable.
+selected level controls the Windows DLL's LLVM optimization and code-generation
+pipelines, or the external Clang driver on other platforms. `--emit-llvm`
+intentionally writes the pre-optimization backend IR so it remains
+deterministic and inspectable.
 
 Debug information defaults to off (`-g0`). `-g` and `-gline-tables-only`
 enable line tables in the host format; `-gfull` adds lexical scopes, source
@@ -89,12 +99,12 @@ changing the emitted pre-optimization instructions.
 
 Native artifacts follow the host format. Windows CodeView keeps a sibling PDB
 with the executable and embeds a CodeView debug-directory reference. Windows
-DWARF requires the `lld-link` executable beside the configured Clang and keeps
-DWARF sections in the PE executable. ELF keeps DWARF sections in the executable;
-macOS asks the Clang driver for a sibling dSYM bundle. `-O0` disables reference
-elimination and identical-code folding for Windows debug links; optimized
-levels retain them. Clang is launched with an argument vector rather than a
-shell command, so user paths are not subject to shell expansion.
+DWARF is emitted by the same backend DLL and keeps DWARF sections in the PE
+executable. ELF keeps DWARF sections in the executable; macOS asks the external
+Clang driver for a sibling dSYM bundle. `-O0` disables reference elimination
+and identical-code folding for Windows debug links; optimized levels retain
+them. Paths cross the DLL as UTF-8 C strings and LLD receives an argument
+array, so user paths are not subject to shell expansion.
 
 ---
 
@@ -212,8 +222,8 @@ The native path is an MVP, not the final zero-cost implementation:
   not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an
   aligned payload buffer;
-- no Joyeer-specific LLVM pass pipeline or LTO policy is configured beyond the
-  explicit Clang optimization level;
+- the Windows backend uses LLVM's per-module default optimization pipelines;
+  no Joyeer-specific pass pipeline or LTO policy is configured;
 - the textual emitter can generate source/function/instruction line tables or
   full lexical-scope/variable/type metadata with DWARF 4 or CodeView module
   flags; compiler-generated cleanup/plumbing is suppressed from line rows;
@@ -238,14 +248,17 @@ ctest --test-dir build -L optimization --output-on-failure
 ctest --test-dir build -L debug-info --output-on-failure
 ```
 
-The tests make Clang compile generated LLVM IR, compile and run native Joyeer
-programs, verify output and zero allocation balance, stress nested
+The tests use Clang as an independent textual-IR oracle and use the Windows
+backend DLL to compile and run native Joyeer programs. They verify output and
+zero allocation balance, stress nested
 string/array/dictionary ownership, exercise runtime traps, and reject an
 executable request without `main`. File-input tests cover binary bytes,
 missing-file errors, exhaustive source-level handling, and zero allocation
 balance on both paths. Debug-info tests validate metadata structure in both
 DWARF/CodeView modes and make the configured Clang emit objects containing the
 corresponding DWARF `.debug_line` and Windows CodeView `.debug$S` sections.
+`NativeBackendAbiTests` is compiled as C and verifies the DLL ABI/version
+without exposing C++ types.
 Native artifact tests additionally validate no-debug output, Windows PDB source
 and line records, embedded Windows DWARF sections, platform artifact retention,
 safe metacharacter paths, and refusal to overwrite output/PDB directories.

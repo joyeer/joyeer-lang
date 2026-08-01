@@ -11,7 +11,7 @@ Joyeer source
   -> control-flow semantic analysis
   -> verified Joyeer IR
   -> textual LLVM IR
-  -> Clang optimization/code generation/link
+  -> platform LLVM optimization/code generation/link
   -> native executable + JoyeerNativeRuntime
 ```
 
@@ -30,7 +30,7 @@ runtime, VM, golden corpus, and language-mode CLI options were removed in July
 | Semantic analysis | all-paths return, reachability, initialization, unused bindings | `lib/compiler/semanticanalysis.cpp` |
 | Joyeer IR | verified CFG, aggregates, ownership operations, source/debug scopes | `lib/compiler/irlowering.cpp`, `lib/ir/ir.cpp` |
 | LLVM backend | textual LLVM IR, checked operations, ownership helpers, debug metadata | `lib/backend/llvm.cpp` |
-| Native linking | explicit `-O0` through `-O3`, artifact collision policy | `lib/backend/linker.cpp` |
+| Native backend | Windows LLVM/LLD DLL with C ABI; external Clang on macOS/Linux | `lib/backend/native_backend.cpp`, `linker.cpp` |
 | Native runtime | strings, owned UTF-8 byte arrays, collections, typed file input, checked arithmetic, allocation balance | `lib/native/runtime.c` |
 | Diagnostics | stable stage IDs, excerpts, fix-its, help, secondary notes | `lib/diagnostic/diagnostic.cpp` |
 
@@ -47,6 +47,8 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 - Compiler tests do not link a VM or obsolete runtime.
 - The legacy source directories, tests, and documentation were removed.
 - Unfiltered CTest is safe and is the required final gate.
+- Windows release packages no longer require an LLVM/Clang installation;
+  LLVM/LLD are private static dependencies of `joyeer-native-backend.dll`.
 - The v0.1 heap-value ownership baseline is fixed: ordinary copies recursively
   clone unique storage, owned temporaries transfer directly, overwrite acquires
   the replacement before destroying the old value, and `consume` is the only
@@ -56,8 +58,8 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 
 1. Broaden the standard library beyond the typed whole-file I/O surface with
   incremental/streaming APIs, writing, metadata, and Unicode paths.
-2. Stabilize the external Clang/LLVM compatibility contract, including version
-  checks, tool discovery diagnostics, and a documented upgrade process.
+2. Add equivalent self-contained Mach-O and ELF backend libraries while
+  retaining the same versioned C ABI and textual LLVM IR boundary.
 3. Define a Joyeer-specific optimization and LTO policy while preserving
    checked arithmetic, bounds, ownership, and debug semantics.
 4. Expand modules, generics, error propagation, and contracts only after their

@@ -140,6 +140,19 @@ joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
 
+if(WIN32)
+    add_executable(NativeBackendAbiTests
+            native_backend_abi_test.c
+    )
+    target_link_libraries(NativeBackendAbiTests
+            JoyeerNativeBackend
+    )
+    add_test(NAME NativeBackendAbiTests COMMAND NativeBackendAbiTests)
+    set_tests_properties(NativeBackendAbiTests PROPERTIES
+            LABELS "llvm-backend;native;abi"
+    )
+endif()
+
 if(JOYEER_CLANG_EXECUTABLE)
         get_filename_component(JOYEER_LLVM_BIN_DIR "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
         find_program(JOYEER_LLVM_READOBJ_EXECUTABLE
@@ -485,7 +498,7 @@ if(JOYEER_CLANG_EXECUTABLE)
         )
         endif()
 
-        if(WIN32 AND JOYEER_LLD_LINK_EXECUTABLE AND JOYEER_LLVM_READOBJ_EXECUTABLE)
+        if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE)
         add_test(NAME NativeExecutableDwarfArtifact
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

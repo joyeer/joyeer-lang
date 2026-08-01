@@ -1,4 +1,5 @@
 #include "joyeer/backend/linker.h"
+#include "joyeer/backend/native_backend.h"
 
 #include <algorithm>
 #include <atomic>
@@ -8,7 +9,6 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
-#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -128,113 +128,45 @@ bool isNonemptyRegularFile(const std::filesystem::path& path) {
             std::filesystem::file_size(path, error) > 0 && !error;
 }
 
+std::string utf8Path(const std::filesystem::path& path) {
+    const auto bytes = path.u8string();
+    return std::string(
+            reinterpret_cast<const char*>(bytes.data()),
+            bytes.size());
+}
+
+JoyeerNativeBackendOptimizationLevel backendOptimizationLevel(
+        OptimizationLevel level) {
+    switch (level) {
+        case OptimizationLevel::O0: return JOYEER_NATIVE_BACKEND_O0;
+        case OptimizationLevel::O1: return JOYEER_NATIVE_BACKEND_O1;
+        case OptimizationLevel::O2: return JOYEER_NATIVE_BACKEND_O2;
+        case OptimizationLevel::O3: return JOYEER_NATIVE_BACKEND_O3;
+    }
+    return JOYEER_NATIVE_BACKEND_O2;
+}
+
+struct BackendDiagnostic {
+    JoyeerNativeBackendStatus status = JOYEER_NATIVE_BACKEND_SUCCESS;
+    std::string message;
+};
+
+void collectBackendDiagnostic(
+        void* context,
+        JoyeerNativeBackendStatus status,
+        const char* message,
+        size_t messageSize) {
+    auto& diagnostic = *static_cast<BackendDiagnostic*>(context);
+    diagnostic.status = status;
+    diagnostic.message.assign(message, messageSize);
+}
+
+#if !defined(_WIN32)
+
 struct ProcessResult {
     int exitCode = -1;
     std::string launchError;
 };
-
-#if defined(_WIN32)
-
-std::wstring quoteWindowsArgument(std::wstring_view argument) {
-    std::wstring result = L"\"";
-    size_t backslashes = 0;
-    for (const auto character : argument) {
-        if (character == L'\\') {
-            ++backslashes;
-            continue;
-        }
-        if (character == L'\"') {
-            result.append(backslashes * 2 + 1, L'\\');
-            result.push_back(character);
-            backslashes = 0;
-            continue;
-        }
-        result.append(backslashes, L'\\');
-        backslashes = 0;
-        result.push_back(character);
-    }
-    result.append(backslashes * 2, L'\\');
-    result.push_back(L'\"');
-    return result;
-}
-
-ProcessResult runProcess(
-        const std::filesystem::path& executable,
-        const std::vector<std::filesystem::path>& arguments,
-        const std::filesystem::path& logFile) {
-    SECURITY_ATTRIBUTES securityAttributes {};
-    securityAttributes.nLength = sizeof(securityAttributes);
-    securityAttributes.bInheritHandle = TRUE;
-    const auto logHandle = CreateFileW(
-            logFile.c_str(),
-            GENERIC_WRITE,
-            FILE_SHARE_READ,
-            &securityAttributes,
-            CREATE_ALWAYS,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr);
-    if (logHandle == INVALID_HANDLE_VALUE) {
-        return ProcessResult {
-            -1,
-            "cannot create tool output log: " +
-                    std::error_code(GetLastError(), std::system_category()).message(),
-        };
-    }
-    const auto inputHandle = CreateFileW(
-            L"NUL",
-            GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            &securityAttributes,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr);
-    if (inputHandle == INVALID_HANDLE_VALUE) {
-        const auto error = std::error_code(GetLastError(), std::system_category()).message();
-        CloseHandle(logHandle);
-        return ProcessResult { -1, "cannot open null input: " + error };
-    }
-
-    std::wstring commandLine = quoteWindowsArgument(executable.native());
-    for (const auto& argument : arguments) {
-        commandLine.push_back(L' ');
-        commandLine += quoteWindowsArgument(argument.native());
-    }
-    STARTUPINFOW startup {};
-    startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESTDHANDLES;
-    startup.hStdInput = inputHandle;
-    startup.hStdOutput = logHandle;
-    startup.hStdError = logHandle;
-    PROCESS_INFORMATION process {};
-    const auto started = CreateProcessW(
-            executable.c_str(),
-            commandLine.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            CREATE_NO_WINDOW,
-            nullptr,
-            nullptr,
-            &startup,
-            &process);
-    CloseHandle(inputHandle);
-    CloseHandle(logHandle);
-    if (!started) {
-        return ProcessResult {
-            -1,
-            "cannot launch Clang: " +
-                    std::error_code(GetLastError(), std::system_category()).message(),
-        };
-    }
-    WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD exitCode = 1;
-    if (!GetExitCodeProcess(process.hProcess, &exitCode)) exitCode = 1;
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return ProcessResult { static_cast<int>(exitCode), {} };
-}
-
-#else
 
 ProcessResult runProcess(
         const std::filesystem::path& executable,
@@ -303,6 +235,7 @@ LinkResult Linker::link(
         return result;
     }
     std::error_code filesystemError;
+#if !defined(_WIN32)
     if (options.clangExecutable.empty() ||
         !std::filesystem::is_regular_file(options.clangExecutable, filesystemError) ||
         filesystemError) {
@@ -312,6 +245,7 @@ LinkResult Linker::link(
                         options.clangExecutable.string() + "'");
         return result;
     }
+#endif
     filesystemError.clear();
     if (options.runtimeLibrary.empty() ||
         !std::filesystem::is_regular_file(options.runtimeLibrary, filesystemError) ||
@@ -344,20 +278,6 @@ LinkResult Linker::link(
                 LinkDiagnosticId::toolFailure,
                 "CodeView debug artifacts are supported only on Windows");
         return result;
-    }
-#else
-    if (options.debugInfo.emitLineTables &&
-        options.debugInfo.format == DebugInfoFormat::dwarf) {
-        const auto bundledLld = options.clangExecutable.parent_path() / "lld-link.exe";
-        filesystemError.clear();
-        if (!std::filesystem::is_regular_file(bundledLld, filesystemError) ||
-            filesystemError) {
-        report(
-                LinkDiagnosticId::missingTool,
-                    "LLD is required for Windows DWARF executable output and was not found at '" +
-                            bundledLld.string() + "'");
-            return result;
-        }
     }
 #endif
 
@@ -517,6 +437,117 @@ LinkResult Linker::link(
     }
     const auto base = temporaryDirectory /
             ("joyeer-native-" + std::to_string(nonce));
+#if defined(_WIN32)
+    const auto objectFile = std::filesystem::path(base.string() + ".obj");
+    const auto objectPath = utf8Path(objectFile);
+    const auto outputPath = utf8Path(options.outputFile);
+    const auto runtimePath = utf8Path(options.runtimeLibrary);
+    const JoyeerNativeBackendObjectOptions objectOptions {
+        JOYEER_NATIVE_BACKEND_ABI_VERSION,
+        sizeof(JoyeerNativeBackendObjectOptions),
+        llvmIR.data(),
+        llvmIR.size(),
+        objectPath.c_str(),
+        backendOptimizationLevel(options.optimizationLevel),
+    };
+    BackendDiagnostic backendDiagnostic;
+    const auto objectStatus = joyeer_native_backend_emit_object(
+            &objectOptions,
+            collectBackendDiagnostic,
+            &backendDiagnostic);
+    if (objectStatus != JOYEER_NATIVE_BACKEND_SUCCESS ||
+        !isNonemptyRegularFile(objectFile)) {
+        filesystemError.clear();
+        std::filesystem::remove(objectFile, filesystemError);
+        report(
+                objectStatus == JOYEER_NATIVE_BACKEND_FILE_ERROR
+                        ? LinkDiagnosticId::fileError
+                        : LinkDiagnosticId::toolFailure,
+                "embedded LLVM failed to generate the native object" +
+                        (backendDiagnostic.message.empty()
+                                ? std::string()
+                                : ":\n" + backendDiagnostic.message));
+        return result;
+    }
+
+    std::vector<std::string> lldArguments {
+        "lld-link",
+        "/NOLOGO",
+        "/MACHINE:X64",
+        "/SUBSYSTEM:CONSOLE",
+        "/OUT:" + outputPath,
+        objectPath,
+        "/WHOLEARCHIVE:" + runtimePath,
+    };
+    const auto optimizeReferences = options.optimizationLevel == OptimizationLevel::O0
+            ? "/OPT:NOREF"
+            : "/OPT:REF";
+    const auto foldIdenticalCode = options.optimizationLevel == OptimizationLevel::O0
+            ? "/OPT:NOICF"
+            : "/OPT:ICF";
+    lldArguments.emplace_back(optimizeReferences);
+    lldArguments.emplace_back(foldIdenticalCode);
+    if (options.debugInfo.emitLineTables) {
+        if (options.debugInfo.format == DebugInfoFormat::codeView) {
+            lldArguments.emplace_back("/DEBUG:FULL");
+            lldArguments.emplace_back("/PDB:" + utf8Path(pdbFile));
+        } else {
+            lldArguments.emplace_back("/DEBUG:DWARF");
+        }
+    }
+    std::vector<const char*> rawLldArguments;
+    rawLldArguments.reserve(lldArguments.size());
+    for (const auto& argument : lldArguments) {
+        rawLldArguments.push_back(argument.c_str());
+    }
+    const JoyeerNativeBackendLinkOptions linkOptions {
+        JOYEER_NATIVE_BACKEND_ABI_VERSION,
+        sizeof(JoyeerNativeBackendLinkOptions),
+        rawLldArguments.data(),
+        rawLldArguments.size(),
+    };
+    backendDiagnostic = {};
+    const auto linkStatus = joyeer_native_backend_link_coff(
+            &linkOptions,
+            collectBackendDiagnostic,
+            &backendDiagnostic);
+    filesystemError.clear();
+    std::filesystem::remove(objectFile, filesystemError);
+    auto cleanupFailedOutput = [&]() {
+        std::error_code error;
+        std::filesystem::remove(options.outputFile, error);
+        error.clear();
+        std::filesystem::remove(pdbFile, error);
+    };
+    if (linkStatus != JOYEER_NATIVE_BACKEND_SUCCESS ||
+        !isNonemptyRegularFile(options.outputFile)) {
+        cleanupFailedOutput();
+        report(
+                linkStatus == JOYEER_NATIVE_BACKEND_FILE_ERROR
+                        ? LinkDiagnosticId::fileError
+                        : LinkDiagnosticId::toolFailure,
+                "embedded LLD failed to link the native executable" +
+                        (backendDiagnostic.message.empty()
+                                ? std::string()
+                                : ":\n" + backendDiagnostic.message));
+        return result;
+    }
+    if (options.debugInfo.emitLineTables &&
+        options.debugInfo.format == DebugInfoFormat::codeView) {
+        if (!isNonemptyRegularFile(pdbFile)) {
+            cleanupFailedOutput();
+            report(
+                    LinkDiagnosticId::toolFailure,
+                    "native linker did not produce the expected CodeView PDB '" +
+                            pdbFile.string() + "'");
+            return result;
+        }
+        result.debugArtifact = pdbFile;
+    } else if (options.debugInfo.emitLineTables) {
+        result.debugArtifact = options.outputFile;
+    }
+    return result;
+#else
     const auto llvmFile = std::filesystem::path(base.string() + ".ll");
     const auto logFile = std::filesystem::path(base.string() + ".log");
 
@@ -539,61 +570,14 @@ LinkResult Linker::link(
         llvmFile,
         "-x",
         "none",
-#if defined(_WIN32)
-        "-Xlinker",
-        std::filesystem::path(L"/WHOLEARCHIVE:" + options.runtimeLibrary.native()),
-#else
         options.runtimeLibrary,
-#endif
         "-o",
         options.outputFile,
     };
-#if defined(_WIN32)
-    if (!options.msvcRuntimeLibrary.empty()) {
-        clangArguments.insert(
-                clangArguments.begin() + 1,
-                "-fms-runtime-lib=" + options.msvcRuntimeLibrary);
-        if (options.msvcRuntimeLibrary.starts_with("dll")) {
-            clangArguments.insert(
-                    clangArguments.begin() + 2,
-                    { "-Xlinker", "/NODEFAULTLIB:libcmt" });
-        }
-    }
-#endif
     if (options.debugInfo.emitLineTables) {
-#if defined(_WIN32)
-        const auto optimizeReferences = options.optimizationLevel == OptimizationLevel::O0
-                ? "/OPT:NOREF"
-                : "/OPT:REF";
-        const auto foldIdenticalCode = options.optimizationLevel == OptimizationLevel::O0
-                ? "/OPT:NOICF"
-                : "/OPT:ICF";
-        if (options.debugInfo.format == DebugInfoFormat::codeView) {
-            clangArguments.insert(
-                    clangArguments.end(),
-                    {
-                        "-Xlinker", "/DEBUG:FULL",
-                        "-Xlinker", "/INCREMENTAL:NO",
-                        "-Xlinker", optimizeReferences,
-                        "-Xlinker", foldIdenticalCode,
-                        "-Xlinker",
-                        std::filesystem::path(L"/PDB:" + pdbFile.native()),
-                    });
-        } else {
-            clangArguments.insert(
-                    clangArguments.end(),
-                    {
-                        "-B", options.clangExecutable.parent_path(),
-                        "-fuse-ld=lld",
-                        "-Xlinker", "/DEBUG:DWARF",
-                        "-Xlinker", "/INCREMENTAL:NO",
-                        "-Xlinker", optimizeReferences,
-                        "-Xlinker", foldIdenticalCode,
-                    });
-        }
-#elif defined(__APPLE__)
-    clangArguments.emplace_back(
-        options.debugInfo.emitVariables ? "-g" : "-gline-tables-only");
+    #if defined(__APPLE__)
+        clangArguments.emplace_back(
+            options.debugInfo.emitVariables ? "-g" : "-gline-tables-only");
 #endif
     }
 #if defined(__APPLE__)
@@ -612,10 +596,7 @@ LinkResult Linker::link(
     auto cleanupFailedOutput = [&]() {
         std::error_code error;
         std::filesystem::remove(options.outputFile, error);
-#if defined(_WIN32)
-        error.clear();
-        std::filesystem::remove(pdbFile, error);
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
         error.clear();
         std::filesystem::remove_all(dsymDirectory, error);
 #endif
@@ -633,31 +614,16 @@ LinkResult Linker::link(
         return result;
     }
 
-#if defined(_WIN32)
-    if (options.debugInfo.emitLineTables &&
-        options.debugInfo.format == DebugInfoFormat::codeView) {
-        if (!isNonemptyRegularFile(pdbFile)) {
-            cleanupFailedOutput();
-            report(
-                    LinkDiagnosticId::toolFailure,
-                    "native linker did not produce the expected CodeView PDB '" +
-                            pdbFile.string() + "'");
-            return result;
-        }
-        result.debugArtifact = pdbFile;
-    } else if (options.debugInfo.emitLineTables) {
-        result.debugArtifact = options.outputFile;
-    }
-#elif defined(__APPLE__)
+#if defined(__APPLE__)
     if (options.debugInfo.emitLineTables) {
         const auto dsymBinary = dsymDirectory / "Contents" / "Resources" / "DWARF" /
                 options.outputFile.filename();
-    if (!isNonemptyRegularFile(dsymBinary)) {
+        if (!isNonemptyRegularFile(dsymBinary)) {
             cleanupFailedOutput();
             report(
                     LinkDiagnosticId::toolFailure,
-            "Clang did not produce the expected dSYM bundle '" +
-                dsymDirectory.string() + "'");
+                "Clang did not produce the expected dSYM bundle '" +
+                    dsymDirectory.string() + "'");
             return result;
         }
         result.debugArtifact = dsymDirectory;
@@ -668,6 +634,7 @@ LinkResult Linker::link(
     }
 #endif
     return result;
+#endif
 }
 
 const char* diagnosticName(LinkDiagnosticId id) {

@@ -30,13 +30,14 @@ The compiler is implemented in C++20 and has one pipeline:
 ```text
 source -> lexer -> parser -> name resolution -> type checking
        -> semantic analysis -> verified Joyeer IR -> textual LLVM IR
-       -> Clang + native C runtime -> executable
+  -> LLVM code generation + LLD + native C runtime -> executable
 ```
 
 There is no bytecode backend, VM, legacy parser mode, or language-mode CLI
 switch. Invoking `joyeer` without an output option validates and lowers the
-source. `--emit-llvm` writes verified textual LLVM IR, and `-o` asks Clang to
-build a native executable.
+source. `--emit-llvm` writes verified textual LLVM IR, and `-o` builds a native
+executable. On Windows, LLVM and LLD run inside the bundled
+`joyeer-native-backend.dll`; no LLVM executable is launched at runtime.
 
 The current MVP can compile and run a Joyeer-written JSON parser. Implemented
 features include integers, booleans, bytes, strings, `let`/`var`, checked
@@ -72,28 +73,25 @@ func main() {
 
 ## Getting Started
 
-Joyeer does not download, build, or manage LLVM or the platform toolchain.
-Contributors install the required tools before configuring the project.
+Contributors provide the host compiler, platform SDK, and LLVM development
+SDK. CMake builds LLVM/LLD into a Joyeer-owned backend DLL; it does not build
+LLVM from source.
 
 | Tool | Requirement |
 |---|---|
 | [CMake](https://cmake.org/download/) | 3.20 or newer |
 | [Ninja](https://github.com/ninja-build/ninja/releases) | Required build generator |
 | Host compiler | C and C++ compiler with C++20 support |
-| [LLVM toolchain](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Clang/LLVM 22.1.8; use tools from the same installation |
+| [LLVM SDK](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Exact version 22.1.8 with headers, static libraries, and CMake packages |
 | Platform SDK | Windows SDK, macOS SDK, or Linux libc development files |
-| [Git](https://git-scm.com/downloads) and network access | Required when CMake fetches GoogleTest for unit tests |
+| [Git](https://git-scm.com/downloads) and network access | Required when CMake first fetches LibXml2 and GoogleTest |
 
-The LLVM installation must provide `clang` for native output.
-`llvm-readobj` enables complete debug-artifact tests. Windows development also
-uses `lld-link` for DWARF output and `llvm-pdbutil` for PDB tests; macOS uses
-`dsymutil` for dSYM tests.
-
-On Windows x64, download the official
-[`LLVM-22.1.8-win64.exe`](https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-win64.exe)
-installer. Joyeer invokes LLVM command-line tools and does not need the larger
-`clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz` development archive or the
-LLVM source archive.
+On Windows x64, download
+[`clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz`](https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz),
+extract it to a stable location such as `D:\llvm`, and set `LLVM_HOME` to that
+directory. The smaller `LLVM-22.1.8-win64.exe` tool-only installer is not
+sufficient because building the backend DLL requires LLVM headers, `.lib`
+files, and `LLVMConfig.cmake`/`LLDConfig.cmake`.
 
 Platform requirements are:
 
@@ -113,40 +111,40 @@ Verify the common tools before configuring:
 ```text
 cmake --version
 ninja --version
-clang --version
 git --version
 ```
 
-For the complete native debug test suite, also verify the tools relevant to
-your platform:
+On Windows, verify the SDK root:
 
 ```text
-llvm-readobj --version
-lld-link --version       # Windows
-llvm-pdbutil --version   # Windows
-dsymutil --version       # macOS
+%LLVM_HOME%\bin\clang.exe --version
+%LLVM_HOME%\bin\llvm-readobj.exe --version
+%LLVM_HOME%\lib\LLVMCore.lib
+%LLVM_HOME%\lib\cmake\llvm\LLVMConfig.cmake
 ```
 
-The build is out-of-source only. If Clang 22 is on `PATH`, configure and build
-with:
+The build is out-of-source only. Configure, build, test, and stage a Windows
+release with:
 
 ```text
-cmake -S . -B build -G Ninja
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake --preset x64-release
+cmake --build --preset x64-release
+ctest --test-dir out/build/x64-release --output-on-failure
+cmake --install out/build/x64-release --prefix out/package/joyeer
 ```
 
-Otherwise, pass its absolute path explicitly:
+Pass the SDK root explicitly if `LLVM_HOME` is unavailable:
 
 ```text
-cmake -S . -B build -G Ninja \
-  -DJOYEER_CLANG_EXECUTABLE=/absolute/path/to/clang
+cmake --preset x64-release -DJOYEER_LLVM_ROOT=D:/llvm
 ```
 
-The executable is written to `build/bin/joyeer` on single-config generators.
-A configuration without Clang can still build the frontend and textual LLVM
-emitter, but native output and Clang-based integration tests are unavailable.
-See [building.md](docs/building.md) for platform details and troubleshooting.
+The staged Windows package contains `joyeer.exe`,
+`joyeer-native-backend.dll`, `JoyeerNativeRuntime.lib`, and licenses. Users of
+that package do not install LLVM or Clang. Creating Windows native executables
+still requires MSVC Build Tools and a Windows SDK; the backend locates them
+through Visual Studio Setup Configuration and the registry. See
+[building.md](docs/building.md) for platform details and troubleshooting.
 
 ## CLI
 

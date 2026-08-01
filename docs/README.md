@@ -46,7 +46,7 @@ bytecode backend or VM.
 | [semantic-analysis.md](impl/semantic-analysis.md) | Return, reachability, initialization, and warning analysis |
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
-| [native.md](impl/native.md) | LLVM text emission, Clang linking, native ABI, runtime, and debug artifacts |
+| [native.md](impl/native.md) | LLVM text emission, backend DLL ABI, native linking, runtime, and debug artifacts |
 | [string.md](impl/string.md) | String representation and operations |
 
 ## Plans
