@@ -82,19 +82,22 @@ libraries must report version 22.1.8 and come from the same SDK root.
 ## Configure, build, and test
 
 Run CMake from a shell in which the host compiler and platform SDK are active.
+On macOS, the checked-in presets use Ninja, discover the external Clang driver,
+and obtain the active SDK through `xcrun`:
+
+```text
+cmake --preset macos-debug
+cmake --build --preset macos-debug
+ctest --preset macos-debug
+```
+
+Use `macos-release` in the same commands for a release build.
+
 On Windows, use a Visual Studio Developer PowerShell or Developer Command
 Prompt. The Windows presets explicitly select `cl.exe`; configuration fails
 when the Visual Studio C++ workload or Windows SDK is missing.
 
-```text
-cmake -S . -B build -G Ninja -DJOYEER_LLVM_ROOT=D:/llvm
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
-
-Omit `JOYEER_LLVM_ROOT` when `LLVM_HOME` points to the intended SDK.
-
-Windows contributors may use the checked-in presets:
+Configure, build, and test with:
 
 ```text
 cmake --preset x64-debug -DJOYEER_LLVM_ROOT=D:/llvm -DJOYEER_BUILD_UNITTESTS=ON
@@ -102,9 +105,12 @@ cmake --build --preset x64-debug
 ctest --preset x64-debug
 ```
 
-The build is out-of-source only. The executable is under `build/bin/` for
-single-config generators. Unfiltered CTest is the required final CMake gate;
-labels are for focused iteration.
+Omit `JOYEER_LLVM_ROOT` when `LLVM_HOME` points to the intended SDK.
+
+The build is out-of-source only. Preset builds write the executable under
+`out/build/<preset>/bin/`; manually configured single-config builds use
+`build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
+focused iteration.
 
 ## Windows release staging
 

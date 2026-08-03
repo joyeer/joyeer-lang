@@ -73,16 +73,16 @@ func main() {
 
 ## Getting Started
 
-Contributors provide the host compiler, platform SDK, and LLVM development
-SDK. CMake builds LLVM/LLD into a Joyeer-owned backend DLL; it does not build
-LLVM from source.
+Contributors provide the host compiler, platform SDK, and required LLVM
+toolchain. Windows builds LLVM/LLD into a Joyeer-owned backend DLL; macOS and
+Linux invoke an external Clang driver. CMake does not build LLVM from source.
 
 | Tool | Requirement |
 |---|---|
 | [CMake](https://cmake.org/download/) | 3.20 or newer |
 | [Ninja](https://github.com/ninja-build/ninja/releases) | Required build generator |
 | Host compiler | C and C++ compiler with C++20 support |
-| [LLVM SDK](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Exact version 22.1.8 with headers, static libraries, and CMake packages |
+| [LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Full development SDK on Windows; external Clang driver on macOS and Linux |
 | Platform SDK | Windows SDK, macOS SDK, or Linux libc development files |
 | [Git](https://git-scm.com/downloads) and network access | Required when CMake first fetches LibXml2 and GoogleTest |
 
@@ -113,6 +113,17 @@ cmake --version
 ninja --version
 git --version
 ```
+
+On macOS, configure, build, and test with the checked-in presets:
+
+```text
+cmake --preset macos-debug
+cmake --build --preset macos-debug
+ctest --preset macos-debug
+```
+
+The compiler is written to `out/build/macos-debug/bin/joyeer`. Use
+`macos-release` in the same commands for a release build.
 
 On Windows, verify the SDK root:
 
