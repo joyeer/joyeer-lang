@@ -171,6 +171,5 @@ if(WIN32)
         ARCHIVE DESTINATION .)
     install(FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
-        "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
         DESTINATION licenses)
 endif()
