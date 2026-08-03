@@ -140,7 +140,7 @@ joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
 
-if(WIN32)
+if(WIN32 OR APPLE)
     add_executable(NativeBackendAbiTests
             native_backend_abi_test.c
     )

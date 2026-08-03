@@ -37,7 +37,7 @@ There is no bytecode backend, VM, legacy parser mode, or language-mode CLI
 switch. Invoking `joyeer` without an output option validates and lowers the
 source. `--emit-llvm` writes verified textual LLVM IR, and `-o` builds a native
 executable. On Windows, LLVM and LLD run inside the bundled
-`joyeer-native-backend.dll`; no LLVM executable is launched at runtime.
+`joyeer-backend.dll`; no LLVM executable is launched at runtime.
 
 The current MVP can compile and run a Joyeer-written JSON parser. Implemented
 features include integers, booleans, bytes, strings, `let`/`var`, checked
@@ -74,15 +74,16 @@ func main() {
 ## Getting Started
 
 Contributors provide the host compiler, platform SDK, and required LLVM
-toolchain. Windows builds LLVM/LLD into a Joyeer-owned backend DLL; macOS and
-Linux invoke an external Clang driver. CMake does not build LLVM from source.
+toolchain. Windows and macOS link LLVM/LLD libraries behind a Joyeer-owned C
+ABI backend; Linux invokes an external Clang driver. CMake does not build LLVM
+from source.
 
 | Tool | Requirement |
 |---|---|
 | [CMake](https://cmake.org/download/) | 3.20 or newer |
 | [Ninja](https://github.com/ninja-build/ninja/releases) | Required build generator |
 | Host compiler | C and C++ compiler with C++20 support |
-| [LLVM 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Full development SDK on Windows; external Clang driver on macOS and Linux |
+| [LLVM/LLD 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Development libraries on Windows and macOS; external Clang driver on Linux |
 | Platform SDK | Windows SDK, macOS SDK, or Linux libc development files |
 | [Git](https://git-scm.com/downloads) and network access | Required when CMake first fetches LibXml2 and GoogleTest |
 
@@ -117,6 +118,7 @@ git --version
 On macOS, configure, build, and test with the checked-in presets:
 
 ```text
+brew install cmake ninja llvm lld
 cmake --preset macos-debug
 cmake --build --preset macos-debug
 ctest --preset macos-debug
@@ -151,7 +153,7 @@ cmake --preset x64-release -DJOYEER_LLVM_ROOT=D:/llvm
 ```
 
 The staged Windows package contains `joyeer.exe`,
-`joyeer-native-backend.dll`, `JoyeerNativeRuntime.lib`, and licenses. Users of
+`joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, and licenses. Users of
 that package do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
 through Visual Studio Setup Configuration and the registry. See

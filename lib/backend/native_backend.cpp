@@ -19,7 +19,9 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
+#if defined(_WIN32)
 #include "llvm/WindowsDriver/MSVCPaths.h"
+#endif
 
 #include <memory>
 #include <mutex>
@@ -28,11 +30,21 @@
 #include <string_view>
 #include <vector>
 
+#if defined(_WIN32)
 LLD_HAS_DRIVER(coff)
+#elif defined(__APPLE__)
+LLD_HAS_DRIVER(macho)
+#endif
 
 namespace {
 
-lld::Driver coffDriver = &lld::coff::link;
+#if defined(_WIN32)
+constexpr lld::Flavor nativeLinkerFlavor = lld::WinLink;
+lld::Driver nativeLinkerDriver = &lld::coff::link;
+#elif defined(__APPLE__)
+constexpr lld::Flavor nativeLinkerFlavor = lld::Darwin;
+lld::Driver nativeLinkerDriver = &lld::macho::link;
+#endif
 std::mutex lldMutex;
 
 void report(
@@ -210,6 +222,7 @@ JoyeerNativeBackendStatus emitObject(
     return JOYEER_NATIVE_BACKEND_SUCCESS;
 }
 
+#if defined(_WIN32)
 bool appendWindowsLibraryPaths(
         std::vector<std::string>& arguments,
         std::string& error) {
@@ -299,6 +312,99 @@ bool appendWindowsLibraryPaths(
     arguments.emplace_back("/LIBPATH:" + windowsSDKArchitecturePath);
     return true;
 }
+#endif
+
+JoyeerNativeBackendStatus linkNative(
+        const JoyeerNativeBackendLinkOptions* options,
+        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+        void* diagnosticContext) {
+    if (options == nullptr ||
+        !validHeader(options->abiVersion, options->structSize, sizeof(*options)) ||
+        options->arguments == nullptr || options->argumentCount == 0) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                "invalid native backend linker options");
+        return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+    }
+    for (size_t index = 0; index < options->argumentCount; ++index) {
+        if (options->arguments[index] == nullptr) {
+            report(
+                    diagnosticCallback,
+                    diagnosticContext,
+                    JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                    "native backend linker arguments must not contain null entries");
+            return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+        }
+    }
+
+    try {
+        std::lock_guard lock(lldMutex);
+        std::vector<std::string> argumentStorage;
+        argumentStorage.reserve(options->argumentCount + 3);
+        for (size_t index = 0; index < options->argumentCount; ++index) {
+            argumentStorage.emplace_back(options->arguments[index]);
+        }
+#if defined(_WIN32)
+        std::string discoveryError;
+        if (!appendWindowsLibraryPaths(argumentStorage, discoveryError)) {
+            report(
+                    diagnosticCallback,
+                    diagnosticContext,
+                    JOYEER_NATIVE_BACKEND_LINK_FAILED,
+                    discoveryError);
+            return JOYEER_NATIVE_BACKEND_LINK_FAILED;
+        }
+#endif
+        std::vector<const char*> arguments;
+        arguments.reserve(argumentStorage.size());
+        for (const auto& argument : argumentStorage) {
+            arguments.push_back(argument.c_str());
+        }
+        std::string standardOutput;
+        std::string standardError;
+        llvm::raw_string_ostream outputStream(standardOutput);
+        llvm::raw_string_ostream errorStream(standardError);
+        const lld::DriverDef drivers[] {
+            { nativeLinkerFlavor, nativeLinkerDriver },
+        };
+        const auto linking = lld::lldMain(
+                arguments,
+                outputStream,
+                errorStream,
+                drivers);
+        if (!linking.canRunAgain) {
+            lld::exitLld(linking.retCode == 0 ? 1 : linking.retCode);
+        }
+        if (linking.retCode == 0) return JOYEER_NATIVE_BACKEND_SUCCESS;
+        auto message = standardError;
+        if (!standardOutput.empty()) {
+            if (!message.empty()) message.push_back('\n');
+            message += standardOutput;
+        }
+        if (message.empty()) message = "LLD failed without a diagnostic";
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_LINK_FAILED,
+                message);
+        return JOYEER_NATIVE_BACKEND_LINK_FAILED;
+    } catch (const std::exception& error) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                error.what());
+    } catch (...) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                "unknown LLD failure");
+    }
+    return JOYEER_NATIVE_BACKEND_INTERNAL_ERROR;
+}
 
 } // namespace
 
@@ -311,7 +417,19 @@ extern "C" const char* joyeer_native_backend_llvm_version(void) {
 }
 
 extern "C" int joyeer_native_backend_has_coff_linker(void) {
-    return coffDriver != nullptr;
+#if defined(_WIN32)
+    return nativeLinkerDriver != nullptr;
+#else
+    return 0;
+#endif
+}
+
+extern "C" int joyeer_native_backend_has_macho_linker(void) {
+#if defined(__APPLE__)
+    return nativeLinkerDriver != nullptr;
+#else
+    return 0;
+#endif
 }
 
 extern "C" JoyeerNativeBackendStatus joyeer_native_backend_emit_object(
@@ -351,86 +469,30 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_coff(
         const JoyeerNativeBackendLinkOptions* options,
         JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
-    if (options == nullptr ||
-        !validHeader(options->abiVersion, options->structSize, sizeof(*options)) ||
-        options->arguments == nullptr || options->argumentCount == 0) {
-        report(
-                diagnosticCallback,
-                diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
-                "invalid native backend linker options");
-        return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
-    }
-    for (size_t index = 0; index < options->argumentCount; ++index) {
-        if (options->arguments[index] == nullptr) {
-            report(
-                    diagnosticCallback,
-                    diagnosticContext,
-                    JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
-                    "native backend linker arguments must not contain null entries");
-            return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
-        }
-    }
+#if defined(_WIN32)
+    return linkNative(options, diagnosticCallback, diagnosticContext);
+#else
+    report(
+            diagnosticCallback,
+            diagnosticContext,
+            JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+            "COFF linking is unavailable in this native backend");
+    return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+#endif
+}
 
-    try {
-        std::lock_guard lock(lldMutex);
-        std::vector<std::string> argumentStorage;
-        argumentStorage.reserve(options->argumentCount + 3);
-        for (size_t index = 0; index < options->argumentCount; ++index) {
-            argumentStorage.emplace_back(options->arguments[index]);
-        }
-        std::string discoveryError;
-        if (!appendWindowsLibraryPaths(argumentStorage, discoveryError)) {
-            report(
-                    diagnosticCallback,
-                    diagnosticContext,
-                    JOYEER_NATIVE_BACKEND_LINK_FAILED,
-                    discoveryError);
-            return JOYEER_NATIVE_BACKEND_LINK_FAILED;
-        }
-        std::vector<const char*> arguments;
-        arguments.reserve(argumentStorage.size());
-        for (const auto& argument : argumentStorage) {
-            arguments.push_back(argument.c_str());
-        }
-        std::string standardOutput;
-        std::string standardError;
-        llvm::raw_string_ostream outputStream(standardOutput);
-        llvm::raw_string_ostream errorStream(standardError);
-        const lld::DriverDef drivers[] { { lld::WinLink, coffDriver } };
-        const auto linking = lld::lldMain(
-                arguments,
-                outputStream,
-                errorStream,
-                drivers);
-        if (!linking.canRunAgain) {
-            lld::exitLld(linking.retCode == 0 ? 1 : linking.retCode);
-        }
-        if (linking.retCode == 0) return JOYEER_NATIVE_BACKEND_SUCCESS;
-        auto message = standardError;
-        if (!standardOutput.empty()) {
-            if (!message.empty()) message.push_back('\n');
-            message += standardOutput;
-        }
-        if (message.empty()) message = "LLD failed without a diagnostic";
-        report(
-                diagnosticCallback,
-                diagnosticContext,
-                JOYEER_NATIVE_BACKEND_LINK_FAILED,
-                message);
-        return JOYEER_NATIVE_BACKEND_LINK_FAILED;
-    } catch (const std::exception& error) {
-        report(
-                diagnosticCallback,
-                diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
-                error.what());
-    } catch (...) {
-        report(
-                diagnosticCallback,
-                diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
-                "unknown LLD failure");
-    }
-    return JOYEER_NATIVE_BACKEND_INTERNAL_ERROR;
+extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_macho(
+        const JoyeerNativeBackendLinkOptions* options,
+        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+        void* diagnosticContext) {
+#if defined(__APPLE__)
+    return linkNative(options, diagnosticCallback, diagnosticContext);
+#else
+    report(
+            diagnosticCallback,
+            diagnosticContext,
+            JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+            "Mach-O linking is unavailable in this native backend");
+    return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+#endif
 }

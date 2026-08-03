@@ -5,7 +5,7 @@ add_joyeer_library(JoyeerLLVMBackend STATIC
 
 target_link_libraries(JoyeerLLVMBackend PUBLIC JoyeerIR)
 
-if(WIN32)
+if(WIN32 OR APPLE)
         add_joyeer_library(JoyeerNativeBackend SHARED
                 native_backend.cpp
         )
@@ -23,28 +23,42 @@ if(WIN32)
                 ${LLVM_INCLUDE_DIRS}
                 ${LLD_INCLUDE_DIRS}
         )
-        target_link_libraries(JoyeerNativeBackend PRIVATE
-                LLVMAsmParser
-                LLVMIRReader
-                LLVMPasses
-                LLVMX86CodeGen
-                lldCOFF
-        )
+        if(WIN32)
+                target_link_libraries(JoyeerNativeBackend PRIVATE
+                        LLVMAsmParser
+                        LLVMIRReader
+                        LLVMPasses
+                        LLVMX86CodeGen
+                        lldCOFF
+                )
+        else()
+                target_link_libraries(JoyeerNativeBackend PRIVATE
+                        LLVM
+                        lldMachO
+                        lldCommon
+                )
+        endif()
         set_target_properties(JoyeerNativeBackend PROPERTIES
-                OUTPUT_NAME joyeer-native-backend
-                MSVC_RUNTIME_LIBRARY MultiThreaded
+                OUTPUT_NAME joyeer-backend
         )
+        if(WIN32)
+                set_target_properties(JoyeerNativeBackend PROPERTIES
+                        MSVC_RUNTIME_LIBRARY MultiThreaded
+                )
+        endif()
 
         target_link_libraries(JoyeerLLVMBackend PRIVATE JoyeerNativeBackend)
 
-        add_test(NAME NativeBackendHasNoExternalLLVMDlls
-                COMMAND ${CMAKE_COMMAND}
-                        -DLLVM_READOBJ=${JOYEER_LLVM_ROOT}/bin/llvm-readobj.exe
-                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DBACKEND_LIBRARY=$<TARGET_FILE:JoyeerNativeBackend>
-                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeBackendDependencies.cmake
-        )
-        set_tests_properties(NativeBackendHasNoExternalLLVMDlls PROPERTIES
-                LABELS "llvm-backend;native;abi;packaging"
-        )
+        if(WIN32)
+                add_test(NAME NativeBackendHasNoExternalLLVMDlls
+                        COMMAND ${CMAKE_COMMAND}
+                                -DLLVM_READOBJ=${JOYEER_LLVM_ROOT}/bin/llvm-readobj.exe
+                                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                                -DBACKEND_LIBRARY=$<TARGET_FILE:JoyeerNativeBackend>
+                                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeBackendDependencies.cmake
+                )
+                set_tests_properties(NativeBackendHasNoExternalLLVMDlls PROPERTIES
+                        LABELS "llvm-backend;native;abi;packaging"
+                )
+        endif()
 endif()

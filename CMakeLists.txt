@@ -28,6 +28,9 @@ enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
 
+set(JOYEER_LLVM_ROOT "$ENV{LLVM_HOME}" CACHE PATH
+    "Root of the LLVM/LLD 22.1.8 development SDK")
+
 if(WIN32)
     include(FetchContent)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -59,12 +62,26 @@ if(WIN32)
         CACHE PATH "" FORCE)
     set(LIBXML2_LIBRARY LibXml2 CACHE STRING "" FORCE)
 
-    set(JOYEER_LLVM_ROOT "$ENV{LLVM_HOME}" CACHE PATH
-        "Root of the LLVM/LLD 22.1.8 development SDK")
+endif()
+
+if(WIN32 OR APPLE)
     find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED
-        HINTS "${JOYEER_LLVM_ROOT}/lib/cmake/llvm")
+        HINTS
+            "${JOYEER_LLVM_ROOT}/lib/cmake/llvm"
+            "/opt/homebrew/opt/llvm/lib/cmake/llvm"
+            "/usr/local/opt/llvm/lib/cmake/llvm")
     find_package(LLD 22.1.8 EXACT CONFIG REQUIRED
-        HINTS "${JOYEER_LLVM_ROOT}/lib/cmake/lld")
+        HINTS
+            "${JOYEER_LLVM_ROOT}/lib/cmake/lld"
+            "/opt/homebrew/opt/lld/lib/cmake/lld"
+            "/opt/homebrew/opt/llvm/lib/cmake/lld"
+            "/usr/local/opt/lld/lib/cmake/lld"
+            "/usr/local/opt/llvm/lib/cmake/lld")
+    message(STATUS "Joyeer embedded LLVM SDK: ${LLVM_PACKAGE_VERSION} (${LLVM_DIR})")
+    message(STATUS "Joyeer embedded LLD SDK: ${LLD_DIR}")
+endif()
+
+if(WIN32)
     find_library(JOYEER_DIA_GUIDS_LIBRARY
         NAMES diaguids
         HINTS "$ENV{VSINSTALLDIR}/DIA SDK/lib/amd64"
@@ -84,8 +101,6 @@ if(WIN32)
     endforeach()
     set_target_properties(LLVMDebugInfoPDB PROPERTIES
         INTERFACE_LINK_LIBRARIES "${_joyeer_pdb_link_libraries_fixed}")
-        message(STATUS "Joyeer embedded LLVM SDK: ${LLVM_PACKAGE_VERSION} (${LLVM_DIR})")
-        message(STATUS "Joyeer embedded LLD SDK: ${LLD_DIR}")
 endif()
 
 find_program(JOYEER_CLANG_EXECUTABLE
@@ -100,34 +115,70 @@ find_program(JOYEER_CLANG_EXECUTABLE
 )
 if(JOYEER_CLANG_EXECUTABLE)
     message(STATUS "Joyeer LLVM test driver: ${JOYEER_CLANG_EXECUTABLE}")
-    if(APPLE)
-        set(JOYEER_MACOS_SDK_PATH "" CACHE PATH
-                "macOS SDK passed to the Clang driver for native output")
-        if(NOT JOYEER_MACOS_SDK_PATH OR NOT IS_DIRECTORY "${JOYEER_MACOS_SDK_PATH}")
-            find_program(JOYEER_XCRUN_EXECUTABLE NAMES xcrun)
-            if(JOYEER_XCRUN_EXECUTABLE)
-                execute_process(
-                        COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --sdk macosx --show-sdk-path
-                        RESULT_VARIABLE JOYEER_XCRUN_RESULT
-                        OUTPUT_VARIABLE JOYEER_XCRUN_SDK_PATH
-                        OUTPUT_STRIP_TRAILING_WHITESPACE
-                )
-                if(JOYEER_XCRUN_RESULT EQUAL 0 AND IS_DIRECTORY "${JOYEER_XCRUN_SDK_PATH}")
-                    set(JOYEER_MACOS_SDK_PATH "${JOYEER_XCRUN_SDK_PATH}"
-                            CACHE PATH
-                            "macOS SDK passed to the Clang driver for native output"
-                            FORCE)
-                endif()
-            endif()
-        endif()
-        if(JOYEER_MACOS_SDK_PATH)
-            message(STATUS "Joyeer macOS SDK: ${JOYEER_MACOS_SDK_PATH}")
-        else()
-            message(STATUS "Joyeer macOS SDK not found; native linking relies on the Clang default")
-        endif()
-    endif()
 else()
     message(STATUS "Joyeer LLVM test driver not found; Clang oracle tests are unavailable")
+endif()
+
+if(APPLE)
+    find_program(JOYEER_XCRUN_EXECUTABLE NAMES xcrun REQUIRED)
+    set(JOYEER_MACOS_SDK_PATH "" CACHE PATH
+            "macOS SDK used by the embedded Mach-O linker")
+    set(JOYEER_MACOS_SDK_VERSION "" CACHE STRING
+            "macOS SDK version used by the embedded Mach-O linker")
+    set(JOYEER_MACOS_DEPLOYMENT_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}" CACHE STRING
+            "Minimum macOS version for Joyeer native executables")
+    if(NOT JOYEER_MACOS_SDK_PATH OR NOT IS_DIRECTORY "${JOYEER_MACOS_SDK_PATH}")
+        execute_process(
+                COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --sdk macosx --show-sdk-path
+                RESULT_VARIABLE JOYEER_XCRUN_RESULT
+                OUTPUT_VARIABLE JOYEER_XCRUN_SDK_PATH
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(JOYEER_XCRUN_RESULT EQUAL 0 AND IS_DIRECTORY "${JOYEER_XCRUN_SDK_PATH}")
+            set(JOYEER_MACOS_SDK_PATH "${JOYEER_XCRUN_SDK_PATH}"
+                    CACHE PATH
+                    "macOS SDK used by the embedded Mach-O linker"
+                    FORCE)
+        endif()
+    endif()
+    if(NOT JOYEER_MACOS_SDK_VERSION)
+        execute_process(
+                COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --sdk macosx --show-sdk-version
+                RESULT_VARIABLE JOYEER_XCRUN_VERSION_RESULT
+                OUTPUT_VARIABLE JOYEER_XCRUN_SDK_VERSION
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(JOYEER_XCRUN_VERSION_RESULT EQUAL 0 AND JOYEER_XCRUN_SDK_VERSION)
+            set(JOYEER_MACOS_SDK_VERSION "${JOYEER_XCRUN_SDK_VERSION}"
+                    CACHE STRING
+                    "macOS SDK version used by the embedded Mach-O linker"
+                    FORCE)
+        endif()
+    endif()
+    if(NOT JOYEER_MACOS_DEPLOYMENT_TARGET)
+        set(JOYEER_MACOS_DEPLOYMENT_TARGET "${JOYEER_MACOS_SDK_VERSION}"
+                CACHE STRING
+                "Minimum macOS version for Joyeer native executables"
+                FORCE)
+    endif()
+    execute_process(
+            COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --find dsymutil
+            RESULT_VARIABLE JOYEER_XCRUN_DSYMUTIL_RESULT
+            OUTPUT_VARIABLE JOYEER_XCRUN_DSYMUTIL
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT JOYEER_MACOS_SDK_PATH OR
+       NOT JOYEER_MACOS_SDK_VERSION OR
+             NOT JOYEER_MACOS_DEPLOYMENT_TARGET OR
+       NOT JOYEER_XCRUN_DSYMUTIL_RESULT EQUAL 0 OR
+       NOT EXISTS "${JOYEER_XCRUN_DSYMUTIL}")
+        message(FATAL_ERROR
+                "Joyeer requires an active macOS SDK and dsymutil from Xcode Command Line Tools")
+    endif()
+    set(JOYEER_DSYMUTIL_EXECUTABLE "${JOYEER_XCRUN_DSYMUTIL}" CACHE FILEPATH
+            "Tool used to create macOS dSYM bundles" FORCE)
+    message(STATUS
+            "Joyeer macOS SDK: ${JOYEER_MACOS_SDK_PATH} (${JOYEER_MACOS_SDK_VERSION}), deployment target ${JOYEER_MACOS_DEPLOYMENT_TARGET}")
 endif()
 
 # Use C++20.

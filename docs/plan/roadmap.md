@@ -30,7 +30,7 @@ runtime, VM, golden corpus, and language-mode CLI options were removed in July
 | Semantic analysis | all-paths return, reachability, initialization, unused bindings | `lib/compiler/semanticanalysis.cpp` |
 | Joyeer IR | verified CFG, aggregates, ownership operations, source/debug scopes | `lib/compiler/irlowering.cpp`, `lib/ir/ir.cpp` |
 | LLVM backend | textual LLVM IR, checked operations, ownership helpers, debug metadata | `lib/backend/llvm.cpp` |
-| Native backend | Windows LLVM/LLD DLL with C ABI; external Clang on macOS/Linux | `lib/backend/native_backend.cpp`, `linker.cpp` |
+| Native backend | Windows COFF and macOS Mach-O LLVM/LLD libraries behind one C ABI; external Clang on Linux | `lib/backend/native_backend.cpp`, `linker.cpp` |
 | Native runtime | strings, owned UTF-8 byte arrays, collections, typed file input, checked arithmetic, allocation balance | `lib/native/runtime.c` |
 | Diagnostics | stable stage IDs, excerpts, fix-its, help, secondary notes | `lib/diagnostic/diagnostic.cpp` |
 
@@ -48,7 +48,7 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 - The legacy source directories, tests, and documentation were removed.
 - Unfiltered CTest is safe and is the required final gate.
 - Windows release packages no longer require an LLVM/Clang installation;
-  LLVM/LLD are private static dependencies of `joyeer-native-backend.dll`.
+  LLVM/LLD are private static dependencies of `joyeer-backend.dll`.
 - The v0.1 heap-value ownership baseline is fixed: ordinary copies recursively
   clone unique storage, owned temporaries transfer directly, overwrite acquires
   the replacement before destroying the old value, and `consume` is the only
@@ -58,8 +58,8 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 
 1. Broaden the standard library beyond the typed whole-file I/O surface with
   incremental/streaming APIs, writing, metadata, and Unicode paths.
-2. Add equivalent self-contained Mach-O and ELF backend libraries while
-  retaining the same versioned C ABI and textual LLVM IR boundary.
+2. Add an ELF backend library while retaining the same versioned C ABI and
+  textual LLVM IR boundary; make the Mach-O backend self-contained for release.
 3. Define a Joyeer-specific optimization and LTO policy while preserving
    checked arithmetic, bounds, ownership, and debug semantics.
 4. Expand modules, generics, error propagation, and contracts only after their

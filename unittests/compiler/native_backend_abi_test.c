@@ -25,9 +25,17 @@ int main(void) {
     if (strcmp(joyeer_native_backend_llvm_version(), "22.1.8") != 0) {
         return 2;
     }
-    if (!joyeer_native_backend_has_coff_linker()) {
+#if defined(_WIN32)
+    if (!joyeer_native_backend_has_coff_linker() ||
+        joyeer_native_backend_has_macho_linker()) {
         return 3;
     }
+#elif defined(__APPLE__)
+    if (joyeer_native_backend_has_coff_linker() ||
+        !joyeer_native_backend_has_macho_linker()) {
+        return 3;
+    }
+#endif
 
     JoyeerNativeBackendObjectOptions invalidOptions = { 0 };
     const JoyeerNativeBackendStatus status = joyeer_native_backend_emit_object(

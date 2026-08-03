@@ -1,8 +1,8 @@
 # LLVM and Native Backend
 
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
-> the Windows backend DLL validates it, generates machine code, and links
-> native executables with embedded LLVM/LLD. macOS and Linux still use Clang.
+> the Windows and macOS backend libraries validate it, generate machine code,
+> and link native executables with LLVM/LLD. Linux still uses Clang.
 > Ordinary copies, deterministic cleanup, overwrite ordering, and
 > whole-binding `consuming` transfer work for the current heap-backed value
 > surface. User-defined `deinit` and explicit copy initializers are outside the
@@ -31,27 +31,26 @@ The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
 from LLVM's C++ model by an inspectable format.
 
 The native linker lives in `include/joyeer/backend/linker.h` and
-`lib/backend/linker.cpp`. On Windows it calls the versioned C ABI in
-`include/joyeer/backend/native_backend.h`. `joyeer-native-backend.dll` parses
+`lib/backend/linker.cpp`. On Windows and macOS it calls the versioned C ABI in
+`include/joyeer/backend/native_backend.h`. The native-backend library parses
 and verifies textual IR, runs the selected LLVM optimization pipeline, emits a
-COFF object, and invokes LLD in-process. LLVM, LLD, and LibXml2 are statically
-linked private implementation details; no LLVM executable or DLL is loaded at
-runtime. A mutex serializes LLD because its library entry point has global
-process state.
+COFF or Mach-O object, and invokes the corresponding LLD driver in-process. A
+mutex serializes LLD because its library entry point has global process state.
+Windows statically contains LLVM/LLD; the macOS backend links their Homebrew
+dynamic libraries. Neither compiler launches Clang for native output.
 
 The DLL discovers MSVC, the Universal CRT, and Windows SDK library directories
 through LLVM's Visual Studio Setup Configuration and registry helpers. It then
 links the generated object with the sibling `JoyeerNativeRuntime.lib`. The
 release package keeps the DLL, runtime archive, and `joyeer.exe` together.
 
-On macOS, CMake resolves the active SDK with `xcrun --sdk macosx
---show-sdk-path`. The driver passes that path to the native linker, which adds
-an explicit `-isysroot` after any Clang configuration-file arguments. This
-avoids depending on a package-manager Clang's build-time SDK path.
-
-macOS and Linux retain the configured external Clang driver and SDK behavior.
-Supported build SDK versions, release files, and platform prerequisites are
-documented in [Building Joyeer](../building.md).
+On macOS, CMake resolves the active SDK path and version with `xcrun`. The
+backend passes them to the embedded Mach-O LLD driver together with the host
+architecture and `libSystem`. Debug builds run the system `dsymutil` only to
+materialize a sibling dSYM after code generation and linking are complete.
+Linux retains the configured external Clang driver. Supported build SDK
+versions and platform prerequisites are documented in
+[Building Joyeer](../building.md).
 
 ---
 
@@ -83,8 +82,9 @@ than delegated to the platform linker.
 
 Native executable linking has an explicit optimization policy: `-O2` is the
 default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
-selected level controls the Windows DLL's LLVM optimization and code-generation
-pipelines, or the external Clang driver on other platforms. `--emit-llvm`
+selected level controls the backend library's LLVM optimization and
+code-generation pipelines on Windows and macOS, or the external Clang driver
+on Linux. `--emit-llvm`
 intentionally writes the pre-optimization backend IR so it remains
 deterministic and inspectable.
 
@@ -100,8 +100,9 @@ changing the emitted pre-optimization instructions.
 Native artifacts follow the host format. Windows CodeView keeps a sibling PDB
 with the executable and embeds a CodeView debug-directory reference. Windows
 DWARF is emitted by the same backend DLL and keeps DWARF sections in the PE
-executable. ELF keeps DWARF sections in the executable; macOS asks the external
-Clang driver for a sibling dSYM bundle. `-O0` disables reference elimination
+executable. ELF keeps DWARF sections in the executable; macOS runs `dsymutil`
+after the in-process Mach-O link to create a sibling dSYM bundle. `-O0`
+disables reference elimination
 and identical-code folding for Windows debug links; optimized levels retain
 them. Paths cross the DLL as UTF-8 C strings and LLD receives an argument
 array, so user paths are not subject to shell expansion.

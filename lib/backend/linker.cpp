@@ -171,7 +171,8 @@ struct ProcessResult {
 ProcessResult runProcess(
         const std::filesystem::path& executable,
         const std::vector<std::filesystem::path>& arguments,
-        const std::filesystem::path& logFile) {
+    const std::filesystem::path& logFile,
+    std::string_view toolName) {
     std::vector<std::string> storage;
     storage.reserve(arguments.size() + 1);
     storage.push_back(executable.string());
@@ -195,14 +196,15 @@ ProcessResult runProcess(
     if (process < 0) {
         const auto error = std::string(std::strerror(errno));
         close(logDescriptor);
-        return ProcessResult { -1, "cannot launch Clang: " + error };
+        return ProcessResult { -1, "cannot launch " + std::string(toolName) + ": " + error };
     }
     if (process == 0) {
         static_cast<void>(dup2(logDescriptor, STDOUT_FILENO));
         static_cast<void>(dup2(logDescriptor, STDERR_FILENO));
         close(logDescriptor);
         execv(executable.c_str(), rawArguments.data());
-        const auto message = std::string("cannot launch Clang: ") + std::strerror(errno) + "\n";
+        const auto message = "cannot launch " + std::string(toolName) + ": " +
+            std::strerror(errno) + "\n";
         static_cast<void>(write(STDERR_FILENO, message.data(), message.size()));
         _exit(127);
     }
@@ -210,7 +212,10 @@ ProcessResult runProcess(
     int status = 0;
     while (waitpid(process, &status, 0) < 0) {
         if (errno == EINTR) continue;
-        return ProcessResult { -1, "cannot wait for Clang: " + std::string(std::strerror(errno)) };
+        return ProcessResult {
+            -1,
+            "cannot wait for " + std::string(toolName) + ": " + std::strerror(errno),
+        };
     }
     if (WIFEXITED(status)) return ProcessResult { WEXITSTATUS(status), {} };
     if (WIFSIGNALED(status)) return ProcessResult { 128 + WTERMSIG(status), {} };
@@ -235,7 +240,7 @@ LinkResult Linker::link(
         return result;
     }
     std::error_code filesystemError;
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(__APPLE__)
     if (options.clangExecutable.empty() ||
         !std::filesystem::is_regular_file(options.clangExecutable, filesystemError) ||
         filesystemError) {
@@ -258,11 +263,30 @@ LinkResult Linker::link(
     }
 #if defined(__APPLE__)
     filesystemError.clear();
-    if (!options.sdkRoot.empty() &&
-        (!std::filesystem::is_directory(options.sdkRoot, filesystemError) || filesystemError)) {
+    if (options.sdkRoot.empty() ||
+        !std::filesystem::is_directory(options.sdkRoot, filesystemError) ||
+        filesystemError) {
         report(
                 LinkDiagnosticId::missingTool,
                 "macOS SDK was not found at '" + options.sdkRoot.string() + "'");
+        return result;
+    }
+    if (options.sdkVersion.empty()) {
+        report(LinkDiagnosticId::missingTool, "macOS SDK version is unavailable");
+        return result;
+    }
+    if (options.deploymentTarget.empty()) {
+        report(LinkDiagnosticId::missingTool, "macOS deployment target is unavailable");
+        return result;
+    }
+    filesystemError.clear();
+    if (options.debugInfo.emitLineTables &&
+        (options.debugSymbolTool.empty() ||
+         !std::filesystem::is_regular_file(options.debugSymbolTool, filesystemError) ||
+         filesystemError)) {
+        report(
+                LinkDiagnosticId::missingTool,
+                "dsymutil was not found at '" + options.debugSymbolTool.string() + "'");
         return result;
     }
 #endif
@@ -297,6 +321,7 @@ LinkResult Linker::link(
     const std::vector<std::filesystem::path> protectedFiles {
         options.clangExecutable,
         options.runtimeLibrary,
+        options.debugSymbolTool,
         options.sourceFile,
     };
     auto collidesWithProtectedFile = [&](const std::filesystem::path& path) {
@@ -437,8 +462,12 @@ LinkResult Linker::link(
     }
     const auto base = temporaryDirectory /
             ("joyeer-native-" + std::to_string(nonce));
+#if defined(_WIN32) || defined(__APPLE__)
 #if defined(_WIN32)
     const auto objectFile = std::filesystem::path(base.string() + ".obj");
+#else
+    const auto objectFile = std::filesystem::path(base.string() + ".o");
+#endif
     const auto objectPath = utf8Path(objectFile);
     const auto outputPath = utf8Path(options.outputFile);
     const auto runtimePath = utf8Path(options.runtimeLibrary);
@@ -470,6 +499,7 @@ LinkResult Linker::link(
         return result;
     }
 
+#if defined(_WIN32)
     std::vector<std::string> lldArguments {
         "lld-link",
         "/NOLOGO",
@@ -495,6 +525,38 @@ LinkResult Linker::link(
             lldArguments.emplace_back("/DEBUG:DWARF");
         }
     }
+#else
+#if defined(__aarch64__) || defined(__arm64__)
+    constexpr auto architecture = "arm64";
+#elif defined(__x86_64__)
+    constexpr auto architecture = "x86_64";
+#else
+#error "Unsupported macOS architecture"
+#endif
+    std::vector<std::string> lldArguments {
+        "ld64.lld",
+        "-arch",
+        architecture,
+        "-platform_version",
+        "macos",
+        options.deploymentTarget,
+        options.sdkVersion,
+        "-dynamic",
+        "-undefined",
+        "error",
+        "-syslibroot",
+        utf8Path(options.sdkRoot),
+        "-o",
+        outputPath,
+        objectPath,
+        "-force_load",
+        runtimePath,
+        "-lSystem",
+    };
+    if (options.optimizationLevel != OptimizationLevel::O0) {
+        lldArguments.emplace_back("-dead_strip");
+    }
+#endif
     std::vector<const char*> rawLldArguments;
     rawLldArguments.reserve(lldArguments.size());
     for (const auto& argument : lldArguments) {
@@ -507,17 +569,24 @@ LinkResult Linker::link(
         rawLldArguments.size(),
     };
     backendDiagnostic = {};
+#if defined(_WIN32)
     const auto linkStatus = joyeer_native_backend_link_coff(
+#else
+    const auto linkStatus = joyeer_native_backend_link_macho(
+#endif
             &linkOptions,
             collectBackendDiagnostic,
             &backendDiagnostic);
-    filesystemError.clear();
-    std::filesystem::remove(objectFile, filesystemError);
     auto cleanupFailedOutput = [&]() {
         std::error_code error;
         std::filesystem::remove(options.outputFile, error);
+#if defined(_WIN32)
         error.clear();
         std::filesystem::remove(pdbFile, error);
+#else
+        error.clear();
+        std::filesystem::remove_all(dsymDirectory, error);
+#endif
     };
     if (linkStatus != JOYEER_NATIVE_BACKEND_SUCCESS ||
         !isNonemptyRegularFile(options.outputFile)) {
@@ -530,8 +599,13 @@ LinkResult Linker::link(
                         (backendDiagnostic.message.empty()
                                 ? std::string()
                                 : ":\n" + backendDiagnostic.message));
+        filesystemError.clear();
+        std::filesystem::remove(objectFile, filesystemError);
         return result;
     }
+#if defined(_WIN32)
+    filesystemError.clear();
+    std::filesystem::remove(objectFile, filesystemError);
     if (options.debugInfo.emitLineTables &&
         options.debugInfo.format == DebugInfoFormat::codeView) {
         if (!isNonemptyRegularFile(pdbFile)) {
@@ -546,6 +620,44 @@ LinkResult Linker::link(
     } else if (options.debugInfo.emitLineTables) {
         result.debugArtifact = options.outputFile;
     }
+#else
+    if (options.debugInfo.emitLineTables) {
+        const auto logFile = std::filesystem::path(base.string() + ".log");
+        const std::vector<std::filesystem::path> dsymutilArguments {
+            options.outputFile,
+            "-o",
+            dsymDirectory,
+        };
+        const auto process = runProcess(
+                options.debugSymbolTool,
+                dsymutilArguments,
+                logFile,
+                "dsymutil");
+        const auto toolOutput = readText(logFile);
+        filesystemError.clear();
+        std::filesystem::remove(logFile, filesystemError);
+        const auto dsymBinary = dsymDirectory / "Contents" / "Resources" / "DWARF" /
+                options.outputFile.filename();
+        if (process.exitCode != 0 || !process.launchError.empty() ||
+            !isNonemptyRegularFile(dsymBinary)) {
+            cleanupFailedOutput();
+            filesystemError.clear();
+            std::filesystem::remove(objectFile, filesystemError);
+            report(
+                    LinkDiagnosticId::toolFailure,
+                    "dsymutil failed to create the expected dSYM bundle '" +
+                            dsymDirectory.string() + "'" +
+                            (process.launchError.empty()
+                                    ? std::string()
+                                    : ":\n" + process.launchError) +
+                            (toolOutput.empty() ? std::string() : ":\n" + toolOutput));
+            return result;
+        }
+        result.debugArtifact = dsymDirectory;
+    }
+    filesystemError.clear();
+    std::filesystem::remove(objectFile, filesystemError);
+#endif
     return result;
 #else
     const auto llvmFile = std::filesystem::path(base.string() + ".ll");
@@ -574,20 +686,11 @@ LinkResult Linker::link(
         "-o",
         options.outputFile,
     };
-    if (options.debugInfo.emitLineTables) {
-    #if defined(__APPLE__)
-        clangArguments.emplace_back(
-            options.debugInfo.emitVariables ? "-g" : "-gline-tables-only");
-#endif
-    }
-#if defined(__APPLE__)
-    if (!options.sdkRoot.empty()) {
-        clangArguments.emplace_back("-isysroot");
-        clangArguments.emplace_back(options.sdkRoot);
-    }
-#endif
-
-    const auto process = runProcess(options.clangExecutable, clangArguments, logFile);
+    const auto process = runProcess(
+            options.clangExecutable,
+            clangArguments,
+            logFile,
+            "Clang");
     const auto toolOutput = readText(logFile);
     filesystemError.clear();
     std::filesystem::remove(llvmFile, filesystemError);
@@ -596,10 +699,6 @@ LinkResult Linker::link(
     auto cleanupFailedOutput = [&]() {
         std::error_code error;
         std::filesystem::remove(options.outputFile, error);
-#if defined(__APPLE__)
-        error.clear();
-        std::filesystem::remove_all(dsymDirectory, error);
-#endif
     };
     if (process.exitCode != 0 || !process.launchError.empty() ||
         !isNonemptyRegularFile(options.outputFile)) {
@@ -614,25 +713,9 @@ LinkResult Linker::link(
         return result;
     }
 
-#if defined(__APPLE__)
-    if (options.debugInfo.emitLineTables) {
-        const auto dsymBinary = dsymDirectory / "Contents" / "Resources" / "DWARF" /
-                options.outputFile.filename();
-        if (!isNonemptyRegularFile(dsymBinary)) {
-            cleanupFailedOutput();
-            report(
-                    LinkDiagnosticId::toolFailure,
-                "Clang did not produce the expected dSYM bundle '" +
-                    dsymDirectory.string() + "'");
-            return result;
-        }
-        result.debugArtifact = dsymDirectory;
-    }
-#else
     if (options.debugInfo.emitLineTables) {
         result.debugArtifact = options.outputFile;
     }
-#endif
     return result;
 #endif
 }

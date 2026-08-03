@@ -20,6 +20,18 @@
 #define JOYEER_SDK_ROOT_PATH ""
 #endif
 
+#ifndef JOYEER_SDK_VERSION
+#define JOYEER_SDK_VERSION ""
+#endif
+
+#ifndef JOYEER_MACOS_DEPLOYMENT_TARGET
+#define JOYEER_MACOS_DEPLOYMENT_TARGET ""
+#endif
+
+#ifndef JOYEER_DSYMUTIL_EXECUTABLE_PATH
+#define JOYEER_DSYMUTIL_EXECUTABLE_PATH ""
+#endif
+
 namespace {
 
 std::filesystem::path nativeRuntimePath() {
@@ -77,6 +89,9 @@ int Driver::run() {
                         JOYEER_CLANG_EXECUTABLE_PATH,
                         nativeRuntimePath(),
                         JOYEER_SDK_ROOT_PATH,
+                        JOYEER_SDK_VERSION,
+                        JOYEER_MACOS_DEPLOYMENT_TARGET,
+                        JOYEER_DSYMUTIL_EXECUTABLE_PATH,
                         arguments->outputFile,
                         arguments->optimizationLevel,
                         arguments->debugInfo,
