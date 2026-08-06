@@ -45,9 +45,8 @@ struct Result {
     }
 };
 
-// Emits portable textual LLVM IR. The official Clang driver parses, verifies,
-// optimizes, and compiles this text; no unstable LLVM C++ ABI is linked into
-// the Joyeer compiler process.
+// Emits portable textual LLVM IR. The platform backend parses, verifies,
+// optimizes, and compiles this text behind the versioned Joyeer C ABI.
 class Emitter {
 public:
     [[nodiscard]] Result emit(

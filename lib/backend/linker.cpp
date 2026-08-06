@@ -15,7 +15,7 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
-#else
+#elif defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -161,7 +161,7 @@ void collectBackendDiagnostic(
     diagnostic.message.assign(message, messageSize);
 }
 
-#if !defined(_WIN32)
+#if defined(__APPLE__)
 
 struct ProcessResult {
     int exitCode = -1;
@@ -240,17 +240,6 @@ LinkResult Linker::link(
         return result;
     }
     std::error_code filesystemError;
-#if !defined(_WIN32) && !defined(__APPLE__)
-    if (options.clangExecutable.empty() ||
-        !std::filesystem::is_regular_file(options.clangExecutable, filesystemError) ||
-        filesystemError) {
-        report(
-                LinkDiagnosticId::missingTool,
-                "Clang executable was not found at '" +
-                        options.clangExecutable.string() + "'");
-        return result;
-    }
-#endif
     filesystemError.clear();
     if (options.runtimeLibrary.empty() ||
         !std::filesystem::is_regular_file(options.runtimeLibrary, filesystemError) ||
@@ -319,7 +308,6 @@ LinkResult Linker::link(
     const auto pdbFile = pdbPathFor(options.outputFile);
     const auto dsymDirectory = std::filesystem::path(options.outputFile.string() + ".dSYM");
     const std::vector<std::filesystem::path> protectedFiles {
-        options.clangExecutable,
         options.runtimeLibrary,
         options.debugSymbolTool,
         options.sourceFile,
@@ -462,7 +450,6 @@ LinkResult Linker::link(
     }
     const auto base = temporaryDirectory /
             ("joyeer-native-" + std::to_string(nonce));
-#if defined(_WIN32) || defined(__APPLE__)
 #if defined(_WIN32)
     const auto objectFile = std::filesystem::path(base.string() + ".obj");
 #else
@@ -525,7 +512,7 @@ LinkResult Linker::link(
             lldArguments.emplace_back("/DEBUG:DWARF");
         }
     }
-#else
+#elif defined(__APPLE__)
 #if defined(__aarch64__) || defined(__arm64__)
     constexpr auto architecture = "arm64";
 #elif defined(__x86_64__)
@@ -556,6 +543,15 @@ LinkResult Linker::link(
     if (options.optimizationLevel != OptimizationLevel::O0) {
         lldArguments.emplace_back("-dead_strip");
     }
+#else
+    std::vector<std::string> lldArguments {
+        "clang",
+        "-fuse-ld=lld",
+        objectPath,
+        runtimePath,
+        "-o",
+        outputPath,
+    };
 #endif
     std::vector<const char*> rawLldArguments;
     rawLldArguments.reserve(lldArguments.size());
@@ -571,8 +567,10 @@ LinkResult Linker::link(
     backendDiagnostic = {};
 #if defined(_WIN32)
     const auto linkStatus = joyeer_native_backend_link_coff(
-#else
+#elif defined(__APPLE__)
     const auto linkStatus = joyeer_native_backend_link_macho(
+#else
+    const auto linkStatus = joyeer_native_backend_link_elf(
 #endif
             &linkOptions,
             collectBackendDiagnostic,
@@ -583,7 +581,7 @@ LinkResult Linker::link(
 #if defined(_WIN32)
         error.clear();
         std::filesystem::remove(pdbFile, error);
-#else
+#elif defined(__APPLE__)
         error.clear();
         std::filesystem::remove_all(dsymDirectory, error);
 #endif
@@ -595,7 +593,7 @@ LinkResult Linker::link(
                 linkStatus == JOYEER_NATIVE_BACKEND_FILE_ERROR
                         ? LinkDiagnosticId::fileError
                         : LinkDiagnosticId::toolFailure,
-                "embedded LLD failed to link the native executable" +
+                "embedded native backend failed to link the executable" +
                         (backendDiagnostic.message.empty()
                                 ? std::string()
                                 : ":\n" + backendDiagnostic.message));
@@ -620,7 +618,7 @@ LinkResult Linker::link(
     } else if (options.debugInfo.emitLineTables) {
         result.debugArtifact = options.outputFile;
     }
-#else
+#elif defined(__APPLE__)
     if (options.debugInfo.emitLineTables) {
         const auto logFile = std::filesystem::path(base.string() + ".log");
         const std::vector<std::filesystem::path> dsymutilArguments {
@@ -657,67 +655,14 @@ LinkResult Linker::link(
     }
     filesystemError.clear();
     std::filesystem::remove(objectFile, filesystemError);
-#endif
-    return result;
 #else
-    const auto llvmFile = std::filesystem::path(base.string() + ".ll");
-    const auto logFile = std::filesystem::path(base.string() + ".log");
-
-    {
-        std::ofstream output(llvmFile, std::ios::binary);
-        output << llvmIR;
-        if (!output.good()) {
-            report(
-                    LinkDiagnosticId::fileError,
-                    "cannot write temporary LLVM IR file '" + llvmFile.string() + "'");
-            return result;
-        }
-    }
-
-    std::vector<std::filesystem::path> clangArguments {
-        optimizationFlag(options.optimizationLevel),
-        "-Wno-override-module",
-        "-x",
-        "ir",
-        llvmFile,
-        "-x",
-        "none",
-        options.runtimeLibrary,
-        "-o",
-        options.outputFile,
-    };
-    const auto process = runProcess(
-            options.clangExecutable,
-            clangArguments,
-            logFile,
-            "Clang");
-    const auto toolOutput = readText(logFile);
     filesystemError.clear();
-    std::filesystem::remove(llvmFile, filesystemError);
-    filesystemError.clear();
-    std::filesystem::remove(logFile, filesystemError);
-    auto cleanupFailedOutput = [&]() {
-        std::error_code error;
-        std::filesystem::remove(options.outputFile, error);
-    };
-    if (process.exitCode != 0 || !process.launchError.empty() ||
-        !isNonemptyRegularFile(options.outputFile)) {
-        cleanupFailedOutput();
-        report(
-                LinkDiagnosticId::toolFailure,
-                "Clang failed to link the native executable" +
-                        (process.launchError.empty()
-                                ? std::string()
-                                : ":\n" + process.launchError) +
-                        (toolOutput.empty() ? std::string() : ":\n" + toolOutput));
-        return result;
-    }
-
+    std::filesystem::remove(objectFile, filesystemError);
     if (options.debugInfo.emitLineTables) {
         result.debugArtifact = options.outputFile;
     }
-    return result;
 #endif
+    return result;
 }
 
 const char* diagnosticName(LinkDiagnosticId id) {

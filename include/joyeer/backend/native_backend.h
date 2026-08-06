@@ -67,6 +67,7 @@ JOYEER_NATIVE_BACKEND_API uint32_t joyeer_native_backend_abi_version(void);
 JOYEER_NATIVE_BACKEND_API const char* joyeer_native_backend_llvm_version(void);
 JOYEER_NATIVE_BACKEND_API int joyeer_native_backend_has_coff_linker(void);
 JOYEER_NATIVE_BACKEND_API int joyeer_native_backend_has_macho_linker(void);
+JOYEER_NATIVE_BACKEND_API int joyeer_native_backend_has_elf_linker(void);
 JOYEER_NATIVE_BACKEND_API JoyeerNativeBackendStatus
 joyeer_native_backend_emit_object(
         const JoyeerNativeBackendObjectOptions* options,
@@ -79,6 +80,11 @@ joyeer_native_backend_link_coff(
         void* diagnosticContext);
 JOYEER_NATIVE_BACKEND_API JoyeerNativeBackendStatus
 joyeer_native_backend_link_macho(
+    const JoyeerNativeBackendLinkOptions* options,
+    JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+    void* diagnosticContext);
+JOYEER_NATIVE_BACKEND_API JoyeerNativeBackendStatus
+joyeer_native_backend_link_elf(
     const JoyeerNativeBackendLinkOptions* options,
     JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
     void* diagnosticContext);

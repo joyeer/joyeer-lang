@@ -23,7 +23,6 @@ struct LinkDiagnostic {
 };
 
 struct LinkOptions {
-    std::filesystem::path clangExecutable;
     std::filesystem::path runtimeLibrary;
     std::filesystem::path sdkRoot;
     std::string sdkVersion;

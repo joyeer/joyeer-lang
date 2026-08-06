@@ -1,19 +1,20 @@
 # Building Joyeer
 
-Windows and macOS perform code generation and native linking through
-LLVM/LLD libraries behind the versioned Joyeer native-backend C ABI. Windows
-statically packages those libraries in `joyeer-backend.dll`; macOS
-links the Homebrew LLVM and LLD dynamic libraries. Linux continues to invoke
-an external Clang driver until its ELF backend library is implemented.
+All supported platforms perform code generation and native linking through
+LLVM/LLD libraries behind the versioned Joyeer native-backend C ABI. The
+platform backend selects COFF, Mach-O, or ELF LLD in-process. Linux uses the
+Clang Driver library in-process to discover startup objects, the dynamic
+loader, libc, and compiler runtime inputs; it never launches Clang to produce
+native output.
 
 ## Dependency policy
 
 Contributors install and update CMake, Ninja, the host compiler, platform SDK,
 and LLVM 22.1.8 development SDK. CMake does not download or build LLVM. On
-Windows and macOS treat LLVM/LLD libraries as private implementation details
-of a Joyeer-owned backend library. Only a versioned C ABI crosses into the
-compiler; LLVM C++ types, exceptions, allocators, and ownership never cross
-that boundary.
+All platforms treat LLVM, LLD, and the Linux Clang Driver library as private
+implementation details of a Joyeer-owned backend library. Only a versioned C
+ABI crosses into the compiler; LLVM/Clang C++ types, exceptions, allocators,
+and ownership never cross that boundary.
 
 CMake fetches and statically embeds LibXml2 2.14.5 because the official LLVM
 22.1.8 Windows LLD libraries enable manifest merging. When
@@ -50,15 +51,16 @@ lib/cmake/llvm/LLVMConfig.cmake
 lib/cmake/lld/LLDConfig.cmake
 ```
 
-The LLVM executables are test and inspection tools. Windows `joyeer.exe` does
-not launch them. Python and curl are not source-build requirements.
+The LLVM executables are test and inspection tools. `joyeer` does not launch
+Clang or an LLD executable on any platform. Python and curl are not
+source-build requirements.
 
 Platform prerequisites are:
 
 | Platform | Required software |
 |---|---|
 | Windows | Visual Studio with Desktop development with C++, MSVC, a Windows SDK, CMake, and Ninja |
-| Linux | GCC or Clang with C++20 support, libc development files, binutils, CMake, and Ninja |
+| Linux | GCC or Clang with C++20 support, libc development files and startup objects, the LLVM/LLD/Clang 22.1.8 development SDK, CMake, and Ninja |
 | macOS | Xcode Command Line Tools and the active macOS SDK, CMake, Ninja, and Homebrew `llvm`/`lld` 22.1.8 |
 
 Windows uses the MSVC compiler toolset installed by Visual Studio for the
@@ -82,7 +84,8 @@ Run `cl` from a Visual Studio Developer shell as well. All LLVM tools and
 libraries must report version 22.1.8 and come from the same SDK root.
 
 On macOS, install the matching development libraries and verify the active
-SDK:
+SDK. `dsymutil` is optional for ordinary native output and required only when
+`-g` requests a dSYM bundle:
 
 ```text
 brew install cmake ninja llvm lld
@@ -105,6 +108,18 @@ ctest --preset macos-debug
 
 Use `macos-release` in the same commands for a release build.
 
+On Linux, use the full LLVM/LLD/Clang development SDK and the checked-in
+presets:
+
+```text
+cmake --preset linux-debug -DJOYEER_LLVM_ROOT=/opt/llvm
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+```
+
+Use `linux-release` for a release build. Omit `JOYEER_LLVM_ROOT` when
+`LLVM_HOME` already points to the SDK.
+
 On Windows, use a Visual Studio Developer PowerShell or Developer Command
 Prompt. The Windows presets explicitly select `cl.exe`; configuration fails
 when the Visual Studio C++ workload or Windows SDK is missing.
@@ -124,9 +139,9 @@ The build is out-of-source only. Preset builds write the executable under
 `build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
 focused iteration.
 
-## Windows release staging
+## Release staging
 
-Build Release and install a movable package directory:
+Build Release and install a movable Windows package directory:
 
 ```text
 cmake --preset x64-release -DJOYEER_LLVM_ROOT=D:/llvm
@@ -154,6 +169,22 @@ and a Windows SDK to create native executables. Programs already produced by
 Joyeer use the static CRT and Windows system DLLs; running those programs does
 not require the Visual C++ Redistributable.
 
+Linux and macOS use the corresponding release preset:
+
+```text
+cmake --preset linux-release -DJOYEER_LLVM_ROOT=/opt/llvm
+cmake --build --preset linux-release
+cmake --install out/build/linux-release --prefix out/package/joyeer
+```
+
+Replace `linux-release` with `macos-release` on macOS. The installed package
+keeps the `joyeer` executable, `joyeer-backend` shared library,
+`JoyeerNativeRuntime` archive, and licenses together. Linux uses an `$ORIGIN`
+runtime search path and macOS uses `@loader_path`; the compiler also resolves
+the runtime archive relative to its own executable. Building Joyeer programs
+still requires the host libc/platform SDK startup objects and system
+libraries, but not an external LLVM, Clang, or LLD executable.
+
 ## Non-Windows tool discovery
 
 macOS requires LLVM and LLD 22.1.8 development packages. CMake discovers the
@@ -164,17 +195,24 @@ the active SDK path and version from `xcrun`; set `JOYEER_MACOS_SDK_PATH` and
 `JOYEER_MACOS_DEPLOYMENT_TARGET` to target an older supported macOS release;
 it defaults to `CMAKE_OSX_DEPLOYMENT_TARGET`, then to the active SDK version.
 
-Linux still requires an external Clang 22.1.8 driver. Set
-`JOYEER_CLANG_EXECUTABLE` when it is not discoverable through `PATH`. Clang is
-also discovered on Windows and macOS for IR oracle tests, but the compiler does
-not launch it to produce native executables on those platforms.
+Linux requires LLVM, LLD, and Clang **development libraries** from the same
+22.1.8 SDK. The root must provide `LLVMConfig.cmake`, `LLDConfig.cmake`,
+`ClangConfig.cmake`, `lldELF`, and `clangDriver`. The Clang Driver library
+constructs the host link command in-process and embedded ELF LLD executes it.
+The host libc development package must provide its startup objects and system
+libraries in a layout recognized by Clang.
+
+`JOYEER_CLANG_EXECUTABLE` refers only to the optional Clang executable used by
+independent LLVM IR oracle tests. It is never launched by `joyeer` when
+building a native executable.
 
 ## Troubleshooting
 
 - **LLVM or LLD package is not found:** use the full Windows development
-  archive or install both `llvm` and `lld` with Homebrew on macOS, clear the
-  build directory or use `cmake --fresh`, and set `JOYEER_LLVM_ROOT`,
-  `LLVM_DIR`, or `LLD_DIR` for a nonstandard SDK root.
+  archive, a full Linux LLVM/LLD/Clang development SDK, or install both `llvm`
+  and `lld` with Homebrew on macOS; clear the build directory or use
+  `cmake --fresh`, and set `JOYEER_LLVM_ROOT`, `LLVM_DIR`, `LLD_DIR`, or
+  `Clang_DIR` for a nonstandard SDK root.
 - **Windows rejects the compiler:** reopen a Visual Studio Developer shell and
   verify `cl` and the Windows SDK before running CMake.
 - **Packaged native linking cannot find platform libraries:** install the
@@ -185,3 +223,6 @@ not launch it to produce native executables on those platforms.
 - **macOS native linking cannot find system libraries:** run `xcode-select -p`
   and `xcrun --sdk macosx --show-sdk-path`, then repair or select Xcode Command
   Line Tools before reconfiguring.
+- **Linux native linking cannot find startup objects or libc:** install the
+  distribution's libc and GCC runtime development packages; embedded LLD does
+  not replace those platform ABI inputs.

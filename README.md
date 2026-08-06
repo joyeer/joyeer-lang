@@ -74,16 +74,16 @@ func main() {
 ## Getting Started
 
 Contributors provide the host compiler, platform SDK, and required LLVM
-toolchain. Windows and macOS link LLVM/LLD libraries behind a Joyeer-owned C
-ABI backend; Linux invokes an external Clang driver. CMake does not build LLVM
-from source.
+toolchain. Every supported platform performs LLVM code generation and LLD
+linking in-process behind a Joyeer-owned C ABI backend. CMake does not build
+LLVM from source.
 
 | Tool | Requirement |
 |---|---|
 | [CMake](https://cmake.org/download/) | 3.20 or newer |
 | [Ninja](https://github.com/ninja-build/ninja/releases) | Required build generator |
 | Host compiler | C and C++ compiler with C++20 support |
-| [LLVM/LLD 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Development libraries on Windows and macOS; external Clang driver on Linux |
+| [LLVM/LLD 22.1.8](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.8) | Full development libraries on every platform; Linux also uses the Clang Driver library |
 | Platform SDK | Windows SDK, macOS SDK, or Linux libc development files |
 | [Git](https://git-scm.com/downloads) and network access | Required when CMake first fetches LibXml2 and GoogleTest |
 
@@ -99,8 +99,8 @@ Platform requirements are:
 | Platform | Required environment |
 |---|---|
 | Windows | [Visual Studio](https://visualstudio.microsoft.com/downloads/) with **Desktop development with C++**, the MSVC x64 toolset, and a Windows SDK |
-| Linux | GCC or Clang with C++20 support, libc development files, and binutils |
-| macOS | Xcode Command Line Tools and the active macOS SDK |
+| Linux | GCC or Clang with C++20 support, libc development files and startup objects, plus the LLVM/LLD/Clang development SDK |
+| macOS | Xcode Command Line Tools, the active macOS SDK, and LLVM/LLD development libraries |
 
 Windows builds use MSVC exclusively. Run CMake from a Visual Studio Developer
 PowerShell or Developer Command Prompt so `cl.exe`, the standard library, and
@@ -126,6 +126,17 @@ ctest --preset macos-debug
 
 The compiler is written to `out/build/macos-debug/bin/joyeer`. Use
 `macos-release` in the same commands for a release build.
+
+On Linux, point `LLVM_HOME` at the matching full development SDK or pass its
+root explicitly:
+
+```text
+cmake --preset linux-debug -DJOYEER_LLVM_ROOT=/opt/llvm
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+```
+
+Use `linux-release` for a release build.
 
 On Windows, verify the SDK root:
 
@@ -158,6 +169,11 @@ that package do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
 through Visual Studio Setup Configuration and the registry. See
 [building.md](docs/building.md) for platform details and troubleshooting.
+
+Linux and macOS use the same install layout with platform suffixes: the
+`joyeer` executable, `joyeer-backend` shared library, native runtime archive,
+and licenses are installed together. The executable resolves the backend and
+runtime relative to its own location.
 
 ## CLI
 

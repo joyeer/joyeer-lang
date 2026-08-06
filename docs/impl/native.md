@@ -1,8 +1,8 @@
 # LLVM and Native Backend
 
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
-> the Windows and macOS backend libraries validate it, generate machine code,
-> and link native executables with LLVM/LLD. Linux still uses Clang.
+> the platform backend library validates it, generates machine code, and links
+> native executables with in-process LLVM/LLD on Windows, macOS, and Linux.
 > Ordinary copies, deterministic cleanup, overwrite ordering, and
 > whole-binding `consuming` transfer work for the current heap-backed value
 > surface. User-defined `deinit` and explicit copy initializers are outside the
@@ -31,13 +31,14 @@ The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
 from LLVM's C++ model by an inspectable format.
 
 The native linker lives in `include/joyeer/backend/linker.h` and
-`lib/backend/linker.cpp`. On Windows and macOS it calls the versioned C ABI in
-`include/joyeer/backend/native_backend.h`. The native-backend library parses
-and verifies textual IR, runs the selected LLVM optimization pipeline, emits a
-COFF or Mach-O object, and invokes the corresponding LLD driver in-process. A
-mutex serializes LLD because its library entry point has global process state.
-Windows statically contains LLVM/LLD; the macOS backend links their Homebrew
-dynamic libraries. Neither compiler launches Clang for native output.
+`lib/backend/linker.cpp`. It calls the versioned C ABI in
+`include/joyeer/backend/native_backend.h` on every platform. The
+native-backend library parses and verifies textual IR, runs the selected LLVM
+optimization pipeline, emits a COFF, Mach-O, or ELF object, and invokes the
+corresponding LLD driver in-process. A mutex serializes LLD because its library
+entry point has global process state. LLVM/LLD remain private backend
+dependencies; the compiler never launches Clang or an LLD executable for
+native output.
 
 The DLL discovers MSVC, the Universal CRT, and Windows SDK library directories
 through LLVM's Visual Studio Setup Configuration and registry helpers. It then
@@ -48,7 +49,11 @@ On macOS, CMake resolves the active SDK path and version with `xcrun`. The
 backend passes them to the embedded Mach-O LLD driver together with the host
 architecture and `libSystem`. Debug builds run the system `dsymutil` only to
 materialize a sibling dSYM after code generation and linking are complete.
-Linux retains the configured external Clang driver. Supported build SDK
+More precisely, this occurs whenever `-g` enables line tables, regardless of
+the compiler optimization level; ordinary native output has no tool
+subprocess. On Linux, the private Clang
+Driver library discovers the host ABI inputs and returns an ELF linker command
+that embedded LLD executes without spawning a process. Supported build SDK
 versions and platform prerequisites are documented in
 [Building Joyeer](../building.md).
 
@@ -83,8 +88,7 @@ than delegated to the platform linker.
 Native executable linking has an explicit optimization policy: `-O2` is the
 default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
 selected level controls the backend library's LLVM optimization and
-code-generation pipelines on Windows and macOS, or the external Clang driver
-on Linux. `--emit-llvm`
+code-generation pipelines on every platform. `--emit-llvm`
 intentionally writes the pre-optimization backend IR so it remains
 deterministic and inspectable.
 
@@ -261,8 +265,9 @@ corresponding DWARF `.debug_line` and Windows CodeView `.debug$S` sections.
 `NativeBackendAbiTests` is compiled as C and verifies the DLL ABI/version
 without exposing C++ types.
 Native artifact tests additionally validate no-debug output, Windows PDB source
-and line records, embedded Windows DWARF sections, platform artifact retention,
-safe metacharacter paths, and refusal to overwrite output/PDB directories.
+and line records, embedded Windows/ELF DWARF sections, platform artifact
+retention, safe metacharacter paths, and refusal to overwrite output/PDB
+directories.
 
 `NativeExecutableJsonParser` is the integrated milestone: Joyeer source reads
 an external file, recursively parses nested null/Boolean/integer/string/array/

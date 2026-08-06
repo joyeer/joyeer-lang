@@ -36,17 +36,16 @@ ctest --test-dir build --output-on-failure
 
 - Source builders install CMake 3.20+, Ninja, a C++20 host compiler, and the
   platform SDK before configuring. See [docs/building.md](docs/building.md).
-- Windows and macOS native development require LLVM/LLD 22.1.8 development
-  libraries. Set `LLVM_HOME` or pass `-DJOYEER_LLVM_ROOT=/path/to/sdk` for a
-  nonstandard SDK. CMake must not download or build LLVM itself.
-- Windows packages LLVM/LLD statically inside `joyeer-backend.dll`;
-  macOS links their Homebrew dynamic libraries into the backend dependency graph.
-  Keep the boundary as a versioned C ABI: never expose LLVM C++ types,
-  exceptions, allocators, or ownership to `joyeer.exe`.
+- Native development on every platform requires LLVM/LLD 22.1.8 development
+  libraries; Linux also requires the matching Clang Driver library. Set
+  `LLVM_HOME` or pass `-DJOYEER_LLVM_ROOT=/path/to/sdk` for a nonstandard SDK.
+  CMake must not download or build LLVM itself.
+- Every platform performs LLVM code generation and LLD linking in-process
+  behind the versioned `joyeer-backend` C ABI. Never expose LLVM/Clang C++
+  types, exceptions, allocators, or ownership to `joyeer`.
 - The Windows release set is `joyeer.exe`, `joyeer-backend.dll`,
   `JoyeerNativeRuntime.lib`, and licenses. Do not add LLVM executables or DLLs
-  to it. Linux retains the external Clang driver until its ELF backend library
-  is implemented.
+  to it. Clang executables are test or inspection tools, not product linkers.
 - Windows builds use Visual Studio's MSVC compiler exclusively. CMake enforces
   this even when Ninja is the generator; do not add MinGW, GCC, or clang-cl
   fallbacks.

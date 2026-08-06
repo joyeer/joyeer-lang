@@ -140,18 +140,16 @@ joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
 
-if(WIN32 OR APPLE)
-    add_executable(NativeBackendAbiTests
-            native_backend_abi_test.c
-    )
-    target_link_libraries(NativeBackendAbiTests
-            JoyeerNativeBackend
-    )
-    add_test(NAME NativeBackendAbiTests COMMAND NativeBackendAbiTests)
-    set_tests_properties(NativeBackendAbiTests PROPERTIES
-            LABELS "llvm-backend;native;abi"
-    )
-endif()
+add_executable(NativeBackendAbiTests
+        native_backend_abi_test.c
+)
+target_link_libraries(NativeBackendAbiTests
+        JoyeerNativeBackend
+)
+add_test(NAME NativeBackendAbiTests COMMAND NativeBackendAbiTests)
+set_tests_properties(NativeBackendAbiTests PROPERTIES
+        LABELS "llvm-backend;native;abi"
+)
 
 if(JOYEER_CLANG_EXECUTABLE)
         get_filename_component(JOYEER_LLVM_BIN_DIR "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
@@ -311,6 +309,19 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
     set_tests_properties(NativeExecutableHello PROPERTIES
             LABELS "native;llvm-backend;native-runtime"
+    )
+
+    add_test(NAME InstalledCompilerNativeHello
+            COMMAND ${CMAKE_COMMAND}
+                    -DBUILD_DIR=${CMAKE_BINARY_DIR}
+                    -DSTAGING_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-compiler
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DEXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstalledCompiler.cmake
+    )
+    set_tests_properties(InstalledCompilerNativeHello PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;packaging"
     )
 
     add_test(NAME NativeExecutableNoDebugArtifact

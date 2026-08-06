@@ -244,11 +244,4 @@ TEST(CommandLineArgumentsTest, RejectsUnknownOptimizationLevels) {
             std::string::npos);
 }
 
-TEST(OptimizationOptionsTest, MapsEveryLevelToAClangFlag) {
-    EXPECT_STREQ(joyeer::optimizationFlag(joyeer::OptimizationLevel::O0), "-O0");
-    EXPECT_STREQ(joyeer::optimizationFlag(joyeer::OptimizationLevel::O1), "-O1");
-    EXPECT_STREQ(joyeer::optimizationFlag(joyeer::OptimizationLevel::O2), "-O2");
-    EXPECT_STREQ(joyeer::optimizationFlag(joyeer::OptimizationLevel::O3), "-O3");
-}
-
 } // namespace

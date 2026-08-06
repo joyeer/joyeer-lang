@@ -27,12 +27,20 @@ int main(void) {
     }
 #if defined(_WIN32)
     if (!joyeer_native_backend_has_coff_linker() ||
-        joyeer_native_backend_has_macho_linker()) {
+        joyeer_native_backend_has_macho_linker() ||
+        joyeer_native_backend_has_elf_linker()) {
         return 3;
     }
 #elif defined(__APPLE__)
     if (joyeer_native_backend_has_coff_linker() ||
-        !joyeer_native_backend_has_macho_linker()) {
+        !joyeer_native_backend_has_macho_linker() ||
+        joyeer_native_backend_has_elf_linker()) {
+        return 3;
+    }
+#else
+    if (joyeer_native_backend_has_coff_linker() ||
+        joyeer_native_backend_has_macho_linker() ||
+        !joyeer_native_backend_has_elf_linker()) {
         return 3;
     }
 #endif
@@ -44,6 +52,22 @@ int main(void) {
             NULL);
     if (status != JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
         return 4;
+    }
+
+    diagnosticSeen = 0;
+    JoyeerNativeBackendLinkOptions invalidLinkOptions = { 0 };
+#if defined(_WIN32)
+    const JoyeerNativeBackendStatus linkStatus = joyeer_native_backend_link_coff(
+#elif defined(__APPLE__)
+    const JoyeerNativeBackendStatus linkStatus = joyeer_native_backend_link_macho(
+#else
+    const JoyeerNativeBackendStatus linkStatus = joyeer_native_backend_link_elf(
+#endif
+            &invalidLinkOptions,
+            collectDiagnostic,
+            NULL);
+    if (linkStatus != JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
+        return 5;
     }
     return 0;
 }

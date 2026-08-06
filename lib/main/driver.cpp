@@ -6,11 +6,13 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <unistd.h>
 #endif
 
-#ifndef JOYEER_CLANG_EXECUTABLE_PATH
-#define JOYEER_CLANG_EXECUTABLE_PATH ""
-#endif
+#include <vector>
 
 #ifndef JOYEER_NATIVE_RUNTIME_PATH
 #define JOYEER_NATIVE_RUNTIME_PATH ""
@@ -34,22 +36,54 @@
 
 namespace {
 
-std::filesystem::path nativeRuntimePath() {
-    const std::filesystem::path configuredPath = JOYEER_NATIVE_RUNTIME_PATH;
+std::filesystem::path executableDirectory() {
 #if defined(_WIN32)
-    if (configuredPath.is_relative()) {
-        std::wstring executablePath(32768, L'\0');
-        const auto length = GetModuleFileNameW(
-                nullptr,
+    std::wstring executablePath(32768, L'\0');
+    const auto length = GetModuleFileNameW(
+            nullptr,
+            executablePath.data(),
+            static_cast<DWORD>(executablePath.size()));
+    if (length > 0 && length < executablePath.size()) {
+        executablePath.resize(length);
+        return std::filesystem::path(executablePath).parent_path();
+    }
+#elif defined(__APPLE__)
+    uint32_t size = 0;
+    static_cast<void>(_NSGetExecutablePath(nullptr, &size));
+    std::vector<char> executablePath(size);
+    if (size != 0 && _NSGetExecutablePath(executablePath.data(), &size) == 0) {
+        std::error_code error;
+        const auto resolved = std::filesystem::weakly_canonical(
                 executablePath.data(),
-                static_cast<DWORD>(executablePath.size()));
-        if (length > 0 && length < executablePath.size()) {
-            executablePath.resize(length);
-            return std::filesystem::path(executablePath).parent_path() /
-                    configuredPath;
+                error);
+        return (error ? std::filesystem::path(executablePath.data()) : resolved)
+                .parent_path();
+    }
+#elif defined(__linux__)
+    std::vector<char> executablePath(4096);
+    while (true) {
+    const auto length = readlink(
+                "/proc/self/exe",
+                executablePath.data(),
+                executablePath.size());
+        if (length < 0) break;
+        if (static_cast<size_t>(length) < executablePath.size()) {
+            return std::filesystem::path(
+                    std::string(executablePath.data(), static_cast<size_t>(length)))
+                    .parent_path();
         }
+        executablePath.resize(executablePath.size() * 2);
     }
 #endif
+    return {};
+}
+
+std::filesystem::path nativeRuntimePath() {
+    const std::filesystem::path configuredPath = JOYEER_NATIVE_RUNTIME_PATH;
+    if (configuredPath.is_relative()) {
+        const auto directory = executableDirectory();
+        if (!directory.empty()) return directory / configuredPath;
+    }
     return configuredPath;
 }
 
@@ -86,7 +120,6 @@ int Driver::run() {
                     source->llvmIR,
                     source->llvmHasEntryPoint,
                     joyeer::native::LinkOptions {
-                        JOYEER_CLANG_EXECUTABLE_PATH,
                         nativeRuntimePath(),
                         JOYEER_SDK_ROOT_PATH,
                         JOYEER_SDK_VERSION,

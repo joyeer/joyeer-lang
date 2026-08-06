@@ -64,22 +64,24 @@ if(WIN32)
 
 endif()
 
-if(WIN32 OR APPLE)
-    find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED
-        HINTS
-            "${JOYEER_LLVM_ROOT}/lib/cmake/llvm"
-            "/opt/homebrew/opt/llvm/lib/cmake/llvm"
-            "/usr/local/opt/llvm/lib/cmake/llvm")
-    find_package(LLD 22.1.8 EXACT CONFIG REQUIRED
-        HINTS
-            "${JOYEER_LLVM_ROOT}/lib/cmake/lld"
-            "/opt/homebrew/opt/lld/lib/cmake/lld"
-            "/opt/homebrew/opt/llvm/lib/cmake/lld"
-            "/usr/local/opt/lld/lib/cmake/lld"
-            "/usr/local/opt/llvm/lib/cmake/lld")
-    message(STATUS "Joyeer embedded LLVM SDK: ${LLVM_PACKAGE_VERSION} (${LLVM_DIR})")
-    message(STATUS "Joyeer embedded LLD SDK: ${LLD_DIR}")
+find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED
+    HINTS
+        "${JOYEER_LLVM_ROOT}/lib/cmake/llvm"
+        "/opt/homebrew/opt/llvm/lib/cmake/llvm"
+        "/usr/local/opt/llvm/lib/cmake/llvm")
+find_package(LLD 22.1.8 EXACT CONFIG REQUIRED
+    HINTS
+        "${JOYEER_LLVM_ROOT}/lib/cmake/lld"
+        "/opt/homebrew/opt/lld/lib/cmake/lld"
+        "/opt/homebrew/opt/llvm/lib/cmake/lld"
+        "/usr/local/opt/lld/lib/cmake/lld"
+        "/usr/local/opt/llvm/lib/cmake/lld")
+if(UNIX AND NOT APPLE)
+    find_package(Clang 22.1.8 EXACT CONFIG REQUIRED
+        HINTS "${JOYEER_LLVM_ROOT}/lib/cmake/clang")
 endif()
+message(STATUS "Joyeer embedded LLVM SDK: ${LLVM_PACKAGE_VERSION} (${LLVM_DIR})")
+message(STATUS "Joyeer embedded LLD SDK: ${LLD_DIR}")
 
 if(WIN32)
     find_library(JOYEER_DIA_GUIDS_LIBRARY
@@ -169,14 +171,20 @@ if(APPLE)
     )
     if(NOT JOYEER_MACOS_SDK_PATH OR
        NOT JOYEER_MACOS_SDK_VERSION OR
-             NOT JOYEER_MACOS_DEPLOYMENT_TARGET OR
-       NOT JOYEER_XCRUN_DSYMUTIL_RESULT EQUAL 0 OR
-       NOT EXISTS "${JOYEER_XCRUN_DSYMUTIL}")
+           NOT JOYEER_MACOS_DEPLOYMENT_TARGET)
         message(FATAL_ERROR
-                "Joyeer requires an active macOS SDK and dsymutil from Xcode Command Line Tools")
-    endif()
-    set(JOYEER_DSYMUTIL_EXECUTABLE "${JOYEER_XCRUN_DSYMUTIL}" CACHE FILEPATH
+            "Joyeer requires an active macOS SDK from Xcode Command Line Tools")
+        endif()
+        if(JOYEER_XCRUN_DSYMUTIL_RESULT EQUAL 0 AND
+           EXISTS "${JOYEER_XCRUN_DSYMUTIL}")
+        set(JOYEER_DSYMUTIL_EXECUTABLE "${JOYEER_XCRUN_DSYMUTIL}" CACHE FILEPATH
             "Tool used to create macOS dSYM bundles" FORCE)
+        else()
+        set(JOYEER_DSYMUTIL_EXECUTABLE "" CACHE FILEPATH
+            "Tool used to create macOS dSYM bundles" FORCE)
+        message(STATUS
+            "Joyeer dsymutil not found; macOS native output remains available but -g debug bundles are unavailable")
+    endif()
     message(STATUS
             "Joyeer macOS SDK: ${JOYEER_MACOS_SDK_PATH} (${JOYEER_MACOS_SDK_VERSION}), deployment target ${JOYEER_MACOS_DEPLOYMENT_TARGET}")
 endif()
@@ -215,12 +223,11 @@ if(JOYEER_BUILD_UNITTESTS)
 endif()
 
 include(GNUInstallDirs)
-if(WIN32)
-    install(TARGETS joyeer JoyeerNativeBackend
-        RUNTIME DESTINATION .)
-    install(TARGETS JoyeerNativeRuntime
-        ARCHIVE DESTINATION .)
-    install(FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
-        DESTINATION licenses)
-endif()
+install(TARGETS joyeer JoyeerNativeBackend
+    RUNTIME DESTINATION .
+    LIBRARY DESTINATION .)
+install(TARGETS JoyeerNativeRuntime
+    ARCHIVE DESTINATION .)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    DESTINATION licenses)

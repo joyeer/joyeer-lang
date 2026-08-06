@@ -1,5 +1,14 @@
 #include "joyeer/backend/native_backend.h"
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/DiagnosticIDs.h"
+#include "clang/Basic/DiagnosticOptions.h"
+#include "clang/Driver/Compilation.h"
+#include "clang/Driver/Driver.h"
+#include "clang/Driver/Job.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
+#endif
 #include "lld/Common/Driver.h"
 #include "lld/Common/ErrorHandler.h"
 #include "llvm/AsmParser/Parser.h"
@@ -34,6 +43,8 @@
 LLD_HAS_DRIVER(coff)
 #elif defined(__APPLE__)
 LLD_HAS_DRIVER(macho)
+#else
+LLD_HAS_DRIVER(elf)
 #endif
 
 namespace {
@@ -44,6 +55,9 @@ lld::Driver nativeLinkerDriver = &lld::coff::link;
 #elif defined(__APPLE__)
 constexpr lld::Flavor nativeLinkerFlavor = lld::Darwin;
 lld::Driver nativeLinkerDriver = &lld::macho::link;
+#else
+constexpr lld::Flavor nativeLinkerFlavor = lld::Gnu;
+lld::Driver nativeLinkerDriver = &lld::elf::link;
 #endif
 std::mutex lldMutex;
 
@@ -314,6 +328,57 @@ bool appendWindowsLibraryPaths(
 }
 #endif
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+std::optional<std::vector<std::string>> buildElfLinkerArguments(
+    const JoyeerNativeBackendLinkOptions& options,
+    std::string& error) {
+    std::string diagnosticsText;
+    llvm::raw_string_ostream diagnosticsStream(diagnosticsText);
+    clang::DiagnosticOptions diagnosticOptions;
+    clang::TextDiagnosticPrinter diagnosticPrinter(
+        diagnosticsStream,
+        diagnosticOptions);
+    auto diagnosticIds = llvm::IntrusiveRefCntPtr<clang::DiagnosticIDs>(
+        new clang::DiagnosticIDs());
+    clang::DiagnosticsEngine diagnostics(
+        diagnosticIds,
+        diagnosticOptions,
+        &diagnosticPrinter,
+        false);
+    clang::driver::Driver driver(
+            "/usr/bin/clang",
+        llvm::sys::getDefaultTargetTriple(),
+        diagnostics,
+        "Joyeer native linker");
+
+    const llvm::ArrayRef<const char*> driverArguments(
+        options.arguments,
+        options.argumentCount);
+    std::unique_ptr<clang::driver::Compilation> compilation(
+        driver.BuildCompilation(driverArguments));
+    diagnosticsStream.flush();
+    if (compilation == nullptr || diagnostics.hasErrorOccurred()) {
+    error = diagnosticsText.empty()
+        ? "Clang Driver could not construct the ELF link command"
+        : diagnosticsText;
+    return std::nullopt;
+    }
+    if (compilation->getJobs().size() != 1) {
+    error = "Clang Driver did not produce exactly one ELF link command";
+    return std::nullopt;
+    }
+
+    const auto& command = *compilation->getJobs().begin();
+    std::vector<std::string> arguments;
+    arguments.reserve(command.getArguments().size() + 1);
+    arguments.emplace_back("ld.lld");
+    for (const auto* argument : command.getArguments()) {
+    arguments.emplace_back(argument);
+    }
+    return arguments;
+}
+#endif
+
 JoyeerNativeBackendStatus linkNative(
         const JoyeerNativeBackendLinkOptions* options,
         JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
@@ -493,6 +558,72 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_macho(
             diagnosticContext,
             JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
             "Mach-O linking is unavailable in this native backend");
+    return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+#endif
+}
+
+extern "C" int joyeer_native_backend_has_elf_linker(void) {
+#if !defined(_WIN32) && !defined(__APPLE__)
+    return nativeLinkerDriver != nullptr;
+#else
+    return 0;
+#endif
+}
+
+extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_elf(
+        const JoyeerNativeBackendLinkOptions* options,
+        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+        void* diagnosticContext) {
+#if !defined(_WIN32) && !defined(__APPLE__)
+    if (options == nullptr ||
+        !validHeader(options->abiVersion, options->structSize, sizeof(*options)) ||
+        options->arguments == nullptr || options->argumentCount == 0) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                "invalid native backend ELF linker options");
+        return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+    }
+    for (size_t index = 0; index < options->argumentCount; ++index) {
+        if (options->arguments[index] == nullptr) {
+            report(
+                    diagnosticCallback,
+                    diagnosticContext,
+                    JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                    "native backend ELF linker arguments must not contain null entries");
+            return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+        }
+    }
+
+    std::string driverError;
+    const auto linkerArguments = buildElfLinkerArguments(*options, driverError);
+    if (!linkerArguments.has_value()) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_LINK_FAILED,
+                driverError);
+        return JOYEER_NATIVE_BACKEND_LINK_FAILED;
+    }
+    std::vector<const char*> rawArguments;
+    rawArguments.reserve(linkerArguments->size());
+    for (const auto& argument : *linkerArguments) {
+        rawArguments.push_back(argument.c_str());
+    }
+    const JoyeerNativeBackendLinkOptions linkerOptions {
+        JOYEER_NATIVE_BACKEND_ABI_VERSION,
+        sizeof(JoyeerNativeBackendLinkOptions),
+        rawArguments.data(),
+        rawArguments.size(),
+    };
+    return linkNative(&linkerOptions, diagnosticCallback, diagnosticContext);
+#else
+    report(
+            diagnosticCallback,
+            diagnosticContext,
+            JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+            "ELF linking is unavailable in this native backend");
     return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
 #endif
 }

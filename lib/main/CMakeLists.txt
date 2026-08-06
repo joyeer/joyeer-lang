@@ -15,26 +15,27 @@ add_dependencies(joyeer JoyeerCompiler)
 add_dependencies(joyeer JoyeerDiagnostic)
 add_dependencies(joyeer JoyeerNativeRuntime)
 
-if(WIN32 OR APPLE)
-        set(JOYEER_CONFIGURED_CLANG_EXECUTABLE "")
-else()
-        set(JOYEER_CONFIGURED_CLANG_EXECUTABLE "${JOYEER_CLANG_EXECUTABLE}")
-endif()
-
 target_compile_definitions(joyeer PRIVATE
-        JOYEER_CLANG_EXECUTABLE_PATH="${JOYEER_CONFIGURED_CLANG_EXECUTABLE}"
-        JOYEER_NATIVE_RUNTIME_PATH="$<IF:$<PLATFORM_ID:Windows>,$<TARGET_FILE_NAME:JoyeerNativeRuntime>,$<TARGET_FILE:JoyeerNativeRuntime>>"
+        JOYEER_NATIVE_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
         JOYEER_SDK_ROOT_PATH="${JOYEER_MACOS_SDK_PATH}"
         JOYEER_SDK_VERSION="${JOYEER_MACOS_SDK_VERSION}"
         JOYEER_MACOS_DEPLOYMENT_TARGET="${JOYEER_MACOS_DEPLOYMENT_TARGET}"
         JOYEER_DSYMUTIL_EXECUTABLE_PATH="${JOYEER_DSYMUTIL_EXECUTABLE}"
 )
 
-if(WIN32)
-        add_custom_command(TARGET joyeer POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "$<TARGET_FILE:JoyeerNativeRuntime>"
-                        "$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
+add_custom_command(TARGET joyeer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:JoyeerNativeRuntime>"
+                "$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
+)
+
+if(APPLE)
+        set_target_properties(joyeer PROPERTIES
+                INSTALL_RPATH "@loader_path"
+        )
+elseif(UNIX)
+        set_target_properties(joyeer PROPERTIES
+                INSTALL_RPATH "$ORIGIN"
         )
 endif()
 
