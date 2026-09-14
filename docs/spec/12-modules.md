@@ -11,10 +11,10 @@ A **module** is a directory of `.joyeer` source files compiled together.
 The executable v0.1 milestone is single-file. Multi-file module discovery,
 dependency tracking, visibility enforcement, and linking remain follow-on work.
 
-### 12.2 Visibility 📌
+### 12.2 Visibility
 
-> **📌 Decision.** *Three visibility levels: `public`, `internal`
-> (default), `private` (file-local).*
+The three visibility levels are `public`, `internal` (default), and
+`private` (file-local).
 
 | Visibility | Reachable from |
 |-----------|---------------|

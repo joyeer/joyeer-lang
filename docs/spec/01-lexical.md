@@ -114,12 +114,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 ### 1.7 String interpolation ⏳
 
-> **📌 Decision.** *String interpolation is reserved for a future version,
-> not part of v0.1.*  Swift-style `"\(expr)"` is convenient sugar, but it is
-> not required for the v0.1 use cases; debug and test output use `print` with
-> separate arguments or manual concatenation. Deferring it keeps the v0.1
-> lexer and type checker simpler and can be added later without breaking
-> existing string literals.
+String interpolation is reserved for a future version, not part of v0.1.
 
 When added, the syntax will be Swift-style `"\(expr)"`, where the expression
 inside `\(...)` is any `expression` whose result is one of the built-in

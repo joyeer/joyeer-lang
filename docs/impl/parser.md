@@ -106,7 +106,7 @@ whether the callee is a type or value from capitalization.
 
 ## 4. Parser MVP grammar
 
-The notation follows spec §0.4. Every comma-separated list permits a trailing
+The notation follows spec §0.2. Every comma-separated list permits a trailing
 comma unless a rule says otherwise.
 
 ### 4.1 Source file and declarations

@@ -43,11 +43,11 @@ nonzero platform error code for diagnostics; programs must branch on the case,
 not on a particular numeric value. Embedded NUL paths are `InvalidPath`.
 Unclassified open, read, size, or close failures are `Other`.
 
-### 8.3 `?` propagation 📌
+### 8.3 `?` propagation
 
-> **📌 Decision.** *Postfix `?` on `Result<T,E>` (and `Optional<T>`)
-> propagates the failure.*  Equivalent to `match x { .Ok(v) => v,
-> .Err(e) => return .Err(e) }`.
+Postfix `?` on `Result<T,E>` (and `Optional<T>`) propagates the failure.
+For `Result`, it is equivalent to `match x { .Ok(v) => v,
+.Err(e) => return .Err(e) }`.
 
 ```joyeer
 func parsePair(s: String): Result<(Int, Int), ParseError> {
@@ -68,14 +68,13 @@ Reserved keywords ⏳. If error-handling syntax for `Result` chains becomes
 ergonomically heavy, a `try-block` may be added in v0.3. For v0.1, `?`
 plus `match` covers all cases.
 
-### 8.5 `??` coalescing 📌
+### 8.5 `??` coalescing
 
-> **📌 Decision.** *Binary `??` supplies a fallback for a `nil`
-> `Optional` or an `.Err` `Result`.* `a ?? b` evaluates to the unwrapped
-> value when `a` is `.Some` / `.Ok`, otherwise to `b`. The right operand `b`
-> may be an ordinary value **or** a diverging expression (`return ...`,
-> `fatalError(...)`) — which has the bottom type `Never` and satisfies any
-> result type — letting `??` double as an early-exit guard.
+Binary `??` supplies a fallback for a `nil` `Optional` or an `.Err` `Result`.
+`a ?? b` evaluates to the unwrapped value when `a` is `.Some` / `.Ok`,
+otherwise to `b`. The right operand `b` may be an ordinary value **or** a
+diverging expression (`return ...`, `fatalError(...)`), which has the bottom
+type `Never` and satisfies any result type.
 
 ```joyeer
 let c = peek(p: p) ?? return .Err(.UnexpectedEof)            // Optional → early return

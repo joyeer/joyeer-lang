@@ -86,25 +86,20 @@ kind of thing from ownership:
 | `consuming` param / `self` | ✅ | ✅ | **transferred to callee** |
 | `initializing` param | writes caller's uninit. storage | ✅ (write) | caller keeps |
 
-> **📌 Decision.** *`consuming` is the only access effect that transfers
-> ownership; `borrowing` / `inout` / `initializing` are projections that leave
-> ownership with the caller.*  "owned" names the resulting **state**;
-> `consuming` names the **effect** that produces it. A local `var` is owned
-> without ever being `consuming`; a `consuming` parameter is owned *because*
-> the caller relinquished it (the caller's binding becomes uninitialized,
-> §4.2.3). Hence every `consuming` binding is owned, but not every owned
-> binding is `consuming`.
+`consuming` is the only access effect that transfers ownership;
+`borrowing` / `inout` / `initializing` are projections that leave ownership
+with the caller. "owned" names the resulting **state**; `consuming` names
+the **effect** that produces it. A local `var` is owned without being
+`consuming`; a `consuming` parameter is owned because the caller relinquished
+it (the caller's binding becomes uninitialized, §4.2.3). Every `consuming`
+binding is owned, but not every owned binding is `consuming`.
 
-> **📌 Decision.** *A `consuming` parameter (and `consuming self`) is an
-> owning, `var`-like (mutable) binding, and any owning mutable binding may be
-> mutated in place by its owner.*  A `consuming` binding is owned outright and
-> is therefore mutable — not `let`-like. (A `let` local is owning but immutable,
-> per Axis 2.) In-place mutation is still marked with `&` at the mutation site
-> (§4.3), so "where is this mutated?" stays greppable. Consequently the
-> difference between a `mutating` and a `consuming` receiver is **not** in-body
-> mutability — both may mutate `self` — but the **caller's fate**: `mutating`
-> returns the receiver to the caller (an exclusive borrow), while `consuming`
-> takes it away (§3.2.4).
+A `consuming` parameter (and `consuming self`) is an owning, `var`-like
+(mutable) binding. Any owning mutable binding may be mutated in place by its
+owner; a `let` local is owning but immutable. In-place mutation is marked
+with `&` at the mutation site (§4.3). Both `mutating` and `consuming` receivers
+may mutate `self`: `mutating` exclusively borrows the receiver and returns
+it to the caller, while `consuming` transfers ownership to the callee (§3.2.4).
 
 ### 4.2 Access effects on parameters
 
@@ -180,12 +175,10 @@ produceLargeBuffer(out: &buf)     // 'initializing' writes without destructing p
 storage; the caller promises the storage was uninitialized. This avoids a
 destruct-then-construct round-trip for large objects.
 
-### 4.3 Call-site markers `&` and `consume` 📌
+### 4.3 Call-site markers `&` and `consume`
 
-> **📌 Decision.** *Call-site marker for `inout` / `initializing` is `&x`;
-> for `consuming` it is `consume x`.*  Caller readability: any visible `&` or
-> `consume` at a call site signals "this argument's storage will be
-> exclusively borrowed, or given away, across this call."
+The call-site marker for `inout` / `initializing` is `&x`;
+for `consuming` it is `consume x`.
 
 ```joyeer
 swap(a: &a, b: &b)        // both args are inout
@@ -200,14 +193,8 @@ a syntax-level error, not just a type error — this guarantees that mutation
 and ownership transfer are always visible at the call site by simple
 scanning (§0.1 principle 2).
 
-> **📌 Decision.** *`consume` at the call site is mandatory, not optional.*
-> Swift makes its `consume` operator optional, relying on implicit last-use
-> analysis to move otherwise. Joyeer requires it explicitly because the bulk
-> of code is AI-generated: a mandatory, always-visible marker makes ownership
-> transfer trivially greppable for both reviewers and tools, and removes the
-> "did the compiler move or copy here?" ambiguity (§0.1 principles 2 and 4).
-> Last-use *optimization* still applies to plain `borrowing` bindings (§4.6);
-> `consume` is about **semantic** ownership transfer, not the optimization.
+Last-use optimization still applies to plain `borrowing` bindings (§4.6);
+`consume` specifies **semantic** ownership transfer, not the optimization.
 
 ### 4.4 The Law of Exclusivity
 
@@ -416,12 +403,9 @@ value. Because Joyeer has no reference types (§4.8), the return value is the
 single mechanism by which a value's ownership may **escape** the frame that
 produced it.
 
-> **📌 Decision.** *A function returns **ownership** of its result to the
-> caller.*  After the `return`, the callee does not retain, alias, or `deinit`
-> the returned value; the destruction obligation (§4.7) transfers to the
-> caller. "Who frees the result?" is therefore answerable by simple scanning:
-> the value lives until the caller's binding that receives it goes out of
-> scope.
+A function returns **ownership** of its result to the caller. After the
+`return`, the callee does not retain, alias, or `deinit` the returned value;
+the destruction obligation (§4.7) transfers to the caller.
 
 An already-owned result temporary transfers directly to the caller. Returning
 a borrowed value first produces an owned copy. Copy elision may replace that

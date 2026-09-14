@@ -18,15 +18,12 @@
 `Int` and `UInt` are platform-pointer-sized but always 64-bit on the targets
 Joyeer supports. (No 32-bit target in v0.1.)
 
-#### 2.1.1 `String` is byte-indexed 📌
+#### 2.1.1 `String` is byte-indexed
 
-> **📌 Decision.** *`String` is indexed by byte offset and its element
-> type is `UInt8`, not `Char`.*  A `String` is UTF-8 bytes; `s[i]` returns the
-> `UInt8` byte at offset `i` in **O(1)**, and `s.count` is the **byte length**.
-> Code-point (`Char`) indexing is *not* O(1) over UTF-8, so Joyeer does not
-> offer `String[Int] -> Char` (the same reason Swift forbids integer
-> subscripts on `String`). This is the Go model: `s[i]` is a byte; iterate
-> code points with `.chars()`.
+`String` is indexed by byte offset and its element type is `UInt8`, not
+`Char`. A `String` is UTF-8 bytes; `s[i]` returns the `UInt8` byte at offset
+`i` in **O(1)**, and `s.count` is the **byte length**. Integer subscripts do
+not provide code-point (`Char`) indexing; `.chars()` iterates code points.
 
 ```joyeer
 let s = "héllo"      // 'é' is 2 UTF-8 bytes
@@ -117,15 +114,14 @@ enum Result<T, E> {
 
 See §8 for error-handling semantics.
 
-### 2.6 Generics 📌
+### 2.6 Generics
 
-> **📌 Decision.** *v0.1 has **no user-defined generics**.* The only generic
-> types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
-> `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>`. Their angle brackets are
-> **type arguments understood directly by the compiler**, not a general
-> type-parameter mechanism. User code may *use* these containers but may not
-> declare new generic `func` / `struct` / `enum`, type parameters, or
-> constraints.
+v0.1 has **no user-defined generics**. The only generic types are the built-in
+types `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and
+`Result<T, E>`. Their angle brackets are **type arguments understood directly
+by the compiler**, not a general type-parameter mechanism. User code may
+*use* these containers but may not declare new generic `func` / `struct` /
+`enum`, type parameters, or constraints.
 
 ```joyeer
 let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
@@ -133,11 +129,9 @@ let m: [String: Int] = [:]             // built-in Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
 
-> **📌 Decision.** *When generics are reintroduced they will use `<T>`*
-> (not Hylo's `[T]`), for familiarity with Swift / Rust / C# / TypeScript
-> users. User-defined generics, constraints, associated types, and
-> monomorphization are reserved for a future version (§15); see
-> [../plan/v0.1.md](../plan/v0.1.md) for the milestone rationale.
+User-defined generics will use `<T>`. They, along with constraints,
+associated types, and monomorphization, are reserved for a future version
+(§15).
 
 ### 2.7 Type aliases
 

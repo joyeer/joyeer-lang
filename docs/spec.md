@@ -105,11 +105,9 @@ chapter file below.
   statement grammar drops `break` / `continue` (§6, §17), and `??` / §2.9 no
   longer treat `break` / `continue` as `Never`-typed expressions (§5.12,
   §6.4). The `as` keyword remains for `import` aliasing only (§3.8, §12.3).
-- **2026-06-22b** — Editorial consistency pass. Removed the ad-hoc decision
-  numbers (`D2` / `D2a` / `D3` / `D7` / `D14`) to comply with §0.4 (decisions
-  are cross-referenced by section, not numbered); de-duplicated the
-  call-site-label decision (canonical at §3.2.1, referenced from §5.6) and the
-  `??` decision (canonical at §8.5, referenced from §5.12). Removed the
+- **2026-06-22b** — Editorial consistency pass. De-duplicated the
+  call-site-label rules (canonical at §3.2.1, referenced from §5.6) and the
+  `??` semantics (canonical at §8.5, referenced from §5.12). Removed the
   duplicate nil-coalescing row from the §1.6 operator table. Clarified that
   `class` is reserved but accepted-with-warning, not rejected (§15 ↔ §1.4 /
   §14).

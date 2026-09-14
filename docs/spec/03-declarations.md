@@ -40,11 +40,10 @@ function_body   ::= '{' statement* '}'
 (methods declared inside a `struct`, `enum`, or `extension`). Free functions
 may not carry it. See §3.2.4.
 
-#### 3.2.1 Parameters: labels 📌
+#### 3.2.1 Parameters: labels
 
-> **📌 Decision.** *Argument labels are mandatory at every call site;
-> there is no positional / unlabeled form.*  Every parameter has a label and
-> the caller must always write it.
+Argument labels are mandatory at every call site; there is no positional /
+unlabeled form. Every parameter has a label and the caller must always write it.
 
 ```joyeer
 func add(a: Int, b: Int): Int { a + b }
@@ -87,14 +86,12 @@ parameters, `where` clauses, or constraints. Generic *containers* (`Array`,
 protocol system needed for constraints (`Comparable`, etc.) are reserved for a
 future version (§15).
 
-#### 3.2.4 Method receiver effects 📌
+#### 3.2.4 Method receiver effects
 
-> **📌 Decision.** *A method declares how it accesses `self` with a
-> prefix `method_effect` keyword: `mutating` / `consuming` / `borrowing`
-> (default).*  Borrowed from Swift's `mutating func`. The same access
-> effects as parameters apply to the implicit `self` receiver, but the
-> spelling differs: `mutating` (not `inout`) reads naturally before `func`,
-> and matches the audience's Swift intuition.
+A method declares how it accesses `self` with a prefix `method_effect`
+keyword: `mutating` / `consuming` / `borrowing` (default). The same access
+effects as parameters apply to the implicit `self` receiver, with `mutating`
+in place of `inout`.
 
 | Receiver effect | Declaration | `self` in body | Call-site marker |
 |-----------------|-------------|----------------|-------------------|
@@ -148,11 +145,10 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 - Defaults are part of the function's interface: changing a default value is
   an interface change visible to all callers.
 
-### 3.3 Struct declarations 📌
+### 3.3 Struct declarations
 
-> **📌 Decision.** *Struct construction uses call syntax `Point(x:1, y:2)`,
-> not record-literal `Point { x:1, y:2 }`.*  Chosen for consistency with
-> function calls and Swift familiarity. The `{}` brace form is reserved (⏳).
+Struct construction uses call syntax `Point(x:1, y:2)`.
+The record-literal form `Point { x:1, y:2 }` is reserved (⏳).
 
 ```
 struct_decl     ::= [ visibility ] 'struct' identifier

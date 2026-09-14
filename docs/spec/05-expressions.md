@@ -108,8 +108,8 @@ call_expr       ::= callee '(' [ call_arg , ... ] ')'
 call_arg        ::= label ':' [ '&' | 'consume' ] expression
 ```
 
-Argument labels are **mandatory** at every call site (the decision is recorded
-at §3.2.1); there is no positional / unlabeled form and no `_` label.
+Argument labels are **mandatory** at every call site (§3.2.1);
+there is no positional / unlabeled form and no `_` label.
 `func f(a: Int, b: Int)` must be called as `f(a: 1, b: 2)`. Supplied arguments
 follow declaration order; a defaulted argument (§3.2.5) may be omitted but is
 never written without its label.
@@ -176,11 +176,9 @@ let value = match result {
 }
 ```
 
-### 5.10 if as expression 📌
+### 5.10 if as expression
 
-> **📌 Decision.** *`if`/`match` are expressions; `while`/`for` are
-> statements.*  Pure functional `if` improves AI-generated code clarity
-> (no scattered `return` paths).
+`if`/`match` are expressions; `while`/`for` are statements.
 
 ```joyeer
 let sign = if x > 0 { 1 } else if x < 0 { -1 } else { 0 }
@@ -189,18 +187,16 @@ let sign = if x > 0 { 1 } else if x < 0 { -1 } else { 0 }
 Every branch must produce the same type. The whole `if`-`else` must be
 total (i.e., have an `else` arm) when used as an expression.
 
-### 5.11 Closures 📌
+### 5.11 Closures
 
-> **📌 Decision.** *Closures deferred to v0.2.*  v0.1 has only top-level
-> and method functions. Iteration uses `for-in`; higher-order patterns
-> use free functions. This keeps the memory model simpler (no closure
-> capture rules) and matches the v0.1 use cases (JSON parser, quicksort).
+Closures are deferred to v0.2. v0.1 has only top-level and method functions.
+Iteration uses `for-in`; higher-order patterns use free functions.
 
 ### 5.12 Nil-coalescing `??`
 
 The coalescing operator `??` supplies a fallback for an absent `Optional` or a
-failed `Result`; the decision and its `.Some` / `.Ok` unwrapping semantics are
-recorded at §8.5. `b` is evaluated only when needed (short-circuit), and `??`
+failed `Result`; its `.Some` / `.Ok` unwrapping semantics are specified
+in §8.5. `b` is evaluated only when needed (short-circuit), and `??`
 is right-associative (§5.1), so `a ?? b ?? c` parses as `a ?? (b ?? c)`. When
 the error of a `Result` must be inspected rather than discarded, use `match`
 or `?` (§8.3).
