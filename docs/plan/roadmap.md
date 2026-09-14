@@ -56,17 +56,23 @@ full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
 
 ## Next milestones
 
-1. Broaden the standard library beyond the typed whole-file I/O surface with
-  incremental/streaming APIs, writing, metadata, and Unicode paths.
-2. Add Linux CI and release dependency checks for the embedded ELF backend;
-  evaluate a maintained in-process replacement for macOS dSYM post-processing.
-3. Define a Joyeer-specific optimization and LTO policy while preserving
+1. Strengthen correctness coverage for the supported subset before expanding
+   it, including ownership/control-flow edge cases and the reference JSON
+   parser's malformed-input and integer-boundary behavior.
+2. Close release-packaging gaps: third-party notices, a product-only install
+   manifest, and checked-in CI for supported platforms. The repository
+   currently contains no CI workflow; Linux ELF and macOS behavior need
+   platform-native coverage as well as Windows validation.
+3. Broaden file I/O and path handling, including wide-character Windows CLI
+   arguments, Unicode runtime paths, streaming, writing, and metadata.
+4. Define a measured optimization, footprint, and LTO policy while preserving
    checked arithmetic, bounds, ownership, and debug semantics.
-4. Expand modules, generics, error propagation, and contracts only after their
+5. Expand modules, generics, error propagation, and contracts only after their
    syntax/semantic ownership is specified and tested end to end.
-5. Improve debugger inspection for optimized values and aggregate projections.
-6. Design user-defined destruction and explicit copy initialization without
-  weakening the noncopyable-by-default rule for resource-owning values.
+6. Improve debugger inspection for optimized values and aggregate projections;
+   evaluate an in-process replacement for macOS dSYM post-processing.
+7. Design user-defined destruction and explicit copy initialization without
+   weakening the noncopyable-by-default rule for resource-owning values.
 
 ## Validation
 

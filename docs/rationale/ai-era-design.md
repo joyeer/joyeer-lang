@@ -1,5 +1,10 @@
 # Joyeer Language — AI Era Design Considerations
 
+> **Status:** design rationale, not an implementation checklist. The current
+> compiler implements the subset described in [v0.1.md](../plan/v0.1.md).
+> Contracts, annotations, incremental compilation, and formal verification
+> below are design directions, not delivered compiler guarantees.
+
 ## The Shift in Programming
 
 ```
@@ -24,7 +29,8 @@ Future: Human describes intent → AI generates + verifies → Machine executes
 ### 1. Strong Type System — Guardrails for AI
 
 AI-generated code's biggest risk: looks correct but has subtle bugs.
-A strong type system catches them automatically.
+A strong type system catches important classes of errors automatically; it
+does not prove that a program satisfies its intended business logic.
 
 ```
 // Weak: AI generates this, compiles, crashes at runtime
@@ -38,8 +44,8 @@ func transfer(from: inout Account, to: inout Account, amount: Int) {
     precondition(condition: amount > 0)
     precondition(condition: from.balance >= amount)
     let oldFrom = from.balance
-    &from.balance -= amount
-    &to.balance += amount
+    &from.balance = from.balance - amount
+    &to.balance = to.balance + amount
     assert(condition: from.balance == oldFrom - amount)
 }
 ```
@@ -57,11 +63,15 @@ func sort(arr: [Int]): [Int] {
     assert(condition: isSorted(a: out))
     return out
 }
-// The asserts are runtime-checked today (spec §9); static (SMT) verification
-// of the same properties is a future goal (spec §0.2).
+// This sketches the runtime-checking API specified in §9, not current MVP
+// library support. Static verification of these properties is future work.
 ```
 
 References: Dafny, Lean 4, F*, Ada/SPARK
+
+Automatic proof of arbitrary program properties is not a release promise.
+Any future verification integration must define its supported logic, proof
+obligations, timeout behavior, and what happens when a property cannot be proved.
 
 ### 3. Explicit State Changes Without a General Effect System
 
@@ -89,28 +99,31 @@ smaller while preserving the ownership changes reviewers most need to see.
 ```
 
 ```
-let x = a + b    // Clear: integer addition, cannot be string concatenation
-                  // Unlike JavaScript's + which requires guessing
+let x = a + b    // Static operand types determine the operation:
+                // Int + Int adds; String + String concatenates.
+                // Mixed operands do not trigger dynamic coercion.
 ```
 
 ### 5. Incremental Compilation — Real-time AI Collaboration
 
 ```
-AI writes one line → Compiler responds in <100ms:
+Future workflow: AI edits code → Compiler provides incremental feedback:
   ✅ Types correct
   ⚠️ This branch doesn't handle None
   ❌ A `precondition` may not hold
 ```
 
 Incremental compilation must be designed into the language, not added later.
+The current CLI compiles a single source file through the pipeline; there is
+no incremental invalidation engine or measured interactive-latency guarantee.
 
 ### 6. Natural Language Integration — Intent to Code Bridge
 
 ```
 @spec "Returns the nth Fibonacci number"
-@property fib(0) == 0
-@property fib(1) == 1
-@property forall n >= 2: fib(n) == fib(n-1) + fib(n-2)
+@property fib(n: 0) == 0
+@property fib(n: 1) == 1
+@property forall n in 2..<20: fib(n: n) == fib(n: n-1) + fib(n: n-2)
 func fib(n: Nat): Nat {
     // AI generates implementation from @spec and @property
     // Compiler uses @property for property-based testing
@@ -120,6 +133,9 @@ func fib(n: Nat): Nat {
 ---
 
 ## Existing Languages in the AI Era
+
+The following is a qualitative design comparison, not a measured ranking of
+AI-generated code quality.
 
 | Language | AI Friendliness | Reason |
 |----------|----------------|--------|
@@ -141,7 +157,7 @@ Old philosophy (human writes code):
   "Flexibility first"            → dynamic types, duck typing, metaprogramming
 
 New philosophy (AI writes code + human reviews):
-  "Make errors impossible"       → strong types, contracts, formal verification
+  "Prevent classes of errors"   → strong types, contracts, formal verification
   "Make intent visible"          → explicit mutation, ownership transfer, docs as code
   "Automate verification"       → property testing, theorem proving, invariant checking
   "Make review efficient"       → readability, consistency, no implicit behavior
@@ -151,15 +167,16 @@ New philosophy (AI writes code + human reviews):
 
 ## Joyeer AI-Era Feature Candidates
 
-Ranked by feasibility:
+Candidate priorities; these estimates are not implementation commitments:
 
 | Feature | Difficulty | Impact |
 |---------|-----------|--------|
 | Contracts (precondition/assert) | Medium | High |
-| Property-based testing built-in (@property) | Easy | Medium |
+| Property-based testing built-in (@property) | Requires syntax, generators, and a runner | Medium |
 | Refinement types (PositiveInt, NonEmpty) | Hard | High |
 | Incremental compilation (language-level design) | Architecture | High |
 | Formal verification integration | Very Hard | Very High |
 
-Even without a general effect system, explicit ownership conventions plus
-contracts provide strong guardrails for AI-generated code.
+The current guardrails are static typing and explicit ownership conventions.
+Runtime checks, property testing, and verification tooling can extend them
+once their semantics and implementation are ready.

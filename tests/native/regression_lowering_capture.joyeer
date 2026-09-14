@@ -1,0 +1,40 @@
+enum Pair { Values(String, Int) }
+
+func snapshot(value: String): String {
+    return value
+}
+
+func change(value: inout String): Int {
+    &value = "replacement"
+    return 1
+}
+
+func changeText(value: inout String): String {
+    &value = "replacement"
+    return "after"
+}
+
+func main() {
+    var text = "before"
+    let pair: Pair = .Values(text, change(value: &text))
+    print(value: match pair { .Values(first, _) => first == "before" })
+    print(value: text)
+
+    text = "before"
+    let qualified = Pair.Values(snapshot(value: text), change(value: &text))
+    print(value: match qualified { .Values(first, _) => first == "before" })
+
+    text = "before"
+    let values = [text, changeText(value: &text)]
+    print(value: values[0])
+    print(value: values[1])
+
+    text = "before"
+    let dictionary = [text: changeText(value: &text)]
+    print(value: dictionary["before"])
+
+    text = "key"
+    var target: [String: String] = [:]
+    &target[text] = changeText(value: &text)
+    print(value: target["key"])
+}

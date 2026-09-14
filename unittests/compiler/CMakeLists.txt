@@ -715,6 +715,52 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime;ownership;consuming;projection-consume"
     )
 
+    function(add_joyeer_native_regression name fixture expected_output)
+        foreach(level IN ITEMS 0 2)
+            add_test(NAME ${name}O${level}
+                    COMMAND ${CMAKE_COMMAND}
+                            -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                            -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/${fixture}.joyeer
+                            -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${fixture}-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                            -DCOMPILER_ARGS=-O${level}
+                            "-DEXPECTED_OUTPUT=${expected_output}"
+                            -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+            )
+            set_tests_properties(${name}O${level} PROPERTIES
+                    LABELS "native;llvm-backend;native-runtime;ownership;safety;regression"
+                    TIMEOUT 60
+            )
+        endforeach()
+    endfunction()
+
+    add_joyeer_native_regression(
+            NativeRegressionShortCircuit regression_lowering_short_circuit
+            "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
+    add_joyeer_native_regression(
+            NativeRegressionCapture regression_lowering_capture
+            "true\nreplacement\ntrue\nbefore\nafter\nafter\nafter\n")
+    add_joyeer_native_regression(
+            NativeRegressionPendingOperands regression_lowering_pending_operands
+            "ab\n7\nab\nc\nvalue\nab\n42\n")
+    add_joyeer_native_regression(
+            NativeRegressionPatterns regression_backend_patterns
+            "30\n10\n20\n3\n1\n2\n4\n")
+    add_joyeer_native_regression(
+            NativeRegressionLoopStack regression_backend_loop_stack
+            "100000\n")
+    add_joyeer_native_regression(
+            NativeRegressionEnumInstances regression_backend_enum_instances
+            "42\nhello\n7\n9\n")
+    add_joyeer_native_regression(
+            NativeRegressionPayloadCoverage regression_type_payload_coverage
+            "0\n0\n1\n2\n3\n3\n4\n7\n10\n11\n12\n20\n21\n22\n23\n24\n")
+    add_joyeer_native_regression(
+            NativeRegressionEvaluationAccesses regression_type_evaluation_accesses
+            "2\n7\n4\nupdated\n7\nchanged\n7\n10\n5\n")
+    add_joyeer_native_regression(
+            NativeRegressionFlowReinitialization regression_flow_reinitialization
+            "ready\nready\nold\nnew\niteration\niteration\n")
+
     add_test(NAME NativeOptimizedOverflowTrap
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -739,6 +785,34 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime;optimization;safety"
     )
 endif()
+
+function(add_joyeer_rejected_regression name stage fixture diagnostic)
+    add_test(NAME ${name}
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/${stage}/err/${fixture}.joyeer
+                    -DEXPECTED_PATTERN=${diagnostic}
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+    )
+    set_tests_properties(${name} PROPERTIES LABELS "${stage};safety;regression" TIMEOUT 30)
+endfunction()
+
+add_joyeer_rejected_regression(TypeRegressionPayloadCoverage type-checking
+        regression_type_payload_nonexhaustive type-checking.non-exhaustive-match)
+add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
+        regression_type_conditional_exclusivity type-checking.overlapping-access)
+add_joyeer_rejected_regression(TypeRegressionReceiverExclusivity type-checking
+        regression_type_receiver_exclusivity type-checking.overlapping-access)
+add_joyeer_rejected_regression(FlowRegressionInitializingEarlyReturn semantic-analysis
+        regression_flow_initializing_early_return semantic-analysis.initializing-parameter-not-initialized)
+add_joyeer_rejected_regression(FlowRegressionWrongElement semantic-analysis
+        regression_flow_wrong_element semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowRegressionLoopCondition semantic-analysis
+        regression_flow_loop_condition semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowRegressionProjectionIndex semantic-analysis
+        regression_flow_projection_index semantic-analysis.use-before-initialization)
+add_joyeer_rejected_regression(FlowRegressionPossibleInitialization semantic-analysis
+        regression_flow_possible_initialization semantic-analysis.initializing-initialized-storage)
 
 add_test(NAME NameResolutionCliRejectsUndefinedName
         COMMAND ${CMAKE_COMMAND}

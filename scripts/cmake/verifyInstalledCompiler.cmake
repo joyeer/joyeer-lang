@@ -22,7 +22,8 @@ if(NOT install_result EQUAL 0)
 endif()
 
 set(compiler "${STAGING_DIR}/joyeer${EXECUTABLE_SUFFIX}")
-set(output "${STAGING_DIR}/installed-native${EXECUTABLE_SUFFIX}")
+# Avoid Windows installer detection requesting elevation for the test executable.
+set(output "${STAGING_DIR}/joyeer-native-hello${EXECUTABLE_SUFFIX}")
 if(NOT EXISTS "${compiler}")
     fail_installed_validation("Installed compiler does not exist: ${compiler}")
 endif()

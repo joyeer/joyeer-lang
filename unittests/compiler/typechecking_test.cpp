@@ -805,6 +805,89 @@ let selected = if flag { 1 } else { "two" }
                         joyeer::typing::TypeCheckingDiagnosticId::nonExhaustiveMatch);
                 }
 
+TEST_F(TypeCheckingTest, RejectsRefutableEnumPayloadCoverage) {
+    ASSERT_NO_FATAL_FAILURE(check(readFixture(
+            "type-checking/err/regression_type_payload_nonexhaustive.joyeer")));
+
+    ASSERT_EQ(checking.diagnostics.size(), 1u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(
+            checking.diagnostics[0].id,
+            joyeer::typing::TypeCheckingDiagnosticId::nonExhaustiveMatch);
+    EXPECT_EQ(
+            checking.diagnostics[0].message,
+            "match over 'Choice' is not exhaustive; add the missing cases or a wildcard arm");
+}
+
+TEST_F(TypeCheckingTest, RejectsIncompleteNestedAndProductPayloadCoverage) {
+    ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
+enum Flag { Value(Bool) }
+enum Pair { Values(Bool, Bool) }
+enum Inner { First, Second }
+enum Outer { Value(Inner) }
+enum Literal { Text(String), Byte(UInt8) }
+
+func flag(value: Flag): Int {
+    return match value { .Value(true) => 1 }
+}
+func pair(value: Pair): Int {
+    return match value {
+        .Values(true, true) => 1,
+        .Values(false, false) => 0,
+    }
+}
+func outer(value: Outer): Int {
+    return match value { .Value(.First) => 1 }
+}
+func optional(value: Bool?): Int {
+    return match value { .Some(true) => 1, .None => 0 }
+}
+func resultCode(value: Result<Bool, Bool>): Int {
+    return match value { .Ok(true) => 1, .Err(false) => 0 }
+}
+func literal(value: Literal): Int {
+    return match value { .Text("one") => 1, .Byte(b'a') => 0 }
+}
+)JOYEER"));
+
+    ASSERT_EQ(checking.diagnostics.size(), 6u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_TRUE(std::all_of(
+            checking.diagnostics.begin(),
+            checking.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id ==
+                        joyeer::typing::TypeCheckingDiagnosticId::nonExhaustiveMatch;
+            }));
+}
+
+TEST_F(TypeCheckingTest, AcceptsExhaustiveNestedPayloadMatrices) {
+    ASSERT_NO_FATAL_FAILURE(check(readFixture("native/regression_type_payload_coverage.joyeer")));
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, KeepsWidePayloadProductsSymbolic) {
+    std::ostringstream text;
+    text << "enum Bits { Value(";
+    for (size_t index = 0; index < 80; ++index) {
+        if (index != 0) text << ", ";
+        text << "Bool";
+    }
+    text << ") }\nfunc classify(value: Bits): Int {\nreturn match value {\n";
+    for (const auto* literal : { "true", "false" }) {
+        text << ".Value(";
+        for (size_t index = 0; index < 80; ++index) {
+            if (index != 0) text << ", ";
+            text << (index == 79 ? literal : "_");
+        }
+        text << ") => 0,\n";
+    }
+    text << "}\n}\n";
+
+    ASSERT_NO_FATAL_FAILURE(check(text.str()));
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
                 TEST_F(TypeCheckingTest, AcceptsBooleanCompletenessAndWildcardForInfiniteDomains) {
                     check(R"JOYEER(func fromBool(value: Bool): Int {
                 return match value { true => 1, false => 0, }
@@ -1154,6 +1237,144 @@ let selected = if flag { 1 } else { "two" }
                                 EXPECT_TRUE(checking.succeeded())
                                     << joyeer::typing::dump(checking.diagnostics);
                             }
+
+TEST_F(TypeCheckingTest, RejectsConditionalArgumentAccessWithConflictingNote) {
+    ASSERT_NO_FATAL_FAILURE(check(readFixture(
+            "type-checking/err/regression_type_conditional_exclusivity.joyeer")));
+
+    ASSERT_EQ(checking.diagnostics.size(), 1u)
+            << joyeer::typing::dump(checking.diagnostics);
+    const auto& diagnostic = checking.diagnostics[0];
+    EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+    EXPECT_EQ(
+            diagnostic.message,
+            "overlapping inout and borrowing access to 'value' in the same call");
+    ASSERT_EQ(diagnostic.notes.size(), 1u);
+    EXPECT_EQ(source->content.substr(diagnostic.span.offset, diagnostic.span.length), "value");
+    EXPECT_EQ(
+            source->content.substr(diagnostic.notes[0].offset, diagnostic.notes[0].length),
+            "value");
+    EXPECT_LT(diagnostic.notes[0].offset, diagnostic.span.offset);
+    EXPECT_EQ(diagnostic.notes[0].message, "conflicting inout access occurs here");
+}
+
+TEST_F(TypeCheckingTest, RejectsBorrowingReceiverAccessWithConflictingNote) {
+    ASSERT_NO_FATAL_FAILURE(check(readFixture(
+            "type-checking/err/regression_type_receiver_exclusivity.joyeer")));
+
+    ASSERT_EQ(checking.diagnostics.size(), 1u)
+            << joyeer::typing::dump(checking.diagnostics);
+    const auto& diagnostic = checking.diagnostics[0];
+    EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+    EXPECT_EQ(
+            diagnostic.message,
+            "overlapping inout and borrowing access to 'text' in the same call");
+    ASSERT_EQ(diagnostic.notes.size(), 1u);
+    EXPECT_EQ(source->content.substr(diagnostic.span.offset, diagnostic.span.length), "text");
+    EXPECT_EQ(
+            source->content.substr(diagnostic.notes[0].offset, diagnostic.notes[0].length),
+            "text");
+    EXPECT_LT(diagnostic.notes[0].offset, diagnostic.span.offset);
+    EXPECT_EQ(diagnostic.notes[0].message, "conflicting inout access occurs here");
+}
+
+TEST_F(TypeCheckingTest, TraversesEveryEvaluatedArgumentForm) {
+    const std::vector<std::string> expressions {
+        "if true { value } else { 0 }",
+        "if false { 0 } else { value }",
+        "if value == 1 { 0 } else { 0 }",
+        "match value { _ => 0 }",
+        "match true { true => value, false => 0 }",
+        "match false { true => 0, false => value }",
+        "if true { let snapshot = value\nsnapshot } else { 0 }",
+        "if true { while value < 1 { }\n0 } else { 0 }",
+        "if true { while false { print(value: value) }\n0 } else { 0 }",
+        "if true { return value } else { 0 }",
+        "if true { value = 2\n0 } else { 0 }",
+        "if true { var values = [0]\n&values[value] = 1\n0 } else { 0 }",
+        "Box(value: value).value",
+        "[value][0]",
+        "[value].count",
+    };
+    for (const auto& expression : expressions) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "struct Box { var value: Int }\n"
+                "func add(dst: inout Int, src: Int) { &dst = src }\n"
+                "func invalid(): Int {\nvar value = 1\n"
+                "add(dst: &value, src: " + expression + ")\nreturn value\n}\n"));
+        ASSERT_EQ(checking.diagnostics.size(), 1u)
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(
+                checking.diagnostics[0].id,
+                joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+        ASSERT_EQ(checking.diagnostics[0].notes.size(), 1u);
+        EXPECT_EQ(
+                checking.diagnostics[0].notes[0].message,
+                "conflicting inout access occurs here");
+    }
+}
+
+TEST_F(TypeCheckingTest, TraversesComputedBorrowingReceiversAndResults) {
+    const std::vector<std::string> expressions {
+        "(text + \"\").utf8().count",
+        "(if true { text } else { \"\" }).utf8().count",
+        "byteToInt(value: text.utf8()[0])",
+        "[text][0].utf8().count",
+    };
+    for (const auto& expression : expressions) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func update(text: inout String, count: Int) { &text = \"updated\" }\n"
+                "func invalid() {\nvar text = \"original\"\n"
+                "update(text: &text, count: " + expression + ")\n}\n"));
+        ASSERT_EQ(checking.diagnostics.size(), 1u)
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(
+                checking.diagnostics[0].id,
+                joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+    }
+}
+
+TEST_F(TypeCheckingTest, AllowsCompletedEvaluationsSnapshotsAndDisjointFields) {
+    ASSERT_NO_FATAL_FAILURE(check(readFixture(
+            "native/regression_type_evaluation_accesses.joyeer")));
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AllowsSubscriptIndexEvaluationBeforeExclusiveProjection) {
+    ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
+func add(dst: inout Int, src: Int) { &dst = dst + src }
+func valid() {
+    var values = [1, 2]
+    add(dst: &values[values.count - 1], src: 1)
+}
+)JOYEER"));
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsLaterAccessesWhileDirectBorrowIsStillActive) {
+    ASSERT_NO_FATAL_FAILURE(check(R"JOYEER(
+func increment(value: inout Int): Int {
+    &value = value + 1
+    return value
+}
+func inspect(first: Int, second: Int) { }
+func invalid() {
+    var value = 0
+    inspect(first: value, second: if true { increment(value: &value) } else { 0 })
+}
+)JOYEER"));
+    ASSERT_EQ(checking.diagnostics.size(), 1u)
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(
+            checking.diagnostics[0].id,
+            joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess);
+    ASSERT_EQ(checking.diagnostics[0].notes.size(), 1u);
+    EXPECT_EQ(
+            checking.diagnostics[0].notes[0].message,
+            "conflicting borrowing access occurs here");
+}
 
                     TEST_F(TypeCheckingTest, TypesMutatingArrayAppendFromTheReceiverElement) {
                         check(R"JOYEER(func build() {

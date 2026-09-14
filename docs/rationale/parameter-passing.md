@@ -13,14 +13,19 @@ This document records the design discussion around how function parameters conve
 
 ## The Core Question: `peek(p: &Parser)` vs `peek(p: Parser)`
 
-### `peek(p: Parser)` — Pass by Value
+The following contrasts conventional value and reference passing; it does
+**not** describe Joyeer's default. In Joyeer, `p: Parser` means `borrowing`
+unless another access convention is written. It does not implicitly consume
+or deep-copy the caller's value merely because `&` is absent.
+
+### Conventional `peek(p: Parser)` — Pass by Value
 
 - The entire `Parser` is **copied or moved** into the function.
 - Changes inside the function do **not** affect the caller's copy.
 - With move semantics the caller **cannot use `p` afterwards**.
 - `Parser` typically holds a lexer, token buffer, and position state — copying it on every `peek` call is expensive.
 
-### `peek(p: &Parser)` — Pass by (Immutable) Reference
+### Conventional `peek(p: &Parser)` — Pass by (Immutable) Reference
 
 - Only a **pointer** (8 bytes) is passed — zero copy.
 - The function can **only read** `p`; it cannot modify it.
@@ -62,19 +67,21 @@ Ast   consume(Parser&& p);    // rvalue reference (move)
 ```
 
 ✅ Flexible, zero-cost  
-❌ `const` can be cast away; no alias analysis; dangling references are entirely the programmer's responsibility  
+`const` does not provide lifetime or exclusive-borrow checking; ordinary C++
+references can still dangle. Optimizer alias analysis is a separate mechanism.
 
 Joyeer's stated goal is to **replace C++ for new code**. This is the baseline to surpass.
 
 ### Swift — Value Types + `inout`
 
 ```swift
-func peek(_ p: Parser) -> Token            // implicit copy (COW-optimised)
+func peek(_ p: Parser) -> Token            // value semantics; normally borrowing
 func advance(_ p: inout Parser) -> Token   // explicit mutable
 ```
 
 ✅ Default value semantics; easy to reason about  
-✅ Copy-on-Write makes `Array`/`String` copies nearly free  
+Copy-on-Write can defer copying storage until mutation, but retaining and
+eventual unique-storage copies still have costs.
 ❌ Implicit copies are invisible in performance-sensitive code  
 Joyeer's syntax is intentionally Swift-like, making this the most natural starting point.
 
@@ -99,8 +106,8 @@ fun consume(sink p: Parser) -> Ast      // sink: ownership transfer
 
 Four parameter conventions: `let` / `inout` / `sink` / `set`.
 
-✅ No reference type → no borrow checker required  
-✅ All value semantics → no aliasing, no dangling  
+✅ No first-class reference type simplifies escaping-lifetime rules\
+✅ Value semantics limit shared ownership; projections still require checking\
 ✅ Compiler automatically passes large objects by reference as an optimisation  
 ✅ No lifetime annotations  
 ✅ Intent is fully visible in the signature  
@@ -163,32 +170,37 @@ fun consume(sink b: Buffer) -> ProcessedData {
 
 ### No Cycle Problem (Unlike Reference Counting)
 
-Swift's ARC and Python's RC both suffer from retain cycles:
+Reference counting alone cannot reclaim strong-reference cycles:
 
 ```
-// Retain cycle (Swift/Python)
+// Reference-counting-only model
 let a = Node(); let b = Node()
 a.next = b   // RC +1
 b.prev = a   // RC +1
-// Neither ever reaches RC == 0 → leak
+// Neither reaches zero without an additional cycle-breaking mechanism
 ```
+
+Swift ARC relies on avoiding/breaking strong cycles; Python also has a cyclic
+garbage collector. The example illustrates reference counting alone, not a
+claim that Python necessarily leaks such a cycle.
 
 Hylo has **no reference types**. Ownership is a tree, never a graph. Cycles are **structurally unrepresentable** — the compiler cannot express them.
 
-### Comparison Table: Hylo vs Rust Memory Safety
+### Model-Level Comparison: Hylo and Rust
+
+This is a comparison of design approaches, not a measured ranking of compiler
+quality, complexity, performance, or AI-generated-code correctness.
 
 | Dimension | Rust | Hylo |
 |---|---|---|
 | Core mechanism | Ownership + **borrow checker** | Ownership + **value semantics** (no reference type) |
 | Reference type | Yes (`&T` / `&mut T` with lifetimes) | **No** |
-| Lifetime annotations | Required | **None needed** |
-| Alias analysis | Borrow checker at compile time | Structurally impossible |
-| Compiler complexity | High (borrow checker is the hardest part) | Low |
+| Lifetime annotations | Often inferred; explicit annotations are sometimes needed | No first-class-reference lifetime annotations |
+| Alias analysis | Borrow and lifetime checking | Projection/exclusivity checks still needed |
+| Compiler complexity | Ownership and reference-lifetime analysis | Ownership, initialization, projection, and control-flow analysis |
 | Can return references? | Yes (with lifetime annotations) | **No** (return values only) |
-| Cycle-free guarantee | Yes (ownership is acyclic) | Yes (same reason) |
+| Ownership cycles | Exclusive ownership is acyclic; `Rc`/`Arc` can form cycles | The exclusive value-ownership model avoids reference-count cycles |
 | C/C++ interop | Excellent | Limited (`remote` variables) |
-| Performance ceiling | Highest (precise alias control) | High (compiler auto-optimises) |
-| AI code correctness | Good | **Better** (rules are simpler; AI is less likely to make alias mistakes) |
 
 ---
 
@@ -212,11 +224,11 @@ func consume(p: consuming Parser): Ast     // consuming (ownership transfer)
 
 ### Why This Fits Joyeer
 
-1. **AI-friendly** — the signature fully describes "read / mutate / take". AI cannot accidentally introduce hidden aliasing bugs.
+1. **Reviewable intent** — signatures expose "read / mutate / take / initialize", but compiler analysis must still enforce that intent.
 2. **No GC** — all value semantics; ownership is a tree; `deinit` fires deterministically.
-3. **No borrow checker to implement** — the biggest engineering cost of Rust's compiler disappears.
-4. **Syntax-compatible** — Swift already has `inout`; the ownership effects (`borrowing` / `consuming` / `initializing`, plus `mutating` receivers) line up with Swift 5.9's ownership vocabulary.
-5. **Zero-cost** — the compiler silently chooses pass-by-reference for large objects.
+3. **Narrower lifetime surface** — omitting first-class escaping references removes some rules, not the need for move, initialization, exclusivity, and loop data-flow analysis.
+4. **Related syntax** — Swift's [SE-0377](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0377-parameter-ownership-modifiers.md) provides `borrowing`/`consuming` alongside `inout`; Joyeer's `initializing` contract is its own design, not a verbatim Swift feature.
+5. **Cost-aware conventions** — borrowing can avoid semantic deep copies, but concrete calling conventions and optimizations still need measurement.
 
 ### What Is Sacrificed
 

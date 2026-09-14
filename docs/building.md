@@ -10,17 +10,17 @@ native output.
 ## Dependency policy
 
 Contributors install and update CMake, Ninja, the host compiler, platform SDK,
-and LLVM 22.1.8 development SDK. CMake does not download or build LLVM. On
+and LLVM 22.1.8 development SDK. CMake does not download or build LLVM.
 All platforms treat LLVM, LLD, and the Linux Clang Driver library as private
 implementation details of a Joyeer-owned backend library. Only a versioned C
 ABI crosses into the compiler; LLVM/Clang C++ types, exceptions, allocators,
 and ownership never cross that boundary.
 
-CMake fetches and statically embeds LibXml2 2.14.5 because the official LLVM
-22.1.8 Windows LLD libraries enable manifest merging. When
-`JOYEER_BUILD_UNITTESTS=ON`, CMake also fetches GoogleTest 1.15.2. The first
-configuration therefore requires network access. Neither dependency adds a
-runtime DLL to the Joyeer package.
+On Windows, CMake fetches and statically embeds LibXml2 2.14.5 because the
+official LLVM 22.1.8 Windows LLD libraries enable manifest merging. On every
+platform, `JOYEER_BUILD_UNITTESTS=ON` also fetches GoogleTest 1.15.2. The first
+configuration that needs these dependencies requires network access. Neither
+dependency adds a runtime DLL to the Joyeer package.
 
 ## Source-build prerequisites
 
@@ -39,8 +39,19 @@ Windows requires the full development archive, not the tool-only installer:
 clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
 ```
 
-Extract it to a stable path such as `D:\llvm`, then set the user environment
-variable `LLVM_HOME=D:\llvm`. The directory must contain:
+Extract it to a stable path such as `C:\LLVM-22.1.8`, then set the user
+environment variable `LLVM_HOME`. In PowerShell:
+
+```powershell
+[Environment]::SetEnvironmentVariable("LLVM_HOME", "C:\LLVM-22.1.8", "User")
+$env:LLVM_HOME = "C:\LLVM-22.1.8"
+```
+
+The first command persists the setting for future applications; the second
+sets it in the current shell. Restart already-running IDEs or terminal hosts
+so their new terminals inherit the updated user environment.
+
+The directory must contain:
 
 ```text
 bin/clang.exe
@@ -70,14 +81,14 @@ schedules compiler and linker commands; it does not replace `cl.exe` or the
 Visual Studio toolchain. Platform SDKs, sysroots, startup objects, and system
 libraries remain external prerequisites.
 
-Before configuring Windows, verify the tools supplied by your environment:
+Before configuring Windows, verify the tools in Developer PowerShell:
 
-```text
+```powershell
 cmake --version
 ninja --version
 git --version
-%LLVM_HOME%\bin\clang.exe --version
-%LLVM_HOME%\bin\llvm-readobj.exe --version
+& "$env:LLVM_HOME\bin\clang.exe" --version
+& "$env:LLVM_HOME\bin\llvm-readobj.exe" --version
 ```
 
 Run `cl` from a Visual Studio Developer shell as well. All LLVM tools and
@@ -121,13 +132,17 @@ Use `linux-release` for a release build. Omit `JOYEER_LLVM_ROOT` when
 `LLVM_HOME` already points to the SDK.
 
 On Windows, use a Visual Studio Developer PowerShell or Developer Command
-Prompt. The Windows presets explicitly select `cl.exe`; configuration fails
-when the Visual Studio C++ workload or Windows SDK is missing.
+Prompt configured for the x64 target, for example the x64 Native Tools prompt
+or an environment initialized by `vcvars64.bat`. The presets select `cl.exe`
+but declare architecture setup as external: the preset name does not switch
+an ARM64-targeting shell to x64. Configuration fails when the Visual Studio
+C++ workload or Windows SDK is missing.
 
-Configure, build, and test with:
+The `x64-debug` preset defaults `JOYEER_BUILD_UNITTESTS` to `OFF`. Enable it
+explicitly for development and the full acceptance gate:
 
-```text
-cmake --preset x64-debug -DJOYEER_LLVM_ROOT=D:/llvm -DJOYEER_BUILD_UNITTESTS=ON
+```powershell
+cmake --preset x64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON
 cmake --build --preset x64-debug
 ctest --preset x64-debug
 ```
@@ -141,15 +156,20 @@ focused iteration.
 
 ## Release staging
 
-Build Release and install a movable Windows package directory:
+Build Release and stage a movable Windows package directory:
 
-```text
-cmake --preset x64-release -DJOYEER_LLVM_ROOT=D:/llvm
+```powershell
+cmake --preset x64-release -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON -DINSTALL_GTEST=OFF
 cmake --build --preset x64-release
-cmake --install out/build/x64-release --prefix out/package/joyeer
+ctest --test-dir .\out\build\x64-release --output-on-failure
+cmake --install .\out\build\x64-release --prefix .\out\package\joyeer
 ```
 
-The package contains:
+`INSTALL_GTEST=OFF` disables only GoogleTest's installation rules, not its
+tests. Without this setting, a unit-test-enabled build also installs
+`include/gtest`, GoogleTest libraries, and CMake/pkg-config metadata.
+
+With that setting, the Joyeer package contains:
 
 ```text
 joyeer.exe
@@ -157,6 +177,13 @@ joyeer-backend.dll
 JoyeerNativeRuntime.lib
 licenses/
 ```
+
+The current top-level install rule places only the repository's own `LICENSE`
+in `licenses/`. This is not yet a complete redistribution-license bundle:
+LLVM/LLD and, on Windows, LibXml2 license/notice material must also be staged
+as required by those dependencies. Audit the final manifest and notices before
+publishing a release; a successful native smoke run alone does not establish
+release readiness.
 
 These files may be moved together to another directory or machine. LLVM,
 LLD, and LibXml2 are statically contained in the backend DLL. The DLL finds
@@ -172,7 +199,7 @@ not require the Visual C++ Redistributable.
 Linux and macOS use the corresponding release preset:
 
 ```text
-cmake --preset linux-release -DJOYEER_LLVM_ROOT=/opt/llvm
+cmake --preset linux-release -DJOYEER_LLVM_ROOT=/opt/llvm -DINSTALL_GTEST=OFF
 cmake --build --preset linux-release
 cmake --install out/build/linux-release --prefix out/package/joyeer
 ```
@@ -215,6 +242,15 @@ building a native executable.
   `Clang_DIR` for a nonstandard SDK root.
 - **Windows rejects the compiler:** reopen a Visual Studio Developer shell and
   verify `cl` and the Windows SDK before running CMake.
+- **An existing Windows source path is reported missing:** the current CLI
+  receives narrow `argv` strings. Characters outside the system ANSI code page
+  can be lost before filesystem access, even when the file exists. Use paths
+  representable in that code page until wide-character argument handling is
+  implemented; changing the source file's text encoding does not fix this.
+- **Native compilation crashes with a Unicode temporary directory:** a
+  separate path-construction bug narrows `TEMP`/`TMP`-derived paths before the
+  backend call. An ASCII temporary directory avoids that current defect; the
+  implementation must preserve native paths and report conversion failures.
 - **Packaged native linking cannot find platform libraries:** install the
   Desktop development with C++ workload and a Windows SDK.
 - **GoogleTest cannot be fetched:** restore Git/network access, provide it

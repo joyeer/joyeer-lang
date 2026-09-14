@@ -1,0 +1,8 @@
+func next(value: consuming String): Bool {
+    return true
+}
+
+func invalid() {
+    var text = "owned"
+    while next(value: consume text) {}
+}

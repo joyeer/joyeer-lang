@@ -160,8 +160,9 @@ let y: Double = 1   // explicit Double (literal coerced)
 var a: [Int] = []   // annotation required when initializer is ambiguous
 ```
 
-Function parameters and return types **must** be annotated explicitly.
-This is a deliberate AI-era choice (§0.1): signatures are contracts.
+Function parameter types **must** be annotated explicitly. An omitted function
+result type means `Void`; a value-returning function needs an explicit result
+type. This is a deliberate AI-era choice (§0.1): signatures are contracts.
 
 ```joyeer
 func add(a: Int, b: Int): Int { return a + b }  // ✅
@@ -185,4 +186,3 @@ func fatalError(message: String): Never { ... }
 ```
 
 ---
-

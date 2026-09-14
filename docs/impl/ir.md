@@ -53,15 +53,17 @@ bindings bind only when their storage becomes valid. Diverging initializers do
 not create a source variable.
 
 Values and addresses are different `ValueCategory` values. Mutable local
-storage uses `alloc_stack`, `load`, and `store`. Ordinary parameters enter by
-value and are copied to a local slot. `inout` parameters and arguments are
+storage uses `alloc_stack`, `load`, and `store`. Ordinary borrowing parameters
+enter by value and are shallow-stored in nonowning local slots; this is not a
+recursive owned copy. `inout` parameters and arguments are
 addresses, preserving aliasing instead of silently copying them.
 `consuming` parameters enter by value but become owned local storage in the
 callee; its normal/early-return cleanup destroys them unless ownership moves
 onward.
-`initializing` parameters are caller-owned addresses like `inout`, but Stage 5
-enforces write-before-read and all-path initialization; they never enter the
-callee cleanup stack.
+`initializing` parameters are caller-owned addresses like `inout`. Stage 5 is
+responsible for write-before-read and all-path initialization through its
+[initialization data flow](semantic-analysis.md#4-definite-initialization);
+these addresses never enter the callee cleanup stack.
 
 This is intentionally allocation-based rather than SSA. LLVM's `mem2reg` can
 promote eligible slots after lowering, while source variables retain simple
@@ -90,11 +92,15 @@ The current instruction set covers:
 
 `if` expressions merge values through a typed temporary slot. `while` emits a
 header, body, exit, and back edge. A `Never` branch terminates without adding a
-false fallthrough edge.
+false fallthrough edge. `&&` emits a conditional right-hand block and a Boolean
+merge slot; its right operand and temporaries are evaluated only on the
+true-left path.
 
-Optional promotion is explicit in IR: a type-checked conversion from `T` to
-`T?` emits `Optional.Some(T)` at binding, field, argument, arm-merge, or return
-boundaries. `nil` emits `Optional.None`.
+Optional promotion must be explicit in IR: an accepted conversion from `T` to
+`T?` needs `Optional.Some(T)` at its value boundary, while `nil` needs
+`Optional.None`. Binding initializers, aggregate operands, call arguments,
+branch results, and return values apply their destination conversion before
+ownership transfer and storage.
 
 Heap-backed and recursively nontrivial values have explicit ownership in the
 IR. Borrowed values are cloned before entering owned storage, so ordinary
@@ -103,10 +109,16 @@ temporaries transfer directly. An overwrite first acquires the owned
 replacement, then destroys the previous value, then stores the replacement;
 this ordering keeps self-assignment valid. Scope exits destroy owned storage
 and live temporaries in reverse order.
-Early returns clean every active scope before transferring the result to the
-caller. A typed local declared without an initializer uses `zero_init` when its
-type requires destruction, making cleanup safe while Stage 5 rejects any
-source-level read before initialization.
+Early returns must clean every active scope, including pending temporaries,
+before transferring the result to the caller. A typed local declared without
+an initializer uses `zero_init` when its type requires destruction, making
+cleanup safe without granting permission to read uninitialized source storage.
+
+Operand preparation and transfer are separate. An aggregate component is
+converted and made independently owned before the next component is
+evaluated. Pending components and consuming call arguments remain registered
+for cleanup until the construction or call is emitted, so a later operand's
+early return cleans them rather than leaking them.
 
 A `consume` argument backed by local storage emits `take`, which loads and
 zeroes the caller slot before the call. Owned temporaries move directly;
@@ -137,34 +149,50 @@ Patterns recursively represent:
 - enum cases with nested payload patterns.
 
 Each arm has its own basic block. Payload bindings use `extract_payload`, then
-a local stack slot. Exhaustiveness is already guaranteed by the type checker;
-the future LLVM backend lowers the high-level pattern list into tag and value
-tests without reconstructing source semantics.
+a local stack slot. The LLVM backend lowers the high-level pattern list into
+tag and value tests, relying on the type checker's recursive payload coverage.
+It branches on a matching tag before interpreting payloads, and recursively
+short-circuits payload tests. Case lookup uses concrete enum type identity
+plus case symbol, including distinct builtin container instantiations.
 
 ---
 
 ## 5. Verification
 
-`ir::Verifier` rejects:
+`ir::Verifier` implements checks for:
 
 - duplicate or unknown type/function/block/value identifiers;
 - malformed instruction operand/target counts;
 - invalid value/address categories;
-- load/store, return, operator, call, field, aggregate, or payload type
-  mismatches;
+- selected load/store, return, operator, call, field, aggregate, and payload
+  type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - malformed recursive patterns;
 - malformed source maps, out-of-bounds debug spans, or locations without a
   module source map;
 - detached/cyclic/cross-function lexical scopes, invalid parameter indices,
   untyped variables, or source locations using the wrong scope;
-- missing/duplicate variable bindings, non-address or wrong-typed storage,
-  non-dominating declaration storage, and parameter bindings unrelated to the
-  incoming parameter;
+- missing/duplicate debug-variable bindings, non-address or wrong-typed
+  storage, non-dominating debug declaration storage, and parameter bindings
+  unrelated to the incoming parameter;
 - blocks without terminators or instructions after a terminator.
 
-Lowering returns an `ir-lowering.verification-failed` diagnostic if generated
-IR does not verify. The CLI never advances a malformed module.
+Lowering returns an `ir-lowering.verification-failed` diagnostic when a modeled
+check fails. Passing this verifier is not proof of source-level correctness or
+validity of all subsequently emitted LLVM text. Native output additionally
+parses and verifies that text in the LLVM backend.
+
+General operand dominance is currently missing: hand-built IR can use an
+address before its definition or outside its dominating block and still pass
+both Joyeer verification and text emission. An `Int` condition for `cond_br`,
+or an `Int`-typed comparison result, can likewise pass until LLVM rejects the
+text. Existing definition locations/dominators must be applied to ordinary
+operands, and opcode contracts must check concrete `TypeKind` values.
+
+The verifier is not currently an ownership or definite-initialization proof.
+For example, it accepts destruction of shallow-stored borrowed String
+storage. Explicit ownership operations make those obligations representable,
+but do not by themselves verify them.
 
 The deterministic textual form is produced by `ir::dump` and includes types,
 aggregate definitions, signatures, blocks, instructions, symbols, source
@@ -188,9 +216,27 @@ The current IR/native pipeline intentionally leaves these to later commits:
 - copy-elision and ABI tuning for large aggregates;
 - enum niche optimization and a stable public ABI;
 - Joyeer-specific optimization passes and an LTO policy beyond the native
-  native backend's explicit LLVM optimization level;
+  backend's explicit LLVM optimization level;
 - optimized-debug value tracking beyond the current lexical scope, source
   variable, physical type, and `llvm.dbg.declare` metadata.
 
 These belong in Joyeer IR, LLVM lowering, or the native ABI rather than a
 second execution pipeline.
+
+## 7. Evaluation and storage invariants
+
+Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
+
+| Area | Implementation |
+|---|---|
+| Conditional evaluation | `&&` branches before right-hand evaluation, including side effects, bounds checks, and early returns. |
+| Pattern payloads | Tag branches guard payload interpretation, including nested enum/String patterns. |
+| Aggregate capture | Components become ownership-safe in evaluation order, before later mutation can invalidate a borrowed source. |
+| Pending operand cleanup | Acquiring ownership does not commit transfer; later operand divergence still cleans prepared values. |
+| Loop stack storage | LLVM source and scratch allocations are emitted in a one-time function prologue, not reallocated on every iteration. Initialization and debug-variable bindings remain at their source points. |
+| Builtin enum identity | Case lookup includes concrete `TypeId`; distinct `Optional`/`Result` instantiations do not collide. Failed emission produces diagnostics and no partial success. |
+| Optional binding promotion | Binding initialization applies its destination conversion before storing. |
+
+These are regression-backed implementation rules, not a complete ownership
+proof. The structural verifier limitations in section 5 and broader
+optimization/ABI work in section 6 remain.

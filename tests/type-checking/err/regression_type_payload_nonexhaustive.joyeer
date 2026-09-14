@@ -1,0 +1,7 @@
+enum Choice { Item(Int) }
+
+func choose(value: Choice): Int {
+    return match value {
+        .Item(1) => 1,
+    }
+}

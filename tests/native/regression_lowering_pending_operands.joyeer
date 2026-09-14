@@ -1,0 +1,40 @@
+enum Pair { Values(String, Int) }
+
+func accept(value: consuming String, number: Int) {
+    print(value: value)
+    print(value: number)
+}
+
+func call(flag: Bool) {
+    var text = "a" + "b"
+    accept(value: consume text, number: if flag { return } else { 7 })
+}
+
+func array(flag: Bool) {
+    let values = ["a" + "b", if flag { return } else { "c" }]
+    print(value: values[0])
+    print(value: values[1])
+}
+
+func dictionary(flag: Bool) {
+    let values: [String: String] = ["k" + "ey": if flag { return } else { "value" }]
+    print(value: values["key"])
+}
+
+func enumeration(flag: Bool) {
+    let pair: Pair = .Values("a" + "b", if flag { return } else { 7 })
+    print(value: match pair { .Values(text, _) => text })
+}
+
+func main() {
+    call(flag: true)
+    call(flag: false)
+    array(flag: true)
+    array(flag: false)
+    dictionary(flag: true)
+    dictionary(flag: false)
+    enumeration(flag: true)
+    enumeration(flag: false)
+    let optional: Int? = 42
+    print(value: match optional { .Some(number) => number, .None => 0 })
+}

@@ -1163,16 +1163,8 @@ private:
                         "cannot call mutating method through immutable binding '" +
                                 storage.immutableName + "'");
             }
-            const auto path = storagePath(member->base);
-            if (path.has_value()) {
-                accesses.push_back(CallAccess {
-                    *path,
-                    syntax::AccessEffect::inout,
-                    member->base->span,
-                    true,
-                });
-            }
         }
+        collectCallReceiverAccess(expression, semanticTarget, accesses);
 
         std::optional<TypeId> arrayElementType;
         if (semanticTarget != nullptr && semanticTarget->name == "append" &&
@@ -1228,6 +1220,35 @@ private:
         return signature == nullptr ? model->typeContext.errorType() : signature->result;
     }
 
+    void collectCallReceiverAccess(
+            const syntax::CallExprSyntax::Ptr& expression,
+            const semantic::Symbol* target,
+            std::vector<CallAccess>& accesses,
+            bool sustained = true) const {
+        if (target == nullptr || target->kind != semantic::SymbolKind::builtinMember ||
+            expression->callee->kind != syntax::Kind::memberExpr) {
+            collectEvaluationAccesses(expression->callee, accesses);
+            return;
+        }
+
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto path = storagePath(member->base);
+        if (path.has_value()) {
+            collectSubscriptIndexAccesses(member->base, accesses);
+            accesses.push_back(CallAccess {
+                *path,
+                target->isMutable
+                        ? syntax::AccessEffect::inout
+                        : syntax::AccessEffect::borrowing,
+                member->base->span,
+                sustained,
+            });
+        } else {
+            collectEvaluationAccesses(member->base, accesses);
+        }
+    }
+
     void collectCallArgumentAccess(
             const syntax::CallArgumentSyntax& argument,
             syntax::AccessEffect effect,
@@ -1235,13 +1256,13 @@ private:
             bool sustained = true) const {
         const auto path = storagePath(argument.value);
         if (path.has_value()) {
+            collectSubscriptIndexAccesses(argument.value, accesses);
             accesses.push_back(CallAccess {
                 *path,
                 effect,
                 argument.value->span,
                 sustained,
             });
-            collectSubscriptIndexAccesses(argument.value, accesses);
         } else {
             collectEvaluationAccesses(argument.value, accesses);
         }
@@ -1314,21 +1335,36 @@ private:
     }
 
     void collectEvaluationAccesses(
-            const syntax::ExprPtr& expression,
+            const syntax::NodePtr& expression,
             std::vector<CallAccess>& accesses) const {
         if (expression == nullptr) return;
-        const auto path = storagePath(expression);
+        const auto value = isExpressionKind(expression->kind)
+                ? std::static_pointer_cast<syntax::ExprSyntax>(expression)
+                : nullptr;
+        const auto path = storagePath(value);
         if (path.has_value()) {
+            collectSubscriptIndexAccesses(value, accesses);
             accesses.push_back(CallAccess {
                 *path,
                 syntax::AccessEffect::borrowing,
                 expression->span,
                 false,
             });
-            collectSubscriptIndexAccesses(expression, accesses);
             return;
         }
         switch (expression->kind) {
+            case syntax::Kind::bindingDecl:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::BindingDeclSyntax>(expression)
+                                ->initializer,
+                        accesses);
+                break;
+            case syntax::Kind::whileStmt: {
+                const auto loop = std::static_pointer_cast<syntax::WhileStmtSyntax>(expression);
+                collectEvaluationAccesses(loop->condition, accesses);
+                collectEvaluationAccesses(loop->body, accesses);
+                break;
+            }
             case syntax::Kind::parenthesizedExpr:
                 collectEvaluationAccesses(
                         std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
@@ -1356,14 +1392,29 @@ private:
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
                 const auto target = storagePath(assignment->target);
                 if (target.has_value()) {
+                    collectSubscriptIndexAccesses(assignment->target, accesses);
                     accesses.push_back(CallAccess {
                         *target,
                         syntax::AccessEffect::inout,
                         assignment->target->span,
                         false,
                     });
+                } else {
+                    collectEvaluationAccesses(assignment->target, accesses);
                 }
                 collectEvaluationAccesses(assignment->value, accesses);
+                break;
+            }
+            case syntax::Kind::memberExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
+                        accesses);
+                break;
+            case syntax::Kind::subscriptExpr: {
+                const auto subscript =
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                collectEvaluationAccesses(subscript->base, accesses);
+                collectEvaluationAccesses(subscript->index, accesses);
                 break;
             }
             case syntax::Kind::callExpr: {
@@ -1372,21 +1423,7 @@ private:
                 const auto* symbol = target.has_value()
                         ? model->semanticModelValue->symbol(*target)
                         : nullptr;
-                const auto mutatingReceiver = symbol != nullptr &&
-                        symbol->kind == semantic::SymbolKind::builtinMember &&
-                        symbol->isMutable && call->callee->kind == syntax::Kind::memberExpr;
-                if (mutatingReceiver) {
-                    const auto receiver = storagePath(
-                            std::static_pointer_cast<syntax::MemberExprSyntax>(call->callee)->base);
-                    if (receiver.has_value()) {
-                        accesses.push_back(CallAccess {
-                            *receiver,
-                            syntax::AccessEffect::inout,
-                            call->callee->span,
-                            false,
-                        });
-                    }
-                }
+                collectCallReceiverAccess(call, symbol, accesses, false);
                 for (size_t index = 0; index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
                     const auto parameterIndex = symbol == nullptr
@@ -1425,6 +1462,35 @@ private:
                 }
                 break;
             }
+            case syntax::Kind::blockExpr: {
+                const auto block =
+                        std::static_pointer_cast<syntax::BlockExprSyntax>(expression);
+                for (const auto& item : block->items) {
+                    collectEvaluationAccesses(item, accesses);
+                }
+                break;
+            }
+            case syntax::Kind::ifExpr: {
+                const auto conditional =
+                        std::static_pointer_cast<syntax::IfExprSyntax>(expression);
+                collectEvaluationAccesses(conditional->condition, accesses);
+                collectEvaluationAccesses(conditional->thenBranch, accesses);
+                collectEvaluationAccesses(conditional->elseBranch, accesses);
+                break;
+            }
+            case syntax::Kind::matchExpr: {
+                const auto match = std::static_pointer_cast<syntax::MatchExprSyntax>(expression);
+                collectEvaluationAccesses(match->scrutinee, accesses);
+                for (const auto& arm : match->arms) {
+                    collectEvaluationAccesses(arm->body, accesses);
+                }
+                break;
+            }
+            case syntax::Kind::returnExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::ReturnExprSyntax>(expression)->value,
+                        accesses);
+                break;
             default:
                 break;
         }
@@ -1459,7 +1525,8 @@ private:
                     accesses[right].effect == syntax::AccessEffect::borrowing) {
                     continue;
                 }
-                if (!accesses[left].sustained && !accesses[right].sustained) continue;
+                // Transient evaluations finish before later arguments acquire storage.
+                if (!accesses[left].sustained) continue;
                 if (!pathsOverlap(accesses[left].path, accesses[right].path)) continue;
                 const auto* root = model->semanticModelValue->symbol(accesses[right].path.root);
                 report(
@@ -1920,6 +1987,7 @@ private:
         bool catchesAll = false;
         std::optional<semantic::SymbolId> enumCase;
         std::optional<bool> booleanLiteral;
+        std::vector<PatternCoverage> payloads;
     };
 
     TypeId checkMatch(
@@ -1930,9 +1998,12 @@ private:
         std::vector<PatternCoverage> coverage;
         coverage.reserve(expression->arms.size());
         std::optional<TypeId> result;
+        bool validPatterns = true;
 
         for (const auto& arm : expression->arms) {
+            const auto previousDiagnostics = diagnostics.size();
             coverage.push_back(checkPattern(arm->pattern, scrutinee));
+            validPatterns &= diagnostics.size() == previousDiagnostics;
             const auto armType = checkExpression(arm->body, expected).value_or(
                     model->typeContext.errorType());
             recordNodeType(arm, armType);
@@ -1941,7 +2012,7 @@ private:
                     : std::optional<TypeId>(armType);
         }
 
-        checkMatchExhaustiveness(expression, scrutinee, coverage);
+        if (validPatterns) checkMatchExhaustiveness(expression, scrutinee, coverage);
         return result.value_or(model->typeContext.voidType());
     }
 
@@ -2030,11 +2101,15 @@ private:
         }
 
         recordResolvedReference(pattern, *caseSymbol);
-        validatePatternArguments(*pattern, *caseSymbol, *signature);
-        return PatternCoverage { false, caseSymbol, std::nullopt };
+        return PatternCoverage {
+            false,
+            caseSymbol,
+            std::nullopt,
+            validatePatternArguments(*pattern, *caseSymbol, *signature),
+        };
     }
 
-    void validatePatternArguments(
+    std::vector<PatternCoverage> validatePatternArguments(
             const syntax::EnumCasePatternSyntax& pattern,
             semantic::SymbolId caseSymbol,
             const TypedCallableSignature& signature) {
@@ -2053,6 +2128,8 @@ private:
                             std::to_string(pattern.arguments.size()));
         }
 
+        std::vector<PatternCoverage> payloads;
+        payloads.reserve(pattern.arguments.size());
         for (size_t index = 0; index < pattern.arguments.size(); ++index) {
             const auto& argument = pattern.arguments[index];
             const auto payloadType = index < signature.parameters.size()
@@ -2065,50 +2142,111 @@ private:
                         argument->span,
                         symbol->name);
             }
-            checkPattern(argument->pattern, payloadType);
+            payloads.push_back(checkPattern(argument->pattern, payloadType));
             recordNodeType(argument, payloadType);
         }
+        return payloads;
+    }
+
+    using PatternRow = std::vector<const PatternCoverage*>;
+
+    bool patternMatrixIsExhaustive(
+            const std::vector<TypeId>& columns,
+            const std::vector<PatternRow>& rows,
+            size_t& remainingSpecializations,
+            size_t depth = 0) const {
+        if (rows.empty()) return false;
+        const auto isWildcard = [](const PatternCoverage* pattern) {
+            return pattern == nullptr || pattern->catchesAll;
+        };
+        if (columns.empty() ||
+            std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
+                return std::all_of(row.begin(), row.end(), isWildcard);
+            })) {
+            return true;
+        }
+
+        // Keep wildcards symbolic instead of enumerating payload products.
+        // Pathological matrices conservatively require a catch-all arm.
+        if (remainingSpecializations == 0 || depth == 256) return false;
+        --remainingSpecializations;
+
+        const auto specialize = [&](std::optional<semantic::SymbolId> enumCase,
+                                    std::optional<bool> booleanLiteral,
+                                    const std::vector<TypeId>& payloadTypes) {
+            auto specializedColumns = payloadTypes;
+            specializedColumns.insert(
+                    specializedColumns.end(), columns.begin() + 1, columns.end());
+            std::vector<PatternRow> specializedRows;
+            for (const auto& row : rows) {
+                const auto* pattern = row.front();
+                const auto wildcard = isWildcard(pattern);
+                if (!wildcard &&
+                    !(enumCase.has_value() && pattern->enumCase == enumCase) &&
+                    !(booleanLiteral.has_value() &&
+                      pattern->booleanLiteral == booleanLiteral)) {
+                    continue;
+                }
+
+                PatternRow specialized;
+                specialized.reserve(payloadTypes.size() + row.size() - 1);
+                if (wildcard) {
+                    specialized.insert(specialized.end(), payloadTypes.size(), nullptr);
+                } else {
+                    if (pattern->payloads.size() != payloadTypes.size()) continue;
+                    for (const auto& payload : pattern->payloads) {
+                        specialized.push_back(&payload);
+                    }
+                }
+                specialized.insert(specialized.end(), row.begin() + 1, row.end());
+                specializedRows.push_back(std::move(specialized));
+            }
+            return patternMatrixIsExhaustive(
+                    specializedColumns,
+                    specializedRows,
+                    remainingSpecializations,
+                    depth + 1);
+        };
+
+        const auto hasDefault = std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
+            return isWildcard(row.front());
+        });
+        if (hasDefault && specialize(std::nullopt, std::nullopt, {})) return true;
+        if (std::all_of(rows.begin(), rows.end(), [&](const auto& row) {
+                return isWildcard(row.front());
+            })) {
+            return false;
+        }
+
+        const auto* type = model->typeContext.type(columns.front());
+        if (type != nullptr && type->kind == TypeKind::boolean) {
+            return specialize(std::nullopt, true, {}) &&
+                    specialize(std::nullopt, false, {});
+        }
+
+        const auto required = enumCases(columns.front());
+        if (required.empty()) return false;
+        for (const auto caseSymbol : required) {
+            const auto signature = enumCaseSignature(caseSymbol, columns.front());
+            if (!signature.has_value() ||
+                !specialize(caseSymbol, std::nullopt, signature->parameters)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     void checkMatchExhaustiveness(
             const syntax::MatchExprSyntax::Ptr& expression,
             TypeId scrutinee,
             const std::vector<PatternCoverage>& coverage) {
-        if (scrutinee == model->typeContext.errorType() ||
-            std::any_of(coverage.begin(), coverage.end(), [](const auto& item) {
-                return item.catchesAll;
-            })) {
-            return;
-        }
+        if (scrutinee == model->typeContext.errorType()) return;
 
-        const auto* type = model->typeContext.type(scrutinee);
-        bool exhaustive = false;
-        if (type != nullptr && type->kind == TypeKind::boolean) {
-            bool hasTrue = false;
-            bool hasFalse = false;
-            for (const auto& item : coverage) {
-                if (!item.booleanLiteral.has_value()) continue;
-                hasTrue |= *item.booleanLiteral;
-                hasFalse |= !*item.booleanLiteral;
-            }
-            exhaustive = hasTrue && hasFalse;
-        } else {
-            const auto required = enumCases(scrutinee);
-            if (!required.empty()) {
-                std::unordered_set<semantic::SymbolId> covered;
-                for (const auto& item : coverage) {
-                    if (item.enumCase.has_value()) covered.insert(*item.enumCase);
-                }
-                exhaustive = std::all_of(
-                        required.begin(),
-                        required.end(),
-                        [&covered](const auto caseSymbol) {
-                            return covered.contains(caseSymbol);
-                        });
-            }
-        }
-
-        if (!exhaustive) {
+        std::vector<PatternRow> rows;
+        rows.reserve(coverage.size());
+        for (const auto& pattern : coverage) rows.push_back({ &pattern });
+        size_t remainingSpecializations = 4096;
+        if (!patternMatrixIsExhaustive({ scrutinee }, rows, remainingSpecializations)) {
             report(
                     TypeCheckingDiagnosticId::nonExhaustiveMatch,
                     expression->span,

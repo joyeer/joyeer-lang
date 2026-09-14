@@ -34,13 +34,16 @@ source -> lexer -> parser -> name resolution -> type checking
 ```
 
 There is no bytecode backend, VM, legacy parser mode, or language-mode CLI
-switch. Invoking `joyeer` without an output option validates and lowers the
-source. `--emit-llvm` writes verified textual LLVM IR, and `-o` builds a native
+switch. Invoking `joyeer` without an output option checks and lowers the
+source. `--emit-llvm` writes text after the frontend and Joyeer IR checks;
+LLVM parsing/verification runs in the native backend when `-o` builds an
 executable. On Windows, LLVM and LLD run inside the bundled
 `joyeer-backend.dll`; no LLVM executable is launched at runtime.
 
-The current MVP can compile and run a Joyeer-written JSON parser. Implemented
-features include integers, booleans, bytes, strings, `let`/`var`, checked
+The current MVP can compile and run an integer-focused Joyeer-written JSON
+parser fixture. It is an integration workload, not a complete JSON conformance
+or performance benchmark; see its [known limits](docs/plan/v0.1.md).
+Implemented features include integers, booleans, bytes, strings, `let`/`var`, checked
 arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
 `Optional`, `Result`, file input, deterministic ownership cleanup, projection
@@ -89,8 +92,8 @@ LLVM from source.
 
 On Windows x64, download
 [`clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz`](https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz),
-extract it to a stable location such as `D:\llvm`, and set `LLVM_HOME` to that
-directory. The smaller `LLVM-22.1.8-win64.exe` tool-only installer is not
+extract it to a stable location such as `C:\LLVM-22.1.8`, and set `LLVM_HOME`
+to that directory. The smaller `LLVM-22.1.8-win64.exe` tool-only installer is not
 sufficient because building the backend DLL requires LLVM headers, `.lib`
 files, and `LLVMConfig.cmake`/`LLDConfig.cmake`.
 
@@ -103,9 +106,10 @@ Platform requirements are:
 | macOS | Xcode Command Line Tools, the active macOS SDK, and LLVM/LLD development libraries |
 
 Windows builds use MSVC exclusively. Run CMake from a Visual Studio Developer
-PowerShell or Developer Command Prompt so `cl.exe`, the standard library, and
-the Windows SDK are available. Ninja schedules the build but does not replace
-the host compiler.
+PowerShell or Developer Command Prompt configured for an **x64 target** so
+`cl.exe`, the standard library, and the Windows SDK are available. Ninja and
+the preset's external architecture hint do not activate a compiler toolchain;
+this also matters on an ARM64 Windows host.
 
 Verify the common tools before configuring:
 
@@ -138,37 +142,49 @@ ctest --preset linux-debug
 
 Use `linux-release` for a release build.
 
-On Windows, verify the SDK root:
+On Windows, verify the SDK root in Developer PowerShell:
 
-```text
-%LLVM_HOME%\bin\clang.exe --version
-%LLVM_HOME%\bin\llvm-readobj.exe --version
-%LLVM_HOME%\lib\LLVMCore.lib
-%LLVM_HOME%\lib\cmake\llvm\LLVMConfig.cmake
+```powershell
+& "$env:LLVM_HOME\bin\clang.exe" --version
+& "$env:LLVM_HOME\bin\llvm-readobj.exe" --version
+Get-Item "$env:LLVM_HOME\lib\LLVMCore.lib"
+Get-Item "$env:LLVM_HOME\lib\cmake\llvm\LLVMConfig.cmake"
 ```
 
-The build is out-of-source only. Configure, build, test, and stage a Windows
-release with:
+The build is out-of-source only. For Windows development, explicitly enable
+unit tests; the `x64-debug` preset otherwise defaults them to `OFF`:
 
-```text
-cmake --preset x64-release
+```powershell
+cmake --preset x64-debug -DJOYEER_BUILD_UNITTESTS=ON
+cmake --build --preset x64-debug
+ctest --preset x64-debug
+```
+
+To build and stage a Windows release candidate:
+
+```powershell
+cmake --preset x64-release -DJOYEER_BUILD_UNITTESTS=ON -DINSTALL_GTEST=OFF
 cmake --build --preset x64-release
-ctest --test-dir out/build/x64-release --output-on-failure
-cmake --install out/build/x64-release --prefix out/package/joyeer
+ctest --test-dir .\out\build\x64-release --output-on-failure
+cmake --install .\out\build\x64-release --prefix .\out\package\joyeer
 ```
 
 Pass the SDK root explicitly if `LLVM_HOME` is unavailable:
 
-```text
-cmake --preset x64-release -DJOYEER_LLVM_ROOT=D:/llvm
+```powershell
+cmake --preset x64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON
 ```
 
 The staged Windows package contains `joyeer.exe`,
 `joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, and licenses. Users of
 that package do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
-through Visual Studio Setup Configuration and the registry. See
-[building.md](docs/building.md) for platform details and troubleshooting.
+through Visual Studio Setup Configuration and the registry. `INSTALL_GTEST=OFF`
+prevents test-only headers and libraries from being added to the package.
+The current install rule stages only Joyeer's own license; third-party
+license/notice staging remains a release requirement. See
+[building.md](docs/building.md#release-staging) for these packaging limitations,
+platform details, and troubleshooting.
 
 Linux and macOS use the same install layout with platform suffixes: the
 `joyeer` executable, `joyeer-backend` shared library, native runtime archive,
@@ -177,23 +193,27 @@ runtime relative to its own location.
 
 ## CLI
 
+These examples use the Windows `x64-debug` build above. Linux and macOS use
+`out/build/<preset>/bin/joyeer` without the `.exe` suffix. A manually configured
+`-B build` directory instead places the compiler under `build/bin/`.
+
 Validate and lower a source file:
 
 ```pwsh
-build/bin/joyeer path/to/program.joyeer
+.\out\build\x64-debug\bin\joyeer.exe .\tests\native\hello.joyeer
 ```
 
 Emit textual LLVM IR:
 
 ```pwsh
-build/bin/joyeer -O0 -gfull -gdwarf --emit-llvm output.ll path/to/program.joyeer
+.\out\build\x64-debug\bin\joyeer.exe -O0 -gfull -gdwarf --emit-llvm .\out\hello.ll .\tests\native\hello.joyeer
 ```
 
 Build and run a native executable:
 
 ```pwsh
-build/bin/joyeer -O2 -o hello.exe path/to/program.joyeer
-./hello.exe
+.\out\build\x64-debug\bin\joyeer.exe -O2 -o .\out\hello.exe .\tests\native\hello.joyeer
+.\out\hello.exe
 ```
 
 Optimization defaults to `-O2`; `-O0` through `-O3` are supported. Debug
@@ -203,20 +223,22 @@ Use `-gdwarf` or `-gcodeview` to select the format.
 
 ## Test
 
-The required CMake acceptance gate is an unfiltered CTest run:
+The required CMake acceptance gate is an unfiltered CTest run with unit tests
+enabled. For the Windows development build above:
 
 ```text
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake --build --preset x64-debug
+ctest --preset x64-debug
 ```
 
+Use the matching `linux-debug` or `macos-debug` preset on those platforms.
 Focused labels are available when iterating:
 
 ```pwsh
-ctest --test-dir build -L lexer --output-on-failure
-ctest --test-dir build -L type-checking --output-on-failure
-ctest --test-dir build -L native --output-on-failure
-ctest --test-dir build -L debug-info --output-on-failure
+ctest --preset x64-debug -L lexer
+ctest --preset x64-debug -L type-checking
+ctest --preset x64-debug -L native
+ctest --preset x64-debug -L debug-info
 ```
 
 C++ unit tests use GoogleTest. End-to-end compiler and native fixtures live in

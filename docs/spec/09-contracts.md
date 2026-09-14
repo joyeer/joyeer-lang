@@ -3,6 +3,12 @@
 Joyeer uses Swift-style runtime checks instead of declaration-level contract
 keywords. There is no `requires` / `ensures` / `invariant` syntax in v0.1.
 
+**Implementation status:** this chapter specifies the intended library API.
+The executable JSON-parser MVP does not provide `assert`, `precondition`, or
+`fatalError` in its prelude. Its compiler-generated arithmetic/bounds traps
+are separate mechanisms. The examples below are draft-library examples,
+not programs supported by the current builtin inventory.
+
 ### 9.1 Contract style in Joyeer
 
 Contract intent is expressed in executable code:
@@ -54,17 +60,19 @@ Postconditions are expressed with local snapshots and `assert`:
 ```joyeer
 func bumpAndGet(x: inout Int): Int {
   let old = x
-  &x += 1
+  &x = x + 1
   assert(condition: x == old + 1)
   return x
 }
 ```
 
-### 9.5 v0.1 compiler treatment
+### 9.5 Intended compiler treatment
 
 - `assert`, `precondition`, and `fatalError` are ordinary callable symbols
-  provided by the prelude / standard library.
-- They are type-checked like normal function calls.
+  to be provided by the prelude / standard library.
+- Once provided, they are type-checked like normal function calls; declaring
+  an ordinary user function with one of these names does not automatically
+  give it checking or termination semantics.
 - The compiler does not perform theorem proving.
 
 ### 9.6 Migration note
@@ -77,4 +85,3 @@ migrated mechanically:
 - `invariant I` -> `assert(condition: I)` at loop/struct consistency checkpoints
 
 ---
-

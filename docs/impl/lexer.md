@@ -29,9 +29,10 @@ Each token carries:
 - `startsLine`, derived from skipped newline trivia;
 - `rawValue`, plus `intValue` for integer and byte literals.
 
-`SourceFile::lineStarts` always begins with zero and records the byte offset
-after every LF, CR, or CRLF sequence. Diagnostics convert these zero-based byte
-locations to one-based display locations.
+The line-tracking invariant is that `SourceFile::lineStarts` begins with zero
+and records the byte offset after every LF, CR, or CRLF sequence. Diagnostics
+convert these zero-based byte locations to one-based display locations. The
+malformed-escape recovery gap below currently violates this invariant.
 
 The lexer clears existing output before scanning and appends exactly one EOF
 token. Every scanner either advances or returns, so malformed input cannot
@@ -44,9 +45,10 @@ JSON fixture:
 
 - identifiers, wildcard `_`, and current/deferred keywords;
 - decimal `Int` literals with `int64_t` overflow diagnostics;
-- strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, `\'`, and
+- strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, and
   `\\`;
-- strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`;
+- strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
+  literals additionally support `\'`, which is not a supported string escape;
 - delimiters, labels, member access, `=>`, `?`, and `&`;
 - assignment, arithmetic/comparison operators, and `&&` used by v0.1;
 - line comments and nested block comments.
@@ -67,6 +69,12 @@ unit instead of emitting misleading valid prefixes. Examples include `+=`,
 `<<=`, `?.`, `1.5`, and `0xff`.
 
 Source files larger than the 32-bit span capacity are rejected before scanning.
+
+Known recovery gap: a backslash immediately followed by a physical LF inside
+a malformed string or byte escape can consume that newline without updating
+line tracking. Subsequent diagnostics can report the wrong physical line.
+Recovery must use the normal newline-consumption path; the intended location
+contract above is unchanged.
 
 ## Deferred syntax policy
 

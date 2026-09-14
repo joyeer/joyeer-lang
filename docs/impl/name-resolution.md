@@ -72,11 +72,17 @@ ambiguous.
 
 The v0.1 prelude currently declares:
 
-- types: `Void`, `Never`, `Int`, `Bool`, `String`, `UInt8`, `Any`, `Array`,
-  `Dict`, `Optional`, and `Result`;
-- `String.count` and `Array.count`;
+- types: `Void`, `Never`, `Int`, `Bool`, `String`, `UInt8`, `Array`, `Dict`,
+  `Optional`, `Result`, and `IOError`;
+- `String.count`, `Array.count`, and `Dict.count`;
+- `String.utf8()` and mutating `Array.append(element:)`;
 - `Optional.Some` / `Optional.None` and `Result.Ok` / `Result.Err`;
-- `print(value:)`.
+- the builtin `IOError` cases;
+- `print(value:)`, `readFile(path:)`, `byteToInt(value:)`, and
+  `byteToString(value:)`.
+
+An internal `Any` marker also exists in the semantic prelude; the source
+spelling is reserved and is not a supported dynamic-value type.
 
 Struct declarations receive a separate synthesized memberwise-initializer
 symbol. Its parameters retain field labels, declaration order, field types,
@@ -138,3 +144,17 @@ The test target covers forward references, nested shadowing, type/member
 resolution, synthesized initializers, enum cases, labels, match-arm bindings,
 deferred contextual cases, diagnostics, and the JSON-parser fixture. A CLI
 negative test verifies that the default compiler reports resolver failures.
+
+## 7. Known resolution gaps
+
+- Intrinsic literal/member resolution can use lexical lookup of a builtin
+  type's spelling. A user `struct String` can therefore make `"abc".count`
+  incorrectly resolve against that struct. Literal and intrinsic-syntax
+  identities must remain tied to the compiler's builtin symbols.
+- Parenthesizing a direct callee, as in `(identity)(value: 7)`, does not
+  currently preserve its recorded target and can produce a later
+  `type-checking.not-callable` error. Grouping should remain transparent;
+  this does not require general first-class-function support.
+- Repeated external parameter labels and receiver-dependent field defaults
+  need explicit end-to-end rules. Current declaration acceptance alone does
+  not establish that those declarations can be called or lowered.

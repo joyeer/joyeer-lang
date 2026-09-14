@@ -86,9 +86,9 @@ public:
         for (const auto& enumeration : source.enumerations) {
             enumerations.emplace(enumeration.type, &enumeration);
             for (size_t index = 0; index < enumeration.cases.size(); ++index) {
-                cases.emplace(
+                cases[enumeration.type].emplace(
                         enumeration.cases[index].symbol,
-                        std::make_pair(&enumeration, index));
+                        index);
             }
         }
         for (const auto& function : source.functions) {
@@ -112,10 +112,13 @@ public:
             }
             initializeDebugMetadata();
         }
-        emitAggregateTypeDefinitions();
-        emitOwnershipHelpers();
+        if (!emitAggregateTypeDefinitions() || !emitOwnershipHelpers()) {
+            return failedEmission();
+        }
         for (const auto& function : source.functions) {
-            if (!function.isExternal) emitFunction(function);
+            if (!function.isExternal && !emitFunction(function)) {
+                return failedEmission();
+            }
         }
         emitEntryPoint();
         if (!diagnostics.empty()) return Result { {}, std::move(diagnostics) };
@@ -162,8 +165,8 @@ private:
     std::unordered_map<ir::TypeId, const ir::EnumerationDefinition*> enumerations;
     std::unordered_map<semantic::SymbolId,
                        std::pair<const ir::StructureDefinition*, size_t>> fields;
-    std::unordered_map<semantic::SymbolId,
-                       std::pair<const ir::EnumerationDefinition*, size_t>> cases;
+    std::unordered_map<ir::TypeId,
+                       std::unordered_map<semantic::SymbolId, size_t>> cases;
     std::unordered_map<ir::TypeId, Layout> layouts;
     std::unordered_set<ir::TypeId> layoutsInProgress;
     std::unordered_map<ir::ValueId, ir::Value> values;
@@ -172,6 +175,7 @@ private:
     std::vector<std::string> stringGlobals;
     std::vector<std::string> typeDefinitions;
     std::vector<std::string> functionBodies;
+    std::ostringstream instructionStackAllocations;
     std::vector<std::string> metadataDefinitions;
     std::vector<size_t> moduleFlagMetadata;
     std::optional<size_t> compileUnitMetadata;
@@ -216,6 +220,16 @@ private:
                         ? std::optional<ir::BlockId>()
                         : std::optional<ir::BlockId>(currentBlock->id),
                 std::move(message));
+    }
+
+    Result failedEmission() {
+        if (diagnostics.empty()) {
+            reportHere(
+                    DiagnosticId::invalidModule,
+                    {},
+                    "LLVM module emission failed before completion");
+        }
+        return Result { {}, std::move(diagnostics) };
     }
 
     size_t addMetadata(std::string definition) {
@@ -638,7 +652,7 @@ private:
         return result;
     }
 
-    void emitAggregateTypeDefinitions() {
+    bool emitAggregateTypeDefinitions() {
         std::vector<ir::TypeId> structureTypes;
         for (const auto& [id, structure] : structures) {
             static_cast<void>(structure);
@@ -652,12 +666,12 @@ private:
             for (size_t index = 0; index < structure->fields.size(); ++index) {
                 if (index != 0) definition << ", ";
                 const auto fieldType = llvmType(structure->fields[index].type);
-                if (!fieldType.has_value()) return;
+                if (!fieldType.has_value()) return false;
                 definition << *fieldType;
             }
             definition << " }";
             typeDefinitions.push_back(definition.str());
-            layoutFor(id);
+            if (!layoutFor(id).has_value()) return false;
         }
 
         std::vector<ir::TypeId> enumerationTypes;
@@ -668,7 +682,7 @@ private:
         std::sort(enumerationTypes.begin(), enumerationTypes.end());
         for (const auto id : enumerationTypes) {
             const auto valueLayout = layoutFor(id);
-            if (!valueLayout.has_value()) return;
+            if (!valueLayout.has_value()) return false;
             const auto payloadWords = valueLayout->size <= 8
                     ? 0
                     : (valueLayout->size - 8) / 8;
@@ -677,6 +691,7 @@ private:
                     " = type { i32, [" + std::to_string(payloadWords) +
                     " x i64] }");
         }
+        return true;
     }
 
     std::string cloneHelper(ir::TypeId type) const {
@@ -687,20 +702,25 @@ private:
         return "@joyeer_destroy_type_" + std::to_string(type);
     }
 
-    void emitOwnershipHelpers() {
+    bool emitOwnershipHelpers() {
         std::vector<ir::TypeId> ownedTypes;
         for (const auto& type : module->types) {
             if (ir::requiresDestruction(*module, type.id)) ownedTypes.push_back(type.id);
         }
         std::sort(ownedTypes.begin(), ownedTypes.end());
-        for (const auto type : ownedTypes) emitCloneHelper(type);
-        for (const auto type : ownedTypes) emitDestroyHelper(type);
+        for (const auto type : ownedTypes) {
+            if (!emitCloneHelper(type)) return false;
+        }
+        for (const auto type : ownedTypes) {
+            if (!emitDestroyHelper(type)) return false;
+        }
+        return true;
     }
 
-    void emitCloneHelper(ir::TypeId id) {
+    bool emitCloneHelper(ir::TypeId id) {
         const auto* valueType = type(id);
         const auto typeText = llvmType(id);
-        if (valueType == nullptr || !typeText.has_value()) return;
+        if (valueType == nullptr || !typeText.has_value()) return false;
         std::ostringstream out;
         out << "define void " << cloneHelper(id) << "(ptr %destination, ptr %source) {\n"
             << "entry:\n";
@@ -730,21 +750,22 @@ private:
                     << "  call void @joyeer_dictionary_clone_abi(ptr %destination, ptr %data, i64 %count)\n";
                 break;
             case typing::TypeKind::structure:
-                emitStructClone(out, id, *typeText);
+                if (!emitStructClone(out, id, *typeText)) return false;
                 break;
             case typing::TypeKind::enumeration:
             case typing::TypeKind::optional:
             case typing::TypeKind::result:
-                emitEnumClone(out, id, *typeText);
+                if (!emitEnumClone(out, id, *typeText)) return false;
                 break;
             default:
-                return;
+                return false;
         }
         out << "  ret void\n}\n";
         functionBodies.push_back(out.str());
+        return true;
     }
 
-    void emitStructClone(std::ostringstream& out, ir::TypeId id, const std::string& typeText) {
+    bool emitStructClone(std::ostringstream& out, ir::TypeId id, const std::string& typeText) {
         const auto* structure = structures.at(id);
         for (size_t index = 0; index < structure->fields.size(); ++index) {
             const auto& field = structure->fields[index];
@@ -759,7 +780,7 @@ private:
                     << destination << ", ptr " << source << ")\n";
             } else {
                 const auto fieldType = llvmType(field.type);
-                if (!fieldType.has_value()) return;
+                if (!fieldType.has_value()) return false;
                 const auto loaded = "%field.value." + std::to_string(index);
                 out << "  " << loaded << " = load " << *fieldType << ", ptr "
                     << source << "\n"
@@ -767,6 +788,7 @@ private:
                     << destination << "\n";
             }
         }
+        return true;
     }
 
     std::string emitEnumPayloadAddress(
@@ -785,7 +807,7 @@ private:
         return address;
     }
 
-    void emitEnumClone(std::ostringstream& out, ir::TypeId id, const std::string& typeText) {
+    bool emitEnumClone(std::ostringstream& out, ir::TypeId id, const std::string& typeText) {
         const auto* enumeration = enumerations.at(id);
         out << "  %whole = load " << typeText << ", ptr %source\n"
             << "  store " << typeText << " %whole, ptr %destination\n"
@@ -798,7 +820,7 @@ private:
         for (size_t caseIndex = 0; caseIndex < enumeration->cases.size(); ++caseIndex) {
             const auto& enumCase = enumeration->cases[caseIndex];
             const auto offsets = payloadOffsets(enumCase);
-            if (!offsets.has_value()) return;
+            if (!offsets.has_value()) return false;
             out << "case." << caseIndex << ":\n";
             for (size_t payload = 0; payload < enumCase.payloadTypes.size(); ++payload) {
                 const auto payloadType = enumCase.payloadTypes[payload];
@@ -821,12 +843,13 @@ private:
             out << "  br label %exit\n";
         }
         out << "exit:\n";
+        return true;
     }
 
-    void emitDestroyHelper(ir::TypeId id) {
+    bool emitDestroyHelper(ir::TypeId id) {
         const auto* valueType = type(id);
         const auto typeText = llvmType(id);
-        if (valueType == nullptr || !typeText.has_value()) return;
+        if (valueType == nullptr || !typeText.has_value()) return false;
         std::ostringstream out;
         out << "define void " << destroyHelper(id) << "(ptr %value) {\n"
             << "entry:\n";
@@ -849,13 +872,14 @@ private:
             case typing::TypeKind::enumeration:
             case typing::TypeKind::optional:
             case typing::TypeKind::result:
-                emitEnumDestroy(out, id, *typeText);
+                if (!emitEnumDestroy(out, id, *typeText)) return false;
                 break;
             default:
-                return;
+                return false;
         }
         out << "  ret void\n}\n";
         functionBodies.push_back(out.str());
+        return true;
     }
 
     void emitStructDestroy(
@@ -875,7 +899,7 @@ private:
         out << "  store " << typeText << " zeroinitializer, ptr %value\n";
     }
 
-    void emitEnumDestroy(
+    bool emitEnumDestroy(
             std::ostringstream& out,
             ir::TypeId id,
             const std::string& typeText) {
@@ -890,7 +914,7 @@ private:
         for (size_t caseIndex = 0; caseIndex < enumeration->cases.size(); ++caseIndex) {
             const auto& enumCase = enumeration->cases[caseIndex];
             const auto offsets = payloadOffsets(enumCase);
-            if (!offsets.has_value()) return;
+            if (!offsets.has_value()) return false;
             out << "case." << caseIndex << ":\n";
             for (size_t payload = enumCase.payloadTypes.size(); payload > 0; --payload) {
                 const auto payloadType = enumCase.payloadTypes[payload - 1];
@@ -908,6 +932,7 @@ private:
         }
         out << "exit:\n"
             << "  store " << typeText << " zeroinitializer, ptr %value\n";
+        return true;
     }
 
     std::optional<std::string> llvmType(ir::TypeId id, SourceSpan span = {}) {
@@ -1005,7 +1030,7 @@ private:
         return found->second;
     }
 
-    void emitFunction(const ir::Function& function) {
+    bool emitFunction(const ir::Function& function) {
         currentFunction = &function;
         currentBlock = nullptr;
         currentSubprogramMetadata = addSubprogramMetadata(function);
@@ -1013,13 +1038,13 @@ private:
         operands.clear();
 
         const auto resultType = llvmType(function.resultType);
-        if (!resultType.has_value()) return;
+        if (!resultType.has_value()) return false;
         std::vector<std::string> parameterTypes;
         for (const auto& parameter : function.parameters) {
             const auto typeText = parameter.value.category == ir::ValueCategory::address
                     ? std::optional<std::string>("ptr")
                     : llvmType(parameter.value.type, parameter.span);
-            if (!typeText.has_value()) return;
+            if (!typeText.has_value()) return false;
             parameterTypes.push_back(*typeText);
             values.emplace(parameter.value.id, parameter.value);
             operands.emplace(parameter.value.id, valueName(parameter.value.id));
@@ -1046,31 +1071,55 @@ private:
             out << " !dbg " << metadataReference(*currentSubprogramMetadata);
         }
         out << " {\n";
+        std::ostringstream entryAllocations;
+        std::ostringstream body;
         for (const auto& block : function.blocks) {
             currentBlock = &block;
-            out << blockName(block.id) << ":\n";
+            body << blockName(block.id) << ":\n";
             if (block.id == function.entry) {
                 for (const auto& binding : function.entryDebugVariableBindings) {
-                    if (!emitDebugVariableBinding(out, binding)) return;
+                    if (!emitDebugVariableBinding(body, binding)) return false;
                 }
             }
             for (const auto& instruction : block.instructions) {
+                instructionStackAllocations.str({});
+                instructionStackAllocations.clear();
                 std::ostringstream instructionText;
-                if (!emitInstruction(instructionText, instruction)) return;
+                const auto diagnosticCount = diagnostics.size();
+                if (!emitInstruction(instructionText, instruction)) {
+                    if (diagnostics.size() == diagnosticCount) {
+                        reportHere(
+                                DiagnosticId::unsupportedInstruction,
+                                instruction.span,
+                                std::string("LLVM lowering failed for '") +
+                                        ir::opcodeName(instruction.opcode) + "'");
+                    }
+                    return false;
+                }
                 const auto text = instructionText.str();
-                appendInstructionText(
-                        out,
-                        text,
-                        text.empty()
-                                ? std::optional<size_t>()
-                                : addLocationMetadata(instruction));
+                const auto allocations = instructionStackAllocations.str();
+                const auto location = text.empty() && allocations.empty()
+                        ? std::optional<size_t>()
+                        : addLocationMetadata(instruction);
+                appendInstructionText(entryAllocations, allocations, location);
+                appendInstructionText(body, text, location);
                 for (const auto& binding : instruction.debugVariableBindings) {
-                    if (!emitDebugVariableBinding(out, binding)) return;
+                    if (!emitDebugVariableBinding(body, binding)) return false;
                 }
             }
         }
-        out << "}\n";
+        // This prologue runs once even when the IR entry has incoming edges.
+        // Initialization and debug declarations stay at their original locations.
+        out << "entry:\n" << entryAllocations.str();
+        ir::Instruction entryBranch { ir::Opcode::branch };
+        entryBranch.debugLocation = function.debugLocation;
+        appendInstructionText(
+                out,
+                "  br label %" + blockName(function.entry) + "\n",
+                addLocationMetadata(entryBranch));
+        out << body.str() << "}\n";
         functionBodies.push_back(out.str());
+        return true;
     }
 
     bool emitInstruction(std::ostringstream& out, const ir::Instruction& instruction) {
@@ -1101,8 +1150,7 @@ private:
             case ir::Opcode::stackAllocate: {
                 const auto typeText = llvmType(instruction.result->type, instruction.span);
                 if (!typeText.has_value()) return false;
-                out << "  " << valueName(instruction.result->id)
-                    << " = alloca " << *typeText << "\n";
+                allocateStackSlot(*typeText, valueName(instruction.result->id));
                 return true;
             }
             case ir::Opcode::zeroInitialize: {
@@ -1223,6 +1271,14 @@ private:
         return "%tmp" + std::to_string(nextTemporary++);
     }
 
+    std::string allocateStackSlot(
+            const std::string& typeText,
+            const std::string& requestedResult = {}) {
+        const auto address = requestedResult.empty() ? temporary() : requestedResult;
+        instructionStackAllocations << "  " << address << " = alloca " << typeText << "\n";
+        return address;
+    }
+
     struct HandleParts {
         std::string data;
         std::string count;
@@ -1286,9 +1342,9 @@ private:
 
         std::string data = "null";
         if (!instruction.operands.empty()) {
-            data = temporary();
-            out << "  " << data << " = alloca [" << instruction.operands.size()
-                << " x " << *elementType << "]\n";
+            data = allocateStackSlot(
+                    "[" + std::to_string(instruction.operands.size()) +
+                    " x " + *elementType + "]");
             for (size_t index = 0; index < instruction.operands.size(); ++index) {
                 const auto element = operand(instruction.operands[index]);
                 if (!element.has_value()) return false;
@@ -1300,7 +1356,7 @@ private:
                     << ", ptr " << address << "\n";
             }
         }
-        const auto resultAddress = temporary();
+        const auto resultAddress = allocateStackSlot("%joyeer.array");
         const auto ownsElements = ir::requiresDestruction(*module, arrayType->arguments[0]);
         const auto clone = ownsElements
             ? "ptr " + cloneHelper(arrayType->arguments[0])
@@ -1308,8 +1364,7 @@ private:
         const auto destroy = ownsElements
             ? "ptr " + destroyHelper(arrayType->arguments[0])
             : std::string("ptr null");
-        out << "  " << resultAddress << " = alloca %joyeer.array\n"
-            << "  call void @joyeer_array_create_owned_abi(ptr " << resultAddress
+        out << "  call void @joyeer_array_create_owned_abi(ptr " << resultAddress
             << ", ptr " << data << ", i64 " << instruction.operands.size()
             << ", i64 " << elementLayout->size << ", " << clone << ", "
             << destroy << ")\n"
@@ -1339,11 +1394,10 @@ private:
         usesArray = true;
         const auto sourceParts = emitHandleParts(out, "%joyeer.string", *source);
         if (!sourceParts.has_value()) return false;
-        const auto resultAddress = temporary();
+        const auto resultAddress = allocateStackSlot("%joyeer.array");
         runtimeDeclarations.insert(
                 "declare void @joyeer_array_create_owned_abi(ptr, ptr, i64, i64, ptr, ptr)");
-        out << "  " << resultAddress << " = alloca %joyeer.array\n"
-            << "  call void @joyeer_array_create_owned_abi(ptr " << resultAddress
+        out << "  call void @joyeer_array_create_owned_abi(ptr " << resultAddress
             << ", ptr " << sourceParts->data
             << ", i64 " << sourceParts->count
             << ", i64 1, ptr null, ptr null)\n"
@@ -1367,9 +1421,8 @@ private:
             return false;
         }
 
-        const auto elementAddress = temporary();
-        out << "  " << elementAddress << " = alloca " << *elementType << "\n"
-            << "  store " << *elementType << ' ' << *element
+        const auto elementAddress = allocateStackSlot(*elementType);
+        out << "  store " << *elementType << ' ' << *element
             << ", ptr " << elementAddress << "\n";
         runtimeDeclarations.insert(
                 "declare void @joyeer_array_append_owned_abi(ptr, ptr)");
@@ -1410,9 +1463,8 @@ private:
         if (!keyKind.has_value()) return false;
         std::string data = "null";
         if (count != 0) {
-            data = temporary();
-            out << "  " << data << " = alloca [" << count << " x "
-                << entryType << "]\n";
+            data = allocateStackSlot(
+                    "[" + std::to_string(count) + " x " + entryType + "]");
             for (size_t index = 0; index < count; ++index) {
                 const auto key = operand(instruction.operands[index * 2]);
                 const auto storedValue = operand(instruction.operands[index * 2 + 1]);
@@ -1433,7 +1485,7 @@ private:
                     << valueAddress << "\n";
             }
         }
-        const auto resultAddress = temporary();
+        const auto resultAddress = allocateStackSlot("%joyeer.dictionary");
         const auto ownsKeys = ir::requiresDestruction(*module, dictionaryType->arguments[0]);
         const auto ownsValues = ir::requiresDestruction(*module, dictionaryType->arguments[1]);
         const auto cloneKey = ownsKeys
@@ -1448,8 +1500,7 @@ private:
         const auto destroyValue = ownsValues
             ? "ptr " + destroyHelper(dictionaryType->arguments[1])
             : std::string("ptr null");
-        out << "  " << resultAddress << " = alloca %joyeer.dictionary\n"
-            << "  call void @joyeer_dictionary_create_owned_abi(ptr " << resultAddress
+        out << "  call void @joyeer_dictionary_create_owned_abi(ptr " << resultAddress
             << ", ptr " << data << ", i64 " << count << ", i64 " << keyLayout->size
             << ", i64 " << valueLayout->size << ", i64 " << entrySize
             << ", i64 " << valueOffset << ", i32 " << *keyKind << ", "
@@ -1481,12 +1532,10 @@ private:
             return false;
         }
 
-        const auto keyAddress = temporary();
-        const auto valueAddress = temporary();
-        out << "  " << keyAddress << " = alloca " << *keyType << "\n"
-            << "  store " << *keyType << ' ' << *key
+        const auto keyAddress = allocateStackSlot(*keyType);
+        const auto valueAddress = allocateStackSlot(*valueType);
+        out << "  store " << *keyType << ' ' << *key
             << ", ptr " << keyAddress << "\n"
-            << "  " << valueAddress << " = alloca " << *valueType << "\n"
             << "  store " << *valueType << ' ' << *storedValue
             << ", ptr " << valueAddress << "\n";
         usesDictionary = true;
@@ -1546,14 +1595,18 @@ private:
     }
 
     const ir::EnumCaseDefinition* enumCase(
+            ir::TypeId enumType,
             semantic::SymbolId symbol,
             const ir::EnumerationDefinition** owner = nullptr,
             size_t* index = nullptr) const {
-        const auto found = cases.find(symbol);
+        const auto found = cases.find(enumType);
         if (found == cases.end()) return nullptr;
-        if (owner != nullptr) *owner = found->second.first;
-        if (index != nullptr) *index = found->second.second;
-        return &found->second.first->cases[found->second.second];
+        const auto foundCase = found->second.find(symbol);
+        if (foundCase == found->second.end()) return nullptr;
+        const auto* enumeration = enumerations.at(enumType);
+        if (owner != nullptr) *owner = enumeration;
+        if (index != nullptr) *index = foundCase->second;
+        return &enumeration->cases[foundCase->second];
     }
 
     bool emitConstructEnum(
@@ -1563,6 +1616,7 @@ private:
         const ir::EnumerationDefinition* enumeration = nullptr;
         size_t caseIndex = 0;
         const auto* selectedCase = enumCase(
+                instruction.result->type,
                 *instruction.symbol,
                 &enumeration,
                 &caseIndex);
@@ -1574,10 +1628,9 @@ private:
         const auto offsets = payloadOffsets(*selectedCase);
         if (!typeText.has_value() || !offsets.has_value()) return false;
 
-        const auto storage = temporary();
+        const auto storage = allocateStackSlot(*typeText);
         const auto tagAddress = temporary();
-        out << "  " << storage << " = alloca " << *typeText << "\n"
-            << "  store " << *typeText << " zeroinitializer, ptr " << storage << "\n"
+        out << "  store " << *typeText << " zeroinitializer, ptr " << storage << "\n"
             << "  " << tagAddress << " = getelementptr inbounds " << *typeText
             << ", ptr " << storage << ", i32 0, i32 0\n"
             << "  store i32 " << caseIndex << ", ptr " << tagAddress << "\n";
@@ -1616,7 +1669,7 @@ private:
             SourceSpan span,
             const std::string& requestedResult = {}) {
         const ir::EnumerationDefinition* enumeration = nullptr;
-        const auto* selectedCase = enumCase(caseSymbol, &enumeration);
+        const auto* selectedCase = enumCase(enumType, caseSymbol, &enumeration);
         if (selectedCase == nullptr || enumeration == nullptr ||
             enumeration->type != enumType ||
             payloadIndex >= selectedCase->payloadTypes.size()) {
@@ -1632,10 +1685,9 @@ private:
             return std::nullopt;
         }
 
-        const auto storage = temporary();
+        const auto storage = allocateStackSlot(*enumTypeText);
         const auto payloadBase = temporary();
-        out << "  " << storage << " = alloca " << *enumTypeText << "\n"
-            << "  store " << *enumTypeText << ' ' << enumValue << ", ptr " << storage << "\n"
+        out << "  store " << *enumTypeText << ' ' << enumValue << ", ptr " << storage << "\n"
             << "  " << payloadBase << " = getelementptr inbounds " << *enumTypeText
             << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
         auto payloadAddress = payloadBase;
@@ -1784,12 +1836,11 @@ private:
         }
         const auto parts = emitHandleParts(out, "%joyeer.dictionary", dictionaryValue);
         if (!parts.has_value()) return false;
-        const auto keyAddress = temporary();
+        const auto keyAddress = allocateStackSlot(*keyType);
         const auto valueAddress = returnsAddress
                 ? valueName(instruction.result->id)
                 : temporary();
-        out << "  " << keyAddress << " = alloca " << *keyType << "\n"
-            << "  store " << *keyType << ' ' << key << ", ptr " << keyAddress << "\n"
+        out << "  store " << *keyType << ' ' << key << ", ptr " << keyAddress << "\n"
             << "  " << valueAddress
             << " = call ptr @joyeer_dictionary_at_abi(ptr " << parts->data
             << ", i64 " << parts->count << ", ptr " << keyAddress << ", i64 "
@@ -1813,26 +1864,34 @@ private:
                 std::to_string(text.size()) + " }";
     }
 
-    std::optional<std::string> emitPatternCondition(
+    bool emitPatternBranch(
             std::ostringstream& out,
             const ir::Pattern& pattern,
             const std::string& testedValue,
+            const std::string& matched,
+            const std::string& missed,
             SourceSpan span) {
+        const auto branch = [&](const std::string& condition) {
+            out << "  br i1 " << condition << ", label %" << matched
+                << ", label %" << missed << "\n";
+        };
         switch (pattern.kind) {
             case ir::PatternKind::wildcard:
-                return "true";
+                out << "  br label %" << matched << "\n";
+                return true;
             case ir::PatternKind::integerLiteral:
             case ir::PatternKind::booleanLiteral:
             case ir::PatternKind::byteLiteral: {
                 const auto typeText = llvmType(pattern.type, span);
-                if (!typeText.has_value()) return std::nullopt;
+                if (!typeText.has_value()) return false;
                 const auto condition = temporary();
                 const auto literal = pattern.kind == ir::PatternKind::booleanLiteral
                         ? (pattern.integerValue == 0 ? std::string("false") : std::string("true"))
                         : std::to_string(pattern.integerValue);
                 out << "  " << condition << " = icmp eq " << *typeText << ' '
                     << testedValue << ", " << literal << "\n";
-                return condition;
+                branch(condition);
+                return true;
             }
             case ir::PatternKind::stringLiteral: {
                 runtimeDeclarations.insert(
@@ -1841,61 +1900,83 @@ private:
                 const auto literal = stringLiteralOperand(pattern.text);
                 const auto literalParts = emitHandleParts(out, "%joyeer.string", literal);
                 if (!testedParts.has_value() || !literalParts.has_value()) {
-                    return std::nullopt;
+                    return false;
                 }
                 const auto condition = temporary();
                 out << "  " << condition
                     << " = call i1 @joyeer_string_equal_abi(ptr " << testedParts->data
                     << ", i64 " << testedParts->count << ", ptr " << literalParts->data
                     << ", i64 " << literalParts->count << ")\n";
-                return condition;
+                branch(condition);
+                return true;
             }
             case ir::PatternKind::enumCase: {
-                if (!pattern.symbol.has_value()) return std::nullopt;
+                if (!pattern.symbol.has_value()) return false;
                 const ir::EnumerationDefinition* enumeration = nullptr;
                 size_t caseIndex = 0;
                 const auto* selectedCase = enumCase(
+                        pattern.type,
                         *pattern.symbol,
                         &enumeration,
                         &caseIndex);
                 if (selectedCase == nullptr || enumeration == nullptr ||
                     enumeration->type != pattern.type) {
-                    return std::nullopt;
+                    return false;
                 }
                 const auto typeText = llvmType(pattern.type, span);
-                if (!typeText.has_value()) return std::nullopt;
+                if (!typeText.has_value()) return false;
                 const auto tag = temporary();
                 const auto tagMatches = temporary();
                 out << "  " << tag << " = extractvalue " << *typeText << ' '
                     << testedValue << ", 0\n"
                     << "  " << tagMatches << " = icmp eq i32 " << tag
                     << ", " << caseIndex << "\n";
-                auto condition = tagMatches;
+
+                std::vector<size_t> payloadIndices;
                 for (size_t index = 0; index < pattern.payloads.size(); ++index) {
-                    if (pattern.payloads[index].kind == ir::PatternKind::wildcard) continue;
+                    if (pattern.payloads[index].kind != ir::PatternKind::wildcard) {
+                        payloadIndices.push_back(index);
+                    }
+                }
+                if (payloadIndices.empty()) {
+                    branch(tagMatches);
+                    return true;
+                }
+
+                const auto suffix = std::to_string(nextTemporary++);
+                const auto payloadBlock = [&](size_t index) {
+                    return "pattern.payload." + suffix + '.' + std::to_string(index);
+                };
+                out << "  br i1 " << tagMatches << ", label %" << payloadBlock(0)
+                    << ", label %" << missed << "\n";
+                for (size_t index = 0; index < payloadIndices.size(); ++index) {
+                    out << payloadBlock(index) << ":\n";
+                    const auto payloadIndex = payloadIndices[index];
                     const auto payload = emitPayloadLoad(
                             out,
                             testedValue,
                             pattern.type,
                             *pattern.symbol,
-                            index,
+                            payloadIndex,
                             span);
-                    if (!payload.has_value()) return std::nullopt;
-                    const auto payloadMatches = emitPatternCondition(
+                    if (!payload.has_value()) return false;
+                    const auto next = index + 1 < payloadIndices.size()
+                            ? payloadBlock(index + 1)
+                            : matched;
+                    if (!emitPatternBranch(
                             out,
-                            pattern.payloads[index],
+                            pattern.payloads[payloadIndex],
                             *payload,
-                            span);
-                    if (!payloadMatches.has_value()) return std::nullopt;
-                    const auto combined = temporary();
-                    out << "  " << combined << " = and i1 " << condition
-                        << ", " << *payloadMatches << "\n";
-                    condition = combined;
+                            next,
+                            missed,
+                            span)) {
+                        return false;
+                    }
                 }
-                return condition;
+                return true;
             }
         }
-        return std::nullopt;
+        return false;
     }
 
     bool emitSwitchPattern(
@@ -1910,23 +1991,23 @@ private:
                 out << "pattern." << currentBlock->id << '.' << index << ":\n";
             }
             const auto& switchCase = instruction.switchCases[index];
-            const auto condition = emitPatternCondition(
-                    out,
-                    switchCase.pattern,
-                    *scrutinee,
-                    instruction.span);
-            if (!condition.has_value()) return false;
-            if (*condition == "true") {
-                out << "  br label %" << blockName(switchCase.target) << "\n";
-                terminated = true;
-                break;
-            }
             const auto miss = index + 1 < instruction.switchCases.size()
                     ? "pattern." + std::to_string(currentBlock->id) + '.' +
                             std::to_string(index + 1)
                     : "pattern." + std::to_string(currentBlock->id) + ".miss";
-            out << "  br i1 " << *condition << ", label %"
-                << blockName(switchCase.target) << ", label %" << miss << "\n";
+            if (!emitPatternBranch(
+                    out,
+                    switchCase.pattern,
+                    *scrutinee,
+                    blockName(switchCase.target),
+                    miss,
+                    instruction.span)) {
+                return false;
+            }
+            if (switchCase.pattern.kind == ir::PatternKind::wildcard) {
+                terminated = true;
+                break;
+            }
         }
         if (!terminated) {
             out << "pattern." << currentBlock->id << ".miss:\n"
@@ -1959,12 +2040,10 @@ private:
         }
         const auto typeText = llvmType(sourceValue->type, instruction.span);
         if (!typeText.has_value()) return false;
-        const auto sourceAddress = temporary();
-        const auto destinationAddress = temporary();
-        out << "  " << sourceAddress << " = alloca " << *typeText << "\n"
-            << "  store " << *typeText << ' ' << *source << ", ptr "
+        const auto sourceAddress = allocateStackSlot(*typeText);
+        const auto destinationAddress = allocateStackSlot(*typeText);
+        out << "  store " << *typeText << ' ' << *source << ", ptr "
             << sourceAddress << "\n"
-            << "  " << destinationAddress << " = alloca " << *typeText << "\n"
             << "  call void " << cloneHelper(sourceValue->type) << "(ptr "
             << destinationAddress << ", ptr " << sourceAddress << ")\n"
             << "  " << valueName(instruction.result->id) << " = load "
@@ -2023,9 +2102,8 @@ private:
             const auto leftParts = emitHandleParts(out, "%joyeer.string", *left);
             const auto rightParts = emitHandleParts(out, "%joyeer.string", *right);
             if (!leftParts.has_value() || !rightParts.has_value()) return false;
-            const auto resultAddress = temporary();
-            out << "  " << resultAddress << " = alloca %joyeer.string\n"
-            << "  call void @joyeer_string_concat_abi(ptr " << resultAddress
+            const auto resultAddress = allocateStackSlot("%joyeer.string");
+            out << "  call void @joyeer_string_concat_abi(ptr " << resultAddress
             << ", ptr " << leftParts->data << ", i64 " << leftParts->count
             << ", ptr " << rightParts->data << ", i64 " << rightParts->count
             << ")\n"
@@ -2181,8 +2259,7 @@ private:
         }
 
         usesString = true;
-        const auto resultAddress = temporary();
-        out << "  " << resultAddress << " = alloca %joyeer.string\n";
+        const auto resultAddress = allocateStackSlot("%joyeer.string");
         runtimeDeclarations.insert(
                 "declare void @joyeer_byte_to_string_abi(ptr, i8)");
         out << "  call void @joyeer_byte_to_string_abi(ptr " << resultAddress
@@ -2268,26 +2345,23 @@ private:
             return false;
         }
 
-        const auto storage = temporary();
+        const auto storage = allocateStackSlot(*resultType);
         const auto tagAddress = temporary();
         const auto payloadAddress = temporary();
-        const auto stringAddress = temporary();
-        const auto errorCodeAddress = temporary();
+        const auto stringAddress = allocateStackSlot("%joyeer.string");
+        const auto errorCodeAddress = allocateStackSlot("i64");
         const auto errorKind = temporary();
         const auto succeeded = temporary();
         const auto labelSuffix = std::to_string(nextTemporary++);
         const auto successLabel = "readfile.ok." + labelSuffix;
         const auto errorLabel = "readfile.error." + labelSuffix;
         const auto doneLabel = "readfile.done." + labelSuffix;
-        out << "  " << storage << " = alloca " << *resultType << "\n"
-            << "  store " << *resultType << " zeroinitializer, ptr " << storage << "\n"
+        out << "  store " << *resultType << " zeroinitializer, ptr " << storage << "\n"
             << "  " << tagAddress << " = getelementptr inbounds " << *resultType
             << ", ptr " << storage << ", i32 0, i32 0\n"
             << "  " << payloadAddress << " = getelementptr inbounds " << *resultType
             << ", ptr " << storage << ", i32 0, i32 1, i32 0\n"
-            << "  " << stringAddress << " = alloca %joyeer.string\n"
             << "  store %joyeer.string zeroinitializer, ptr " << stringAddress << "\n"
-            << "  " << errorCodeAddress << " = alloca i64\n"
             << "  store i64 0, ptr " << errorCodeAddress << "\n";
         runtimeDeclarations.insert(
                 "declare i32 @joyeer_read_file_abi(ptr, ptr, ptr, i64)");
@@ -2331,13 +2405,12 @@ private:
             << ", i32 " << *invalidPathTag << ", i32 "
             << afterPermissionDenied << "\n";
 
-        const auto nestedErrorStorage = temporary();
+        const auto nestedErrorStorage = allocateStackSlot(*errorTypeText);
         const auto nestedErrorTagAddress = temporary();
         const auto nestedErrorPayloadAddress = temporary();
         const auto errorCode = temporary();
         const auto nestedErrorValue = temporary();
-        out << "  " << nestedErrorStorage << " = alloca " << *errorTypeText << "\n"
-            << "  store " << *errorTypeText << " zeroinitializer, ptr "
+        out << "  store " << *errorTypeText << " zeroinitializer, ptr "
             << nestedErrorStorage << "\n"
             << "  " << nestedErrorTagAddress << " = getelementptr inbounds "
             << *errorTypeText << ", ptr " << nestedErrorStorage

@@ -9,7 +9,8 @@
 ## 1. Boundary
 
 The type checker consumes the syntax tree and all bindings produced by name
-resolution. Joyeer IR lowering is the next pipeline stage.
+resolution. Semantic analysis follows type checking; Joyeer IR lowering runs
+only after that analysis succeeds.
 
 The public API lives in `include/joyeer/compiler/typechecking.h`; the
 implementation is in `lib/compiler/typechecking.cpp`. A successful result is
@@ -116,8 +117,18 @@ The v0.1 checker currently validates:
   argument expression therefore conflict with it, including computed expressions
   such as `x + 1`. Nested calls whose accesses both finish during sequential
   argument evaluation do not overlap each other. v0.1 has no first-class or
-  escaping references, so this closes the access lifetime surface currently
-  expressible by the language.
+  escaping references. Access collection visits block items, conditions,
+  match arms, return operands, projection indices, and both borrowing and
+  mutating receivers. Transient evaluations finish before later arguments
+  acquire storage; an earlier sustained projection remains active until
+  the call returns.
+
+  Exhaustiveness uses a recursive pattern matrix rather than a set of outer
+  constructor names. Refutable payloads do not cover their whole constructor;
+  complementary Boolean and nested enum patterns can cover it collectively.
+  Wildcards stay symbolic rather than enumerating payload products. Analysis
+  is bounded to 4096 specializations and depth 256; an otherwise unproved
+  pathological matrix conservatively requires a catch-all arm.
 
 Ordinary call labels, ordering, required/default argument presence, and
 lexical declaration binding remain name-resolution responsibilities. The type
@@ -177,3 +188,17 @@ diagnostics, or enum representation. Control-flow and lint checks now live in
 the dedicated [semantic-analysis pass](semantic-analysis.md); representation
 and ownership decisions live in later lowering stages. None of these may be
 smuggled into type checking merely to reuse backend implementation details.
+
+## 8. Known correctness gaps
+
+The intended rules above must not be weakened to describe these bugs:
+
+| Area | Current limitation | Required invariant |
+|---|---|---|
+| Writable argument types | Optional value promotion can be accepted for `inout` or `initializing` storage and rejected only by IR verification. | Writable storage types are invariant unless explicit writeback conversion semantics exist. |
+| Contextual branch results | Expected types can be lost when checking block and `if` results. | Propagate context into reachable trailing expressions. |
+| `nil` patterns | Optional `nil` does not contribute `.None` coverage, while nonoptional `nil` can produce an error type without a diagnostic. | Normalize optional coverage and diagnose invalid pattern types at this stage. |
+
+These remaining issues concern stage-appropriate diagnostics and contextual
+typing. Passing the current tests is not a proof that every possible
+expression/pattern combination is correct.

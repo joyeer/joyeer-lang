@@ -52,8 +52,6 @@ only when a later milestone has a concrete consumer.
 The original parser was replaced rather than extended. The audit below records
 the design differences that motivated the current parser.
 
-| Area | Current behavior | Parser MVP requirement |
-|---|---|---|
 | Area | Replaced behavior | Current parser requirement |
 |---|---|---|
 | Token access | raw iterators and broad token categories | bounded `TokenCursor`, explicit terminals, checkpoints, and `expect()` |
@@ -312,7 +310,7 @@ contextual_case_expr
                    ::= '.' identifier [ argument_clause ]
 
 argument_clause    ::= '(' [ argument ( ',' argument )* ','? ] ')'
-argument           ::= [ identifier ':' ] [ '&' ] expression
+argument           ::= [ identifier ':' ] [ '&' | 'consume' ] expression
 
 array_literal      ::= '[' [ expression ( ',' expression )* ','? ] ']'
 dict_literal       ::= '[' ':' ']'
@@ -403,11 +401,18 @@ rejects them. Parser MVP therefore has one predictable formatting rule:
 > item starts on a new physical line; two adjacent items may not share a line.
 
 Newline information comes from `Token::startsLine`; newline is not a general
-expression token. A newline does **not** terminate a construct:
+expression token. The intended continuation rule is that a newline does
+**not** terminate a construct:
 
 - inside unmatched `()`, `[]`, or an argument/type/pattern list;
 - after an infix operator, comma, colon, dot, or `=>`;
 - while parsing an explicitly expected declaration body or `else` branch.
+
+Current limitation: the infix/postfix loops still stop unconditionally when
+the next token starts a line. A newline before an infix operator or postfix
+suffix can therefore terminate an expression even inside parentheses. This
+is an implementation gap, not a change to the continuation rule; delimiter
+continuation needs context distinct from nested statement-block boundaries.
 
 Delimited lists consistently permit a trailing comma. This includes function
 parameters, call/constructor arguments, generic arguments, enum payloads,
@@ -425,7 +430,7 @@ Minimum node families:
 
 | Family | Nodes / retained information |
 |---|---|
-| File | `SourceFileSyntax`, ordered top-level items, EOF span |
+| File | `SourceFileSyntax`, ordered top-level items, aggregate source span |
 | Declarations | `BindingDecl` (`let`/`var` retained), `FunctionDecl`, `ParameterDecl`, `StructDecl`, `StructFieldDecl`, `EnumDecl`, `EnumCaseDecl`, `AssociatedTypeSyntax` |
 | Types | nominal, built-in generic argument list, array, dictionary, optional |
 | Blocks/control | `BlockExpr`, `WhileStmt`, `IfExpr`, `ReturnExpr`, `MatchExpr`, `MatchArm` |
@@ -468,7 +473,9 @@ position()       -> token index
 atEnd()          -> bool
 ```
 
-`peek()` at or beyond input returns the real terminal EOF token. Rewinding may
+An in-range `peek()` returns the corresponding input token, including the
+terminal EOF token. An out-of-range `peek()` returns a synthesized fallback
+EOF token rather than the real terminal token and its span. Rewinding may
 only return to a checkpoint and never moves before token zero.
 
 ### 7.2 Parsing strategy

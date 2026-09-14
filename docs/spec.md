@@ -1,8 +1,10 @@
 # The Joyeer Programming Language — Specification
 
-> **Status:** Draft v0.1-spec. This document defines the future language. Some
-> annotations are marked **syntax-only** (parsed and stored, but not yet
-> executed). Removed syntax from earlier implementations or drafts (including
+> **Status:** Draft v0.1-spec. This document indexes the broader language
+> design, not just the implemented JSON-parser milestone. **Syntax-only**
+> annotation marks describe proposed treatment, not current parser support;
+> see [the implementation scope](plan/v0.1.md). Removed syntax from earlier
+> implementations or drafts (including
 > `class`, `print(message: x)`, and positional/unlabeled calls) is listed in
 > §14.
 

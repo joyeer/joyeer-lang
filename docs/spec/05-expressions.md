@@ -35,6 +35,11 @@ to v0.2).
 
 Comparisons are non-chaining: `1 < x < 10` is a syntax error.
 
+Logical `&&` evaluates its left operand first and evaluates the right operand
+only when the left is `true`. The skipped operand produces no side effects,
+traps, ownership transfers, or early returns. The result is `false` when the
+left operand is `false`, independently of optimization level.
+
 ### 5.3 Assignment
 
 ```
@@ -212,4 +217,3 @@ The right-hand side may have type `Never` (§2.9) — as with `fatalError` or
 unwrapped type `T`.
 
 ---
-

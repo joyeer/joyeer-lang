@@ -10,26 +10,31 @@
 Zero-overhead memory management — easier to learn than Rust, safer than C++,
 with nearly identical performance.
 
+These are goals, not measured conclusions. See
+[runtime-overhead.md](runtime-overhead.md) for the current baseline and the
+evidence still needed.
+
 ---
 
-## The Model (Committed)
+## Core Model and Future Mechanisms
 
 Joyeer's memory model is **Mutable Value Semantics + RAII**, in the style of
-Hylo / Val. This document covers the **defaults** that work for 95 % of code.
-Opt-in tools (regions, raw pointers, `unsafe`) cover the rest.
+Hylo / Val. The current MVP implements compiler-known owned values and access
+conventions. User-defined destruction, regions, raw-pointer/unsafe facilities,
+and dedicated escape-analysis promotion are not implemented capabilities.
 
 | Piece | Defined in |
 |---|---|
 | Value semantics and explicit ownership | this doc §1 |
-| Deterministic destruction via `deinit` (RAII) | this doc §2 |
-| Region allocator (opt-in for bulk patterns) | this doc §3 |
-| Escape analysis (transparent optimization) | this doc §4 |
+| Deterministic destruction; user-defined `deinit` remains future work | this doc §2 |
+| Region allocator candidate, not implemented | this doc §3 |
+| Escape-analysis optimization candidate, not guaranteed | this doc §4 |
 | Ownership transfer via `consuming` parameters | [parameter-passing.md](parameter-passing.md) |
 | Exclusive mutable borrow via `inout` | [parameter-passing.md](parameter-passing.md) |
-| **No** GC | [runtime-overhead.md](runtime-overhead.md) §1 |
-| **No** ARC / refcounting | [runtime-overhead.md](runtime-overhead.md) §3.2 |
+| **No** GC | [runtime cost goals](runtime-overhead.md#1-what-zero-cost-means-here) |
+| **No** ARC / refcounting | [runtime cost goals](runtime-overhead.md#1-what-zero-cost-means-here) |
 | **No** first-class references (`&T`) | [parameter-passing.md](parameter-passing.md) |
-| **No** work unrelated to the specified operation | [runtime-overhead.md](runtime-overhead.md) §3.2 |
+| **No** work unrelated to the specified operation | [ownership operation costs](runtime-overhead.md#3-ownership-operations-have-real-costs) |
 
 ---
 
@@ -40,7 +45,7 @@ the value and leave the source initialized; an explicit consuming boundary
 transfers ownership.
 
 ```
-let a = Vec3(1, 2, 3)    // stack-allocated
+let a = Vec3(x: 1, y: 2, z: 3) // value construction
 var b = a                 // semantic copy; a remains usable
 ```
 
@@ -52,28 +57,17 @@ insert allocations unrelated to the operation's specified value semantics.
 
 ## 2. Deterministic Destruction (RAII)
 
-When a value goes out of scope, its `deinit` runs. No GC, no refcount, no
-finalizer queue.
+The language model gives owned values deterministic destruction on normal
+scope exit and return. In the current MVP the compiler emits cleanup for
+builtin heap-backed values and aggregates; user-defined `init`/`deinit`
+bodies remain future work. There is no GC, reference counting, or finalizer
+queue.
 
 ```
-type Buffer {
-    var data: Pointer<UInt8>
-    var size: Int
-
-    init(size: Int) {
-        self.size = size
-        self.data = Pointer.allocate(size)
-    }
-
-    deinit {
-        self.data.deallocate()   // runs at scope exit, guaranteed
-    }
-}
-
 func example() {
-    let buf = Buffer(size: 1024)
-    process(buf)
-    // scope ends → buf.deinit() runs → memory freed
+    let bytes = "data".utf8()
+    print(value: bytes.count)
+    // compiler-inserted cleanup destroys the owned byte array
 }
 ```
 
@@ -86,39 +80,33 @@ Because there are no reference types and no shared ownership, the lifetime
 graph of any program is a tree. Retain cycles (the Achilles heel of Swift /
 Python RC) are **structurally unrepresentable**.
 
-## 3. Region Allocator (Opt-in for Bulk Patterns)
+## 3. Region Allocator Candidate
 
-For request-response, per-frame, or per-compiler-pass workloads, the region
-allocator provides bulk allocation and O(1) bulk free.
+Regions are a possible design for request-response, per-frame, or
+per-compiler-pass workloads. There is currently no `Region` API, region syntax,
+or region-lifetime checker.
 
-```
-region r = Region.create()
-let a = r.alloc(Point(1, 2))
-let b = r.alloc(Point(3, 4))
-// ... use a, b ...
-r.destroy()                    // free entire region at once
-```
-
-The type system tracks which values belong to which region and prevents
-use-after-region-destroy at compile time. The compiler may erase per-object
-`deinit` calls for region-allocated objects when proven safe.
+A future design must track region membership and prevent use after region
+destruction. Bulk memory reclamation does not automatically remove per-object
+destructor obligations; those may be erased only when semantics permit it.
 
 References: Cyclone, MLKit, Rust's `bumpalo`.
 
-## 4. Escape Analysis (Transparent Optimization)
+## 4. Escape Analysis Candidate
 
-The compiler automatically promotes heap-allocated stdlib containers to the
-stack when escape analysis proves they do not outlive the current frame.
+Promoting non-escaping heap-backed values to stack storage is a possible
+optimization, not a current Joyeer guarantee. There is no dedicated
+container-to-stack promotion pass in the MVP.
 
 ```
 func compute(): Int {
-    let xs = Array<Int>()    // logically heap, optimized to stack if non-escaping
-    xs.push(1); xs.push(2)
-    return xs.sum()
+    let xs = [1, 2]
+    return xs[0] + xs[1]
 }
 ```
 
-Fully transparent to the programmer. References: Go, JVM JIT, GraalVM.
+Any such optimization must preserve copying, destruction, and observable
+behavior. References for related techniques: Go, JVM JIT, GraalVM.
 
 ---
 
@@ -126,10 +114,10 @@ Fully transparent to the programmer. References: Go, JVM JIT, GraalVM.
 
 | Mechanism | Why rejected |
 |---|---|
-| Garbage collection | Pauses, hidden cost, large runtime ([runtime-overhead.md §2](runtime-overhead.md)) |
-| Automatic reference counting (ARC) | Hidden retain/release work, retain cycles, contradicts [runtime-overhead.md §3.2](runtime-overhead.md) |
-| First-class references (`&T`, `&mut T`) | Forces a borrow checker; replaced by `borrowing` / `inout` / `consuming` ([parameter-passing.md](parameter-passing.md)) |
-| Linear / affine types (Rust-style) | High learning curve; `consuming` captures the "use once" property without the type-system tax |
+| Garbage collection | Conflicts with the deterministic ownership and [runtime cost goals](runtime-overhead.md). |
+| Automatic reference counting (ARC) | Retain/release work and shared ownership are outside the [chosen runtime model](runtime-overhead.md). |
+| First-class references (`&T`, `&mut T`) | Would require an escaping-reference lifetime model. Current access conventions still require static exclusivity and ownership analysis. |
+| User-defined linear-resource constraints | Not part of the current subset. `consuming` still requires move/use analysis; it does not eliminate type-system or data-flow work. |
 | Reference capabilities (Pony `iso` / `ref` / `trn`) | Too complex; concurrency model not designed yet |
 | Generational references (Vale) | Per-deref runtime check is not zero-cost |
 
@@ -236,28 +224,27 @@ are in spec §4.1 and §4.6.
 
 ## Comparison Summary
 
-| Mechanism | Runtime overhead | Compile-time complexity | Programmer burden | In Joyeer? |
-|---|---|---|---|---|
-| Value semantics (stack) | Zero | Low | Zero | ✅ Default |
-| RAII / `deinit` | Zero | Low | Low | ✅ Default |
-| `consuming` ownership transfer | Zero | Medium | Low | ✅ Default ([parameter-passing.md](parameter-passing.md)) |
-| Region-based | Near zero | Medium | Low | ✅ Opt-in |
-| Escape analysis | Zero (non-escaping) | Medium | Zero | ✅ Optimization |
-| Garbage collection | High (pauses) | Low | Zero | ❌ Rejected |
-| ARC / refcounting | Low–medium | Medium | Low | ❌ Rejected |
-| Borrow checker (Rust) | Zero | **High** | Medium | ❌ Avoided by MVS |
-| Linear / affine types | Zero | High | Medium-high | ⏸ Future |
-| Pool / Slab | Zero | Low | Medium | ⏸ Future (library) |
-| Capabilities (Pony) | Zero | High | High | ❌ |
-| Generational refs (Vale) | Low | Low | Low | ❌ |
+This table records availability, not measured runtime or compiler-complexity
+rankings.
+
+| Mechanism | Current status |
+|---|---|
+| Value semantics | Core model; heap-backed ordinary copies can allocate and recursively copy. |
+| Deterministic destruction | Compiler-generated cleanup for the MVP; user-defined `deinit` is future work. |
+| Access conventions | All four conventions exist, with known analysis/lowering gaps still to close. |
+| Regions | Future design; no region API or checker is implemented. |
+| Container escape-analysis promotion | Potential optimization, not a current guarantee. |
+| GC / ARC | Excluded from the core model. |
+| Ownership/exclusivity analysis | Required despite the absence of first-class reference types. |
+| Custom allocators, pools, and stronger resource constraints | Follow-on design work, not current APIs. |
 
 ---
 
-## Key Principles
+## Long-Term Priorities
 
-1. **Zero-overhead C FFI** — the entry ticket to systems programming.
-2. **Pick one memory safety approach and commit** — MVS + RAII, no fallbacks.
-3. **Compilation speed is a feature** — modules + incremental compilation.
-4. **Gradual migration from C / C++** — must interop without runtime overhead.
-5. **Explicit `unsafe` blocks** — raw pointers, FFI, low-level work needs an
-   explicit marker but is not forbidden.
+1. Preserve and test MVS/RAII invariants before expanding the ownership surface.
+2. Define a source-language FFI and stable layout/calling rules before claiming
+   C interoperability; the existing compiler-backend C ABI is a different boundary.
+3. Measure compilation and runtime costs rather than assuming they disappear.
+4. Design modules, incremental compilation, allocator control, and any unsafe
+   interoperability surface explicitly before promising them as capabilities.

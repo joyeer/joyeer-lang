@@ -17,38 +17,40 @@
 
 ## TL;DR
 
-- **The "engineering version" of Joyeer is clearly buildable.** Every feature
-  Joyeer wants has already been proven — *individually* — in a shipping
-  language. Nothing here requires a research breakthrough.
-- **The risk is integration, ergonomics, and scope/time — not theoretical
-  possibility.** It needs an experienced team and years of polish, not a Nobel
-  prize.
+- **The systems-language core has strong engineering precedent.** Related
+  languages demonstrate many of its components, and Joyeer's native MVP
+  demonstrates a scoped integration. This is evidence of feasibility, not
+  proof that every proposed feature combination or performance target works.
+- **The main near-term risks are integration, ergonomics, scope, and
+  implementation quality.** Ownership soundness, ABI costs, platform behavior,
+  and diagnostics need broader workloads and regression coverage.
 - **The one genuinely hard part — fully automatic formal verification of
   arbitrary properties — has a theoretical ceiling and should *not* be
-  promised.** It is also *not necessary*: a layered fallback (runtime →
-  decidable refinement → SMT-assisted) is already stronger than ~99% of
-  production languages today.
+  promised.** A layered approach (runtime checks, a precisely defined decidable
+  subset, then optional SMT assistance) can still be useful without making
+  unsupported comparisons to other languages.
 
 ---
 
-## 1. Each feature is already proven — individually
+## 1. Related features have prior art
 
 Joyeer is not betting on an unsolved research problem; it is betting on
 **engineering integration**. The table below maps each major design commitment
-to a real language that already ships it.
+to related work. The mechanisms and maturity of those projects differ;
+similar terminology does not establish equivalent semantics.
 
 | Feature | Prior art (proof it works) | Notes |
 |---|---|---|
-| No GC + value semantics + ownership | **Rust, Swift, Hylo, Mojo** | Hylo (ex-Val) is almost exactly Joyeer's "no reference types, mutable value semantics" target. The path has been walked. |
-| `borrowing` / `inout` / `consuming` / `initializing` | **Swift 5.9+** (near-verbatim) | Joyeer borrows Swift's ownership keywords directly. Shipping ⇒ implementable. |
-| 4 subscript accessors + `yield` | **Swift** `_read` / `_modify` coroutine accessors | Already runs in a production compiler. |
-| Contracts (`requires` / `ensures`) | **Eiffel, Ada/SPARK, Dafny, Verus** | Runtime contracts are 1986 tech; compile-time verification proven by SPARK / Dafny / Verus. |
+| Value semantics and ownership | **Rust, Swift, Hylo** | Useful related designs, not identical memory models. Swift also uses ARC, whereas Joyeer excludes it; Hylo is a value-oriented language project, not evidence that Joyeer's full design has shipped. |
+| Parameter access conventions | **Swift** `borrowing`, `consuming`, `inout` | [SE-0377](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0377-parameter-ownership-modifiers.md), implemented in Swift 5.9, documents related syntax, not Joyeer's `initializing` contract. Joyeer's four-convention model needs its own specification and implementation. |
+| Subscript projections and `yield` | **Swift** `_read` / `_modify` coroutine accessors | Related implementation techniques, not proof of Joyeer's four-accessor semantics. |
+| Runtime checks and verification | **Eiffel, Ada/SPARK, Dafny, Verus** | These illustrate different checking/proof strategies. Joyeer specifies ordinary `assert` / `precondition` / `fatalError` calls, not `requires` / `ensures` declarations (§9). |
 | Refinement types (`PositiveInt`, `NonEmpty`) | **Liquid Haskell, F\***, Dafny | Decidable subsets are well understood. |
 | Zero-cost generics (monomorphization) | **Rust, C++** | Standard practice. |
 | LLVM backend | **Rust, Swift, Clang** | Large but fully known path. |
 
-**Conclusion:** no single feature needs a new theory. Difficulty lives in
-*combining* them and in *years of polish*, not in feasibility.
+**Conclusion:** there is substantial prior art, but combining these mechanisms
+still requires checking their assumptions, performance, and user-facing rules.
 
 ---
 
@@ -73,10 +75,11 @@ projections and broader ergonomic stress cases remain future work.
 
 ### 2.2 Index-alias safety — *solvable, known answer*
 
-Banning reference types (spec §4.8) pushes graph/cyclic structures onto
-integer indices, where the Law of Exclusivity currently gives **zero**
-guarantees (an index is just an `Int`: stale or cross-container indices are
-unchecked use-after-free-class bugs).
+Banning reference types (spec §4.8) pushes graph/cyclic structures toward
+integer indices. Exclusivity and bounds checks do not establish an index's
+container identity or generation: a stale or cross-container index can name
+the wrong live element even while remaining in bounds. This is a logical
+identity problem, distinct from dereferencing a freed native pointer.
 
 This has a **mature solution**: generational indices / typed handles / arenas
 (cf. Rust's `slotmap`, ECS `Entity`). A checked `Handle<T>` / arena abstraction
@@ -104,46 +107,42 @@ Layer 4: Fully automatic proof of arbitrary props    ← no language achieves th
                                                         must NOT be promised
 ```
 
-**Key insight:** Joyeer does not need Layer 4 to be valuable. Reaching
-**Layer 2–3** already exceeds ~99% of production languages. The design is
-implementable as long as the spec does **not** write "Layer 4, fully
-automatic" as a release promise.
+**Key insight:** Joyeer does not need Layer 4 to be valuable. Layers 2 and 3
+would need explicitly bounded proof obligations and an honest treatment of
+unproved properties. None of these proposed verification layers is evidence
+of current implementation support.
 
 ---
 
 ## 3. Verdict
 
-- ✅ **As an integrated systems language** — "no GC + ownership + runtime
-  contracts + refinement types + LLVM backend" — **clearly buildable.**
-  Each block has prior art; the cost is integration engineering and years of
-  polish, not feasibility. This is "needs an experienced team for a long time,"
-  not "needs a breakthrough."
+- ✅ **The scoped native systems-language core is implemented.** This supports
+  the architectural direction, but broader soundness, runtime-cost, and
+  release-quality claims still require evidence. Refinement types and
+  verification are separate future design work.
 
 - ⚠️ **As "AI generates, verifier proves arbitrary correctness"** — has a
   theoretical ceiling and will **never** be 100% automatic. It also doesn't
   need to be; landing at SMT-assisted (Layer 3) is implementable and already
   strong.
 
-In short: the **engineering version is necessarily buildable**; the
-**sci-fi version (fully automatic formal verification) is not — and need not
-be.** Residual risk is entirely in execution (scope, team, time), **not** in
-whether the design is physically/theoretically possible.
+In short: prioritize proving the current subset's invariants and costs before
+expanding its surface. Prior art supports feasibility; it does not remove
+design risk or establish the project's resource and schedule requirements.
 
 ---
 
 ## 4. Recommended spec note (to de-risk the flagship claim)
 
-Add a layered-verification statement to the rationale/spec so the "core
-differentiator" stops being an open-ended promise and becomes a planned,
-incremental feature:
+Keep current guarantees distinct from proposed verification work:
 
-> Contract semantics land in four layers (runtime → decidable refinement →
-> SMT-assisted → fully automatic). Joyeer commits through **Layer 3**; Layer 4
-> is a research direction, **not** a release promise.
+> The current compiler checks the implemented type, control-flow, and ownership
+> rules. Runtime contract APIs, refinements, and SMT assistance require
+> additional design and implementation. Automatic proof of arbitrary program
+> correctness is not a release promise.
 
-With that change, the previously-noted "flagship feature is vaporware" gap
-downgrades from a **contradiction** to a **known, planned, incremental
-feature**.
+The layer model above is an evaluation framework, not a commitment to deliver
+Layer 3 in a particular release.
 
 ---
 
@@ -159,5 +158,6 @@ feature**.
       [../rationale/ai-era-design.md](../rationale/ai-era-design.md) and
       [../spec/09-contracts.md](../spec/09-contracts.md) (§2.3, §4).
 - [x] Make integer overflow trap in every build mode.
-- [ ] Decide whether optimized builds may elide `assert` without weakening the
-  safety positioning.
+- [ ] When implementing the check APIs, preserve the distinction already
+  specified in §9: optimized builds may elide `assert`, but not required
+  `precondition`, arithmetic, or bounds-check semantics.

@@ -1,5 +1,10 @@
 ## §11 Property-Test & Spec Annotations 🔬
 
+**Implementation status:** proposed annotation design. The current MVP lexer
+rejects `@`; annotations are not yet parsed or stored. The generic production
+and shorthand examples below need a single agreed parser grammar before this
+surface is implemented.
+
 ```
 attribute       ::= '@' identifier [ '(' attribute_args ')' ]
 attribute_args  ::= string_literal | expression , ...
@@ -28,13 +33,13 @@ func fib(n: Int): Int { ... }
 ```
 
 The `forall <name> in <range>: <bool-expr>` quantifier used by `@property` is
-a reserved annotation DSL (🔬); it is **not** part of the v0.1 expression
-grammar (§5) and is recognized only inside `@property`.
+a proposed annotation DSL (🔬); it is **not** part of the v0.1 expression
+grammar (§5). Its intended scope is `@property`, not ordinary expressions.
 
-### 11.3 v0.1 treatment
+### 11.3 Proposed treatment and current scope
 
-- Parsed and stored.
-- No test runner shipped in v0.1. Runner targeted for v0.3.
+- Proposed initial implementation: parse and store annotation metadata.
+- Current executable MVP: no annotation parser or property-test runner.
+- A runner is follow-on work, not a delivered capability of the draft syntax.
 
 ---
-

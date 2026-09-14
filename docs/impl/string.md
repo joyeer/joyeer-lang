@@ -21,6 +21,11 @@ embedded NUL bytes from `readFile(path:)` are preserved. The native runtime
 implementation is in `include/joyeer/native/runtime.h` and
 `lib/native/runtime.c`.
 
+The handle occupies 16 bytes on the supported 64-bit layout. The current
+runtime preserves bytes but does not enforce a valid-UTF-8 invariant;
+`readFile` and `byteToString` can produce arbitrary bytes. Unicode scalar APIs
+will need an explicit validation/error policy rather than assuming validity.
+
 ## Ownership
 
 Heap-backed strings have value semantics at the Joyeer level:
@@ -29,13 +34,16 @@ Heap-backed strings have value semantics at the Joyeer level:
 - destroy releases owned storage and clears the handle;
 - compiler-generated Joyeer IR `copy`, `take`, and `destroy` operations route
   through per-type LLVM helpers;
-- normal scope exit, early return, aggregate destruction, collection growth,
-  and tagged payload cleanup all preserve ownership;
+- cleanup is emitted for normal scope exit, early return, aggregate
+  destruction, collection growth, and tagged payloads; known control-flow
+  and temporary-ownership gaps are tracked in [native.md](native.md);
 - the native entry point requires the runtime allocation count to return to
   zero.
 
 Borrowed strings are cloned before entering owning storage. Owned temporaries
 are moved without an extra clone where lowering can prove the transfer.
+An empty-string clone can still allocate storage. Logical byte length does
+not specify capacity, total allocations, or peak memory usage.
 
 ## Operations
 

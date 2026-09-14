@@ -49,10 +49,9 @@ ordinary identifier/literal/punctuation tokens plus `match`, `where`,
 `indirect`, and `=>`; the parser builds pattern nodes and the type checker
 performs binding and exhaustiveness checks (§7).
 
-> `class` is in the **reserved ⏳** list because it is removed in v0.2; unlike
-> the other reserved words it is **not** rejected — the parser still accepts
-> it through v0.1 with a deprecation warning (§14). The remaining reserved
-> words are rejected with a clear error message in v0.1 (§15).
+> `class` is **reserved ⏳ and rejected** by the current compiler; use
+> `struct` for aggregates. There is no accept-with-warning compatibility
+> path (§14). The other reserved words are also rejected in v0.1 (§15).
 
 > `as` is a contextual keyword: in v0.1 it is used **only** for `import`
 > aliasing (§3.8). Its type-cast meaning (`x as T`) and the `is` type-test
@@ -138,4 +137,3 @@ A user-extensible `Display` protocol is also reserved for a future version
 (§15).
 
 ---
-

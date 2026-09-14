@@ -2,15 +2,19 @@
 
 > Joyeer is an AI-era systems language: AI writes most code, humans review and
 > assist. Goal: replace C++ for new code. No GC. Zero-cost abstractions.
-> Swift-like syntax. Use `struct` for aggregates; do not add `class`.
+> Swift-like syntax with value semantics and deterministic destruction.
 
 The normative language definition is [docs/spec.md](docs/spec.md). Design
 rationale lives in [docs/rationale/](docs/rationale/), and the documentation
 index is [docs/README.md](docs/README.md).
 
-## Repository reality
+Keep this file focused on current development rules. Remove completed
+one-off tasks and migration history instead of retaining them as instructions.
 
-The compiler is a C++20 implementation with one supported pipeline:
+## Architecture
+
+The compiler uses C++20, the native runtime uses C11, and the build uses
+CMake + Ninja. The supported pipeline is:
 
 ```text
 source -> lexer -> parser -> name resolution -> type checking
@@ -18,13 +22,9 @@ source -> lexer -> parser -> name resolution -> type checking
   -> LLVM code generation + LLD + JoyeerNativeRuntime -> native executable
 ```
 
-The old parser/AST passes, bytecode runtime, VM, language-mode switch, and
-golden-output corpus were removed in July 2026. Do not reintroduce compatibility
-paths, VM opcodes, runtime descriptors, or `--lang` modes.
-
-The repository contains a stray `Cargo.lock` from an abandoned experiment.
-Ignore it. The build is CMake + C++20 + the C11 native runtime; do not propose
-Rust files or Cargo commands.
+LLVM code generation and LLD linking run in-process behind the versioned
+`joyeer-backend` C ABI. Do not expose LLVM/Clang C++ types, exceptions,
+allocators, or ownership across that boundary.
 
 ## Build and test
 
@@ -38,20 +38,18 @@ ctest --test-dir build --output-on-failure
   platform SDK before configuring. See [docs/building.md](docs/building.md).
 - Native development on every platform requires LLVM/LLD 22.1.8 development
   libraries; Linux also requires the matching Clang Driver library. Set
-  `LLVM_HOME` or pass `-DJOYEER_LLVM_ROOT=/path/to/sdk` for a nonstandard SDK.
+  `LLVM_HOME` or `JOYEER_LLVM_ROOT` for a nonstandard SDK.
   CMake must not download or build LLVM itself.
-- Every platform performs LLVM code generation and LLD linking in-process
-  behind the versioned `joyeer-backend` C ABI. Never expose LLVM/Clang C++
-  types, exceptions, allocators, or ownership to `joyeer`.
-- The Windows release set is `joyeer.exe`, `joyeer-backend.dll`,
-  `JoyeerNativeRuntime.lib`, and licenses. Do not add LLVM executables or DLLs
-  to it. Clang executables are test or inspection tools, not product linkers.
-- Windows builds use Visual Studio's MSVC compiler exclusively. CMake enforces
-  this even when Ninja is the generator; do not add MinGW, GCC, or clang-cl
-  fallbacks.
-- The executable is under `build/bin/` for single-config generators.
-- Unfiltered CTest is the required final gate. Label filters are for focused
-  iteration only.
+- Windows builds require Visual Studio's MSVC compiler, a Windows SDK,
+  compatible `/MT` static LLVM/LLD libraries, and the MSVC DIA SDK. Configure
+  from an x64-targeting Developer shell; Ninja does not select the toolchain.
+- The build is out-of-source only. Never run `cmake .` at the repository root.
+- Manual `-B build` configurations place the executable under `build/bin/`;
+  presets use `out/build/<preset>/bin/`.
+- Enable `JOYEER_BUILD_UNITTESTS` for the full acceptance gate and run
+  unfiltered CTest. Label filters are for focused iteration only.
+- Re-run CMake configure after adding or removing registered fixtures or test
+  targets.
 - C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
   live under stage-specific directories in [tests/](tests/).
 
@@ -74,7 +72,6 @@ ctest --test-dir build --output-on-failure
 - Use `struct` for aggregates. `class` is outside the implemented surface.
 - Put explicit types on public function signatures.
 - Use `Optional` for absence and `Result` for recoverable failure.
-- Assume value semantics, deterministic destruction, and no GC.
 - Named calls use the syntax accepted by current parser fixtures, for example
   `print(value: result)`.
 
@@ -88,24 +85,19 @@ ctest --test-dir build --output-on-failure
   native runtime only where the feature crosses those boundaries.
 - Report compiler failures through `Diagnostics` with stable IDs and
   `SourceSpan`; do not write ad hoc errors to `std::cerr`.
-- Do not add VM or bytecode abstractions. Extend Joyeer IR, its verifier, LLVM
-  lowering, and `JoyeerNativeRuntime`.
 - Add focused GoogleTests and at least one durable stage/native fixture for a
   user-visible feature.
 - Preserve source locations and debug scopes when adding or expanding IR
   operations.
 
-## Pitfalls
+## Packaging and automation
 
-- The build is out-of-source only. Never run `cmake .` at the repository root.
-- Re-run CMake configure after adding or removing registered fixtures or test
-  targets.
-- Windows source builds need compatible `/MT` static LLVM/LLD libraries and
-  the MSVC DIA SDK. Packaged native linking still needs MSVC Build Tools and a
-  Windows SDK, but never an LLVM installation.
-- Do not fix historical behavior by creating a second language mode.
-
-## Repository automation
+- Windows packages should contain only `joyeer.exe`, `joyeer-backend.dll`,
+  `JoyeerNativeRuntime.lib`, and required licenses/notices, not test SDKs or
+  LLVM tools/DLLs. See [docs/building.md](docs/building.md#release-staging).
+- Packaged native linking needs MSVC Build Tools and a Windows SDK, but not
+  an LLVM installation. Clang executables are test/inspection tools, not
+  product linkers.
 
 - Keep external tool prerequisites in [docs/building.md](docs/building.md);
   checked-in automation must not install or resolve the host compiler, platform

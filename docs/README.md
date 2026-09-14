@@ -19,9 +19,11 @@ wins.
 
 ## Specification
 
-The split files under [spec/](spec/) mirror the sections assembled in
-[spec.md](spec.md): lexical structure, types, declarations, memory, expressions,
-statements, patterns, errors, contracts, modules, naming, examples, and grammar.
+The files under [spec/](spec/) contain the normative chapters:
+lexical structure, types, declarations, memory, expressions, statements,
+patterns, errors, contracts, modules, naming, examples, and grammar.
+[spec.md](spec.md) is their index and change log, not an assembled copy of
+the chapter text.
 
 ## Rationale
 

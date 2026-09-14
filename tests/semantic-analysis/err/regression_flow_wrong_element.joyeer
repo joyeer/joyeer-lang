@@ -1,0 +1,8 @@
+func take(value: consuming String) {}
+
+func invalid() {
+    var values = ["first", "second"]
+    take(value: consume values[0])
+    &values[1] = "replacement"
+    print(value: values[0])
+}

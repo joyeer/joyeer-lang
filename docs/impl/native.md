@@ -3,9 +3,10 @@
 > **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
 > the platform backend library validates it, generates machine code, and links
 > native executables with in-process LLVM/LLD on Windows, macOS, and Linux.
-> Ordinary copies, deterministic cleanup, overwrite ordering, and
-> whole-binding `consuming` transfer work for the current heap-backed value
-> surface. User-defined `deinit` and explicit copy initializers are outside the
+> The current implementation covers the native acceptance workload and
+> regression cases for conditional evaluation, ownership flow, guarded
+> payloads, and loop storage. Verifier, native ABI, and library gaps remain.
+> User-defined `deinit` and explicit copy initializers are outside the
 > implemented v0.1 surface.
 
 ---
@@ -111,6 +112,24 @@ and identical-code folding for Windows debug links; optimized levels retain
 them. Paths cross the DLL as UTF-8 C strings and LLD receives an argument
 array, so user paths are not subject to shell expansion.
 
+UTF-8 at the backend boundary does not imply end-to-end Windows Unicode path
+support. Narrow `argv` can lose characters, and native temporary-path
+construction currently narrows a `std::filesystem::path` through `.string()`.
+A temporary directory containing characters outside the active code page can
+therefore crash compilation even with ASCII source and output arguments.
+
+### C ABI lifetimes and failure contract
+
+Options and their input buffers are borrowed for the duration of a call.
+Diagnostic callbacks are synchronous; their message storage must be copied
+if retained beyond the callback. The version string has static ownership and
+must not be freed by a caller. Callbacks must not throw or recursively invoke
+linking while the serialized LLD operation is active.
+
+The intended boundary translates failures into status codes and diagnostics,
+without exposing C++ exceptions or allocator ownership. The failure-path
+gaps below mean it is not yet a complete recovery boundary.
+
 ---
 
 ## 3. LLVM type and ABI mapping
@@ -125,15 +144,18 @@ array, so user paths are not subject to shell expansion.
 | `Dict<K,V>` | `{ ptr, i64, i64 }` |
 | user `struct` | named LLVM struct with declaration-order fields |
 | enum / `Optional` / `Result` | named `{ i32 tag, [N x i64] payload }` |
-| `inout T` | opaque `ptr` |
+| `inout T` / `initializing T` | opaque `ptr` |
 
 Enum payload size is the maximum aligned case payload. Pattern lowering emits
-source-ordered tag/literal tests and an unreachable miss after the frontend's
-exhaustiveness proof.
+source-ordered tag/literal tests and an unreachable miss, assuming frontend
+exhaustiveness. Tag branches precede payload interpretation, including nested
+patterns; the type checker accounts for refutable payload coverage.
 
-Runtime calls never pass C structs by value. LLVM decomposes strings and
-collection handles into pointers/counts, or uses out-pointers for aggregate
-results. This avoids target-specific C aggregate calling-convention drift.
+Internal Joyeer calls pass value parameters/results as their LLVM types;
+address parameters use pointers. Runtime C calls follow a separate convention:
+LLVM decomposes strings and collection handles into pointers/counts, or uses
+out-pointers for aggregate results rather than passing C structs by value.
+This avoids target-specific C aggregate calling-convention drift.
 
 ---
 
@@ -156,15 +178,21 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 - panic and bounds traps;
 - the process entry trampoline and active-allocation balance check.
 
-The runtime uses libc allocation today. Collection lookup favors correctness
-and a small implementation over performance; dictionary hashing is not yet
-implemented.
+The runtime uses libc allocation today. Dictionary lookup uses a
+straightforward linear implementation; hashing is not yet implemented.
+
+Collection allocations retain element/layout sizes and clone/destroy
+callbacks. In the current 64-bit implementation their private headers occupy
+24 bytes for arrays and 72 bytes for dictionaries, before payload and allocator
+overhead. These callbacks can introduce indirect calls without source-level
+protocol dispatch. Allocation/free also updates a relaxed atomic balance
+counter; this is accounting, not reference counting.
 
 Joyeer IR `copy`, `take`, and `destroy` operations lower through generated
 per-type LLVM helpers. Helpers recurse through structs and tagged payloads and
-delegate strings/collections to runtime callbacks. Scope lowering destroys
-owned storage and temporaries in reverse order on normal and early-return
-paths. The C entry point fails the process if runtime-managed allocation count
+delegate strings/collections to runtime callbacks. Scope lowering is responsible for destroying owned storage and temporaries in
+reverse order on normal and early-return paths. The C entry point fails the
+process if runtime-managed allocation count
 is nonzero after `joyeer_main` returns, making leaks in native integration
 tests observable.
 
@@ -186,6 +214,12 @@ take both key and value. Existing keys retain their original key storage,
 destroy the incoming duplicate key and previous value, and take the replacement
 value without changing `count`.
 
+Known construction gap: dictionary literals preserve every supplied pair,
+including keys that compare equal at runtime. They can therefore have
+`count == 2` while lookup/update reaches only the first equal key, unlike
+successive insertion into an initially empty dictionary. Construction needs
+a defined, consistent duplicate-key policy and ownership cleanup.
+
 ### File input
 
 The v0.1 prelude exposes:
@@ -200,6 +234,10 @@ normal ownership cleanup destroys it. `Err` contains `.NotFound(code)`,
 are stable across platforms; each payload preserves the nonzero platform C I/O
 error code. Callers handle both enum layers with exhaustive `match` because
 postfix propagation is outside the v0.1 surface.
+
+Byte preservation does not establish valid UTF-8. The reader grows from a
+4096-byte buffer and retains spare capacity on success; the returned string's
+`count` is its logical length, not its allocated capacity.
 
 LLVM passes the path as pointer/count and separate owned-string/error-code out
 pointers to `joyeer_read_file_abi`. The runtime returns a stable C ABI error
@@ -221,22 +259,60 @@ The native path is an MVP, not the final zero-cost implementation:
 - all four parameter effects are accepted; `consuming` supports owning locals,
   consuming parameters, temporaries, and field/subscript projections, while
   `initializing` supports whole mutable local/forwarded storage. Call-site
-  and argument-evaluation exclusivity cover the v0.1 non-escaping projection
-  surface;
+  and argument-evaluation exclusivity traverse the supported expression
+  surface; [type-checking](type-checking.md#8-known-correctness-gaps) and
+  [flow-analysis precision limits](semantic-analysis.md#precision-limits)
+  remain documented separately;
 - allocation balance covers runtime-managed string/collection allocations,
   not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an
   aligned payload buffer;
-- the Windows backend uses LLVM's per-module default optimization pipelines;
+- all platforms use LLVM's per-module default optimization pipelines;
   no Joyeer-specific pass pipeline or LTO policy is configured;
 - the textual emitter can generate source/function/instruction line tables or
   full lexical-scope/variable/type metadata with DWARF 4 or CodeView module
   flags; compiler-generated cleanup/plumbing is suppressed from line rows;
+- aggregate debug metadata currently supplies names and sizes with empty
+  member lists, not field/payload debugger structure or optimized-value
+  location tracking;
 - `print` supports primitive and string values, not arbitrary aggregates;
 - file input is synchronous and whole-file only; streaming, writing, and
-  metadata are not provided;
+  metadata are not provided.
+
+Conditional evaluation, guarded payload comparisons, prepared-operand cleanup,
+and one-time stack allocation are covered by native regressions at O0 and O2.
+See the [IR invariants](ir.md#7-evaluation-and-storage-invariants) and remaining
+structural verifier limitations.
+
 These gaps must be addressed in Joyeer IR, LLVM lowering, or the native runtime
 without creating a second execution pipeline.
+
+### Native ABI hardening gaps
+
+The following failure paths were identified from source and SDK contracts;
+they are separate from the reproduced Unicode-path and duplicate-key issues:
+
+- Object output checks stream errors before closing and returns without
+  clearing an observed error. LLVM 22.1.8's `raw_fd_ostream` can then terminate
+  through its fatal-error destructor path instead of returning `FILE_ERROR`.
+  Close-time failures also need explicit handling.
+- Linux ELF argument/Clang Driver preparation occurs outside the exception
+  guard used by the later linking call. The whole exported operation needs
+  exception translation.
+- The current IR parser path expects an accessible trailing NUL even though
+  the C options describe a pointer/length pair. The internal `std::string`
+  caller satisfies this; arbitrary C buffers need a defensive terminated
+  copy inside the backend rather than an undocumented extra-byte requirement.
+- Invalid C-ABI optimization values currently fall back to O2 instead of
+  producing `INVALID_ARGUMENT`.
+- Some unrecoverable LLD paths terminate the process; callbacks and fatal
+  failures must not be described as universally recoverable status returns.
+
+The existing C ABI smoke test covers version/platform queries and invalid
+zero-initialized options. Successful object emission, malformed IR, output
+failures, structure-size boundaries, and callback contracts need dedicated
+coverage. Disk exhaustion and Linux exception paths were not exercised by
+the Windows review.
 
 ---
 

@@ -155,7 +155,10 @@ private:
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
             case syntax::Kind::binaryExpr: {
                 const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
-                return analyzeExpression(binary->left) || analyzeExpression(binary->right);
+                if (analyzeExpression(binary->left)) return true;
+                const auto rightTerminates = analyzeExpression(binary->right);
+                return (binary->op == nullptr || binary->op->kind != andAnd) &&
+                        rightTerminates;
             }
             case syntax::Kind::assignmentExpr: {
                 const auto assignment =
@@ -242,15 +245,26 @@ private:
 
 struct InitializationState {
     std::unordered_set<semantic::SymbolId> initialized;
+    std::unordered_set<semantic::SymbolId> possiblyInitialized;
     std::unordered_set<semantic::SymbolId> consumed;
+    struct Projection {
+        std::optional<semantic::SymbolId> field;
+        // A binding identifies its current value only until a write or scope exit.
+        std::optional<semantic::SymbolId> indexBinding;
+        std::optional<std::string> indexLiteral;
+
+        bool operator==(const Projection& other) const = default;
+    };
     struct ProjectionPath {
         semantic::SymbolId root = semantic::invalidSymbolId;
-        std::vector<std::optional<semantic::SymbolId>> projections;
+        std::vector<Projection> projections;
 
         bool operator==(const ProjectionPath& other) const = default;
     };
     std::vector<ProjectionPath> consumedProjections;
     bool reachable = true;
+
+    bool operator==(const InitializationState& other) const = default;
 };
 
 class InitializationBuilder {
@@ -275,8 +289,10 @@ private:
     std::vector<Diagnostic> diagnostics;
     std::unordered_set<semantic::SymbolId> tracked;
     std::unordered_set<semantic::SymbolId> initializingParameters;
+    std::vector<InitializationState::ProjectionPath*> activePaths;
 
     void analyzeFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        assert(activePaths.empty());
         tracked.clear();
         initializingParameters.clear();
         InitializationState state;
@@ -288,6 +304,7 @@ private:
                 initializingParameters.insert(*symbol);
             } else {
                 state.initialized.insert(*symbol);
+                state.possiblyInitialized.insert(*symbol);
             }
         }
         analyzeBlock(declaration->body, state);
@@ -312,9 +329,7 @@ private:
                 analyzeExpression(declaration->initializer, state);
                 if (state.reachable && declaration->initializer != nullptr &&
                     symbol.has_value()) {
-                    state.initialized.insert(*symbol);
-                    state.consumed.erase(*symbol);
-                    clearConsumedProjections(*symbol, state);
+                    markInitialized({ *symbol, {} }, state);
                 }
                 continue;
             }
@@ -331,58 +346,31 @@ private:
             }
         }
         for (const auto symbol : locals) {
-            state.initialized.erase(symbol);
-            state.consumed.erase(symbol);
-            clearConsumedProjections(symbol, state);
+            forgetBinding(symbol, state);
         }
     }
 
     void analyzeWhile(
             const syntax::WhileStmtSyntax::Ptr& statement,
             InitializationState& state) {
+        auto conditionEntry = state;
+        for (;;) {
+            const auto diagnosticCount = diagnostics.size();
+            auto backEdge = conditionEntry;
+            analyzeExpression(statement->condition, backEdge);
+            if (backEdge.reachable) analyzeBlock(statement->body, backEdge);
+            diagnostics.resize(diagnosticCount);
+
+            // Retain the zero-iteration path and monotonically join every back-edge.
+            auto nextEntry = merge({ conditionEntry, std::move(backEdge) });
+            if (nextEntry == conditionEntry) break;
+            conditionEntry = std::move(nextEntry);
+        }
+        state = std::move(conditionEntry);
         analyzeExpression(statement->condition, state);
         if (!state.reachable) return;
-        const auto afterCondition = state;
-        auto bodyState = afterCondition;
+        auto bodyState = state;
         analyzeBlock(statement->body, bodyState);
-        if (bodyState.reachable) {
-            for (const auto symbol : afterCondition.initialized) {
-                if (!bodyState.initialized.contains(symbol) &&
-                    bodyState.consumed.contains(symbol)) {
-                    const auto* declaration = model->semanticModel()->symbol(symbol);
-                    diagnostics.push_back(Diagnostic {
-                        DiagnosticId::useAfterConsume,
-                        Severity::error,
-                        statement->span,
-                        "binding '" +
-                                (declaration == nullptr
-                                        ? std::string()
-                                        : declaration->name) +
-                                "' may already be consumed on the next loop iteration",
-                            "reinitialize the binding before the loop back-edge",
-                    });
-                }
-            }
-            for (const auto& projection : bodyState.consumedProjections) {
-                if (std::find(
-                            afterCondition.consumedProjections.begin(),
-                            afterCondition.consumedProjections.end(),
-                            projection) != afterCondition.consumedProjections.end()) {
-                    continue;
-                }
-                const auto* declaration = model->semanticModel()->symbol(projection.root);
-                diagnostics.push_back(Diagnostic {
-                    DiagnosticId::useAfterConsume,
-                    Severity::error,
-                    statement->span,
-                    "part of binding '" +
-                            (declaration == nullptr ? std::string() : declaration->name) +
-                            "' may already be consumed on the next loop iteration",
-                    "reinitialize the consumed projection before the loop back-edge",
-                });
-            }
-        }
-        state = afterCondition;
     }
 
     void analyzeExpression(
@@ -410,7 +398,7 @@ private:
                 break;
             case syntax::Kind::binaryExpr:
                 analyzeBinary(std::static_pointer_cast<syntax::BinaryExprSyntax>(expression), state);
-                break;
+                return;
             case syntax::Kind::assignmentExpr:
                 analyzeAssignment(
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression),
@@ -418,7 +406,8 @@ private:
                 break;
             case syntax::Kind::memberExpr:
                 if (storagePath(expression).has_value()) {
-                    analyzeStorageRead(expression, state);
+                    analyzeStorageOperands(expression, state);
+                    if (state.reachable) analyzeStorageRead(expression, state);
                 } else {
                     analyzeExpression(
                             std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
@@ -432,7 +421,9 @@ private:
                 const auto* callableSymbol = target.has_value()
                         ? model->semanticModel()->symbol(*target)
                         : nullptr;
-                for (size_t index = 0; index < call->arguments.size(); ++index) {
+                std::vector<semantic::SymbolId> initializedArguments;
+                std::vector<semantic::SymbolId> mutatedArguments;
+                for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
                     const auto effect = callableSymbol != nullptr &&
                                         callableSymbol->callable.has_value() &&
@@ -442,9 +433,29 @@ private:
                     if (effect == syntax::AccessEffect::consuming) {
                         analyzeConsume(argument->value, state);
                     } else if (effect == syntax::AccessEffect::initializing) {
-                        analyzeInitialize(argument->value, state);
+                        const auto symbol = analyzeInitialize(argument->value, state);
+                        if (symbol.has_value()) initializedArguments.push_back(*symbol);
                     } else {
                         analyzeExpression(argument->value, state);
+                        if (effect == syntax::AccessEffect::inout) {
+                            const auto path = storagePath(argument->value);
+                            if (path.has_value()) mutatedArguments.push_back(path->root);
+                        }
+                    }
+                }
+                if (state.reachable &&
+                    model->typeOf(expression) != model->types().neverType()) {
+                    if (callableSymbol != nullptr && callableSymbol->isMutable) {
+                        const auto receiver = storagePath(call->callee);
+                        if (receiver.has_value()) {
+                            invalidateIndexIdentity(receiver->root, state);
+                        }
+                    }
+                    for (const auto symbol : mutatedArguments) {
+                        invalidateIndexIdentity(symbol, state);
+                    }
+                    for (const auto symbol : initializedArguments) {
+                        markInitialized({ symbol, {} }, state);
                     }
                 }
                 break;
@@ -452,11 +463,12 @@ private:
             case syntax::Kind::subscriptExpr: {
                 const auto subscript =
                         std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
-                analyzeExpression(subscript->index, state);
                 if (storagePath(expression).has_value()) {
-                    analyzeStorageRead(expression, state);
+                    analyzeStorageOperands(expression, state);
+                    if (state.reachable) analyzeStorageRead(expression, state);
                 } else {
                     analyzeExpression(subscript->base, state);
+                    analyzeExpression(subscript->index, state);
                 }
                 break;
             }
@@ -521,17 +533,20 @@ private:
             const syntax::ExprPtr& expression,
             InitializationState& state) {
         if (expression == nullptr || !state.reachable) return;
-        const auto path = storagePath(expression);
+        auto path = storagePath(expression);
         if (!path.has_value()) {
             analyzeExpression(expression, state);
             return;
         }
-        if (!tracked.contains(path->root) ||
-            !analyzeStorageRead(expression, state)) {
-            return;
-        }
+        activePaths.push_back(&*path);
+        analyzeStorageOperands(expression, state);
+        activePaths.pop_back();
+        if (!state.reachable || !tracked.contains(path->root)) return;
+        analyzeStorageRead(expression, state);
+        invalidateIndexIdentity(path->root, state);
         if (path->projections.empty()) {
             state.initialized.erase(path->root);
+            state.possiblyInitialized.erase(path->root);
             state.consumed.insert(path->root);
             clearConsumedProjections(path->root, state);
         } else {
@@ -539,12 +554,17 @@ private:
         }
     }
 
-    void analyzeInitialize(
+    std::optional<semantic::SymbolId> analyzeInitialize(
             const syntax::ExprPtr& expression,
             InitializationState& state) {
+        if (expression == nullptr || !state.reachable) return std::nullopt;
         const auto symbol = directlyAssignedSymbol(expression);
-        if (!symbol.has_value() || !tracked.contains(*symbol)) return;
-        if (state.initialized.contains(*symbol)) {
+        if (!symbol.has_value()) {
+            analyzeExpression(expression, state);
+            return std::nullopt;
+        }
+        if (!tracked.contains(*symbol)) return std::nullopt;
+        if (state.possiblyInitialized.contains(*symbol)) {
             const auto* declaration = model->semanticModel()->symbol(*symbol);
             diagnostics.push_back(Diagnostic {
                 DiagnosticId::initializingInitializedStorage,
@@ -555,11 +575,8 @@ private:
                         "' is already initialized",
                     "pass uninitialized storage, or consume the old value before initializing it",
             });
-            return;
         }
-        state.initialized.insert(*symbol);
-        state.consumed.erase(*symbol);
-        clearConsumedProjections(*symbol, state);
+        return symbol;
     }
 
     void reportUninitializedParameters(
@@ -598,9 +615,11 @@ private:
     void analyzeAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             InitializationState& state) {
-        const auto assigned = storagePath(expression->target);
+        auto assigned = storagePath(expression->target);
+        if (assigned.has_value()) activePaths.push_back(&*assigned);
         analyzeAssignmentTarget(expression->target, state);
         analyzeExpression(expression->value, state);
+        if (assigned.has_value()) activePaths.pop_back();
         if (state.reachable && assigned.has_value() && tracked.contains(assigned->root)) {
             markInitialized(*assigned, state);
         }
@@ -610,32 +629,46 @@ private:
             const syntax::ExprPtr& target,
             InitializationState& state) {
         if (target == nullptr || !state.reachable) return;
-        switch (target->kind) {
-            case syntax::Kind::nameExpr:
-                return;
+        const auto path = storagePath(target);
+        if (!path.has_value()) {
+            analyzeExpression(target, state);
+            return;
+        }
+        analyzeStorageOperands(target, state);
+        if (state.reachable && !path->projections.empty()) {
+            analyzeProjectionTarget(target, state);
+        }
+    }
+
+    void analyzeStorageOperands(
+            const syntax::ExprPtr& expression,
+            InitializationState& state) {
+        if (expression == nullptr || !state.reachable) return;
+        switch (expression->kind) {
             case syntax::Kind::parenthesizedExpr:
-                analyzeAssignmentTarget(
-                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression,
+                analyzeStorageOperands(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression,
                         state);
-                return;
+                break;
             case syntax::Kind::accessExpr:
-                analyzeAssignmentTarget(
-                        std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand,
+                analyzeStorageOperands(
+                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
                         state);
-                return;
+                break;
             case syntax::Kind::memberExpr:
-                analyzeProjectionTarget(target, state);
-                return;
+                analyzeStorageOperands(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
+                        state);
+                break;
             case syntax::Kind::subscriptExpr: {
                 const auto subscript =
-                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
+                        std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
+                analyzeStorageOperands(subscript->base, state);
                 analyzeExpression(subscript->index, state);
-                analyzeProjectionTarget(target, state);
-                return;
+                break;
             }
             default:
-                analyzeExpression(target, state);
-                return;
+                break;
         }
     }
 
@@ -683,9 +716,7 @@ private:
             initializePattern(arm->pattern, armState, bindings);
             analyzeExpression(arm->body, armState);
             for (const auto symbol : bindings) {
-                armState.initialized.erase(symbol);
-                armState.consumed.erase(symbol);
-                clearConsumedProjections(symbol, armState);
+                forgetBinding(symbol, armState);
             }
             armStates.push_back(std::move(armState));
         }
@@ -701,9 +732,7 @@ private:
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (symbol.has_value()) {
                 tracked.insert(*symbol);
-                state.initialized.insert(*symbol);
-                state.consumed.erase(*symbol);
-                clearConsumedProjections(*symbol, state);
+                markInitialized({ *symbol, {} }, state);
                 bindings.push_back(*symbol);
             }
             return;
@@ -742,7 +771,7 @@ private:
                     : nullptr;
             if (semanticMember != nullptr &&
                 semanticMember->kind == semantic::SymbolKind::structureField) {
-                path->projections.push_back(*symbol);
+                path->projections.push_back({ *symbol, std::nullopt, std::nullopt });
             }
             return path;
         }
@@ -751,10 +780,38 @@ private:
                     std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
             auto path = storagePath(subscript->base);
             if (!path.has_value()) return std::nullopt;
-            path->projections.push_back(std::nullopt);
+            path->projections.push_back(indexProjection(subscript->index));
             return path;
         }
         return std::nullopt;
+    }
+
+    InitializationState::Projection indexProjection(
+            const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return {};
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return indexProjection(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::literalExpr) {
+            const auto literal =
+                    std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal;
+            if (literal != nullptr) {
+                return { std::nullopt, std::nullopt,
+                         std::to_string(literal->kind) + ":" + literal->rawValue };
+            }
+        }
+        if (expression->kind == syntax::Kind::nameExpr) {
+            const auto symbol = model->referencedSymbol(expression);
+            const auto* declaration = symbol.has_value()
+                    ? model->semanticModel()->symbol(*symbol)
+                    : nullptr;
+            if (declaration != nullptr &&
+                (tracked.contains(*symbol) || !declaration->isMutable)) {
+                return { std::nullopt, *symbol, std::nullopt };
+            }
+        }
+        return {};
     }
 
     bool pathsOverlap(
@@ -763,11 +820,10 @@ private:
         if (left.root != right.root) return false;
         const auto count = std::min(left.projections.size(), right.projections.size());
         for (size_t index = 0; index < count; ++index) {
-            if (!left.projections[index].has_value() ||
-                !right.projections[index].has_value()) {
-                return true;
-            }
-            if (*left.projections[index] != *right.projections[index]) return false;
+            const auto& leftField = left.projections[index].field;
+            const auto& rightField = right.projections[index].field;
+            if (leftField.has_value() && rightField.has_value() &&
+                leftField != rightField) return false;
         }
         return true;
     }
@@ -780,11 +836,11 @@ private:
             return false;
         }
         for (size_t index = 0; index < prefix.projections.size(); ++index) {
-            if (!prefix.projections[index].has_value() ||
-                !value.projections[index].has_value()) {
-                continue;
-            }
-            if (*prefix.projections[index] != *value.projections[index]) return false;
+            const auto& projection = prefix.projections[index];
+            if ((!projection.field.has_value() &&
+                 !projection.indexBinding.has_value() &&
+                 !projection.indexLiteral.has_value()) ||
+                projection != value.projections[index]) return false;
         }
         return true;
     }
@@ -842,7 +898,8 @@ private:
                 state.consumedProjections.begin(),
                 state.consumedProjections.end(),
                 [&](const auto& candidate) {
-                    return candidate != *path && pathIsPrefix(candidate, *path);
+                    return candidate.projections.size() < path->projections.size() &&
+                            pathsOverlap(candidate, *path);
                 });
         if (ancestor != state.consumedProjections.end()) {
             analyzeStorageRead(expression, state);
@@ -855,7 +912,9 @@ private:
         const auto ancestor = std::find_if(
                 state.consumedProjections.begin(),
                 state.consumedProjections.end(),
-                [&](const auto& candidate) { return pathIsPrefix(candidate, path); });
+                [&](const auto& candidate) {
+                    return candidate == path || pathIsPrefix(candidate, path);
+                });
         if (ancestor != state.consumedProjections.end()) return;
         std::erase_if(state.consumedProjections, [&](const auto& candidate) {
             return pathIsPrefix(path, candidate);
@@ -866,15 +925,40 @@ private:
     void markInitialized(
             const InitializationState::ProjectionPath& path,
             InitializationState& state) {
-        state.initialized.insert(path.root);
-        state.consumed.erase(path.root);
+        invalidateIndexIdentity(path.root, state);
         if (path.projections.empty()) {
+            state.initialized.insert(path.root);
+            state.possiblyInitialized.insert(path.root);
+            state.consumed.erase(path.root);
             clearConsumedProjections(path.root, state);
             return;
         }
         std::erase_if(state.consumedProjections, [&](const auto& candidate) {
             return pathIsPrefix(path, candidate);
         });
+    }
+
+    void invalidateIndexIdentity(
+            semantic::SymbolId symbol,
+            InitializationState& state) {
+        const auto invalidate = [symbol](auto& path) {
+            for (auto& projection : path.projections) {
+                if (projection.indexBinding == symbol) projection.indexBinding.reset();
+            }
+        };
+        for (auto& path : state.consumedProjections) invalidate(path);
+        // Captured assignment destinations must not acquire a later index value's identity.
+        for (auto* path : activePaths) invalidate(*path);
+    }
+
+    void forgetBinding(
+            semantic::SymbolId symbol,
+            InitializationState& state) {
+        invalidateIndexIdentity(symbol, state);
+        state.initialized.erase(symbol);
+        state.possiblyInitialized.erase(symbol);
+        state.consumed.erase(symbol);
+        clearConsumedProjections(symbol, state);
     }
 
     void clearConsumedProjections(
@@ -902,6 +986,8 @@ private:
                     ++symbol;
                 }
             }
+            result.possiblyInitialized.insert(
+                    path.possiblyInitialized.begin(), path.possiblyInitialized.end());
             result.consumed.insert(path.consumed.begin(), path.consumed.end());
             for (const auto& projection : path.consumedProjections) {
                 if (std::find(

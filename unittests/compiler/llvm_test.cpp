@@ -447,6 +447,96 @@ return text
             std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, GuardsInactivePayloadTestsWithTagBranches) {
+    ASSERT_NO_FATAL_FAILURE(emit(R"JOYEER(
+enum Value { Number(Int, Int), Text(String) }
+enum Nested { Wrap(Value), Empty }
+func classify(value: Nested): Int {
+return match value {
+.Wrap(.Text("x")) => 1,
+.Wrap(.Text(_)) => 2,
+.Wrap(.Number(_, _)) => 3,
+.Empty => 4,
+}
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_EQ(result.text.find(" = and i1 "), std::string::npos);
+    size_t payloadBranches = 0;
+    std::istringstream lines(result.text);
+    std::string line;
+    std::string label;
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == ':') label = line;
+        if (line.find("br i1 ") != std::string::npos &&
+            line.find("label %pattern.payload.") != std::string::npos) {
+            ++payloadBranches;
+        }
+        if (line.find("call i1 @joyeer_string_equal_abi") != std::string::npos) {
+            EXPECT_TRUE(label.starts_with("pattern.payload.")) << line;
+        }
+    }
+    EXPECT_GE(payloadBranches, 2u);
+}
+
+TEST_F(LLVMBackendTest, HoistsLocalAndScratchAllocationsButNotDebugDeclarations) {
+    ASSERT_NO_FATAL_FAILURE(emit(
+            R"JOYEER(func main() {
+var index = 0
+while index < 2 {
+let text = "a" + "b"
+let values = [text]
+let lookup = ["key": values[0]]
+let optional: String? = .Some(lookup["key"])
+print(value: match optional { .Some(value) => value, .None => "" })
+index = index + values.count
+}
+}
+)JOYEER",
+            true,
+            joyeer::llvmbackend::EmitOptions {
+                true, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0, true,
+            }));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    std::istringstream lines(result.text);
+    std::string line;
+    std::string label;
+    size_t allocations = 0;
+    size_t debugDeclarations = 0;
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == ':') label = line;
+        if (line.find(" = alloca ") != std::string::npos) {
+            ++allocations;
+            EXPECT_EQ(label, "entry:") << line;
+        }
+        if (line.find("call void @llvm.dbg.declare") != std::string::npos) {
+            ++debugDeclarations;
+            EXPECT_NE(label, "entry:") << line;
+        }
+    }
+    EXPECT_GT(allocations, 6u);
+    EXPECT_GT(debugDeclarations, 0u);
+}
+
+TEST_F(LLVMBackendTest, SeparatesConcreteBuiltinEnumCaseIdentities) {
+    ASSERT_NO_FATAL_FAILURE(emit(R"JOYEER(func main() {
+let integer: Int? = .Some(42)
+let text: String? = .Some("hello")
+let first: Result<Int, String> = .Ok(7)
+let second: Result<String, Int> = .Err(9)
+print(value: match integer { .Some(value) => value, .None => 0 })
+print(value: match text { .Some(value) => value, .None => "" })
+print(value: match first { .Ok(value) => value, .Err(_) => 0 })
+print(value: match second { .Ok(_) => 0, .Err(code) => code })
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(result.hasEntryPoint);
+    EXPECT_NE(result.text.find("define void @joyeer_fn_"), std::string::npos);
+    EXPECT_NE(result.text.find("define void @joyeer_main()"), std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_print_int"), std::string::npos);
+}
+
         TEST_F(LLVMBackendTest, EmitsTypedReadFileResultFromLayoutIndependentABI) {
             emit(R"JOYEER(func load(path: String): Result<String, IOError> {
         return readFile(path: path)

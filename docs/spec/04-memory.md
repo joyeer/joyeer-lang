@@ -220,20 +220,19 @@ Checked statically by the compiler. Examples:
 
 ```joyeer
 var x = 10
-let a = x            // ✅ borrowing projection
-let b = x            // ✅ another borrowing projection coexists
-increment(n: &x)     // ❌ error: cannot establish inout projection while
-                     //    borrowing projections 'a' and 'b' are active
+let a = x            // independent value copy, not an outstanding borrow
+let b = x            // another independent copy
+increment(n: &x)     // allowed: a and b do not alias x
 ```
 
 ```joyeer
 var x = 10
 increment(n: &x)     // ✅ inout for the duration of the call
-let a = x            // ✅ inout ended; borrowing now allowed
+let a = x            // inout ended; copying x is allowed
 ```
 
 ```joyeer
-func add(dst: inout Int, src: Int) { &dst += src }
+func add(dst: inout Int, src: Int) { &dst = dst + src }
 
 var n = 5
 add(dst: &n, src: n)          // ❌ error: 'n' has overlapping inout + borrowing projections
@@ -538,4 +537,3 @@ A function that never returns normally has result type `Never` (§2.9); a
 result type and may stand on the right of `??` as an early-exit guard (§8.5).
 
 ---
-

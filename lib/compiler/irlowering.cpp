@@ -240,10 +240,10 @@ private:
         scopes.back().cleanups.push_back(Cleanup { CleanupKind::temporary, value });
     }
 
-    std::optional<ir::Value> acquireOwned(ir::Value value, SourceSpan span) {
+    std::optional<ir::Value> prepareOwned(ir::Value value, SourceSpan span) {
         if (!requiresDestroy(value.type)) return value;
         if (ownershipOf(value) == ValueOwnership::owned) {
-            if (!liveOwnedTemporaries.erase(value.id)) {
+            if (!liveOwnedTemporaries.contains(value.id)) {
                 report(
                         DiagnosticId::ownershipViolation,
                         span,
@@ -252,14 +252,40 @@ private:
             }
             return value;
         }
-        auto copy = emitValue(
+        return emitValue(
                 ir::Opcode::copyValue,
                 value.type,
                 ir::ValueCategory::value,
                 { value.id },
                 span);
-        liveOwnedTemporaries.erase(copy.id);
-        return copy;
+    }
+
+    std::optional<ir::Value> acquireOwned(ir::Value value, SourceSpan span) {
+        const auto prepared = prepareOwned(value, span);
+        if (prepared.has_value()) liveOwnedTemporaries.erase(prepared->id);
+        return prepared;
+    }
+
+    std::optional<ir::Value> prepareOperand(
+            const syntax::ExprPtr& expression,
+            typing::TypeId destination) {
+        auto value = lowerExpression(expression);
+        if (!value.has_value()) return std::nullopt;
+        value = coerce(*value, destination, expression->span);
+        if (!value.has_value()) return std::nullopt;
+        return prepareOwned(*value, expression->span);
+    }
+
+    bool transferOperands(
+            ir::Instruction& instruction,
+            const std::vector<ir::Value>& operands,
+            SourceSpan span) {
+        for (const auto& operand : operands) {
+            const auto value = acquireOwned(operand, span);
+            if (!value.has_value()) return false;
+            instruction.operands.push_back(value->id);
+        }
+        return true;
     }
 
     void emitRawStore(
@@ -856,6 +882,8 @@ private:
         }
         auto initializer = lowerExpression(declaration->initializer);
         if (!initializer.has_value()) return;
+        initializer = coerce(*initializer, *type, declaration->initializer->span);
+        if (!initializer.has_value()) return;
         if (requiresDestroy(*type)) {
             initializer = acquireOwned(*initializer, declaration->initializer->span);
             if (!initializer.has_value()) return;
@@ -1022,7 +1050,11 @@ private:
     }
 
     std::optional<ir::Value> lowerBinary(const syntax::BinaryExprSyntax::Ptr& expression) {
+        if (expression->op != nullptr && expression->op->kind == andAnd) {
+            return lowerLogicalAnd(expression);
+        }
         const auto left = lowerExpression(expression->left);
+        if (!left.has_value()) return std::nullopt;
         const auto right = lowerExpression(expression->right);
         const auto type = model->typeOf(expression);
         if (!left.has_value() || !right.has_value() || !type.has_value() ||
@@ -1045,6 +1077,57 @@ private:
                 expression->span);
     }
 
+    std::optional<ir::Value> lowerLogicalAnd(
+            const syntax::BinaryExprSyntax::Ptr& expression) {
+        pushScope();
+        const auto left = lowerExpression(expression->left);
+        if (currentBlockTerminated()) {
+            discardScopeAfterTerminator();
+            return std::nullopt;
+        }
+        cleanupAndPopScope(expression->left->span);
+        if (!left.has_value()) return std::nullopt;
+
+        const auto resultAddress = emitValue(
+                ir::Opcode::stackAllocate,
+                model->types().boolType(),
+                ir::ValueCategory::address,
+                {},
+                expression->span,
+                std::nullopt,
+                true);
+        emitRawStore(*left, resultAddress, expression->left->span, std::nullopt, true);
+        const auto rightBlock = createBlock("and.rhs");
+        const auto mergeBlock = createBlock("and.merge");
+        emitConditionalBranch(*left, rightBlock, mergeBlock, expression->left->span);
+
+        switchToBlock(rightBlock);
+        pushScope();
+        const auto right = lowerExpression(expression->right);
+        if (currentBlockTerminated()) {
+            discardScopeAfterTerminator();
+        } else if (right.has_value()) {
+            emitRawStore(*right, resultAddress, expression->right->span, std::nullopt, true);
+            cleanupAndPopScope(expression->right->span);
+            emitBranch(mergeBlock, expression->span);
+        } else {
+            cleanupAndPopScope(expression->right->span);
+            report(
+                    DiagnosticId::missingType,
+                    expression->right->span,
+                    "logical-and right operand did not lower a Boolean value");
+            emit(makeInstruction(ir::Opcode::unreachable, expression->right->span, true));
+        }
+
+        switchToBlock(mergeBlock);
+        return emitValue(
+                ir::Opcode::load,
+                model->types().boolType(),
+                ir::ValueCategory::value,
+                { resultAddress.id },
+                expression->span);
+    }
+
     std::optional<ir::Opcode> binaryOpcode(TokenKind token) const {
         switch (token) {
             case plus: return ir::Opcode::add;
@@ -1056,7 +1139,6 @@ private:
             case greaterEqual: return ir::Opcode::greaterEqual;
             case equalEqual: return ir::Opcode::equal;
             case notEqual: return ir::Opcode::notEqual;
-            case andAnd: return ir::Opcode::logicalAnd;
             default: return std::nullopt;
         }
     }
@@ -1101,20 +1183,13 @@ private:
         }
 
         const auto dictionary = lowerAddress(subscript->base);
-        auto key = lowerExpression(subscript->index);
-        auto value = lowerExpression(expression->value);
-        if (!dictionary.has_value() || !key.has_value() || !value.has_value()) {
-            return true;
-        }
-        key = coerce(*key, dictionaryType->arguments[0], subscript->index->span);
-        value = coerce(*value, dictionaryType->arguments[1], expression->value->span);
-        if (!key.has_value() || !value.has_value()) return true;
-        if (requiresDestroy(key->type)) {
-            key = acquireOwned(*key, subscript->index->span);
-        }
-        if (requiresDestroy(value->type)) {
-            value = acquireOwned(*value, expression->value->span);
-        }
+        if (!dictionary.has_value()) return true;
+        auto key = prepareOperand(subscript->index, dictionaryType->arguments[0]);
+        if (!key.has_value()) return true;
+        auto value = prepareOperand(expression->value, dictionaryType->arguments[1]);
+        if (!value.has_value()) return true;
+        key = acquireOwned(*key, subscript->index->span);
+        value = acquireOwned(*value, expression->value->span);
         if (!key.has_value() || !value.has_value()) return true;
 
         auto instruction = makeInstruction(ir::Opcode::dictionarySet, expression->span);
@@ -1294,17 +1369,13 @@ private:
 
         auto instruction = makeInstruction(ir::Opcode::constructArray, expression->span);
         instruction.result = makeValue(*type, ir::ValueCategory::value);
+        std::vector<ir::Value> elements;
         for (const auto& element : expression->elements) {
-            const auto value = lowerExpression(element);
+            const auto value = prepareOperand(element, arrayType->arguments[0]);
             if (!value.has_value()) return std::nullopt;
-            auto converted = coerce(*value, arrayType->arguments[0], element->span);
-            if (!converted.has_value()) return std::nullopt;
-            if (requiresDestroy(arrayType->arguments[0])) {
-                converted = acquireOwned(*converted, element->span);
-                if (!converted.has_value()) return std::nullopt;
-            }
-            instruction.operands.push_back(converted->id);
+            elements.push_back(*value);
         }
+        if (!transferOperands(instruction, elements, expression->span)) return std::nullopt;
         const auto result = *instruction.result;
         emit(std::move(instruction));
         recordValue(result, ValueOwnership::owned);
@@ -1330,33 +1401,16 @@ private:
                 ir::Opcode::constructDictionary,
                 expression->span);
         instruction.result = makeValue(*type, ir::ValueCategory::value);
+        std::vector<ir::Value> entries;
         for (const auto& entry : expression->entries) {
-            const auto key = lowerExpression(entry->key);
-            const auto value = lowerExpression(entry->value);
-            if (!key.has_value() || !value.has_value()) return std::nullopt;
-                auto convertedKey = coerce(
-                    *key,
-                    dictionaryType->arguments[0],
-                    entry->key->span);
-            auto convertedValue = coerce(
-                    *value,
-                    dictionaryType->arguments[1],
-                    entry->value->span);
-            if (!convertedKey.has_value() || !convertedValue.has_value()) {
-                return std::nullopt;
-            }
-            if (requiresDestroy(dictionaryType->arguments[0])) {
-                convertedKey = acquireOwned(*convertedKey, entry->key->span);
-            }
-            if (requiresDestroy(dictionaryType->arguments[1])) {
-                convertedValue = acquireOwned(*convertedValue, entry->value->span);
-            }
-            if (!convertedKey.has_value() || !convertedValue.has_value()) {
-                return std::nullopt;
-            }
-            instruction.operands.push_back(convertedKey->id);
-            instruction.operands.push_back(convertedValue->id);
+            const auto key = prepareOperand(entry->key, dictionaryType->arguments[0]);
+            if (!key.has_value()) return std::nullopt;
+            entries.push_back(*key);
+            const auto value = prepareOperand(entry->value, dictionaryType->arguments[1]);
+            if (!value.has_value()) return std::nullopt;
+            entries.push_back(*value);
         }
+        if (!transferOperands(instruction, entries, expression->span)) return std::nullopt;
         const auto result = *instruction.result;
         emit(std::move(instruction));
         recordValue(result, ValueOwnership::owned);
@@ -1374,13 +1428,8 @@ private:
                     "contextual enum case has no typed target");
             return std::nullopt;
         }
-        std::vector<ir::Value> payloads;
-        for (const auto& argument : expression->arguments) {
-            const auto payload = lowerExpression(argument->value);
-            if (!payload.has_value()) return std::nullopt;
-            payloads.push_back(*payload);
-        }
-        return emitEnumConstruction(*type, *caseSymbol, payloads, expression->span);
+        return lowerEnumArguments(
+                *type, *caseSymbol, expression->arguments, expression->span);
     }
 
     std::optional<semantic::SymbolId> findEnumCase(
@@ -1400,26 +1449,27 @@ private:
                 : std::optional<semantic::SymbolId>(enumCase->symbol);
     }
 
+    const ir::EnumCaseDefinition* enumCaseDefinition(
+            typing::TypeId type,
+            semantic::SymbolId caseSymbol) const {
+        const auto enumeration = std::find_if(
+                module->enumerations.begin(),
+                module->enumerations.end(),
+                [type](const auto& candidate) { return candidate.type == type; });
+        if (enumeration == module->enumerations.end()) return nullptr;
+        const auto found = std::find_if(
+                enumeration->cases.begin(),
+                enumeration->cases.end(),
+                [caseSymbol](const auto& candidate) { return candidate.symbol == caseSymbol; });
+        return found == enumeration->cases.end() ? nullptr : &*found;
+    }
+
     std::optional<ir::Value> emitEnumConstruction(
             typing::TypeId type,
             semantic::SymbolId caseSymbol,
             const std::vector<ir::Value>& payloads,
             SourceSpan span) {
-        const auto enumeration = std::find_if(
-                module->enumerations.begin(),
-                module->enumerations.end(),
-                [type](const auto& candidate) { return candidate.type == type; });
-        const auto enumCase = enumeration == module->enumerations.end()
-                ? static_cast<const ir::EnumCaseDefinition*>(nullptr)
-                : [&]() -> const ir::EnumCaseDefinition* {
-                    const auto found = std::find_if(
-                            enumeration->cases.begin(),
-                            enumeration->cases.end(),
-                            [caseSymbol](const auto& candidate) {
-                                return candidate.symbol == caseSymbol;
-                            });
-                    return found == enumeration->cases.end() ? nullptr : &*found;
-                }();
+        const auto* enumCase = enumCaseDefinition(type, caseSymbol);
         if (enumCase == nullptr || enumCase->payloadTypes.size() != payloads.size()) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1443,6 +1493,29 @@ private:
         emit(std::move(instruction));
         recordValue(result, ValueOwnership::owned);
         return result;
+    }
+
+    std::optional<ir::Value> lowerEnumArguments(
+            typing::TypeId type,
+            semantic::SymbolId caseSymbol,
+            const std::vector<syntax::CallArgumentSyntax::Ptr>& arguments,
+            SourceSpan span) {
+        const auto* definition = enumCaseDefinition(type, caseSymbol);
+        if (definition == nullptr || definition->payloadTypes.size() != arguments.size()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    span,
+                    "enum construction has no matching concrete case definition");
+            return std::nullopt;
+        }
+        std::vector<ir::Value> payloads;
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const auto payload = prepareOperand(
+                    arguments[index]->value, definition->payloadTypes[index]);
+            if (!payload.has_value()) return std::nullopt;
+            payloads.push_back(*payload);
+        }
+        return emitEnumConstruction(type, caseSymbol, payloads, span);
     }
 
     std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
@@ -1734,6 +1807,14 @@ private:
         switchToBlock(headerBlock);
         pushScope();
         const auto condition = lowerExpression(statement->condition);
+        if (currentBlockTerminated()) {
+            discardScopeAfterTerminator();
+            switchToBlock(bodyBlock);
+            emit(makeInstruction(ir::Opcode::unreachable, statement->body->span, true));
+            switchToBlock(exitBlock);
+            emit(makeInstruction(ir::Opcode::unreachable, statement->span, true));
+            return;
+        }
         if (condition.has_value()) {
             cleanupAndPopScope(statement->condition->span);
             emitConditionalBranch(
@@ -1743,6 +1824,10 @@ private:
                     statement->condition->span);
         } else {
             cleanupAndPopScope(statement->condition->span);
+            report(
+                    DiagnosticId::missingType,
+                    statement->condition->span,
+                    "while condition did not lower a Boolean value");
             emit(makeInstruction(ir::Opcode::unreachable, statement->condition->span));
         }
 
@@ -1779,13 +1864,8 @@ private:
              targetSymbol->kind == semantic::SymbolKind::builtinEnumCase)) {
             const auto type = model->typeOf(expression);
             if (!type.has_value()) return std::nullopt;
-            std::vector<ir::Value> payloads;
-            for (const auto& argument : expression->arguments) {
-                const auto payload = lowerExpression(argument->value);
-                if (!payload.has_value()) return std::nullopt;
-                payloads.push_back(*payload);
-            }
-            return emitEnumConstruction(*type, *target, payloads, expression->span);
+            return lowerEnumArguments(
+                    *type, *target, expression->arguments, expression->span);
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
@@ -1806,6 +1886,7 @@ private:
         }
 
         std::vector<ir::ValueId> arguments;
+        std::vector<ir::Value> consumedArguments;
         const auto& callee = module->functions[functions.at(*target)];
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
             const auto& argument = expression->arguments[index];
@@ -1839,12 +1920,16 @@ private:
                 if (!value.has_value()) return std::nullopt;
             }
             if (consumesValue && requiresDestroy(value->type)) {
-                value = acquireOwned(*value, argument->span);
+                value = prepareOwned(*value, argument->span);
                 if (!value.has_value()) return std::nullopt;
+                consumedArguments.push_back(*value);
             }
             arguments.push_back(value->id);
         }
 
+        for (const auto& argument : consumedArguments) {
+            if (!acquireOwned(argument, expression->span).has_value()) return std::nullopt;
+        }
         auto instruction = makeInstruction(ir::Opcode::call, expression->span);
         instruction.operands = std::move(arguments);
         instruction.callee = functions.at(*target);
@@ -1971,7 +2056,7 @@ private:
                         return candidate.name == argument->label->rawValue;
                     });
             if (field == structure->fields.end()) continue;
-            const auto value = lowerExpression(argument->value);
+            const auto value = prepareOperand(argument->value, field->type);
             if (!value.has_value()) return std::nullopt;
             fieldValues[static_cast<size_t>(
                     std::distance(structure->fields.begin(), field))] = *value;
@@ -1995,7 +2080,8 @@ private:
             }
             const auto fieldDeclaration =
                     std::static_pointer_cast<syntax::StructFieldDeclSyntax>(declaration);
-            const auto value = lowerExpression(fieldDeclaration->initializer);
+            const auto value = prepareOperand(
+                    fieldDeclaration->initializer, structure->fields[index].type);
             if (!value.has_value()) {
                 report(
                         DiagnosticId::unsupportedSyntax,
@@ -2010,16 +2096,9 @@ private:
         instruction.result = makeValue(*type, ir::ValueCategory::value);
         instruction.symbol = structure->symbol;
         for (size_t index = 0; index < fieldValues.size(); ++index) {
-            auto converted = coerce(
-                *fieldValues[index],
-                structure->fields[index].type,
-                expression->span);
-            if (!converted.has_value()) return std::nullopt;
-            if (requiresDestroy(structure->fields[index].type)) {
-                converted = acquireOwned(*converted, expression->span);
-                if (!converted.has_value()) return std::nullopt;
-            }
-            instruction.operands.push_back(converted->id);
+            const auto value = acquireOwned(*fieldValues[index], expression->span);
+            if (!value.has_value()) return std::nullopt;
+            instruction.operands.push_back(value->id);
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
