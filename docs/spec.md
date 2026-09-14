@@ -3,10 +3,7 @@
 > **Status:** Draft v0.1-spec. This document indexes the broader language
 > design, not just the implemented JSON-parser milestone. **Syntax-only**
 > annotation marks describe proposed treatment, not current parser support;
-> see [the implementation scope](plan/v0.1.md). Removed syntax from earlier
-> implementations or drafts (including
-> `class`, `print(message: x)`, and positional/unlabeled calls) is listed in
-> §14.
+> see [the implementation scope](plan/v0.1.md).
 
 This specification is split into one file per chapter under
 [spec/](spec/). Section numbers (`§N`, `§N.M`) are stable across the split;
@@ -33,7 +30,7 @@ chapter file below.
 | 11 | Property-Test & Spec Annotations 🔬 | [spec/11-annotations.md](spec/11-annotations.md) |
 | 12 | Modules & Imports | [spec/12-modules.md](spec/12-modules.md) |
 | 13 | Naming Conventions | [spec/13-naming.md](spec/13-naming.md) |
-| 14 | Deprecated / Removed Legacy + Reserved for Future (§15) | [spec/14-legacy.md](spec/14-legacy.md) |
+| 15 | Reserved for Future | [spec/15-reserved.md](spec/15-reserved.md) |
 | 16 | Worked Examples | [spec/16-examples.md](spec/16-examples.md) |
 | 17 | Grammar Appendix (EBNF) | [spec/17-grammar.md](spec/17-grammar.md) |
 
@@ -54,9 +51,6 @@ chapter file below.
   `Result<String, IOError>` with stable categories and preserved platform
   codes (§8.2.1). Defined `String.utf8()` as an independent owned `[UInt8]`
   copy rather than an escaping zero-copy view (§2.1.1).
-- **2026-07-18** — Synchronized §14 with the native-only implementation:
-  `class` is reserved and rejected in v0.1; the retired parser/VM compatibility
-  behavior is no longer part of the implementation contract.
 - **2026-07-13** — Consolidated parser-facing grammar. Made enum construction
   and associated-value labels explicit, added labeled enum pattern payloads,
   and reconciled `return` as the same `Never`-typed expression in standalone,
@@ -108,9 +102,7 @@ chapter file below.
 - **2026-06-22b** — Editorial consistency pass. De-duplicated the
   call-site-label rules (canonical at §3.2.1, referenced from §5.6) and the
   `??` semantics (canonical at §8.5, referenced from §5.12). Removed the
-  duplicate nil-coalescing row from the §1.6 operator table. Clarified that
-  `class` is reserved but accepted-with-warning, not rejected (§15 ↔ §1.4 /
-  §14).
+  duplicate nil-coalescing row from the §1.6 operator table.
 - **2026-06-23** — Added §4.10 (Return values & ownership escape): the return
   value is the sole route by which ownership leaves a frame, since reference
   returns do not exist (§4.8); returning a binding is a move at its last use

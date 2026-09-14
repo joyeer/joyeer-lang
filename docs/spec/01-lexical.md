@@ -50,8 +50,8 @@ ordinary identifier/literal/punctuation tokens plus `match`, `where`,
 performs binding and exhaustiveness checks (§7).
 
 > `class` is **reserved ⏳ and rejected** by the current compiler; use
-> `struct` for aggregates. There is no accept-with-warning compatibility
-> path (§14). The other reserved words are also rejected in v0.1 (§15).
+> `struct` for aggregates. The other reserved words are also rejected in
+> v0.1 (§15).
 
 > `as` is a contextual keyword: in v0.1 it is used **only** for `import`
 > aliasing (§3.8). Its type-cast meaning (`x as T`) and the `is` type-test
