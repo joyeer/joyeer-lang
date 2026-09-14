@@ -37,7 +37,7 @@ an identifier.
 |----------|----------|
 | Bindings | `let`, `var` |
 | Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `yield` |
-| Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `typealias`, `import`, `as`, `indirect` |
+| Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `import`, `as`, `indirect` |
 | Access conventions | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self` |

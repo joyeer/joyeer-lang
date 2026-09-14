@@ -10,7 +10,6 @@ top_decl          ::= func_decl
                    |  enum_decl
                    |  extension_decl
                    |  binding
-                   |  typealias_decl
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
@@ -57,7 +56,6 @@ accessor          ::= 'borrowing'   block_with_yield
 
 block_with_yield  ::= '{' statement* 'yield' [ '&' ] expression statement* '}'
 
-typealias_decl    ::= 'typealias' identifier '=' type
 import_decl       ::= 'import' import_path [ 'as' identifier ]
 import_path       ::= identifier ( '.' identifier )*
 visibility        ::= 'public' | 'internal' | 'private'

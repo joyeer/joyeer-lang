@@ -133,17 +133,6 @@ User-defined generics will use `<T>`. They, along with constraints,
 associated types, and monomorphization, are reserved for a future version
 (§15).
 
-### 2.7 Type aliases
-
-```
-typealias_decl ::= 'typealias' identifier '=' type
-```
-
-```joyeer
-typealias Bytes = [UInt8]
-typealias IntMap = [String: Int]
-```
-
 ### 2.8 Type inference
 
 Local bindings infer their type from the initializer when not annotated:
