@@ -48,6 +48,9 @@ else()
                 lldELF
         )
 endif()
+target_link_libraries(JoyeerNativeBackend PRIVATE
+        lldCommon
+)
 set_target_properties(JoyeerNativeBackend PROPERTIES
         OUTPUT_NAME joyeer-backend
 )
