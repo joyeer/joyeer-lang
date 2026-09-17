@@ -13,6 +13,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
@@ -293,10 +294,90 @@ return if flag { add(left: left, right: right) } else { left * right }
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("define i64 @joyeer_fn_"), std::string::npos);
     EXPECT_NE(result.text.find("alloca i64"), std::string::npos);
-    EXPECT_NE(result.text.find("call i64 @joyeer_checked_add_int"), std::string::npos);
-    EXPECT_NE(result.text.find("call i64 @joyeer_checked_mul_int"), std::string::npos);
+    EXPECT_NE(result.text.find("call { i64, i1 } @llvm.sadd.with.overflow.i64"),
+              std::string::npos);
+    EXPECT_NE(result.text.find("call { i64, i1 } @llvm.smul.with.overflow.i64"),
+              std::string::npos);
     EXPECT_NE(result.text.find("br i1 %"), std::string::npos);
     EXPECT_NE(result.text.find("ret i64"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, EmitsCheckedArithmeticIntrinsicsAtEveryOptimizationLevel) {
+    for (const auto level : { joyeer::OptimizationLevel::O0, joyeer::OptimizationLevel::O1,
+                             joyeer::OptimizationLevel::O2, joyeer::OptimizationLevel::O3 }) {
+        SCOPED_TRACE(static_cast<int>(level));
+        joyeer::llvmbackend::EmitOptions options;
+        options.optimizationLevel = level;
+        ASSERT_NO_FATAL_FAILURE(emit(R"JOYEER(
+func calculate(left: Int, right: Int): Int {
+let sum = left + right
+let difference = left - right
+return sum * difference + left
+}
+)JOYEER", false, options));
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        for (const auto* name : { "sadd", "ssub", "smul" }) {
+            EXPECT_NE(result.text.find(
+                    "call { i64, i1 } @llvm." + std::string(name) + ".with.overflow.i64"),
+                      std::string::npos);
+        }
+        EXPECT_EQ(result.text.find("@joyeer_checked_"), std::string::npos);
+        EXPECT_EQ(result.text.find("add nsw"), std::string::npos);
+        EXPECT_NE(result.text.find("declare void @joyeer_panic(ptr) cold noreturn"),
+                  std::string::npos);
+        for (const auto* message : { "integer addition overflow\\00",
+                                     "integer subtraction overflow\\00",
+                                     "integer multiplication overflow\\00" }) {
+            const auto first = result.text.find(message);
+            ASSERT_NE(first, std::string::npos);
+            EXPECT_EQ(result.text.find(message, first + 1), std::string::npos);
+        }
+        std::unordered_set<std::string> labels;
+        std::istringstream lines(result.text);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (line.starts_with("trap.") || line.starts_with("checked.")) {
+                EXPECT_TRUE(labels.insert(line).second) << line;
+            }
+        }
+        EXPECT_EQ(labels.size(), 8u);
+    }
+}
+
+TEST_F(LLVMBackendTest, PreservesDebugLocationsOnExpandedSafetyChecks) {
+    for (const auto level : { joyeer::OptimizationLevel::O0, joyeer::OptimizationLevel::O3 }) {
+        ASSERT_NO_FATAL_FAILURE(emit(
+                R"JOYEER(func read(values: [Int], index: Int): Int {
+return values[index] + 1
+}
+)JOYEER",
+                true,
+                joyeer::llvmbackend::EmitOptions {
+                    true, joyeer::DebugInfoFormat::dwarf, level, true,
+                }));
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        std::istringstream lines(result.text);
+        std::string line;
+        size_t checkedInstructions = 0;
+        size_t labels = 0;
+        while (std::getline(lines, line)) {
+            if (line.starts_with("trap.") || line.starts_with("checked.")) {
+                ++labels;
+                EXPECT_EQ(line.find("!dbg"), std::string::npos);
+            }
+            if (line.starts_with("  ") &&
+                (line.find("@llvm.sadd.with.overflow") != std::string::npos ||
+                 line.find("@joyeer_panic") != std::string::npos ||
+                 line.find("getelementptr i64") != std::string::npos ||
+                 line.starts_with("  br i1 ") ||
+                 line.starts_with("  unreachable"))) {
+                ++checkedInstructions;
+                EXPECT_NE(line.find(", !dbg !"), std::string::npos) << line;
+            }
+        }
+        EXPECT_EQ(labels, 4u);
+        EXPECT_EQ(checkedInstructions, 8u);
+    }
 }
 
 TEST_F(LLVMBackendTest, SpecializesPrintAndStringRuntimeDeclarations) {
@@ -353,7 +434,7 @@ return match choice {
     EXPECT_NE(result.text.find("pattern."), std::string::npos);
 }
 
-TEST_F(LLVMBackendTest, EmitsArrayDictionaryCountAndSubscriptRuntimeAbi) {
+TEST_F(LLVMBackendTest, EmitsTypedArrayAccessAndDictionaryRuntimeAbi) {
     emit(R"JOYEER(func read(): Int {
 let values: [Int] = [1, 2]
 let lookup: [String: Int] = ["answer": 42]
@@ -369,9 +450,43 @@ return values[0] + lookup["answer"]
               std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_array_create"), std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_dictionary_create"), std::string::npos);
-    EXPECT_NE(result.text.find("@joyeer_array_at"), std::string::npos);
+    EXPECT_EQ(result.text.find("@joyeer_array_at"), std::string::npos);
+    EXPECT_NE(result.text.find("getelementptr i64, ptr"), std::string::npos);
+    EXPECT_NE(result.text.find("array index out of bounds\\00"), std::string::npos);
     EXPECT_NE(result.text.find("@joyeer_dictionary_at"), std::string::npos);
     EXPECT_NE(result.text.find("extractvalue %joyeer.array"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, EmitsTypedArrayAddressesForPrimitiveAndAggregateElements) {
+    ASSERT_NO_FATAL_FAILURE(emit(R"JOYEER(
+struct Item { var number: Int }
+struct Empty {}
+enum Choice { None, Some(Int, String) }
+func access(ints: inout [Int], bytes: inout [UInt8], flags: inout [Bool],
+            items: inout [Item], empty: inout [Empty], choices: inout [Choice],
+            strings: inout [String], nested: inout [[Int]], index: Int) {
+&ints[index] = ints[index] + 1
+&bytes[index] = b'x'
+&flags[index] = true
+&items[index] = Item(number: 42)
+&empty[index] = Empty()
+&choices[index] = .Some(7, "value")
+&strings[index] = "replacement"
+&nested[index] = [1, 2]
+}
+)JOYEER"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_EQ(result.text.find("@joyeer_array_at"), std::string::npos);
+    for (const auto* elementType : { "i64", "i8", "i1", "%joyeer.string", "%joyeer.array" }) {
+        EXPECT_NE(result.text.find("getelementptr " + std::string(elementType) + ", ptr"),
+                  std::string::npos);
+    }
+    EXPECT_NE(result.text.find("getelementptr %joyeer.struct."), std::string::npos);
+    EXPECT_NE(result.text.find("getelementptr %joyeer.enum."), std::string::npos);
+    EXPECT_NE(result.text.find("icmp eq ptr"), std::string::npos);
+    EXPECT_NE(result.text.find("icmp slt i64"), std::string::npos);
+    EXPECT_NE(result.text.find("icmp sge i64"), std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_destroy_type_"), std::string::npos);
 }
 
 TEST_F(LLVMBackendTest, EmitsStringUtf8AsOwnedByteArray) {

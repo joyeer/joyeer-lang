@@ -92,9 +92,18 @@ peak memory, or copying throughput.
   compiler-generated arithmetic and bounds checks. A future optimized-away
   `assert` must not disable required language safety checks.
 
-The backend uses LLVM optimization passes. There is no implemented promise to
-inline every single-call-site function, a Joyeer-specific LTO policy, or
-`--Wabstraction-cost` diagnostics.
+The backend emits checked integer arithmetic as LLVM overflow intrinsics and
+typed array accesses as explicit bounds checks plus element addressing.
+Failure paths call the existing panic routine. This makes the successful
+paths visible to LLVM without changing the required safety semantics or
+depending on cross-library inlining of the separately compiled C runtime.
+Array construction and growth validate the allocation size for the same
+element layout used by indexing; append/growth and ownership operations still
+use the runtime.
+
+LLVM optimization passes can then simplify proven-safe checks and loops.
+There is no implemented promise to inline every single-call-site function,
+a Joyeer-specific LTO policy, or `--Wabstraction-cost` diagnostics.
 
 ## 5. Layout is not yet a public interoperability promise
 

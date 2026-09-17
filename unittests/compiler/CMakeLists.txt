@@ -716,7 +716,11 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
 
     function(add_joyeer_native_regression name fixture expected_output)
-        foreach(level IN ITEMS 0 2)
+        set(levels 0 2)
+        if(ARGC GREATER 3)
+            set(levels ${ARGN})
+        endif()
+        foreach(level IN LISTS levels)
             add_test(NAME ${name}O${level}
                     COMMAND ${CMAKE_COMMAND}
                             -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -760,6 +764,68 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             NativeRegressionFlowReinitialization regression_flow_reinitialization
             "ready\nready\nold\nnew\niteration\niteration\n")
+
+    add_joyeer_native_regression(
+            NativeCheckedArithmetic checked_arithmetic
+            "9223372036854775807\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-9223372036854775808\n0\n21\n2\n49995000\n"
+            0 1 2 3)
+    set(typed_array_output
+            "2\n40\n50\n30\n122\nfalse\ntrue\ntrue\nsecond\nchanged\n2\n9\n121\n9\ntrue\n11\nowned\n2\ntrue\n")
+    add_joyeer_native_regression(
+            NativeTypedArrayAccess typed_array_access "${typed_array_output}"
+            0 1 2 3)
+    add_test(NAME NativeCheckedAccessDebugInfo
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/typed_array_access.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-checked-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O3;-gfull"
+                    "-DEXPECTED_OUTPUT=${typed_array_output}"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeCheckedAccessDebugInfo PROPERTIES
+            LABELS "native;llvm-backend;optimization;safety;debug-info")
+
+    function(add_joyeer_native_checked_trap name fixture diagnostic)
+        foreach(level IN ITEMS 0 1 2 3)
+            add_test(NAME ${name}O${level}
+                    COMMAND ${CMAKE_COMMAND}
+                            -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                            -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/${fixture}.joyeer
+                            -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${fixture}-trap-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                            -DCOMPILER_ARGS=-O${level}
+                            "-DEXPECTED_PATTERN=${diagnostic}"
+                            -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
+            )
+            set_tests_properties(${name}O${level} PROPERTIES
+                    LABELS "native;llvm-backend;native-runtime;optimization;safety"
+                    TIMEOUT 60)
+        endforeach()
+    endfunction()
+    # Runtime-loaded operands keep these checks from folding to unconditional
+    # panic calls; NativeOptimizedOverflowTrap still covers constant overflow.
+    add_joyeer_native_checked_trap(
+            NativeCheckedAddOverflow checked_add_overflow "integer addition overflow")
+    add_joyeer_native_checked_trap(
+            NativeCheckedSubtractOverflow checked_subtract_overflow "integer subtraction overflow")
+    add_joyeer_native_checked_trap(
+            NativeCheckedMultiplyOverflow checked_multiply_overflow "integer multiplication overflow")
+    add_joyeer_native_checked_trap(
+            NativeCheckedMinMultiplyOverflow checked_min_multiply_overflow "integer multiplication overflow")
+    add_joyeer_native_checked_trap(
+            NativeCheckedArrayUpper optimized_bounds "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedArrayNegative checked_array_negative_index "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedArrayEmpty checked_array_empty_index "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedArrayWrite checked_array_write_index "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedArrayMax checked_array_max_index "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedIndexOverflow checked_index_overflow "integer addition overflow")
+    add_joyeer_native_checked_trap(
+            NativeCheckedBoundsBeforeOverflow checked_bounds_before_overflow "array index out of bounds")
 
     add_test(NAME NativeOptimizedOverflowTrap
             COMMAND ${CMAKE_COMMAND}

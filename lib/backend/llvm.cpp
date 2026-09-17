@@ -172,6 +172,7 @@ private:
     std::unordered_map<ir::ValueId, ir::Value> values;
     std::unordered_map<ir::ValueId, std::string> operands;
     std::unordered_set<std::string> runtimeDeclarations;
+    std::unordered_map<std::string, std::string> panicMessages;
     std::vector<std::string> stringGlobals;
     std::vector<std::string> typeDefinitions;
     std::vector<std::string> functionBodies;
@@ -1271,6 +1272,32 @@ private:
         return "%tmp" + std::to_string(nextTemporary++);
     }
 
+    void emitTrapIf(
+            std::ostringstream& out,
+            const std::string& condition,
+            const std::string& message) {
+        auto found = panicMessages.find(message);
+        if (found == panicMessages.end()) {
+            const auto name = "@.joyeer.panic." + std::to_string(nextString++);
+            const auto terminated = message + '\0';
+            stringGlobals.push_back(
+                    name + " = private unnamed_addr constant [" +
+                    std::to_string(terminated.size()) + " x i8] c\"" +
+                    escapeQuoted(terminated) + "\", align 1");
+            found = panicMessages.emplace(message, name).first;
+        }
+        runtimeDeclarations.insert("declare void @joyeer_panic(ptr) cold noreturn");
+        const auto suffix = std::to_string(nextTemporary++);
+        const auto trap = "trap." + suffix;
+        const auto continuation = "checked." + suffix;
+        out << "  br i1 " << condition << ", label %" << trap
+            << ", label %" << continuation << "\n"
+            << trap << ":\n"
+            << "  call void @joyeer_panic(ptr " << found->second << ")\n"
+            << "  unreachable\n"
+            << continuation << ":\n";
+    }
+
     std::string allocateStackSlot(
             const std::string& typeText,
             const std::string& requestedResult = {}) {
@@ -1786,9 +1813,9 @@ private:
             const std::string& base,
             const std::string& index,
             bool returnsAddress) {
+        const auto elementType = llvmType(instruction.result->type, instruction.span);
+        if (!elementType.has_value()) return false;
         usesArray = true;
-        runtimeDeclarations.insert(
-            "declare ptr @joyeer_array_at_abi(ptr, i64, i64)");
         auto arrayValue = base;
         if (returnsAddress) {
             arrayValue = temporary();
@@ -1796,17 +1823,32 @@ private:
         }
         const auto parts = emitHandleParts(out, "%joyeer.array", arrayValue);
         if (!parts.has_value()) return false;
+        const auto nullData = temporary();
+        const auto negativeIndex = temporary();
+        const auto pastEnd = temporary();
+        const auto invalidIndex = temporary();
+        const auto invalid = temporary();
+        out << "  " << nullData << " = icmp eq ptr " << parts->data << ", null\n"
+            << "  " << negativeIndex << " = icmp slt i64 " << index << ", 0\n"
+            << "  " << pastEnd << " = icmp sge i64 " << index
+            << ", " << parts->count << "\n"
+            << "  " << invalidIndex << " = or i1 " << negativeIndex
+            << ", " << pastEnd << "\n"
+            << "  " << invalid << " = or i1 " << nullData
+            << ", " << invalidIndex << "\n";
+        emitTrapIf(out, invalid, "array index out of bounds");
+
         const auto elementAddress = returnsAddress
                 ? valueName(instruction.result->id)
                 : temporary();
+        // Construction/growth validates the typed allocation size; an in-range
+        // index needs no runtime header lookup or repeated byte-count check.
         out << "  " << elementAddress
-            << " = call ptr @joyeer_array_at_abi(ptr " << parts->data
-            << ", i64 " << parts->count << ", i64 " << index << ")\n";
+            << " = getelementptr " << *elementType << ", ptr " << parts->data
+            << ", i64 " << index << "\n";
         if (returnsAddress) return true;
-        const auto resultType = llvmType(instruction.result->type, instruction.span);
-        if (!resultType.has_value()) return false;
         out << "  " << valueName(instruction.result->id) << " = load "
-            << *resultType << ", ptr " << elementAddress << "\n";
+            << *elementType << ", ptr " << elementAddress << "\n";
         return true;
     }
 
@@ -2083,16 +2125,34 @@ private:
         const auto result = valueName(instruction.result->id);
 
         if (operandType != nullptr && operandType->kind == typing::TypeKind::integer) {
-            std::string helper;
+            std::string intrinsic;
+            std::string message;
             switch (instruction.opcode) {
-                case ir::Opcode::add: helper = "joyeer_checked_add_int"; break;
-                case ir::Opcode::subtract: helper = "joyeer_checked_sub_int"; break;
-                case ir::Opcode::multiply: helper = "joyeer_checked_mul_int"; break;
+                case ir::Opcode::add:
+                    intrinsic = "llvm.sadd.with.overflow.i64";
+                    message = "integer addition overflow";
+                    break;
+                case ir::Opcode::subtract:
+                    intrinsic = "llvm.ssub.with.overflow.i64";
+                    message = "integer subtraction overflow";
+                    break;
+                case ir::Opcode::multiply:
+                    intrinsic = "llvm.smul.with.overflow.i64";
+                    message = "integer multiplication overflow";
+                    break;
                 default: return false;
             }
-            runtimeDeclarations.insert("declare i64 @" + helper + "(i64, i64)");
-            out << "  " << result << " = call i64 @" << helper
-                << "(i64 " << *left << ", i64 " << *right << ")\n";
+            runtimeDeclarations.insert(
+                    "declare { i64, i1 } @" + intrinsic + "(i64, i64)");
+            const auto checked = temporary();
+            const auto overflow = temporary();
+            out << "  " << checked << " = call { i64, i1 } @" << intrinsic
+                << "(i64 " << *left << ", i64 " << *right << ")\n"
+                << "  " << overflow << " = extractvalue { i64, i1 } "
+                << checked << ", 1\n";
+            emitTrapIf(out, overflow, message);
+            out << "  " << result << " = extractvalue { i64, i1 } "
+                << checked << ", 0\n";
         } else if (operandType != nullptr &&
                    operandType->kind == typing::TypeKind::string &&
                    instruction.opcode == ir::Opcode::add) {

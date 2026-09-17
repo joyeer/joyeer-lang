@@ -93,6 +93,22 @@ code-generation pipelines on every platform. `--emit-llvm`
 intentionally writes the pre-optimization backend IR so it remains
 deterministic and inspectable.
 
+Checked `Int` add/subtract/multiply lower to LLVM's signed
+`*.with.overflow.i64` intrinsics, with a branch to the existing panic routine
+on overflow. Array reads and mutable projections lower to null/negative/
+upper-bound checks followed by a typed `getelementptr`, rather than a
+per-access runtime call. The IR verifier checks the array element/result type;
+construction and growth validate the allocation size using that same element
+layout. An in-range access therefore needs neither a header stride lookup nor
+a repeated offset-overflow check. This also handles byte, Boolean, padded
+aggregate, nested, and zero-sized element layouts.
+
+These checks are emitted at every optimization level. LLVM may eliminate
+only checks proven redundant, not replace trapping arithmetic with unchecked
+`nsw` operations. Expanded branches, panic calls, and accesses retain the
+source operation's debug location. Array ownership, operand evaluation order,
+append/growth, and destruction remain unchanged.
+
 Debug information defaults to off (`-g0`). `-g` and `-gline-tables-only`
 enable line tables in the host format; `-gfull` adds lexical scopes, source
 variables, and physical type metadata. `-gdwarf` selects DWARF 4, and
@@ -177,6 +193,11 @@ The C11 runtime is in `include/joyeer/native/runtime.h` and
 - binary file input through `readFile(path:)`;
 - panic and bounds traps;
 - the process entry trampoline and active-allocation balance check.
+
+The checked arithmetic and generic array-indexing C entry points remain
+available for runtime clients. Generated Joyeer arithmetic and typed array
+accesses use the inline checks described above; string and dictionary accesses
+still use their runtime operations.
 
 The runtime uses libc allocation today. Dictionary lookup uses a
 straightforward linear implementation; hashing is not yet implemented.
