@@ -1,0 +1,27 @@
+struct Pair {
+    var left: String
+    var right: String
+}
+
+func take(value: consuming String) {
+    print(value: value)
+}
+
+func main() {
+    var pair = Pair(left: "left", right: "right")
+    take(value: consume pair.left)
+    print(value: pair.right)
+    pair.left = "new-left"
+    print(value: pair.left)
+
+    var values = ["first", "second"]
+    take(value: consume values[0])
+    &values[0] = "new-first"
+    print(value: values[0])
+    print(value: values[1])
+
+    var lookup = ["key": "old"]
+    take(value: consume lookup["key"])
+    &lookup["key"] = "new"
+    print(value: lookup["key"])
+}

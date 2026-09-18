@@ -1,0 +1,12 @@
+func answer(): Int {
+    42
+}
+
+func message(): String {
+    "trailing"
+}
+
+func main() {
+    print(value: answer())
+    print(value: message())
+}

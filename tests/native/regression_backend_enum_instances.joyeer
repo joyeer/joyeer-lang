@@ -1,0 +1,10 @@
+func main() {
+    let integer: Int? = .Some(42)
+    let text: String? = .Some("hello")
+    let first: Result<Int, String> = .Ok(7)
+    let second: Result<String, Int> = .Err(9)
+    print(value: match integer { .Some(value) => value, .None => 0 })
+    print(value: match text { .Some(value) => value, .None => "" })
+    print(value: match first { .Ok(value) => value, .Err(_) => 0 })
+    print(value: match second { .Ok(_) => 0, .Err(code) => code })
+}

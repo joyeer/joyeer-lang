@@ -1,0 +1,24 @@
+func add(left: Int, right: Int): Int { return left + right }
+func subtract(left: Int, right: Int): Int { return left - right }
+func multiply(left: Int, right: Int): Int { return left * right }
+
+func main() {
+    let values = [9223372036854775807, 0 - 9223372036854775807 - 1, -3, -7]
+    let maximum = values[0]
+    let minimum = values[1]
+    print(value: add(left: maximum, right: 0))
+    print(value: add(left: minimum, right: 0))
+    print(value: subtract(left: minimum, right: 0))
+    print(value: subtract(left: maximum, right: 0))
+    print(value: multiply(left: minimum, right: 1))
+    print(value: multiply(left: minimum, right: 0))
+    print(value: multiply(left: values[2], right: values[3]))
+    print(value: subtract(left: values[2] - 2, right: values[3]))
+    var index = 0
+    var total = 0
+    while index < 10000 {
+        total = total + index
+        index = index + 1
+    }
+    print(value: total)
+}

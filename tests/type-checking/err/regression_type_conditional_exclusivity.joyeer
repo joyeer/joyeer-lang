@@ -1,0 +1,8 @@
+func add(dst: inout Int, src: Int) {
+    &dst = dst + src
+}
+
+func invalid() {
+    var value = 2
+    add(dst: &value, src: if true { value } else { 0 })
+}

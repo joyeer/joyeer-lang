@@ -1,6 +1,9 @@
 #ifndef __joyeer_diagnostic_diagnostic_h__
 #define __joyeer_diagnostic_diagnostic_h__
 
+#include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,6 +15,26 @@ enum ErrorLevel {
     failure
 };
 
+struct DiagnosticFixIt {
+    uint32_t offset = 0;
+    uint32_t length = 0;
+    std::string replacement;
+};
+
+struct DiagnosticSourceNote {
+    uint32_t offset = 0;
+    uint32_t length = 0;
+    std::string message;
+};
+
+struct ErrorMessageNote {
+    std::string message;
+    int lineAt = -1;
+    int columnAt = -1;
+    std::string sourceLine;
+    uint32_t length = 0;
+};
+
 struct ErrorMessage {
     ErrorMessage(ErrorLevel level, const char* message, int lineAt, int columnAt);
 
@@ -19,6 +42,16 @@ struct ErrorMessage {
     std::string message;
     int lineAt;
     int columnAt;
+    std::string code;
+    std::string path;
+    std::string sourceLine;
+    uint32_t length = 0;
+    bool hasSourceContext = false;
+    std::optional<std::string> help;
+    std::optional<DiagnosticFixIt> fixIt;
+    std::vector<ErrorMessageNote> notes;
+    int fixLineAt = -1;
+    int fixColumnAt = -1;
 };
 
 #define DIAGNOSTICS_ERROR_MESSAGE(name, message) static constexpr const char* name = message;
@@ -34,8 +67,18 @@ struct Diagnostics {
      * Lex error
      */
     DIAGNOSTICS_ERROR_MESSAGE(errorOctalNumberFormat,                           "Octal number only contains 0,1,2,3,4,5,6,7")
+    DIAGNOSTICS_ERROR_MESSAGE(errorIntegerLiteralOverflow,                      "Integer literal overflows when stored into 'Int'")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedCComment,                        "Unterminated '/*' comment")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedStringLiteral,                   "Unterminated string literal")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidStringEscape,                         "Invalid string escape sequence")
+    DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedByteLiteral,                     "Unterminated byte literal")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidByteLiteral,                          "A byte literal must contain exactly one ASCII byte")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidByteEscape,                           "Invalid byte escape sequence")
+    DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedNumericLiteral,                   "This numeric literal form is not supported")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidNumericSuffix,                        "Invalid suffix on decimal integer literal")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidSourceCharacter,                      "Invalid source character '%s'")
+    DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedSyntax,                           "Syntax '%s' is not supported in the JSON-parser MVP")
+    DIAGNOSTICS_ERROR_MESSAGE(errorSourceTooLarge,                              "Source file exceeds the 32-bit source-location limit")
 
     /**
      * Syntax errors
@@ -53,12 +96,34 @@ struct Diagnostics {
 
     void reportError(ErrorLevel level, const char* error, ...);
     void reportError(ErrorLevel level, int lineAt, int columnAt, const char* error, ...);
+        void reportDiagnostic(
+            ErrorLevel level,
+            std::string code,
+            std::string message);
+        void reportSourceDiagnostic(
+            ErrorLevel level,
+            std::string code,
+            std::string path,
+            const std::string& source,
+            const std::vector<uint32_t>& lineStarts,
+            uint32_t offset,
+            uint32_t length,
+            std::string message,
+            std::optional<std::string> help = std::nullopt,
+            std::optional<DiagnosticFixIt> fixIt = std::nullopt,
+            std::vector<DiagnosticSourceNote> notes = {});
 
     // print the error into consoles
     void printErrors();
 
     // print the error message
     void printError(ErrorMessage& error);
+
+    [[nodiscard]] bool hasFailure() const {
+        return std::any_of(errors.begin(), errors.end(), [](const auto& error) {
+            return error.level == ErrorLevel::failure;
+        });
+    }
 
     std::vector<ErrorMessage> errors;
     

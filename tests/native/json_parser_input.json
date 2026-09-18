@@ -1,0 +1,9 @@
+{
+  "name": "joyeer",
+  "active": true,
+  "items": [1, 2, 3, 4],
+  "nested": {"message": "ok"},
+  "none": null,
+  "negative": -7,
+  "escaped": "line\nquote: \"ok\""
+}

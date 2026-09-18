@@ -1,0 +1,4 @@
+parser.expected-type@18:1 expected a type, found ')'
+parser.expected-type@65:1 expected a type, found ')'
+parser.chained-comparison@91:1 comparison and equality operators do not chain
+parser.invalid-assignment-target@109:7 the left side of assignment is not a writable syntax path

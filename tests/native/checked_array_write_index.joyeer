@@ -1,0 +1,4 @@
+func main() {
+    var values = [b'x']
+    &values[1] = b'y'
+}

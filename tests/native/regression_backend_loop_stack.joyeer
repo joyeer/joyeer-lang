@@ -1,0 +1,14 @@
+func main() {
+    var index = 0
+    while index < 100000 {
+        let text = "a" + "b"
+        let values = [text]
+        let lookup = ["key": values[0]]
+        let optional: String? = .Some(lookup["key"])
+        index = index + match optional {
+            .Some(value) => value.count,
+            .None => 0,
+        }
+    }
+    print(value: index)
+}

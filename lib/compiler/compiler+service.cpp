@@ -1,35 +1,89 @@
 #include "joyeer/compiler/compiler+service.h"
 
 #include "joyeer/compiler/lexparser.h"
-#include "joyeer/compiler/typegen.h"
-#include "joyeer/compiler/typebinding.h"
-#include "joyeer/compiler/syntaxparser.h"
-#include "joyeer/compiler/IRGen.h"
-#include "joyeer/compiler/debugprinter.h"
-#include "joyeer/runtime/types.h"
-#include "joyeer/runtime/sys.h"
+#include "joyeer/compiler/nameresolution.h"
+#include "joyeer/compiler/parser.h"
+#include "joyeer/compiler/typechecking.h"
+#include "joyeer/compiler/irlowering.h"
+#include "joyeer/compiler/semanticanalysis.h"
+#include "joyeer/backend/llvm.h"
 
+#include <algorithm>
+#include <fstream>
 #include <utility>
 
+namespace {
 
-#define CHECK_ERROR_RETURN_NULL \
-    if(diagnostics->errors.size() != 0) { \
-        return nullptr; \
+std::string pathUtf8(const std::filesystem::path& path) {
+    const auto encoded = path.generic_u8string();
+    return std::string(
+            reinterpret_cast<const char*>(encoded.data()),
+            encoded.size());
+}
+
+joyeer::ir::SourceInfo sourceInfoFor(const SourceFile::Ptr& sourcefile) {
+    std::error_code error;
+    auto sourcePath = std::filesystem::absolute(
+            sourcefile->getAbstractPath(),
+            error);
+    if (error) {
+        sourcePath = sourcefile->getAbstractPath();
+    }
+    sourcePath = sourcePath.lexically_normal();
+    return joyeer::ir::SourceInfo {
+        pathUtf8(sourcePath.filename()),
+        pathUtf8(sourcePath.parent_path()),
+        static_cast<uint64_t>(sourcefile->content.size()),
+        sourcefile->lineStarts,
+    };
+}
+
+void reportSpannedDiagnostic(
+    Diagnostics* diagnostics,
+    const SourceFile::Ptr& sourcefile,
+    SourceSpan span,
+    ErrorLevel level,
+    std::string code,
+    const std::string& message,
+    std::optional<std::string> help = std::nullopt,
+    std::optional<DiagnosticFixIt> fixIt = std::nullopt,
+    std::vector<DiagnosticSourceNote> notes = {}) {
+    diagnostics->reportSourceDiagnostic(
+        level,
+        std::move(code),
+        sourcefile->getLocation(),
+        sourcefile->content,
+        sourcefile->lineStarts,
+        span.offset,
+        span.length,
+        message,
+        std::move(help),
+        std::move(fixIt),
+        std::move(notes));
+}
+
+} // namespace
+
+#define CHECK_ERROR_RETURN \
+    if(diagnostics->hasFailure()) { \
+        return; \
     }
 
-CompilerService::CompilerService(Diagnostics* diagnostics, CommandLineArguments::Ptr opts):
+CompilerService::CompilerService(Diagnostics* diagnostics, joyeer::CompileOptions opts):
         options(std::move(opts)) {
-    globalSymbols = std::make_shared<SymbolTable>();
     this->diagnostics = diagnostics;
 }
 
-ModuleClass* CompilerService::compile(const std::string& inputFile) {
+void CompilerService::compile(const std::filesystem::path& inputFile) {
     auto sourcefile = findSourceFile(inputFile);
-    return compile(sourcefile);
+    lastCompiledSourceFile = sourcefile;
+    compile(sourcefile);
 }
 
-SourceFile::Ptr CompilerService::findSourceFile(const std::string &path, const std::string& relativeFolder) {
-    auto sourcefile = std::filesystem::path(path);
+SourceFile::Ptr CompilerService::findSourceFile(
+        const std::filesystem::path& path,
+        const std::filesystem::path& relativeFolder) {
+    auto sourcefile = path;
     if(sourcefile.is_relative()) {
         // check the relative folder
         auto target = std::filesystem::path(relativeFolder) / path;
@@ -37,242 +91,157 @@ SourceFile::Ptr CompilerService::findSourceFile(const std::string &path, const s
             sourcefile = target;
         }
     }
-    
-    auto sourcefilePath = sourcefile.string();
+
+    std::error_code error;
+    auto sourcefilePath = std::filesystem::absolute(sourcefile, error);
+    if (error) sourcefilePath = sourcefile;
+    sourcefilePath = sourcefilePath.lexically_normal();
     if(sourceFiles.find(sourcefilePath) == sourceFiles.end()) {
-        
-        std::string folder = options->workingDirectory.string();
-        auto sf = std::make_shared<SourceFile>(folder, sourcefilePath);
+        auto sf = std::make_shared<SourceFile>(options.workingDirectory, sourcefilePath);
         sourceFiles.insert({sourcefilePath, sf});
     }
-    
+
     return sourceFiles.find(sourcefilePath)->second;
 }
 
 
-ModuleClass* CompilerService::compile(const SourceFile::Ptr& sourcefile) {
+void CompilerService::compile(const SourceFile::Ptr& sourcefile) {
+    if (!sourcefile->loaded()) {
+        const auto tooLarge = sourcefile->loadingError() == SourceFile::LoadError::sourceTooLarge;
+        diagnostics->reportDiagnostic(
+                ErrorLevel::failure,
+                tooLarge ? "lexer.source-too-large" : "source-file.read-failed",
+                tooLarge
+                        ? Diagnostics::errorSourceTooLarge
+                        : "cannot read source file '" + sourcefile->getLocation() + "'");
+        return;
+    }
 
-    auto debugfile = sourcefile->getAbstractLocation() + ".xdump.yml";
-    NodeDebugPrinter debugPrinter(debugfile);
-
-    auto context= std::make_shared<CompileContext>(diagnostics, globalSymbols);
-    context->sourcefile = sourcefile;
-    context->compiler = this;
-    
-    // lex structure analyze
-    LexParser lexParser(context);
+    LexParser lexParser(diagnostics);
     lexParser.parse(sourcefile);
-    CHECK_ERROR_RETURN_NULL
-    
-    // syntax analyze
-    SyntaxParser syntaxParser(context, sourcefile);
-    auto block = syntaxParser.parse();
-    CHECK_ERROR_RETURN_NULL
-    debugPrinter.print("parsing-stage", block);
+    CHECK_ERROR_RETURN
 
-    // gen the type from source code
-    TypeGen typeGen(context);
-    typeGen.visit(block);
-    CHECK_ERROR_RETURN_NULL
-    debugPrinter.print("typegen-stage", block);
-
-    // binding the types
-    TypeBinding typeBinding(context);
-    typeBinding.visit(std::static_pointer_cast<Node>(block));
-    CHECK_ERROR_RETURN_NULL
-    debugPrinter.print("typebinding-stage", block);
-
-    // generate IR code
-    IRGen irGen(context);
-    sourcefile->moduleClass = irGen.emit(block);
-    CHECK_ERROR_RETURN_NULL
-
-    // debug print the types after IR code generated
-    debugPrinter.print("IRGEN-stage", types->types);
-
-    debugPrinter.close();
-
-    return sourcefile->moduleClass;
-}
-
-int CompilerService::declare(Type* type) {
-    type->slot = static_cast<int32_t>(types->types.size());
-    types->types.push_back(type);
-    return type->slot;
-}
-
-Type* CompilerService::getType(int address) {
-    assert(address >= 0 && address < types->types.size());
-    return (*types)[address];
-}
-
-Type* CompilerService::getType(ValueType valueType) {
-    return getType(static_cast<int>(valueType));
-}
-
-Type* CompilerService::getType(BuildIns buildIn) {
-    return getType(static_cast<int>(buildIn));
-}
-
-SymbolTable::Ptr CompilerService::getExportingSymbolTable(int typeSlot) {
-    assert(typeSlot != -1);
-    return exportingSymbolTableOfClasses[typeSlot];
-}
-
-void CompilerService::exportClassDecl(const ClassDecl::Ptr &decl) {
-    assert(decl->typeSlot != -1);
-    assert(decl->symtable != nullptr);
-    assert(!exportingSymbolTableOfClasses.contains(decl->typeSlot));
-    exportingSymbolTableOfClasses[decl->typeSlot] = decl->symtable;
-}
-
-void CompilerService::registerOptionalTypeGlobally(const Optional *type) {
-    assert(type->slot == -1);
-    assert(type->wrappedTypeSlot != -1);
-    assert(globalSymbols->find(type->name) == nullptr);
-    declare((Type*)type);
-
-    // bi-binding the optionalTypeSlot to original type
-    auto wrappedType = getType(type->wrappedTypeSlot);
-    assert(wrappedType->optionalTypeSlot == -1);
-    wrappedType->optionalTypeSlot = type->slot;
-
-    globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, type->name, type->slot));
-}
-
-#define DECLARE_TYPE(type, TypeClass) \
-    {                                 \
-        auto typeClass = new TypeClass(); \
-        declare(typeClass);           \
-        assert((type) == types->types.back()->kind); \
-        assert((size_t)(type) == (types->types.size() - 1)); \
-        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, typeClass->name, typeClass->slot)); \
+    sourcefile->semanticModel.reset();
+    sourcefile->typeCheckedModel.reset();
+    sourcefile->joyeerIR.reset();
+    sourcefile->llvmIR.clear();
+    sourcefile->llvmHasEntryPoint = false;
+    joyeer::parser::Parser parser(sourcefile->tokens);
+    auto result = parser.parse();
+    for(const auto& diagnostic : result.diagnostics) {
+        reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::parser::diagnosticName(diagnostic.id),
+                diagnostic.message,
+                diagnostic.help,
+                diagnostic.fixIt);
+    }
+    if (!result.succeeded()) {
+        return;
     }
 
-#define BEGIN_DECLARE_FUNC(type, descriptor, retTypeSlot, cFuncImpl) \
-    {                                                                \
-        auto func = new Function(descriptor, true);                  \
-        declare(func);                                               \
-        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::func, func->name, func->slot)); \
-        func->funcType = FuncType::C_Func;                           \
-        func->cFunction = (CFunction)&(cFuncImpl);                   \
-        func->returnTypeSlot = (int)(retTypeSlot);                   \
-        func->paramCount = 0;
-
-#define DECLARE_FUNC_PARM(name, type) \
-    {                                 \
-        auto variable = new Variable(name); \
-        variable->typeSlot = (int)(type);   \
-        variable->loc = func->paramCount;   \
-        func->localVars.push_back(variable);\
-        func->paramCount ++;          \
+    const auto resolution = joyeer::semantic::NameResolver().resolve(result.root);
+    sourcefile->semanticModel = resolution.model;
+    for (const auto& diagnostic : resolution.diagnostics) {
+        reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::semantic::diagnosticName(diagnostic.id),
+                diagnostic.message);
+    }
+    if (!resolution.succeeded()) {
+        return;
     }
 
-#define END_DECLARE_FUNC() \
+    const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
+    sourcefile->typeCheckedModel = checking.model;
+    for (const auto& diagnostic : checking.diagnostics) {
+        reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::typing::diagnosticName(diagnostic.id),
+                    diagnostic.message,
+                    diagnostic.help,
+                diagnostic.fixIt,
+                diagnostic.notes);
+    }
+    if (!checking.succeeded()) {
+        return;
     }
 
-#define BEGIN_DECLARE_CLASS(type, TypeClass) \
-    {                                        \
-        auto symtable = std::make_shared<SymbolTable>(); \
-        auto typeClass = new TypeClass();    \
-        declare(typeClass);                  \
-        globalSymbols->insert(std::make_shared<Symbol>(SymbolFlag::klass, typeClass->name, typeClass->slot)); \
-        assert((size_t)(type) == typeClass->slot);       \
-        exportingSymbolTableOfClasses.insert({ typeClass->slot, symtable });
-
-#define DECLARE_CLASS_FUNC(name, typeSlot, cParamCount, cFuncImpl) \
-    {                                                              \
-        auto func = new Function(name, false);                     \
-        func->funcType = FuncType::C_Func;                     \
-        func->paramCount = cParamCount;                            \
-        func->cFunction = (CFunction)&(cFuncImpl);                 \
-        func->returnTypeSlot = (int)(typeSlot);                    \
-        auto funcAddress = declare(func);                          \
-        symtable->insert(std::make_shared<Symbol>(SymbolFlag::func, name, funcAddress)); \
+    const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+    for (const auto& diagnostic : analysis.diagnostics) {
+        reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                diagnostic.severity == joyeer::analysis::Severity::warning
+                    ? ErrorLevel::report
+                    : ErrorLevel::failure,
+                joyeer::analysis::diagnosticName(diagnostic.id),
+                diagnostic.message,
+                diagnostic.help);
+    }
+    if (!analysis.succeeded()) {
+        return;
     }
 
-#define DECLARE_CLASS_INIT(name, typeSlot, cParamCount, cFuncImpl) \
-    {                                                              \
-        auto func = new Function(name, false);                     \
-        func->funcType = FuncType::C_CInit;                    \
-        func->paramCount = cParamCount;                            \
-        func->cFunction = (CFunction)&(cFuncImpl);                 \
-        func->returnTypeSlot = (int)(typeSlot);                    \
-        auto funcAddress = declare(func);                          \
-        symtable->insert(std::make_shared<Symbol>(SymbolFlag::func, name, funcAddress)); \
+    const auto lowering = joyeer::lowering::Lowerer().lower(
+            checking.model,
+            sourcefile->getLocation(),
+            sourceInfoFor(sourcefile));
+    sourcefile->joyeerIR = lowering.module;
+    for (const auto& diagnostic : lowering.diagnostics) {
+        reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::lowering::diagnosticName(diagnostic.id),
+                diagnostic.message);
+    }
+    if (!lowering.succeeded()) {
+        return;
     }
 
-#define END_DECLARE_CLASS(type) \
+    const auto llvm = joyeer::llvmbackend::Emitter().emit(
+            *lowering.module,
+            joyeer::llvmbackend::EmitOptions {
+                options.debugInfo.emitLineTables,
+                options.debugInfo.format,
+                options.optimizationLevel,
+                options.debugInfo.emitVariables,
+            });
+    sourcefile->llvmIR = llvm.text;
+    sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
+    for (const auto& diagnostic : llvm.diagnostics) {
+        reportSpannedDiagnostic(
+                diagnostics,
+                sourcefile,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::llvmbackend::diagnosticName(diagnostic.id),
+                diagnostic.message);
     }
-
-
-#define BEGIN_DECLARE_OPTIONAL(type, originalTypeSlot) \
-    {                                                 \
-        auto symtable = std::make_shared<SymbolTable>(); \
-        auto originalType = getType(originalTypeSlot); \
-        auto name =  "Optional<" + getType(originalTypeSlot)->name + ">";\
-        auto typeClass = new Optional(name, (int)(originalTypeSlot));    \
-        registerOptionalTypeGlobally(typeClass);
-
-#define END_DECLARE_OPTIONAL }
-
-
-void CompilerService::bootstrap() {
-
-
-    DECLARE_TYPE(ValueType::Nil, NilType)
-    DECLARE_TYPE(ValueType::Unspecified, UnspecifiedType)
-    DECLARE_TYPE(ValueType::Void, VoidType)
-    DECLARE_TYPE(ValueType::Int, IntType)
-    DECLARE_TYPE(ValueType::Bool, BoolType)
-    DECLARE_TYPE(ValueType::Any, AnyType)
-    DECLARE_TYPE(ValueType::String, StringClass)
-
-    BEGIN_DECLARE_FUNC(BuildIns::Func_Print, "print(message:)", ValueType::Void, Global_$_print)
-        DECLARE_FUNC_PARM("message", ValueType::Any)
-    END_DECLARE_FUNC()
-
-    BEGIN_DECLARE_FUNC(BuildIns::Func_AutoWrapping_Int, "autoWrapping(int:)", ValueType::Any, Global_$_autoWrapping_Int)
-        DECLARE_FUNC_PARM("int", ValueType::Int)
-    END_DECLARE_FUNC()
-
-    BEGIN_DECLARE_FUNC(BuildIns::Func_AutoWrapping_Bool, "autoWrapping(bool:)", ValueType::Any, Global_$_autoWrapping_Bool)
-        DECLARE_FUNC_PARM("bool", ValueType::Bool)
-    END_DECLARE_FUNC()
-
-    BEGIN_DECLARE_FUNC(BuildIns::Func_autoWrapping_Class, "autoWrapping(class:)", ValueType::Class, Global_$_autoWrapping_Class)
-        DECLARE_FUNC_PARM("class", ValueType::Any)
-    END_DECLARE_FUNC()
-
-    BEGIN_DECLARE_FUNC(BuildIns::Func_autoUnwrapping, "autoUnwrapping(value:)", ValueType::Int, Global_$_autoUnwrapping)
-        DECLARE_FUNC_PARM("value", BuildIns::Object_Optional_Int)
-    END_DECLARE_FUNC()
-
-    BEGIN_DECLARE_OPTIONAL(BuildIns::Object_Optional_Int, ValueType::Int)
-    END_DECLARE_OPTIONAL
-
-    BEGIN_DECLARE_OPTIONAL(BuildIns::Object_Optional_Bool, ValueType::Bool)
-    END_DECLARE_OPTIONAL
-
-    // Declare build-in classes and its members
-    BEGIN_DECLARE_CLASS(BuildIns::Object_Array, ArrayClass)
-        DECLARE_CLASS_FUNC("size()", ValueType::Int, 0, Array_$$_size)
-        DECLARE_CLASS_FUNC("get(index:)", ValueType::Any, 1, Array_$$_get)
-        DECLARE_CLASS_FUNC("set(index:value:)", ValueType::Void, 2, Array_$$_set)
-    END_DECLARE_CLASS(BuildIns::Object_Array)
-
-    BEGIN_DECLARE_CLASS(BuildIns::Object_Dict, DictClass)
-        DECLARE_CLASS_INIT("Dict()", BuildIns::Object_Dict, 0, Dict_$_init)
-        DECLARE_CLASS_FUNC("insert(key:value:)", ValueType::Void, 2, Dict_$$_insert)
-        DECLARE_CLASS_FUNC("get(key:)", BuildIns::Object_Optional_Int, 1, Dict_$$_get)
-    END_DECLARE_CLASS(BuildIns::Object_Dict)
-
-    BEGIN_DECLARE_CLASS(BuildIns::Object_DictEntry, DictEntry)
-    END_DECLARE_CLASS(BuildIns::Object_Dict)
-
-    BEGIN_DECLARE_CLASS(BuildIns::Object_StringBuilder, StringBuilderClass)
-        DECLARE_CLASS_FUNC("append(string:)", BuildIns::Object_StringBuilder, 1, StringBuilder_$$_append)
-        DECLARE_CLASS_FUNC("toString()", ValueType::String, 0, StringBuilder_$$_toString)
-    END_DECLARE_CLASS(BuildIns::Object_StringBuilder)
-
+    if (!llvm.succeeded()) {
+        return;
+    }
+    if (options.outputMode == joyeer::OutputMode::llvmIR) {
+        std::ofstream output(options.outputFile, std::ios::binary);
+        output << llvm.text;
+        if (!output.good()) {
+            diagnostics->reportDiagnostic(
+                        ErrorLevel::failure,
+                        "driver.output-file-error",
+                        "cannot write LLVM IR output: " +
+                        options.outputFile.string());
+        }
+    }
 }

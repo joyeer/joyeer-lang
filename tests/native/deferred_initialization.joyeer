@@ -1,0 +1,20 @@
+func choose(flag: Bool): Int {
+    var number: Int
+    if flag {
+        number = 41
+    } else {
+        number = 0
+    }
+    return number + 1
+}
+
+func message(): String {
+    var text: String
+    text = "initialized"
+    return text
+}
+
+func main() {
+    print(value: choose(flag: true))
+    print(value: message())
+}

@@ -1,0 +1,9 @@
+func take(value: consuming String) {
+    print(value: value)
+}
+
+func invalid() {
+    var text = "owned"
+    take(value: consume text)
+    print(value: text)
+}

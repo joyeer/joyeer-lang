@@ -1,0 +1,10 @@
+func invalid(out: initializing String, flag: Bool) {
+    if flag {
+        &out = "value"
+    }
+}
+
+func main() {
+    var text: String
+    invalid(out: &text, flag: false)
+}

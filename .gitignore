@@ -1,11 +1,17 @@
 build/
-.vscode/
+/out/
+.vscode/*
+!.vscode/settings.json
 .idea/
 xcode/
 *.debug.txt
 *.xdump.yml
 *.pyc
-xcode-build
 cmake-build-debug
 .vs/
 *.code-workspace
+
+
+# Added by cargo
+
+/target

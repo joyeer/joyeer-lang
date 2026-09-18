@@ -1,0 +1,6 @@
+func value(flag: Bool): Int {
+    return match flag {
+        true = 1,
+        false => 0,
+    }
+}

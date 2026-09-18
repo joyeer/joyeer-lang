@@ -1,0 +1,9 @@
+func update(text: inout String, bytes: [UInt8]) {
+    &text = "updated"
+    print(value: bytes.count)
+}
+
+func invalid() {
+    var text = "original"
+    update(text: &text, bytes: text.utf8())
+}

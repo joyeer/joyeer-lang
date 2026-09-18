@@ -1,2 +1,0 @@
-SyntaxError(line: 0):
-    Unterminated string literal

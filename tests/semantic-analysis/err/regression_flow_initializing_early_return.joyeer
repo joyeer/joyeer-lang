@@ -1,0 +1,7 @@
+func initialize(out: initializing String, flag: Bool) {
+    &out = "new"
+}
+
+func invalid(out: initializing String, flag: Bool) {
+    initialize(out: &out, flag: if flag { return } else { false })
+}

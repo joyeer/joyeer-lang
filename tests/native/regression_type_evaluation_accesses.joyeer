@@ -1,0 +1,51 @@
+struct Pair {
+    var left: Int
+    var right: Int
+}
+
+func add(dst: inout Int, src: Int) {
+    &dst = dst + src
+}
+
+func increment(value: inout Int): Int {
+    &value = value + 1
+    return value
+}
+
+func sum(first: Int, second: Int): Int {
+    return first + second
+}
+
+func replace(text: inout String, bytes: [UInt8]): Int {
+    &text = "updated"
+    return bytes.count
+}
+
+func replaceAfterSnapshot(bytes: [UInt8], text: inout String): Int {
+    &text = "changed"
+    return bytes.count
+}
+
+func main() {
+    var value = 1
+    let snapshot = value
+    add(dst: &value, src: if true { snapshot } else { 0 })
+    print(value: value)
+
+    var pair = Pair(left: 3, right: 4)
+    add(dst: &pair.left, src: match true { true => pair.right, false => 0 })
+    print(value: pair.left)
+
+    var text = "copy"
+    let bytes = text.utf8()
+    print(value: replace(text: &text, bytes: bytes))
+    print(value: text)
+    print(value: replaceAfterSnapshot(bytes: text.utf8(), text: &text))
+    print(value: text)
+
+    print(value: sum(
+        first: if true { increment(value: &value) } else { 0 },
+        second: if true { increment(value: &value) } else { 0 }))
+    print(value: sum(first: increment(value: &value), second: value))
+    print(value: value)
+}

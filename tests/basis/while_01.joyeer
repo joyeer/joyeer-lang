@@ -1,9 +1,0 @@
-
-var array = [8, 6, 1, 2, 1, 12, 3, 4, 34]
-var num = 1
-var endIndex = 8
-
-while array[endIndex] > num {
-    print(message: array[endIndex])
-    endIndex = endIndex - 1
-}

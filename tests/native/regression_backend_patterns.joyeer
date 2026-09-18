@@ -1,0 +1,29 @@
+enum Value { Number(Int, Int), Text(String) }
+enum Nested { Wrap(Value), Empty }
+
+func classify(value: Value): Int {
+    return match value {
+        .Text("x") => 10,
+        .Text(_) => 20,
+        .Number(_, _) => 30,
+    }
+}
+
+func nested(value: Nested): Int {
+    return match value {
+        .Wrap(.Text("x")) => 1,
+        .Wrap(.Text(_)) => 2,
+        .Wrap(.Number(_, _)) => 3,
+        .Empty => 4,
+    }
+}
+
+func main() {
+    print(value: classify(value: .Number(1, 1)))
+    print(value: classify(value: .Text("x")))
+    print(value: classify(value: .Text("other")))
+    print(value: nested(value: .Wrap(.Number(1, 1))))
+    print(value: nested(value: .Wrap(.Text("x"))))
+    print(value: nested(value: .Wrap(.Text("other"))))
+    print(value: nested(value: .Empty))
+}

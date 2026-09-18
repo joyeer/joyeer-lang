@@ -1,0 +1,9 @@
+func main() {
+    print(value: 40 + 2)
+    print(value: "native")
+    var values: [Int] = [7, 8]
+    &values[0] = values[0] + 1
+    print(value: values[0])
+    let lookup: [String: Int] = ["answer": 42]
+    print(value: lookup["answer"])
+}
