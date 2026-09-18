@@ -1,0 +1,9 @@
+func main() {
+    let digit = byteToInt(value: b'7') - byteToInt(value: b'0')
+    print(value: digit)
+
+    let first = byteToString(value: b'J')
+    let word = first + byteToString(value: b'o') + byteToString(value: b'y')
+    print(value: first)
+    print(value: word)
+}

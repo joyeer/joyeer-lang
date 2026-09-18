@@ -1,0 +1,27 @@
+enum Value {
+    Number(Int),
+    Text(String),
+}
+
+func main() {
+    var lookup: [String: String] = [:]
+    &lookup["first"] = "one"
+    &lookup["second"] = "two"
+    &lookup["first"] = "updated" + "!"
+    let retained = "retained"
+    &lookup["third"] = retained
+    print(value: lookup.count)
+    print(value: lookup["first"])
+    print(value: lookup["second"])
+    print(value: lookup["third"])
+    print(value: retained)
+
+    var values: [String: Value] = [:]
+    &values["number"] = .Number(42)
+    &values["text"] = .Text("nested")
+    print(value: values.count)
+    print(value: match values["text"] {
+        .Number(number) => number,
+        .Text(text) => text.count,
+    })
+}

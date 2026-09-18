@@ -1,17 +1,47 @@
 
+add_joyeer_library(JoyeerCLI STATIC
+        arguments.cpp
+)
+
+target_link_libraries(JoyeerCLI PUBLIC JoyeerDiagnostic)
+
 add_joyeer_executable(joyeer 
         main.cpp
         driver.cpp
         )
 
-add_dependencies(joyeer JoyeerRuntime)
+add_dependencies(joyeer JoyeerCLI)
 add_dependencies(joyeer JoyeerCompiler)
-add_dependencies(joyeer JoyeerVM)
 add_dependencies(joyeer JoyeerDiagnostic)
+add_dependencies(joyeer JoyeerNativeRuntime)
+
+target_compile_definitions(joyeer PRIVATE
+        JOYEER_NATIVE_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
+        JOYEER_SDK_ROOT_PATH="${JOYEER_MACOS_SDK_PATH}"
+        JOYEER_SDK_VERSION="${JOYEER_MACOS_SDK_VERSION}"
+        JOYEER_MACOS_DEPLOYMENT_TARGET="${JOYEER_MACOS_DEPLOYMENT_TARGET}"
+        JOYEER_DSYMUTIL_EXECUTABLE_PATH="${JOYEER_DSYMUTIL_EXECUTABLE}"
+)
+
+add_custom_command(TARGET joyeer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:JoyeerNativeRuntime>"
+                "$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
+)
+
+if(APPLE)
+        set_target_properties(joyeer PROPERTIES
+                INSTALL_RPATH "@loader_path"
+        )
+elseif(UNIX)
+        set_target_properties(joyeer PROPERTIES
+                INSTALL_RPATH "$ORIGIN"
+        )
+endif()
 
 target_link_libraries(joyeer
-        JoyeerDiagnostic
-        JoyeerRuntime
+        JoyeerCLI
         JoyeerCompiler
-        JoyeerVM
+        JoyeerLLVMBackend
+        JoyeerDiagnostic
 )

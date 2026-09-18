@@ -1,0 +1,9 @@
+func initialize(out: initializing String) {
+    &out = "new"
+}
+
+func invalid(flag: Bool) {
+    var text: String
+    if flag { text = "old" }
+    initialize(out: &text)
+}

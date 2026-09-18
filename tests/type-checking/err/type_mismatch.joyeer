@@ -1,0 +1,3 @@
+func invalid(): Int {
+    return "not an integer"
+}

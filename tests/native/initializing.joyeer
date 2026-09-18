@@ -1,0 +1,33 @@
+func initializeText(out: initializing String, value: borrowing String) {
+    &out = value + "!"
+}
+
+func initializeArray(out: initializing [String]) {
+    &out = []
+    &out.append(element: "first")
+    &out.append(element: "second")
+}
+
+func forward(out: initializing String) {
+    initializeText(out: &out, value: "forwarded")
+}
+
+func drop(value: consuming String) {
+    print(value: value)
+}
+
+func main() {
+    var text: String
+    initializeText(out: &text, value: "created")
+    print(value: text)
+
+    drop(value: consume text)
+    forward(out: &text)
+    print(value: text)
+
+    var values: [String]
+    initializeArray(out: &values)
+    print(value: values.count)
+    print(value: values[0])
+    print(value: values[1])
+}

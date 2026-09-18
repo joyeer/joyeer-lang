@@ -1,0 +1,8 @@
+func take(value: consuming String) {
+    print(value: value)
+}
+
+func main() {
+    let text = "owned"
+    take(value: text)
+}

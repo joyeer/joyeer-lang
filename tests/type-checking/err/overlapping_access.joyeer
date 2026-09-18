@@ -1,0 +1,8 @@
+func update(dst: inout Int, src: borrowing Int) {
+    &dst = src
+}
+
+func invalid() {
+    var value = 1
+    update(dst: &value, src: value)
+}

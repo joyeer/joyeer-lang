@@ -1,0 +1,69 @@
+struct Item {
+    let tag: UInt8
+    var number: Int
+    let flag: Bool
+}
+
+struct Empty {}
+
+enum Choice { None, Some(Int, String) }
+enum Flag { Off, On }
+
+func next(cursor: inout Int): Int {
+    let index = cursor
+    &cursor = cursor + 1
+    return index
+}
+
+func set(target: inout Int, value: Int) {
+    &target = value
+}
+
+func main() {
+    var cursor = 0
+    var numbers = [10, 20, 30]
+    &numbers[next(cursor: &cursor)] = 40
+    set(target: &numbers[next(cursor: &cursor)], value: 50)
+    print(value: cursor)
+    print(value: numbers[0])
+    print(value: numbers[1])
+    print(value: numbers[2])
+
+    var bytes = [b'a', b'b', b'c']
+    &bytes[1] = b'z'
+    print(value: byteToInt(value: bytes[1]))
+    var flags = [false, true, false]
+    &flags[2] = true
+    print(value: flags[0])
+    print(value: flags[1])
+    print(value: flags[2])
+
+    var strings = ["first", "second"]
+    let copied = strings
+    &strings[1] = "changed"
+    print(value: copied[1])
+    print(value: strings[1])
+    var nested: [[Int]] = [[1, 2], [3, 4]]
+    &nested[1][0] = 9
+    print(value: nested[0][1])
+    print(value: nested[1][0])
+
+    var items = [
+        Item(tag: b'x', number: 7, flag: false),
+        Item(tag: b'y', number: 8, flag: true),
+    ]
+    &items[1].number = 9
+    print(value: byteToInt(value: items[1].tag))
+    print(value: items[1].number)
+    print(value: items[1].flag)
+    var choices: [Choice] = [.None, .Some(7, "owned")]
+    &choices[0] = .Some(11, "first")
+    print(value: match choices[0] { .Some(number, _) => number, .None => 0 })
+    print(value: match choices[1] { .Some(_, text) => text, .None => "" })
+
+    var empty = [Empty(), Empty()]
+    &empty[1] = Empty()
+    print(value: empty.count)
+    let plain: [Flag] = [.Off, .On]
+    print(value: match plain[1] { .Off => false, .On => true })
+}

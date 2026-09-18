@@ -1,17 +1,19 @@
 
 add_joyeer_library(JoyeerCompiler STATIC
         compiler+service.cpp
-        context.cpp
+        irlowering.cpp
         lexparser.cpp
-        IRGen.cpp
-        node.cpp
-        node+visitor.cpp
-        debugprinter.cpp
+        nameresolution.cpp
+        parser.cpp
+        semanticanalysis.cpp
+        semantic.cpp
         sourcefile.cpp
-        symtable.cpp
-        syntaxparser.cpp
+        syntax.cpp
         token.cpp
-        typegen.cpp
-        typebinding.cpp
+        typechecking.cpp
         )
+
+target_link_libraries(JoyeerCompiler PUBLIC JoyeerIR)
+target_link_libraries(JoyeerCompiler PUBLIC JoyeerLLVMBackend)
+target_link_libraries(JoyeerCompiler PUBLIC JoyeerDiagnostic)
 

@@ -1,0 +1,50 @@
+enum Inner { Empty, Flag(Bool) }
+enum Choice { Pair(Inner, Bool), Number(Int) }
+
+func classify(value: Choice): Int {
+    return match value {
+        .Pair(.Empty, _) => 0,
+        .Pair(.Flag(true), true) => 1,
+        .Pair(.Flag(true), false) => 2,
+        .Pair(.Flag(false), _) => 3,
+        .Number(1) => 4,
+        .Number(number) => number,
+    }
+}
+
+func optionalCode(value: Bool?): Int {
+    return match value {
+        .Some(true) => 10,
+        .Some(false) => 11,
+        .None => 12,
+    }
+}
+
+func resultCode(value: Result<Bool, Inner>): Int {
+    return match value {
+        .Ok(true) => 20,
+        .Ok(false) => 21,
+        .Err(.Empty) => 22,
+        .Err(.Flag(true)) => 23,
+        .Err(.Flag(false)) => 24,
+    }
+}
+
+func main() {
+    print(value: classify(value: .Pair(.Empty, true)))
+    print(value: classify(value: .Pair(.Empty, false)))
+    print(value: classify(value: .Pair(.Flag(true), true)))
+    print(value: classify(value: .Pair(.Flag(true), false)))
+    print(value: classify(value: .Pair(.Flag(false), true)))
+    print(value: classify(value: .Pair(.Flag(false), false)))
+    print(value: classify(value: .Number(1)))
+    print(value: classify(value: .Number(7)))
+    print(value: optionalCode(value: .Some(true)))
+    print(value: optionalCode(value: .Some(false)))
+    print(value: optionalCode(value: .None))
+    print(value: resultCode(value: .Ok(true)))
+    print(value: resultCode(value: .Ok(false)))
+    print(value: resultCode(value: .Err(.Empty)))
+    print(value: resultCode(value: .Err(.Flag(true))))
+    print(value: resultCode(value: .Err(.Flag(false))))
+}

@@ -1,0 +1,23 @@
+func mark(count: inout Int): Bool {
+    &count = count + 1
+    return true
+}
+
+func choose(flag: Bool): Bool {
+    return flag && if true { return true } else { false }
+}
+
+func main() {
+    var count = 0
+    print(value: false && mark(count: &count))
+    print(value: count)
+    print(value: true && mark(count: &count))
+    print(value: count)
+    let values: [Int] = []
+    print(value: values.count > 0 && values[0] == 1)
+    print(value: false && ("left" + "right" == "leftright"))
+    print(value: true && ("left" + "right" == "leftright"))
+    print(value: choose(flag: false))
+    print(value: choose(flag: true))
+    print(value: true && true && false)
+}

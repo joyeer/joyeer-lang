@@ -1,0 +1,4 @@
+func main() {
+    let values = [42]
+    print(value: values[1])
+}

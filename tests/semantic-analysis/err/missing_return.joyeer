@@ -1,0 +1,3 @@
+func incomplete(value: Int): Int {
+    let copy = value
+}

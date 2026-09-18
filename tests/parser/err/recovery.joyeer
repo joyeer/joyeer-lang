@@ -1,0 +1,11 @@
+func broken(value:) {
+    return
+}
+
+enum Broken {
+    Case(value:),
+}
+
+let chained = a < b < c
+let invalid = (a + b) = c
+let kept = 1

@@ -1,0 +1,4 @@
+func main() {
+    let values = [9223372036854775807, 2]
+    print(value: values[0] * values[1])
+}

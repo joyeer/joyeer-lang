@@ -1,0 +1,9 @@
+struct Item {
+    var text: String
+}
+
+func invalid() {
+    var values = [Item(text: "text")]
+    var index: Int
+    print(value: values[index].text)
+}

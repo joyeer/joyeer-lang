@@ -1,0 +1,1152 @@
+#include "joyeer/compiler/irlowering.h"
+#include "joyeer/compiler/lexparser.h"
+#include "joyeer/compiler/nameresolution.h"
+#include "joyeer/compiler/parser.h"
+#include "joyeer/compiler/sourcefile.h"
+#include "joyeer/compiler/typechecking.h"
+#include "joyeer/diagnostic/diagnostic.h"
+#include "joyeer/ir/ir.h"
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <fstream>
+#include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+
+namespace {
+
+std::string readFixture(const std::string& relativePath) {
+    const std::string path = std::string(JOYEER_TESTS_DIR) + "/" + relativePath;
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("cannot open IR lowering fixture: " + path);
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
+}
+
+class IRLoweringTest : public testing::Test {
+protected:
+    void lower(const std::string& text) {
+        lexerDiagnostics.errors.clear();
+        source = std::make_shared<SourceFile>(text);
+        LexParser lexer(&lexerDiagnostics);
+        lexer.parse(source);
+        ASSERT_TRUE(lexerDiagnostics.errors.empty());
+
+        joyeer::parser::Parser parser(source->tokens);
+        const auto parsing = parser.parse();
+        ASSERT_TRUE(parsing.succeeded()) << joyeer::parser::dump(parsing.diagnostics);
+
+        const auto resolution = joyeer::semantic::NameResolver().resolve(parsing.root);
+        ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+
+        const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        result = joyeer::lowering::Lowerer().lower(
+            checking.model,
+            "test.joyeer",
+            joyeer::ir::SourceInfo {
+                "test.joyeer",
+                "C:/joyeer-tests",
+                static_cast<uint64_t>(source->content.size()),
+                source->lineStarts,
+            });
+    }
+
+    const joyeer::ir::Function& function(const std::string& name) const {
+        const auto found = std::find_if(
+                result.module->functions.begin(),
+                result.module->functions.end(),
+                [&name](const auto& function) { return function.name == name; });
+        EXPECT_NE(found, result.module->functions.end());
+        return *found;
+    }
+
+    size_t opcodeCount(
+            const joyeer::ir::Function& function,
+            joyeer::ir::Opcode opcode) const {
+        size_t count = 0;
+        for (const auto& block : function.blocks) {
+            count += static_cast<size_t>(std::count_if(
+                    block.instructions.begin(),
+                    block.instructions.end(),
+                    [opcode](const auto& instruction) {
+                        return instruction.opcode == opcode;
+                    }));
+        }
+        return count;
+    }
+
+    Diagnostics lexerDiagnostics;
+    SourceFile::Ptr source;
+    joyeer::lowering::Result result;
+};
+
+TEST_F(IRLoweringTest, LowersParametersOperatorsAndReturns) {
+    lower(R"JOYEER(func add(left: Int, right: Int): Int {
+return left + right
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_NE(result.module, nullptr);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    const auto& add = function("add");
+    ASSERT_EQ(add.blocks.size(), 1u);
+    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::stackAllocate), 2u);
+    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::store), 2u);
+    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::load), 2u);
+    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::add), 1u);
+    EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
+    lower(R"JOYEER(func run(input: consuming String) {
+let text = "value"
+print(value: input)
+print(value: text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_TRUE(result.module->sourceInfo.has_value());
+    EXPECT_EQ(result.module->sourceInfo->fileName, "test.joyeer");
+    EXPECT_EQ(result.module->sourceInfo->directory, "C:/joyeer-tests");
+    EXPECT_EQ(result.module->sourceInfo->byteLength, source->content.size());
+    EXPECT_EQ(result.module->sourceInfo->lineStarts, source->lineStarts);
+
+    const auto& run = function("run");
+    ASSERT_TRUE(run.debugLocation.has_value());
+    EXPECT_FALSE(run.debugLocation->implicitCode);
+    bool foundImplicitCleanup = false;
+    bool foundImplicitParameterStorage = false;
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            if (instruction.opcode == joyeer::ir::Opcode::stackAllocate &&
+                instruction.symbol == run.parameters[0].symbol) {
+                foundImplicitParameterStorage = instruction.debugLocation->implicitCode;
+            }
+            if (instruction.opcode == joyeer::ir::Opcode::destroy) {
+                foundImplicitCleanup |= instruction.debugLocation->implicitCode;
+            }
+        }
+    }
+    EXPECT_TRUE(foundImplicitParameterStorage);
+    EXPECT_TRUE(foundImplicitCleanup);
+}
+
+TEST_F(IRLoweringTest, CarriesLexicalScopesVariablesAndStorageBindings) {
+    lower(R"JOYEER(func run(plain: Int, borrowed: borrowing Int, target: inout Int, output: initializing Int) {
+let local = plain
+if true {
+let local = borrowed
+print(value: local)
+}
+&target = local
+&output = borrowed
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    ASSERT_TRUE(run.debugScope.has_value());
+
+    const auto variablesForRun = std::count_if(
+            result.module->debugVariables.begin(),
+            result.module->debugVariables.end(),
+            [&run](const auto& variable) { return variable.function == run.id; });
+    EXPECT_EQ(variablesForRun, 6u);
+    EXPECT_EQ(run.entryDebugVariableBindings.size(), 2u);
+
+    std::vector<const joyeer::ir::DebugVariable*> locals;
+    for (const auto& variable : result.module->debugVariables) {
+        if (variable.function != run.id) continue;
+        if (variable.name == "local") locals.push_back(&variable);
+        if (variable.kind == joyeer::ir::DebugVariableKind::parameter) {
+            ASSERT_TRUE(variable.parameterIndex.has_value());
+            EXPECT_GE(*variable.parameterIndex, 1u);
+            EXPECT_LE(*variable.parameterIndex, 4u);
+        }
+    }
+    ASSERT_EQ(locals.size(), 2u);
+    EXPECT_NE(locals[0]->scope, locals[1]->scope);
+
+    std::unordered_map<joyeer::ir::DebugVariableId, size_t> bindingCounts;
+    for (const auto& binding : run.entryDebugVariableBindings) {
+        ++bindingCounts[binding.variable];
+    }
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            ASSERT_TRUE(instruction.debugLocation->scope.has_value());
+            for (const auto& binding : instruction.debugVariableBindings) {
+                ++bindingCounts[binding.variable];
+            }
+        }
+    }
+    for (const auto& variable : result.module->debugVariables) {
+        if (variable.function == run.id) EXPECT_EQ(bindingCounts[variable.id], 1u);
+    }
+
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, CarriesMatchArmPatternVariables) {
+    lower(R"JOYEER(enum Choice { None, Some(Int) }
+func run(value: Choice) {
+match value {
+.Some(payload) => { print(value: payload) },
+.None => { print(value: 0) },
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    const auto pattern = std::find_if(
+            result.module->debugVariables.begin(),
+            result.module->debugVariables.end(),
+            [&run](const auto& variable) {
+                return variable.function == run.id &&
+                        variable.kind == joyeer::ir::DebugVariableKind::patternBinding &&
+                        variable.name == "payload";
+            });
+    ASSERT_NE(pattern, result.module->debugVariables.end());
+    const auto scope = std::find_if(
+            result.module->debugScopes.begin(),
+            result.module->debugScopes.end(),
+            [&pattern](const auto& candidate) { return candidate.id == pattern->scope; });
+    ASSERT_NE(scope, result.module->debugScopes.end());
+    EXPECT_EQ(scope->kind, joyeer::ir::DebugScopeKind::lexicalBlock);
+    EXPECT_TRUE(scope->parent.has_value());
+
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, OmitsVariablesWhoseInitializersDiverge) {
+    lower(R"JOYEER(func run(): Int {
+let value: Int = return 1
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    EXPECT_TRUE(std::none_of(
+            result.module->debugVariables.begin(),
+            result.module->debugVariables.end(),
+            [&run](const auto& variable) {
+                return variable.function == run.id && variable.name == "value";
+            }));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, LowersBindingsAndMutableAssignmentsThroughStackSlots) {
+    lower(R"JOYEER(func increment(value: Int): Int {
+var current = value
+current = current + 1
+return current
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& increment = function("increment");
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::stackAllocate), 2u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::store), 3u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::integerConstant), 1u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::add), 1u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, AcquiresOwnedReplacementBeforeDestroyingOverwrittenStorage) {
+    lower(R"JOYEER(func run() {
+var text = "before"
+text = text
+print(value: text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& instructions = function("run").blocks[0].instructions;
+    const auto initialStore = std::find_if(
+            instructions.begin(),
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::store;
+            });
+    ASSERT_NE(initialStore, instructions.end());
+    const auto replacementCopy = std::find_if(
+            initialStore + 1,
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::copyValue;
+            });
+    ASSERT_NE(replacementCopy, instructions.end());
+    const auto overwrittenDestroy = std::find_if(
+            replacementCopy + 1,
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::destroy;
+            });
+    ASSERT_NE(overwrittenDestroy, instructions.end());
+    const auto replacementStore = std::find_if(
+            overwrittenDestroy + 1,
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::store;
+            });
+    EXPECT_NE(replacementStore, instructions.end());
+}
+
+TEST_F(IRLoweringTest, LowersDeferredInitializationForTrivialAndOwnedStorage) {
+    lower(R"JOYEER(func run(flag: Bool): String {
+var number: Int
+if flag { number = 1 } else { number = 2 }
+var text: String
+text = "ready"
+print(value: number)
+return text
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::stackAllocate), 3u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::zeroInitialize), 1u);
+    EXPECT_GE(opcodeCount(run, joyeer::ir::Opcode::destroy), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersUserCallsAndTypeErasedPrintCalls) {
+    lower(R"JOYEER(func identity(value: Int): Int { return value }
+func run() {
+let number = identity(value: 42)
+print(value: number)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    const auto& print = function("print");
+    ASSERT_TRUE(print.isExternal);
+    ASSERT_EQ(print.parameters.size(), 1u);
+    EXPECT_TRUE(print.parameters[0].acceptsAnyType);
+
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersReadFileAsAnOwnedExternalResult) {
+    lower(R"JOYEER(func load(path: String): Result<String, IOError> {
+return readFile(path: path)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    const auto& readFile = function("readFile");
+    EXPECT_TRUE(readFile.isExternal);
+    EXPECT_TRUE(readFile.returnsValue);
+    ASSERT_EQ(readFile.parameters.size(), 1u);
+    EXPECT_EQ(
+            result.module->types[readFile.parameters[0].value.type].kind,
+            joyeer::typing::TypeKind::string);
+    EXPECT_EQ(
+            result.module->types[readFile.resultType].kind,
+            joyeer::typing::TypeKind::result);
+    const auto& resultType = result.module->types[readFile.resultType];
+    ASSERT_EQ(resultType.arguments.size(), 2u);
+    const auto errorType = resultType.arguments[1];
+    EXPECT_EQ(
+            result.module->types[errorType].kind,
+            joyeer::typing::TypeKind::enumeration);
+    const auto errorEnumeration = std::find_if(
+            result.module->enumerations.begin(),
+            result.module->enumerations.end(),
+            [errorType](const auto& enumeration) {
+                return enumeration.type == errorType;
+            });
+    ASSERT_NE(errorEnumeration, result.module->enumerations.end());
+    ASSERT_EQ(errorEnumeration->cases.size(), 4u);
+    const auto integerType = std::find_if(
+            result.module->types.begin(),
+            result.module->types.end(),
+            [](const auto& type) {
+                return type.kind == joyeer::typing::TypeKind::integer;
+            });
+    ASSERT_NE(integerType, result.module->types.end());
+    for (const auto& enumCase : errorEnumeration->cases) {
+        ASSERT_EQ(enumCase.payloadTypes.size(), 1u);
+        EXPECT_EQ(enumCase.payloadTypes[0], integerType->id);
+    }
+    EXPECT_EQ(opcodeCount(function("load"), joyeer::ir::Opcode::call), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersExplicitByteConversionCalls) {
+    lower(R"JOYEER(func convert(value: UInt8): String {
+print(value: byteToInt(value: value))
+return byteToString(value: value)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_TRUE(function("byteToInt").isExternal);
+    EXPECT_TRUE(function("byteToString").isExternal);
+    EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::call), 3u);
+    EXPECT_EQ(opcodeCount(function("convert"), joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersIfExpressionValuesThroughMergeSlots) {
+    lower(R"JOYEER(func choose(flag: Bool): Int {
+return if flag { 1 } else { 2 }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& choose = function("choose");
+    EXPECT_EQ(choose.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::branch), 2u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::stackAllocate), 2u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersLogicalAndWithConditionalRightEvaluation) {
+    lower(R"JOYEER(func probe(): Bool { return true }
+func run(flag: Bool): Bool {
+return flag && probe()
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::logicalAnd), 0u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::conditionalBranch), 1u);
+    const auto right = std::find_if(
+            run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "and.rhs"; });
+    ASSERT_NE(right, run.blocks.end());
+    ASSERT_EQ(run.blocks[0].instructions.back().opcode, joyeer::ir::Opcode::conditionalBranch);
+    EXPECT_EQ(run.blocks[0].instructions.back().targets[0], right->id);
+    EXPECT_TRUE(std::none_of(
+            run.blocks[0].instructions.begin(), run.blocks[0].instructions.end(),
+            [](const auto& instruction) { return instruction.opcode == joyeer::ir::Opcode::call; }));
+    EXPECT_TRUE(std::any_of(
+            right->instructions.begin(), right->instructions.end(),
+            [](const auto& instruction) { return instruction.opcode == joyeer::ir::Opcode::call; }));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, PreservesContinuationWhenLogicalAndRightReturns) {
+    lower(R"JOYEER(func run(flag: Bool): Bool {
+return flag && if true { return true } else { false }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::logicalAnd), 0u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::conditionalBranch), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 2u);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, DoesNotAppendCleanupAfterDivergingLoopCondition) {
+    lower(R"JOYEER(func run() {
+let text = "kept"
+while if true { return } else { return } {
+print(value: text)
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, LowersIfBranchesThatReturnEarly) {
+    lower(R"JOYEER(func choose(flag: Bool): Int {
+if flag { return 1 }
+return 2
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& choose = function("choose");
+    EXPECT_EQ(choose.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(choose, joyeer::ir::Opcode::returnValue), 2u);
+}
+
+TEST_F(IRLoweringTest, LowersWhileHeadersBodiesExitsAndBackEdges) {
+    lower(R"JOYEER(func count(limit: Int): Int {
+var value = 0
+while value < limit {
+value = value + 1
+}
+return value
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& count = function("count");
+    EXPECT_EQ(count.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::conditionalBranch), 1u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::branch), 2u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::less), 1u);
+    EXPECT_EQ(opcodeCount(count, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersInoutParametersAndArgumentsAsAddresses) {
+    lower(R"JOYEER(func increment(value: inout Int) {
+&value = value + 1
+}
+func run(): Int {
+var number = 0
+increment(value: &number)
+return number
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+
+    const auto& increment = function("increment");
+    ASSERT_EQ(increment.parameters.size(), 1u);
+    EXPECT_TRUE(increment.parameters[0].isMutable);
+    EXPECT_EQ(
+            increment.parameters[0].value.category,
+            joyeer::ir::ValueCategory::address);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::stackAllocate), 0u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::store), 1u);
+
+    const auto& run = function("run");
+    const auto call = std::find_if(
+            run.blocks[0].instructions.begin(),
+            run.blocks[0].instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::call;
+            });
+    ASSERT_NE(call, run.blocks[0].instructions.end());
+    ASSERT_EQ(call->operands.size(), 1u);
+    const auto slot = std::find_if(
+            run.blocks[0].instructions.begin(),
+            run.blocks[0].instructions.end(),
+            [&call](const auto& instruction) {
+                return instruction.result.has_value() &&
+                        instruction.result->id == call->operands[0];
+            });
+    ASSERT_NE(slot, run.blocks[0].instructions.end());
+    EXPECT_EQ(slot->result->category, joyeer::ir::ValueCategory::address);
+}
+
+TEST_F(IRLoweringTest, LowersStructConstructionFieldReadsAndWrites) {
+    lower(R"JOYEER(struct Box {
+var value: Int
+let fixed: Int = 7
+}
+func make(): Int {
+var box = Box(value: 1)
+box.value = box.value + box.fixed
+return box.value
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    ASSERT_EQ(result.module->structures.size(), 1u);
+    EXPECT_EQ(result.module->structures[0].fields.size(), 2u);
+
+    const auto& make = function("make");
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::constructStruct), 1u);
+    EXPECT_GE(opcodeCount(make, joyeer::ir::Opcode::fieldAddress), 3u);
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::add), 1u);
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersUserOptionalAndNilEnumConstruction) {
+    lower(R"JOYEER(enum Value { Empty, Number(Int), }
+func qualified(): Value { return Value.Number(1) }
+func contextual(): Value { return .Empty }
+func some(value: Int): Int? { return .Some(value) }
+func none(): Int? { return nil }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_GE(result.module->enumerations.size(), 2u);
+    EXPECT_EQ(opcodeCount(function("qualified"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("contextual"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("some"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("none"), joyeer::ir::Opcode::constructEnum), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersStringCountAndSubscript) {
+    lower(R"JOYEER(func first(text: String): UInt8 {
+let length = text.count
+print(value: length)
+return text[0]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& first = function("first");
+    EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::count), 1u);
+    EXPECT_EQ(opcodeCount(first, joyeer::ir::Opcode::subscript), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersStringUtf8ToOwnedByteArray) {
+    lower(R"JOYEER(func bytes(text: String): [UInt8] {
+return text.utf8()
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& bytes = function("bytes");
+    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::stringUtf8), 1u);
+    EXPECT_EQ(opcodeCount(bytes, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersArrayAndDictionaryLiteralsWithStructuredTypes) {
+    lower(R"JOYEER(func build(): Int {
+let values: [Int] = [1, 2, 3]
+let lookup: [String: Int] = ["answer": 42]
+print(value: values.count)
+return values[0] + lookup["answer"]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& build = function("build");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructArray), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::constructDictionary), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::subscript), 2u);
+
+    const auto arrayType = std::find_if(
+            result.module->types.begin(),
+            result.module->types.end(),
+            [](const auto& type) { return type.name == "[Int]"; });
+    ASSERT_NE(arrayType, result.module->types.end());
+    EXPECT_EQ(arrayType->kind, joyeer::typing::TypeKind::array);
+    ASSERT_EQ(arrayType->arguments.size(), 1u);
+    const auto elementType = std::find_if(
+            result.module->types.begin(),
+            result.module->types.end(),
+            [&arrayType](const auto& type) { return type.id == arrayType->arguments[0]; });
+    ASSERT_NE(elementType, result.module->types.end());
+    EXPECT_EQ(elementType->kind, joyeer::typing::TypeKind::integer);
+}
+
+TEST_F(IRLoweringTest, LowersMutatingArrayAppendWithOwnedElements) {
+    lower(R"JOYEER(func build(): [String] {
+var values: [String] = []
+&values.append(element: "first" + "!")
+let second = "second"
+&values.append(element: second)
+return values
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& build = function("build");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::arrayAppend), 2u);
+    EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersDictionaryInsertionAndUpdateWithOwnedEntries) {
+    lower(R"JOYEER(func build(): [String: String] {
+var lookup: [String: String] = [:]
+&lookup["key"] = "first" + "!"
+let key = "key"
+let value = "second"
+&lookup[key] = value
+print(value: lookup.count)
+return lookup
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& build = function("build");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::dictionarySet), 2u);
+    EXPECT_GE(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::count), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersMutableArrayElementsAsAddressProjections) {
+    lower(R"JOYEER(func incrementFirst(values: inout [Int]): Int {
+&values[0] = values[0] + 1
+return values[0]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& increment = function("incrementFirst");
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscriptAddress), 1u);
+    EXPECT_EQ(opcodeCount(increment, joyeer::ir::Opcode::subscript), 2u);
+}
+
+TEST_F(IRLoweringTest, LowersEnumMatchesAndPayloadBindings) {
+    lower(R"JOYEER(enum Value { Empty, Number(Int), }
+func read(value: Value): Int {
+return match value {
+.Empty => 0,
+.Number(number) => number,
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& read = function("read");
+    EXPECT_EQ(read.blocks.size(), 4u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::extractPayload), 1u);
+    EXPECT_EQ(opcodeCount(read, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersOptionalMatchesToResultConstruction) {
+    lower(R"JOYEER(enum Failure { Missing, }
+func unwrap(value: Int?): Result<Int, Failure> {
+return match value {
+.Some(number) => .Ok(number),
+.None => .Err(.Missing),
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& unwrap = function("unwrap");
+    EXPECT_EQ(opcodeCount(unwrap, joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(unwrap, joyeer::ir::Opcode::extractPayload), 1u);
+    EXPECT_EQ(opcodeCount(unwrap, joyeer::ir::Opcode::constructEnum), 3u);
+}
+
+TEST_F(IRLoweringTest, LowersLiteralWildcardAndNestedPayloadPatterns) {
+    lower(R"JOYEER(enum Flag { Bool(Bool), }
+func classify(value: UInt8): Int {
+return match value { b'a' => 1, _ => 0, }
+}
+func fromFlag(flag: Flag): Int {
+return match flag { .Bool(true) => 1, .Bool(false) => 0, }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(opcodeCount(function("classify"), joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(function("fromFlag"), joyeer::ir::Opcode::switchPattern), 1u);
+
+    const auto text = joyeer::ir::dump(*result.module);
+    EXPECT_NE(text.find("byte(97):UInt8"), std::string::npos);
+    EXPECT_NE(text.find("case#"), std::string::npos);
+    EXPECT_NE(text.find("true:Bool"), std::string::npos);
+}
+
+TEST_F(IRLoweringTest, LowersTheCompleteJsonParserMvpFixture) {
+    lower(readFixture("parser/ok/json_mvp.joyeer"));
+
+    ASSERT_TRUE(result.succeeded())
+            << joyeer::lowering::dump(result.diagnostics)
+            << (result.module == nullptr ? std::string() : joyeer::ir::dump(*result.module));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::subscript), 1u);
+    EXPECT_EQ(opcodeCount(function("parseValue"), joyeer::ir::Opcode::switchPattern), 2u);
+    EXPECT_GE(opcodeCount(function("parseValue"), joyeer::ir::Opcode::constructEnum), 7u);
+}
+
+TEST_F(IRLoweringTest, ClonesBorrowedValuesAndDestroysOwningLocals) {
+    lower(R"JOYEER(func main() {
+let first = "static"
+let second = first
+let values: [String] = [second]
+print(value: values.count)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& main = function("main");
+    EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::copyValue), 3u);
+    EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 3u);
+
+    const auto& instructions = main.blocks[0].instructions;
+    const auto returnInstruction = std::find_if(
+            instructions.begin(),
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::returnVoid;
+            });
+    ASSERT_NE(returnInstruction, instructions.end());
+    ASSERT_NE(returnInstruction, instructions.begin());
+    EXPECT_EQ((returnInstruction - 1)->opcode, joyeer::ir::Opcode::destroy);
+}
+
+TEST_F(IRLoweringTest, CapturesEnumPayloadBeforeLaterMutation) {
+    lower(R"JOYEER(enum Pair { Values(String, Int) }
+func change(value: inout String): Int {
+&value = "replacement"
+return 1
+}
+func run(): Pair {
+var text = "before"
+return .Values(text, change(value: &text))
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& instructions = function("run").blocks[0].instructions;
+    const auto construction = std::find_if(
+            instructions.begin(), instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::constructEnum;
+            });
+    ASSERT_NE(construction, instructions.end());
+    ASSERT_EQ(construction->operands.size(), 2u);
+    const auto capture = std::find_if(
+            instructions.begin(), construction,
+            [&construction](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::copyValue &&
+                        instruction.result->id == construction->operands[0];
+            });
+    const auto mutation = std::find_if(
+            instructions.begin(), construction,
+            [this](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::call &&
+                        instruction.callee == function("change").id;
+            });
+    ASSERT_NE(capture, construction);
+    ASSERT_NE(mutation, construction);
+    EXPECT_LT(capture, mutation);
+}
+
+TEST_F(IRLoweringTest, KeepsConsumedArgumentLiveAcrossLaterEarlyReturn) {
+    lower(R"JOYEER(func accept(value: consuming String, flag: Bool) {}
+func run(flag: Bool) {
+var text = "a" + "b"
+accept(value: consume text, flag: if flag { return } else { false })
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    const auto take = std::find_if(
+            run.blocks[0].instructions.begin(), run.blocks[0].instructions.end(),
+            [](const auto& instruction) { return instruction.opcode == joyeer::ir::Opcode::take; });
+    ASSERT_NE(take, run.blocks[0].instructions.end());
+    const auto early = std::find_if(
+            run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "if.then"; });
+    ASSERT_NE(early, run.blocks.end());
+    EXPECT_EQ(early->instructions.back().opcode, joyeer::ir::Opcode::returnVoid);
+    const auto savedTemporary = std::find_if(
+            early->instructions.begin(), early->instructions.end(),
+            [&take](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::store &&
+                        instruction.operands[0] == take->result->id;
+            });
+    ASSERT_NE(savedTemporary, early->instructions.end());
+    EXPECT_TRUE(std::any_of(
+            savedTemporary, early->instructions.end(),
+            [&savedTemporary](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::destroy &&
+                        instruction.operands[0] == savedTemporary->operands[1];
+            }));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, CoercesOptionalBindingsBeforeStoring) {
+    lower(R"JOYEER(func run(): Int? {
+let value: Int? = 42
+return value
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::constructEnum), 1u);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, LowersPendingOperandAndCaptureRegressionFixtures) {
+    for (const auto* fixture : {
+                "native/regression_lowering_short_circuit.joyeer",
+                "native/regression_lowering_capture.joyeer",
+                "native/regression_lowering_pending_operands.joyeer" }) {
+        SCOPED_TRACE(fixture);
+        lower(readFixture(fixture));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto verification = joyeer::ir::Verifier().verify(*result.module);
+        EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    }
+}
+
+TEST_F(IRLoweringTest, CleansAllActiveScopesBeforeEarlyReturn) {
+    lower(R"JOYEER(func run(flag: Bool) {
+let text = "owned"
+if flag { return }
+let values: [String] = [text]
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::destroy), 3u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 2u);
+    for (const auto& block : run.blocks) {
+        for (size_t index = 0; index < block.instructions.size(); ++index) {
+            if (block.instructions[index].opcode != joyeer::ir::Opcode::returnVoid) continue;
+            ASSERT_GT(index, 0u);
+            EXPECT_EQ(block.instructions[index - 1].opcode, joyeer::ir::Opcode::destroy);
+        }
+    }
+}
+
+TEST_F(IRLoweringTest, TransfersOwnedReturnValuesToTheCaller) {
+    lower(R"JOYEER(func build(): String {
+let text = "left" + "right"
+return text
+}
+func main() {
+let value = build()
+print(value: value)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& build = function("build");
+    const auto& main = function("main");
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::destroy), 1u);
+    EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 1u);
+}
+
+TEST_F(IRLoweringTest, TransfersConsumingArgumentsAndCleansCalleeOwnership) {
+    lower(R"JOYEER(func take(value: consuming String): String {
+&value = value + "!"
+return value
+}
+func run(): String {
+var text = "first"
+let moved = take(value: consume text)
+text = "second"
+print(value: text)
+return moved
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& take = function("take");
+    ASSERT_EQ(take.parameters.size(), 1u);
+    EXPECT_TRUE(take.parameters[0].isConsuming);
+    EXPECT_FALSE(take.parameters[0].isMutable);
+    EXPECT_GE(opcodeCount(take, joyeer::ir::Opcode::destroy), 1u);
+
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::take), 1u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, KeepsExplicitBorrowingParametersAsNonOwningValues) {
+    lower(R"JOYEER(func inspect(value: borrowing String) {
+print(value: value)
+}
+func run() {
+let text = "retained"
+inspect(value: text)
+print(value: text)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& inspect = function("inspect");
+    ASSERT_EQ(inspect.parameters.size(), 1u);
+    EXPECT_FALSE(inspect.parameters[0].isMutable);
+    EXPECT_FALSE(inspect.parameters[0].isConsuming);
+    EXPECT_EQ(opcodeCount(inspect, joyeer::ir::Opcode::destroy), 0u);
+}
+
+TEST_F(IRLoweringTest, LowersInitializingParametersAsCallerOwnedAddresses) {
+    lower(R"JOYEER(func initialize(out: initializing String) {
+&out = "value"
+}
+func run(): String {
+var text: String
+initialize(out: &text)
+return text
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& initialize = function("initialize");
+    ASSERT_EQ(initialize.parameters.size(), 1u);
+    EXPECT_TRUE(initialize.parameters[0].isMutable);
+    EXPECT_TRUE(initialize.parameters[0].isInitializing);
+    EXPECT_FALSE(initialize.parameters[0].isConsuming);
+    EXPECT_EQ(
+            initialize.parameters[0].value.category,
+            joyeer::ir::ValueCategory::address);
+    EXPECT_EQ(opcodeCount(initialize, joyeer::ir::Opcode::stackAllocate), 0u);
+    EXPECT_EQ(opcodeCount(initialize, joyeer::ir::Opcode::store), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 1u);
+}
+
+TEST_F(IRLoweringTest, TakesAndReinitializesOwnedProjections) {
+    lower(R"JOYEER(struct Pair { var left: String
+var right: String
+}
+func take(value: consuming String) { print(value: value) }
+func run(): Pair {
+var pair = Pair(left: "left", right: "right")
+take(value: consume pair.left)
+print(value: pair.right)
+pair.left = "new"
+return pair
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    const auto& run = function("run");
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::take), 1u);
+    EXPECT_GE(opcodeCount(run, joyeer::ir::Opcode::fieldAddress), 2u);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, LowersTrailingExpressionsAsImplicitReturns) {
+    lower(R"JOYEER(func square(value: Int): Int { value * value }
+func text(): String { "left" + "right" }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("square"), joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::returnValue), 1u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::destroy), 0u);
+}
+
+TEST_F(IRLoweringTest, AnchorsImplicitReturnAtTheTrailingExpression) {
+    lower(R"JOYEER(func answer(): Int {
+42
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& answer = function("answer");
+    const auto& instructions = answer.blocks[0].instructions;
+    const auto returned = std::find_if(
+            instructions.begin(),
+            instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::returnValue;
+            });
+    ASSERT_NE(returned, instructions.end());
+    ASSERT_TRUE(returned->debugLocation.has_value());
+    EXPECT_EQ(
+            source->content.substr(
+                    returned->debugLocation->span.offset,
+                    returned->debugLocation->span.length),
+            "42");
+}
+
+TEST_F(IRLoweringTest, AnchorsTrailingReturnPreparationAtTheExpression) {
+    lower(R"JOYEER(func maybe(): String? {
+"value"
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& maybe = function("maybe");
+    const auto expectedOffset = source->content.find("\"value\"");
+    ASSERT_NE(expectedOffset, std::string::npos);
+    bool foundCopy = false;
+    bool foundConstruction = false;
+    bool foundReturn = false;
+    for (const auto& block : maybe.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::copyValue &&
+                instruction.opcode != joyeer::ir::Opcode::constructEnum &&
+                instruction.opcode != joyeer::ir::Opcode::returnValue) {
+                continue;
+            }
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            EXPECT_EQ(instruction.debugLocation->span.offset, expectedOffset);
+            foundCopy |= instruction.opcode == joyeer::ir::Opcode::copyValue;
+            foundConstruction |= instruction.opcode == joyeer::ir::Opcode::constructEnum;
+            foundReturn |= instruction.opcode == joyeer::ir::Opcode::returnValue;
+        }
+    }
+    EXPECT_TRUE(foundCopy);
+    EXPECT_TRUE(foundConstruction);
+    EXPECT_TRUE(foundReturn);
+}
+
+TEST_F(IRLoweringTest, ReportsStraightLineFunctionsThatFallThrough) {
+    lower(R"JOYEER(func incomplete(value: Int): Int {
+let copy = value
+}
+)JOYEER");
+
+    ASSERT_FALSE(result.succeeded());
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(
+            result.diagnostics[0].id,
+            joyeer::lowering::DiagnosticId::missingReturn);
+}
+
+} // namespace

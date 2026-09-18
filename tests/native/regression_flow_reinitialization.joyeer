@@ -1,0 +1,31 @@
+func take(value: consuming String) {
+    print(value: value)
+}
+
+func initialize(out: initializing String) {
+    &out = "ready"
+}
+
+func main() {
+    var text: String
+    var count = 0
+    while count < 2 {
+        initialize(out: &text)
+        take(value: consume text)
+        count = count + 1
+    }
+
+    var values = ["old"]
+    let index = 0
+    take(value: consume values[index])
+    &values[index] = "new"
+    print(value: values[index])
+
+    text = "reset"
+    count = 0
+    while count < 2 {
+        text = "iteration"
+        take(value: consume text)
+        count = count + 1
+    }
+}

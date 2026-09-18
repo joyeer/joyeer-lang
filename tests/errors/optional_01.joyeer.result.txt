@@ -1,6 +1,0 @@
-SyntaxError(line: -1):
-    Type annotation missing in variable declaration
-SyntaxError(line: -1):
-    'nil' requires a contextual type
-SyntaxError(line: -1):
-    'nil' cannot initialize specified type 'Int'

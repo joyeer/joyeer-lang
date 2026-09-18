@@ -1,5 +1,0 @@
-
-var dict = [12: 10, 13: 12]
-print(message: dict[12])
-dict[12] = 11
-print(message: dict[12])

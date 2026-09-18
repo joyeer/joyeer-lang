@@ -1,0 +1,4 @@
+func main() {
+    let values: [UInt8] = []
+    print(value: values[0])
+}
