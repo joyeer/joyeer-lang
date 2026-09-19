@@ -646,12 +646,14 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime;ownership;array"
     )
 
+    set(dictionary_set_output
+            "3\nupdated!\ntwo\nretained\nretained\n2\n6\n2\n40\n30\n2\n40\n30\n2\nlast\nkept\n2\nlast\nkept\n")
     add_test(NAME NativeExecutableDictionarySet
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/dictionary_set.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dictionary-set${CMAKE_EXECUTABLE_SUFFIX}
-                    -DEXPECTED_OUTPUT=3\nupdated!\ntwo\nretained\nretained\n2\n6\n
+                    "-DEXPECTED_OUTPUT=${dictionary_set_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableDictionarySet PROPERTIES
@@ -761,7 +763,9 @@ if(JOYEER_CLANG_EXECUTABLE)
             "true\nreplacement\ntrue\nbefore\nafter\nafter\nafter\n")
     add_joyeer_native_regression(
             NativeRegressionPendingOperands regression_lowering_pending_operands
-            "ab\n7\nab\nc\nvalue\nab\n42\n")
+            "ab\n7\nab\nc\nvalue\nab\n42\nbeforebefore\ntrue\nfalse\nearly\nbefore!\npayload\npayload\nnested\narray\nnested\narray\n")
+    add_joyeer_native_regression(
+            NativeRegressionDictionaryDuplicates dictionary_set "${dictionary_set_output}" 0)
     add_joyeer_native_regression(
             NativeRegressionPatterns regression_backend_patterns
             "30\n10\n20\n3\n1\n2\n4\n")

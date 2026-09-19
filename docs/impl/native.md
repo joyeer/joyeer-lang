@@ -243,11 +243,12 @@ take both key and value. Existing keys retain their original key storage,
 destroy the incoming duplicate key and previous value, and take the replacement
 value without changing `count`.
 
-Known construction gap: dictionary literals preserve every supplied pair,
-including keys that compare equal at runtime. They can therefore have
-`count == 2` while lookup/update reaches only the first equal key, unlike
-successive insertion into an initially empty dictionary. Construction needs
-a defined, consistent duplicate-key policy and ownership cleanup.
+Dictionary construction uses the same replacement policy as incremental
+insertion: equal keys retain the first key storage and the last supplied value,
+and `count` includes only unique keys. Construction compacts entries in place,
+destroying each discarded key and replaced value exactly once. Cloning an
+already normalized dictionary preserves its count and independently clones
+its owned entries without repeating duplicate-key detection.
 
 ### File input
 
@@ -319,7 +320,7 @@ without creating a second execution pipeline.
 ### Native ABI hardening gaps
 
 The following failure paths were identified from source and SDK contracts;
-they are separate from the reproduced Unicode-path and duplicate-key issues:
+they are separate from the reproduced Unicode-path issue:
 
 - Object output checks stream errors before closing and returns without
   clearing an observed error. LLVM 22.1.8's `raw_fd_ostream` can then terminate

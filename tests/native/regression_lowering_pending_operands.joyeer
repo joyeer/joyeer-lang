@@ -1,4 +1,5 @@
 enum Pair { Values(String, Int) }
+enum Envelope { Payload([String]?) }
 
 func accept(value: consuming String, number: Int) {
     print(value: value)
@@ -26,6 +27,41 @@ func enumeration(flag: Bool) {
     print(value: match pair { .Values(text, _) => text })
 }
 
+func replaceText(value: inout String): String {
+    &value = "after" + "!"
+    return "before"
+}
+
+func binary(flag: Bool): String {
+    let text = "be" + "fore"
+    return text + if flag { return "early" } else { "!" }
+}
+
+func optionalSnapshot(flag: Bool): String {
+    var message: String? = "pay" + "load"
+    return match message {
+        .Some(text) => {
+            message = nil
+            if flag { return text }
+            text
+        },
+        .None => { "missing" }
+    }
+}
+
+func nestedSnapshot(flag: Bool): String {
+    var envelope: Envelope = .Payload(["nest" + "ed", "arr" + "ay"])
+    return match envelope {
+        .Payload(.Some(values)) => {
+            envelope = .Payload(nil)
+            print(value: values[0])
+            if flag { return values[1] }
+            values[1]
+        },
+        .Payload(.None) => { "missing" }
+    }
+}
+
 func main() {
     call(flag: true)
     call(flag: false)
@@ -37,4 +73,16 @@ func main() {
     enumeration(flag: false)
     let optional: Int? = 42
     print(value: match optional { .Some(number) => number, .None => 0 })
+    var text = "be" + "fore"
+    print(value: text + replaceText(value: &text))
+    text = "be" + "fore"
+    print(value: text == replaceText(value: &text))
+    text = "be" + "fore"
+    print(value: text != replaceText(value: &text))
+    print(value: binary(flag: true))
+    print(value: binary(flag: false))
+    print(value: optionalSnapshot(flag: true))
+    print(value: optionalSnapshot(flag: false))
+    print(value: nestedSnapshot(flag: true))
+    print(value: nestedSnapshot(flag: false))
 }

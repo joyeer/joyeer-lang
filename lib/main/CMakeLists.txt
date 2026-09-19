@@ -15,6 +15,10 @@ add_dependencies(joyeer JoyeerCompiler)
 add_dependencies(joyeer JoyeerDiagnostic)
 add_dependencies(joyeer JoyeerNativeRuntime)
 
+set_property(TARGET joyeer APPEND PROPERTY LINK_DEPENDS
+        "$<TARGET_FILE:JoyeerNativeRuntime>"
+)
+
 target_compile_definitions(joyeer PRIVATE
         JOYEER_NATIVE_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
         JOYEER_SDK_ROOT_PATH="${JOYEER_MACOS_SDK_PATH}"

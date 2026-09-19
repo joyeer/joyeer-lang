@@ -1053,7 +1053,9 @@ private:
         if (expression->op != nullptr && expression->op->kind == andAnd) {
             return lowerLogicalAnd(expression);
         }
-        const auto left = lowerExpression(expression->left);
+        auto left = lowerExpression(expression->left);
+        if (!left.has_value()) return std::nullopt;
+        left = prepareOwned(*left, expression->left->span);
         if (!left.has_value()) return std::nullopt;
         const auto right = lowerExpression(expression->right);
         const auto type = model->typeOf(expression);
@@ -1679,6 +1681,16 @@ private:
         if (pattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (!symbol.has_value()) return;
+            if (requiresDestroy(value.type)) {
+                value = emitValue(
+                        ir::Opcode::copyValue,
+                        value.type,
+                        ir::ValueCategory::value,
+                        { value.id },
+                        pattern->span);
+            }
+            const auto owned = acquireOwned(value, pattern->span);
+            if (!owned.has_value()) return;
             const auto address = emitValue(
                     ir::Opcode::stackAllocate,
                     value.type,
@@ -1688,13 +1700,14 @@ private:
                     symbol);
                     const auto debugVariable = ensureDebugVariable(*symbol, currentFunctionId);
                     emitRawStore(
-                        value,
+                        *owned,
                         address,
                         pattern->span,
                         symbol,
                         false,
                         debugVariable);
             slots[*symbol] = address;
+                    registerOwnedStorage(address);
             return;
         }
         if (pattern->kind != syntax::Kind::enumCasePattern) return;
