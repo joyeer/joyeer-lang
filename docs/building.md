@@ -33,14 +33,23 @@ All platforms require:
 - the platform SDK and native linker inputs;
 - network access for the first LibXml2 and GoogleTest population.
 
-Windows requires the full development archive, not the tool-only installer:
+Windows requires the full development archive matching the MSVC target,
+not the tool-only installer:
 
 ```text
 clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
+clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz
 ```
 
-Extract it to a stable path such as `C:\LLVM-22.1.8`, then set the user
-environment variable `LLVM_HOME`. In PowerShell:
+Use the first archive for x64 or the second for ARM64. The LLVM/LLD libraries
+must use the static MSVC runtime (`/MT`). Install the matching MSVC target
+tools, Windows SDK libraries, and Visual Studio DIA SDK (`lib/amd64` for x64,
+`lib/arm64` for ARM64). CMake checks the LLVM native architecture against the
+MSVC target; x64 LLVM libraries cannot be linked into an ARM64 backend DLL.
+
+Extract the SDK to a stable path such as `C:\LLVM-22.1.8` for x64 or
+`C:\LLVM-22.1.8-arm64` for ARM64, then set the user environment variable
+`LLVM_HOME` to the selected SDK. For x64, in PowerShell:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("LLVM_HOME", "C:\LLVM-22.1.8", "User")
@@ -131,21 +140,46 @@ ctest --preset linux-debug
 Use `linux-release` for a release build. Omit `JOYEER_LLVM_ROOT` when
 `LLVM_HOME` already points to the SDK.
 
-On Windows, use a Visual Studio Developer PowerShell or Developer Command
-Prompt configured for the x64 target, for example the x64 Native Tools prompt
-or an environment initialized by `vcvars64.bat`. The presets select `cl.exe`
-but declare architecture setup as external: the preset name does not switch
-an ARM64-targeting shell to x64. Configuration fails when the Visual Studio
-C++ workload or Windows SDK is missing.
+Linux presets are architecture-neutral. Native x86-64 and AArch64 builds use
+the same commands with a matching host compiler, LLVM/LLD/Clang SDK, and
+system development libraries. Code generation uses LLVM's default target;
+the Clang Driver discovers that target's ELF linker inputs. Run the full
+acceptance gate on each Linux architecture before treating it as validated;
+Windows ARM64 results do not establish Linux ARM64 coverage.
 
-The `x64-debug` preset defaults `JOYEER_BUILD_UNITTESTS` to `OFF`. Enable it
-explicitly for development and the full acceptance gate:
+On Windows, use a Visual Studio Developer PowerShell or Developer Command
+Prompt configured for the intended x64 or ARM64 target. For x64, use the x64
+Native Tools prompt or `vcvars64.bat`; for native ARM64, use an ARM64-targeting
+Developer shell, for example one initialized by `vcvarsarm64.bat`. The
+presets select `cl.exe` but declare architecture setup as external: the
+preset name does not switch the shell's compiler target. Configuration fails
+when the required Visual Studio C++ workload or Windows SDK is missing.
+
+All Windows Debug and Release presets enable `JOYEER_BUILD_UNITTESTS` by
+default. For x64 development and the full acceptance gate:
 
 ```powershell
 cmake --preset x64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON
 cmake --build --preset x64-debug
 ctest --preset x64-debug
 ```
+
+For native Windows ARM64, from an ARM64-targeting Developer shell:
+
+```powershell
+cmake --preset arm64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8-arm64
+cmake --build --preset arm64-debug
+ctest --preset arm64-debug
+```
+
+Use `arm64-release` for a release build. Keep separate build directories
+and SDK roots for x64 and ARM64;
+do not switch architectures inside an existing CMake build tree.
+
+These are native builds, not a cross-compilation interface. The compiler,
+backend library, native runtime archive, LLVM default target, and system
+libraries must agree on the architecture. Joyeer does not currently expose
+a `--target` option; 32-bit Windows and ARM64EC are not supported.
 
 Omit `JOYEER_LLVM_ROOT` when `LLVM_HOME` points to the intended SDK.
 
@@ -164,6 +198,10 @@ cmake --build --preset x64-release
 ctest --test-dir .\out\build\x64-release --output-on-failure
 cmake --install .\out\build\x64-release --prefix .\out\package\joyeer
 ```
+
+For an ARM64 package, use `arm64-release` and the ARM64 LLVM SDK throughout
+the commands above, with a separate staging directory. Do not mix x64 and
+ARM64 compiler, backend, or runtime files in one package.
 
 `INSTALL_GTEST=OFF` disables only GoogleTest's installation rules, not its
 tests. Without this setting, a unit-test-enabled build also installs

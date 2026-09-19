@@ -68,6 +68,7 @@ if(WIN32)
                         -DLLVM_READOBJ=${JOYEER_LLVM_ROOT}/bin/llvm-readobj.exe
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DBACKEND_LIBRARY=$<TARGET_FILE:JoyeerNativeBackend>
+                        -DEXPECTED_MACHINE=${JOYEER_WINDOWS_MACHINE}
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeBackendDependencies.cmake
                 )
         set_tests_properties(NativeBackendHasNoExternalLLVMDlls PROPERTIES

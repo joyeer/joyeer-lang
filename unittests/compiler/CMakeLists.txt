@@ -311,6 +311,22 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime"
     )
 
+    if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE)
+        add_test(NAME NativeExecutableArchitecture
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-architecture${CMAKE_EXECUTABLE_SUFFIX}
+                        -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
+                        -DEXPECTED_MACHINE=${JOYEER_WINDOWS_MACHINE}
+                        -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableArchitecture PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;architecture"
+        )
+    endif()
+
     add_test(NAME InstalledCompilerNativeHello
             COMMAND ${CMAKE_COMMAND}
                     -DBUILD_DIR=${CMAKE_BINARY_DIR}

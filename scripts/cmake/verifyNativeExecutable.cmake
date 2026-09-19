@@ -31,6 +31,9 @@ cleanup_native_artifacts()
 if(EXPECTED_DEBUG_PATTERNS AND NOT LLVM_READOBJ)
     fail_native_validation("LLVM_READOBJ is required to inspect native debug sections")
 endif()
+if(EXPECTED_MACHINE AND NOT LLVM_READOBJ)
+    fail_native_validation("LLVM_READOBJ is required to inspect the native architecture")
+endif()
 if(EXPECTED_PDB_PATTERNS AND NOT LLVM_PDBUTIL)
     fail_native_validation("LLVM_PDBUTIL is required to inspect PDB line records")
 endif()
@@ -55,6 +58,19 @@ if(NOT EXISTS "${OUTPUT_FILE}")
     fail_native_validation("Joyeer succeeded without producing ${OUTPUT_FILE}")
 endif()
 
+if(EXPECTED_MACHINE)
+    execute_process(
+            COMMAND "${LLVM_READOBJ}" --file-headers "${OUTPUT_FILE}"
+            RESULT_VARIABLE readobj_result
+            OUTPUT_VARIABLE readobj_output
+            ERROR_VARIABLE readobj_error
+    )
+    if(NOT readobj_result EQUAL 0 OR
+       NOT readobj_output MATCHES "Machine: ${EXPECTED_MACHINE} ")
+        fail_native_validation(
+                "Native executable is not ${EXPECTED_MACHINE}:\n${readobj_output}${readobj_error}")
+    endif()
+endif()
 
 if(EXPECT_PDB)
     if(NOT EXISTS "${pdb_file}")
