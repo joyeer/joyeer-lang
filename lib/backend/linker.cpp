@@ -487,10 +487,17 @@ LinkResult Linker::link(
     }
 
 #if defined(_WIN32)
+#if defined(_M_ARM64)
+    constexpr auto machine = "/MACHINE:ARM64";
+#elif defined(_M_X64)
+    constexpr auto machine = "/MACHINE:X64";
+#else
+#error "Unsupported Windows architecture"
+#endif
     std::vector<std::string> lldArguments {
         "lld-link",
         "/NOLOGO",
-        "/MACHINE:X64",
+        machine,
         "/SUBSYSTEM:CONSOLE",
         "/OUT:" + outputPath,
         objectPath,

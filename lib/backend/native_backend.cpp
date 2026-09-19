@@ -52,6 +52,13 @@ namespace {
 #if defined(_WIN32)
 constexpr lld::Flavor nativeLinkerFlavor = lld::WinLink;
 lld::Driver nativeLinkerDriver = &lld::coff::link;
+#if defined(_M_ARM64)
+constexpr auto windowsTargetArchitecture = llvm::Triple::aarch64;
+#elif defined(_M_X64)
+constexpr auto windowsTargetArchitecture = llvm::Triple::x86_64;
+#else
+#error "Unsupported Windows architecture"
+#endif
 #elif defined(__APPLE__)
 constexpr lld::Flavor nativeLinkerFlavor = lld::Darwin;
 lld::Driver nativeLinkerDriver = &lld::macho::link;
@@ -149,6 +156,16 @@ JoyeerNativeBackendStatus emitObject(
     }
 
     const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#if defined(_WIN32)
+    if (!triple.isWindowsMSVCEnvironment() || triple.getArch() != windowsTargetArchitecture) {
+        report(
+                diagnosticCallback,
+                diagnosticContext,
+                JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED,
+                "LLVM default target must match the Windows native backend architecture");
+        return JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED;
+    }
+#endif
     std::string targetError;
     const auto* target = llvm::TargetRegistry::lookupTarget(triple, targetError);
     if (target == nullptr) {
@@ -261,12 +278,12 @@ bool appendWindowsLibraryPaths(
                     llvm::SubDirectoryType::Lib,
                     toolsetLayout,
                     toolchainPath,
-                    llvm::Triple::x86_64));
+                    windowsTargetArchitecture));
 
     if (llvm::useUniversalCRT(
                 toolsetLayout,
                 toolchainPath,
-                llvm::Triple::x86_64,
+                windowsTargetArchitecture,
                 *fileSystem)) {
         std::string universalCRTRoot;
         std::string universalCRTVersion;
@@ -286,7 +303,7 @@ bool appendWindowsLibraryPaths(
                 "Lib",
                 universalCRTVersion,
                 "ucrt",
-                llvm::archToWindowsSDKArch(llvm::Triple::x86_64));
+                llvm::archToWindowsSDKArch(windowsTargetArchitecture));
         arguments.emplace_back("/LIBPATH:" + std::string(universalCRTPath));
     }
 
@@ -318,9 +335,10 @@ bool appendWindowsLibraryPaths(
     if (!llvm::appendArchToWindowsSDKLibPath(
                 windowsSDKMajor,
                 windowsSDKPath,
-                llvm::Triple::x86_64,
+                windowsTargetArchitecture,
                 windowsSDKArchitecturePath)) {
-        error = "Windows SDK does not support the x64 target";
+        error = "Windows SDK does not support the " +
+                std::string(llvm::archToWindowsSDKArch(windowsTargetArchitecture)) + " target";
         return false;
     }
     arguments.emplace_back("/LIBPATH:" + windowsSDKArchitecturePath);

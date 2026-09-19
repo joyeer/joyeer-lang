@@ -41,8 +41,9 @@ ctest --test-dir build --output-on-failure
   `LLVM_HOME` or `JOYEER_LLVM_ROOT` for a nonstandard SDK.
   CMake must not download or build LLVM itself.
 - Windows builds require Visual Studio's MSVC compiler, a Windows SDK,
-  compatible `/MT` static LLVM/LLD libraries, and the MSVC DIA SDK. Configure
-  from an x64-targeting Developer shell; Ninja does not select the toolchain.
+  compatible `/MT` static LLVM/LLD libraries, and the MSVC DIA SDK, all matching
+  the x64 or ARM64 target. Configure from a matching Developer shell; Ninja
+  does not select the toolchain. Keep separate build trees for each architecture.
 - The build is out-of-source only. Never run `cmake .` at the repository root.
 - Manual `-B build` configurations place the executable under `build/bin/`;
   presets use `out/build/<preset>/bin/`.

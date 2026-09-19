@@ -10,6 +10,25 @@ if(WIN32 AND NOT MSVC)
         "Run CMake from a Visual Studio Developer shell.")
 endif()
 
+if(WIN32)
+    string(TOLOWER "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}" _joyeer_windows_arch)
+    if(_joyeer_windows_arch STREQUAL "arm64")
+        set(JOYEER_WINDOWS_ARCH arm64)
+        set(JOYEER_WINDOWS_MACHINE IMAGE_FILE_MACHINE_ARM64)
+        set(_joyeer_dia_arch arm64)
+        set(_joyeer_llvm_arch AArch64)
+    elseif(_joyeer_windows_arch STREQUAL "x64")
+        set(JOYEER_WINDOWS_ARCH x64)
+        set(JOYEER_WINDOWS_MACHINE IMAGE_FILE_MACHINE_AMD64)
+        set(_joyeer_dia_arch amd64)
+        set(_joyeer_llvm_arch X86)
+    else()
+        message(FATAL_ERROR
+            "Joyeer on Windows supports only x64 and ARM64 MSVC targets. "
+            "Use a matching Visual Studio Developer shell.")
+    endif()
+endif()
+
 cmake_policy(SET CMP0110 NEW)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 NEW)
@@ -23,7 +42,7 @@ list(APPEND CMAKE_MODULE_PATH
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cmake")
 
 # enable the testing
-enable_testing()
+include(CTest)
 enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
@@ -69,6 +88,13 @@ find_package(LLVM 22.1.8 EXACT CONFIG REQUIRED
         "${JOYEER_LLVM_ROOT}/lib/cmake/llvm"
         "/opt/homebrew/opt/llvm/lib/cmake/llvm"
         "/usr/local/opt/llvm/lib/cmake/llvm")
+if(WIN32 AND NOT LLVM_NATIVE_ARCH STREQUAL _joyeer_llvm_arch)
+    message(FATAL_ERROR
+        "The LLVM SDK must match the MSVC ${JOYEER_WINDOWS_ARCH} target. "
+        "Found LLVM_NATIVE_ARCH=${LLVM_NATIVE_ARCH}. "
+        "Set JOYEER_LLVM_ROOT to a matching LLVM/LLD 22.1.8 development SDK "
+        "and configure in a fresh build directory.")
+endif()
 find_package(LLD 22.1.8 EXACT CONFIG REQUIRED
     HINTS
         "${JOYEER_LLVM_ROOT}/lib/cmake/lld"
@@ -86,7 +112,7 @@ message(STATUS "Joyeer embedded LLD SDK: ${LLD_DIR}")
 if(WIN32)
     find_library(JOYEER_DIA_GUIDS_LIBRARY
         NAMES diaguids
-        HINTS "$ENV{VSINSTALLDIR}/DIA SDK/lib/amd64"
+        HINTS "$ENV{VSINSTALLDIR}/DIA SDK/lib/${_joyeer_dia_arch}"
         REQUIRED
         NO_DEFAULT_PATH)
     get_target_property(_joyeer_pdb_link_libraries

@@ -46,6 +46,14 @@ through LLVM's Visual Studio Setup Configuration and registry helpers. It then
 links the generated object with the sibling `JoyeerNativeRuntime.lib`. The
 release package keeps the DLL, runtime archive, and `joyeer.exe` together.
 
+Windows supports native x64 and ARM64 builds. The compiled backend architecture
+selects the MSVC/UCRT/Windows SDK library directories and the COFF machine
+argument. Object emission rejects an LLVM default target that disagrees with
+the backend architecture. CMake selects the matching DIA SDK library and
+checks the LLVM SDK's native architecture. This is native compilation, not an
+architecture-switching or cross-compilation API; the versioned C ABI is
+unchanged.
+
 On macOS, CMake resolves the active SDK path and version with `xcrun`. The
 backend passes them to the embedded Mach-O LLD driver together with the host
 architecture and `libSystem`. Debug builds run the system `dsymutil` only to

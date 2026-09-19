@@ -151,14 +151,18 @@ Get-Item "$env:LLVM_HOME\lib\LLVMCore.lib"
 Get-Item "$env:LLVM_HOME\lib\cmake\llvm\LLVMConfig.cmake"
 ```
 
-The build is out-of-source only. For Windows development, explicitly enable
-unit tests; the `x64-debug` preset otherwise defaults them to `OFF`:
+The build is out-of-source only. Windows Debug and Release presets enable
+unit tests by default. For x64 development:
 
 ```powershell
 cmake --preset x64-debug -DJOYEER_BUILD_UNITTESTS=ON
 cmake --build --preset x64-debug
 ctest --preset x64-debug
 ```
+
+For native Windows ARM64, use an ARM64 Developer shell, point `LLVM_HOME`
+at the ARM64 LLVM SDK, and use `arm64-debug` or `arm64-release` instead.
+See [Building Joyeer](docs/building.md) for architecture-specific prerequisites.
 
 To build and stage a Windows release candidate:
 
