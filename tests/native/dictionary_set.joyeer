@@ -24,4 +24,33 @@ func main() {
         .Number(number) => number,
         .Text(text) => text.count,
     })
+
+    let literal: [Int: Int] = [1: 10, 1: 20, 2: 30, 1: 40]
+    var inserted: [Int: Int] = [:]
+    &inserted[1] = 10
+    &inserted[1] = 20
+    &inserted[2] = 30
+    &inserted[1] = 40
+    print(value: literal.count)
+    print(value: literal[1])
+    print(value: literal[2])
+    print(value: inserted.count)
+    print(value: inserted[1])
+    print(value: inserted[2])
+
+    let textLiteral: [String: String] = [
+        "ke" + "y": "fi" + "rst",
+        "other": "ke" + "pt",
+        "k" + "ey": "la" + "st",
+    ]
+    var textInserted: [String: String] = [:]
+    &textInserted["ke" + "y"] = "fi" + "rst"
+    &textInserted["other"] = "ke" + "pt"
+    &textInserted["k" + "ey"] = "la" + "st"
+    print(value: textLiteral.count)
+    print(value: textLiteral["key"])
+    print(value: textLiteral["other"])
+    print(value: textInserted.count)
+    print(value: textInserted["key"])
+    print(value: textInserted["other"])
 }

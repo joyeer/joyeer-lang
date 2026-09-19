@@ -482,6 +482,34 @@ static bool dictionaryKeyEqual(
     }
 }
 
+static bool dictionaryReplaceOwnedEntry(
+        JoyeerDictionary* dictionary,
+        void* key,
+        const void* value) {
+    const DictionaryHeader* header = ((const DictionaryHeader*)dictionary->data) - 1;
+    for (int64_t index = 0; index < dictionary->count; ++index) {
+        uint8_t* entry = (uint8_t*)dictionary->data +
+                checkedByteCount(index, header->entrySize);
+        if (!dictionaryKeyEqual(entry, key, header->keySize, header->keyKind)) {
+            continue;
+        }
+        if (header->destroyKey != NULL) {
+            header->destroyKey(key);
+        }
+        if (header->destroyValue != NULL) {
+            header->destroyValue(entry + header->valueOffset);
+        }
+        if (header->valueSize != 0) {
+            memcpy(
+                    entry + header->valueOffset,
+                    value,
+                    (size_t)header->valueSize);
+        }
+        return true;
+    }
+    return false;
+}
+
 static JoyeerDictionary dictionaryCreateOwned(
         const void* entries,
         int64_t count,
@@ -540,6 +568,17 @@ static JoyeerDictionary dictionaryCreateOwned(
         }
     }
     JoyeerDictionary result = { data, count, count };
+    if (cloneEntries) return result;
+    result.count = 0;
+    for (int64_t index = 0; index < count; ++index) {
+        uint8_t* entry = (uint8_t*)data + checkedByteCount(index, entrySize);
+        if (dictionaryReplaceOwnedEntry(&result, entry, entry + valueOffset)) {
+            continue;
+        }
+        uint8_t* destination = (uint8_t*)data + checkedByteCount(result.count, entrySize);
+        if (destination != entry) memcpy(destination, entry, (size_t)entrySize);
+        ++result.count;
+    }
     return result;
 }
 
@@ -631,26 +670,7 @@ void joyeer_dictionary_set_owned_abi(
         joyeer_panic("invalid dictionary set");
     }
 
-    for (int64_t index = 0; index < dictionary->count; ++index) {
-        uint8_t* entry = (uint8_t*)dictionary->data +
-                checkedByteCount(index, header->entrySize);
-        if (!dictionaryKeyEqual(entry, key, header->keySize, header->keyKind)) {
-            continue;
-        }
-        if (header->destroyKey != NULL) {
-            header->destroyKey(key);
-        }
-        if (header->destroyValue != NULL) {
-            header->destroyValue(entry + header->valueOffset);
-        }
-        if (header->valueSize != 0) {
-            memcpy(
-                    entry + header->valueOffset,
-                    value,
-                    (size_t)header->valueSize);
-        }
-        return;
-    }
+    if (dictionaryReplaceOwnedEntry(dictionary, key, value)) return;
 
     if (dictionary->count == dictionary->capacity) {
         int64_t capacity = dictionary->capacity < 4 ? 4 : dictionary->capacity;

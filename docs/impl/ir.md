@@ -120,6 +120,11 @@ evaluated. Pending components and consuming call arguments remain registered
 for cleanup until the construction or call is emitted, so a later operand's
 early return cleans them rather than leaking them.
 
+Non-short-circuit binary expressions also prepare the left operand before
+evaluating the right. A borrowed nontrivial operand is copied and registered
+as a temporary, so mutation during right-hand evaluation cannot invalidate it.
+Early returns clean this temporary through the normal active-scope cleanup.
+
 A `consume` argument backed by local storage emits `take`, which loads and
 zeroes the caller slot before the call. Owned temporaries move directly;
 borrowed nontrivial values are not valid consuming sources. Field, array, and
@@ -135,7 +140,8 @@ owns every appended element exactly once.
 `dictionary_set` likewise consumes a concrete key/value pair. Runtime lookup
 decides whether to insert or update: insertion transfers both into a new entry;
 update keeps the existing key, destroys the incoming duplicate key and old
-value, then transfers the replacement value.
+value, then transfers the replacement value. Dictionary construction applies
+the same last-value-wins policy and counts only unique keys.
 
 ---
 
@@ -149,7 +155,10 @@ Patterns recursively represent:
 - enum cases with nested payload patterns.
 
 Each arm has its own basic block. Payload bindings use `extract_payload`, then
-a local stack slot. The LLVM backend lowers the high-level pattern list into
+a local stack slot. Nontrivial bindings own independent copies, registered for
+cleanup on both normal arm exit and early return. Reassigning the original
+scrutinee cannot invalidate a binding, including nested heap-backed payloads.
+The LLVM backend lowers the high-level pattern list into
 tag and value tests, relying on the type checker's recursive payload coverage.
 It branches on a matching tag before interpreting payloads, and recursively
 short-circuits payload tests. Case lookup uses concrete enum type identity
@@ -231,6 +240,8 @@ Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
 |---|---|
 | Conditional evaluation | `&&` branches before right-hand evaluation, including side effects, bounds checks, and early returns. |
 | Pattern payloads | Tag branches guard payload interpretation, including nested enum/String patterns. |
+| Pattern binding ownership | Nontrivial bindings own copies independent of the scrutinee and are destroyed on normal exit and early return. |
+| Binary operand capture | Nontrivial left operands remain alive across right-hand side effects and are cleaned on divergence. |
 | Aggregate capture | Components become ownership-safe in evaluation order, before later mutation can invalidate a borrowed source. |
 | Pending operand cleanup | Acquiring ownership does not commit transfer; later operand divergence still cleans prepared values. |
 | Loop stack storage | LLVM source and scratch allocations are emitted in a one-time function prologue, not reallocated on every iteration. Initialization and debug-variable bindings remain at their source points. |

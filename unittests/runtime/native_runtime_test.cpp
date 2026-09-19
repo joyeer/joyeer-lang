@@ -333,6 +333,84 @@ struct OwnedStringEntry {
     JoyeerString value;
 };
 
+TEST(NativeRuntimeTest, DictionaryConstructionMatchesInsertionForDuplicateKeys) {
+    const std::array<IntEntry, 5> entries {
+    IntEntry { 1, 10 }, IntEntry { 2, 30 }, IntEntry { 1, 20 },
+    IntEntry { 3, 40 }, IntEntry { 2, 50 },
+    };
+    auto constructed = joyeer_dictionary_create(
+        entries.data(), entries.size(), sizeof(int64_t), sizeof(int64_t),
+        sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    auto inserted = joyeer_dictionary_create(
+        nullptr, 0, sizeof(int64_t), sizeof(int64_t), sizeof(IntEntry),
+        offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    for (const auto& entry : entries) {
+    auto key = entry.key;
+    joyeer_dictionary_set_owned_abi(&inserted, &key, &entry.value);
+    }
+    EXPECT_EQ(constructed.count, 3);
+    EXPECT_EQ(constructed.count, inserted.count);
+    EXPECT_GE(constructed.capacity, constructed.count);
+    for (const auto& expected : { IntEntry { 1, 20 }, IntEntry { 2, 50 }, IntEntry { 3, 40 } }) {
+    const auto* constructedValue = static_cast<const int64_t*>(joyeer_dictionary_at(
+        constructed, &expected.key, sizeof(expected.key), JOYEER_DICTIONARY_KEY_INT));
+    const auto* insertedValue = static_cast<const int64_t*>(joyeer_dictionary_at(
+        inserted, &expected.key, sizeof(expected.key), JOYEER_DICTIONARY_KEY_INT));
+    EXPECT_EQ(*constructedValue, expected.value);
+    EXPECT_EQ(*constructedValue, *insertedValue);
+    }
+    EXPECT_EQ(entries[0].value, 10);
+    joyeer_dictionary_destroy(&constructed);
+    joyeer_dictionary_destroy(&inserted);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, DestroysDuplicateOwnedDictionaryEntriesExactlyOnce) {
+    cloneCount = 0;
+    destroyCount = 0;
+    const std::array<OwnedStringEntry, 4> entries {
+    OwnedStringEntry { owned("key"), owned("first") },
+    OwnedStringEntry { owned("key"), owned("second") },
+        OwnedStringEntry { owned("other"), owned("kept") },
+    OwnedStringEntry { owned("key"), owned("final") },
+    };
+    ASSERT_NE(entries[0].key.data, entries[1].key.data);
+    JoyeerDictionary dictionary {};
+    joyeer_dictionary_create_owned_abi(
+        &dictionary, entries.data(), entries.size(), sizeof(JoyeerString), sizeof(JoyeerString),
+        sizeof(OwnedStringEntry), offsetof(OwnedStringEntry, value), JOYEER_DICTIONARY_KEY_STRING,
+        cloneString, destroyString, cloneString, destroyString);
+    EXPECT_EQ(dictionary.count, 2);
+    EXPECT_EQ(cloneCount, 0);
+    EXPECT_EQ(destroyCount, 4);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 5);
+
+    JoyeerDictionary clone {};
+    joyeer_dictionary_clone_abi(&clone, dictionary.data, dictionary.count);
+    EXPECT_EQ(clone.count, 2);
+    EXPECT_EQ(cloneCount, 4);
+    const std::string keyText = "key";
+    const auto key = view(keyText);
+    const auto* value = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+        dictionary, &key, sizeof(key), JOYEER_DICTIONARY_KEY_STRING));
+    const auto* cloneValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+        clone, &key, sizeof(key), JOYEER_DICTIONARY_KEY_STRING));
+    EXPECT_TRUE(joyeer_string_equal(*value, view(std::string("final"))));
+    EXPECT_NE(value->data, cloneValue->data);
+
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(destroyCount, 8);
+    EXPECT_TRUE(joyeer_string_equal(*cloneValue, view(std::string("final"))));
+    const std::string otherText = "other";
+    const auto otherKey = view(otherText);
+    const auto* otherValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+        clone, &otherKey, sizeof(otherKey), JOYEER_DICTIONARY_KEY_STRING));
+    EXPECT_TRUE(joyeer_string_equal(*otherValue, view(std::string("kept"))));
+    joyeer_dictionary_destroy(&clone);
+    EXPECT_EQ(destroyCount, 12);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
 TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
     const std::string name = "answer";
     const StringEntry entry { view(name), 42 };

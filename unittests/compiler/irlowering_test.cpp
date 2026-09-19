@@ -902,6 +902,82 @@ accept(value: consume text, flag: if flag { return } else { false })
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
+    TEST_F(IRLoweringTest, CapturesStringBinaryOperandBeforeLaterMutation) {
+        for (const auto* operation : { "+", "==", "!=" }) {
+        SCOPED_TRACE(operation);
+        lower(std::string(R"JOYEER(func change(value: inout String): String {
+    &value = "replacement"
+    return "!"
+    }
+    func run(input: String) {
+    var text = input
+    print(value: text )JOYEER") + operation + R"JOYEER( change(value: &text))
+    }
+    )JOYEER");
+
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto& instructions = function("run").blocks[0].instructions;
+        const auto binary = std::find_if(
+            instructions.begin(), instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::add ||
+                    instruction.opcode == joyeer::ir::Opcode::equal ||
+                    instruction.opcode == joyeer::ir::Opcode::notEqual;
+            });
+        ASSERT_NE(binary, instructions.end());
+        const auto capture = std::find_if(
+            instructions.begin(), binary,
+            [&binary](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::copyValue &&
+                    instruction.result->id == binary->operands[0];
+            });
+        const auto mutation = std::find_if(
+            instructions.begin(), binary,
+            [this](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::call &&
+                    instruction.callee == function("change").id;
+            });
+        ASSERT_NE(capture, binary);
+        ASSERT_NE(mutation, binary);
+        EXPECT_LT(capture, mutation);
+        }
+    }
+
+    TEST_F(IRLoweringTest, CleansCapturedBinaryOperandOnEarlyReturn) {
+        lower(R"JOYEER(func run(text: String, flag: Bool): String {
+    return text + if flag { return "early" } else { "!" }
+    }
+    )JOYEER");
+
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto& run = function("run");
+        const auto& entry = run.blocks[0].instructions;
+        const auto capture = std::find_if(
+            entry.begin(), entry.end(),
+            [](const auto& instruction) {
+            return instruction.opcode == joyeer::ir::Opcode::copyValue;
+            });
+        ASSERT_NE(capture, entry.end());
+        const auto early = std::find_if(
+            run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "if.then"; });
+        ASSERT_NE(early, run.blocks.end());
+        EXPECT_EQ(early->instructions.back().opcode, joyeer::ir::Opcode::returnValue);
+        const auto savedTemporary = std::find_if(
+            early->instructions.begin(), early->instructions.end(),
+            [&capture](const auto& instruction) {
+            return instruction.opcode == joyeer::ir::Opcode::store &&
+                instruction.operands[0] == capture->result->id;
+            });
+        ASSERT_NE(savedTemporary, early->instructions.end());
+        EXPECT_TRUE(std::any_of(
+            savedTemporary, early->instructions.end(),
+            [&savedTemporary](const auto& instruction) {
+            return instruction.opcode == joyeer::ir::Opcode::destroy &&
+                instruction.operands[0] == savedTemporary->operands[1];
+            }));
+    }
+
 TEST_F(IRLoweringTest, CoercesOptionalBindingsBeforeStoring) {
     lower(R"JOYEER(func run(): Int? {
 let value: Int? = 42
@@ -913,6 +989,66 @@ return value
     EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::constructEnum), 1u);
     const auto verification = joyeer::ir::Verifier().verify(*result.module);
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(IRLoweringTest, OwnsPatternPayloadAcrossScrutineeMutationAndEarlyReturn) {
+    lower(R"JOYEER(func run(input: String?, flag: Bool) {
+var message = input
+match message {
+    .Some(text) => {
+        message = nil
+        if flag { return }
+        print(value: text)
+    },
+    .None => {}
+}
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    const auto arm = std::find_if(
+            run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "match.arm.0"; });
+    ASSERT_NE(arm, run.blocks.end());
+    const auto& instructions = arm->instructions;
+    const auto payload = std::find_if(
+            instructions.begin(), instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::extractPayload;
+            });
+    ASSERT_NE(payload, instructions.end());
+    const auto capture = std::find_if(
+            payload, instructions.end(),
+            [&payload](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::copyValue &&
+                        instruction.operands[0] == payload->result->id;
+            });
+    ASSERT_NE(capture, instructions.end());
+    const auto binding = std::find_if(
+            capture, instructions.end(),
+            [&capture](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::store &&
+                        instruction.operands[0] == capture->result->id;
+            });
+    ASSERT_NE(binding, instructions.end());
+    const auto mutation = std::find_if(
+            instructions.begin(), instructions.end(),
+            [](const auto& instruction) {
+                return instruction.opcode == joyeer::ir::Opcode::destroy;
+            });
+    ASSERT_NE(mutation, instructions.end());
+    EXPECT_LT(binding, mutation);
+    size_t bindingCleanups = 0;
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::destroy &&
+                instruction.operands[0] == binding->operands[1]) {
+                ++bindingCleanups;
+            }
+        }
+    }
+    EXPECT_EQ(bindingCleanups, 2u);
 }
 
 TEST_F(IRLoweringTest, LowersPendingOperandAndCaptureRegressionFixtures) {
@@ -963,8 +1099,8 @@ print(value: value)
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     const auto& build = function("build");
     const auto& main = function("main");
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::copyValue), 1u);
-    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::destroy), 1u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::copyValue), 2u);
+    EXPECT_EQ(opcodeCount(build, joyeer::ir::Opcode::destroy), 2u);
     EXPECT_EQ(opcodeCount(main, joyeer::ir::Opcode::destroy), 1u);
 }
 
@@ -1076,7 +1212,8 @@ func text(): String { "left" + "right" }
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_EQ(opcodeCount(function("square"), joyeer::ir::Opcode::returnValue), 1u);
     EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::returnValue), 1u);
-    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::destroy), 0u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(function("text"), joyeer::ir::Opcode::destroy), 1u);
 }
 
 TEST_F(IRLoweringTest, AnchorsImplicitReturnAtTheTrailingExpression) {
