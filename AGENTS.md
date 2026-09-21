@@ -110,6 +110,8 @@ ctest --test-dir build --output-on-failure
   3.9+ using the standard library when scripting is necessary.
 - Do not maintain parallel `.sh` and `.ps1` implementations. Command examples
   may use the host shell, but reusable workflow logic belongs in Python.
+  Exception: `scripts/install-debug.ps1` and its tests use PowerShell for
+  Windows-only local Debug installation, not release packaging.
 - Launch tools with argument arrays and `subprocess.run`; do not use
   `shell=True` or construct shell command strings.
 - Python is not a source-build requirement. Released Joyeer compiler binaries

@@ -1,0 +1,28 @@
+enum Item {
+    Number(Int),
+    Text(String),
+}
+
+func main() {
+    var values: [Int] = []
+    &values.append(element: 20)
+    &values.append(element: 21)
+    &values[1] = values[1] + 1
+    print(value: values.count)
+
+    var lookup: [String: Int] = [:]
+    &lookup["answer"] = values[0] + values[1]
+    print(value: lookup["answer"])
+
+    let text = "Joy"
+    var bytes = text.utf8()
+    &bytes[0] = b'B'
+    print(value: text)
+    print(value: byteToInt(value: bytes[0]))
+
+    let item: Item = .Text("example")
+    print(value: match item {
+        .Number(number) => number,
+        .Text(word) => word.count,
+    })
+}
