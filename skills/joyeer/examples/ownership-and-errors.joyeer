@@ -1,0 +1,54 @@
+struct Counter {
+    var value: Int
+}
+
+func increment(counter: inout Counter) {
+    &counter.value = counter.value + 1
+}
+
+func initializeText(out: initializing String, value: borrowing String) {
+    &out = value
+}
+
+func decorate(value: consuming String): String {
+    return value + "!"
+}
+
+func nonNegative(value: Int): Result<Int, String> {
+    if value < 0 {
+        return .Err("expected non-negative")
+    }
+    return .Ok(value)
+}
+
+func showOptional(value: Optional<Int>) {
+    match value {
+        .Some(number) => print(value: number),
+        .None => print(value: "absent"),
+    }
+}
+
+func showResult(value: Result<Int, String>) {
+    match value {
+        .Ok(number) => print(value: number),
+        .Err(message) => print(value: message),
+    }
+}
+
+func main() {
+    var counter = Counter(value: 41)
+    increment(counter: &counter)
+    print(value: counter.value)
+
+    var text: String
+    initializeText(out: &text, value: "hello")
+    let decorated = decorate(value: consume text)
+    text = "reinitialized"
+    print(value: decorated)
+    print(value: text)
+
+    showOptional(value: .Some(7))
+    showOptional(value: .None)
+    showResult(value: nonNegative(value: 8))
+    showResult(value: nonNegative(value: -1))
+}

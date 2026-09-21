@@ -1,0 +1,15 @@
+func add(left: Int, right: Int): Int {
+    return left + right
+}
+
+func main() {
+    let greeting = "Hello, Joyeer!"
+    print(value: greeting)
+    var total = add(left: 20, right: 19)
+    var index = 0
+    while index < 3 {
+        total = total + 1
+        index = index + 1
+    }
+    print(value: total)
+}

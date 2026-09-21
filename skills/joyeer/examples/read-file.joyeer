@@ -1,0 +1,18 @@
+func countNewlines(text: borrowing String): Int {
+    var count = 0
+    var index = 0
+    while index < text.count {
+        if text[index] == b'\n' {
+            count = count + 1
+        }
+        index = index + 1
+    }
+    return count
+}
+
+func main() {
+    match readFile(path: "input.txt") {
+        .Ok(contents) => print(value: countNewlines(text: contents)),
+        .Err(_) => print(value: "read failed"),
+    }
+}

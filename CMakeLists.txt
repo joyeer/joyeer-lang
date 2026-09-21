@@ -250,10 +250,10 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS joyeer JoyeerNativeBackend
-    RUNTIME DESTINATION .
-    LIBRARY DESTINATION .)
+    RUNTIME DESTINATION . COMPONENT JoyeerRuntime
+    LIBRARY DESTINATION . COMPONENT JoyeerRuntime)
 install(TARGETS JoyeerNativeRuntime
-    ARCHIVE DESTINATION .)
+    ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
-    DESTINATION licenses)
+    DESTINATION licenses COMPONENT JoyeerRuntime)

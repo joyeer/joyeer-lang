@@ -76,6 +76,11 @@ func main() {
 
 ## Getting Started
 
+For AI-assisted Joyeer programming, the [portable Joyeer skill](skills/README.md)
+includes current language guidance, CLI instructions, and runnable examples for
+VS Code Copilot, Copilot CLI, Claude Code, and Codex. The Windows Debug installer
+includes the skill by default; it can also be installed separately.
+
 Contributors provide the host compiler, platform SDK, and required LLVM
 toolchain. Every supported platform performs LLVM code generation and LLD
 linking in-process behind a Joyeer-owned C ABI backend. CMake does not build
@@ -194,6 +199,30 @@ Linux and macOS use the same install layout with platform suffixes: the
 `joyeer` executable, `joyeer-backend` shared library, native runtime archive,
 and licenses are installed together. The executable resolves the backend and
 runtime relative to its own location.
+
+For a local Windows Debug installation from an existing build:
+
+```powershell
+.\scripts\install-debug.ps1
+```
+
+The script selects `out/build/arm64-debug` on ARM64 Windows or
+`out/build/x64-debug` on x64 Windows, relative to this checkout rather than the
+current working directory. That Debug build must already exist; use
+`-BuildDir` to override the selection.
+
+This installs the compiler, backend, runtime, and PDBs to
+`$HOME\.joyeer\bin` and adds that directory to the user and current PowerShell
+PATH without duplicating existing entries. Use `-SkipPathUpdate` to leave PATH
+unchanged. The complete Joyeer skill is also installed to
+`$HOME\.agents\skills\joyeer` for VS Code Copilot, Copilot CLI, and Codex.
+Use `-SkillDir` to select another destination or `-SkipSkillInstall` to install
+only the compiler. Empty skill directories are accepted, and identical files
+are left unchanged. Use `-Force` after reviewing and backing up local skill
+edits to overwrite differing files and restore missing ones. Extra files and
+other skills are not deleted. Reload your agent session after installation. See
+[Debug installation](docs/building.md#local-windows-debug-installation) for
+custom destinations and verification.
 
 ## CLI
 

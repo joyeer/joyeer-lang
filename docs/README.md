@@ -10,11 +10,13 @@ wins.
 | Goal | Document |
 |---|---|
 | Learn the language | [spec.md](spec.md) |
+| Use Joyeer with an AI coding agent | [Portable Joyeer skill](../skills/README.md) |
 | Understand the design | [rationale/ai-era-design.md](rationale/ai-era-design.md) |
 | Understand memory and ownership | [rationale/memory.md](rationale/memory.md) |
 | See the implemented pipeline | [plan/roadmap.md](plan/roadmap.md) |
 | See the v0.1 scope | [plan/v0.1.md](plan/v0.1.md) |
 | Build from source | [building.md](building.md) |
+| Install a local Windows Debug compiler | [Debug installation](building.md#local-windows-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
 
 ## Specification
