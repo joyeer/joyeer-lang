@@ -132,6 +132,37 @@ TEST(IRModelTest, VerifiesAndDumpsAWellFormedFunctionDeterministically) {
 )IR");
 }
 
+TEST(IRModelTest, VerifiesUnitConstantShapeAndType) {
+    Module module;
+    module.types = {
+        TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
+        TypeName { 1, "Int", joyeer::typing::TypeKind::integer },
+    };
+    Function function;
+    function.id = 0;
+    function.name = "unit";
+    function.resultType = 0;
+    function.entry = 0;
+    function.blocks = { BasicBlock { 0, "entry", {
+        Instruction { Opcode::unitConstant, Value { 0, 0, ValueCategory::value } },
+        Instruction { Opcode::returnVoid },
+    } } };
+    module.functions.push_back(std::move(function));
+    EXPECT_TRUE(Verifier().verify(module).succeeded());
+    EXPECT_NE(dump(module).find("unit"), std::string::npos);
+    EXPECT_FALSE(requiresDestruction(module, 0));
+
+    auto& unit = module.functions[0].blocks[0].instructions[0];
+    unit.result->type = 1;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::typeMismatch));
+    unit.result->type = 0;
+    unit.result->category = ValueCategory::address;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::typeMismatch));
+    unit.result->category = ValueCategory::value;
+    unit.targets = { 0 };
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidInstruction));
+}
+
 TEST(IRModelTest, VerifiesSourceMapsAndDebugLocations) {
     auto module = validAddModule();
     module.sourceInfo = SourceInfo {

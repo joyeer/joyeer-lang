@@ -250,6 +250,22 @@ destroying each discarded key and replaced value exactly once. Cloning an
 already normalized dictionary preserves its count and independently clones
 its owned entries without repeating duplicate-key detection.
 
+### Unit values
+
+Source `Void` values use LLVM's zero-sized empty struct type `{}` in value
+and storage positions. A `Void` function result still uses LLVM `void`, so
+existing no-result functions and the entry trampoline keep their calling
+convention. Unit constants require no instructions; unit loads, stores,
+takes, and enum payload reads/writes need no data access. Logical source
+storage and full-debug metadata still describe unit bindings.
+
+`Result<Void, E>` retains the ordinary enum tag and error storage. Existing
+tag-directed ownership helpers clean an active nontrivial error payload and
+do not clean a unit success payload. Arrays and dictionaries can store unit
+values with zero-sized elements/values while retaining their existing
+container metadata, allocation, count, and bounds behavior. No new runtime
+allocation or destruction API is introduced for unit values.
+
 ### File input
 
 The v0.1 prelude exposes:

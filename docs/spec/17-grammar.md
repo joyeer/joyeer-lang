@@ -88,6 +88,7 @@ postfix_expr      ::= primary_expr ( '.' identifier
 call_arg          ::= label ':' [ '&' | 'consume' ] expression
 
 primary_expr      ::= literal
+                   |  '(' ')'                                  // unit value, type Void
                    |  identifier
                    |  '(' expression ( ',' expression )* ')'   // parens (1) or tuple (≥2)
                    |  array_literal
@@ -106,6 +107,7 @@ match_expr        ::= 'match' expression '{' match_arm+ '}'
 match_arm         ::= pattern ( ',' pattern )* [ 'where' expression ] '=>' ( expression | block ) ','?
 
 pattern           ::= '_'
+                   |  '(' ')'                                  // unit pattern
                    |  literal
                    |  identifier
                    |  '(' pattern , ... ')'
@@ -133,4 +135,3 @@ attribute_args    ::= string_literal | expression , ...
 > `let v = opt ?? fatalError(...)` well-typed (§8.5, §9.3).
 
 ---
-

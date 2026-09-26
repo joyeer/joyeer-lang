@@ -1,5 +1,13 @@
 ## §2 Type System
 
+**Implementation status:** this chapter includes broader type-system design.
+The executable v0.1 subset is listed in [the v0.1 plan](../plan/v0.1.md).
+In particular, the runtime currently preserves arbitrary string bytes without
+enforcing the valid-UTF-8 invariant described below. `Result` and `Optional`
+are compiler-known builtins in this subset, not user-declared generic enums.
+Their declarations below explain the intended shape, not supported generic
+declaration syntax.
+
 ### 2.1 Primitive types
 
 | Type | Bits | Range / domain |
@@ -49,6 +57,39 @@ as their byte value, and multi-byte UTF-8 sequences are copied through
 verbatim. `Char` (a 32-bit Unicode scalar, §2.1) remains the element type
 produced by `.chars()` and written by character literals like `'a'`.
 
+#### 2.1.2 `Void` and the unit value
+
+`Void` has exactly one value, written `()`. In a type position, `()` is an
+alias for the builtin `Void` type. These two uses do not require tuple support.
+The unit expression and type alias always refer to the builtin type, even
+when a user declaration shadows the name `Void`.
+
+```joyeer
+func finish(): Void {
+    return ()
+}
+
+func accept(value: ()): Void {
+    return value
+}
+```
+
+Unit values may be bound, passed, returned, and stored in struct fields, enum
+payloads, arrays, dictionary values, `Optional`, and `Result`. Calls returning
+`Void` produce the unit value after their side effects complete. Empty blocks,
+blocks ending in a binding or loop, and assignment expressions also have
+`Void` results. A bare `return` remains valid in a `Void` function.
+
+Unit values own no resources and have zero-sized data representation.
+Initialization, mutability, access exclusivity, and consumption rules still
+apply. Containers and enclosing enums can have storage and resources of their
+own; a zero-sized element does not make its container allocation-free.
+
+The pattern `()` matches a `Void` value exhaustively. It does not implicitly
+unwrap an optional or result. Unit equality, ordering, printing, and dictionary
+keys are not part of the implemented primitive operations; use a unit pattern
+or wildcard when matching. See §7 and §8.2.2.
+
 ### 2.2 Nominal types
 
 A nominal type is introduced by a `struct` or `enum` declaration (§3.3,
@@ -58,6 +99,7 @@ A nominal type is introduced by a `struct` or `enum` declaration (§3.3,
 
 ```
 type            ::= primitive_type
+                 |  '(' ')'                                 // Void type alias
                  |  nominal_type [ generic_args ]
                  |  array_type
                  |  dict_type

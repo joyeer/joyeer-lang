@@ -1,5 +1,10 @@
 ## §8 Error Handling
 
+**Implementation status:** v0.1 supports `Result`, `Optional`, explicit
+`match`, and the typed `readFile` errors below. Postfix `?`, `??`, and several
+library helpers used in examples are broader design, not implemented
+features. See [the current scope](../plan/v0.1.md).
+
 ### 8.1 No exceptions
 
 Joyeer has **no `throw` / `try` / `catch`**, no `errno`, no nullable-by-
@@ -43,6 +48,30 @@ nonzero platform error code for diagnostics; programs must branch on the case,
 not on a particular numeric value. Embedded NUL paths are `InvalidPath`.
 Unclassified open, read, size, or close failures are `Other`.
 
+#### 8.2.2 Fallible operations without success data
+
+`Result<Void, E>` reports either success without business data or an error of
+type `E`. The successful case still has one logical payload, the unit value:
+
+```joyeer
+func complete(failed: Bool): Result<Void, String> {
+  if failed { return .Err("operation failed") }
+  return .Ok(())
+}
+```
+
+`.Ok(())`, `.Ok(value)` for a `Void` value, and `.Ok(aVoidReturningCall())`
+are valid. The call in the last form is evaluated exactly once. `.Ok()` is
+invalid because it supplies no payload; `.Ok(42)` has the wrong payload type.
+
+Unit success adds no resource ownership. An error payload is copied, moved,
+and destroyed under the ordinary value rules. Replacing an error with success
+must still destroy the old error. The enclosing result retains its case
+discriminant and storage needed by `E`; it is not itself a zero-sized value.
+
+The current implementation supports explicit `match` for these results.
+Postfix `?` remains separate, unimplemented work.
+
 ### 8.3 `?` propagation
 
 Postfix `?` on `Result<T,E>` (and `Optional<T>`) propagates the failure.
@@ -65,8 +94,9 @@ propagated error.
 ### 8.4 No `try` / `catch`
 
 Reserved keywords ⏳. If error-handling syntax for `Result` chains becomes
-ergonomically heavy, a `try-block` may be added in v0.3. For v0.1, `?`
-plus `match` covers all cases.
+ergonomically heavy, a `try-block` may be added in v0.3. The broader design
+uses `?` plus `match`; the executable v0.1 subset uses explicit `match`
+without propagation syntax.
 
 ### 8.5 `??` coalescing
 
@@ -86,4 +116,3 @@ let n = maybe ?? 0                                          // plain fallback va
 right-associative (§5.1).
 
 ---
-

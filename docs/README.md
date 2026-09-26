@@ -62,6 +62,7 @@ work.
 |---|---|
 | [roadmap.md](plan/roadmap.md) | Current pipeline status and next milestones |
 | [v0.1.md](plan/v0.1.md) | JSON-parser milestone scope and gaps |
+| [joypm-m0.md](plan/joypm-m0.md) | Draft language and host contracts for a project manager written in Joyeer |
 | [feasibility.md](plan/feasibility.md) | Feasibility and combined-risk analysis |
 
 ## Conventions

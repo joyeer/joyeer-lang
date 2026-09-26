@@ -187,6 +187,14 @@ let sign = if x > 0 { 1 } else if x < 0 { -1 } else { 0 }
 Every branch must produce the same type. The whole `if`-`else` must be
 total (i.e., have an `else` arm) when used as an expression.
 
+### 5.10.1 Unit expressions
+
+An empty pair of parentheses in expression position, `()`, is the unit value
+of type `Void` (§2.1.2), not a missing expression or a general tuple.
+Parenthesized expressions such as `(value)` keep their existing meaning.
+In `.Ok(())`, the outer parentheses contain one payload expression, `()`;
+`.Ok()` is not an alternative unit construction.
+
 ### 5.11 Closures
 
 Closures are deferred to v0.2. v0.1 has only top-level and method functions.

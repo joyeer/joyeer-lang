@@ -324,7 +324,6 @@ private:
             case typing::TypeKind::uint8:
                 definition = "!DIBasicType(name: \"UInt8\", size: 8, encoding: DW_ATE_unsigned_char)";
                 break;
-            case typing::TypeKind::voidType:
             case typing::TypeKind::never:
                 return std::nullopt;
             default: {
@@ -354,7 +353,8 @@ private:
     size_t addFunctionTypeMetadata(const ir::Function& function) {
         std::ostringstream typeList;
         typeList << "!{";
-        const auto resultType = addDebugTypeMetadata(function.resultType);
+        const auto resultType = function.returnsValue
+                ? addDebugTypeMetadata(function.resultType) : std::nullopt;
         typeList << (resultType.has_value()
                 ? metadataReference(*resultType)
                 : std::string("null"));
@@ -947,6 +947,7 @@ private:
         }
         switch (found->second->kind) {
             case typing::TypeKind::voidType:
+                return "{}";
             case typing::TypeKind::never:
                 return "void";
             case typing::TypeKind::integer:
@@ -1020,6 +1021,15 @@ private:
         return found == types.end() ? nullptr : found->second;
     }
 
+    bool isUnit(ir::TypeId id) const {
+        const auto* valueType = type(id);
+        return valueType != nullptr && valueType->kind == typing::TypeKind::voidType;
+    }
+
+    std::optional<std::string> llvmReturnType(ir::TypeId id) {
+        return isUnit(id) ? std::optional<std::string>("void") : llvmType(id);
+    }
+
     const ir::Value* value(ir::ValueId id) const {
         const auto found = values.find(id);
         return found == values.end() ? nullptr : &found->second;
@@ -1038,7 +1048,7 @@ private:
         values.clear();
         operands.clear();
 
-        const auto resultType = llvmType(function.resultType);
+        const auto resultType = llvmReturnType(function.resultType);
         if (!resultType.has_value()) return false;
         std::vector<std::string> parameterTypes;
         for (const auto& parameter : function.parameters) {
@@ -1138,6 +1148,9 @@ private:
         };
 
         switch (instruction.opcode) {
+            case ir::Opcode::unitConstant:
+                operands[instruction.result->id] = "zeroinitializer";
+                return true;
             case ir::Opcode::integerConstant:
             case ir::Opcode::byteConstant:
                 operands[instruction.result->id] = std::to_string(instruction.integerValue);
@@ -1161,6 +1174,7 @@ private:
                         ? std::optional<std::string>()
                     : llvmType(storage->type, instruction.span);
                 if (!address.has_value() || !typeText.has_value()) return false;
+                if (isUnit(storage->type)) return true;
                 out << "  store " << *typeText << " zeroinitializer, ptr "
                     << *address << "\n";
                 return true;
@@ -1169,6 +1183,10 @@ private:
                 const auto address = requiredOperand(0);
                 const auto typeText = llvmType(instruction.result->type, instruction.span);
                 if (!address.has_value() || !typeText.has_value()) return false;
+                if (isUnit(instruction.result->type)) {
+                    operands[instruction.result->id] = "zeroinitializer";
+                    return true;
+                }
                 out << "  " << valueName(instruction.result->id)
                     << " = load " << *typeText << ", ptr " << *address << "\n";
                 return true;
@@ -1368,7 +1386,7 @@ private:
             "declare void @joyeer_array_create_owned_abi(ptr, ptr, i64, i64, ptr, ptr)");
 
         std::string data = "null";
-        if (!instruction.operands.empty()) {
+        if (!instruction.operands.empty() && !isUnit(arrayType->arguments[0])) {
             data = allocateStackSlot(
                     "[" + std::to_string(instruction.operands.size()) +
                     " x " + *elementType + "]");
@@ -1448,9 +1466,12 @@ private:
             return false;
         }
 
-        const auto elementAddress = allocateStackSlot(*elementType);
-        out << "  store " << *elementType << ' ' << *element
-            << ", ptr " << elementAddress << "\n";
+        std::string elementAddress = "null";
+        if (!isUnit(elementValue->type)) {
+            elementAddress = allocateStackSlot(*elementType);
+            out << "  store " << *elementType << ' ' << *element
+                << ", ptr " << elementAddress << "\n";
+        }
         runtimeDeclarations.insert(
                 "declare void @joyeer_array_append_owned_abi(ptr, ptr)");
         out << "  call void @joyeer_array_append_owned_abi(ptr " << *array
@@ -1505,11 +1526,13 @@ private:
                     << "  " << keyAddress << " = getelementptr inbounds " << entryType
                     << ", ptr " << entryAddress << ", i32 0, i32 0\n"
                     << "  store " << *keyType << ' ' << *key << ", ptr "
-                    << keyAddress << "\n"
-                    << "  " << valueAddress << " = getelementptr inbounds " << entryType
-                    << ", ptr " << entryAddress << ", i32 0, i32 1\n"
-                    << "  store " << *valueType << ' ' << *storedValue << ", ptr "
-                    << valueAddress << "\n";
+                    << keyAddress << "\n";
+                if (!isUnit(dictionaryType->arguments[1])) {
+                    out << "  " << valueAddress << " = getelementptr inbounds " << entryType
+                        << ", ptr " << entryAddress << ", i32 0, i32 1\n"
+                        << "  store " << *valueType << ' ' << *storedValue << ", ptr "
+                        << valueAddress << "\n";
+                }
             }
         }
         const auto resultAddress = allocateStackSlot("%joyeer.dictionary");
@@ -1560,11 +1583,14 @@ private:
         }
 
         const auto keyAddress = allocateStackSlot(*keyType);
-        const auto valueAddress = allocateStackSlot(*valueType);
+        std::string valueAddress = "null";
         out << "  store " << *keyType << ' ' << *key
-            << ", ptr " << keyAddress << "\n"
-            << "  store " << *valueType << ' ' << *storedValue
-            << ", ptr " << valueAddress << "\n";
+            << ", ptr " << keyAddress << "\n";
+        if (!isUnit(valueValue->type)) {
+            valueAddress = allocateStackSlot(*valueType);
+            out << "  store " << *valueType << ' ' << *storedValue
+                << ", ptr " << valueAddress << "\n";
+        }
         usesDictionary = true;
         runtimeDeclarations.insert(
                 "declare void @joyeer_dictionary_set_owned_abi(ptr, ptr, ptr)");
@@ -1613,6 +1639,10 @@ private:
         const auto found = fields.find(*instruction.symbol);
         const auto base = operand(instruction.operands[0]);
         if (found == fields.end() || !base.has_value()) return false;
+        if (isUnit(instruction.result->type)) {
+            operands[instruction.result->id] = "zeroinitializer";
+            return true;
+        }
         const auto typeText = llvmType(found->second.first->type, instruction.span);
         if (!typeText.has_value()) return false;
         out << "  " << valueName(instruction.result->id)
@@ -1662,11 +1692,13 @@ private:
             << ", ptr " << storage << ", i32 0, i32 0\n"
             << "  store i32 " << caseIndex << ", ptr " << tagAddress << "\n";
 
-        if (!instruction.operands.empty()) {
+        if (std::any_of(selectedCase->payloadTypes.begin(), selectedCase->payloadTypes.end(),
+                        [this](auto id) { return !isUnit(id); })) {
             const auto payloadBase = temporary();
             out << "  " << payloadBase << " = getelementptr inbounds " << *typeText
                 << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
             for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                if (isUnit(selectedCase->payloadTypes[index])) continue;
                 const auto payload = operand(instruction.operands[index]);
                 const auto payloadType = llvmType(
                         selectedCase->payloadTypes[index],
@@ -1702,6 +1734,7 @@ private:
             payloadIndex >= selectedCase->payloadTypes.size()) {
             return std::nullopt;
         }
+        if (isUnit(selectedCase->payloadTypes[payloadIndex])) return "zeroinitializer";
         const auto enumTypeText = llvmType(enumType, span);
         const auto payloadTypeText = llvmType(
                 selectedCase->payloadTypes[payloadIndex],
@@ -1738,14 +1771,17 @@ private:
         if (!source.has_value() || sourceValue == nullptr || instruction.integerValue < 0) {
             return false;
         }
-        return emitPayloadLoad(
+        const auto payload = emitPayloadLoad(
                 out,
                 *source,
                 sourceValue->type,
                 *instruction.symbol,
                 static_cast<size_t>(instruction.integerValue),
                 instruction.span,
-                valueName(instruction.result->id)).has_value();
+                valueName(instruction.result->id));
+        if (!payload.has_value()) return false;
+        operands[instruction.result->id] = *payload;
+        return true;
     }
 
     bool emitCount(std::ostringstream& out, const ir::Instruction& instruction) {
@@ -1838,6 +1874,10 @@ private:
             << ", " << invalidIndex << "\n";
         emitTrapIf(out, invalid, "array index out of bounds");
 
+        if (!returnsAddress && isUnit(instruction.result->type)) {
+            operands[instruction.result->id] = "zeroinitializer";
+            return true;
+        }
         const auto elementAddress = returnsAddress
                 ? valueName(instruction.result->id)
                 : temporary();
@@ -1888,6 +1928,10 @@ private:
             << ", i64 " << parts->count << ", ptr " << keyAddress << ", i64 "
             << keyLayout->size << ", i32 " << *keyKind << ")\n";
         if (returnsAddress) return true;
+        if (isUnit(instruction.result->type)) {
+            operands[instruction.result->id] = "zeroinitializer";
+            return true;
+        }
         const auto resultType = llvmType(instruction.result->type, instruction.span);
         if (!resultType.has_value()) return false;
         out << "  " << valueName(instruction.result->id) << " = load "
@@ -2065,6 +2109,7 @@ private:
         if (!stored.has_value() || !address.has_value() || storedValue == nullptr) {
             return false;
         }
+        if (isUnit(storedValue->type)) return true;
         const auto typeText = llvmType(storedValue->type, instruction.span);
         if (!typeText.has_value()) return false;
         out << "  store " << *typeText << ' ' << *stored
@@ -2096,6 +2141,10 @@ private:
     bool emitTake(std::ostringstream& out, const ir::Instruction& instruction) {
         const auto source = operand(instruction.operands[0]);
         if (!source.has_value()) return false;
+        if (isUnit(instruction.result->type)) {
+            operands[instruction.result->id] = "zeroinitializer";
+            return true;
+        }
         const auto typeText = llvmType(instruction.result->type, instruction.span);
         if (!typeText.has_value()) return false;
         out << "  " << valueName(instruction.result->id) << " = load "
@@ -2274,7 +2323,7 @@ private:
             return false;
         }
 
-        const auto returnType = llvmType(callee.resultType, instruction.span);
+        const auto returnType = llvmReturnType(callee.resultType);
         if (!returnType.has_value()) return false;
         out << "  ";
         if (instruction.result.has_value()) {

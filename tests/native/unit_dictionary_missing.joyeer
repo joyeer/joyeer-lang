@@ -1,0 +1,6 @@
+func main() {
+    let entries: [String: Void] = [:]
+    match entries["missing"] {
+        () => print(value: "unreachable"),
+    }
+}

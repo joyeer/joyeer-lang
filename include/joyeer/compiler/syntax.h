@@ -31,6 +31,7 @@ enum class Kind {
     associatedType,
 
     errorType,
+    unitType,
     nominalType,
     arrayType,
     dictionaryType,
@@ -39,6 +40,7 @@ enum class Kind {
     errorExpr,
     nameExpr,
     literalExpr,
+    unitExpr,
     parenthesizedExpr,
     prefixExpr,
     accessExpr,
@@ -62,6 +64,7 @@ enum class Kind {
     errorPattern,
     wildcardPattern,
     literalPattern,
+    unitPattern,
     bindingPattern,
     enumCasePattern,
     patternArgument,
@@ -148,6 +151,18 @@ struct ErrorPatternSyntax final : PatternSyntax {
     using Ptr = std::shared_ptr<ErrorPatternSyntax>;
 
     explicit ErrorPatternSyntax(SourceSpan span): PatternSyntax(Kind::errorPattern, span) {}
+};
+
+struct UnitTypeSyntax final : TypeSyntax {
+    explicit UnitTypeSyntax(SourceSpan span): TypeSyntax(Kind::unitType, span) {}
+};
+
+struct UnitExprSyntax final : ExprSyntax {
+    explicit UnitExprSyntax(SourceSpan span): ExprSyntax(Kind::unitExpr, span) {}
+};
+
+struct UnitPatternSyntax final : PatternSyntax {
+    explicit UnitPatternSyntax(SourceSpan span): PatternSyntax(Kind::unitPattern, span) {}
 };
 
 struct NominalTypeSyntax final : TypeSyntax {

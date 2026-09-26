@@ -27,6 +27,11 @@ canonical JSON-parser slice in [the v0.1 plan](../plan/v0.1.md):
 - correct MVP operator precedence and associativity;
 - recoverable syntax diagnostics with stable spans.
 
+The unit-value extension adds `()` in expression, type, and match-pattern
+positions. Dedicated syntax nodes distinguish it from parenthesized
+expressions. `Result<Void, E>` success is written `.Ok(())`; an empty enum
+payload clause is still rejected. This does not add general tuples.
+
 The Parser MVP deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;

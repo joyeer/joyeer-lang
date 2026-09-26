@@ -11,6 +11,8 @@ index is [docs/README.md](docs/README.md).
 Keep this file focused on current development rules. Remove completed
 one-off tasks and migration history instead of retaining them as instructions.
 
+Write all documentation in English.
+
 ## Architecture
 
 The compiler uses C++20, the native runtime uses C11, and the build uses
