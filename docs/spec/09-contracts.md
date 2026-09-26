@@ -37,6 +37,10 @@ fatalError(message: String): Never
 - `precondition`: for caller obligations that must hold in all builds.
 - `fatalError`: immediately terminates execution and does not return.
 
+Eliding an `assert` does not disable compiler-generated arithmetic or bounds
+checks. Required trapping semantics remain in optimized builds; a redundant
+check may be removed only when observable behavior is preserved.
+
 ### 9.3 Optional-first contract discipline
 
 Uncertainty is modeled with `T?` (Optional), not with nullable-by-default
@@ -75,13 +79,24 @@ func bumpAndGet(x: inout Int): Int {
   give it checking or termination semantics.
 - The compiler does not perform theorem proving.
 
-### 9.6 Migration note
+### 9.6 Verification boundary
 
-Specs and code that previously used declaration-level contracts should be
-migrated mechanically:
+**Design rationale.** Runtime checks test conditions on an execution;
+compile-time checking proves only the properties covered by its rules.
+Neither establishes arbitrary program correctness.
 
-- `requires P` -> `precondition(condition: P)` at function entry
-- `ensures Q`  -> `assert(condition: Q)` before each return (or before final return)
-- `invariant I` -> `assert(condition: I)` at loop/struct consistency checkpoints
+Keep three possible layers distinct:
+
+- runtime checks with specified failure and optimization behavior;
+- deliberately bounded static analyses, such as type and exhaustiveness
+  checking;
+- optional solver-assisted verification with explicit proof obligations,
+  timeouts, and unproved outcomes.
+
+Refinement types and solver integration remain future design work, not
+capabilities implied by the contract APIs. Any future proof system must define
+its supported logic and treatment of unproved properties; a timeout or failed
+proof must not be reported as successful verification. Automatic proof of
+arbitrary properties is not a release promise.
 
 ---

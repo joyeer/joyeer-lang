@@ -13,5 +13,9 @@ Observable failures remain explicit through `Result<T, E>` (§8), and mutation
 or ownership transfer remains explicit through call-site `&` and `consume`
 markers (§4.3).
 
----
+**Design rationale.** Allocation and I/O remain ordinary APIs, not type-level
+effect labels. Keeping their effects out of function type identity avoids a
+separate effect-polymorphism system while leaving the ownership transitions
+most important to code review explicit.
 
+---

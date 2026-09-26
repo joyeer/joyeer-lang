@@ -57,6 +57,9 @@ The proposed host contracts and acceptance cases are tracked in
 - Measure supported platforms and distinguish generated-program costs from the
   LLVM-based compiler/backend package.
 
+Use the [measurement requirements](../impl/native.md#7-performance-and-footprint-measurement)
+when defining workloads and acceptance thresholds.
+
 ### 6. Expand the language deliberately
 
 - Complete the design and end-to-end implementation boundaries for modules,
@@ -88,9 +91,10 @@ The proposed host contracts and acceptance cases are tracked in
 
 ### 9. Bound verification claims
 
-- Decide which runtime contract APIs are required in optimized builds and
-  preserve the distinction between elidable `assert` checks and required
-  precondition, arithmetic, and bounds semantics.
+- Implement runtime contract APIs with the
+  [specified optimization behavior](../spec/09-contracts.md#92-standard-checks):
+  elidable `assert` checks do not weaken required precondition, arithmetic,
+  or bounds semantics.
 - Define any compile-time verification work as a bounded decidable subset or
   optional solver-assisted layer with explicit timeout and unproved-result
   behavior.
@@ -100,8 +104,9 @@ The proposed host contracts and acceptance cases are tracked in
 
 - Keep completed behavior in [implementation documentation](../impl/) and
   durable tests, not in this roadmap.
-- Keep normative language rules in the [specification](../spec.md) and design
-  motivation in [rationale](../rationale/).
+- Keep normative language rules and their design explanations together in the
+  owning [specification](../spec.md) chapters; distinguish future proposals
+  from adopted rules.
 - A source-visible feature is not complete until its frontend, Joyeer IR,
   native backend/runtime, diagnostics, and durable fixtures agree.
 - Use unfiltered CTest as the final acceptance gate; focused labels are for

@@ -181,6 +181,12 @@ LLVM decomposes strings and collection handles into pointers/counts, or uses
 out-pointers for aggregate results rather than passing C structs by value.
 This avoids target-specific C aggregate calling-convention drift.
 
+These layouts are private implementation choices, not source-language C FFI
+or a stable Joyeer library ABI. Value semantics alone do not promise a C struct
+layout, a one-byte `Optional<Bool>`, a register-only `Result`, or the absence of
+platform unwind/startup metadata. Interoperability requires a separate layout,
+calling-convention, and initialization contract.
+
 ---
 
 ## 4. Runtime
@@ -209,6 +215,13 @@ still use their runtime operations.
 
 The runtime uses libc allocation today. Dictionary lookup uses a
 straightforward linear implementation; hashing is not yet implemented.
+
+`JoyeerNativeRuntime` is a static archive, not separately selectable `abi`,
+`core`, and `std` profiles. Generated programs depend on the target platform's
+C runtime and startup/link inputs; freestanding, kernel, embedded, and no-libc
+profiles are not supported. LLVM/LLD belong to the compiler's private backend,
+not the generated program's runtime. See [building](../building.md) for
+platform prerequisites and package layout.
 
 Collection allocations retain element/layout sizes and clone/destroy
 callbacks. In the current 64-bit implementation their private headers occupy
@@ -404,3 +417,31 @@ with their runtime diagnostics. Panic flushes stderr and uses C11 `_Exit` with
 a nonzero status, avoiding platform crash dialogs while remaining
 unrecoverable. Existing ownership-heavy native tests run at the default `-O2`
 and retain the zero-allocation-balance check.
+
+---
+
+## 7. Performance and footprint measurement
+
+The [language cost goals](../spec/00-preamble.md#012-cost-goals) are not
+measured performance parity or a fixed binary-size budget. Before adopting
+numerical acceptance thresholds, establish reproducible workloads and record:
+
+1. Target architecture, OS/SDK, compiler revision, optimization level, debug
+   mode, C-runtime linkage, and whether LTO or stripping was used.
+2. Generated-program sizes separately from the compiler/backend package;
+   embedding LLVM in the compiler does not make it a program runtime dependency.
+3. Allocation count, peak live storage, copied bytes, and final cleanup
+   balance. Zero outstanding allocations at exit demonstrates cleanup for
+   that workload, not allocation-free execution or low peak memory.
+4. Equivalent ownership, error-handling, overflow, and bounds semantics in
+   comparison implementations.
+5. Ordinary and consuming copies, nested collections, mutation-heavy
+   workloads, and failure paths at multiple optimization levels.
+6. Results on supported platforms rather than extrapolating from one host.
+
+Account for atomic allocation-balance updates and indirect collection
+clone/destroy callbacks as real costs even without GC/ARC. Repeated string
+concatenation can copy the growing prefix many times. Copy elision, check
+elimination, and any future container-to-stack promotion must preserve
+ownership, destruction, and observable behavior; none is a blanket guarantee
+that every allocation, copy, or check disappears.

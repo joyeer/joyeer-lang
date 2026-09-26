@@ -1,9 +1,9 @@
 # Joyeer Documentation Index
 
-The normative language definition is [spec.md](spec.md). Rationale explains
-why decisions were made, implementation notes describe the current compiler,
-and plan documents track incomplete work. If they disagree, the specification
-wins.
+The normative language definition is [spec.md](spec.md), with design
+explanations alongside the rules in each chapter. Implementation notes
+describe the current compiler, and plan documents track incomplete work.
+Explanations and plans do not add language rules or implementation guarantees.
 
 ## Start here
 
@@ -11,8 +11,10 @@ wins.
 |---|---|
 | Learn the language | [spec.md](spec.md) |
 | Use Joyeer with an AI coding agent | [Portable Joyeer skill](../skills/README.md) |
-| Understand the design | [rationale/ai-era-design.md](rationale/ai-era-design.md) |
-| Understand memory and ownership | [rationale/memory.md](rationale/memory.md) |
+| Understand the design and cost goals | [spec/00-preamble.md](spec/00-preamble.md) |
+| Understand memory and ownership | [spec/04-memory.md](spec/04-memory.md) |
+| Understand parameter access | [Access effects](spec/04-memory.md#42-access-effects-on-parameters) |
+| Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | See active implementation priorities | [plan/roadmap.md](plan/roadmap.md) |
 | Build from source | [building.md](building.md) |
@@ -27,14 +29,9 @@ patterns, errors, contracts, modules, naming, examples, and grammar.
 [spec.md](spec.md) is their index and change log, not an assembled copy of
 the chapter text.
 
-## Rationale
-
-| Document | Topic |
-|---|---|
-| [ai-era-design.md](rationale/ai-era-design.md) | AI guardrails, verification boundaries, and feasibility |
-| [memory.md](rationale/memory.md) | Value semantics, deterministic destruction, no GC/ARC |
-| [parameter-passing.md](rationale/parameter-passing.md) | Access conventions and call semantics |
-| [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost and ABI constraints |
+Design rationale, design notes, and cost notes explain the adjacent rules.
+They are not separate specifications; future proposals remain explicitly
+distinguished from adopted rules and current implementation support.
 
 ## Implementation
 
@@ -51,7 +48,7 @@ bytecode backend or VM.
 | [semantic-analysis.md](impl/semantic-analysis.md) | Return, reachability, initialization, and warning analysis |
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
-| [native.md](impl/native.md) | LLVM text emission, backend DLL ABI, native linking, runtime, and debug artifacts |
+| [native.md](impl/native.md) | LLVM emission, backend ABI, linking, runtime, debug artifacts, and performance measurement |
 | [string.md](impl/string.md) | String representation and operations |
 
 ## Plans
@@ -67,6 +64,9 @@ work.
 ## Conventions
 
 - Keep one topic per document and link instead of duplicating.
-- Treat drift between spec and rationale as a bug.
+- Keep design explanations beside the rules they motivate; do not repeat
+  normative rules in separate design documents.
+- Keep implementation details and measurements out of normative rules, and
+  distinguish proposed features from implemented ones.
 - Keep short-lived plans current; delete obsolete implementation plans.
 - Use repository-relative links and verify them when deleting source areas.

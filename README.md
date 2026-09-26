@@ -19,9 +19,9 @@ review and assist, with the long-term goal of replacing C++ for new code.
   implemented language surface.
 
 The normative language definition is [docs/spec.md](docs/spec.md). Design
-trade-offs live under [docs/rationale/](docs/rationale/), starting with
-[ai-era-design.md](docs/rationale/ai-era-design.md) and
-[memory.md](docs/rationale/memory.md).
+trade-offs are explained alongside the rules, starting with the
+[design philosophy](docs/spec/00-preamble.md) and
+[memory model](docs/spec/04-memory.md).
 
 ## Implementation status
 
@@ -290,7 +290,7 @@ stage-specific folders under [tests/](tests/) and are registered in
 | [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
 | [scripts/](scripts/) | CMake integration-test helpers |
-| [docs/](docs/) | Specification, rationale, implementation notes, and plans |
+| [docs/](docs/) | Specification and design explanations, implementation notes, and plans |
 
 Useful examples include the
 [native JSON parser](tests/native/json_parser.joyeer) and the
@@ -300,7 +300,8 @@ Useful examples include the
 
 - [docs/README.md](docs/README.md): documentation index
 - [docs/spec.md](docs/spec.md): normative language specification
-- [docs/rationale/](docs/rationale/): design rationale
+- [docs/spec/00-preamble.md](docs/spec/00-preamble.md): design philosophy and
+  cost goals
 - [docs/impl/supported-features.md](docs/impl/supported-features.md): current
   implementation boundary
 - [docs/plan/roadmap.md](docs/plan/roadmap.md): active implementation
