@@ -13,8 +13,8 @@ wins.
 | Use Joyeer with an AI coding agent | [Portable Joyeer skill](../skills/README.md) |
 | Understand the design | [rationale/ai-era-design.md](rationale/ai-era-design.md) |
 | Understand memory and ownership | [rationale/memory.md](rationale/memory.md) |
-| See the implemented pipeline | [plan/roadmap.md](plan/roadmap.md) |
-| See the v0.1 scope | [plan/v0.1.md](plan/v0.1.md) |
+| See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
+| See active implementation priorities | [plan/roadmap.md](plan/roadmap.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Windows Debug compiler | [Debug installation](building.md#local-windows-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
@@ -31,7 +31,7 @@ the chapter text.
 
 | Document | Topic |
 |---|---|
-| [ai-era-design.md](rationale/ai-era-design.md) | Strong types, ownership, and contracts as AI guardrails |
+| [ai-era-design.md](rationale/ai-era-design.md) | AI guardrails, verification boundaries, and feasibility |
 | [memory.md](rationale/memory.md) | Value semantics, deterministic destruction, no GC/ARC |
 | [parameter-passing.md](rationale/parameter-passing.md) | Access conventions and call semantics |
 | [runtime-overhead.md](rationale/runtime-overhead.md) | Zero-cost and ABI constraints |
@@ -43,6 +43,7 @@ bytecode backend or VM.
 
 | Document | Topic |
 |---|---|
+| [supported-features.md](impl/supported-features.md) | Current executable language surface, pipeline, and limits |
 | [lexer.md](impl/lexer.md) | Token model, spans, recovery, and supported lexical surface |
 | [parser.md](impl/parser.md) | Parser grammar, syntax AST, and recovery contract |
 | [name-resolution.md](impl/name-resolution.md) | Scopes, symbols, references, and diagnostics |
@@ -60,10 +61,8 @@ work.
 
 | Document | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Current pipeline status and next milestones |
-| [v0.1.md](plan/v0.1.md) | JSON-parser milestone scope and gaps |
+| [roadmap.md](plan/roadmap.md) | Active implementation priorities |
 | [joypm-m0.md](plan/joypm-m0.md) | Draft language and host contracts for a project manager written in Joyeer |
-| [feasibility.md](plan/feasibility.md) | Feasibility and combined-risk analysis |
 
 ## Conventions
 

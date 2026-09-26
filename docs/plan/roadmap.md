@@ -1,90 +1,108 @@
 # Joyeer Implementation Roadmap
 
-## Compiler pipeline
+> **Status:** active work only. The current compiler boundary is documented in
+> [Implemented Language Surface](../impl/supported-features.md). Remove items
+> from this file when they are complete instead of retaining migration history.
 
-```text
-Joyeer source
-  -> lexer
-  -> syntax parser
-  -> name resolution
-  -> type checking
-  -> control-flow semantic analysis
-  -> verified Joyeer IR
-  -> textual LLVM IR
-  -> platform LLVM optimization/code generation/link
-  -> native executable + JoyeerNativeRuntime
-```
+## Current priorities
 
-This is the only compiler pipeline. The old parser passes, bytecode backend,
-runtime, VM, golden corpus, and language-mode CLI options were removed in July
-2026.
+### 1. Strengthen correctness coverage
 
-## Current status
+- Expand ownership and control-flow edge-case coverage beyond the current
+  acceptance workload.
+- Fix the native JSON parser's malformed-input handling for leading-zero
+  numbers and unescaped control characters.
+- Define and test integer-boundary behavior, including decimal accumulation,
+  out-of-range JSON input, and contextual handling of
+  `-9223372036854775808`.
+- Strengthen Joyeer IR ownership, dominance, and opcode-type verification.
 
-| Stage | Status | Main implementation |
-|---|---|---|
-| Lexer | JSON-parser surface complete; explicit terminals, spans, recovery | `lib/compiler/lexparser.cpp` |
-| Parser | Syntax-only AST, precedence, payload enums/match, recovery | `lib/compiler/parser.cpp`, `syntax.cpp` |
-| Name resolution | Stable symbols/scopes and deferred type-directed references | `lib/compiler/nameresolution.cpp`, `semantic.cpp` |
-| Type checking | Canonical types, calls, access conventions, patterns, exclusivity | `lib/compiler/typechecking.cpp` |
-| Semantic analysis | all-paths return, reachability, initialization, unused bindings | `lib/compiler/semanticanalysis.cpp` |
-| Joyeer IR | verified CFG, aggregates, ownership operations, source/debug scopes | `lib/compiler/irlowering.cpp`, `lib/ir/ir.cpp` |
-| LLVM backend | textual LLVM IR, checked operations, ownership helpers, debug metadata | `lib/backend/llvm.cpp` |
-| Native backend | COFF, Mach-O, and ELF LLVM/LLD libraries behind one C ABI; no external compiler/linker process | `lib/backend/native_backend.cpp`, `linker.cpp` |
-| Native runtime | strings, owned UTF-8 byte arrays, collections, typed file input, checked arithmetic, allocation balance | `lib/native/runtime.c` |
-| Diagnostics | stable stage IDs, excerpts, fix-its, help, secondary notes | `lib/diagnostic/diagnostic.cpp` |
+### 2. Improve diagnostics and developer feedback
 
-The complete JSON parser fixture builds and runs natively with recursive value
-clone/destroy, deterministic scope cleanup, whole-binding and projection
-consumption, and call-site exclusivity. Debug emission supports line tables and
-full source variable/type/scope metadata with PDB/DWARF/dSYM artifact handling.
+- Add broader type-directed edits without guessing implicit conversions.
+- Support multi-line and Unicode-aware diagnostic rendering.
+- Define a stable machine-readable diagnostic format such as JSON or SARIF.
+- Keep diagnostics, source locations, and ownership guidance consistent as the
+  language surface expands.
 
-## Completed migration
+### 3. Close release and platform gaps
 
-- The typed pipeline is unconditional and default.
-- CLI parsing is independent of compiler and native runtime internals.
-- `LexParser` depends only on diagnostics and source data.
-- Compiler tests do not link a VM or obsolete runtime.
-- The legacy source directories, tests, and documentation were removed.
-- Unfiltered CTest is safe and is the required final gate.
-- Windows release packages no longer require an LLVM/Clang installation;
-  LLVM/LLD are private static dependencies of `joyeer-backend.dll`.
-- The v0.1 heap-value ownership baseline is fixed: ordinary copies recursively
-  clone unique storage, owned temporaries transfer directly, overwrite acquires
-  the replacement before destroying the old value, and `consume` is the only
-  source-visible ownership transfer across a call.
+- Stage required third-party licenses and notices.
+- Provide a product-only install manifest that excludes GoogleTest and other
+  development SDK content.
+- Add checked-in CI for supported Windows, macOS, and Linux configurations.
+- Exercise ELF and Mach-O behavior on their native platforms in addition to
+  Windows release validation.
 
-## Next milestones
+### 4. Broaden file, path, and process support
 
-1. Strengthen correctness coverage for the supported subset before expanding
-   it, including ownership/control-flow edge cases and the reference JSON
-   parser's malformed-input and integer-boundary behavior.
-2. Close release-packaging gaps: third-party notices, a product-only install
-   manifest, and checked-in CI for supported platforms. The repository
-   currently contains no CI workflow; Linux ELF and macOS behavior need
-   platform-native coverage as well as Windows validation.
-3. Broaden file I/O and path handling, including wide-character Windows CLI
-   arguments, Unicode runtime paths, streaming, writing, and metadata.
-4. Define a measured optimization, footprint, and LTO policy while preserving
-   checked arithmetic, bounds, ownership, and debug semantics.
-5. Expand modules, generics, error propagation, and contracts only after their
-   syntax/semantic ownership is specified and tested end to end.
-6. Improve debugger inspection for optimized values and aggregate projections;
-   evaluate an in-process replacement for macOS dSYM post-processing.
-7. Design user-defined destruction and explicit copy initialization without
-   weakening the noncopyable-by-default rule for resource-owning values.
+- Define portable path encoding and use wide-character Windows host
+  boundaries for command-line arguments and filesystem operations.
+- Add non-destructive filesystem operations, streaming, writing, metadata, and
+  explicit error contracts.
+- Design synchronous process execution with argument arrays, working-directory
+  control, typed launch/wait failures, and no implicit shell evaluation.
+- Preserve the compatibility contract of the existing `readFile(path:)`
+  builtin while introducing richer APIs.
 
-## Validation
+The proposed host contracts and acceptance cases are tracked in
+[joypm M0](joypm-m0.md).
 
-The normal acceptance sequence is:
+### 5. Establish performance and footprint evidence
 
-```pwsh
-cmake -S . -B build -G Ninja
-cmake --build build
-ctest --test-dir build --output-on-failure
-```
+- Add reproducible workloads for runtime performance, allocation behavior, and
+  generated-program size.
+- Define optimization, stripping, and LTO policies without weakening checked
+  arithmetic, bounds, ownership, or debug semantics.
+- Measure supported platforms and distinguish generated-program costs from the
+  LLVM-based compiler/backend package.
 
-Use labels such as `lexer`, `parser`, `type-checking`, `ir-lowering`,
-`llvm-backend`, `native-runtime`, `native`, and `debug-info` only for focused
-iteration. Developer-managed toolchain prerequisites are documented in
-[building.md](../building.md).
+### 6. Expand the language deliberately
+
+- Complete the design and end-to-end implementation boundaries for modules,
+  user-defined generics, error propagation, and runtime contracts before
+  admitting their syntax as supported.
+- Keep `Optional`, `Result`, `Array`, and `Dict` on their compiler-known path
+  until general generic declarations and monomorphization are specified.
+- Treat standard-library growth as an API, ownership, portability, and
+  diagnostics task rather than exposing runtime helpers ad hoc.
+
+### 7. Improve optimized debugging
+
+- Improve inspection of optimized values and aggregate projections.
+- Preserve source locations, variable scopes, and physical type metadata
+  through optimization.
+- Evaluate an in-process replacement for macOS dSYM post-processing.
+
+### 8. Extend ownership ergonomics safely
+
+- Stress-test exclusivity on broader mutation-heavy workloads before adding
+  longer-lived projections.
+- Design longer-lived `yield` projections without weakening call-site and
+  argument-evaluation exclusivity.
+- Specify user-defined destruction and explicit copy initialization while
+  keeping resource-owning values noncopyable by default.
+- Define a checked generational `Handle<T>` or arena abstraction before
+  presenting integer indices as a safe identity mechanism for graph-like
+  storage.
+
+### 9. Bound verification claims
+
+- Decide which runtime contract APIs are required in optimized builds and
+  preserve the distinction between elidable `assert` checks and required
+  precondition, arithmetic, and bounds semantics.
+- Define any compile-time verification work as a bounded decidable subset or
+  optional solver-assisted layer with explicit timeout and unproved-result
+  behavior.
+- Do not promise automatic proof of arbitrary program properties.
+
+## Planning policy
+
+- Keep completed behavior in [implementation documentation](../impl/) and
+  durable tests, not in this roadmap.
+- Keep normative language rules in the [specification](../spec.md) and design
+  motivation in [rationale](../rationale/).
+- A source-visible feature is not complete until its frontend, Joyeer IR,
+  native backend/runtime, diagnostics, and durable fixtures agree.
+- Use unfiltered CTest as the final acceptance gate; focused labels are for
+  iteration only.

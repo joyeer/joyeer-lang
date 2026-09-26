@@ -16,8 +16,9 @@ semantic contracts, API sketches, compatibility decisions, and acceptance
 cases for later milestones. It does not implement modules, new operators,
 filesystem operations, or subprocesses.
 
-The current executable baseline is documented in [v0.1.md](v0.1.md).
-Specification examples may describe a broader design than that baseline.
+The current executable baseline is documented in
+[Implemented Language Surface](../impl/supported-features.md). Specification
+examples may describe a broader design than that baseline.
 
 ## Decision register
 

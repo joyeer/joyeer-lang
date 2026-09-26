@@ -131,13 +131,14 @@ FFI would need its own calling-convention, layout, and initialization contract.
 The former cost sketches used examples involving `joyeer build --profile`,
 `extern "C"`, `dyn Protocol`, user-defined generic functions, `const fn`,
 `static_assert`, user-defined accessors/destructors, and layout annotations.
-These are not implemented v0.1 capabilities or commands.
+These are not current compiler capabilities or commands.
 
 Possible future work includes better enum layouts, inlining/copy diagnostics,
 allocator control, freestanding deployment, source-language FFI, and generics.
 Each needs a language/ABI design before it can carry a performance promise.
-Refer to [the v0.1 scope](../plan/v0.1.md) rather than treating a cost sketch as
-an additional feature specification.
+Refer to
+[the implemented language surface](../impl/supported-features.md) rather than
+treating a cost sketch as an additional feature specification.
 
 ## 7. Evidence needed for a runtime budget
 
@@ -164,5 +165,6 @@ ownership obligations, and failure semantics.
 - [memory.md](memory.md) - value semantics and deterministic destruction.
 - [parameter-passing.md](parameter-passing.md) - the four access conventions.
 - [native.md](../impl/native.md) - current LLVM/native backend and runtime.
-- [roadmap.md](../plan/roadmap.md) - current pipeline and follow-on milestones.
-- [v0.1.md](../plan/v0.1.md) - executable milestone and known limits.
+- [supported-features.md](../impl/supported-features.md) - current executable
+  surface and known limits.
+- [roadmap.md](../plan/roadmap.md) - active implementation priorities.

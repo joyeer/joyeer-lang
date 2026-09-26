@@ -11,7 +11,8 @@
 
 The Parser MVP converts the explicit token stream produced by the
 [Lexer MVP](lexer.md) into a syntax-only AST. Its acceptance target is the
-canonical JSON-parser slice in [the v0.1 plan](../plan/v0.1.md):
+canonical JSON-parser slice in
+[Implemented Language Surface](supported-features.md):
 
 - typed `func` declarations and mandatory call-site labels;
 - `let` / `var` bindings;
@@ -92,7 +93,7 @@ The parser decides only facts visible in the token stream:
 | Does a name refer to a value, type, function, field, or enum case? | name resolution |
 | Is `Foo.Bar(...)` an enum constructor, and is `.Bar(...)` contextually typed? | name resolution + type checking |
 | Do supplied labels match a function, initializer, or enum payload declaration? | name resolution + type checking |
-| Is a generic type one of the built-in generic containers allowed in v0.1? | type checking |
+| Is a generic type one of the currently supported built-in generic containers? | type checking |
 | Do `&` / `consume` match inout/consuming signatures and valid storage? | type checking + semantic ownership analysis |
 | Are assignment targets mutable and initialized correctly? | semantic analysis |
 | Do `if` branches and `match` arms have compatible types? | type checking |
@@ -193,7 +194,7 @@ Result<JsonValue, JsonError>
 ```
 
 The parser records generic type syntax without deciding whether the base is a
-permitted built-in. In v0.1 the type checker accepts only built-in generic
+permitted built-in. The type checker currently accepts only built-in generic
 containers (`Array`, `Dict`, `Optional`, and `Result`); user-defined generics
 remain out of scope.
 
@@ -622,7 +623,7 @@ layout, match exhaustiveness, ownership, and lowering.
 
 ## 10. Test matrix
 
-Parser tests consume in-memory source through the v0.1 lexer, then compare a
+Parser tests consume in-memory source through the current lexer, then compare a
 normalized syntax AST or diagnostic stream. They never execute the program.
 
 ### 10.1 Positive corpus

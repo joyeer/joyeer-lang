@@ -1,6 +1,6 @@
 # String Implementation
 
-> **Status:** The native v0.1 string representation, ownership operations,
+> **Status:** The native string representation, ownership operations,
 > comparisons, byte indexing, owned `utf8()` byte arrays, concatenation,
 > printing, and file-input path are implemented. Broader formatting remains
 > future work.

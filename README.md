@@ -42,7 +42,8 @@ executable. On Windows, LLVM and LLD run inside the bundled
 
 The current MVP can compile and run an integer-focused Joyeer-written JSON
 parser fixture. It is an integration workload, not a complete JSON conformance
-or performance benchmark; see its [known limits](docs/plan/v0.1.md).
+or performance benchmark; see its
+[known limits](docs/impl/supported-features.md#json-parser-fixture-limits).
 Implemented features include integers, booleans, bytes, strings, `let`/`var`, checked
 arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
@@ -53,8 +54,10 @@ Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,
 optimization policy, and broader language surface remain incomplete.
 
-See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the current pipeline and
-[docs/plan/v0.1.md](docs/plan/v0.1.md) for the JSON-parser milestone.
+See
+[docs/impl/supported-features.md](docs/impl/supported-features.md) for the
+current implementation boundary and
+[docs/plan/roadmap.md](docs/plan/roadmap.md) for active priorities.
 
 ## Example
 
@@ -298,7 +301,10 @@ Useful examples include the
 - [docs/README.md](docs/README.md): documentation index
 - [docs/spec.md](docs/spec.md): normative language specification
 - [docs/rationale/](docs/rationale/): design rationale
-- [docs/plan/roadmap.md](docs/plan/roadmap.md): implementation roadmap
+- [docs/impl/supported-features.md](docs/impl/supported-features.md): current
+  implementation boundary
+- [docs/plan/roadmap.md](docs/plan/roadmap.md): active implementation
+  priorities
 - [docs/impl/native.md](docs/impl/native.md): LLVM/native backend details
 
 Build, test, and contribution conventions are in [AGENTS.md](AGENTS.md).

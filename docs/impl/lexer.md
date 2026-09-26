@@ -1,6 +1,6 @@
 # Joyeer Lexer Implementation
 
-> **Status:** The JSON-parser v0.1 lexical surface is implemented as the
+> **Status:** The accepted JSON-parser lexical surface is implemented as the
 > compiler's only lexer. The normative grammar is
 > [../spec/01-lexical.md](../spec/01-lexical.md).
 
@@ -50,7 +50,7 @@ JSON fixture:
 - strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
   literals additionally support `\'`, which is not a supported string escape;
 - delimiters, labels, member access, `=>`, `?`, and `&`;
-- assignment, arithmetic/comparison operators, and `&&` used by v0.1;
+- assignment, supported arithmetic/comparison operators, and `&&`;
 - line comments and nested block comments.
 
 The longest valid terminal wins. Unsupported compound, shift, range,

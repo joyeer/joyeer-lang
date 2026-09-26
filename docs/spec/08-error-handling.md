@@ -1,9 +1,10 @@
 ## §8 Error Handling
 
-**Implementation status:** v0.1 supports `Result`, `Optional`, explicit
+**Implementation status:** the current compiler supports `Result`, `Optional`, explicit
 `match`, and the typed `readFile` errors below. Postfix `?`, `??`, and several
 library helpers used in examples are broader design, not implemented
-features. See [the current scope](../plan/v0.1.md).
+features. See
+[the implemented language surface](../impl/supported-features.md).
 
 ### 8.1 No exceptions
 
@@ -95,7 +96,7 @@ propagated error.
 
 Reserved keywords ⏳. If error-handling syntax for `Result` chains becomes
 ergonomically heavy, a `try-block` may be added in v0.3. The broader design
-uses `?` plus `match`; the executable v0.1 subset uses explicit `match`
+uses `?` plus `match`; the current executable subset uses explicit `match`
 without propagation syntax.
 
 ### 8.5 `??` coalescing

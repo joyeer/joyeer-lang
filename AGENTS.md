@@ -123,6 +123,7 @@ ctest --test-dir build --output-on-failure
 
 - Language design: [docs/spec.md](docs/spec.md) and
   [docs/rationale/](docs/rationale/)
-- v0.1 scope: [docs/plan/v0.1.md](docs/plan/v0.1.md)
-- Pipeline ownership: [docs/plan/roadmap.md](docs/plan/roadmap.md)
+- Implemented language surface:
+  [docs/impl/supported-features.md](docs/impl/supported-features.md)
+- Active implementation priorities: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - Native ABI/debug behavior: [docs/impl/native.md](docs/impl/native.md)

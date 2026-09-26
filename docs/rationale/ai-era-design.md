@@ -1,7 +1,8 @@
 # Joyeer Language — AI Era Design Considerations
 
 > **Status:** design rationale, not an implementation checklist. The current
-> compiler implements the subset described in [v0.1.md](../plan/v0.1.md).
+> compiler boundary is described in
+> [Implemented Language Surface](../impl/supported-features.md).
 > Contracts, annotations, incremental compilation, and formal verification
 > below are design directions, not delivered compiler guarantees.
 
@@ -72,6 +73,17 @@ References: Dafny, Lean 4, F*, Ada/SPARK
 Automatic proof of arbitrary program properties is not a release promise.
 Any future verification integration must define its supported logic, proof
 obligations, timeout behavior, and what happens when a property cannot be proved.
+
+A feasible progression keeps distinct guarantees separate:
+
+| Layer | Possible guarantee |
+|---|---|
+| Runtime checks | Execute specified preconditions, assertions, arithmetic checks, and bounds checks with defined optimization behavior |
+| Decidable static checks | Prove deliberately bounded properties such as type compatibility, exhaustiveness, nullability, and selected ranges |
+| Solver-assisted checks | Attempt explicitly scoped proof obligations with visible timeout and unproved outcomes |
+
+The first two layers can grow independently of solver integration. A failed or
+timed-out proof must never silently become a successful verification result.
 
 ### 3. Explicit State Changes Without a General Effect System
 
@@ -180,3 +192,25 @@ Candidate priorities; these estimates are not implementation commitments:
 The current guardrails are static typing and explicit ownership conventions.
 Runtime checks, property testing, and verification tooling can extend them
 once their semantics and implementation are ready.
+
+## Feasibility and evidence boundaries
+
+The individual systems-language mechanisms have substantial precedent, but
+their combination still requires Joyeer-specific evidence. The native JSON
+parser demonstrates a scoped integration of types, ownership, containers,
+control flow, and deterministic cleanup; it does not establish broad
+ownership ergonomics, ABI cost, platform completeness, or the performance of
+future features.
+
+Two design boundaries need particular care:
+
+- Longer-lived projections must be tested on mutation-heavy workloads before
+  the exclusivity model is made more permissive.
+- Bounds checks and exclusivity do not prove that an integer index belongs to
+  the intended container generation. Graph-like storage needs a checked
+  generational handle or arena design before stale or cross-container indices
+  can be described as safe identities.
+
+These are engineering and language-design risks rather than evidence that the
+core direction is infeasible. Their unresolved work is tracked in the
+[implementation roadmap](../plan/roadmap.md).

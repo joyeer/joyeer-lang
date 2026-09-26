@@ -1,13 +1,13 @@
 # LLVM and Native Backend
 
-> **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
+> **Status:** The current JSON-parser language surface emits textual LLVM IR;
 > the platform backend library validates it, generates machine code, and links
 > native executables with in-process LLVM/LLD on Windows, macOS, and Linux.
 > The current implementation covers the native acceptance workload and
 > regression cases for conditional evaluation, ownership flow, guarded
 > payloads, and loop storage. Verifier, native ABI, and library gaps remain.
 > User-defined `deinit` and explicit copy initializers are outside the
-> implemented v0.1 surface.
+> [implemented language surface](supported-features.md).
 
 ---
 
@@ -225,7 +225,7 @@ process if runtime-managed allocation count
 is nonzero after `joyeer_main` returns, making leaks in native integration
 tests observable.
 
-The v0.1 prelude exposes `byteToInt(value:)` and `byteToString(value:)` rather
+The current prelude exposes `byteToInt(value:)` and `byteToString(value:)` rather
 than silently coercing `UInt8`. LLVM zero-extends the former to the signed
 64-bit `Int` representation. The latter allocates one owned byte through
 `joyeer_byte_to_string_abi`, so ordinary temporary and scope cleanup applies.
@@ -268,7 +268,7 @@ allocation or destruction API is introduced for unit values.
 
 ### File input
 
-The v0.1 prelude exposes:
+The current prelude exposes:
 
 ```joyeer
 readFile(path: String): Result<String, IOError>
@@ -279,7 +279,7 @@ normal ownership cleanup destroys it. `Err` contains `.NotFound(code)`,
 `.PermissionDenied(code)`, `.InvalidPath(code)`, or `.Other(code)`. Categories
 are stable across platforms; each payload preserves the nonzero platform C I/O
 error code. Callers handle both enum layers with exhaustive `match` because
-postfix propagation is outside the v0.1 surface.
+postfix propagation is outside the implemented surface.
 
 Byte preservation does not establish valid UTF-8. The reader grows from a
 4096-byte buffer and retains spare capacity on success; the returned string's
@@ -395,7 +395,8 @@ directories.
 an external file, recursively parses nested null/Boolean/integer/string/array/
 object values, checks representative results, rejects malformed input, and
 returns with no runtime-managed allocations. It intentionally matches the
-v0.1 scope: floating-point numbers and JSON `\uXXXX` decoding remain deferred.
+accepted fixture scope: floating-point numbers and JSON `\uXXXX` decoding
+remain deferred.
 
 Optimization tests verify the default and all accepted CLI levels, then compile
 at `-O2` and prove checked integer overflow and array bounds still terminate

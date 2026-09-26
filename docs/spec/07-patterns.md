@@ -27,8 +27,8 @@ enum_pattern_arg
 Binds a fresh name to the matched value:
 
 ```joyeer
-match v {
-  .Number(n) => print(value: n),    // n bound
+match reading {
+  .Value(n) => print(value: n),    // n bound
   _ => (),
 }
 ```
@@ -66,21 +66,21 @@ alternative patterns may only combine patterns that bind no variables
 (wildcards and literals):
 
 ```joyeer
-match c {
-  b'"'             => parseString(p: &p),
-  b't', b'f'       => parseBool(p: &p),
-  b'0', b'1', b'2' => parseDigit(c: c),
-  _                => parseOther(p: &p),
+let category = match byte {
+  b'+', b'-'       => "sign",
+  b'0', b'1', b'2' => "digit",
+  b' ', b'\t'      => "space",
+  _                => "other",
 }
 ```
 
 ### 7.6 Where guards
 
 ```joyeer
-match v {
-  .Number(n) where n > 0 => "positive",
-  .Number(_)              => "non-positive",
-  _                       => "other",
+match reading {
+  .Value(n) where n > 0 => "positive",
+  .Value(_)             => "non-positive",
+  .Missing              => "missing",
 }
 ```
 

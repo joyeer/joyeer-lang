@@ -1,9 +1,9 @@
 # The Joyeer Programming Language — Specification
 
 > **Status:** Draft v0.1-spec. This document indexes the broader language
-> design, not just the implemented JSON-parser milestone. **Syntax-only**
-> annotation marks describe proposed treatment, not current parser support;
-> see [the implementation scope](plan/v0.1.md).
+> design, including features beyond the current compiler. **Syntax-only**
+> annotation marks describe proposed treatment, not current parser support.
+> See [the implemented language surface](impl/supported-features.md).
 
 This specification is split into one file per chapter under
 [spec/](spec/). Section numbers (`§N`, `§N.M`) are stable across the split;

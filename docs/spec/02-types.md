@@ -1,11 +1,12 @@
 ## §2 Type System
 
 **Implementation status:** this chapter includes broader type-system design.
-The executable v0.1 subset is listed in [the v0.1 plan](../plan/v0.1.md).
-In particular, the runtime currently preserves arbitrary string bytes without
-enforcing the valid-UTF-8 invariant described below. `Result` and `Optional`
-are compiler-known builtins in this subset, not user-declared generic enums.
-Their declarations below explain the intended shape, not supported generic
+The executable subset is listed in
+[Implemented Language Surface](../impl/supported-features.md). In particular,
+the runtime currently preserves arbitrary string bytes without enforcing the
+valid-UTF-8 invariant described below. `Result` and `Optional` are
+compiler-known builtins in this subset, not user-declared generic enums. Their
+declarations below explain the intended shape, not supported generic
 declaration syntax.
 
 ### 2.1 Primitive types
@@ -51,11 +52,11 @@ not mutate the source string, and the array remains valid after the source is
 destroyed. A zero-copy byte view would require a scoped non-escaping projection
 type; v0.1 does not expose one as a first-class value (§4.8).
 
-For ASCII-oriented work (parsing JSON, tokenizing source, protocol framing)
-byte indexing is exactly what is wanted: ASCII structural characters compare
-as their byte value, and multi-byte UTF-8 sequences are copied through
-verbatim. `Char` (a 32-bit Unicode scalar, §2.1) remains the element type
-produced by `.chars()` and written by character literals like `'a'`.
+For ASCII-oriented work such as tokenizing source or protocol framing, byte
+indexing is exactly what is wanted: ASCII structural characters compare as
+their byte value, and multi-byte UTF-8 sequences are copied through verbatim.
+`Char` (a 32-bit Unicode scalar, §2.1) remains the element type produced by
+`.chars()` and written by character literals like `'a'`.
 
 #### 2.1.2 `Void` and the unit value
 

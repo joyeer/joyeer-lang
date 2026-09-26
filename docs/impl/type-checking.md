@@ -1,6 +1,6 @@
 # Type Checking — Resolved Parser MVP AST
 
-> **Status:** Implemented for the v0.1 JSON-parser frontend.
+> **Status:** Implemented for the current JSON-parser frontend.
 > **Input:** `semantic::SemanticModel`.
 > **Output:** `typing::TypeCheckedModel` plus stable, spanned diagnostics.
 
@@ -71,7 +71,7 @@ bindings to infer from previously checked initializers.
 
 ## 4. Implemented rules
 
-The v0.1 checker currently validates:
+The current checker validates:
 
 - explicit and inferred binding types;
 - scalar, byte, array, dictionary, and `nil` literals;
@@ -116,12 +116,12 @@ The v0.1 checker currently validates:
   lasts until the call returns. Reads or nested exclusive calls in another
   argument expression therefore conflict with it, including computed expressions
   such as `x + 1`. Nested calls whose accesses both finish during sequential
-  argument evaluation do not overlap each other. v0.1 has no first-class or
-  escaping references. Access collection visits block items, conditions,
-  match arms, return operands, projection indices, and both borrowing and
-  mutating receivers. Transient evaluations finish before later arguments
-  acquire storage; an earlier sustained projection remains active until
-  the call returns.
+  argument evaluation do not overlap each other. The current language surface
+  has no first-class or escaping references. Access collection visits block
+  items, conditions, match arms, return operands, projection indices, and both
+  borrowing and mutating receivers. Transient evaluations finish before later
+  arguments acquire storage; an earlier sustained projection remains active
+  until the call returns.
 
   Exhaustiveness uses a recursive pattern matrix rather than a set of outer
   constructor names. Refutable payloads do not cover their whole constructor;
