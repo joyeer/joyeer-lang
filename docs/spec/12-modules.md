@@ -8,8 +8,9 @@ CMake is separate from designing a multi-file Joyeer module system.
 ### 12.1 Module unit
 
 A **module** is a directory of `.joyeer` source files compiled together.
-The executable v0.1 milestone is single-file. Multi-file module discovery,
-dependency tracking, visibility enforcement, and linking remain follow-on work.
+The current executable implementation is single-file. Multi-file module
+discovery, dependency tracking, visibility enforcement, and linking remain
+follow-on work.
 
 ### 12.2 Visibility
 
@@ -31,7 +32,7 @@ import std.collections.Dict as Map
 
 In this draft, `as` denotes import renaming and `import` appears only at the
 top of a file, before declarations. This syntax is not implemented by the
-current JSON-parser MVP.
+current compiler.
 
 ### 12.4 Prelude
 

@@ -71,7 +71,11 @@ public func main() {
 }
 ```
 
-### 16.2 JSON parser (sketch matching v0.1-plan.md)
+### 16.2 JSON parser
+
+This example illustrates recursive enums, byte-oriented input, explicit
+mutation, optional values, and recoverable errors. It is a language-design
+example rather than a statement of current compiler coverage.
 
 ```joyeer
 public enum JsonValue {
@@ -184,4 +188,3 @@ public func main() {
 ```
 
 ---
-

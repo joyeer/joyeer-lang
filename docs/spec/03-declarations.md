@@ -207,17 +207,15 @@ one case syntax (no `case` keyword) — one way to write each thing (§0.1
 principle 4).
 
 ```joyeer
-public enum JsonValue {
-  Null,
-  Bool(Bool),
-  Number(Double),
-  Str(String),
-  Array([JsonValue]),
-  Object([String: JsonValue]),
+public enum Message {
+  Quit,
+  Text(String),
+  Move(x: Int, y: Int),
+  Batch([Message]),
 }
 
-let v: JsonValue = .Number(3.14)
-let arr: JsonValue = .Array([.Null, .Bool(true)])
+let message: Message = .Move(x: 3, y: 4)
+let batch: Message = .Batch([.Quit, .Text("ready")])
 ```
 
 Construction uses `Type.Case(args)` or `.Case(args)` when the target type
@@ -226,11 +224,11 @@ positional; one declared with a label must use that label in construction and
 patterns (§5.8, §7):
 
 ```joyeer
-enum JsonError {
+enum DecodeError {
   Unexpected(UInt8, at: Int),
 }
 
-let error: JsonError = .Unexpected(b'{', at: 12)
+let error: DecodeError = .Unexpected(b'?', at: 12)
 match error {
   .Unexpected(byte, at: position) => position,
 }
@@ -238,8 +236,8 @@ match error {
 
 This positional form is specific to unlabeled enum payloads. Ordinary
 function and struct-initializer arguments remain labeled (§3.2.1). A case
-without associated values is written without parentheses (`.Null`, not
-`.Null()`). Pattern-match with `match` (§5.9).
+without associated values is written without parentheses (`.Quit`, not
+`.Quit()`). Pattern-match with `match` (§5.9).
 
 Enums are **tagged unions**. Size is `discriminant + max(variant)`,
 stack-allocatable, no heap unless the user requests indirection (§3.4.1).
@@ -345,4 +343,3 @@ import std.collections
 See §12 for module rules.
 
 ---
-

@@ -106,6 +106,25 @@ return left + right
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, LowersUnitCallsAndReturnsWithoutLosingEffects) {
+    lower("func effect() { print(value: 42) }\n"
+          "func complete(): Result<Void, String> { return .Ok(effect()) }\n"
+          "func forward(): Void { return effect() }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::call), 1u);
+    EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::unitConstant), 1u);
+    EXPECT_EQ(opcodeCount(function("complete"), joyeer::ir::Opcode::constructEnum), 1u);
+    EXPECT_EQ(opcodeCount(function("forward"), joyeer::ir::Opcode::returnVoid), 1u);
+    EXPECT_EQ(opcodeCount(function("forward"), joyeer::ir::Opcode::returnValue), 0u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, LowersUnitNativeFixture) {
+    lower(readFixture("native/unit_values.joyeer"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
 TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
     lower(R"JOYEER(func run(input: consuming String) {
 let text = "value"

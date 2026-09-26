@@ -74,6 +74,55 @@ print(value: 42)
     EXPECT_EQ(result.text, withoutLocations);
 }
 
+TEST_F(LLVMBackendTest, UnitConstantsDoNotAllocateOrStorePayloads) {
+    emit("func run(): Void { return () }\n"
+         "func complete(): Result<Void, String> { return .Ok(()) }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("define void @joyeer_fn_"), std::string::npos);
+    EXPECT_EQ(result.text.find("load void"), std::string::npos);
+    EXPECT_EQ(result.text.find("store void"), std::string::npos);
+    EXPECT_EQ(result.text.find("store {}"), std::string::npos);
+    EXPECT_EQ(result.text.find("load {}"), std::string::npos);
+    const auto sourceStart = result.text.find("define void @joyeer_fn_");
+    ASSERT_NE(sourceStart, std::string::npos);
+    const auto sourceBodies = result.text.substr(sourceStart);
+    EXPECT_EQ(sourceBodies.find("call void @joyeer_string_clone"), std::string::npos);
+    const auto unitBody = sourceBodies.substr(0, sourceBodies.find("\n}"));
+    EXPECT_EQ(unitBody.find("alloca"), std::string::npos);
+    EXPECT_EQ(unitBody.find("call "), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, EmitsUnitStorageAndDebugTypesWithoutChangingVoidReturns) {
+    emit("struct Completed { var value: Void }\n"
+         "func identity(value: Void): Void { return value }\n"
+         "func main() {\nlet value = identity(value: ())\n"
+         "let completion = Completed(value: value)\n"
+         "match completion.value { () => print(value: 42) }\n}\n",
+         true,
+         joyeer::llvmbackend::EmitOptions {
+             true, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0, true,
+         });
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("name: \"Void\""), std::string::npos);
+    EXPECT_NE(result.text.find("define void @joyeer_main()"), std::string::npos);
+    EXPECT_EQ(result.text.find("load void"), std::string::npos);
+    EXPECT_EQ(result.text.find("store void"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, UnitContainersKeepChecksWithoutUnitPayloadLoadsOrStores) {
+    emit("func run(): Void {\n"
+         "var values: [Void] = [()]\n&values.append(element: ())\n"
+         "match values[0] { () => () }\n"
+         "var entries: [String: Void] = [\"key\": ()]\n"
+         "&entries[\"key\"] = ()\nmatch entries[\"key\"] { () => () }\n}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_EQ(result.text.find("load {}"), std::string::npos);
+    EXPECT_EQ(result.text.find("store {}"), std::string::npos);
+    EXPECT_NE(result.text.find("array index out of bounds"), std::string::npos);
+    EXPECT_NE(result.text.find("call ptr @joyeer_dictionary_at_abi"), std::string::npos);
+    EXPECT_NE(result.text.find("call void @joyeer_array_append_owned_abi"), std::string::npos);
+}
+
 TEST_F(LLVMBackendTest, EmitsDwarfLineTablesForSourceFunctionsAndInstructions) {
     emit(
             R"JOYEER(func run(input: consuming String) {

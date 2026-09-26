@@ -1,0 +1,181 @@
+struct Completion {
+    var value: Void
+    var message: String
+}
+
+enum UnitEvent {
+    Done(Void),
+    Failed(String),
+}
+
+func effect(counter: inout Int): Void {
+    &counter = counter + 1
+    return ()
+}
+
+func accept(value: Void): () {
+    return value
+}
+
+func take(value: consuming Void): Void {
+    return value
+}
+
+func initialize(value: initializing Void) {
+    &value = ()
+}
+
+func overwrite(value: inout Void) {
+    &value = ()
+}
+
+func isUnit(value: Void): Bool {
+    return match value {
+        () => true,
+    }
+}
+
+func complete(fail: Bool): Result<Void, String> {
+    let temporary = "temporary" + "!"
+    if fail {
+        return .Err(temporary)
+    }
+    return .Ok(())
+}
+
+func pass(outcome: consuming Result<Void, String>): Result<Void, String> {
+    return match outcome {
+        .Ok(value) => .Ok(value),
+        .Err(error) => .Err(error),
+    }
+}
+
+func pending(outcome: Result<Void, String>, counter: inout Int): Result<Void, String> {
+    let values: [String] = ["pending" + "!", match outcome {
+        .Ok(()) => {
+            effect(counter: &counter)
+            return .Ok(())
+        },
+        .Err(error) => {
+            return .Err(error)
+        },
+    }]
+    return .Err(values[0])
+}
+
+func choose(flag: Bool, counter: inout Int): Void {
+    return if flag {
+        effect(counter: &counter)
+    } else {
+        ()
+    }
+}
+
+func branch(flag: Bool): Void {
+    return match flag {
+        true => (),
+        false => {
+            let owned = "branch" + "!"
+            print(value: owned)
+        },
+    }
+}
+
+func main() {
+    var counter = 0
+    let value: () = effect(counter: &counter)
+    print(value: isUnit(value: accept(value: value)))
+    var destination: Void
+    initialize(value: &destination)
+    overwrite(value: &destination)
+    take(value: consume destination)
+    destination = ()
+    print(value: isUnit(value: destination))
+
+    let sideEffect: Result<Void, String> = .Ok(effect(counter: &counter))
+    match sideEffect {
+        .Ok(()) => print(value: counter),
+        .Err(error) => print(value: error),
+    }
+    print(value: isUnit(value: choose(flag: true, counter: &counter)))
+    print(value: isUnit(value: branch(flag: false)))
+    print(value: counter)
+
+    var outcome = complete(fail: true)
+    outcome = .Ok(())
+    outcome = complete(fail: true)
+    let copy = outcome
+    outcome = complete(fail: false)
+    match copy {
+        .Ok(_) => print(value: "unexpected"),
+        .Err(error) => print(value: error),
+    }
+    let moved = pass(outcome: consume outcome)
+    match pending(outcome: moved, counter: &counter) {
+        .Ok(()) => print(value: counter),
+        .Err(error) => print(value: error),
+    }
+    match pending(outcome: copy, counter: &counter) {
+        .Ok(_) => print(value: "unexpected"),
+        .Err(error) => print(value: error),
+    }
+
+    var units: [Void] = [(), value]
+    &units.append(element: effect(counter: &counter))
+    &units[0] = ()
+    let unitsCopy = units
+    print(value: unitsCopy.count)
+    print(value: isUnit(value: unitsCopy[2]))
+    print(value: counter)
+
+    var dictionary: [String: Void] = ["done": ()]
+    &dictionary["another"] = ()
+    &dictionary["done"] = effect(counter: &counter)
+    let dictionaryCopy = dictionary
+    print(value: dictionaryCopy.count)
+    print(value: isUnit(value: dictionaryCopy["done"]))
+    print(value: counter)
+
+    var completion = Completion(value: (), message: "owned" + "!")
+    completion.value = ()
+    let completionCopy = completion
+    print(value: isUnit(value: completionCopy.value))
+    print(value: completionCopy.message)
+    let event = UnitEvent.Done(())
+    match event {
+        .Done(()) => print(value: "event"),
+        .Failed(error) => print(value: error),
+    }
+    let optional: Void? = ()
+    match optional {
+        .Some(()) => print(value: "some"),
+        .None => print(value: "none"),
+    }
+    let empty: Void? = nil
+    match empty {
+        .Some(_) => print(value: "some"),
+        .None => print(value: "none"),
+    }
+    let errorUnit: Result<Void, Void> = .Err(())
+    match errorUnit {
+        .Ok(_) => print(value: "ok"),
+        .Err(()) => print(value: "unit error"),
+    }
+
+    var index = 0
+    while index < 100 {
+        var repeated: Result<Void, [String]> = .Err(["owned" + "!"])
+        let snapshot = repeated
+        repeated = .Ok(())
+        match snapshot {
+            .Ok(_) => print(value: "unexpected"),
+            .Err(messages) => {
+                if messages[0] != "owned!" {
+                    print(value: "unexpected")
+                }
+            },
+        }
+        index = index + 1
+    }
+    print(value: index)
+}

@@ -19,6 +19,7 @@ const char* kindName(Kind kind) {
         case Kind::enumCaseDecl: return "enum_case_decl";
         case Kind::associatedType: return "associated_type";
         case Kind::errorType: return "error_type";
+        case Kind::unitType: return "unit_type";
         case Kind::nominalType: return "nominal_type";
         case Kind::arrayType: return "array_type";
         case Kind::dictionaryType: return "dictionary_type";
@@ -26,6 +27,7 @@ const char* kindName(Kind kind) {
         case Kind::errorExpr: return "error_expr";
         case Kind::nameExpr: return "name_expr";
         case Kind::literalExpr: return "literal_expr";
+        case Kind::unitExpr: return "unit_expr";
         case Kind::parenthesizedExpr: return "parenthesized_expr";
         case Kind::prefixExpr: return "prefix_expr";
         case Kind::accessExpr: return "access_expr";
@@ -48,6 +50,7 @@ const char* kindName(Kind kind) {
         case Kind::errorPattern: return "error_pattern";
         case Kind::wildcardPattern: return "wildcard_pattern";
         case Kind::literalPattern: return "literal_pattern";
+        case Kind::unitPattern: return "unit_pattern";
         case Kind::bindingPattern: return "binding_pattern";
         case Kind::enumCasePattern: return "enum_case_pattern";
         case Kind::patternArgument: return "pattern_argument";
@@ -86,6 +89,9 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
         case Kind::errorType:
         case Kind::errorExpr:
         case Kind::errorPattern:
+        case Kind::unitType:
+        case Kind::unitExpr:
+        case Kind::unitPattern:
             out << '\n';
             return;
         case Kind::bindingDecl: {

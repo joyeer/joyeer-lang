@@ -274,6 +274,9 @@ private:
             case Kind::errorPattern:
             case Kind::nameExpr:
             case Kind::literalExpr:
+            case Kind::unitType:
+            case Kind::unitExpr:
+            case Kind::unitPattern:
             case Kind::wildcardPattern:
             case Kind::literalPattern:
             case Kind::bindingPattern:
@@ -808,7 +811,7 @@ private:
 
         auto returnType = resolveType(declaration->returnType, functionScope);
         if (!returnType.has_value()) {
-            returnType = lookupType(functionScope, "Void");
+            returnType = lookupType(model->preludeScope_, "Void");
         }
         symbol(*functionSymbol).declaredType = returnType;
     }
@@ -863,6 +866,8 @@ private:
         switch (type->kind) {
             case syntax::Kind::errorType:
                 return std::nullopt;
+            case syntax::Kind::unitType:
+                return bindBuiltinType(type, model->preludeScope_, "Void");
             case syntax::Kind::nominalType: {
                 const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(type);
                 for (const auto& argument : nominal->arguments) {
@@ -959,6 +964,7 @@ private:
             case syntax::Kind::errorExpr:
             case syntax::Kind::nameExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
@@ -987,6 +993,7 @@ private:
         switch (expression->kind) {
             case syntax::Kind::errorExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
                 break;
             case syntax::Kind::nameExpr:
                 resolveName(std::static_pointer_cast<syntax::NameExprSyntax>(expression), currentScope);
@@ -1493,6 +1500,8 @@ private:
                 if (found == model->callTargets_.end()) return std::nullopt;
                 return symbol(found->second).declaredType;
             }
+            case syntax::Kind::unitExpr:
+                return lookupType(model->preludeScope_, "Void");
             case syntax::Kind::literalExpr: {
                 const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression);
                 switch (literal->literal->kind) {

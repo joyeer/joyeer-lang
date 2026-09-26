@@ -19,6 +19,36 @@ humans review, audit, and refine. The language optimizes for:
 References: Hylo's mutable value semantics, Swift's syntactic surface,
 Rust's memory safety guarantees, and Dafny's contracts.
 
+#### 0.1.1 Reviewable intent
+
+**Design rationale.** Explicit access conventions let a reviewer distinguish
+reading, mutation, ownership transfer, and initialization without tracing a
+callee's implementation. The compiler must still enforce those obligations;
+readable syntax does not replace ownership or control-flow analysis.
+
+Strong types and explicit ownership constrain generated code, but do not prove
+that it satisfies the author's intent. Runtime contracts (§9) and proposed
+property annotations (§11) describe additional checks, not automatic proof of
+arbitrary program correctness.
+
+#### 0.1.2 Cost goals
+
+**Design rationale.** Zero-cost abstractions aim to avoid work unrelated to the
+specified operation, not to make every operation free. Heap-backed value copies
+can allocate and scale with the copied data; borrowing avoids an ownership
+transfer but materializing an owned value can still require a copy (§4).
+
+Performance comparisons must preserve equivalent ownership, copying, error
+handling, arithmetic, and bounds-check semantics. Comparing a checked operation
+with an unchecked one does not establish abstraction overhead. Optimizations
+may remove redundant work only without changing source validity or observable
+behavior. Eliding a development-time `assert` does not disable required language
+safety checks (§9).
+
+Performance parity and fixed binary-size budgets are measurement goals, not
+language guarantees. Current costs and measurement requirements belong in the
+[native implementation notes](../impl/native.md#7-performance-and-footprint-measurement).
+
 ### 0.2 Notation
 
 Grammar rules use a compact EBNF dialect:

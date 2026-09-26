@@ -19,9 +19,9 @@ review and assist, with the long-term goal of replacing C++ for new code.
   implemented language surface.
 
 The normative language definition is [docs/spec.md](docs/spec.md). Design
-trade-offs live under [docs/rationale/](docs/rationale/), starting with
-[ai-era-design.md](docs/rationale/ai-era-design.md) and
-[memory.md](docs/rationale/memory.md).
+trade-offs are explained alongside the rules, starting with the
+[design philosophy](docs/spec/00-preamble.md) and
+[memory model](docs/spec/04-memory.md).
 
 ## Implementation status
 
@@ -42,7 +42,8 @@ executable. On Windows, LLVM and LLD run inside the bundled
 
 The current MVP can compile and run an integer-focused Joyeer-written JSON
 parser fixture. It is an integration workload, not a complete JSON conformance
-or performance benchmark; see its [known limits](docs/plan/v0.1.md).
+or performance benchmark; see its
+[known limits](docs/impl/supported-features.md#json-parser-fixture-limits).
 Implemented features include integers, booleans, bytes, strings, `let`/`var`, checked
 arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
@@ -53,8 +54,10 @@ Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,
 optimization policy, and broader language surface remain incomplete.
 
-See [docs/plan/roadmap.md](docs/plan/roadmap.md) for the current pipeline and
-[docs/plan/v0.1.md](docs/plan/v0.1.md) for the JSON-parser milestone.
+See
+[docs/impl/supported-features.md](docs/impl/supported-features.md) for the
+current implementation boundary and
+[docs/plan/roadmap.md](docs/plan/roadmap.md) for active priorities.
 
 ## Example
 
@@ -287,7 +290,7 @@ stage-specific folders under [tests/](tests/) and are registered in
 | [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
 | [scripts/](scripts/) | CMake integration-test helpers |
-| [docs/](docs/) | Specification, rationale, implementation notes, and plans |
+| [docs/](docs/) | Specification and design explanations, implementation notes, and plans |
 
 Useful examples include the
 [native JSON parser](tests/native/json_parser.joyeer) and the
@@ -297,8 +300,12 @@ Useful examples include the
 
 - [docs/README.md](docs/README.md): documentation index
 - [docs/spec.md](docs/spec.md): normative language specification
-- [docs/rationale/](docs/rationale/): design rationale
-- [docs/plan/roadmap.md](docs/plan/roadmap.md): implementation roadmap
+- [docs/spec/00-preamble.md](docs/spec/00-preamble.md): design philosophy and
+  cost goals
+- [docs/impl/supported-features.md](docs/impl/supported-features.md): current
+  implementation boundary
+- [docs/plan/roadmap.md](docs/plan/roadmap.md): active implementation
+  priorities
 - [docs/impl/native.md](docs/impl/native.md): LLVM/native backend details
 
 Build, test, and contribution conventions are in [AGENTS.md](AGENTS.md).

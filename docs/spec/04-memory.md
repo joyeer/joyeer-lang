@@ -1,7 +1,15 @@
 ## §4 Memory Model  ★ CORE ★
 
-This is the chapter that distinguishes Joyeer from "another Swift clone."
-Read it carefully.
+Joyeer combines mutable value semantics with deterministic destruction (RAII).
+The rules below define ownership, temporary access, and cleanup independently
+of a particular physical representation.
+
+**Design rationale.** Values remain independently owned; access projections
+allow temporary observation or mutation without introducing shared ownership.
+This avoids GC scheduling and retain/release accounting while keeping resource
+lifetimes explicit. Omitting first-class references narrows the lifetime
+surface, but does not remove the need for initialization, consumption,
+exclusivity, and control-flow analysis.
 
 ### 4.1 Value semantics is the only semantics
 
@@ -27,6 +35,11 @@ destination because no independently usable source binding exists. The
 compiler may also elide a materialized copy under the as-if rule in §4.6, but
 that optimization never changes whether a source binding is initialized.
 Only a consuming operation has that source-visible effect (§4.2.3).
+
+**Cost note.** A semantic copy is not necessarily a constant-time operation.
+Recursive copying can allocate and scales with the data copied. Explicit
+consumption distinguishes ownership transfer from copying without making
+source correctness depend on whether an optimizer happens to elide a copy.
 
 There are **no reference types** in Joyeer. No `&T`, no pointers, no
 `Box`/`Rc`/`Arc`. The closest equivalents are *access effects* on
@@ -106,6 +119,13 @@ it to the caller, while `consuming` transfers ownership to the callee (§3.2.4).
 A function parameter declares **how** the function will access the
 argument's storage. The effect is part of the function signature; callers
 must match it explicitly at the call site (§4.3).
+
+**Design rationale.** An unqualified `value: T` parameter is a read-only
+`borrowing` projection, not an implicit deep copy or consume. The absence of
+`&` in the type does not determine whether the machine ABI passes bits or an
+address. Source-level access and physical calling conventions are distinct;
+materializing an owned value from borrowed storage follows the copy rules in
+§4.1 and §4.10.
 
 | Effect | Meaning | Caller obligation | In-body usage |
 |--------|---------|-------------------|----------------|
@@ -386,9 +406,17 @@ value" outside of subscript yields. The following do **not** exist:
 - `Box<T>`, `Rc<T>`, `Arc<T>`
 - Weak references
 
-Cycles between values are therefore expressible only via `indirect` enum
-cases (§3.4.1) and explicit collection indices. This keeps the memory
-model trivially analyzable by both the compiler and AI tools.
+`indirect` enum cases (§3.4.1) enable recursive value structure, not shared
+ownership cycles. Graphs and cycles can be represented with explicit
+collection indices; the owned storage remains acyclic.
+
+**Design note.** Bounds checks and exclusivity do not establish an index's
+container identity or generation. A stale or cross-container index can select
+the wrong live element while remaining in bounds. A checked handle or arena
+abstraction would need a separate design; neither is a current language API.
+Likewise, the lexical projection rules do not authorize a borrow to escape to
+another thread. Cross-thread sharing requires a separately specified lifetime
+and concurrency model.
 
 ### 4.9 Raw memory (FFI)
 

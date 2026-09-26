@@ -44,6 +44,7 @@ enum class Opcode {
     booleanConstant,
     stringConstant,
     byteConstant,
+    unitConstant,
 
     stackAllocate,
     zeroInitialize,

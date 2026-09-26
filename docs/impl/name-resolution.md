@@ -1,6 +1,6 @@
 # Name Resolution — Parser MVP Semantic Model
 
-> **Status:** Implemented for the type-independent portion of the v0.1
+> **Status:** Implemented for the type-independent portion of the current
 > Parser MVP AST.
 > **Input:** `syntax::SourceFileSyntax`.
 > **Output:** `semantic::SemanticModel` plus stable, spanned diagnostics.
@@ -70,7 +70,7 @@ member base. Type syntax checks only the type namespace. A same-scope
 cross-namespace collision is rejected because `Foo(...)` would otherwise be
 ambiguous.
 
-The v0.1 prelude currently declares:
+The current prelude declares:
 
 - types: `Void`, `Never`, `Int`, `Bool`, `String`, `UInt8`, `Array`, `Dict`,
   `Optional`, `Result`, and `IOError`;

@@ -1,4 +1,4 @@
-# Diagnostics — Structured v0.1 Source Rendering
+# Diagnostics — Structured Source Rendering
 
 > **Status:** Stable IDs, severity, file paths, one-based locations, source
 > excerpts, caret ranges, structured help, and applicable source edits are
@@ -26,7 +26,7 @@ unspanned argument and infrastructure failures that have no source buffer.
 
 ---
 
-## 2. v0.1 output contract
+## 2. Current output contract
 
 A source diagnostic is rendered as:
 
@@ -59,7 +59,7 @@ never changes the semantic span model.
 
 ## 3. Pipeline integration
 
-The v0.1 lexer maps every lexical failure category to a stable `lexer.*` ID and
+The lexer maps every lexical failure category to a stable `lexer.*` ID and
 reports the consumed source span. Parser, name-resolution, type-checking,
 semantic-analysis, IR-lowering, and LLVM diagnostics already carry IDs and
 spans; `CompilerService` forwards those fields separately rather than joining

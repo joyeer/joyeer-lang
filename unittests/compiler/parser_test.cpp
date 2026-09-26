@@ -73,6 +73,32 @@ TEST_F(ParserTest, EmptySourceProducesEmptySpannedFile) {
     EXPECT_EQ(result.root->span.length, 0u);
 }
 
+TEST_F(ParserTest, ParsesUnitTypesValuesAndPatterns) {
+    parse("let value: () = ()\n"
+          "func run(): Result<Void, String> { return .Ok(()) }\n"
+          "func inspect(value: Void): Bool { return match value { () => true } }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    EXPECT_EQ(binding->annotation->kind, Kind::unitType);
+    EXPECT_EQ(binding->initializer->kind, Kind::unitExpr);
+    EXPECT_EQ(binding->initializer->span.length, 2u);
+    const auto tree = joyeer::syntax::dump(result.root);
+    EXPECT_NE(tree.find("unit_pattern"), std::string::npos);
+}
+
+TEST_F(ParserTest, UnitDoesNotEnableEmptyPayloadClausesOrGeneralTuples) {
+    for (const auto* text : {
+            "func run() { let value = .Ok() }\n",
+            "func run() { let value = (1, 2) }\n",
+            "func run(value: (Int, Int)) {}\n",
+            "func run(value: Void) { match value { (1, 2) => () } }\n"}) {
+        SCOPED_TRACE(text);
+        parse(text);
+        EXPECT_FALSE(result.succeeded());
+    }
+}
+
 TEST_F(ParserTest, ParsesMvpTypesFunctionsStructsAndEnums) {
         parse(R"JOYEER(let outcome: Result<[String: JsonValue], JsonError>?
 func advance(p: inout Parser, from source: String,): UInt8? { return p.input[p.pos] }
