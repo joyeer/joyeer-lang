@@ -221,6 +221,7 @@ private:
             case syntax::Kind::errorExpr:
             case syntax::Kind::nameExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
@@ -1007,6 +1008,7 @@ private:
             case syntax::Kind::errorExpr:
             case syntax::Kind::nameExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
@@ -1254,6 +1256,7 @@ private:
             case syntax::Kind::errorExpr:
             case syntax::Kind::nameExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:

@@ -1,13 +1,13 @@
 # LLVM and Native Backend
 
-> **Status:** The v0.1 JSON-parser language surface emits textual LLVM IR;
+> **Status:** The current JSON-parser language surface emits textual LLVM IR;
 > the platform backend library validates it, generates machine code, and links
 > native executables with in-process LLVM/LLD on Windows, macOS, and Linux.
 > The current implementation covers the native acceptance workload and
 > regression cases for conditional evaluation, ownership flow, guarded
 > payloads, and loop storage. Verifier, native ABI, and library gaps remain.
 > User-defined `deinit` and explicit copy initializers are outside the
-> implemented v0.1 surface.
+> [implemented language surface](supported-features.md).
 
 ---
 
@@ -181,6 +181,12 @@ LLVM decomposes strings and collection handles into pointers/counts, or uses
 out-pointers for aggregate results rather than passing C structs by value.
 This avoids target-specific C aggregate calling-convention drift.
 
+These layouts are private implementation choices, not source-language C FFI
+or a stable Joyeer library ABI. Value semantics alone do not promise a C struct
+layout, a one-byte `Optional<Bool>`, a register-only `Result`, or the absence of
+platform unwind/startup metadata. Interoperability requires a separate layout,
+calling-convention, and initialization contract.
+
 ---
 
 ## 4. Runtime
@@ -210,6 +216,13 @@ still use their runtime operations.
 The runtime uses libc allocation today. Dictionary lookup uses a
 straightforward linear implementation; hashing is not yet implemented.
 
+`JoyeerNativeRuntime` is a static archive, not separately selectable `abi`,
+`core`, and `std` profiles. Generated programs depend on the target platform's
+C runtime and startup/link inputs; freestanding, kernel, embedded, and no-libc
+profiles are not supported. LLVM/LLD belong to the compiler's private backend,
+not the generated program's runtime. See [building](../building.md) for
+platform prerequisites and package layout.
+
 Collection allocations retain element/layout sizes and clone/destroy
 callbacks. In the current 64-bit implementation their private headers occupy
 24 bytes for arrays and 72 bytes for dictionaries, before payload and allocator
@@ -225,7 +238,7 @@ process if runtime-managed allocation count
 is nonzero after `joyeer_main` returns, making leaks in native integration
 tests observable.
 
-The v0.1 prelude exposes `byteToInt(value:)` and `byteToString(value:)` rather
+The current prelude exposes `byteToInt(value:)` and `byteToString(value:)` rather
 than silently coercing `UInt8`. LLVM zero-extends the former to the signed
 64-bit `Int` representation. The latter allocates one owned byte through
 `joyeer_byte_to_string_abi`, so ordinary temporary and scope cleanup applies.
@@ -250,9 +263,25 @@ destroying each discarded key and replaced value exactly once. Cloning an
 already normalized dictionary preserves its count and independently clones
 its owned entries without repeating duplicate-key detection.
 
+### Unit values
+
+Source `Void` values use LLVM's zero-sized empty struct type `{}` in value
+and storage positions. A `Void` function result still uses LLVM `void`, so
+existing no-result functions and the entry trampoline keep their calling
+convention. Unit constants require no instructions; unit loads, stores,
+takes, and enum payload reads/writes need no data access. Logical source
+storage and full-debug metadata still describe unit bindings.
+
+`Result<Void, E>` retains the ordinary enum tag and error storage. Existing
+tag-directed ownership helpers clean an active nontrivial error payload and
+do not clean a unit success payload. Arrays and dictionaries can store unit
+values with zero-sized elements/values while retaining their existing
+container metadata, allocation, count, and bounds behavior. No new runtime
+allocation or destruction API is introduced for unit values.
+
 ### File input
 
-The v0.1 prelude exposes:
+The current prelude exposes:
 
 ```joyeer
 readFile(path: String): Result<String, IOError>
@@ -263,7 +292,7 @@ normal ownership cleanup destroys it. `Err` contains `.NotFound(code)`,
 `.PermissionDenied(code)`, `.InvalidPath(code)`, or `.Other(code)`. Categories
 are stable across platforms; each payload preserves the nonzero platform C I/O
 error code. Callers handle both enum layers with exhaustive `match` because
-postfix propagation is outside the v0.1 surface.
+postfix propagation is outside the implemented surface.
 
 Byte preservation does not establish valid UTF-8. The reader grows from a
 4096-byte buffer and retains spare capacity on success; the returned string's
@@ -379,7 +408,8 @@ directories.
 an external file, recursively parses nested null/Boolean/integer/string/array/
 object values, checks representative results, rejects malformed input, and
 returns with no runtime-managed allocations. It intentionally matches the
-v0.1 scope: floating-point numbers and JSON `\uXXXX` decoding remain deferred.
+accepted fixture scope: floating-point numbers and JSON `\uXXXX` decoding
+remain deferred.
 
 Optimization tests verify the default and all accepted CLI levels, then compile
 at `-O2` and prove checked integer overflow and array bounds still terminate
@@ -387,3 +417,31 @@ with their runtime diagnostics. Panic flushes stderr and uses C11 `_Exit` with
 a nonzero status, avoiding platform crash dialogs while remaining
 unrecoverable. Existing ownership-heavy native tests run at the default `-O2`
 and retain the zero-allocation-balance check.
+
+---
+
+## 7. Performance and footprint measurement
+
+The [language cost goals](../spec/00-preamble.md#012-cost-goals) are not
+measured performance parity or a fixed binary-size budget. Before adopting
+numerical acceptance thresholds, establish reproducible workloads and record:
+
+1. Target architecture, OS/SDK, compiler revision, optimization level, debug
+   mode, C-runtime linkage, and whether LTO or stripping was used.
+2. Generated-program sizes separately from the compiler/backend package;
+   embedding LLVM in the compiler does not make it a program runtime dependency.
+3. Allocation count, peak live storage, copied bytes, and final cleanup
+   balance. Zero outstanding allocations at exit demonstrates cleanup for
+   that workload, not allocation-free execution or low peak memory.
+4. Equivalent ownership, error-handling, overflow, and bounds semantics in
+   comparison implementations.
+5. Ordinary and consuming copies, nested collections, mutation-heavy
+   workloads, and failure paths at multiple optimization levels.
+6. Results on supported platforms rather than extrapolating from one host.
+
+Account for atomic allocation-balance updates and indirect collection
+clone/destroy callbacks as real costs even without GC/ARC. Repeated string
+concatenation can copy the growing prefix many times. Copy elision, check
+elimination, and any future container-to-stack promotion must preserve
+ownership, destruction, and observable behavior; none is a blanket guarantee
+that every allocation, copy, or check disappears.

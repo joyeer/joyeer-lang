@@ -1,7 +1,7 @@
 # Semantic Analysis — Control Flow, Initialization, and Lints
 
-> **Status:** Implemented for the v0.1 language surface and wired between type
-> checking and Joyeer IR lowering.
+> **Status:** Implemented for the current language surface and wired between
+> type checking and Joyeer IR lowering.
 > **Input:** `typing::TypeCheckedModel`.
 > **Output:** source-spanned errors and warnings; the typed model is unchanged.
 
@@ -126,11 +126,11 @@ remain deterministic.
 This pass does not yet implement the complete ownership language from the
 specification. Call-site and argument-evaluation access-path exclusivity is
 enforced by the type checker. Future method/subscript `yield` syntax will need
-additional lifetime analysis, but v0.1 has no first-class escaping projection.
-Explicit `borrowing` uses the existing immutable projection behavior. The
-absence of `break` and `continue` does not make loop checking complete:
-conditions are re-evaluated and each back edge must satisfy their entry
-requirements.
+additional lifetime analysis, but the current language surface has no
+first-class escaping projection. Explicit `borrowing` uses the existing
+immutable projection behavior. The absence of `break` and `continue` does not
+make loop checking complete: conditions are re-evaluated and each back edge
+must satisfy their entry requirements.
 
 Diagnostics use the shared [structured source renderer](diagnostics.md), with
 stable IDs, file names, one-based locations, source excerpts, and caret ranges.

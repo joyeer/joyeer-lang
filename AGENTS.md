@@ -5,11 +5,14 @@
 > Swift-like syntax with value semantics and deterministic destruction.
 
 The normative language definition is [docs/spec.md](docs/spec.md). Design
-rationale lives in [docs/rationale/](docs/rationale/), and the documentation
-index is [docs/README.md](docs/README.md).
+explanations live alongside the rules in its chapters; implementation details
+belong in [docs/impl/](docs/impl/). The documentation index is
+[docs/README.md](docs/README.md).
 
 Keep this file focused on current development rules. Remove completed
 one-off tasks and migration history instead of retaining them as instructions.
+
+Write all documentation in English.
 
 ## Architecture
 
@@ -119,8 +122,9 @@ ctest --test-dir build --output-on-failure
 
 ## When in doubt
 
-- Language design: [docs/spec.md](docs/spec.md) and
-  [docs/rationale/](docs/rationale/)
-- v0.1 scope: [docs/plan/v0.1.md](docs/plan/v0.1.md)
-- Pipeline ownership: [docs/plan/roadmap.md](docs/plan/roadmap.md)
+- Language design and rationale: [docs/spec.md](docs/spec.md), starting with
+  [the preamble](docs/spec/00-preamble.md)
+- Implemented language surface:
+  [docs/impl/supported-features.md](docs/impl/supported-features.md)
+- Active implementation priorities: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - Native ABI/debug behavior: [docs/impl/native.md](docs/impl/native.md)

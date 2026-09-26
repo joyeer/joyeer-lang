@@ -474,6 +474,9 @@ private:
         switch (syntaxType->kind) {
             case syntax::Kind::errorType:
                 break;
+            case syntax::Kind::unitType:
+                result = model->typeContext.voidType();
+                break;
             case syntax::Kind::nominalType: {
                 const auto nominal =
                         std::static_pointer_cast<syntax::NominalTypeSyntax>(syntaxType);
@@ -775,6 +778,7 @@ private:
             case syntax::Kind::errorExpr:
             case syntax::Kind::nameExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
@@ -806,6 +810,9 @@ private:
         auto result = model->typeContext.errorType();
         switch (expression->kind) {
             case syntax::Kind::errorExpr:
+                break;
+            case syntax::Kind::unitExpr:
+                result = model->typeContext.voidType();
                 break;
             case syntax::Kind::literalExpr:
                 result = checkLiteral(
@@ -1006,7 +1013,9 @@ private:
                 break;
             case equalEqual:
             case notEqual:
-                if (left == right) return model->typeContext.boolType();
+                if (left == right && left != model->typeContext.voidType()) {
+                    return model->typeContext.boolType();
+                }
                 break;
             case andAnd:
                 if (left == model->typeContext.boolType() && left == right) return left;
@@ -2025,6 +2034,10 @@ private:
 
         switch (pattern->kind) {
             case syntax::Kind::errorPattern:
+                break;
+            case syntax::Kind::unitPattern:
+                requireAssignable(expected, model->typeContext.voidType(), pattern->span);
+                coverage.catchesAll = expected == model->typeContext.voidType();
                 break;
             case syntax::Kind::wildcardPattern:
                 coverage.catchesAll = true;

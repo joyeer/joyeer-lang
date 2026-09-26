@@ -143,6 +143,48 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         joyeer::typing::TypeCheckingResult checking;
     };
 
+    TEST_F(TypeCheckingTest, UnitValuesUseExistingVoidType) {
+        check("func make(): Result<Void, String> { return .Ok(()) }\n"
+              "func run(value: ()): Void {\n"
+              "let local = ()\n"
+              "let units: [Void] = [local, value]\n"
+              "let optional: Void? = ()\n"
+              "match make() { .Ok(()) => (), .Err(_) => () }\n"
+              "}\n");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto run = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[1]);
+        EXPECT_EQ(declaredType(run->parameters[0]), checking.model->types().voidType());
+        EXPECT_EQ(declaredType(run->body->items[0]), checking.model->types().voidType());
+    }
+
+    TEST_F(TypeCheckingTest, RejectsInvalidUnitPayloadsAndPatterns) {
+        for (const auto* text : {
+                "func run(): Result<Void, String> { return .Ok(42) }\n",
+                "func run(): Int { return () }\n",
+                "func run(value: Int): Bool { return match value { () => true } }\n",
+                "func run(value: Void?): Bool { return match value { () => true, _ => false } }\n",
+                "func run(): Result<Int, String> { return .Ok(()) }\n"}) {
+            SCOPED_TRACE(text);
+            check(text);
+            EXPECT_FALSE(checking.succeeded());
+            EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                        return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+                    })) << joyeer::typing::dump(checking.diagnostics);
+        }
+    }
+
+    TEST_F(TypeCheckingTest, UnitEqualityIsRejectedRatherThanLoweringInvalidLLVM) {
+        check("func compare(): Bool { return () == () }\n");
+        EXPECT_FALSE(checking.succeeded());
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id ==
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidOperatorOperands;
+                }));
+    }
+
     TEST_F(TypeCheckingTest, ResolvesExactCompositeDeclarationTypes) {
         check(R"JOYEER(struct Packet {
     var values: [Result<Int, String?>]

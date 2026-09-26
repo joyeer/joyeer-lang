@@ -1,0 +1,7 @@
+func accept(value: Void) {
+}
+
+func main() {
+    let value: Void
+    accept(value: value)
+}

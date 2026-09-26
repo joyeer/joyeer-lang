@@ -1,14 +1,19 @@
 # The Joyeer Programming Language — Specification
 
 > **Status:** Draft v0.1-spec. This document indexes the broader language
-> design, not just the implemented JSON-parser milestone. **Syntax-only**
-> annotation marks describe proposed treatment, not current parser support;
-> see [the implementation scope](plan/v0.1.md).
+> design, including features beyond the current compiler. **Syntax-only**
+> annotation marks describe proposed treatment, not current parser support.
+> See [the implemented language surface](impl/supported-features.md).
 
 This specification is split into one file per chapter under
 [spec/](spec/). Section numbers (`§N`, `§N.M`) are stable across the split;
 cross-references like "see §4.3" point to the correspondingly numbered
 chapter file below.
+
+Design explanations live alongside the rules they motivate, labeled
+**Design rationale**, **Design note**, or **Cost note**. They do not add
+implementation guarantees. Proposed extensions remain explicitly marked as
+future work rather than becoming requirements through explanatory text.
 
 ---
 
@@ -16,7 +21,7 @@ chapter file below.
 
 | § | Chapter | File |
 |---|---------|------|
-| 0 | Preamble — philosophy, versioning, status legend, notation | [spec/00-preamble.md](spec/00-preamble.md) |
+| 0 | Preamble — design philosophy, cost goals, notation | [spec/00-preamble.md](spec/00-preamble.md) |
 | 1 | Lexical Structure | [spec/01-lexical.md](spec/01-lexical.md) |
 | 2 | Type System | [spec/02-types.md](spec/02-types.md) |
 | 3 | Declarations | [spec/03-declarations.md](spec/03-declarations.md) |

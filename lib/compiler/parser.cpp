@@ -527,6 +527,11 @@ syntax::TypePtr Parser::parseType() {
 
 syntax::TypePtr Parser::parseTypePrimary() {
     const size_t start = cursor.position();
+    if (cursor.at(leftParen) && cursor.at(rightParen, 1)) {
+        cursor.advance();
+        cursor.advance();
+        return std::make_shared<syntax::UnitTypeSyntax>(spanFrom(start));
+    }
     if (cursor.at(identifier)) {
         auto name = cursor.advance();
         std::vector<syntax::TypePtr> arguments;
@@ -806,6 +811,9 @@ syntax::ExprPtr Parser::parseParenthesizedExpr() {
     const size_t start = cursor.position();
     cursor.advance();
     DelimiterScope delimiter(activeClosers, rightParen);
+    if (cursor.eat(rightParen) != nullptr) {
+        return std::make_shared<syntax::UnitExprSyntax>(spanFrom(start));
+    }
     auto expression = parseExpression();
     if (expression == nullptr) {
         reportExpected(DiagnosticId::expectedExpression, "an expression inside parentheses");
@@ -1019,6 +1027,12 @@ std::vector<syntax::CallArgumentSyntax::Ptr> Parser::parseArgumentClause() {
 }
 
 syntax::PatternPtr Parser::parsePattern() {
+    if (cursor.at(leftParen) && cursor.at(rightParen, 1)) {
+        const size_t start = cursor.position();
+        cursor.advance();
+        cursor.advance();
+        return std::make_shared<syntax::UnitPatternSyntax>(spanFrom(start));
+    }
     if (cursor.at(wildcard)) {
         auto token = cursor.advance();
         return std::make_shared<syntax::WildcardPatternSyntax>(tokenSpan(token), std::move(token));

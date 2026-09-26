@@ -75,7 +75,7 @@ and debuggable semantics in the language IR.
 
 The current instruction set covers:
 
-- scalar and string constants;
+- scalar, string, and `unit` constants;
 - stack allocation, zero initialization, load, and store;
 - explicit `copy`, `take`, and `destroy` ownership operations;
 - MVP arithmetic, comparison, and logical operations;
@@ -89,6 +89,18 @@ The current instruction set covers:
 - `String`/collection count and value/address subscript operations, plus owned
   `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
+
+The `unit` instruction produces a value of the builtin `Void` type with no
+operands or resource ownership. Unit patterns lower to typed wildcard
+patterns after the frontend checks their exact type. Unit values remain
+explicit in enum operands and initialization/consumption analysis, even
+though they carry no data bytes.
+
+Calls returning `Void` retain the no-result IR call convention and are
+followed by a unit constant for source value contexts. Explicit `return ()`
+and `return aVoidReturningCall()` lower to `ret_void` after evaluating the
+expression and cleaning active scopes. An early return inside the expression
+does not create a second return or a false fallthrough value.
 
 `if` expressions merge values through a typed temporary slot. `while` emits a
 header, body, exit, and back edge. A `Never` branch terminates without adding a
