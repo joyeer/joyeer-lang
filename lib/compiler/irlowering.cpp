@@ -760,7 +760,10 @@ private:
                 !declaration->body->items.empty()
                 ? declaration->body->items.back()->span
                 : declaration->span;
-        if (function.returnsValue && bodyValue.has_value()) {
+        const auto hasTrailingExpression = declaration->body != nullptr &&
+                !declaration->body->items.empty() &&
+                isExpressionKind(declaration->body->items.back()->kind);
+        if (function.returnsValue && bodyValue.has_value() && hasTrailingExpression) {
             bodyValue = coerce(*bodyValue, function.resultType, trailingSpan);
             if (bodyValue.has_value() && requiresDestroy(bodyValue->type)) {
                 bodyValue = acquireOwned(*bodyValue, trailingSpan);
@@ -801,16 +804,20 @@ private:
             debugScopeForNode(block, currentFunctionId));
         pushScope();
         std::optional<ir::Value> result;
+        bool unitResult = block->items.empty();
         for (const auto& item : block->items) {
             if (currentBlockTerminated()) break;
             if (item->kind == syntax::Kind::bindingDecl) {
                 lowerBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
                 result.reset();
+                unitResult = true;
             } else if (item->kind == syntax::Kind::whileStmt) {
                 lowerWhile(std::static_pointer_cast<syntax::WhileStmtSyntax>(item));
                 result.reset();
+                unitResult = true;
             } else if (isExpressionKind(item->kind)) {
                 result = lowerExpression(std::static_pointer_cast<syntax::ExprSyntax>(item));
+                unitResult = false;
             }
         }
         if (currentBlockTerminated()) {
@@ -827,6 +834,7 @@ private:
                 return std::nullopt;
             }
         }
+        if (unitResult) result = emitUnit(block->span);
         cleanupAndPopScope(block->span);
         if (result.has_value() && requiresDestroy(result->type)) {
             adoptInParentScope(*result);
@@ -904,6 +912,8 @@ private:
     std::optional<ir::Value> lowerExpression(const syntax::ExprPtr& expression) {
         if (expression == nullptr) return std::nullopt;
         switch (expression->kind) {
+            case syntax::Kind::unitExpr:
+                return emitUnit(expression->span);
             case syntax::Kind::literalExpr:
                 return lowerLiteral(std::static_pointer_cast<syntax::LiteralExprSyntax>(expression));
             case syntax::Kind::nameExpr:
@@ -919,8 +929,8 @@ private:
             case syntax::Kind::binaryExpr:
                 return lowerBinary(std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
             case syntax::Kind::assignmentExpr:
-                lowerAssignment(std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression));
-                return std::nullopt;
+                return lowerAssignment(
+                        std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression));
             case syntax::Kind::memberExpr:
                 return lowerMember(std::static_pointer_cast<syntax::MemberExprSyntax>(expression));
             case syntax::Kind::callExpr:
@@ -1145,23 +1155,8 @@ private:
         }
     }
 
-    void lowerAssignment(const syntax::AssignmentExprSyntax::Ptr& expression) {
-        if (lowerDictionarySet(expression)) return;
-        const auto address = lowerAddress(expression->target);
-        auto value = lowerExpression(expression->value);
-        if (address.has_value() && value.has_value()) {
-            value = coerce(*value, address->type, expression->value->span);
-            if (!value.has_value()) return;
-            if (requiresDestroy(address->type)) {
-                value = acquireOwned(*value, expression->value->span);
-                if (!value.has_value()) return;
-                emitDestroyStorage(*address, expression->target->span);
-            }
-            emitRawStore(*value, *address, expression->span);
-        }
-    }
-
-    bool lowerDictionarySet(const syntax::AssignmentExprSyntax::Ptr& expression) {
+    std::optional<ir::Value> lowerAssignment(
+            const syntax::AssignmentExprSyntax::Ptr& expression) {
         auto target = expression->target;
         while (target != nullptr &&
                (target->kind == syntax::Kind::accessExpr ||
@@ -1170,34 +1165,52 @@ private:
                     ? std::static_pointer_cast<syntax::AccessExprSyntax>(target)->operand
                     : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(target)->expression;
         }
-        if (target == nullptr || target->kind != syntax::Kind::subscriptExpr) return false;
-
-        const auto subscript =
-                std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
-        const auto baseTypeId = model->typeOf(subscript->base);
-        const auto* dictionaryType = baseTypeId.has_value()
-                ? model->types().type(*baseTypeId)
-                : nullptr;
-        if (dictionaryType == nullptr ||
-            dictionaryType->kind != typing::TypeKind::dictionary ||
-            dictionaryType->arguments.size() != 2) {
-            return false;
+        if (target != nullptr && target->kind == syntax::Kind::subscriptExpr) {
+            const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
+            const auto baseType = model->typeOf(subscript->base);
+            const auto* dictionaryType = baseType.has_value()
+                    ? model->types().type(*baseType) : nullptr;
+            if (dictionaryType != nullptr &&
+                dictionaryType->kind == typing::TypeKind::dictionary &&
+                dictionaryType->arguments.size() == 2) {
+                return lowerDictionarySet(expression, subscript, *dictionaryType);
+            }
         }
+        const auto address = lowerAddress(expression->target);
+        if (!address.has_value() || currentBlockTerminated()) return std::nullopt;
+        auto value = lowerExpression(expression->value);
+        if (address.has_value() && value.has_value()) {
+            value = coerce(*value, address->type, expression->value->span);
+            if (!value.has_value()) return std::nullopt;
+            if (requiresDestroy(address->type)) {
+                value = acquireOwned(*value, expression->value->span);
+                if (!value.has_value()) return std::nullopt;
+                emitDestroyStorage(*address, expression->target->span);
+            }
+            emitRawStore(*value, *address, expression->span);
+            return emitUnit(expression->span);
+        }
+        return std::nullopt;
+    }
 
+    std::optional<ir::Value> lowerDictionarySet(
+            const syntax::AssignmentExprSyntax::Ptr& expression,
+            const syntax::SubscriptExprSyntax::Ptr& subscript,
+            const typing::TypeRecord& dictionaryType) {
         const auto dictionary = lowerAddress(subscript->base);
-        if (!dictionary.has_value()) return true;
-        auto key = prepareOperand(subscript->index, dictionaryType->arguments[0]);
-        if (!key.has_value()) return true;
-        auto value = prepareOperand(expression->value, dictionaryType->arguments[1]);
-        if (!value.has_value()) return true;
+        if (!dictionary.has_value()) return std::nullopt;
+        auto key = prepareOperand(subscript->index, dictionaryType.arguments[0]);
+        if (!key.has_value()) return std::nullopt;
+        auto value = prepareOperand(expression->value, dictionaryType.arguments[1]);
+        if (!value.has_value()) return std::nullopt;
         key = acquireOwned(*key, subscript->index->span);
         value = acquireOwned(*value, expression->value->span);
-        if (!key.has_value() || !value.has_value()) return true;
+        if (!key.has_value() || !value.has_value()) return std::nullopt;
 
         auto instruction = makeInstruction(ir::Opcode::dictionarySet, expression->span);
         instruction.operands = { dictionary->id, key->id, value->id };
         emit(std::move(instruction));
-        return true;
+        return emitUnit(expression->span);
     }
 
     std::optional<ir::Value> lowerAddress(const syntax::ExprPtr& expression) {
@@ -1585,7 +1598,7 @@ private:
             emit(makeInstruction(ir::Opcode::unreachable, expression->span));
             return std::nullopt;
         }
-        if (!resultAddress.has_value()) return std::nullopt;
+        if (!resultAddress.has_value()) return emitUnit(expression->span);
         registerOwnedStorage(*resultAddress);
         return emitValue(
                 ir::Opcode::load,
@@ -1607,6 +1620,7 @@ private:
         result.type = *type;
         switch (pattern->kind) {
             case syntax::Kind::wildcardPattern:
+            case syntax::Kind::unitPattern:
             case syntax::Kind::bindingPattern:
                 result.kind = ir::PatternKind::wildcard;
                 break;
@@ -1801,7 +1815,7 @@ private:
             emit(makeInstruction(ir::Opcode::unreachable, expression->span));
             return std::nullopt;
         }
-        if (!resultAddress.has_value()) return std::nullopt;
+        if (!resultAddress.has_value()) return emitUnit(expression->span);
         registerOwnedStorage(*resultAddress);
         return emitValue(
                 ir::Opcode::load,
@@ -1960,6 +1974,7 @@ private:
                     ? ValueOwnership::owned
                     : ValueOwnership::trivial);
         }
+        if (type == model->types().voidType()) return emitUnit(expression->span);
         return result;
     }
 
@@ -2029,7 +2044,7 @@ private:
         auto instruction = makeInstruction(ir::Opcode::arrayAppend, expression->span);
         instruction.operands = { array->id, element->id };
         emit(std::move(instruction));
-        return std::nullopt;
+        return emitUnit(expression->span);
     }
 
     std::optional<ir::Value> lowerStructConstruction(
@@ -2134,9 +2149,22 @@ private:
             if (!value.has_value()) return;
         }
         emitAllScopeCleanupForReturn(expression->span);
+        if (currentFunction().resultType == model->types().voidType()) {
+            emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
+            return;
+        }
         auto instruction = makeInstruction(ir::Opcode::returnValue, expression->span);
         instruction.operands = { value->id };
         emit(std::move(instruction));
+    }
+
+    ir::Value emitUnit(SourceSpan span) {
+        return emitValue(
+                ir::Opcode::unitConstant,
+                model->types().voidType(),
+                ir::ValueCategory::value,
+                {},
+                span);
     }
 
     ir::Value emitValue(
@@ -2294,6 +2322,7 @@ private:
             case syntax::Kind::errorExpr:
             case syntax::Kind::nameExpr:
             case syntax::Kind::literalExpr:
+            case syntax::Kind::unitExpr:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:

@@ -7,6 +7,7 @@ arms, and `for-in`; they are not a separate lexer subsystem.
 pattern         ::= '_'                                       // wildcard
                  |  identifier                                 // bind
                  |  literal                                    // literal compare
+                 |  '(' ')'                                    // unit
                  |  '(' pattern , ... ')'                       // tuple
                  |  enum_case_pattern
 
@@ -26,8 +27,8 @@ enum_pattern_arg
 Binds a fresh name to the matched value:
 
 ```joyeer
-match v {
-  .Number(n) => print(value: n),    // n bound
+match reading {
+  .Value(n) => print(value: n),    // n bound
   _ => (),
 }
 ```
@@ -41,6 +42,22 @@ match error {
 }
 ```
 
+### 7.1.1 Unit pattern
+
+The unit pattern `()` requires a scrutinee of type `Void` and covers its only
+value. It may appear inside an enum payload pattern:
+
+```joyeer
+match outcome {
+  .Ok(()) => print(value: "completed"),
+  .Err(error) => print(value: error),
+}
+```
+
+Here `outcome` can have type `Result<Void, String>`. `.Ok(_)` and `.Ok(value)`
+are also valid, with `value` bound as `Void`. An empty pattern clause `.Ok()`
+is invalid. General tuple patterns remain outside the implemented subset.
+
 ### 7.2 Alternative patterns
 
 A match arm may list several comma-separated patterns; the arm runs when
@@ -49,21 +66,21 @@ alternative patterns may only combine patterns that bind no variables
 (wildcards and literals):
 
 ```joyeer
-match c {
-  b'"'             => parseString(p: &p),
-  b't', b'f'       => parseBool(p: &p),
-  b'0', b'1', b'2' => parseDigit(c: c),
-  _                => parseOther(p: &p),
+let category = match byte {
+  b'+', b'-'       => "sign",
+  b'0', b'1', b'2' => "digit",
+  b' ', b'\t'      => "space",
+  _                => "other",
 }
 ```
 
 ### 7.6 Where guards
 
 ```joyeer
-match v {
-  .Number(n) where n > 0 => "positive",
-  .Number(_)              => "non-positive",
-  _                       => "other",
+match reading {
+  .Value(n) where n > 0 => "positive",
+  .Value(_)             => "non-positive",
+  .Missing              => "missing",
 }
 ```
 
@@ -74,4 +91,3 @@ arm. Missing cases are a compile error with a list of the missing
 constructors.
 
 ---
-

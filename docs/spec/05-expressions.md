@@ -131,9 +131,9 @@ enum_arg           ::= [ label ':' ] expression
 ```
 
 ```joyeer
-let v: JsonValue = .Number(3.14)       // contextual: target type known
-let w = JsonValue.Bool(true)            // fully qualified
-let e: JsonError = .Unexpected(b'{', at: 12)
+let command: Message = .Move(x: 3, y: 4)       // contextual: target type known
+let text = Message.Text("ready")                // fully qualified
+let error: DecodeError = .Unexpected(b'?', at: 12)
 ```
 
 The declaration determines the payload arity and labels. A payload position
@@ -141,7 +141,7 @@ declared without a label is positional; a labeled position must use exactly
 that label. Positional and labeled payloads may be mixed in declaration order.
 This is the only unlabeled invocation form in v0.1 — ordinary function and
 struct-initializer calls still require labels (§3.2.1, §5.6). A payload-less
-case is written without an empty argument clause (`.Null`, not `.Null()`).
+case is written without an empty argument clause (`.Quit`, not `.Quit()`).
 
 ### 5.9 Match expression
 
@@ -155,13 +155,15 @@ type (or all be `Void`). An arm may list several comma-separated
 alternative patterns and runs when any of them matches (§7.2):
 
 ```joyeer
-let label = match v {
-  .Null         => "null",
-  .Bool(true)   => "true",
-  .Bool(false)  => "false",
-  .Number(n) where n < 0 => "negative",
-  .Number(_)    => "non-negative",
-  _             => "other",
+enum Reading {
+  Missing,
+  Value(Int),
+}
+
+let label = match reading {
+  .Missing                  => "missing",
+  .Value(n) where n < 0     => "negative",
+  .Value(_)                 => "non-negative",
 }
 ```
 
@@ -186,6 +188,14 @@ let sign = if x > 0 { 1 } else if x < 0 { -1 } else { 0 }
 
 Every branch must produce the same type. The whole `if`-`else` must be
 total (i.e., have an `else` arm) when used as an expression.
+
+### 5.10.1 Unit expressions
+
+An empty pair of parentheses in expression position, `()`, is the unit value
+of type `Void` (§2.1.2), not a missing expression or a general tuple.
+Parenthesized expressions such as `(value)` keep their existing meaning.
+In `.Ok(())`, the outer parentheses contain one payload expression, `()`;
+`.Ok()` is not an alternative unit construction.
 
 ### 5.11 Closures
 

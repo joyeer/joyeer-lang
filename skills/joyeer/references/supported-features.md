@@ -1,21 +1,21 @@
-# Supported features and version boundary
+# Supported features and compatibility boundary
 
 ## Baseline
 
-This skill accompanies the source tree whose CMake project version is `0.0.1`
-and whose implementation milestone is called **v0.1**. These are different
-labels: the milestone and the draft specification are not a released version.
-The compiler currently has no `--version` option. For a source checkout, record
-the revision and build provenance; for a distributed binary, use its package
-metadata. A version string alone may not distinguish early-development builds.
-If provenance is unknown, say so and validate a minimal program before relying
-on these instructions.
+This skill accompanies the source tree whose CMake project version is `0.0.1`.
+The draft specification's version label is not a released compiler version.
+The compiler currently has no `--version` option. For a source checkout,
+record the revision and build provenance; for a distributed binary, use its
+package metadata. A version string alone may not distinguish early-development
+builds. If provenance is unknown, say so and validate a minimal program before
+relying on these instructions.
 
 Keep this directory with the matching release or revision. The upstream
-`docs/spec.md` defines the language design; `docs/plan/v0.1.md` and native
-fixtures describe current implementation coverage. Specification examples can
-use future features. Compiler acceptance is evidence of implementation support,
-not a replacement for the normative language rules.
+`docs/spec.md` defines the language design;
+`docs/impl/supported-features.md` and native fixtures describe current
+implementation coverage. Specification examples can use future features.
+Compiler acceptance is evidence of implementation support, not a replacement
+for the normative language rules.
 
 The references and examples in this skill are self-contained. They do not
 require a source checkout, internet access, or access to a moving branch.
@@ -25,11 +25,12 @@ require a source checkout, internet access, or access to a moving branch.
 | Area | Current surface |
 |---|---|
 | Programs | One source file; typed functions; recursion; parameterless `func main()` returning `Void` for executables |
-| Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`; local `let` and `var` |
+| Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, `return`, short-circuit `&&`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
+| Unit results | `Result<Void, E>` with `.Ok(())`; unit expressions, bindings, fields, container elements, and patterns |
 | Strings | Concatenation, comparisons, byte count/indexing, owned `utf8()` byte array |
 | Built-ins | `print(value:)` for supported primitive/string values; `byteToInt(value:)`, `byteToString(value:)`, `readFile(path:)` |
 | Output | Frontend validation, textual LLVM IR, native executables, optimization and debug flags |
@@ -44,10 +45,10 @@ combination is supported or that the compiler is free of correctness gaps.
 - User-defined `init` / `deinit` bodies or explicit copy initializers.
 - Top-level executable statements or global storage, modules/imports,
   multi-file builds, or dependency packages.
-- Floating-point `Float` / `Double` programs.
-- `for-in`, `break`, `continue`, `||`, compound assignment such as `+=`,
-  `is` / `as` casts, match guards, range/alternative patterns, or tuple
+- Floating-point `Float` / `Double` programs, general tuples, or tuple
   destructuring.
+- `for-in`, `break`, `continue`, `||`, compound assignment such as `+=`,
+  `is` / `as` casts, match guards, or range/alternative patterns.
 - Optional chaining `?.`, coalescing `??`, postfix propagation `?`, or force
   unwrap `!`. `T?` as an Optional type is supported; use `match` on the value.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
@@ -74,5 +75,7 @@ explicit `match` for absence and recoverable errors.
 - Windows command-line and file-path encoding have known non-ASCII limitations.
   Report them rather than treating them as language syntax errors. Do not
   modify the user's global environment as a workaround.
-- The checked-in JSON parser is a milestone workload, not a fully conforming
-  JSON library or a measured performance guarantee.
+- The checked-in JSON parser is an acceptance workload, not a fully conforming
+  JSON library or a measured performance guarantee. It omits floating-point
+  numbers and Unicode escape decoding, accepts leading-zero numbers and raw
+  control characters, and can trap while accumulating the maximum `Int`.

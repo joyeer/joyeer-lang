@@ -57,6 +57,29 @@ if flag { return 1 } else { return 2 }
     EXPECT_TRUE(result.diagnostics.empty());
 }
 
+TEST_F(SemanticAnalysisTest, UnitStillRequiresInitializationAndConsumptionTracking) {
+    for (const auto* text : {
+            "func accept(value: Void) {}\nfunc run() {\n"
+            "let value: Void\naccept(value: value)\n}\n",
+            "func take(value: consuming Void) {}\nfunc accept(value: Void) {}\n"
+            "func run() {\nlet value = ()\ntake(value: consume value)\n"
+            "accept(value: value)\n}\n",
+            "func initialize(value: initializing Void) {}\n"}) {
+        SCOPED_TRACE(text);
+        analyze(text);
+        EXPECT_FALSE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, AcceptsUnitInitializationAndReinitialization) {
+    analyze("func initialize(value: initializing Void) { &value = () }\n"
+            "func take(value: consuming Void) {}\n"
+            "func run() {\nvar value: Void\ninitialize(value: &value)\n"
+            "take(value: consume value)\nvalue = ()\n"
+            "match value { () => () }\n}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, DiagnosesFunctionsThatCanFallThrough) {
     analyze(R"JOYEER(func incomplete(flag: Bool): Int {
 if flag { return 1 }

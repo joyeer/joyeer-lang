@@ -118,6 +118,16 @@ return item.count
     EXPECT_EQ(referenced(field).name, "count");
 }
 
+TEST_F(NameResolutionTest, UnitTypeUsesBuiltinIdentityWhenVoidIsShadowed) {
+    resolve("struct Void {}\nfunc accept(value: ()): () { return value }\n"
+            "func run() { accept(value: ()) }\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[1]);
+    EXPECT_EQ(referenced(function->parameters[0]->type).kind, SymbolKind::builtinType);
+    EXPECT_EQ(referenced(function->returnType).kind, SymbolKind::builtinType);
+}
+
 TEST_F(NameResolutionTest, ResolvesReadFileFromThePrelude) {
         resolve(R"JOYEER(func load(): Result<String, IOError> {
 return readFile(path: "input.json")

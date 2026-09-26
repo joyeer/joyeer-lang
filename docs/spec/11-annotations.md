@@ -42,4 +42,10 @@ grammar (§5). Its intended scope is `@property`, not ordinary expressions.
 - Current executable MVP: no annotation parser or property-test runner.
 - A runner is follow-on work, not a delivered capability of the draft syntax.
 
+**Design rationale.** Natural-language intent and executable properties can
+help reviewers and tooling check generated code. Sampling inputs is testing,
+not proof over every input, and storing an annotation does not verify it.
+These annotations do not imply an incremental compiler or formal-verification
+engine; see the [verification boundary](09-contracts.md#96-verification-boundary).
+
 ---

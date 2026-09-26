@@ -1,0 +1,6 @@
+func main() {
+    let values: [Void] = []
+    match values[0] {
+        () => print(value: "unreachable"),
+    }
+}

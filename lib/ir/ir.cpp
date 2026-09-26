@@ -16,6 +16,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::booleanConstant:
         case Opcode::stringConstant:
         case Opcode::byteConstant:
+        case Opcode::unitConstant:
         case Opcode::stackAllocate:
         case Opcode::load:
         case Opcode::copyValue:
@@ -1178,6 +1179,23 @@ VerificationResult Verifier::verify(const Module& module) const {
                 };
 
                 switch (instruction.opcode) {
+                    case Opcode::unitConstant: {
+                        requireShape(0, 0);
+                        const auto* unitType = instruction.result.has_value() &&
+                                types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type) : nullptr;
+                        if (unitType == nullptr ||
+                            unitType->kind != typing::TypeKind::voidType ||
+                            instruction.result->category != ValueCategory::value) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId,
+                                    block.id,
+                                    location,
+                                    "unit constant must produce a Void value");
+                        }
+                        break;
+                    }
                     case Opcode::integerConstant:
                     case Opcode::booleanConstant:
                     case Opcode::stringConstant:
@@ -1824,6 +1842,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::booleanConstant: return "boolean";
         case Opcode::stringConstant: return "string";
         case Opcode::byteConstant: return "byte";
+        case Opcode::unitConstant: return "unit";
         case Opcode::stackAllocate: return "alloc_stack";
         case Opcode::zeroInitialize: return "zero_init";
         case Opcode::load: return "load";
@@ -2057,6 +2076,7 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::stackAllocate:
                     case Opcode::returnVoid:
+                    case Opcode::unitConstant:
                     case Opcode::unreachable:
                         break;
                     case Opcode::zeroInitialize:

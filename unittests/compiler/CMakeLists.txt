@@ -785,6 +785,23 @@ if(JOYEER_CLANG_EXECUTABLE)
             NativeRegressionFlowReinitialization regression_flow_reinitialization
             "ready\nready\nold\nnew\niteration\niteration\n")
 
+    set(unit_values_output
+            "true\ntrue\n2\ntrue\nbranch!\ntrue\n3\ntemporary!\n4\ntemporary!\n3\ntrue\n5\n2\ntrue\n6\ntrue\nowned!\nevent\nsome\nnone\nunit error\n100\n")
+    add_joyeer_native_regression(
+            NativeUnitValues unit_values "${unit_values_output}")
+    add_test(NAME NativeUnitValuesFullDebug
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/unit_values.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/unit-values-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DEXPECTED_OUTPUT=${unit_values_output}"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeUnitValuesFullDebug PROPERTIES
+            LABELS "native;llvm-backend;ownership;debug-info;unit"
+            TIMEOUT 60)
+
     add_joyeer_native_regression(
             NativeCheckedArithmetic checked_arithmetic
             "9223372036854775807\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-9223372036854775808\n0\n21\n2\n49995000\n"
@@ -822,6 +839,11 @@ if(JOYEER_CLANG_EXECUTABLE)
                     TIMEOUT 60)
         endforeach()
     endfunction()
+    add_joyeer_native_checked_trap(
+            NativeUnitArrayBounds unit_array_bounds "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
+
     # Runtime-loaded operands keep these checks from folding to unconditional
     # panic calls; NativeOptimizedOverflowTrap still covers constant overflow.
     add_joyeer_native_checked_trap(
@@ -921,6 +943,22 @@ add_test(NAME TypeCheckingCliRejectsMismatch
 set_tests_properties(TypeCheckingCliRejectsMismatch PROPERTIES
         LABELS type-checking
 )
+
+add_test(NAME TypeCheckingCliRejectsUnitPayload
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/unit_result_payload.joyeer
+                -DEXPECTED_PATTERN=type-checking.type-mismatch
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake)
+set_tests_properties(TypeCheckingCliRejectsUnitPayload PROPERTIES LABELS "type-checking;unit")
+
+add_test(NAME SemanticAnalysisCliRejectsUninitializedUnit
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/unit_uninitialized.joyeer
+                -DEXPECTED_PATTERN=semantic-analysis.use-before-initialization
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake)
+set_tests_properties(SemanticAnalysisCliRejectsUninitializedUnit PROPERTIES LABELS "semantic-analysis;unit")
 
 add_test(NAME TypeCheckingCliRejectsOverlappingAccess
         COMMAND ${CMAKE_COMMAND}

@@ -1,0 +1,3 @@
+func run(): Result<Void, String> {
+    return .Ok(42)
+}
