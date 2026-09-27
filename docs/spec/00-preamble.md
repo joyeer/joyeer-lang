@@ -47,7 +47,7 @@ safety checks (§9).
 
 Performance parity and fixed binary-size budgets are measurement goals, not
 language guarantees. Current costs and measurement requirements belong in the
-[native implementation notes](../impl/native.md#7-performance-and-footprint-measurement).
+[backend implementation notes](../impl/backend.md#7-performance-and-footprint-measurement).
 
 ### 0.2 Notation
 

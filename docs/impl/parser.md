@@ -1,18 +1,16 @@
-# Parser MVP — JSON-Parser Grammar and Implementation Contract
+# Parser Implementation
 
-> **Status:** Parser MVP implemented and parser-only validation green.
+> **Status:** The current parser produces a syntax-only AST for the
+> [implemented language surface](supported-features.md).
 > **Normative source:** [the language specification](../spec.md). This document
-> narrows that future language to the parser surface required by the first
-> Joyeer JSON parser; it does not redefine the language.
+> describes the implemented parser subset; it does not redefine the language.
 
 ---
 
-## 1. Goal and non-goals
+## 1. Scope and non-goals
 
-The Parser MVP converts the explicit token stream produced by the
-[Lexer MVP](lexer.md) into a syntax-only AST. Its acceptance target is the
-canonical JSON-parser slice in
-[Implemented Language Surface](supported-features.md):
+The parser converts the explicit token stream produced by the
+[lexer](lexer.md) into a syntax-only AST. Its current surface includes:
 
 - typed `func` declarations and mandatory call-site labels;
 - `let` / `var` bindings;
@@ -25,15 +23,15 @@ canonical JSON-parser slice in
 - byte, integer, string, Boolean, and `nil` literals;
 - member access, calls, subscripts, arrays, dictionaries, `if`, `while`, and
   `return`;
-- correct MVP operator precedence and associativity;
+- implemented operator precedence and associativity;
 - recoverable syntax diagnostics with stable spans.
 
-The unit-value extension adds `()` in expression, type, and match-pattern
-positions. Dedicated syntax nodes distinguish it from parenthesized
-expressions. `Result<Void, E>` success is written `.Ok(())`; an empty enum
-payload clause is still rejected. This does not add general tuples.
+Unit values use `()` in expression, type, and match-pattern positions.
+Dedicated syntax nodes distinguish them from parenthesized expressions.
+`Result<Void, E>` success is written `.Ok(())`; an empty enum payload clause
+is still rejected. This does not add general tuples.
 
-The Parser MVP deliberately does **not** implement:
+The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
 - `class`, `for-in`, imports, extensions, explicit `init` / `deinit`, methods,
@@ -46,26 +44,14 @@ The Parser MVP deliberately does **not** implement:
   compound assignment, ranges, shifts, or bitwise expressions;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
-  so the MVP produces a spanned AST rather than pretending to be lossless.
+  so the parser produces a spanned AST rather than pretending to be lossless.
 
 These exclusions are syntax boundaries, not permanent removals. They are added
 only when a later milestone has a concrete consumer.
 
 ---
 
-## 2. Historical parser audit
-
-The original parser was replaced rather than extended. The audit below records
-the design differences that motivated the current parser.
-
-| Area | Replaced behavior | Current parser requirement |
-|---|---|---|
-| Token access | raw iterators and broad token categories | bounded `TokenCursor`, explicit terminals, checkpoints, and `expect()` |
-| Declarations | shared nodes for unrelated declaration roles | dedicated parameter, field, case, and binding nodes |
-| Expressions | flat prefix plus binary tail | fully shaped Pratt/precedence-climbing tree |
-| Patterns | identifier plus optional type annotation | wildcard/literal/binding/enum-case pattern syntax |
-| Errors | first-failure parsing | stable IDs, error nodes, synchronization, and continued parsing |
-| AST | semantic and runtime state mixed into syntax | syntax-only nodes with source spans |
+## 2. Implementation location
 
 The implementation lives in `parser.h` / `parser.cpp`, with its syntax-only
 AST in `syntax.h` / `syntax.cpp`. A successful tree flows through name
@@ -83,7 +69,7 @@ The parser decides only facts visible in the token stream:
 - delimiters, commas, labels, and ownership-marker placement;
 - operator precedence and associativity;
 - obvious assignment-target shape;
-- whether a construct belongs to the Parser MVP grammar;
+- whether a construct belongs to the implemented grammar;
 - source spans and syntax recovery points.
 
 ### 3.2 What later stages decide
@@ -110,7 +96,7 @@ whether the callee is a type or value from capitalization.
 
 ---
 
-## 4. Parser MVP grammar
+## 4. Implemented parser grammar
 
 The notation follows spec §0.2. Every comma-separated list permits a trailing
 comma unless a rule says otherwise.
@@ -154,13 +140,13 @@ Rules and intentional restrictions:
 2. A function parameter always has an external label. With one identifier it
    is also the local name; `from source: String` uses `from` externally and
    `source` in the body.
-3. All four parameter access effects are in the Parser MVP; borrowing is also
+3. All four parameter access effects are implemented; borrowing is also
   the implicit default. Calls spell `&` for inout/initializing and `consume`
   for consuming; borrowing has no marker.
-4. A Parser MVP `struct` contains stored fields only. Explicit initializers,
+4. A parsed `struct` contains stored fields only. Explicit initializers,
    methods, and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.
-5. A Parser MVP `enum` contains one or more cases only. Cases do not use a
+5. A parsed `enum` contains one or more cases only. Cases do not use a
    `case` keyword.
 6. An associated type may be positional (`Bool(Bool)`) or labeled
    (`Unexpected(UInt8, at: Int)`). Construction and patterns must reproduce
@@ -176,6 +162,7 @@ Rules and intentional restrictions:
 type               ::= type_primary [ '?' ]
 
 type_primary       ::= identifier [ generic_argument_clause ]
+                     | '(' ')'
                      | '[' type ']'
                      | '[' type ':' type ']'
 
@@ -201,11 +188,10 @@ remain out of scope.
 `?` is a type suffix in this phase. It is not parsed as expression propagation
 or optional chaining.
 
-The current lexer treats `>>` as one deferred shift token. Adjacent nested
-angle closers are not needed by the JSON acceptance source, but no whitespace
-workaround becomes part of Joyeer. Before nested built-in generic types become
-a completion requirement, the lexer/parser boundary must represent a shift
-operator in a way that the type parser can split into two closing `>` tokens.
+The lexer treats `>>` as one deferred shift token, so adjacent angle closers
+in nested generic types are not yet supported without separation. This is an
+implementation limitation, not a language requirement for whitespace between
+type arguments.
 
 ### 4.3 Blocks and block items
 
@@ -237,7 +223,7 @@ continuation token.
 
 ### 4.4 Expression precedence
 
-The Parser MVP uses a Pratt or equivalent precedence-climbing parser. From
+The parser uses Pratt or equivalent precedence-climbing parsing. From
 highest to lowest:
 
 | Binding power | Forms | Associativity |
@@ -283,7 +269,7 @@ a = b = value   => a = (b = value)
 a < b < c       => syntax error: comparison operators do not chain
 ```
 
-`&` is prefix-only in the Parser MVP and produces an explicit access-marker
+`&` is prefix-only in the current parser and produces an explicit access-marker
 node. The full language later also uses it as infix bitwise AND.
 
 An assignment target must have one of these syntactic shapes:
@@ -303,6 +289,7 @@ later semantic question.
 
 ```ebnf
 primary_expr       ::= literal
+                     | '(' ')'
                      | identifier
                      | contextual_case_expr
                      | parenthesized_expr
@@ -360,6 +347,7 @@ match_expr         ::= 'match' expression '{' match_arm+ '}'
 match_arm          ::= match_pattern '=>' ( expression | block ) ','?
 
 match_pattern      ::= '_'
+                     | '(' ')'
                      | literal
                      | identifier
                      | enum_case_pattern
@@ -370,7 +358,7 @@ enum_case_pattern  ::= [ identifier ] '.' identifier
 pattern_argument   ::= [ identifier ':' ] match_pattern
 ```
 
-Parser MVP rules:
+Implemented pattern rules:
 
 1. `_` is wildcard; a plain identifier binds the matched value.
 2. `.Case(...)` is contextual. `Type.Case(...)` is explicitly qualified.
@@ -399,8 +387,8 @@ token and its span; it does not convert or reinterpret the value.
 
 ## 5. Newlines, commas, and statement boundaries
 
-The full specification permits semicolons, but the JSON-parser lexer profile
-rejects them. Parser MVP therefore has one predictable formatting rule:
+The full specification permits semicolons, but the current lexer rejects them.
+The parser therefore has one predictable formatting rule:
 
 > The first source item may begin at the start of the file, and the first block
 > item may follow `{` on the same line. Every subsequent top-level or block
@@ -459,7 +447,7 @@ Important shape rules:
   resolved/typed representation.
 
 A lossless CST can be introduced later if formatter/IDE work requires it. That
-requires the lexer to retain trivia first and is not a Parser MVP dependency.
+requires the lexer to retain trivia first and is not a parser dependency.
 
 ---
 
@@ -523,7 +511,7 @@ At minimum, use stable IDs for:
 - invalid assignment target;
 - chained non-associative comparison/equality operator;
 - two block items on one physical line;
-- unsupported Parser MVP syntax that reached parsing;
+- unsupported syntax that reached parsing;
 - unexpected EOF while parsing a delimited construct.
 
 Diagnostics point at the unexpected token span (or a zero-length EOF span).
@@ -562,91 +550,32 @@ malformed inner item does not consume the remainder of the file.
 
 ---
 
-## 9. Implementation sequence
-
-### P0 — Isolated parser foundation ✅
-
-1. Introduce the syntax-only AST and node spans.
-2. Introduce `TokenCursor`, diagnostic IDs, error nodes, and a parser-only test
-   executable labeled `parser`.
-3. Integrate the parser as the compiler's only syntax parser.
-4. Add deterministic AST and diagnostic dump formats.
-
-**Exit:** empty input and malformed token streams always produce a file node,
-one EOF boundary, and no crash/hang.
-
-### P1 — Types and declarations ✅
-
-1. Parse MVP type syntax, including `Result<T, E>` and `[K: V]`.
-2. Parse bindings while retaining `let`/`var`.
-3. Parse functions, labels/local names, `inout`/`consuming`, and trailing commas.
-4. Parse field-only structs and payload-only enums.
-
-**Exit:** all declarations and signatures in the focused JSON source parse with
-exact spans.
-
-### P2 — Pratt expressions ✅
-
-1. Parse literals, names, parenthesized expressions, arrays, and dictionaries.
-2. Parse member/call/subscript chains and contextual `.Case` expressions.
-3. Parse call arguments with optional syntax labels and `&` / `consume` markers.
-4. Parse prefix/infix/assignment operators with the table in §4.4.
-5. Diagnose chained comparisons and invalid assignment targets.
-
-**Exit:** precedence and postfix-chain snapshots are exact.
-
-### P3 — Control flow and patterns ✅
-
-1. Parse blocks, line boundaries, trailing expressions, `while`, and `return`.
-2. Parse `if` as one expression node usable in statement or value position.
-3. Parse minimal match arms and wildcard/literal/binding/enum-case patterns.
-4. Parse `return .Err(...)` as a diverging match-arm expression.
-
-**Exit:** the focused JSON-parser source produces a complete AST with no parser
-diagnostics.
-
-### P4 — Recovery and corpus ✅
-
-1. Implement synchronization sets and missing-token/error nodes.
-2. Add positive and negative parser corpus snapshots.
-3. Add deterministic token deletion/insertion/replacement mutation tests.
-4. Verify every malformed case terminates, stays within token bounds, and
-   reports later independent errors when recovery permits.
-
-**Exit:** all direct parser tests pass without invoking name resolution, type
-checking, IR, or the native runtime.
-
-Only after P0–P4 are green should later phases add AST consumers for enum
-layout, match exhaustiveness, ownership, and lowering.
-
----
-
-## 10. Test matrix
+## 9. Test matrix
 
 Parser tests consume in-memory source through the current lexer, then compare a
 normalized syntax AST or diagnostic stream. They never execute the program.
 
-### 10.1 Positive corpus
+### 9.1 Positive corpus
 
 | Area | Required cases |
 |---|---|
 | Empty/file | empty input, one and several top-level items |
 | Bindings | inferred/annotated, initialized/uninitialized, `let` vs `var` |
 | Parameters | one-name, external/local names, borrowing/inout/consuming/initializing, empty/non-empty/trailing comma |
-| Types | nominal, array, dictionary, optional, `Result<T, E>`, nesting through `[]` / `?`; adjacent angle closers after the documented lexer handshake |
+| Types | nominal, unit `()`, array, dictionary, optional, `Result<T, E>`, nesting through `[]` / `?` |
 | Struct | typed fields, field initializer, multiline body |
-| Enum | empty-payload, positional payload, labeled payload, mixed payload, trailing comma |
-| Literals | every Lexer MVP literal kind, especially `byteLiteral` |
+| Enum | payload-free case, positional payload, labeled payload, mixed payload, trailing comma |
+| Literals | every implemented lexer literal kind, especially `byteLiteral` |
 | Collections | empty/non-empty arrays and dictionaries, nesting, trailing commas |
 | Postfix | member/call/subscript chains and multiline argument clauses |
 | Calls/cases | labeled function/initializer calls, marker-free borrowing, `&` inout/initializing, `consume` arguments, positional/labeled enum payloads, contextual and qualified cases |
 | Precedence | every neighboring precedence pair, left/right/non-associativity |
 | Assignment | name, member, subscript, `&` target, right-associative chain |
 | Control | standalone/value `if`, else-if, `while`, empty/value blocks, early return |
-| Match | literal/wildcard/binding/case/nested-case patterns, expression/block/return arms |
+| Match | literal/wildcard/unit/binding/case/nested-case patterns, expression/block/return arms |
 | Locations | exact node spans across LF, CR, CRLF, comments, and UTF-8 strings |
 
-### 10.2 Negative corpus
+### 9.2 Negative corpus
 
 | Area | Required failures |
 |---|---|
@@ -661,7 +590,7 @@ normalized syntax AST or diagnostic stream. They never execute the program.
 | Boundaries | two same-line block items, unexpected top-level token, unexpected EOF |
 | Lexer handoff | `invalid` and `deferredKeyword` tokens consumed once without diagnostic cascades |
 
-### 10.3 Invariants
+### 9.3 Invariants
 
 For every input:
 
@@ -676,39 +605,15 @@ For every input:
 8. AST shape is independent of name resolution and type checking;
 9. no user input reaches an assertion or bypasses structured diagnostics.
 
-A cross-implementation corpus should eventually live under
-`tests/parser/{ok,err}/` with source plus normalized `.ast.txt` or `.diag.txt`
-files. That corpus, rather than C++ class layout, becomes the durable Parser
-contract for any future implementation rewrite.
+The existing corpus under `tests/parser/{ok,err}/` contains positive and
+negative sources and diagnostic snapshots; extend it alongside direct parser
+tests as the implemented syntax grows.
 
----
-
-## 11. Completion criteria
-
-Parser MVP is complete when:
-
-- [x] a clean build produces a parser-only test target;
-- [x] the parser-labeled regression suite covers the core grammar/recovery
-  matrix, deterministic dumps, diagnostic snapshots, applicable insertion/
-  replacement/deletion edits, and token deletion/insertion/replacement
-  mutation;
-- [x] positive and negative CLI acceptance tests run through the default
-  compiler pipeline;
-- [x] the Parser MVP acceptance source parses with no lexical or parser diagnostic;
-- [x] expression ASTs encode precedence and associativity directly;
-- [x] `enum`, minimal `match`, byte literals, contextual cases, `Result<T, E>`,
-  optional types, `inout`, `consuming`, `&`, and `consume` all reach stable syntax nodes;
-- [x] malformed input yields stable diagnostic IDs/spans and parsing continues at
-  documented boundaries;
-- [x] direct `ParserTest` cases enter no semantic pass.
-
-Validate this milestone with:
+Focused validation:
 
 ```pwsh
 ctest --test-dir build --output-on-failure -L parser
 ```
 
-Type-directed completion of deferred name references, type checking, enum
-layout, match exhaustiveness, ownership enforcement, and code generation are
-explicit later gates. A source file parsing and resolving successfully does
-not imply that it is fully typed or executable.
+A source file parsing successfully does not imply that it is fully typed or
+executable. Run the complete unfiltered CTest suite for the final gate.
