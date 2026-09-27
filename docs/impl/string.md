@@ -35,8 +35,8 @@ Heap-backed strings have value semantics at the Joyeer level:
 - compiler-generated Joyeer IR `copy`, `take`, and `destroy` operations route
   through per-type LLVM helpers;
 - cleanup is emitted for normal scope exit, early return, aggregate
-  destruction, collection growth, and tagged payloads; known control-flow
-  and temporary-ownership gaps are tracked in [native.md](native.md);
+  destruction, collection growth, and tagged payloads; the limits of
+  structural ownership verification are recorded in [ir.md](ir.md#5-verification);
 - the native entry point requires the runtime allocation count to return to
   zero.
 
@@ -89,9 +89,9 @@ standard library rather than the core string layout.
 ctest --test-dir build -L native-runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
 ctest --test-dir build -L file-io --output-on-failure
-ctest --test-dir build -L json-parser --output-on-failure
 ```
 
 Tests cover independent clones, destruction, embedded bytes, concatenation,
 comparison, checked indexing, nested aggregate/collection ownership, file I/O,
-JSON parsing, and final allocation balance.
+and final allocation balance. See [runtime validation](runtime.md#limits-and-validation)
+for executable entry and other collection tests.

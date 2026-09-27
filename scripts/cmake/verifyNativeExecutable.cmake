@@ -148,18 +148,64 @@ if(DEFINED PROGRAM_WORKING_DIRECTORY)
         WORKING_DIRECTORY "${PROGRAM_WORKING_DIRECTORY}")
 endif()
 
-execute_process(
-    COMMAND "${OUTPUT_FILE}"
-    ${program_working_directory_arguments}
+if(PROGRAM_ARGUMENT_1_NON_UTF8)
+    if(DEFINED PROGRAM_ARGUMENT_1)
+        fail_native_validation("PROGRAM_ARGUMENT_1_NON_UTF8 conflicts with PROGRAM_ARGUMENT_1")
+    endif()
+    string(ASCII 255 PROGRAM_ARGUMENT_1)
+endif()
+if(PROGRAM_ARGUMENT_2_SURROUND_SPACES)
+    if(NOT DEFINED PROGRAM_ARGUMENT_2)
+        fail_native_validation("PROGRAM_ARGUMENT_2_SURROUND_SPACES requires PROGRAM_ARGUMENT_2")
+    endif()
+    string(CONCAT PROGRAM_ARGUMENT_2 " " "${PROGRAM_ARGUMENT_2}" " ")
+endif()
+
+if(DEFINED PROGRAM_ARGUMENT_2)
+    if(NOT DEFINED PROGRAM_ARGUMENT_1)
+        fail_native_validation("PROGRAM_ARGUMENT_2 requires PROGRAM_ARGUMENT_1")
+    endif()
+    execute_process(
+        COMMAND "${OUTPUT_FILE}" "${PROGRAM_ARGUMENT_1}" "${PROGRAM_ARGUMENT_2}"
+        ${program_working_directory_arguments}
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
-)
+    )
+elseif(DEFINED PROGRAM_ARGUMENT_1)
+    execute_process(
+        COMMAND "${OUTPUT_FILE}" "${PROGRAM_ARGUMENT_1}"
+        ${program_working_directory_arguments}
+        RESULT_VARIABLE program_result
+        OUTPUT_VARIABLE program_output
+        ERROR_VARIABLE program_error
+    )
+else()
+    execute_process(
+        COMMAND "${OUTPUT_FILE}"
+        ${program_working_directory_arguments}
+        RESULT_VARIABLE program_result
+        OUTPUT_VARIABLE program_output
+        ERROR_VARIABLE program_error
+    )
+endif()
 cleanup_native_artifacts()
 
-if(NOT program_result EQUAL 0)
+if(NOT DEFINED EXPECTED_EXIT_CODE)
+    set(EXPECTED_EXIT_CODE 0)
+endif()
+if(NOT program_result STREQUAL "${EXPECTED_EXIT_CODE}")
     message(FATAL_ERROR
-            "Native program failed (${program_result}):\n${program_output}${program_error}")
+            "Native program returned ${program_result}, expected ${EXPECTED_EXIT_CODE}:\n"
+            "${program_output}${program_error}")
+endif()
+if(DEFINED EXPECTED_ERROR_PATTERN)
+    if(NOT program_error MATCHES "${EXPECTED_ERROR_PATTERN}")
+        message(FATAL_ERROR
+                "Native error did not match '${EXPECTED_ERROR_PATTERN}':\n${program_error}")
+    endif()
+elseif(NOT program_error STREQUAL "")
+    message(FATAL_ERROR "Native program unexpectedly wrote to stderr:\n${program_error}")
 endif()
 
 string(REPLACE "\r\n" "\n" normalized_output "${program_output}")

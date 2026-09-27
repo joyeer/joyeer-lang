@@ -1,6 +1,6 @@
-# Type Checking — Resolved Parser MVP AST
+# Type Checking — Resolved Syntax AST
 
-> **Status:** Implemented for the current JSON-parser frontend.
+> **Status:** Implemented for the current language surface.
 > **Input:** `semantic::SemanticModel`.
 > **Output:** `typing::TypeCheckedModel` plus stable, spanned diagnostics.
 
@@ -78,7 +78,7 @@ The current checker validates:
 - explicit `byteToInt(value: UInt8) -> Int` and
   `byteToString(value: UInt8) -> String` built-in calls;
 - optional value promotion and `Never` as the bottom type;
-- MVP arithmetic, string concatenation, comparison, and `&&` operators;
+- implemented arithmetic, string concatenation, comparison, and `&&` operators;
 - `if`/`while` conditions, `if` branch unification, and return values;
 - exact function, struct-initializer, enum-case, and `print(value:)` calls;
 - inferred and declared member access;
@@ -172,10 +172,10 @@ ctest --test-dir build -L type-checking --output-on-failure
 
 The suite covers canonical type construction, signatures, inference,
 operators, control flow, calls, members, subscripts, contextual cases,
-patterns, exhaustiveness, access conventions, deferred-reference closure, the
-JSON-parser MVP source, and CLI rejection of a type mismatch with expected/found
-guidance. Overlapping-access coverage verifies both independently rendered
-source spans.
+patterns, exhaustiveness, access conventions, deferred-reference closure,
+parser and native regression sources, and CLI rejection of a type mismatch
+with expected/found guidance. Overlapping-access coverage verifies both
+independently rendered source spans.
 
 ---
 

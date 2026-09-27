@@ -145,6 +145,28 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 - Defaults are part of the function's interface: changing a default value is
   an interface change visible to all callers.
 
+#### 3.2.6 Executable entry point
+
+A native executable has one `main` function. The supported signatures are
+`func main()` (returning `Void`, whether written explicitly or omitted) and
+`func main(args: [String]): Int`. The latter's external parameter label is
+`args`, and its access effect is `borrowing` (the default); the internal
+parameter name may differ. Both forms cannot be declared together.
+
+The argument-taking form receives the command-line arguments after the
+executable name, in their original order. Empty arguments and spaces within
+arguments are preserved. On POSIX, argument strings preserve the operating
+system's bytes without requiring UTF-8; on Windows, arguments are converted
+from UTF-16 to UTF-8, and invalid encoding is a runtime error. The runtime
+owns this array for the duration of `main`, and ordinary borrowing rules
+apply within the program.
+
+The parameterless form returns exit status zero. The `Int` form returns a
+process exit status in `0..255` after normal scope and argument cleanup.
+Values outside that range cause an explicit runtime error and failure,
+not truncation. This limit applies to Joyeer's own entry point, not to exit
+statuses observed from other processes.
+
 ### 3.3 Struct declarations
 
 Struct construction uses call syntax `Point(x:1, y:2)`.
