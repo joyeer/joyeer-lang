@@ -10,10 +10,14 @@
 
 - Expand ownership and control-flow edge-case coverage beyond the current
   acceptance workload.
-- Fix the native JSON parser's malformed-input handling for leading-zero
-  numbers and unescaped control characters.
-- Define and test integer-boundary behavior, including decimal accumulation,
-  out-of-range JSON input, and contextual handling of
+- Fix the native [JSON acceptance fixture](../../tests/native/json_parser.joyeer),
+  which is not a conforming JSON library: it accepts leading-zero numbers
+  such as `01` and unescaped control characters, and does not implement
+  floating-point numbers or Unicode `\uXXXX` escape decoding.
+- Define and test integer-boundary behavior in that fixture. Its decimal
+  accumulation adds the ASCII byte before subtracting `b'0'`, so the valid
+  maximum `Int` can trap on intermediate overflow; out-of-range input lacks
+  a deliberate parse-error policy. Also specify contextual handling of
   `-9223372036854775808`.
 - Strengthen Joyeer IR ownership, dominance, and opcode-type verification.
 
@@ -57,7 +61,7 @@ The proposed host contracts and acceptance cases are tracked in
 - Measure supported platforms and distinguish generated-program costs from the
   LLVM-based compiler/backend package.
 
-Use the [measurement requirements](../impl/native.md#7-performance-and-footprint-measurement)
+Use the [measurement requirements](../impl/backend.md#7-performance-and-footprint-measurement)
 when defining workloads and acceptance thresholds.
 
 ### 6. Expand the language deliberately

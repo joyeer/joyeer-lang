@@ -676,6 +676,7 @@ private:
                 false,
                 parameterEffect == syntax::AccessEffect::consuming,
                 parameterEffect == syntax::AccessEffect::initializing,
+                parameter->label == nullptr ? std::string() : parameter->label->rawValue,
             });
             const auto debugVariable = ensureDebugVariable(
                     *parameterSymbol,

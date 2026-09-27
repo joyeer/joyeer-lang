@@ -1,9 +1,10 @@
 # joypm M0: Language and Host Contracts
 
-**Status:** discussion draft except M0-04, whose unit-value scope has been
-accepted and implemented. The remaining recommendations are not approved
-language changes or implemented APIs. M0 is not complete until the other
-decisions and compatibility boundaries are accepted.
+**Status:** discussion draft except M0-02 (single-file native entry) and M0-04
+(unit values), which have been accepted and implemented. The remaining
+recommendations are not approved language changes or implemented APIs. M0 is
+not complete until the other decisions and compatibility boundaries are
+accepted.
 
 ## Goal and scope
 
@@ -13,8 +14,9 @@ policy belong in Joyeer. The existing C++ compiler and C11 runtime remain.
 
 M0 defines observable behavior before implementation. Its deliverables are
 semantic contracts, API sketches, compatibility decisions, and acceptance
-cases for later milestones. It does not implement modules, new operators,
-filesystem operations, or subprocesses.
+cases for later milestones. The accepted entry and unit-value slices are
+implemented; modules, new operators, filesystem operations, and subprocesses
+are not.
 
 The current executable baseline is documented in
 [Implemented Language Surface](../impl/supported-features.md). Specification
@@ -27,7 +29,7 @@ Recommendations are **proposed** unless explicitly marked implemented.
 | ID | Area | Recommended direction | Implementation milestone |
 |---|---|---|---|
 | M0-01 | Modules | Directory-based modules, explicit dependencies, qualified imports, existing visibility levels | M1 |
-| M0-02 | Program entry | Preserve `main()`; add an argument-taking entry point with an integer exit status | M3 |
+| M0-02 | Program entry | Implemented for single-file native executables: preserve `main()`; accept borrowed arguments and an integer exit status | M3 entry slice done |
 | M0-03 | Error propagation | Explicit `Result` / `Optional` propagation without implicit error conversion | M2 |
 | M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice |
 | M0-05 | Dictionaries | Add owned optional lookup without changing subscript behavior | M2 |
@@ -86,7 +88,9 @@ binary modules, caching, and a stable library ABI are not prerequisites.
 
 ## M0-02: Program entry and exit status
 
-Keep the current entry form:
+Accepted and implemented for single-file native executables; see
+[declarations](../spec/03-declarations.md#326-executable-entry-point) for the
+normative contract. Keep the original entry form:
 
 ```joyeer
 func main() {
@@ -94,7 +98,7 @@ func main() {
 }
 ```
 
-Propose one additional entry form:
+The additional entry form is:
 
 ```joyeer
 func main(args: [String]): Int {
@@ -103,9 +107,10 @@ func main(args: [String]): Int {
 }
 ```
 
-Recommended contract:
+Implemented contract:
 
-- An executable has exactly one entry point in its root module.
+- A single-file executable has exactly one entry point; module-root entry
+  selection remains part of M0-01.
 - Legacy `main()` succeeds with status zero after normal cleanup.
 - `args` contains user arguments only, excluding the executable name.
 - Empty arguments, spaces, and argument boundaries are preserved.
@@ -113,16 +118,17 @@ Recommended contract:
   Runtime-owned argument storage outlives the entry call and is released
   before the final allocation-balance check.
 - Normal return cleans local values and temporaries before reporting status.
-- Recommend the portable range `0..255` for a Joyeer entry's return value.
-  Out-of-range values produce an explicit runtime diagnostic and failure,
-  rather than silent truncation.
+- Joyeer's own entry return value is restricted to `0..255`. Out-of-range
+  values produce an explicit runtime diagnostic and failure, not truncation.
+- POSIX arguments preserve their original bytes; Windows uses UTF-16 to UTF-8
+  conversion and reports invalid encoding.
 - Do not add an unrestricted termination primitive as a substitute for entry
   return semantics.
 
-Accept or revise the proposed signature, exclusion of the executable name,
-exit-code range, and startup argument-encoding policy before M3. A subprocess
-status must still retain the full platform exit code; it is not restricted by
-the portable range proposed for Joyeer's own entry points.
+When M0-01 adds modules, preserve the single root-module entry rule without
+changing either signature. A subprocess status must still retain the full
+platform exit code; it is not restricted by the range for Joyeer's own entry
+points.
 
 The project manager's meanings for individual codes are tool policy, not
 language semantics. A possible convention is zero for success, one for an
@@ -306,12 +312,13 @@ own CLI status must be settled explicitly.
 
 ## Acceptance matrix to prepare in M0
 
-These are planned acceptance cases, not tests claimed to exist or pass.
+These are acceptance cases for the planned work, except the implemented entry
+and unit-value slices, which have native and compiler tests.
 
 | Area | Positive cases | Negative or boundary cases |
 |---|---|---|
 | Modules | Same-module forward calls; public imported calls; correct per-file diagnostics | Duplicate declarations; invisible names; unresolved imports; dependency cycles; multiple root entries |
-| Entry | Legacy entry; zero arguments; empty arguments; argument forwarding; normal nonzero return | Unsupported signature; invalid exit range; startup encoding failure; cleanup before reporting status |
+| Entry (implemented for single-file programs) | Legacy entry; zero arguments; empty and spaced arguments; normal nonzero return | Unsupported signature; invalid exit range; cleanup before reporting status. Windows encoding failure still needs a Windows-only test |
 | Propagation | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
 | Unit results | Construct and match `Result<Void, E>`; propagate success and failure | Invalid zero-sized payload lowering; confusion between `.Ok()` and `.Ok(())` |
 | Dictionary | Present key; absent key; owned result survives mutation | Existing subscript still traps; nested optional preserves absence distinctions |

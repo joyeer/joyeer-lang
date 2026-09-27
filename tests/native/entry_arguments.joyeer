@@ -1,0 +1,12 @@
+func main(args: [String]): Int {
+    print(value: args.count)
+    if args.count == 0 {
+        return 0
+    }
+    let copy = args
+    print(value: copy[0].count)
+    print(value: copy[0])
+    print(value: copy[1].count)
+    print(value: copy[1])
+    return 73
+}
