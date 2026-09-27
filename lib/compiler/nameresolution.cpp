@@ -176,6 +176,9 @@ private:
             case Kind::accessExpr:
                 indexNode(std::static_pointer_cast<syntax::AccessExprSyntax>(node)->operand);
                 break;
+            case Kind::propagateExpr:
+                indexNode(std::static_pointer_cast<syntax::PropagateExprSyntax>(node)->operand);
+                break;
             case Kind::binaryExpr: {
                 const auto value = std::static_pointer_cast<syntax::BinaryExprSyntax>(node);
                 indexNode(value->left);
@@ -968,6 +971,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -1011,6 +1015,11 @@ private:
             case syntax::Kind::accessExpr:
                 resolveExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        currentScope);
+                break;
+            case syntax::Kind::propagateExpr:
+                resolveExpression(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand,
                         currentScope);
                 break;
             case syntax::Kind::binaryExpr: {

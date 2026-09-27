@@ -782,6 +782,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -845,6 +846,11 @@ private:
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
                         expected,
                         true).value_or(model->typeContext.errorType());
+                break;
+            case syntax::Kind::propagateExpr:
+                result = checkPropagation(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression),
+                        expected);
                 break;
             case syntax::Kind::assignmentExpr: {
                 const auto assignment =
@@ -966,6 +972,63 @@ private:
             default:
                 return model->typeContext.errorType();
         }
+    }
+
+    TypeId checkPropagation(
+            const syntax::PropagateExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        std::optional<TypeId> operandExpected;
+        if (expected.has_value() &&
+            *expected != model->typeContext.errorType() &&
+            *expected != model->typeContext.anyType() &&
+            currentReturnType.has_value()) {
+            const auto* returnType = model->typeContext.type(*currentReturnType);
+            if (returnType != nullptr && returnType->kind == TypeKind::result) {
+                const auto errorType = returnType->arguments[1];
+                operandExpected = model->typeContext.resultType(*expected, errorType);
+            } else if (returnType != nullptr && returnType->kind == TypeKind::optional) {
+                operandExpected = model->typeContext.optionalType(*expected);
+            }
+        }
+        const auto operand = checkExpression(expression->operand, operandExpected).value_or(
+                model->typeContext.errorType());
+        if (operand == model->typeContext.errorType()) return operand;
+
+        const auto* operandType = model->typeContext.type(operand);
+        if (operandType == nullptr ||
+            (operandType->kind != TypeKind::result &&
+             operandType->kind != TypeKind::optional)) {
+            report(
+                    TypeCheckingDiagnosticId::invalidPropagationOperand,
+                    expression->span,
+                    "postfix '?' requires a Result or Optional operand");
+            return model->typeContext.errorType();
+        }
+
+        const auto* returnType = currentReturnType.has_value()
+                ? model->typeContext.type(*currentReturnType)
+                : nullptr;
+        if (returnType == nullptr || returnType->kind != operandType->kind) {
+            report(
+                    TypeCheckingDiagnosticId::invalidPropagationContext,
+                    expression->span,
+                    operandType->kind == TypeKind::result
+                            ? "postfix '?' on Result requires a Result-returning function"
+                            : "postfix '?' on Optional requires an Optional-returning function");
+            return model->typeContext.errorType();
+        }
+        if (operandType->kind == TypeKind::result &&
+            operandType->arguments[1] != returnType->arguments[1]) {
+            report(
+                    TypeCheckingDiagnosticId::mismatchedPropagationError,
+                    expression->span,
+                    "postfix '?' requires the same error type: operand has '" +
+                            model->typeContext.displayName(operandType->arguments[1]) +
+                            "' but function returns '" +
+                            model->typeContext.displayName(returnType->arguments[1]) + "'");
+            return model->typeContext.errorType();
+        }
+        return operandType->arguments[0];
     }
 
     TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
@@ -1388,6 +1451,11 @@ private:
             case syntax::Kind::accessExpr:
                 collectEvaluationAccesses(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        accesses);
+                break;
+            case syntax::Kind::propagateExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand,
                         accesses);
                 break;
             case syntax::Kind::binaryExpr: {
@@ -2388,6 +2456,12 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.missing-contextual-type";
         case TypeCheckingDiagnosticId::invalidOperatorOperands:
             return "type-checking.invalid-operator-operands";
+        case TypeCheckingDiagnosticId::invalidPropagationOperand:
+            return "type-checking.invalid-propagation-operand";
+        case TypeCheckingDiagnosticId::invalidPropagationContext:
+            return "type-checking.invalid-propagation-context";
+        case TypeCheckingDiagnosticId::mismatchedPropagationError:
+            return "type-checking.mismatched-propagation-error";
         case TypeCheckingDiagnosticId::unknownMember:
             return "type-checking.unknown-member";
         case TypeCheckingDiagnosticId::notSubscriptable:

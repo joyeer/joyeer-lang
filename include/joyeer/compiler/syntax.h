@@ -44,6 +44,7 @@ enum class Kind {
     parenthesizedExpr,
     prefixExpr,
     accessExpr,
+    propagateExpr,
     binaryExpr,
     assignmentExpr,
     memberExpr,
@@ -410,6 +411,15 @@ struct AccessExprSyntax final : ExprSyntax {
             ExprSyntax(Kind::accessExpr, span),
             marker(std::move(marker)),
             operand(std::move(operand)) {}
+};
+
+struct PropagateExprSyntax final : ExprSyntax {
+    using Ptr = std::shared_ptr<PropagateExprSyntax>;
+
+    ExprPtr operand;
+
+    PropagateExprSyntax(SourceSpan span, ExprPtr operand):
+            ExprSyntax(Kind::propagateExpr, span), operand(std::move(operand)) {}
 };
 
 struct BinaryExprSyntax final : ExprSyntax {

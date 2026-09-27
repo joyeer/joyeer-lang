@@ -866,6 +866,36 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             NativeRegressionFlowReinitialization regression_flow_reinitialization
             "ready\nready\nold\nnew\niteration\niteration\n")
+    set(propagation_output
+            "local!\nready!\nok\n1\nlocal!\nfailed!\n2\nfailed!\n3\nfirst!\nready!\n4\nheld!\npresent!\nheld!\nmissing\nunit some\nunit none\n7\nunit!\nscope!\n9\narray ok\narray!\nouter\ninner\n42\nouter\ninner\n42\nkept!\nkept!\nborrowed error!\nborrowed error!\n3\nnever success\n9\nnever none\nfalse\n0\ntrue\n1\nguard failed\n2\n")
+    add_joyeer_native_regression(
+            NativePropagation propagation "${propagation_output}")
+    set_tests_properties(NativePropagationO0 NativePropagationO2 PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;safety;regression;propagation")
+
+    add_test(NAME NativePropagationFullDebug
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/propagation.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/propagation-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DEXPECTED_OUTPUT=${propagation_output}"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativePropagationFullDebug PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;propagation;debug-info")
+
+    add_test(NAME NativePropagationFile
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/propagation_file.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/propagation-file${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_OUTPUT=file contents\nmissing\n"
+                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/native
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativePropagationFile PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;file-io;propagation")
 
     set(unit_values_output
             "true\ntrue\n2\ntrue\nbranch!\ntrue\n3\ntemporary!\n4\ntemporary!\n3\ntrue\n5\n2\ntrue\n6\ntrue\nowned!\nevent\nsome\nnone\nunit error\n100\n")
@@ -989,6 +1019,12 @@ endfunction()
 
 add_joyeer_rejected_regression(TypeRegressionPayloadCoverage type-checking
         regression_type_payload_nonexhaustive type-checking.non-exhaustive-match)
+add_joyeer_rejected_regression(TypePropagationWrongReturn type-checking
+        propagation_wrong_return type-checking.invalid-propagation-context)
+add_joyeer_rejected_regression(TypePropagationWrongError type-checking
+        propagation_wrong_error type-checking.mismatched-propagation-error)
+set_tests_properties(TypePropagationWrongReturn TypePropagationWrongError PROPERTIES
+        LABELS "type-checking;safety;regression;propagation")
 add_joyeer_rejected_regression(TypeRegressionConditionalExclusivity type-checking
         regression_type_conditional_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeRegressionReceiverExclusivity type-checking

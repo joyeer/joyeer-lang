@@ -927,6 +927,9 @@ private:
             case syntax::Kind::accessExpr:
                 return lowerExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::propagateExpr:
+                return lowerPropagation(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression));
             case syntax::Kind::binaryExpr:
                 return lowerBinary(std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
             case syntax::Kind::assignmentExpr:
@@ -1534,6 +1537,153 @@ private:
         return emitEnumConstruction(type, caseSymbol, payloads, span);
     }
 
+    ir::Value emitExtractPayload(
+            typing::TypeId payloadType,
+            ir::ValueId operandId,
+            semantic::SymbolId caseSymbol,
+            int64_t payloadIndex,
+            SourceSpan span) {
+        auto instruction = makeInstruction(ir::Opcode::extractPayload, span);
+        instruction.result = makeValue(payloadType, ir::ValueCategory::value);
+        instruction.operands = { operandId };
+        instruction.symbol = caseSymbol;
+        instruction.integerValue = payloadIndex;
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        return result;
+    }
+
+    std::optional<ir::Value> lowerPropagation(
+            const syntax::PropagateExprSyntax::Ptr& expression) {
+        auto operand = lowerExpression(expression->operand);
+        const auto resultType = model->typeOf(expression);
+        if (!operand.has_value() || !resultType.has_value()) return std::nullopt;
+        const auto* operandType = model->types().type(operand->type);
+        const bool isResult = operandType != nullptr &&
+                operandType->kind == typing::TypeKind::result;
+        const auto successCase = findEnumCase(
+                operand->type, isResult ? "Ok" : "Some");
+        const auto failureCase = findEnumCase(
+                operand->type, isResult ? "Err" : "None");
+        const auto returnedFailureCase = findEnumCase(
+                currentFunction().resultType, isResult ? "Err" : "None");
+        if (operandType == nullptr || !successCase.has_value() ||
+            !failureCase.has_value() || !returnedFailureCase.has_value()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "propagation requires matching concrete enum cases");
+            return std::nullopt;
+        }
+
+        operand = acquireOwned(*operand, expression->span);
+        if (!operand.has_value()) return std::nullopt;
+        const bool neverSuccess = *resultType == model->types().neverType();
+        const bool neverFailure = isResult &&
+                operandType->arguments[1] == model->types().neverType();
+        const bool hasPayload = *resultType != model->types().voidType() && !neverSuccess;
+        const auto resultAddress = hasPayload
+                ? std::optional<ir::Value>(emitValue(
+                        ir::Opcode::stackAllocate,
+                        *resultType,
+                        ir::ValueCategory::address,
+                        {},
+                        expression->span))
+                : std::nullopt;
+        const auto successBlock = createBlock("propagate.success");
+        const auto failureBlock = createBlock("propagate.failure");
+        const auto mergeBlock = neverSuccess
+                ? std::nullopt
+                : std::optional<ir::BlockId>(createBlock("propagate.merge"));
+        auto dispatch = makeInstruction(ir::Opcode::switchPattern, expression->span);
+        dispatch.operands = { operand->id };
+        for (const auto [caseSymbol, target] :
+             { std::pair { *successCase, successBlock },
+               std::pair { *failureCase, failureBlock } }) {
+            const auto* definition = enumCaseDefinition(operand->type, caseSymbol);
+            if (definition == nullptr) {
+                report(
+                        DiagnosticId::missingSymbol,
+                        expression->span,
+                        "propagation case has no concrete definition");
+                return std::nullopt;
+            }
+            ir::Pattern pattern;
+            pattern.kind = ir::PatternKind::enumCase;
+            pattern.type = operand->type;
+            pattern.symbol = caseSymbol;
+            for (const auto payloadType : definition->payloadTypes) {
+                ir::Pattern wildcard;
+                wildcard.kind = ir::PatternKind::wildcard;
+                wildcard.type = payloadType;
+                pattern.payloads.push_back(std::move(wildcard));
+            }
+            dispatch.switchCases.push_back(ir::SwitchCase { pattern, target });
+        }
+        emit(std::move(dispatch));
+
+        switchToBlock(failureBlock);
+        if (neverFailure) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+        } else {
+            std::vector<ir::Value> failurePayloads;
+            if (isResult) {
+                const auto error = emitExtractPayload(
+                        operandType->arguments[1],
+                        operand->id,
+                        *failureCase,
+                        0,
+                        expression->span);
+                if (requiresDestroy(error.type)) recordValue(error, ValueOwnership::owned);
+                failurePayloads.push_back(error);
+            }
+            const auto failure = emitEnumConstruction(
+                    currentFunction().resultType,
+                    *returnedFailureCase,
+                    failurePayloads,
+                    expression->span);
+            if (!failure.has_value()) return std::nullopt;
+            emitReturnValue(*failure, expression->span, expression->span);
+        }
+
+        switchToBlock(successBlock);
+        if (neverSuccess) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+            return std::nullopt;
+        }
+        const auto success = emitExtractPayload(
+                *resultType,
+                operand->id,
+                *successCase,
+                0,
+                expression->span);
+        if (requiresDestroy(success.type)) recordValue(success, ValueOwnership::owned);
+        if (resultAddress.has_value()) {
+            const auto owned = acquireOwned(success, expression->span);
+            if (!owned.has_value()) return std::nullopt;
+            emitRawStore(*owned, *resultAddress, expression->span);
+        }
+        emitBranch(*mergeBlock, expression->span);
+
+        switchToBlock(*mergeBlock);
+        if (!resultAddress.has_value()) return emitUnit(expression->span);
+        if (requiresDestroy(*resultType)) {
+            registerOwnedStorage(*resultAddress);
+            return emitValue(
+                    ir::Opcode::take,
+                    *resultType,
+                    ir::ValueCategory::value,
+                    { resultAddress->id },
+                    expression->span);
+        }
+        return emitValue(
+                ir::Opcode::load,
+                *resultType,
+                ir::ValueCategory::value,
+                { resultAddress->id },
+                expression->span);
+    }
+
     std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
         const auto scrutinee = lowerExpression(expression->scrutinee);
         const auto resultType = model->typeOf(expression);
@@ -1732,17 +1882,18 @@ private:
         if (!caseSymbol.has_value()) return;
         for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
             const auto& payloadPattern = enumPattern->arguments[index]->pattern;
+            if (payloadPattern->kind != syntax::Kind::bindingPattern &&
+                payloadPattern->kind != syntax::Kind::enumCasePattern) {
+                continue;
+            }
             const auto payloadType = model->typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
-            auto instruction = makeInstruction(
-                    ir::Opcode::extractPayload,
+            const auto payload = emitExtractPayload(
+                    *payloadType,
+                    value.id,
+                    *caseSymbol,
+                    static_cast<int64_t>(index),
                     payloadPattern->span);
-            instruction.result = makeValue(*payloadType, ir::ValueCategory::value);
-            instruction.operands = { value.id };
-            instruction.symbol = *caseSymbol;
-            instruction.integerValue = static_cast<int64_t>(index);
-            const auto payload = *instruction.result;
-            emit(std::move(instruction));
             bindPattern(payloadPattern, payload);
         }
     }
@@ -2145,17 +2296,22 @@ private:
         if (!value.has_value()) return;
         value = coerce(*value, currentFunction().resultType, expression->value->span);
         if (!value.has_value()) return;
-        if (requiresDestroy(value->type)) {
-            value = acquireOwned(*value, expression->value->span);
-            if (!value.has_value()) return;
+        emitReturnValue(*value, expression->span, expression->value->span);
+    }
+
+    void emitReturnValue(ir::Value value, SourceSpan span, SourceSpan valueSpan) {
+        if (requiresDestroy(value.type)) {
+            const auto owned = acquireOwned(value, valueSpan);
+            if (!owned.has_value()) return;
+            value = *owned;
         }
-        emitAllScopeCleanupForReturn(expression->span);
+        emitAllScopeCleanupForReturn(span);
         if (currentFunction().resultType == model->types().voidType()) {
-            emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
+            emit(makeInstruction(ir::Opcode::returnVoid, span));
             return;
         }
-        auto instruction = makeInstruction(ir::Opcode::returnValue, expression->span);
-        instruction.operands = { value->id };
+        auto instruction = makeInstruction(ir::Opcode::returnValue, span);
+        instruction.operands = { value.id };
         emit(std::move(instruction));
     }
 
@@ -2327,6 +2483,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:

@@ -412,6 +412,25 @@ return parser.input[p.pos]
     EXPECT_EQ(returnExpr->value->kind, Kind::subscriptExpr);
 }
 
+TEST_F(ParserTest, ParsesPostfixPropagationAfterOperandsBeforeInfixOperators) {
+    parse("func run(value: Int?): Int? {\n"
+          "return .Some(value? + 1)\n"
+          "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto some = std::static_pointer_cast<joyeer::syntax::ContextualCaseExprSyntax>(
+            returned->value);
+    const auto addition = std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            some->arguments[0]->value);
+    ASSERT_EQ(addition->left->kind, Kind::propagateExpr);
+    EXPECT_EQ(addition->left->span.offset, source->content.find("value?"));
+    EXPECT_EQ(addition->left->span.length, 6u);
+    EXPECT_NE(joyeer::syntax::dump(result.root).find("propagate_expr"), std::string::npos);
+}
+
 TEST_F(ParserTest, ParsesConsumingParametersAndArguments) {
     parse(R"JOYEER(func take(value: consuming String) { print(value: value) }
 func run() {

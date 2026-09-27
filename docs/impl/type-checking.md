@@ -86,6 +86,9 @@ The current checker validates:
   `Dict<K,V>[K] -> V` typing;
 - `count` on strings, arrays, and dictionaries;
 - contextual user enum, `Optional`, and `Result` construction;
+- postfix `?` on `Result<T, E>` only within `Result<U, E>`, requiring identical
+  concrete `E`, and on `Optional<T>` only within `Optional<U>`; no implicit
+  error conversion or mixing of the two families;
 - enum pattern payload binding and match-arm result unification;
 - exhaustive user enum, `Optional`, `Result`, and `Bool` matches; other
   domains require a catch-all arm;

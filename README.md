@@ -43,11 +43,12 @@ An integer-focused Joyeer-written JSON parser fixture exercises the compiled
 pipeline. It is an integration workload, not a complete JSON conformance or
 performance benchmark; see its
 [known limits](docs/plan/roadmap.md#1-strengthen-correctness-coverage).
-Implemented features include integers, booleans, bytes, strings, `let`/`var`, checked
-arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
+Implemented features include integers, booleans, bytes, strings, `let`/`var`,
+checked arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
-`Optional`, `Result`, file input, deterministic ownership cleanup, projection
-consumption, exclusivity checking, and structured diagnostics.
+`Optional`, `Result`, postfix `?` propagation, file input, deterministic
+ownership cleanup, projection consumption, exclusivity checking, and
+structured diagnostics.
 
 Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,

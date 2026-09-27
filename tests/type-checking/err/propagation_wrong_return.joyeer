@@ -1,0 +1,4 @@
+func main(args: [String]): Int {
+    let value = readFile(path: "x")?
+    return 0
+}

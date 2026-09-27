@@ -764,6 +764,12 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
                     std::move(index));
             continue;
         }
+        if (auto questionToken = cursor.eat(question)) {
+            expression = std::make_shared<syntax::PropagateExprSyntax>(
+                    coveringSpan(expression->span, tokenSpan(questionToken)),
+                    std::move(expression));
+            continue;
+        }
         break;
     }
     return expression;

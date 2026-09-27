@@ -124,6 +124,10 @@ only checks proven redundant, not replace trapping arithmetic with unchecked
 source operation's debug location. Array ownership, operand evaluation order,
 append/growth, and destruction remain unchanged.
 
+Postfix `?` uses the existing enum-tag branch, payload extraction, and return
+instructions from Joyeer IR. The backend guards payload reads by the tag;
+no separate runtime propagation operation is required.
+
 Debug information defaults to off (`-g0`). `-g` and `-gline-tables-only`
 enable line tables in the host format; `-gfull` adds lexical scopes, source
 variables, and physical type metadata. `-gdwarf` selects DWARF 4, and

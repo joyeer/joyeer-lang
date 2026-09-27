@@ -57,6 +57,48 @@ if flag { return 1 } else { return 2 }
     EXPECT_TRUE(result.diagnostics.empty());
 }
 
+TEST_F(SemanticAnalysisTest, KeepsPropagationSuccessPathsReachable) {
+    analyze("func pass(input: Int?): Int? {\n"
+            "let value = input?\n"
+            "return value\n"
+            "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_TRUE(result.diagnostics.empty()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, NeverSuccessPropagationTerminatesTheFunction) {
+    analyze("func fail(): Result<Never, String> { return .Err(\"stop\") }\n"
+            "func forward(): Result<Int, String> {\n"
+            "fail()?\n"
+            "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_TRUE(result.diagnostics.empty()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, NeverErrorPropagationDoesNotRequireEarlyOutputInitialization) {
+    analyze("func pass(out: initializing String, value: Result<Int, Never>): "
+            "Result<Int, Never> {\n"
+            "let number = value?\n"
+            "&out = \"ready\"\n"
+            "return .Ok(number)\n"
+            "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_TRUE(result.diagnostics.empty()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, PropagationFailureRequiresInitializingOutputs) {
+    analyze("func load(out: initializing String, input: Result<Int, String>): "
+            "Result<Int, String> {\n"
+            "let value = input?\n"
+            "&out = \"ready\"\n"
+            "return .Ok(value)\n"
+            "}\n");
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::initializingParameterNotInitialized))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, UnitStillRequiresInitializationAndConsumptionTracking) {
     for (const auto* text : {
             "func accept(value: Void) {}\nfunc run() {\n"

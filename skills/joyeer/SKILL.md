@@ -28,13 +28,14 @@ single-file native implementation, not every feature in the draft specification.
 ## Write the program
 
 - Prefer `let`; use `var` for mutation. Put executable work in functions and
-  use a parameterless `func main()` for native programs.
+  use `func main()` or `func main(args: [String]): Int` for native programs.
 - Write explicit parameter and result types. Use named calls such as
   `print(value: result)`; function result types follow `:`, not `->`.
 - Respect borrowing, `inout`, consuming, and initializing access.
   Do not remove required `&` or `consume` markers merely to hide a diagnostic.
-- Use exhaustive `match` for enums, `Optional`, and `Result`. Handle failure
-  explicitly rather than replacing it with an apparent success.
+- Use exhaustive `match` for enums and when handling errors at a CLI boundary.
+  Inside compatible `Result`/`Optional` functions, postfix `?` propagates
+  failure with cleanup; never replace failure with an apparent success.
 - Keep compilation to one source file. Do not invent imports, external
   packages, standard-library methods, or project-manager commands.
 - Consult the [tested examples](examples/README.md) for concrete spellings.

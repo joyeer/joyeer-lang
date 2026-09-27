@@ -23,7 +23,8 @@ precedence; associativity is shown.
 | 14 | `??` (nil / `.Err` coalescing) | right |
 | 15 | assignment (`=`  `+=` …) | right |
 
-(Postfix `?` and `!` are optional-chain / force-unwrap, see §5.4.)
+(Postfix `?` propagates `Result`/`Optional` failure; postfix `!` forces an
+unwrap. Optional chaining is the separate `?.` form; see §5.4 and §8.3.)
 
 ### 5.2 Arithmetic, comparison, logical, bitwise
 

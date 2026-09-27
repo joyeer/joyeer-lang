@@ -105,7 +105,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Bitwise | `&` `\|` `^` `~` `<<` `>>` |
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 | Range | `..<` `...` |
-| Postfix | `?` (optional chain / Result-propagation) `!` (force-unwrap) |
+| Postfix | `?` (Result / Optional propagation) `!` (force-unwrap) |
 | Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
 

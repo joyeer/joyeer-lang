@@ -33,7 +33,7 @@ machine code and links it with `JoyeerNativeRuntime`.
 |---|---|
 | Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
-| Expressions | Calls with mandatory labels, member access, subscripts, assignment, checked integer arithmetic, comparisons, Boolean `&&`, and string concatenation |
+| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer arithmetic, comparisons, Boolean `&&`, and string concatenation |
 | Control flow | `if`, `else if`, `else`, `while`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
@@ -58,9 +58,9 @@ declarations.
 - `Float`, `Double`, general tuples, or tuple destructuring.
 - `for-in`, `break`, `continue`, `||`, compound assignment, `is` / `as`,
   match guards, range patterns, or alternative patterns.
-- Optional chaining `?.`, coalescing `??`, postfix propagation `?`, or force
-  unwrap `!`. Optional types use `T?`; recoverable values are handled with an
-  explicit `match`.
+- Optional chaining `?.`, coalescing `??`, or force unwrap `!`. Optional
+  types use `T?`; postfix `?` propagates only between the same `Result` error
+  type or between `Optional` results. Other errors require explicit `match`.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
   aggregate printing, streaming file APIs, or a general standard library.
 - Source-language FFI, contracts or property annotations as executable

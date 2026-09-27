@@ -109,6 +109,17 @@ false fallthrough edge. `&&` emits a conditional right-hand block and a Boolean
 merge slot; its right operand and temporaries are evaluated only on the
 true-left path.
 
+Postfix `?` evaluates its `Result`/`Optional` operand once, then lowers to an
+enum-tag switch with success, failure, and continuation blocks. The success
+payload moves into the expression result; the failure block constructs the
+enclosing function's `.Err` or `.None` and uses the existing return cleanup
+path. An owned operand is transferred rather than cloned; a borrowed one
+receives the independent owned copy required by value semantics. Typed
+payload extraction follows the tag branch, and `Void` payloads carry no
+bytes. A `Never` payload has no value to extract, so its impossible branch
+terminates as unreachable. No new runtime operation or special IR opcode is
+required.
+
 Optional promotion must be explicit in IR: an accepted conversion from `T` to
 `T?` needs `Optional.Some(T)` at its value boundary, while `nil` needs
 `Optional.None`. Binding initializers, aggregate operands, call arguments,

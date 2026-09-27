@@ -116,8 +116,9 @@ readFile(path: String): Result<String, IOError>
 `Ok` contains an owned, byte-preserving `String`, including embedded NUL
 bytes. `Err` contains `.NotFound(code)`, `.PermissionDenied(code)`,
 `.InvalidPath(code)`, or `.Other(code)` with a stable category and the nonzero
-platform C I/O error code. Both enum layers require exhaustive `match`
-because postfix propagation is not implemented.
+platform C I/O error code. A function returning `Result<U, IOError>` may use
+`readFile(path: path)?` to propagate the same error type; an entry returning
+`Int` must handle its final result explicitly.
 
 Byte preservation does not establish valid UTF-8. The reader grows from a
 4096-byte buffer and retains spare capacity on success; `count` is the

@@ -1,10 +1,10 @@
 # joypm M0: Language and Host Contracts
 
-**Status:** discussion draft except M0-02 (single-file native entry) and M0-04
-(unit values), which have been accepted and implemented. The remaining
-recommendations are not approved language changes or implemented APIs. M0 is
-not complete until the other decisions and compatibility boundaries are
-accepted.
+**Status:** discussion draft except M0-02 (single-file native entry), M0-03
+(error propagation), and M0-04 (unit values), which have been implemented.
+The remaining recommendations are not approved language changes or implemented
+APIs. M0 is not complete until the other decisions and compatibility
+boundaries are accepted.
 
 ## Goal and scope
 
@@ -14,9 +14,9 @@ policy belong in Joyeer. The existing C++ compiler and C11 runtime remain.
 
 M0 defines observable behavior before implementation. Its deliverables are
 semantic contracts, API sketches, compatibility decisions, and acceptance
-cases for later milestones. The accepted entry and unit-value slices are
-implemented; modules, new operators, filesystem operations, and subprocesses
-are not.
+cases for later milestones. The accepted entry, propagation, and unit-value
+slices are implemented; modules, other new operators, filesystem operations,
+and subprocesses are not.
 
 The current executable baseline is documented in
 [Implemented Language Surface](../impl/supported-features.md). Specification
@@ -30,7 +30,7 @@ Recommendations are **proposed** unless explicitly marked implemented.
 |---|---|---|---|
 | M0-01 | Modules | Directory-based modules, explicit dependencies, qualified imports, existing visibility levels | M1 |
 | M0-02 | Program entry | Implemented for single-file native executables: preserve `main()`; accept borrowed arguments and an integer exit status | M3 entry slice done |
-| M0-03 | Error propagation | Explicit `Result` / `Optional` propagation without implicit error conversion | M2 |
+| M0-03 | Error propagation | Implemented: postfix `?` for `Result` / `Optional`, with exact error types and owned early-return cleanup | M2 propagation slice done |
 | M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice |
 | M0-05 | Dictionaries | Add owned optional lookup without changing subscript behavior | M2 |
 | M0-06 | Control flow | Define short-circuiting, loop exits, checked division, and remainder before lowering them | M2 |
@@ -136,8 +136,8 @@ operation failure, and two for invalid CLI usage.
 
 ## M0-03: Error propagation
 
-Use [the existing propagation design](../spec/08-error-handling.md), with
-explicit first-version limits:
+Implemented using [the propagation design](../spec/08-error-handling.md),
+with the following first-version limits:
 
 - Evaluate the operand of `?` exactly once.
 - Unwrap one `.Ok` or `.Some` layer on success.
@@ -149,7 +149,7 @@ explicit first-version limits:
 - Preserve ordinary value ownership and cleanup on the early-return path.
 - Do not silently flatten nested optional or result values.
 
-An API sketch using proposed syntax:
+A supported example:
 
 ```joyeer
 func load(path: String): Result<String, IOError> {
@@ -180,8 +180,8 @@ The compiler now accepts `()` in expression, type, and pattern positions.
 Unit values work in bindings, calls, returns, aggregates, and builtin
 containers, with initialization and consumption checks preserved.
 `.Ok()` and general tuples remain rejected. The native acceptance fixture is
-[`unit_values.joyeer`](../../tests/native/unit_values.joyeer). Postfix `?` and
-filesystem operations remain separate work. The normative rules are in
+[`unit_values.joyeer`](../../tests/native/unit_values.joyeer). Filesystem
+operations remain separate work. The normative rules are in
 [types](../spec/02-types.md#212-void-and-the-unit-value) and
 [error handling](../spec/08-error-handling.md#822-fallible-operations-without-success-data).
 
@@ -312,14 +312,14 @@ own CLI status must be settled explicitly.
 
 ## Acceptance matrix to prepare in M0
 
-These are acceptance cases for the planned work, except the implemented entry
-and unit-value slices, which have native and compiler tests.
+These are acceptance cases for the planned work, except the implemented entry,
+propagation, and unit-value slices, which have native and compiler tests.
 
 | Area | Positive cases | Negative or boundary cases |
 |---|---|---|
 | Modules | Same-module forward calls; public imported calls; correct per-file diagnostics | Duplicate declarations; invisible names; unresolved imports; dependency cycles; multiple root entries |
 | Entry (implemented for single-file programs) | Legacy entry; zero arguments; empty and spaced arguments; normal nonzero return | Unsupported signature; invalid exit range; cleanup before reporting status. Windows encoding failure still needs a Windows-only test |
-| Propagation | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
+| Propagation (implemented) | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
 | Unit results | Construct and match `Result<Void, E>`; propagate success and failure | Invalid zero-sized payload lowering; confusion between `.Ok()` and `.Ok(())` |
 | Dictionary | Present key; absent key; owned result survives mutation | Existing subscript still traps; nested optional preserves absence distinctions |
 | Control flow | Short-circuit OR; nested loop exits; repeated `continue` | Skipped side effects; use outside loops; skipped cleanup; invalid loop re-entry state |

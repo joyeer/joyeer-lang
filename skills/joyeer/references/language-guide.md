@@ -9,8 +9,9 @@ The linked examples are complete programs, not pseudocode.
   for mutable locals. Explicit annotations use `let name: Int = expression`.
 - Functions use `func add(left: Int, right: Int): Int { ... }`; call them with
   `add(left: 20, right: 22)`. Do not use Swift's `->` or Rust's `fn`.
-- A function without a result annotation returns `Void`. Use `func main()` as
-  the native entry point, with all executable work inside functions.
+- A function without a result annotation returns `Void`. Native entry
+  points are `func main()` and `func main(args: [String]): Int`; arguments
+  exclude the executable name and `Int` exits must be in `0..255`.
 - Use braces for `if`, `else`, and `while`; parentheses around conditions are
   unnecessary. Prefer explicit `return` for clarity.
 - Local mutation uses `number = number + 1`. Use a loop condition or `return`
@@ -83,9 +84,12 @@ See [ownership-and-errors.joyeer](../examples/ownership-and-errors.joyeer).
   Read a known-present key with `lookup["answer"]`. Do not assume Rust-like
   `get`, `insert`, iteration, or Optional-valued lookup.
 - Optional: `Optional<Int>` (or `Int?`), `.Some(value)` and `.None`.
-  Inspect with `match value { .Some(number) => ..., .None => ... }`.
+  Inspect with `match value { .Some(number) => ..., .None => ... }`, or use
+  `value?` inside a function returning another `Optional`.
 - Result: `Result<Int, String>`, `.Ok(value)` and `.Err(error)`.
-  Match both cases; do not introduce `try`, `catch`, or propagation operators.
+  Use `value?` inside a function returning `Result<U, String>` with exactly the
+  same error type; otherwise handle both cases with `match`. Do not introduce
+  `try`, `catch`, `??`, or implicit error conversion.
 
 These are compiler-supported built-ins, not evidence for user-defined
 generics. See [collections.joyeer](../examples/collections.joyeer) and
@@ -94,7 +98,9 @@ generics. See [collections.joyeer](../examples/collections.joyeer) and
 ## File input
 
 `readFile(path: "input.txt")` returns `Result<String, IOError>`. Match `.Ok`
-to use the bytes and `.Err` to explicitly report or propagate failure.
+to use the bytes and `.Err` to report failure, or write
+`readFile(path: path)?` inside a function returning `Result<U, IOError>`.
+An `Int` entry point must match its final error and select an exit status.
 For example, `.NotFound(code)` is an IOError payload case; do not invent
 unverified error cases or a universal `.message` property.
 

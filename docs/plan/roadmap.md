@@ -67,7 +67,7 @@ when defining workloads and acceptance thresholds.
 ### 6. Expand the language deliberately
 
 - Complete the design and end-to-end implementation boundaries for modules,
-  user-defined generics, error propagation, and runtime contracts before
+  user-defined generics, and runtime contracts before
   admitting their syntax as supported.
 - Keep `Optional`, `Result`, `Array`, and `Dict` on their compiler-known path
   until general generic declarations and monomorphization are specified.

@@ -158,6 +158,108 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         EXPECT_EQ(declaredType(run->body->items[0]), checking.model->types().voidType());
     }
 
+    TEST_F(TypeCheckingTest, TypesResultAndOptionalPropagationWithoutFlattening) {
+        check(R"JOYEER(func change(value: Result<Int, String>): Result<String, String> {
+let amount: Int = value?
+return .Ok("done")
+}
+func optional(value: Int?): String? {
+let amount: Int = value?
+return "done"
+}
+func nested(value: Result<Result<Int, String>, String>): Result<Int, String> {
+return value?
+}
+func twice(value: Result<Result<Int, String>, String>): Result<Int, String> {
+let number: Int = (value?)?
+return .Ok(number)
+}
+func unit(value: Result<Void, String>): Result<Int, String> {
+let done: Void = value?
+return .Ok(1)
+}
+func contextual(): Result<Int, String> {
+let number: Int = .Ok(42)?
+return .Ok(number)
+}
+func contextualOptional(): Int? {
+let number: Int = .Some(9)?
+return number
+}
+func length(value: Result<String, String>): Result<Int, String> {
+let count = (value?).count
+return .Ok(count)
+}
+)JOYEER");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto change = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[0]);
+        const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                change->body->items[0]);
+        EXPECT_EQ(checking.model->typeOf(binding->initializer), checking.model->types().intType());
+        const auto nested = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[2]);
+        const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                nested->body->items[0]);
+        EXPECT_EQ(
+                checking.model->typeOf(returned->value),
+                checking.model->types().resultType(
+                        checking.model->types().intType(),
+                        checking.model->types().stringType()));
+    }
+
+    TEST_F(TypeCheckingTest, PropagatedOperandsKeepCallExclusivityChecks) {
+        check("func select(value: Int): Int? { return value }\n"
+              "func update(dst: inout Int, src: Int) { &dst = src }\n"
+              "func run(value: inout Int): Int? {\n"
+              "update(dst: &value, src: select(value: value)?)\n"
+              "return value\n"
+              "}\n");
+        EXPECT_FALSE(checking.succeeded());
+        EXPECT_TRUE(std::any_of(
+                checking.diagnostics.begin(),
+                checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id ==
+                            joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, RejectsInvalidPropagationKindsAndContexts) {
+        using joyeer::typing::TypeCheckingDiagnosticId;
+        struct Case {
+            const char* source;
+            TypeCheckingDiagnosticId diagnostic;
+        };
+        for (const auto& test : std::vector<Case> {
+                 { "func run(): Int? { return .Some(42?) }\n",
+                   TypeCheckingDiagnosticId::invalidPropagationOperand },
+                 { "func main(args: [String]): Int {\n"
+                   "let value = readFile(path: \"x\")?\n"
+                   "return 0\n"
+                   "}\n",
+                   TypeCheckingDiagnosticId::invalidPropagationContext },
+                 { "func run(value: Int?): Result<Int, String> { return .Ok(value?) }\n",
+                   TypeCheckingDiagnosticId::invalidPropagationContext },
+                 { "func run(value: Result<Int, String>): Int? { return value? }\n",
+                   TypeCheckingDiagnosticId::invalidPropagationContext },
+                 { "let source: Int? = 1\nlet value = source?\n",
+                   TypeCheckingDiagnosticId::invalidPropagationContext },
+                 { "func run(value: Result<Int, String>): Result<Int, String?> { return .Ok(value?) }\n",
+                   TypeCheckingDiagnosticId::mismatchedPropagationError },
+             }) {
+            SCOPED_TRACE(test.source);
+            check(test.source);
+            EXPECT_FALSE(checking.succeeded());
+            EXPECT_TRUE(std::any_of(
+                    checking.diagnostics.begin(),
+                    checking.diagnostics.end(),
+                    [&test](const auto& diagnostic) {
+                        return diagnostic.id == test.diagnostic;
+                    })) << joyeer::typing::dump(checking.diagnostics);
+        }
+    }
+
     TEST_F(TypeCheckingTest, RejectsInvalidUnitPayloadsAndPatterns) {
         for (const auto* text : {
                 "func run(): Result<Void, String> { return .Ok(42) }\n",

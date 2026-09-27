@@ -153,6 +153,10 @@ private:
             case syntax::Kind::accessExpr:
                 return analyzeExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::propagateExpr:
+                return analyzeExpression(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand) ||
+                        model->typeOf(expression) == model->types().neverType();
             case syntax::Kind::binaryExpr: {
                 const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
                 if (analyzeExpression(binary->left)) return true;
@@ -225,6 +229,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -397,6 +402,26 @@ private:
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
                         state);
                 break;
+            case syntax::Kind::propagateExpr: {
+                const auto propagated =
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression);
+                analyzeExpression(propagated->operand, state);
+                if (state.reachable) {
+                    const auto operandType = model->typeOf(propagated->operand);
+                    const auto* container = operandType.has_value()
+                            ? model->types().type(*operandType)
+                            : nullptr;
+                    if (container == nullptr ||
+                        container->kind != typing::TypeKind::result ||
+                        container->arguments[1] != model->types().neverType()) {
+                        reportUninitializedParameters(expression->span, state);
+                    }
+                    if (model->typeOf(expression) == model->types().neverType()) {
+                        state.reachable = false;
+                    }
+                }
+                break;
+            }
             case syntax::Kind::binaryExpr:
                 analyzeBinary(std::static_pointer_cast<syntax::BinaryExprSyntax>(expression), state);
                 return;
@@ -1012,6 +1037,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -1124,6 +1150,10 @@ private:
             case syntax::Kind::accessExpr:
                 visitExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+                break;
+            case syntax::Kind::propagateExpr:
+                visitExpression(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand);
                 break;
             case syntax::Kind::binaryExpr: {
                 const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
@@ -1260,6 +1290,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:

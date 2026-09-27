@@ -40,8 +40,8 @@ The parser deliberately does **not** implement:
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
-- `/`, `%`, `||`, `!`, `??`, `?.`, propagation/force-unwrap postfix forms,
-  compound assignment, ranges, shifts, or bitwise expressions;
+- `/`, `%`, `||`, `!`, `??`, `?.`, compound assignment, ranges, shifts, or
+  bitwise expressions;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
   so the parser produces a spanned AST rather than pretending to be lossless.
@@ -185,8 +185,8 @@ permitted built-in. The type checker currently accepts only built-in generic
 containers (`Array`, `Dict`, `Optional`, and `Result`); user-defined generics
 remain out of scope.
 
-`?` is a type suffix in this phase. It is not parsed as expression propagation
-or optional chaining.
+`?` is a type suffix here. After an expression it is parsed separately as
+postfix failure propagation; `?.` optional chaining remains unsupported.
 
 The lexer treats `>>` as one deferred shift token, so adjacent angle closers
 in nested generic types are not yet supported without separation. This is an
@@ -228,7 +228,7 @@ highest to lowest:
 
 | Binding power | Forms | Associativity |
 |---|---|---|
-| 8 | member `.`, call `(...)`, subscript `[...]` | left |
+| 8 | member `.`, call `(...)`, subscript `[...]`, postfix `?` | left |
 | 7 | prefix `-`, access marker `&` | right |
 | 6 | `*` | left |
 | 5 | `+`, `-` | left |
@@ -258,6 +258,7 @@ postfix_expr       ::= primary_expr postfix_suffix*
 postfix_suffix     ::= '.' identifier
                      | argument_clause
                      | '[' expression ']'
+                     | '?'
 ```
 
 Consequences that must be visible in AST snapshots:
@@ -317,6 +318,7 @@ Postfix suffixes compose without special cases:
 p.input[p.pos]
 Parser(input: source, pos: 0)
 JsonValue.Bool(true)
+readFile(path: path)?
 ```
 
 The parser records calls uniformly:
@@ -325,6 +327,8 @@ The parser records calls uniformly:
 - `Parser(input: source, pos: 0)` has labeled initializer arguments;
 - `.Bool(true)` has one positional enum-payload argument;
 - `.Unexpected(c, at: pos)` mixes a positional and labeled payload argument.
+- `expr?` wraps one operand in a spanned propagation node; later stages
+  check its `Result`/`Optional` type and early-return rules.
 
 The resolver/type checker applies the declaration-specific restrictions from
 §3.2.1 and §3.4; the parser does not infer them from capitalization.

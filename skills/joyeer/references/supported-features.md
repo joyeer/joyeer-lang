@@ -24,12 +24,13 @@ require a source checkout, internet access, or access to a moving branch.
 
 | Area | Current surface |
 |---|---|
-| Programs | One source file; typed functions; recursion; parameterless `func main()` returning `Void` for executables |
+| Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, `return`, short-circuit `&&`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
+| Propagation | Postfix `?` on `Result<T, E>` in `Result<U, E>` functions with identical `E`, or on `Optional<T>` in Optional-returning functions |
 | Unit results | `Result<Void, E>` with `.Ok(())`; unit expressions, bindings, fields, container elements, and patterns |
 | Strings | Concatenation, comparisons, byte count/indexing, owned `utf8()` byte array |
 | Built-ins | `print(value:)` for supported primitive/string values; `byteToInt(value:)`, `byteToString(value:)`, `readFile(path:)` |
@@ -49,8 +50,9 @@ combination is supported or that the compiler is free of correctness gaps.
   destructuring.
 - `for-in`, `break`, `continue`, `||`, compound assignment such as `+=`,
   `is` / `as` casts, match guards, or range/alternative patterns.
-- Optional chaining `?.`, coalescing `??`, postfix propagation `?`, or force
-  unwrap `!`. `T?` as an Optional type is supported; use `match` on the value.
+- Optional chaining `?.`, coalescing `??`, or force unwrap `!`. `T?` as an
+  Optional type and postfix failure propagation `expr?` are supported;
+  use `match` when handling errors at an `Int` entry point.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
   aggregate printing, streaming file APIs, or an assumed networking library.
 - `joyeer build`, `run`, `test`, `init`, `toolchain`, `doctor`, `--target`,
@@ -58,7 +60,7 @@ combination is supported or that the compiler is free of correctness gaps.
 
 Use a `while` loop with an explicit condition instead of `for-in` or `break`,
 `x = x + 1` instead of `x += 1`, nested conditionals instead of `||`, and
-explicit `match` for absence and recoverable errors.
+explicit `match` for errors that cannot be propagated with `?`.
 
 ## Important semantic and runtime limits
 

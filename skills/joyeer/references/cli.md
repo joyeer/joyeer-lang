@@ -42,8 +42,11 @@ cannot be mistaken for the newly compiled program.
 
 The compiler accepts one input file. `--` ends option parsing, for example
 `joyeer -o output.exe -- -input.joyeer`. Use only one output mode at a time.
-Native output needs `func main()` with no parameters and no non-`Void` result.
-Programs do not expose a supported command-line argument API in this subset.
+Native output needs either `func main()` returning `Void` or
+`func main(args: [String]): Int`. The latter receives arguments excluding
+the executable name and must return a status in `0..255`; other values
+produce an explicit runtime error. An entry returning `Int` cannot use
+postfix `?` directly; handle the final `Result`/`Optional` with `match`.
 
 ## Options
 

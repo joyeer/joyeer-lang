@@ -43,6 +43,8 @@ The pass models normal continuation versus termination for blocks and
 expressions:
 
 - `return` and expressions of type `Never` terminate a path;
+- postfix `?` continues on success but checks initialization obligations on
+  its potential early-return path;
 - `if` terminates only when both branches terminate;
 - an exhaustive `match` terminates when every arm terminates;
 - `while` is conservatively assumed to fall through, even when its condition
@@ -92,6 +94,8 @@ analysis tracks possible initialization separately from definite
 initialization. It checks destination eligibility during argument evaluation
 but commits initialization only after all arguments and a normally returning
 call; a later argument's early return cannot fulfill an output obligation.
+Postfix `?` likewise cannot bypass an `initializing` output obligation when
+the operand fails.
 
 Assignment to a plain local does not read its old value. Assignment through a
 member or subscript does read/project the base storage. The right-hand side and

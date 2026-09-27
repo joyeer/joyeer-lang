@@ -125,6 +125,44 @@ TEST_F(IRLoweringTest, LowersUnitNativeFixture) {
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
+TEST_F(IRLoweringTest, MovesPropagatedPayloadsAndCleansFailurePaths) {
+    lower(R"JOYEER(func fetch(flag: Bool): Result<String, String> {
+if flag { return .Ok("owned" + "!") }
+return .Err("bad" + "!")
+}
+func forward(flag: Bool): Result<Void, String> {
+let local = "local" + "!"
+let data = fetch(flag: flag)?
+print(value: data)
+return .Ok(())
+}
+func borrowed(value: Result<Result<String, String>, String>): Result<String, String> {
+return value?
+}
+func optional(value: Int?): Int? {
+let number = value?
+return number
+}
+)JOYEER");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    const auto& forward = function("forward");
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::switchPattern), 1u);
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::extractPayload), 2u);
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::copyValue), 1u)
+            << joyeer::ir::dump(*result.module);
+    EXPECT_EQ(opcodeCount(forward, joyeer::ir::Opcode::returnValue), 2u);
+    EXPECT_GT(opcodeCount(forward, joyeer::ir::Opcode::destroy), 0u);
+    const auto& dispatch = forward.blocks[0].instructions.back();
+    ASSERT_EQ(dispatch.opcode, joyeer::ir::Opcode::switchPattern);
+    ASSERT_TRUE(dispatch.debugLocation.has_value());
+    EXPECT_EQ(dispatch.span.offset, source->content.find("fetch(flag: flag)?"));
+    EXPECT_FALSE(dispatch.debugLocation->implicitCode);
+    EXPECT_EQ(opcodeCount(function("borrowed"), joyeer::ir::Opcode::copyValue), 1u);
+    EXPECT_EQ(opcodeCount(function("optional"), joyeer::ir::Opcode::switchPattern), 1u);
+}
+
 TEST_F(IRLoweringTest, CarriesSourceLocationsAndMarksCleanupImplicit) {
     lower(R"JOYEER(func run(input: consuming String) {
 let text = "value"
