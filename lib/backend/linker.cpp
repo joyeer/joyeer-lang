@@ -236,7 +236,10 @@ LinkResult Linker::link(
     };
 
     if (!hasEntryPoint) {
-        report(LinkDiagnosticId::missingEntryPoint, "native executable requires 'func main()'");
+        report(
+                LinkDiagnosticId::missingEntryPoint,
+                "native executable requires 'func main()' or "
+                "'func main(args: [String]): Int'");
         return result;
     }
     std::error_code filesystemError;
@@ -502,6 +505,7 @@ LinkResult Linker::link(
         "/OUT:" + outputPath,
         objectPath,
         "/WHOLEARCHIVE:" + runtimePath,
+        "kernel32.lib",
     };
     const auto optimizeReferences = options.optimizationLevel == OptimizationLevel::O0
             ? "/OPT:NOREF"

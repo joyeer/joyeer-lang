@@ -6,19 +6,12 @@
 > implement. This document records implementation coverage; it is not a
 > release-readiness or complete-correctness claim.
 
-## Acceptance baseline
+## Compilation boundary
 
-The compiler accepts one Joyeer source file and runs it through lexer, parser,
-name resolution, type checking, semantic analysis, verified Joyeer IR, LLVM
-emission, native code generation, and linking with `JoyeerNativeRuntime`.
-
-The maintained [native JSON parser](../../tests/native/json_parser.joyeer)
-exercises the implemented surface as one end-to-end workload. It parses the
-integer-focused JSON subset used by the fixture, reads external files, performs
-recursive value cleanup, and exits with no outstanding runtime-managed
-allocations. This demonstrates integration and cleanup for that workload, not
-full JSON conformance, allocation-free parsing, or measured performance parity
-with another language.
+The compiler accepts one Joyeer source file and runs it through lexing, parsing,
+name resolution, type checking, semantic analysis, verified Joyeer IR, and
+textual LLVM IR emission. Native executable output additionally generates
+machine code and links it with `JoyeerNativeRuntime`.
 
 ## Compiler pipeline
 
@@ -30,18 +23,15 @@ with another language.
 | Type checking | Canonical types, calls, access conventions, patterns, and exclusivity | [Type checking](type-checking.md) |
 | Semantic analysis | All-paths return, reachability, initialization, and unused-binding analysis | [Semantic analysis](semantic-analysis.md) |
 | Joyeer IR | Verified CFG, aggregates, ownership operations, and source/debug scopes | [IR](ir.md) |
-| Native backend | Textual LLVM IR plus in-process LLVM code generation and LLD linking | [Native backend](native.md) |
-| Native runtime | Strings, owned byte arrays, collections, typed file input, checked arithmetic, and allocation balance | [Native runtime](native.md) |
+| Backend | Textual LLVM IR plus in-process LLVM code generation and LLD linking | [Backend](backend.md) |
+| Runtime | Strings, owned byte arrays, collections, typed file input, checked arithmetic, and allocation balance | [Runtime](runtime.md) |
 | Diagnostics | Stable stage IDs, source excerpts, fix-its, help, and secondary notes | [Diagnostics](diagnostics.md) |
-
-There is no bytecode backend, VM, legacy parser mode, or language-mode CLI
-switch.
 
 ## Implemented source surface
 
 | Area | Current surface |
 |---|---|
-| Programs | One source file; typed functions; recursion; parameterless `func main()` returning `Void` for executables |
+| Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
 | Expressions | Calls with mandatory labels, member access, subscripts, assignment, checked integer arithmetic, comparisons, Boolean `&&`, and string concatenation |
 | Control flow | `if`, `else if`, `else`, `while`, `return`, and exhaustive `match` |
@@ -96,9 +86,12 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   invalid input in every optimization mode.
 - `readFile(path:)` is the implemented file-input primitive and returns
   `Result<String, IOError>`. There is no general filesystem API.
-- Windows command-line and file-path handling has known non-ASCII limitations.
-  Portable path encoding and wide-character host boundaries remain future
-  work.
+- Generated programs receive Windows command-line arguments as UTF-8 from a
+  wide-character entry point, while POSIX arguments preserve their original
+  bytes. The entry return status must be in `0..255`; other values produce
+  a runtime error rather than truncation. The compiler CLI and existing
+  Windows file-path handling still have non-ASCII limitations; portable path
+  encoding remains future work.
 - Debug emission includes source line tables, lexical variables/types/scopes,
   and PDB/DWARF/dSYM artifact handling. Optimized-value and aggregate-projection
   inspection remains incomplete.
@@ -113,22 +106,6 @@ correctness gaps:
 - [Semantic-analysis precision limits](semantic-analysis.md#precision-limits)
 - [Parser continuation boundaries](parser.md#5-newlines-commas-and-statement-boundaries)
 - [IR evaluation, ownership, and verification invariants](ir.md#7-evaluation-and-storage-invariants)
-
-## JSON parser fixture limits
-
-The JSON parser is a compiler acceptance workload, not a reusable conforming
-JSON library:
-
-- floating-point numbers and Unicode escape decoding are outside its accepted
-  subset;
-- `parseNumber` accepts leading-zero numbers such as `01`;
-- `parseString` accepts unescaped control characters such as a raw newline;
-- decimal accumulation adds the ASCII byte before subtracting `b'0'`, so even
-  the valid maximum `Int` value can trap on intermediate overflow;
-- out-of-range integers do not yet have a deliberate parse-error policy.
-
-These are fixture and coverage gaps, not reasons to weaken the compiler's
-checked arithmetic.
 
 ## Keeping this document current
 

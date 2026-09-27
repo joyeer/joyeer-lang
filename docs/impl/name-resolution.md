@@ -1,7 +1,7 @@
-# Name Resolution — Parser MVP Semantic Model
+# Name Resolution — Semantic Model
 
 > **Status:** Implemented for the type-independent portion of the current
-> Parser MVP AST.
+> syntax AST.
 > **Input:** `syntax::SourceFileSyntax`.
 > **Output:** `semantic::SemanticModel` plus stable, spanned diagnostics.
 
@@ -142,7 +142,7 @@ ctest --test-dir build -L name-resolution --output-on-failure
 
 The test target covers forward references, nested shadowing, type/member
 resolution, synthesized initializers, enum cases, labels, match-arm bindings,
-deferred contextual cases, diagnostics, and the JSON-parser fixture. A CLI
+deferred contextual cases, diagnostics, and parser/native fixtures. A CLI
 negative test verifies that the default compiler reports resolver failures.
 
 ## 7. Known resolution gaps

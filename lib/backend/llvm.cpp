@@ -997,22 +997,58 @@ private:
                 });
         if (found == module->functions.end()) return;
         const auto* resultType = type(found->resultType);
-        if (!found->parameters.empty() || resultType == nullptr ||
-            resultType->kind != typing::TypeKind::voidType) {
+        const bool legacyEntry = found->parameters.empty() &&
+                resultType != nullptr && resultType->kind == typing::TypeKind::voidType;
+        bool argumentEntry = false;
+        if (found->parameters.size() == 1 && resultType != nullptr &&
+            resultType->kind == typing::TypeKind::integer) {
+            const auto& parameter = found->parameters.front();
+            const auto* parameterType = type(parameter.value.type);
+            const auto* elementType = parameterType != nullptr &&
+                    parameterType->kind == typing::TypeKind::array &&
+                    parameterType->arguments.size() == 1
+                    ? type(parameterType->arguments.front())
+                    : nullptr;
+            argumentEntry = parameter.label == "args" && !parameter.isMutable &&
+                    !parameter.isConsuming &&
+                    parameter.value.category == ir::ValueCategory::value &&
+                    elementType != nullptr && elementType->kind == typing::TypeKind::string;
+        }
+        if (!legacyEntry && !argumentEntry) {
             report(
                     DiagnosticId::invalidEntryPoint,
-                    {},
+                    found->debugLocation.has_value()
+                            ? found->debugLocation->span
+                            : SourceSpan {},
                     found->id,
                     std::nullopt,
-                    "entry function must have signature 'func main()'");
+                    "entry function must have signature 'func main()' or "
+                    "'func main(args: [String]): Int'");
             return;
         }
         functionBodies.push_back(
-                "define void @joyeer_main() {\n"
+                "define i32 @joyeer_main_uses_arguments() {\n"
                 "entry:\n"
-                "  call void " + functionName(*found) + "()\n"
-                "  ret void\n"
+                "  ret i32 " + std::string(argumentEntry ? "1" : "0") + "\n"
                 "}\n");
+        if (argumentEntry) {
+            usesArray = true;
+            functionBodies.push_back(
+                    "define i64 @joyeer_main(ptr %args) {\n"
+                    "entry:\n"
+                    "  %arguments = load %joyeer.array, ptr %args\n"
+                    "  %status = call i64 " + functionName(*found) +
+                    "(%joyeer.array %arguments)\n"
+                    "  ret i64 %status\n"
+                    "}\n");
+        } else {
+            functionBodies.push_back(
+                    "define i64 @joyeer_main(ptr %args) {\n"
+                    "entry:\n"
+                    "  call void " + functionName(*found) + "()\n"
+                    "  ret i64 0\n"
+                    "}\n");
+        }
         hasEntryPoint = true;
     }
 

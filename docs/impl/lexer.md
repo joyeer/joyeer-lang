@@ -1,7 +1,7 @@
 # Joyeer Lexer Implementation
 
-> **Status:** The accepted JSON-parser lexical surface is implemented as the
-> compiler's only lexer. The normative grammar is
+> **Status:** The [supported lexical surface](supported-features.md) is
+> implemented by the compiler's only lexer. The normative grammar is
 > [../spec/01-lexical.md](../spec/01-lexical.md).
 
 ## Boundary
@@ -40,8 +40,7 @@ create an infinite loop.
 
 ## Implemented surface
 
-The lexer recognizes the terminals needed by the current parser and native
-JSON fixture:
+The lexer recognizes terminals needed by the current parser:
 
 - identifiers, wildcard `_`, and current/deferred keywords;
 - decimal `Int` literals with `int64_t` overflow diagnostics;
@@ -101,7 +100,7 @@ Coverage includes:
 - malformed strings and bytes;
 - deterministic arbitrary byte buffers with ordered bounded spans;
 - retokenization reset behavior and exactly one EOF;
-- the JSON-parser acceptance source;
+- representative parser and native acceptance sources;
 - CLI rendering of lexer source diagnostics.
 
 The complete unfiltered CTest suite is the final gate.

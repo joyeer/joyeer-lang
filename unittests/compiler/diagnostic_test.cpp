@@ -63,7 +63,7 @@ TEST(DiagnosticsTest, PrintsStructuredDiagnosticsWithoutSourceContext) {
 	diagnostics.reportDiagnostic(
 			ErrorLevel::failure,
 			"linker.missing-entry-point",
-			"native executable requires 'func main()'");
+			"native executable requires 'func main()' or 'func main(args: [String]): Int'");
 
 	testing::internal::CaptureStdout();
 	diagnostics.printErrors();
@@ -71,7 +71,8 @@ TEST(DiagnosticsTest, PrintsStructuredDiagnosticsWithoutSourceContext) {
 
 	EXPECT_EQ(
 			output,
-			"error[linker.missing-entry-point]: native executable requires 'func main()'\n");
+			"error[linker.missing-entry-point]: native executable requires 'func main()' "
+			"or 'func main(args: [String]): Int'\n");
 }
 
 TEST(DiagnosticsTest, PrintsHelpAndSourceFixItEdits) {

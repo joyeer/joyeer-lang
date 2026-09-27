@@ -92,6 +92,48 @@ TEST_F(LLVMBackendTest, UnitConstantsDoNotAllocateOrStorePayloads) {
     EXPECT_EQ(unitBody.find("call "), std::string::npos);
 }
 
+TEST_F(LLVMBackendTest, PreservesParameterlessEntryWithZeroStatus) {
+    emit("func main(): Void { return () }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(result.hasEntryPoint);
+    EXPECT_NE(result.text.find("define i32 @joyeer_main_uses_arguments()"), std::string::npos);
+    EXPECT_NE(result.text.find("  ret i32 0\n"), std::string::npos);
+    EXPECT_NE(result.text.find("define i64 @joyeer_main(ptr %args)"), std::string::npos);
+    EXPECT_NE(result.text.find("  ret i64 0\n"), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, PassesBorrowedStringArgumentsAndReturnsFullStatus) {
+    emit("func main(args values: [String]): Int { return values.count }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(result.hasEntryPoint);
+    EXPECT_NE(result.text.find("  ret i32 1\n"), std::string::npos);
+    EXPECT_NE(result.text.find("  %arguments = load %joyeer.array, ptr %args\n"), std::string::npos);
+    EXPECT_NE(result.text.find("  %status = call i64 @joyeer_fn_"), std::string::npos);
+    EXPECT_NE(result.text.find("(%joyeer.array %arguments)\n"), std::string::npos);
+    EXPECT_NE(result.text.find("  ret i64 %status\n"), std::string::npos);
+
+    emit("func main(args: borrowing [String]): Int { return args.count }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(result.hasEntryPoint);
+}
+
+TEST_F(LLVMBackendTest, RejectsOtherEntrySignatures) {
+    for (const auto* source : {
+                 "func main(): Int { return 0 }\n",
+                 "func main(args: [String]) {}\n",
+                 "func main(values: [String]): Int { return 0 }\n",
+                 "func main(args: [Int]): Int { return 0 }\n",
+                 "func main(args: consuming [String]): Int { return 0 }\n",
+                 "func main(args: inout [String]): Int { return 0 }\n",
+             }) {
+        ASSERT_NO_FATAL_FAILURE(emit(source));
+        ASSERT_EQ(result.diagnostics.size(), 1u) << source;
+        EXPECT_EQ(
+                result.diagnostics.front().id,
+                joyeer::llvmbackend::DiagnosticId::invalidEntryPoint) << source;
+    }
+}
+
 TEST_F(LLVMBackendTest, EmitsUnitStorageAndDebugTypesWithoutChangingVoidReturns) {
     emit("struct Completed { var value: Void }\n"
          "func identity(value: Void): Void { return value }\n"
@@ -104,7 +146,7 @@ TEST_F(LLVMBackendTest, EmitsUnitStorageAndDebugTypesWithoutChangingVoidReturns)
          });
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("name: \"Void\""), std::string::npos);
-    EXPECT_NE(result.text.find("define void @joyeer_main()"), std::string::npos);
+    EXPECT_NE(result.text.find("define i64 @joyeer_main(ptr %args)"), std::string::npos);
     EXPECT_EQ(result.text.find("load void"), std::string::npos);
     EXPECT_EQ(result.text.find("store void"), std::string::npos);
 }
@@ -200,8 +242,8 @@ print(value: text)
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("define void @joyeer_destroy_type_"), std::string::npos);
-    EXPECT_NE(result.text.find("define void @joyeer_main() {"), std::string::npos);
-    EXPECT_EQ(result.text.find("define void @joyeer_main() !dbg"), std::string::npos);
+    EXPECT_NE(result.text.find("define i64 @joyeer_main(ptr %args) {"), std::string::npos);
+    EXPECT_EQ(result.text.find("define i64 @joyeer_main(ptr %args) !dbg"), std::string::npos);
     const auto helper = result.text.find("define void @joyeer_destroy_type_");
     const auto helperHeaderEnd = result.text.find('\n', helper);
     ASSERT_NE(helperHeaderEnd, std::string::npos);
@@ -697,7 +739,7 @@ print(value: match second { .Ok(_) => 0, .Err(code) => code })
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_TRUE(result.hasEntryPoint);
     EXPECT_NE(result.text.find("define void @joyeer_fn_"), std::string::npos);
-    EXPECT_NE(result.text.find("define void @joyeer_main()"), std::string::npos);
+    EXPECT_NE(result.text.find("define i64 @joyeer_main(ptr %args)"), std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_print_int"), std::string::npos);
 }
 

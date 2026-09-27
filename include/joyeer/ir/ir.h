@@ -192,6 +192,7 @@ struct Parameter {
     bool acceptsAnyType = false;
     bool isConsuming = false;
     bool isInitializing = false;
+    std::string label;
 };
 
 struct Function {

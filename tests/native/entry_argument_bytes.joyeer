@@ -1,0 +1,6 @@
+func main(args: [String]): Int {
+    print(value: args.count)
+    print(value: args[0].count)
+    print(value: byteToInt(value: args[0][0]))
+    return 0
+}

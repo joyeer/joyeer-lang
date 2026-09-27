@@ -33,17 +33,16 @@ source -> lexer -> parser -> name resolution -> type checking
   -> LLVM code generation + LLD + native C runtime -> executable
 ```
 
-There is no bytecode backend, VM, legacy parser mode, or language-mode CLI
-switch. Invoking `joyeer` without an output option checks and lowers the
+Invoking `joyeer` without an output option checks and lowers the
 source. `--emit-llvm` writes text after the frontend and Joyeer IR checks;
 LLVM parsing/verification runs in the native backend when `-o` builds an
 executable. On Windows, LLVM and LLD run inside the bundled
 `joyeer-backend.dll`; no LLVM executable is launched at runtime.
 
-The current MVP can compile and run an integer-focused Joyeer-written JSON
-parser fixture. It is an integration workload, not a complete JSON conformance
-or performance benchmark; see its
-[known limits](docs/impl/supported-features.md#json-parser-fixture-limits).
+An integer-focused Joyeer-written JSON parser fixture exercises the compiled
+pipeline. It is an integration workload, not a complete JSON conformance or
+performance benchmark; see its
+[known limits](docs/plan/roadmap.md#1-strengthen-correctness-coverage).
 Implemented features include integers, booleans, bytes, strings, `let`/`var`, checked
 arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
@@ -294,7 +293,7 @@ stage-specific folders under [tests/](tests/) and are registered in
 
 Useful examples include the
 [native JSON parser](tests/native/json_parser.joyeer) and the
-[parser MVP fixture](tests/parser/ok/json_mvp.joyeer).
+[parser acceptance fixture](tests/parser/ok/json_mvp.joyeer).
 
 ## Documentation
 
@@ -306,7 +305,8 @@ Useful examples include the
   implementation boundary
 - [docs/plan/roadmap.md](docs/plan/roadmap.md): active implementation
   priorities
-- [docs/impl/native.md](docs/impl/native.md): LLVM/native backend details
+- [docs/impl/backend.md](docs/impl/backend.md): LLVM backend and linking
+- [docs/impl/runtime.md](docs/impl/runtime.md): process entry and C runtime
 
 Build, test, and contribution conventions are in [AGENTS.md](AGENTS.md).
 

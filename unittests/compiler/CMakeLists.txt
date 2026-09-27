@@ -609,6 +609,88 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime;semantic-analysis"
     )
 
+    function(joyeer_add_entry_case name fixture expected_output expected_exit)
+        add_test(NAME ${name}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/${fixture}.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${name}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DEXPECTED_OUTPUT=${expected_output}"
+                        -DEXPECTED_EXIT_CODE=${expected_exit}
+                        ${ARGN}
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(${name} PROPERTIES
+                LABELS "native;llvm-backend;native-runtime;entry"
+                TIMEOUT 60)
+    endfunction()
+
+    joyeer_add_entry_case(NativeEntryNoArguments entry_arguments "0\n" 0)
+    joyeer_add_entry_case(NativeEntryEmptyAndWhitespace entry_arguments
+            "2\n0\n\n5\n a b \n" 73
+            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
+            -DPROGRAM_ARGUMENT_2_SURROUND_SPACES=ON)
+    string(ASCII 195 169 entry_accent)
+    joyeer_add_entry_case(NativeEntryUnicodeArgument entry_arguments
+            "2\n0\n\n3\nh${entry_accent}\n" 73
+            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=h${entry_accent}")
+    joyeer_add_entry_case(NativeEntryUnoptimizedArguments entry_arguments
+            "2\n0\n\n3\na b\n" 73
+            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
+            -DCOMPILER_ARGS=-O0)
+    joyeer_add_entry_case(NativeEntryLegacyIgnoresArguments hello
+            "42\nnative\n8\n42\n" 0
+            "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=ignored")
+    if(UNIX)
+        joyeer_add_entry_case(NativeEntryPosixRawBytes entry_argument_bytes
+                "1\n1\n255\n" 0
+                -DPROGRAM_ARGUMENT_1_NON_UTF8=ON)
+    endif()
+    joyeer_add_entry_case(NativeEntryExitZero entry_exit_status "cleanup\n" 0)
+    joyeer_add_entry_case(NativeEntryExitOne entry_exit_status "cleanup\n" 1
+            -DPROGRAM_ARGUMENT_1=one)
+    joyeer_add_entry_case(NativeEntryExitMaximum entry_exit_status "cleanup\n" 255
+            -DPROGRAM_ARGUMENT_1=max)
+    joyeer_add_entry_case(NativeEntryExitNegative entry_exit_status "cleanup\n" 1
+            -DPROGRAM_ARGUMENT_1=negative
+            "-DEXPECTED_ERROR_PATTERN=entry returned exit code -1 outside 0")
+    joyeer_add_entry_case(NativeEntryExitOverflow entry_exit_status "cleanup\n" 1
+            -DPROGRAM_ARGUMENT_1=overflow
+            "-DEXPECTED_ERROR_PATTERN=entry returned exit code 256 outside 0")
+
+    add_test(NAME NativeEntryRejectsInvalidSignature
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/err/invalid_entry_signature.joyeer
+                    "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/invalid-entry${CMAKE_EXECUTABLE_SUFFIX}"
+                    -DEXPECTED_PATTERN=llvm.invalid-entry-point
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+    )
+    set_tests_properties(NativeEntryRejectsInvalidSignature PROPERTIES
+            LABELS "native;llvm-backend;entry;diagnostics")
+
+    add_test(NAME NativeEntryRejectsDuplicate
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/err/duplicate_entry.joyeer
+                    "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/duplicate-entry${CMAKE_EXECUTABLE_SUFFIX}"
+                    -DEXPECTED_PATTERN=name-resolution.duplicate-declaration
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+    )
+    set_tests_properties(NativeEntryRejectsDuplicate PROPERTIES
+            LABELS "native;name-resolution;entry;diagnostics")
+
+    add_test(NAME NativeEntryRejectsMissing
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/err/missing_entry.joyeer
+                    "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/missing-entry${CMAKE_EXECUTABLE_SUFFIX}"
+                    -DEXPECTED_PATTERN=linker.missing-entry-point
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
+    )
+    set_tests_properties(NativeEntryRejectsMissing PROPERTIES
+            LABELS "native;llvm-backend;entry;diagnostics")
+
     add_test(NAME NativeExecutableDeferredInitialization
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

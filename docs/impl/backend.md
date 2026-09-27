@@ -1,6 +1,6 @@
-# LLVM and Native Backend
+# Compiler Backend Implementation
 
-> **Status:** The current JSON-parser language surface emits textual LLVM IR;
+> **Status:** The supported language surface emits textual LLVM IR;
 > the platform backend library validates it, generates machine code, and links
 > native executables with in-process LLVM/LLD on Windows, macOS, and Linux.
 > The current implementation covers the native acceptance workload and
@@ -8,6 +8,8 @@
 > payloads, and loop storage. Verifier, native ABI, and library gaps remain.
 > User-defined `deinit` and explicit copy initializers are outside the
 > [implemented language surface](supported-features.md).
+
+For the C runtime and process startup, see [Runtime](runtime.md).
 
 ---
 
@@ -89,10 +91,15 @@ Build a native executable:
 joyeer -o output.exe source.joyeer
 ```
 
-A native executable requires one parameterless `func main()` returning
-`Void`. The emitter adds a stable `joyeer_main` trampoline consumed by the C
-runtime entry point. Missing or invalid entry signatures are diagnosed rather
-than delegated to the platform linker.
+A native executable requires one `func main()` returning `Void` or
+`func main(args: [String]): Int` with a borrowing `args` parameter. The emitter
+provides C-callable `joyeer_main_uses_arguments` and `joyeer_main` trampolines;
+the latter receives a pointer to runtime-owned argument storage and returns
+an `int64_t` status (zero for the parameterless form). No collection is passed
+by value across the generated-module/runtime boundary. Missing or invalid
+entry signatures are diagnosed rather than delegated to the linker. The
+[runtime entry](runtime.md#process-entry-and-exit) owns argument
+storage, cleanup, and exit-status validation.
 
 Native executable linking has an explicit optimization policy: `-O2` is the
 default, and `-O0`, `-O1`, `-O2`, or `-O3` may override it on the CLI. The
@@ -189,132 +196,20 @@ calling-convention, and initialization contract.
 
 ---
 
-## 4. Runtime
+## 4. Runtime boundary
 
-The C11 runtime is in `include/joyeer/native/runtime.h` and
-`lib/native/runtime.c`. It currently supplies:
-
-- checked `Int` add/subtract/multiply;
-- scalar and string printing;
-- string concatenation, equality, ordering, byte indexing, deep clone, and
-  destroy, plus owned UTF-8 byte-array extraction;
-- explicit byte-to-integer conversion and owned single-byte string creation;
-- array construction, checked indexing, mutable element projection,
-  ownership-transferring append/growth, recursive clone, and reverse-order
-  element destruction;
-- dictionary construction, count, linear lookup for primitive/string keys,
-  mutable insert/update growth, recursive key/value clone, and destruction;
-- binary file input through `readFile(path:)`;
-- panic and bounds traps;
-- the process entry trampoline and active-allocation balance check.
-
-The checked arithmetic and generic array-indexing C entry points remain
-available for runtime clients. Generated Joyeer arithmetic and typed array
-accesses use the inline checks described above; string and dictionary accesses
-still use their runtime operations.
-
-The runtime uses libc allocation today. Dictionary lookup uses a
-straightforward linear implementation; hashing is not yet implemented.
-
-`JoyeerNativeRuntime` is a static archive, not separately selectable `abi`,
-`core`, and `std` profiles. Generated programs depend on the target platform's
-C runtime and startup/link inputs; freestanding, kernel, embedded, and no-libc
-profiles are not supported. LLVM/LLD belong to the compiler's private backend,
-not the generated program's runtime. See [building](../building.md) for
-platform prerequisites and package layout.
-
-Collection allocations retain element/layout sizes and clone/destroy
-callbacks. In the current 64-bit implementation their private headers occupy
-24 bytes for arrays and 72 bytes for dictionaries, before payload and allocator
-overhead. These callbacks can introduce indirect calls without source-level
-protocol dispatch. Allocation/free also updates a relaxed atomic balance
-counter; this is accounting, not reference counting.
-
-Joyeer IR `copy`, `take`, and `destroy` operations lower through generated
-per-type LLVM helpers. Helpers recurse through structs and tagged payloads and
-delegate strings/collections to runtime callbacks. Scope lowering is responsible for destroying owned storage and temporaries in
-reverse order on normal and early-return paths. The C entry point fails the
-process if runtime-managed allocation count
-is nonzero after `joyeer_main` returns, making leaks in native integration
-tests observable.
-
-The current prelude exposes `byteToInt(value:)` and `byteToString(value:)` rather
-than silently coercing `UInt8`. LLVM zero-extends the former to the signed
-64-bit `Int` representation. The latter allocates one owned byte through
-`joyeer_byte_to_string_abi`, so ordinary temporary and scope cleanup applies.
-
-The built-in mutating method
-`&values.append(element: value)` requires an addressable mutable `Array<T>`.
-Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`; the
-runtime grows geometrically and preserves the array's element clone/destroy
-callbacks. Borrowed heap-backed elements are cloned before transfer, while
-owned temporaries move directly into the array.
-
-Mutable `&dictionary[key] = value` lowers to
-`joyeer_dictionary_set_owned_abi`. Missing keys grow storage geometrically and
-take both key and value. Existing keys retain their original key storage,
-destroy the incoming duplicate key and previous value, and take the replacement
-value without changing `count`.
-
-Dictionary construction uses the same replacement policy as incremental
-insertion: equal keys retain the first key storage and the last supplied value,
-and `count` includes only unique keys. Construction compacts entries in place,
-destroying each discarded key and replaced value exactly once. Cloning an
-already normalized dictionary preserves its count and independently clones
-its owned entries without repeating duplicate-key detection.
-
-### Unit values
-
-Source `Void` values use LLVM's zero-sized empty struct type `{}` in value
-and storage positions. A `Void` function result still uses LLVM `void`, so
-existing no-result functions and the entry trampoline keep their calling
-convention. Unit constants require no instructions; unit loads, stores,
-takes, and enum payload reads/writes need no data access. Logical source
-storage and full-debug metadata still describe unit bindings.
-
-`Result<Void, E>` retains the ordinary enum tag and error storage. Existing
-tag-directed ownership helpers clean an active nontrivial error payload and
-do not clean a unit success payload. Arrays and dictionaries can store unit
-values with zero-sized elements/values while retaining their existing
-container metadata, allocation, count, and bounds behavior. No new runtime
-allocation or destruction API is introduced for unit values.
-
-### File input
-
-The current prelude exposes:
-
-```joyeer
-readFile(path: String): Result<String, IOError>
-```
-
-`Ok` contains an owned byte-preserving `String`, including embedded NUL bytes;
-normal ownership cleanup destroys it. `Err` contains `.NotFound(code)`,
-`.PermissionDenied(code)`, `.InvalidPath(code)`, or `.Other(code)`. Categories
-are stable across platforms; each payload preserves the nonzero platform C I/O
-error code. Callers handle both enum layers with exhaustive `match` because
-postfix propagation is outside the implemented surface.
-
-Byte preservation does not establish valid UTF-8. The reader grows from a
-4096-byte buffer and retains spare capacity on success; the returned string's
-`count` is its logical length, not its allocated capacity.
-
-LLVM passes the path as pointer/count and separate owned-string/error-code out
-pointers to `joyeer_read_file_abi`. The runtime returns a stable C ABI error
-category. LLVM then constructs the concrete `IOError` and `Result` tags, so the
-runtime does not depend on frontend case ordering or target aggregate layout.
-Embedded NUL bytes in a path produce `InvalidPath`. Windows paths currently
-use the active narrow-character CRT encoding; a future Unicode path API belongs
-to broader standard-library design.
+The C11 [runtime](runtime.md) owns process startup, checked
+arithmetic and bounds helpers, value storage, collections, file input, and
+allocation-balance checking. It is a static archive linked into generated
+programs, not a dependency on LLVM/LLD.
 
 ---
 
 ## 5. Known limitations
 
-The native path is an MVP, not the final zero-cost implementation:
+The native pipeline does not yet provide its final layout, optimization, or
+verification guarantees:
 
-- copy/destroy helpers cover compiler-known heap-backed values and recursive
-  aggregates; user-defined `deinit`, noncopyable user types, and explicit copy
-  initializers are not implemented;
 - all four parameter effects are accepted; `consuming` supports owning locals,
   consuming parameters, temporaries, and field/subscript projections, while
   `initializing` supports whole mutable local/forwarded storage. Call-site
@@ -322,8 +217,6 @@ The native path is an MVP, not the final zero-cost implementation:
   surface; [type-checking](type-checking.md#8-known-correctness-gaps) and
   [flow-analysis precision limits](semantic-analysis.md#precision-limits)
   remain documented separately;
-- allocation balance covers runtime-managed string/collection allocations,
-  not arbitrary future unsafe/native allocations;
 - aggregate layout has no niche optimization and uses an `i32` tag plus an
   aligned payload buffer;
 - all platforms use LLVM's per-module default optimization pipelines;
@@ -333,18 +226,16 @@ The native path is an MVP, not the final zero-cost implementation:
   flags; compiler-generated cleanup/plumbing is suppressed from line rows;
 - aggregate debug metadata currently supplies names and sizes with empty
   member lists, not field/payload debugger structure or optimized-value
-  location tracking;
-- `print` supports primitive and string values, not arbitrary aggregates;
-- file input is synchronous and whole-file only; streaming, writing, and
-  metadata are not provided.
+  location tracking.
 
 Conditional evaluation, guarded payload comparisons, prepared-operand cleanup,
 and one-time stack allocation are covered by native regressions at O0 and O2.
 See the [IR invariants](ir.md#7-evaluation-and-storage-invariants) and remaining
-structural verifier limitations.
+structural verifier limitations. Runtime and library limitations are described
+in [runtime.md](runtime.md#limits-and-validation).
 
-These gaps must be addressed in Joyeer IR, LLVM lowering, or the native runtime
-without creating a second execution pipeline.
+These gaps must be addressed in Joyeer IR or LLVM lowering without creating a
+second execution pipeline.
 
 ### Native ABI hardening gaps
 
@@ -381,42 +272,32 @@ Focused tests:
 
 ```pwsh
 ctest --test-dir build -L llvm-backend --output-on-failure
-ctest --test-dir build -L native-runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
-ctest --test-dir build -L file-io --output-on-failure
 ctest --test-dir build -L optimization --output-on-failure
 ctest --test-dir build -L debug-info --output-on-failure
 ```
 
-The tests use Clang as an independent textual-IR oracle and use the Windows
-backend DLL to compile and run native Joyeer programs. They verify output and
-zero allocation balance, stress nested
-string/array/dictionary ownership, exercise runtime traps, and reject an
-executable request without `main`. File-input tests cover binary bytes,
-missing-file errors, exhaustive source-level handling, and zero allocation
-balance on both paths. Debug-info tests validate metadata structure in both
+The Clang executable is an optional test tool, not a product linker. The
+independent textual-IR oracle and many native-executable regression tests are
+registered only when `JOYEER_CLANG_EXECUTABLE` is found at configuration time.
+Check the configure message and discovered tests before treating a label run
+as the full native acceptance suite.
+
+When available, those tests use Clang to independently validate textual IR
+and the host's `joyeer-backend` shared library to compile and link native
+Joyeer programs. They verify compiler output and debug-info metadata in both
 DWARF/CodeView modes and make the configured Clang emit objects containing the
 corresponding DWARF `.debug_line` and Windows CodeView `.debug$S` sections.
-`NativeBackendAbiTests` is compiled as C and verifies the DLL ABI/version
-without exposing C++ types.
-Native artifact tests additionally validate no-debug output, Windows PDB source
-and line records, embedded Windows/ELF DWARF sections, platform artifact
-retention, safe metacharacter paths, and refusal to overwrite output/PDB
-directories.
+`NativeBackendAbiTests` is compiled as C and checks the shared library's C
+ABI/version without exposing C++ types. Native artifact tests additionally
+validate no-debug output, Windows PDB source and line records, embedded
+Windows/ELF DWARF sections, platform artifact retention, safe metacharacter
+paths, and refusal to overwrite output/PDB directories.
 
-`NativeExecutableJsonParser` is the integrated milestone: Joyeer source reads
-an external file, recursively parses nested null/Boolean/integer/string/array/
-object values, checks representative results, rejects malformed input, and
-returns with no runtime-managed allocations. It intentionally matches the
-accepted fixture scope: floating-point numbers and JSON `\uXXXX` decoding
-remain deferred.
-
-Optimization tests verify the default and all accepted CLI levels, then compile
-at `-O2` and prove checked integer overflow and array bounds still terminate
-with their runtime diagnostics. Panic flushes stderr and uses C11 `_Exit` with
-a nonzero status, avoiding platform crash dialogs while remaining
-unrecoverable. Existing ownership-heavy native tests run at the default `-O2`
-and retain the zero-allocation-balance check.
+Optimization tests verify the default and all accepted CLI levels, then
+compile at `-O2` and prove checked integer overflow and array bounds still
+terminate with their runtime diagnostics. Runtime traps and ownership-heavy
+native tests are detailed in [runtime validation](runtime.md#limits-and-validation).
 
 ---
 

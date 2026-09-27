@@ -35,8 +35,7 @@ distinguished from adopted rules and current implementation support.
 
 ## Implementation
 
-The current compiler has one typed Joyeer IR/LLVM/native pipeline. There is no
-bytecode backend or VM.
+The compiler lowers typed Joyeer IR through LLVM to native executables.
 
 | Document | Topic |
 |---|---|
@@ -48,7 +47,8 @@ bytecode backend or VM.
 | [semantic-analysis.md](impl/semantic-analysis.md) | Return, reachability, initialization, and warning analysis |
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
-| [native.md](impl/native.md) | LLVM emission, backend ABI, linking, runtime, debug artifacts, and performance measurement |
+| [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
+| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, and file input |
 | [string.md](impl/string.md) | String representation and operations |
 
 ## Plans

@@ -1,6 +1,7 @@
 # Joyeer IR — Typed Backend-Neutral Lowering
 
-> **Status:** Core model and JSON-parser MVP lowering implemented.
+> **Status:** The current typed model and lowering are implemented for the
+> [supported language surface](supported-features.md).
 > **Input:** `typing::TypeCheckedModel`.
 > **Output:** a structurally verified `ir::Module`.
 
@@ -15,7 +16,7 @@ is in `include/joyeer/ir/ir.h`; typed AST lowering is in
 
 A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
-`--emit-llvm` and `-o`; see [native.md](native.md).
+`--emit-llvm` and `-o`; see the [compiler backend](backend.md).
 
 ---
 
@@ -78,7 +79,7 @@ The current instruction set covers:
 - scalar, string, and `unit` constants;
 - stack allocation, zero initialization, load, and store;
 - explicit `copy`, `take`, and `destroy` ownership operations;
-- MVP arithmetic, comparison, and logical operations;
+- implemented arithmetic, comparison, and logical operations;
 - direct source and external calls;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
@@ -225,7 +226,8 @@ Direct validation:
 ctest --test-dir build -L "ir|ir-lowering" --output-on-failure
 ```
 
-The lowering suite includes the complete JSON-parser MVP fixture.
+The lowering suite includes parser acceptance, unit-value, and ownership
+fixtures.
 
 ---
 

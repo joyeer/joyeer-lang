@@ -1,0 +1,3 @@
+func main(values: [String]): Int {
+    return 0
+}
