@@ -106,7 +106,10 @@ The current checker validates:
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
   on a mutable receiver;
 - mutable dictionary subscript insertion/update with concrete `K`/`V` checks
-  and mandatory `&` on the subscript projection.
+  and mandatory `&` on the subscript projection;
+- borrowing `Dict<K,V>.get(key: K)` returning exactly `Optional<V>`, without
+  optional flattening or receiver/key access markers. The receiver remains
+  borrowed throughout key evaluation.
 
   Call-site exclusivity compares typed access paths. Multiple borrowing
   arguments may overlap. Any inout, consuming, or initializing argument must be
@@ -134,8 +137,13 @@ The current checker validates:
   pathological matrix conservatively requires a catch-all arm.
 
 Ordinary call labels, ordering, required/default argument presence, and
-lexical declaration binding remain name-resolution responsibilities. The type
-checker consumes those validated targets and checks concrete argument types.
+lexical declaration binding are checked during name resolution when the call
+target is known. If a target is deferred until its receiver type is available,
+the type checker runs the shared call-argument validator before checking
+concrete argument types and access effects. Invalid deferred calls report
+`type-checking.invalid-call-arguments` with the original argument or call span.
+For example, `values[0].get(value: "x")` is rejected just like a directly
+resolved dictionary call with the wrong label; only `key:` is accepted.
 
 ---
 

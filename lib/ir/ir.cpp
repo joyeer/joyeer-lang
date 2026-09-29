@@ -34,6 +34,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
+        case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
         case Opcode::extractField:
         case Opcode::constructEnum:
@@ -1511,6 +1512,37 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::dictionaryGet:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value()) {
+                            const auto* dictionaryType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            const auto* resultType = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type)
+                                    : nullptr;
+                            const auto matches =
+                                    operands[0]->category == ValueCategory::value &&
+                                    operands[1]->category == ValueCategory::value &&
+                                    instruction.result->category == ValueCategory::value &&
+                                    dictionaryType != nullptr &&
+                                    dictionaryType->kind == typing::TypeKind::dictionary &&
+                                    dictionaryType->arguments.size() == 2 &&
+                                    dictionaryType->arguments[0] == operands[1]->type &&
+                                    resultType != nullptr &&
+                                    resultType->kind == typing::TypeKind::optional &&
+                                    resultType->arguments.size() == 1 &&
+                                    resultType->arguments[0] == dictionaryType->arguments[1];
+                            if (!matches) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "dictionary get requires a dictionary value and matching key, producing Optional<V>");
+                            }
+                        }
+                        break;
                         case Opcode::fieldAddress:
                         case Opcode::extractField: {
                         const auto shapeMatches = requireShape(1, 0);
@@ -1866,6 +1898,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::arrayAppend: return "array_append";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
+        case Opcode::dictionaryGet: return "dictionary_get";
         case Opcode::fieldAddress: return "field_addr";
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
@@ -2092,6 +2125,7 @@ std::string dump(const Module& module) {
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
+                    case Opcode::dictionaryGet:
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:

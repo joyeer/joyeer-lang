@@ -143,6 +143,114 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         joyeer::typing::TypeCheckingResult checking;
     };
 
+    TEST_F(TypeCheckingTest, DictionaryGetInfersExactOptionalFromReceiver) {
+        check("func lookup(values: [String: Int?], units: [UInt8: Void], flags: [Bool: Int]) {\n"
+              "let nested = values.get(key: \"answer\")\n"
+              "let unit = units.get(key: b'X')\n"
+              "let flag = flags.get(key: true)\n"
+              "let byte = units.get(key: b'A')\n"
+              "}\n");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items[0]);
+        auto& types = checking.model->types();
+        const auto* nested = types.type(declaredType(function->body->items[0]));
+        ASSERT_NE(nested, nullptr);
+        EXPECT_EQ(nested->kind, joyeer::typing::TypeKind::optional);
+        ASSERT_EQ(nested->arguments.size(), 1u);
+        const auto* payload = types.type(nested->arguments[0]);
+        ASSERT_NE(payload, nullptr);
+        EXPECT_EQ(payload->kind, joyeer::typing::TypeKind::optional);
+        EXPECT_EQ(payload->arguments, std::vector<joyeer::typing::TypeId> { types.intType() });
+        EXPECT_EQ(types.displayName(declaredType(function->body->items[1])), "Void?");
+        EXPECT_EQ(types.displayName(declaredType(function->body->items[2])), "Int?");
+        EXPECT_EQ(declaredType(function->body->items[1]), declaredType(function->body->items[3]));
+    }
+
+    TEST_F(TypeCheckingTest, RejectsDictionaryGetTypeAndAccessErrors) {
+        for (const auto* source : {
+                 "func run(values: [String: Int]): Int? { return values.get(key: 1) }\n",
+                 "func run(values: [String: Int]): String? { return values.get(key: \"x\") }\n",
+                 "func run(values: [String: Int]): Int { return values.get(key: \"x\") }\n",
+                 "func run(values: [String: Int?]): Int? { return values.get(key: \"x\") }\n",
+                 "func run(values: inout [String: Int]) { &values.get(key: \"x\") }\n",
+                 "func run(values: [String: Int], key: inout String) { values.get(key: &key) }\n",
+                 "func run(values: [String: Int], key: consuming String) { values.get(key: consume key) }\n",
+                 "func run(values: [UInt8: Int]) { values.get(key: 256) }\n",
+             }) {
+            SCOPED_TRACE(source);
+            ASSERT_NO_FATAL_FAILURE(check(source));
+            EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        }
+    }
+
+    TEST_F(TypeCheckingTest, DictionaryGetBorrowsReceiverThroughoutKeyEvaluation) {
+        check("func change(values: inout [String: String]): String {\n"
+              "&values[\"name\"] = \"changed\"\nreturn \"name\"\n}\n"
+              "func run(values: inout [String: String]): String? {\n"
+              "return values.get(key: change(values: &values))\n}\n");
+        EXPECT_FALSE(checking.succeeded());
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::overlappingAccess;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, RejectsMalformedDeferredDictionaryGetCalls) {
+        for (const auto* arguments : {
+                 "()",
+                 "(\"x\")",
+                 "(value: \"x\")",
+                 "(key: \"x\", key: \"y\")",
+                 "(key: \"x\", extra: 1)",
+             }) {
+            SCOPED_TRACE(arguments);
+            ASSERT_NO_FATAL_FAILURE(check(
+                    "func run(values: [Int: [String: Int]]): Int? {\n"
+                    "return values[0].get" + std::string(arguments) + "\n}\n"));
+            EXPECT_FALSE(checking.succeeded());
+            ASSERT_FALSE(checking.diagnostics.empty());
+            const auto& diagnostic = checking.diagnostics.front();
+            EXPECT_EQ(diagnostic.id, joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments)
+                    << joyeer::typing::dump(checking.diagnostics);
+            EXPECT_STREQ(joyeer::typing::diagnosticName(diagnostic.id),
+                    "type-checking.invalid-call-arguments");
+            EXPECT_GT(diagnostic.span.length, 0u);
+            if (std::string(arguments) == "(value: \"x\")") {
+                EXPECT_EQ(diagnostic.span.offset, source->content.find("value:"));
+                EXPECT_EQ(diagnostic.message, "call target 'get' has no parameter labeled 'value:'");
+            }
+        }
+    }
+
+    TEST_F(TypeCheckingTest, DeferredAppendUsesSharedCallArgumentValidation) {
+        check("func run(values: inout [[Int]]) {\n"
+              "&values[0].append(element: 1)\n}\n");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+
+        check("func run(values: inout [[Int]]) {\n"
+              "&values[0].append(value: 1)\n}\n");
+        EXPECT_FALSE(checking.succeeded());
+        ASSERT_FALSE(checking.diagnostics.empty());
+        EXPECT_EQ(checking.diagnostics.front().id,
+                joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments)
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, DeferredDictionaryGetPreservesArgumentTyping) {
+        check("func run(values: [Int: [String: Int?]]): Optional<Int?> {\n"
+              "return values[0].get(key: \"x\")\n}\n");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+
+        check("func run(values: [Int: [String: Int]]): Int? {\n"
+              "return values[0].get(key: 1)\n}\n");
+        EXPECT_FALSE(checking.succeeded());
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::typeMismatch;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+
     TEST_F(TypeCheckingTest, UnitValuesUseExistingVoidType) {
         check("func make(): Result<Void, String> { return .Ok(()) }\n"
               "func run(value: ()): Void {\n"

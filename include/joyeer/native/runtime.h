@@ -180,6 +180,14 @@ void* joyeer_dictionary_at_abi(
     const void* key,
     int64_t keySize,
     int32_t keyKind);
+// Returns borrowed value storage, or null for a missing key. A present
+// zero-sized value still returns non-null; invalid lookups still panic.
+void* joyeer_dictionary_find_abi(
+    void* data,
+    int64_t count,
+    const void* key,
+    int64_t keySize,
+    int32_t keyKind);
 
 #ifdef __cplusplus
 }

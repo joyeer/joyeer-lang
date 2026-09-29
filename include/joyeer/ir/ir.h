@@ -71,6 +71,7 @@ enum class Opcode {
     arrayAppend,
     constructDictionary,
     dictionarySet,
+    dictionaryGet,
     fieldAddress,
     extractField,
     constructEnum,

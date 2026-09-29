@@ -2053,6 +2053,11 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "get") {
+            return lowerDictionaryGet(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "utf8") {
             return lowerStringUtf8(expression);
         }
@@ -2127,6 +2132,50 @@ private:
                     : ValueOwnership::trivial);
         }
         if (type == model->types().voidType()) return emitUnit(expression->span);
+        return result;
+    }
+
+    std::optional<ir::Value> lowerDictionaryGet(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            expression->arguments.size() != 1) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Dict.get requires one key argument");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto dictionary = lowerExpression(member->base);
+        const auto* dictionaryType = dictionary.has_value()
+                ? model->types().type(dictionary->type)
+                : nullptr;
+        if (!dictionary.has_value() || dictionaryType == nullptr ||
+            dictionaryType->kind != typing::TypeKind::dictionary ||
+            dictionaryType->arguments.size() != 2) {
+            report(
+                    DiagnosticId::missingType,
+                    expression->span,
+                    "Dict.get receiver has no concrete key/value types");
+            return std::nullopt;
+        }
+        auto key = lowerExpression(expression->arguments[0]->value);
+        const auto resultType = model->typeOf(expression);
+        if (!key.has_value() || !resultType.has_value()) return std::nullopt;
+        key = coerce(
+                *key,
+                dictionaryType->arguments[0],
+                expression->arguments[0]->value->span);
+        if (!key.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::dictionaryGet, expression->span);
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        instruction.operands = { dictionary->id, key->id };
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
         return result;
     }
 

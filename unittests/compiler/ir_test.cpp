@@ -439,6 +439,55 @@ TEST(IRModelTest, VerifiesDictionarySetStorageKeyAndValueTypes) {
     EXPECT_TRUE(hasError(invalid, VerificationErrorId::typeMismatch));
 }
 
+TEST(IRModelTest, VerifiesDictionaryGetKeyAndExactOptionalResult) {
+    auto module = validAddModule();
+    module.types.push_back(TypeName {
+        3, "[Int: Bool]", joyeer::typing::TypeKind::dictionary,
+        joyeer::semantic::invalidSymbolId, { 1, 2 },
+    });
+    module.types.push_back(TypeName {
+        4, "Bool?", joyeer::typing::TypeKind::optional,
+        joyeer::semantic::invalidSymbolId, { 2 },
+    });
+    module.types.push_back(TypeName {
+        5, "Bool??", joyeer::typing::TypeKind::optional,
+        joyeer::semantic::invalidSymbolId, { 4 },
+    });
+    auto& function = module.functions[0];
+    function.parameters = {
+        Parameter { Value { 0, 3, ValueCategory::value }, std::nullopt, "values", false, {} },
+        Parameter { Value { 1, 1, ValueCategory::value }, std::nullopt, "key", false, {} },
+    };
+    function.resultType = 4;
+    function.blocks[0].instructions = {
+        Instruction { Opcode::dictionaryGet, Value { 2, 4, ValueCategory::value }, { 0, 1 } },
+        Instruction { Opcode::returnValue, std::nullopt, { 2 } },
+    };
+    const auto valid = Verifier().verify(module);
+    ASSERT_TRUE(valid.succeeded()) << dump(valid);
+    EXPECT_NE(dump(module).find("dictionary_get"), std::string::npos);
+    for (const auto badType : { 1u, 2u, 5u }) {
+        auto invalid = module;
+        invalid.functions[0].blocks[0].instructions[0].result->type = badType;
+        EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
+    }
+    auto invalid = module;
+    invalid.functions[0].parameters[1].value.type = 2;
+    EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
+    invalid = module;
+    invalid.functions[0].parameters[0].value.category = ValueCategory::address;
+    EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
+    invalid = module;
+    invalid.functions[0].blocks[0].instructions[0].result->category = ValueCategory::address;
+    EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch));
+    invalid = module;
+    invalid.functions[0].blocks[0].instructions[0].operands.pop_back();
+    EXPECT_FALSE(Verifier().verify(invalid).succeeded());
+    invalid = module;
+    invalid.functions[0].blocks[0].instructions[0].result.reset();
+    EXPECT_FALSE(Verifier().verify(invalid).succeeded());
+}
+
 TEST(IRModelTest, ReportsDuplicateAndUndefinedValueIds) {
     auto module = validAddModule();
     auto& add = module.functions[0].blocks[0].instructions[0];

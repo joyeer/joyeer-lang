@@ -901,6 +901,20 @@ if(JOYEER_CLANG_EXECUTABLE)
             "true\ntrue\n2\ntrue\nbranch!\ntrue\n3\ntemporary!\n4\ntemporary!\n3\ntrue\n5\n2\ntrue\n6\ntrue\nowned!\nevent\nsome\nnone\nunit error\n100\n")
     add_joyeer_native_regression(
             NativeUnitValues unit_values "${unit_values_output}")
+    add_joyeer_native_regression(
+            NativeDictionaryGet dictionary_get "dictionary get ok\n" 0 1 2 3)
+    add_test(NAME NativeDictionaryGetFullDebug
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/dictionary_get.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dictionary-get-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DEXPECTED_OUTPUT=dictionary get ok\n"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeDictionaryGetFullDebug PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;debug-info"
+            TIMEOUT 60)
     add_test(NAME NativeUnitValuesFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1019,6 +1033,14 @@ endfunction()
 
 add_joyeer_rejected_regression(TypeRegressionPayloadCoverage type-checking
         regression_type_payload_nonexhaustive type-checking.non-exhaustive-match)
+add_joyeer_rejected_regression(TypeDictionaryGetWrongKey type-checking
+        dictionary_get_key type-checking.type-mismatch)
+add_joyeer_rejected_regression(TypeDictionaryGetNoFlatten type-checking
+        dictionary_get_flatten type-checking.type-mismatch)
+add_joyeer_rejected_regression(TypeDictionaryGetExclusivity type-checking
+        dictionary_get_exclusivity type-checking.overlapping-access)
+add_joyeer_rejected_regression(TypeDictionaryGetArguments type-checking
+        dictionary_get_arguments type-checking.invalid-call-arguments)
 add_joyeer_rejected_regression(TypePropagationWrongReturn type-checking
         propagation_wrong_return type-checking.invalid-propagation-context)
 add_joyeer_rejected_regression(TypePropagationWrongError type-checking

@@ -333,6 +333,185 @@ struct OwnedStringEntry {
     JoyeerString value;
 };
 
+template <typename Key>
+void expectDictionaryFind(
+        const Key& storedKey,
+        const Key& hitKey,
+        const Key& missingKey,
+        int32_t keyKind) {
+    struct Entry {
+        Key key;
+        int64_t value;
+    };
+    const Entry entry { storedKey, 42 };
+    auto dictionary = joyeer_dictionary_create(
+            &entry, 1, sizeof(Key), sizeof(int64_t),
+            sizeof(Entry), offsetof(Entry, value), keyKind);
+    const auto allocations = joyeer_runtime_active_allocations();
+    const auto* found = static_cast<const int64_t*>(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &hitKey, sizeof(Key), keyKind));
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(*found, 42);
+    EXPECT_EQ(found, joyeer_dictionary_at_abi(
+            dictionary.data, dictionary.count, &hitKey, sizeof(Key), keyKind));
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &missingKey, sizeof(Key), keyKind), nullptr);
+    EXPECT_EQ(dictionary.count, 1);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+    joyeer_dictionary_destroy(&dictionary);
+
+    auto empty = joyeer_dictionary_create(
+            nullptr, 0, sizeof(Key), sizeof(int64_t),
+            sizeof(Entry), offsetof(Entry, value), keyKind);
+    const auto emptyAllocations = joyeer_runtime_active_allocations();
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            empty.data, empty.count, &hitKey, sizeof(Key), keyKind), nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), emptyAllocations);
+    joyeer_dictionary_destroy(&empty);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyIntegerDictionaryEntries) {
+    expectDictionaryFind<int64_t>(2, 2, 3, JOYEER_DICTIONARY_KEY_INT);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyBooleanDictionaryEntries) {
+    expectDictionaryFind<bool>(false, false, true, JOYEER_DICTIONARY_KEY_BOOL);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyByteDictionaryEntries) {
+    expectDictionaryFind<uint8_t>(255, 255, 0, JOYEER_DICTIONARY_KEY_BYTE);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyStringDictionaryEntriesByContent) {
+    const std::string stored("key\0suffix", 10);
+    const std::string hit(stored);
+    const std::string missing("key");
+    ASSERT_NE(stored.data(), hit.data());
+    expectDictionaryFind(view(stored), view(hit), view(missing), JOYEER_DICTIONARY_KEY_STRING);
+}
+
+TEST(NativeRuntimeTest, FindsZeroSizedDictionaryValuesWithNonNullPresence) {
+    const std::array<int64_t, 2> keys { 1, 2 };
+    auto dictionary = joyeer_dictionary_create(
+            keys.data(), keys.size(), sizeof(int64_t), 0,
+            sizeof(int64_t), sizeof(int64_t), JOYEER_DICTIONARY_KEY_INT);
+    const int64_t hit = 2;
+    const int64_t missing = 3;
+    auto* found = joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &hit, sizeof(hit), JOYEER_DICTIONARY_KEY_INT);
+    EXPECT_NE(found, nullptr);
+    EXPECT_EQ(found, static_cast<uint8_t*>(dictionary.data) + sizeof(keys));
+    EXPECT_EQ(found, joyeer_dictionary_at(
+            dictionary, &hit, sizeof(hit), JOYEER_DICTIONARY_KEY_INT));
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &missing, sizeof(missing),
+            JOYEER_DICTIONARY_KEY_INT), nullptr);
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, FindsBorrowedStorageWithoutCloningOrConsumingDictionaryEntries) {
+    cloneCount = 0;
+    destroyCount = 0;
+    const std::array<OwnedStringEntry, 2> entries {
+        OwnedStringEntry { owned("key"), owned("value") },
+        OwnedStringEntry { owned("other"), owned("unchanged") },
+    };
+    JoyeerDictionary dictionary {};
+    joyeer_dictionary_create_owned_abi(
+            &dictionary, entries.data(), entries.size(),
+            sizeof(JoyeerString), sizeof(JoyeerString),
+            sizeof(OwnedStringEntry), offsetof(OwnedStringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING, cloneString, destroyString,
+            cloneString, destroyString);
+    auto key = owned("key");
+    const auto originalData = dictionary.data;
+    const auto allocations = joyeer_runtime_active_allocations();
+    const auto* found = static_cast<const JoyeerString*>(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &key, sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->data, entries[0].value.data);
+    EXPECT_EQ(found, joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &key, sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    const std::string missingText = "missing";
+    const auto missing = view(missingText);
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &missing, sizeof(missing),
+            JOYEER_DICTIONARY_KEY_STRING), nullptr);
+    EXPECT_EQ(cloneCount, 0);
+    EXPECT_EQ(destroyCount, 0);
+    EXPECT_EQ(dictionary.data, originalData);
+    EXPECT_EQ(dictionary.count, 2);
+    EXPECT_TRUE(joyeer_string_equal(key, entries[0].key));
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+
+    JoyeerString result {};
+    cloneString(&result, found);
+    EXPECT_EQ(cloneCount, 1);
+    EXPECT_NE(result.data, found->data);
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_TRUE(joyeer_string_equal(result, view(std::string("value"))));
+    EXPECT_EQ(destroyCount, 4);
+    destroyString(&result);
+    joyeer_string_destroy(&key);
+    EXPECT_EQ(destroyCount, 5);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeDeathTest, StrictDictionaryLookupStillTrapsForMissingAndEmptyEntries) {
+    const IntEntry entry { 1, 42 };
+    const int64_t missing = 2;
+    for (const int64_t count : { 0, 1 }) {
+        auto dictionary = joyeer_dictionary_create(
+                &entry, count, sizeof(int64_t), sizeof(int64_t),
+                sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+        EXPECT_EQ(joyeer_dictionary_find_abi(
+                dictionary.data, dictionary.count, &missing, sizeof(missing),
+                JOYEER_DICTIONARY_KEY_INT), nullptr);
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_dictionary_at(
+                        dictionary, &missing, sizeof(missing), JOYEER_DICTIONARY_KEY_INT)),
+                "dictionary key not found");
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_dictionary_at_abi(
+                        dictionary.data, dictionary.count, &missing, sizeof(missing),
+                        JOYEER_DICTIONARY_KEY_INT)),
+                "dictionary key not found");
+        joyeer_dictionary_destroy(&dictionary);
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeDeathTest, DictionaryFindPreservesInvalidLookupDiagnostics) {
+    const int64_t key = 1;
+    auto dictionary = joyeer_dictionary_create(
+            nullptr, 0, sizeof(int64_t), sizeof(int64_t),
+            sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    for (const auto lookup : { joyeer_dictionary_find_abi, joyeer_dictionary_at_abi }) {
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        nullptr, 0, &key, sizeof(key), JOYEER_DICTIONARY_KEY_INT)),
+                "invalid dictionary lookup");
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        dictionary.data, 0, nullptr, sizeof(key), JOYEER_DICTIONARY_KEY_INT)),
+                "invalid dictionary lookup");
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        dictionary.data, 0, &key, sizeof(bool), JOYEER_DICTIONARY_KEY_INT)),
+                "dictionary key type mismatch");
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        dictionary.data, 0, &key, sizeof(key), JOYEER_DICTIONARY_KEY_BOOL)),
+                "dictionary key type mismatch");
+    }
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
 TEST(NativeRuntimeTest, DictionaryConstructionMatchesInsertionForDuplicateKeys) {
     const std::array<IntEntry, 5> entries {
     IntEntry { 1, 10 }, IntEntry { 2, 30 }, IntEntry { 1, 20 },

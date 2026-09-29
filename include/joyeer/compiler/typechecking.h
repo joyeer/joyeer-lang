@@ -149,6 +149,7 @@ enum class TypeCheckingDiagnosticId {
     invalidInitializingArgument,
     overlappingAccess,
     notCallable,
+    invalidCallArguments,
     unresolvedReference,
 };
 

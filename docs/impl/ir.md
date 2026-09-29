@@ -87,6 +87,8 @@ The current instruction set covers:
 - mutating `array_append` with an addressable receiver and transferred element;
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
+- `dictionary_get` with borrowed dictionary/key values and an owned
+  `Optional<V>` result, verified against the concrete `K` and `V`;
 - `String`/collection count and value/address subscript operations, plus owned
   `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
@@ -166,6 +168,13 @@ decides whether to insert or update: insertion transfers both into a new entry;
 update keeps the existing key, destroys the incoming duplicate key and old
 value, then transfers the replacement value. Dictionary construction applies
 the same last-value-wins policy and counts only unique keys.
+
+`dictionary_get` evaluates the receiver and key once, in source order, without
+copying the receiver. Native emission performs one lookup and clones only the
+present value into `.Some`; absence produces `.None` without a payload copy.
+The result is already owned, so lowering transfers it without another clone.
+Nested optional and unit payloads retain their exact types. Receiver and key
+temporaries remain live through lookup and are cleaned on every exit path.
 
 ---
 

@@ -83,6 +83,15 @@ Existing keys retain their original key storage, destroy the incoming
 duplicate key and previous value, and take the replacement value without
 changing `count`.
 
+`Dict.get(key:)` uses nontrapping `joyeer_dictionary_find_abi`: a borrowed
+value address indicates a present key, and null indicates absence. Invalid
+handles or key types still trap. This private pointer never escapes to Joyeer
+source. Generated code constructs `Optional<V>` and clones the present value
+using the existing typed copy helpers; neither the receiver nor an absent
+payload is cloned. Zero-sized values have a non-null presence address but
+require no payload load. Strict `joyeer_dictionary_at_abi` retains its
+missing-key trap and shares the single-pass lookup.
+
 Construction uses the same replacement policy: equal keys retain the first
 key storage and the last supplied value, and `count` includes only unique
 keys. Construction compacts entries in place and destroys discarded keys

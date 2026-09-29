@@ -1,7 +1,8 @@
 # joypm M0: Language and Host Contracts
 
 **Status:** discussion draft except M0-02 (single-file native entry), M0-03
-(error propagation), and M0-04 (unit values), which have been implemented.
+(error propagation), M0-04 (unit values), and M0-05 (`Dict.get(key:)`), which
+have been implemented. Key enumeration remains deferred.
 The remaining recommendations are not approved language changes or implemented
 APIs. M0 is not complete until the other decisions and compatibility
 boundaries are accepted.
@@ -14,9 +15,9 @@ policy belong in Joyeer. The existing C++ compiler and C11 runtime remain.
 
 M0 defines observable behavior before implementation. Its deliverables are
 semantic contracts, API sketches, compatibility decisions, and acceptance
-cases for later milestones. The accepted entry, propagation, and unit-value
-slices are implemented; modules, other new operators, filesystem operations,
-and subprocesses are not.
+cases for later milestones. The accepted entry, propagation, unit-value, and
+safe dictionary lookup slices are implemented; modules, other new operators,
+filesystem operations, and subprocesses are not.
 
 The current executable baseline is documented in
 [Implemented Language Surface](../impl/supported-features.md). Specification
@@ -32,7 +33,7 @@ Recommendations are **proposed** unless explicitly marked implemented.
 | M0-02 | Program entry | Implemented for single-file native executables: preserve `main()`; accept borrowed arguments and an integer exit status | M3 entry slice done |
 | M0-03 | Error propagation | Implemented: postfix `?` for `Result` / `Optional`, with exact error types and owned early-return cleanup | M2 propagation slice done |
 | M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice |
-| M0-05 | Dictionaries | Add owned optional lookup without changing subscript behavior | M2 |
+| M0-05 | Dictionaries | Implemented: owned `get(key:)` returning `Optional<V>` without changing subscript behavior; key enumeration deferred | M2 lookup slice done |
 | M0-06 | Control flow | Define short-circuiting, loop exits, checked division, and remainder before lowering them | M2 |
 | M0-07 | Paths and files | Separate byte strings from portable path encoding and define non-destructive operations | M3 |
 | M0-08 | Processes | Synchronous execution with separate arguments and explicit completion states | M3 |
@@ -187,8 +188,9 @@ operations remain separate work. The normative rules are in
 
 ## M0-05: Safe dictionary lookup
 
-Propose a builtin `get(key:)` operation returning `Optional<V>`.
-This does not require general user-defined methods or generics.
+Implemented: builtin `Dict<K, V>.get(key:)` returns `Optional<V>`.
+This does not require general user-defined methods or generics. The receiver
+and key are borrowed, evaluated once in that order, and require no access markers.
 
 - A present key returns `.Some` containing an independently owned value.
 - A missing key returns `.None` without trapping.
@@ -197,12 +199,18 @@ This does not require general user-defined methods or generics.
 - Preserve `dictionary[key]` and its current missing-key trap.
 - For optional stored values, distinguish a missing key from a present key
   whose value is `.None`; do not flatten the result.
-- If manifest validation requires key enumeration, return an owned snapshot.
+- Key enumeration is deferred. If manifest validation requires it, return an
+  owned snapshot.
   Do not promise a traversal order; callers needing deterministic output sort
   explicitly.
 
 The generic return type describes a compiler-supported container operation,
 not a claim that Joyeer can already declare generic library functions.
+See [dictionary lookup](../spec/02-types.md#261-safe-dictionary-lookup) for the
+normative contract and
+[`dictionary_get.joyeer`](../../tests/native/dictionary_get.joyeer) for native
+acceptance coverage, including nested optionals, zero-sized values, ownership,
+temporary cleanup, and unchanged strict subscripts. Lookup remains linear.
 
 ## M0-06: Control-flow and arithmetic boundaries
 
@@ -313,7 +321,8 @@ own CLI status must be settled explicitly.
 ## Acceptance matrix to prepare in M0
 
 These are acceptance cases for the planned work, except the implemented entry,
-propagation, and unit-value slices, which have native and compiler tests.
+propagation, unit-value, and dictionary lookup slices, which have native and
+compiler tests.
 
 | Area | Positive cases | Negative or boundary cases |
 |---|---|---|
@@ -321,7 +330,7 @@ propagation, and unit-value slices, which have native and compiler tests.
 | Entry (implemented for single-file programs) | Legacy entry; zero arguments; empty and spaced arguments; normal nonzero return | Unsupported signature; invalid exit range; cleanup before reporting status. Windows encoding failure still needs a Windows-only test |
 | Propagation (implemented) | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
 | Unit results | Construct and match `Result<Void, E>`; propagate success and failure | Invalid zero-sized payload lowering; confusion between `.Ok()` and `.Ok(())` |
-| Dictionary | Present key; absent key; owned result survives mutation | Existing subscript still traps; nested optional preserves absence distinctions |
+| Dictionary lookup (implemented) | Present key; absent key; owned result survives mutation | Existing subscript still traps; nested optional preserves absence distinctions |
 | Control flow | Short-circuit OR; nested loop exits; repeated `continue` | Skipped side effects; use outside loops; skipped cleanup; invalid loop re-entry state |
 | Arithmetic | Positive and negative division/remainder | Zero divisor; minimum-`Int` edge; consistent optimized and unoptimized behavior |
 | Filesystem | Binary contents; Unicode and space-containing paths; create-new | Existing destination; missing parent; permission failure; invalid encoding/NUL; symlink escape |

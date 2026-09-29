@@ -1,4 +1,5 @@
 #include "joyeer/compiler/typechecking.h"
+#include "joyeer/compiler/nameresolution.h"
 
 #include <algorithm>
 #include <array>
@@ -441,6 +442,16 @@ private:
 
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             if (symbol.kind != semantic::SymbolKind::builtinMember) continue;
+            if (symbol.name == "get" && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    { model->typeContext.anyType() },
+                    model->typeContext.anyType(),
+                };
+                continue;
+            }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
                 const auto result = model->typeContext.arrayType(
                         model->typeContext.uint8Type());
@@ -1204,7 +1215,16 @@ private:
                     target = callee;
                 }
             }
-            if (target.has_value()) recordResolvedCallTarget(expression, *target);
+            if (target.has_value()) {
+                recordResolvedCallTarget(expression, *target);
+                for (auto& diagnostic : semantic::validateCallArguments(
+                        *expression, *model->semanticModelValue->symbol(*target))) {
+                    report(
+                            TypeCheckingDiagnosticId::invalidCallArguments,
+                            diagnostic.span,
+                            std::move(diagnostic.message));
+                }
+            }
         }
 
         const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
@@ -1238,8 +1258,10 @@ private:
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);
 
-        std::optional<TypeId> arrayElementType;
-        if (semanticTarget != nullptr && semanticTarget->name == "append" &&
+        std::optional<TypeId> receiverArgumentType;
+        std::optional<TypeId> receiverResultType;
+        if (semanticTarget != nullptr &&
+            semanticTarget->kind == semantic::SymbolKind::builtinMember &&
             expression->callee->kind == syntax::Kind::memberExpr) {
             const auto member =
                     std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
@@ -1247,9 +1269,15 @@ private:
             const auto* baseType = base.has_value()
                     ? model->typeContext.type(*base)
                     : nullptr;
-            if (baseType != nullptr && baseType->kind == TypeKind::array &&
+            if (semanticTarget->name == "append" &&
+                baseType != nullptr && baseType->kind == TypeKind::array &&
                 baseType->arguments.size() == 1) {
-                arrayElementType = baseType->arguments[0];
+                receiverArgumentType = baseType->arguments[0];
+            } else if (semanticTarget->name == "get" &&
+                       baseType != nullptr && baseType->kind == TypeKind::dictionary &&
+                       baseType->arguments.size() == 2) {
+                receiverArgumentType = baseType->arguments[0];
+                receiverResultType = model->typeContext.optionalType(baseType->arguments[1]);
             }
         }
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
@@ -1257,9 +1285,9 @@ private:
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
-            const auto expected = arrayElementType.has_value() &&
+            const auto expected = receiverArgumentType.has_value() &&
                                   parameterIndex == std::optional<size_t>(0)
-                    ? arrayElementType
+                    ? receiverArgumentType
                     : signature != nullptr && parameterIndex.has_value() &&
                       *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
@@ -1289,7 +1317,8 @@ private:
                             "' of type '" + model->typeContext.displayName(calleeType) +
                             "' is not callable");
         }
-        return signature == nullptr ? model->typeContext.errorType() : signature->result;
+        return receiverResultType.value_or(
+                signature == nullptr ? model->typeContext.errorType() : signature->result);
     }
 
     void collectCallReceiverAccess(
@@ -2486,6 +2515,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.overlapping-access";
         case TypeCheckingDiagnosticId::notCallable:
             return "type-checking.not-callable";
+        case TypeCheckingDiagnosticId::invalidCallArguments:
+            return "type-checking.invalid-call-arguments";
         case TypeCheckingDiagnosticId::unresolvedReference:
             return "type-checking.unresolved-reference";
     }

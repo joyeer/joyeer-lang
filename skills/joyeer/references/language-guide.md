@@ -81,8 +81,11 @@ See [ownership-and-errors.joyeer](../examples/ownership-and-errors.joyeer).
   or `&values.append(element: value)`. Check bounds before indexing.
 - Dictionaries: `[String: Int]` (or `Dict<String, Int>`), `["answer": 42]`,
   and typed empty `[:]`. Insert/update with `&lookup["answer"] = 42`.
-  Read a known-present key with `lookup["answer"]`. Do not assume Rust-like
-  `get`, `insert`, iteration, or Optional-valued lookup.
+  Read a known-present key with `lookup["answer"]`, or use
+  `lookup.get(key: "answer")` for an independently owned `Optional<Int>`.
+  A missing key returns `.None`; a hit returns `.Some(value)`. Lookup borrows
+  the dictionary/key, needs no `&`, and preserves nested optional layers.
+  Do not assume `insert`, iteration, or borrowed-reference lookup APIs.
 - Optional: `Optional<Int>` (or `Int?`), `.Some(value)` and `.None`.
   Inspect with `match value { .Some(number) => ..., .None => ... }`, or use
   `value?` inside a function returning another `Optional`.

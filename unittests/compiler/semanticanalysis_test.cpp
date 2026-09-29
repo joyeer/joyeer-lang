@@ -113,6 +113,29 @@ TEST_F(SemanticAnalysisTest, UnitStillRequiresInitializationAndConsumptionTracki
     }
 }
 
+TEST_F(SemanticAnalysisTest, DictionaryGetRequiresLiveInitializedReceiverAndKey) {
+    for (const auto* text : {
+            "func run() {\nlet values: [String: Int]\nvalues.get(key: \"x\")\n}\n",
+            "func take(value: consuming [String: Int]) {}\nfunc run() {\n"
+            "let values: [String: Int] = [:]\ntake(value: consume values)\nvalues.get(key: \"x\")\n}\n",
+            "func run(values: [String: Int]) {\nlet key: String\nvalues.get(key: key)\n}\n",
+        }) {
+        SCOPED_TRACE(text);
+        ASSERT_NO_FATAL_FAILURE(analyze(text));
+        EXPECT_FALSE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, DictionaryGetDoesNotConsumeReceiverOrKey) {
+    analyze("func run(values: [String: Int], key: String): Int? {\n"
+            "let first = values.get(key: key)\n"
+            "let second = values.get(key: key)\n"
+            "print(value: values.count)\nprint(value: key)\n"
+            "match first { .Some(value) => print(value: value), .None => () }\n"
+            "return second\n}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, AcceptsUnitInitializationAndReinitialization) {
     analyze("func initialize(value: initializing Void) { &value = () }\n"
             "func take(value: consuming Void) {}\n"

@@ -38,6 +38,7 @@ machine code and links it with `JoyeerNativeRuntime`.
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
 | Containers | Compiler-known `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` |
+| Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
 | Built-ins | `print(value:)` for supported primitive/string values, `byteToInt(value:)`, `byteToString(value:)`, and `readFile(path:)` |
@@ -80,8 +81,9 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 - Ordinary copies of heap-backed values can allocate and recursively clone
   uniquely owned storage. There is no garbage collection, ARC, or copy-on-write
   guarantee.
-- Dictionary lookup is linear. Subscript access traps for a missing key; it
-  does not return `Optional`.
+- Dictionary lookup is linear. `get(key:)` returns an owned `Optional<V>` and
+  preserves nested optional layers; copying a stored heap-backed value may
+  allocate. Subscript access still traps for a missing key.
 - Checked integer arithmetic and bounds checks can terminate a program on
   invalid input in every optimization mode.
 - `readFile(path:)` is the implemented file-input primitive and returns

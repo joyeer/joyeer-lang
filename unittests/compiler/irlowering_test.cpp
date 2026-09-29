@@ -125,6 +125,27 @@ TEST_F(IRLoweringTest, LowersUnitNativeFixture) {
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
+TEST_F(IRLoweringTest, DictionaryGetBorrowsInputsAndOwnsItsResultWithoutExtraCopies) {
+    lower("func lookup(values: [String: String], key: String): String? {\n"
+          "return values.get(key: key)\n}\n"
+          "func propagate(values: [String: String], key: String): String? {\n"
+          "return values.get(key: key)?\n}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    const auto& lookup = function("lookup");
+    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::dictionaryGet), 1u);
+    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(lookup, joyeer::ir::Opcode::constructDictionary), 0u);
+    EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::dictionaryGet), 1u);
+    EXPECT_EQ(opcodeCount(function("propagate"), joyeer::ir::Opcode::copyValue), 0u);
+}
+
+TEST_F(IRLoweringTest, LowersDictionaryGetNativeFixture) {
+    ASSERT_NO_FATAL_FAILURE(lower(readFixture("native/dictionary_get.joyeer")));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
 TEST_F(IRLoweringTest, MovesPropagatedPayloadsAndCleansFailurePaths) {
     lower(R"JOYEER(func fetch(flag: Bool): Result<String, String> {
 if flag { return .Ok("owned" + "!") }

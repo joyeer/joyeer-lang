@@ -76,6 +76,7 @@ The current prelude declares:
   `Optional`, `Result`, and `IOError`;
 - `String.count`, `Array.count`, and `Dict.count`;
 - `String.utf8()` and mutating `Array.append(element:)`;
+- borrowing `Dict.get(key:)`, with concrete key/result types supplied by typing;
 - `Optional.Some` / `Optional.None` and `Result.Ok` / `Result.Err`;
 - the builtin `IOError` cases;
 - `print(value:)`, `readFile(path:)`, `byteToInt(value:)`, and
@@ -121,7 +122,10 @@ Some syntax cannot have one correct target before type checking:
 
 These are stored as `DeferredReference` entries with node, name, span, and
 reason. They are not errors and are not treated as successfully resolved. The
-type checker must consume every deferred entry or issue a diagnostic.
+type checker must consume every deferred entry or issue a diagnostic. Once it
+resolves a deferred call target, it reuses the call-argument validator from this
+pass to check labels, order, and required/default argument presence. Deferral
+does not waive these rules.
 
 Type compatibility, access-marker/exclusivity checks, consuming flow,
 mutability, exhaustiveness, layout, and lowering remain outside this pass.

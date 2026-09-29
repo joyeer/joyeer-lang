@@ -1,0 +1,185 @@
+struct Record {
+    var values: [String]
+}
+
+enum Event {
+    Message(String),
+    Empty,
+}
+
+func number(value: Int?): Int {
+    return match value {
+        .Some(number) => number,
+        .None => -1,
+    }
+}
+
+func text(value: String?): String {
+    return match value {
+        .Some(text) => text,
+        .None => "missing",
+    }
+}
+
+func nested(value: Optional<Int?>): Int {
+    return match value {
+        .None => -1,
+        .Some(.None) => 0,
+        .Some(.Some(number)) => number,
+    }
+}
+
+func unit(value: Void?): Bool {
+    return match value {
+        .Some(()) => true,
+        .None => false,
+    }
+}
+
+func snapshot(): String? {
+    let values = ["name": "owned" + "!"]
+    return values.get(key: "name")
+}
+
+func make(counter: inout Int): [String: String] {
+    &counter = counter + 1
+    return ["name": "temporary" + "!"]
+}
+
+func key(counter: inout Int): String {
+    &counter = counter + 1
+    if counter != 2 {
+        return "out of order"
+    }
+    return "na" + "me"
+}
+
+func pending(input: String?, counter: inout Int): String? {
+    return make(counter: &counter).get(key: input?)
+}
+
+func propagate(values: [String: String], key: String): String? {
+    let local = ["cleanup" + "!"]
+    let found = values.get(key: key)?
+    if local.count != 1 {
+        return nil
+    }
+    return found
+}
+
+func main(args: [String]): Int {
+    let empty: [String: Int] = [:]
+    if number(value: empty.get(key: "absent")) != -1 { return 1 }
+    let numbers = [1: 42, 2: 17, 1: 9]
+    if number(value: numbers.get(key: 1)) != 9 { return 2 }
+    if number(value: numbers.get(key: 3)) != -1 { return 3 }
+    let flags = [true: 7]
+    if number(value: flags.get(key: true)) != 7 { return 4 }
+    if number(value: flags.get(key: false)) != -1 { return 5 }
+    let bytes: [UInt8: Int] = [b'A': 65]
+    if number(value: bytes.get(key: b'A')) != 65 { return 6 }
+    if number(value: bytes.get(key: b'B')) != -1 { return 7 }
+
+    var values = ["name": "before" + "!"]
+    let before = values.get(key: "na" + "me")
+    &values["name"] = "after" + "!"
+    &values["other"] = "other"
+    if text(value: before) != "before!" { return 8 }
+    if text(value: values.get(key: "name")) != "after!" { return 9 }
+    if values["name"] != "after!" { return 10 }
+    if values.count != 2 { return 11 }
+    if text(value: snapshot()) != "owned!" { return 12 }
+    if text(value: propagate(values: values, key: "name")) != "after!" { return 13 }
+    if text(value: propagate(values: values, key: "absent")) != "missing" { return 14 }
+
+    let optionalValues: [String: Int?] = ["none": nil, "some": 42]
+    if nested(value: optionalValues.get(key: "absent")) != -1 { return 15 }
+    if nested(value: optionalValues.get(key: "none")) != 0 { return 16 }
+    if nested(value: optionalValues.get(key: "some")) != 42 { return 17 }
+    let units: [String: Void] = ["done": ()]
+    if unit(value: units.get(key: "done")) == false { return 18 }
+    if unit(value: units.get(key: "absent")) { return 19 }
+    let noUnits: [Int: Void] = [:]
+    if unit(value: noUnits.get(key: 1)) { return 20 }
+
+    var records = ["item": Record(values: ["old" + "!"])]
+    let old = records.get(key: "item")
+    &records["item"] = Record(values: ["new" + "!"])
+    match old {
+        .Some(record) => {
+            if record.values[0] != "old!" { return 21 }
+        },
+        .None => { return 22 },
+    }
+    var events: [Int: Event] = [1: .Message("event" + "!")]
+    let event = events.get(key: 1)
+    &events[1] = .Empty
+    match event {
+        .Some(.Message(message)) => {
+            if message != "event!" { return 23 }
+        },
+        _ => { return 24 },
+    }
+    var lists = [1: ["list" + "!"]]
+    let list = lists.get(key: 1)
+    &lists[1] = ["changed"]
+    match list {
+        .Some(items) => {
+            if items[0] != "list!" { return 25 }
+        },
+        .None => { return 26 },
+    }
+    var tree = [1: ["leaf": "leaf" + "!"]]
+    let branch = tree.get(key: 1)
+    &tree[1] = ["leaf": "changed"]
+    match branch {
+        .Some(entries) => {
+            if text(value: entries.get(key: "leaf")) != "leaf!" { return 27 }
+        },
+        .None => { return 28 },
+    }
+    if text(value: tree[1].get(key: "leaf")) != "changed" { return 29 }
+
+    var outcomes: [String: Result<Int, String>] = ["job": .Err("error" + "!")]
+    let outcome = outcomes.get(key: "job")
+    &outcomes["job"] = .Ok(42)
+    match outcome {
+        .Some(.Err(error)) => {
+            if error != "error!" { return 38 }
+        },
+        _ => { return 39 },
+    }
+    let optionalUnits: [Int: Void?] = [1: nil, 2: ()]
+    match optionalUnits.get(key: 1) {
+        .Some(.None) => (),
+        _ => { return 40 },
+    }
+    match optionalUnits.get(key: 2) {
+        .Some(.Some(())) => (),
+        _ => { return 41 },
+    }
+    match optionalUnits.get(key: 3) {
+        .None => (),
+        _ => { return 42 },
+    }
+
+    var calls = 0
+    let temporary = make(counter: &calls).get(key: key(counter: &calls))
+    if calls != 2 { return 30 }
+    if text(value: temporary) != "temporary!" { return 31 }
+    if text(value: pending(input: nil, counter: &calls)) != "missing" { return 32 }
+    if calls != 3 { return 33 }
+    if text(value: pending(input: "name", counter: &calls)) != "temporary!" { return 34 }
+    if calls != 4 { return 35 }
+
+    var index = 0
+    while index < 100 {
+        let saved = values.get(key: "name")
+        &values["name"] = "after" + "!"
+        if text(value: saved) != "after!" { return 36 }
+        if text(value: values.get(key: "absent")) != "missing" { return 37 }
+        index = index + 1
+    }
+    print(value: "dictionary get ok")
+    return 0
+}

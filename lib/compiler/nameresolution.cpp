@@ -27,7 +27,149 @@ bool isEnumCaseSymbol(SymbolKind kind) {
     return kind == SymbolKind::builtinEnumCase || kind == SymbolKind::enumCase;
 }
 
+void validateArgumentLabel(
+        const std::optional<std::string>& expected,
+        const Token::Ptr& actual,
+        SourceSpan span,
+        std::vector<NameResolutionDiagnostic>& diagnostics) {
+    if (!expected.has_value() && actual == nullptr) return;
+    if (expected.has_value() && actual != nullptr && *expected == actual->rawValue) return;
+
+    if (expected.has_value() && actual == nullptr) {
+        diagnostics.push_back({
+            NameResolutionDiagnosticId::missingArgumentLabel,
+            span,
+            "argument requires label '" + *expected + ":'",
+        });
+    } else if (!expected.has_value()) {
+        diagnostics.push_back({
+            NameResolutionDiagnosticId::unexpectedArgumentLabel,
+            actual->span,
+            "this enum payload position is unlabeled",
+        });
+    } else {
+        diagnostics.push_back({
+            NameResolutionDiagnosticId::unexpectedArgumentLabel,
+            actual->span,
+            "expected argument label '" + *expected + ":', but got '" +
+                    actual->rawValue + ":'",
+        });
+    }
+}
+
 } // namespace
+
+std::vector<NameResolutionDiagnostic> validateCallArguments(
+        const syntax::CallExprSyntax& call,
+        const Symbol& target) {
+    assert(target.callable.has_value());
+    const auto& callable = *target.callable;
+    std::vector<NameResolutionDiagnostic> diagnostics;
+    const auto report = [&](NameResolutionDiagnosticId id, SourceSpan span, std::string message) {
+        diagnostics.push_back({ id, span, std::move(message) });
+    };
+    const auto reportArgumentCount = [&] {
+        const auto expectedCount = callable.parameters.size();
+        const auto requiredCount = static_cast<size_t>(std::count_if(
+                callable.parameters.begin(),
+                callable.parameters.end(),
+                [](const CallableParameter& parameter) { return parameter.required; }));
+        const auto expectation = requiredCount == expectedCount
+                ? std::to_string(expectedCount)
+                : std::to_string(requiredCount) + " to " + std::to_string(expectedCount);
+        report(
+                NameResolutionDiagnosticId::argumentCountMismatch,
+                call.span,
+                "call target '" + target.name + "' expects " + expectation +
+                        " argument(s), but got " + std::to_string(call.arguments.size()));
+    };
+    if (!callable.acceptsArgumentClause) {
+        report(
+                NameResolutionDiagnosticId::unexpectedArgumentClause,
+                call.span,
+                "'" + target.name + "' has no payload and must be used without parentheses");
+        return diagnostics;
+    }
+
+    if (callable.kind == CallableKind::enumCase) {
+        if (call.arguments.size() != callable.parameters.size()) {
+            reportArgumentCount();
+        }
+        const auto count = std::min(call.arguments.size(), callable.parameters.size());
+        for (size_t index = 0; index < count; ++index) {
+            validateArgumentLabel(
+                    callable.parameters[index].label,
+                    call.arguments[index]->label,
+                    call.arguments[index]->span,
+                    diagnostics);
+        }
+        return diagnostics;
+    }
+
+    std::vector<bool> matched(callable.parameters.size(), false);
+    size_t previousIndex = 0;
+    bool hasPrevious = false;
+    for (const auto& argument : call.arguments) {
+        if (argument->label == nullptr) {
+            const auto expected = hasPrevious ? previousIndex + 1 : 0;
+            const auto expectedLabel = expected < callable.parameters.size()
+                    ? callable.parameters[expected].label
+                    : std::optional<std::string>();
+            report(
+                    NameResolutionDiagnosticId::missingArgumentLabel,
+                    argument->span,
+                    expectedLabel.has_value()
+                            ? "argument requires label '" + *expectedLabel + ":'"
+                            : std::string("ordinary calls require an argument label"));
+            continue;
+        }
+
+        const auto label = argument->label->rawValue;
+        const auto found = std::find_if(
+                callable.parameters.begin(),
+                callable.parameters.end(),
+                [&label](const CallableParameter& parameter) {
+                    return parameter.label.has_value() && *parameter.label == label;
+                });
+        if (found == callable.parameters.end()) {
+            report(
+                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
+                    argument->label->span,
+                    "call target '" + target.name +
+                            "' has no parameter labeled '" + label + ":'");
+            continue;
+        }
+
+        const auto index = static_cast<size_t>(
+                std::distance(callable.parameters.begin(), found));
+        if (matched[index]) {
+            report(
+                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
+                    argument->label->span,
+                    "argument label '" + label + ":' is supplied more than once");
+            continue;
+        }
+        if (hasPrevious && index < previousIndex) {
+            report(
+                    NameResolutionDiagnosticId::argumentOutOfOrder,
+                    argument->label->span,
+                    "argument '" + label + ":' is out of declaration order");
+        }
+        matched[index] = true;
+        previousIndex = index;
+        hasPrevious = true;
+    }
+
+    bool hasMissingRequired = false;
+    for (size_t index = 0; index < callable.parameters.size(); ++index) {
+        if (callable.parameters[index].required && !matched[index]) {
+            hasMissingRequired = true;
+            break;
+        }
+    }
+    if (hasMissingRequired) reportArgumentCount();
+    return diagnostics;
+}
 
 class NameResolutionBuilder {
 public:
@@ -393,6 +535,22 @@ private:
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
+        declareBuiltinMember(
+                dictionaryType,
+                SymbolKind::builtinMember,
+                "get",
+                optionalType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    { CallableParameter {
+                        std::string("key"),
+                        true,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                    } },
+                });
         CallableSignature utf8Signature { CallableKind::function, true, {} };
         declareBuiltinMember(
             stringType,
@@ -1175,7 +1333,9 @@ private:
         }
 
         model->callTargets_[nodeId(expression)] = target;
-        validateCallArguments(expression, target);
+        for (auto& diagnostic : validateCallArguments(*expression, symbol(target))) {
+            diagnostics.push_back(std::move(diagnostic));
+        }
     }
 
     void resolveContextualCase(
@@ -1286,98 +1446,6 @@ private:
         }
     }
 
-    void validateCallArguments(
-            const syntax::CallExprSyntax::Ptr& call,
-            SymbolId target) {
-        const auto& callable = *symbol(target).callable;
-        if (!callable.acceptsArgumentClause) {
-            report(
-                    NameResolutionDiagnosticId::unexpectedArgumentClause,
-                    call->span,
-                    "'" + symbol(target).name + "' has no payload and must be used without parentheses");
-            return;
-        }
-
-        if (callable.kind == CallableKind::enumCase) {
-            if (call->arguments.size() != callable.parameters.size()) {
-                reportArgumentCount(call->span, symbol(target), call->arguments.size());
-            }
-            const auto count = std::min(call->arguments.size(), callable.parameters.size());
-            for (size_t index = 0; index < count; ++index) {
-                validateLabel(
-                        callable.parameters[index].label,
-                        call->arguments[index]->label,
-                        call->arguments[index]->span);
-            }
-            return;
-        }
-
-        std::vector<bool> matched(callable.parameters.size(), false);
-        size_t previousIndex = 0;
-        bool hasPrevious = false;
-        for (const auto& argument : call->arguments) {
-            if (argument->label == nullptr) {
-                const auto expected = hasPrevious ? previousIndex + 1 : 0;
-                const auto expectedLabel = expected < callable.parameters.size()
-                        ? callable.parameters[expected].label
-                        : std::optional<std::string>();
-                report(
-                        NameResolutionDiagnosticId::missingArgumentLabel,
-                        argument->span,
-                        expectedLabel.has_value()
-                                ? "argument requires label '" + *expectedLabel + ":'"
-                                : std::string("ordinary calls require an argument label"));
-                continue;
-            }
-
-            const auto label = argument->label->rawValue;
-            const auto found = std::find_if(
-                    callable.parameters.begin(),
-                    callable.parameters.end(),
-                    [&label](const CallableParameter& parameter) {
-                        return parameter.label.has_value() && *parameter.label == label;
-                    });
-            if (found == callable.parameters.end()) {
-                report(
-                        NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                        argument->label->span,
-                        "call target '" + symbol(target).name +
-                                "' has no parameter labeled '" + label + ":'");
-                continue;
-            }
-
-            const auto index = static_cast<size_t>(
-                    std::distance(callable.parameters.begin(), found));
-            if (matched[index]) {
-                report(
-                        NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                        argument->label->span,
-                        "argument label '" + label + ":' is supplied more than once");
-                continue;
-            }
-            if (hasPrevious && index < previousIndex) {
-                report(
-                        NameResolutionDiagnosticId::argumentOutOfOrder,
-                        argument->label->span,
-                        "argument '" + label + ":' is out of declaration order");
-            }
-            matched[index] = true;
-            previousIndex = index;
-            hasPrevious = true;
-        }
-
-        bool hasMissingRequired = false;
-        for (size_t index = 0; index < callable.parameters.size(); ++index) {
-            if (callable.parameters[index].required && !matched[index]) {
-                hasMissingRequired = true;
-                break;
-            }
-        }
-        if (hasMissingRequired) {
-            reportArgumentCount(call->span, symbol(target), call->arguments.size());
-        }
-    }
-
     void validatePatternArguments(
             const syntax::EnumCasePatternSyntax::Ptr& pattern,
             SymbolId target) {
@@ -1401,54 +1469,12 @@ private:
         }
         const auto count = std::min(pattern->arguments.size(), callable.parameters.size());
         for (size_t index = 0; index < count; ++index) {
-            validateLabel(
+            validateArgumentLabel(
                     callable.parameters[index].label,
                     pattern->arguments[index]->label,
-                    pattern->arguments[index]->span);
+                    pattern->arguments[index]->span,
+                    diagnostics);
         }
-    }
-
-    void validateLabel(
-            const std::optional<std::string>& expected,
-            const Token::Ptr& actual,
-            SourceSpan span) {
-        if (!expected.has_value() && actual == nullptr) return;
-        if (expected.has_value() && actual != nullptr && *expected == actual->rawValue) return;
-
-        if (expected.has_value() && actual == nullptr) {
-            report(
-                    NameResolutionDiagnosticId::missingArgumentLabel,
-                    span,
-                    "argument requires label '" + *expected + ":'");
-        } else if (!expected.has_value()) {
-            report(
-                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                    actual->span,
-                    "this enum payload position is unlabeled");
-        } else {
-            report(
-                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                    actual->span,
-                    "expected argument label '" + *expected + ":', but got '" +
-                            actual->rawValue + ":'");
-        }
-    }
-
-    void reportArgumentCount(SourceSpan span, const Symbol& target, size_t actualCount) {
-        const auto expectedCount = target.callable->parameters.size();
-        const auto requiredCount = static_cast<size_t>(std::count_if(
-            target.callable->parameters.begin(),
-            target.callable->parameters.end(),
-            [](const CallableParameter& parameter) { return parameter.required; }));
-        const auto expectation = requiredCount == expectedCount
-            ? std::to_string(expectedCount)
-            : std::to_string(requiredCount) + " to " + std::to_string(expectedCount);
-        report(
-                NameResolutionDiagnosticId::argumentCountMismatch,
-                span,
-            "call target '" + target.name + "' expects " + expectation +
-                " argument(s), but got " +
-                        std::to_string(actualCount));
     }
 
     std::optional<SymbolId> referencedSymbol(const syntax::NodePtr& node) const {

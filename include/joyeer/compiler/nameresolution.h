@@ -43,6 +43,10 @@ public:
             const syntax::SourceFileSyntax::Ptr& root) const;
 };
 
+[[nodiscard]] std::vector<NameResolutionDiagnostic> validateCallArguments(
+        const syntax::CallExprSyntax& call,
+        const Symbol& target);
+
 [[nodiscard]] const char* diagnosticName(NameResolutionDiagnosticId id);
 [[nodiscard]] std::string dump(const std::vector<NameResolutionDiagnostic>& diagnostics);
 

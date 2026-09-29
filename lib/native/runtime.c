@@ -704,23 +704,34 @@ void joyeer_dictionary_set_owned_abi(
     ++dictionary->count;
 }
 
-void* joyeer_dictionary_at(
-        JoyeerDictionary dictionary,
+static void* dictionaryFind(
+        void* data,
+        int64_t count,
         const void* key,
         int64_t keySize,
         int32_t keyKind) {
-    if (dictionary.data == NULL || key == NULL) joyeer_panic("invalid dictionary lookup");
-    const DictionaryHeader* header = ((const DictionaryHeader*)dictionary.data) - 1;
+    if (data == NULL || key == NULL) joyeer_panic("invalid dictionary lookup");
+    const DictionaryHeader* header = ((const DictionaryHeader*)data) - 1;
     if (keySize != header->keySize || keyKind != header->keyKind) {
         joyeer_panic("dictionary key type mismatch");
     }
-    for (int64_t index = 0; index < dictionary.count; ++index) {
-        uint8_t* entry = (uint8_t*)dictionary.data +
+    for (int64_t index = 0; index < count; ++index) {
+        uint8_t* entry = (uint8_t*)data +
                 checkedByteCount(index, header->entrySize);
         if (dictionaryKeyEqual(entry, key, keySize, keyKind)) {
             return entry + header->valueOffset;
         }
     }
+    return NULL;
+}
+
+void* joyeer_dictionary_at(
+        JoyeerDictionary dictionary,
+        const void* key,
+        int64_t keySize,
+        int32_t keyKind) {
+    void* value = dictionaryFind(dictionary.data, dictionary.count, key, keySize, keyKind);
+    if (value != NULL) return value;
     joyeer_panic("dictionary key not found");
 }
 
@@ -829,4 +840,13 @@ void* joyeer_dictionary_at_abi(
             key,
             keySize,
             keyKind);
+}
+
+void* joyeer_dictionary_find_abi(
+        void* data,
+        int64_t count,
+        const void* key,
+        int64_t keySize,
+        int32_t keyKind) {
+    return dictionaryFind(data, count, key, keySize, keyKind);
 }

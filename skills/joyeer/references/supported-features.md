@@ -30,6 +30,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
+| Dictionary lookup | `get(key:)` returns an owned `Optional<V>`; absence is `.None`, while strict subscripts still trap |
 | Propagation | Postfix `?` on `Result<T, E>` in `Result<U, E>` functions with identical `E`, or on `Optional<T>` in Optional-returning functions |
 | Unit results | `Result<Void, E>` with `.Ok(())`; unit expressions, bindings, fields, container elements, and patterns |
 | Strings | Concatenation, comparisons, byte count/indexing, owned `utf8()` byte array |
@@ -68,8 +69,9 @@ explicit `match` for errors that cannot be propagated with `?`.
   contain arbitrary bytes; file input does not guarantee valid UTF-8.
 - Ordinary heap-backed value copies can allocate and recursively clone.
   Do not promise copy-on-write, garbage collection, or allocation-free code.
-- Dictionary lookup is currently linear, not hashed. Do not assume a missing
-  subscript returns `Optional`; current subscript examples access present keys.
+- Dictionary lookup is currently linear, not hashed. Use `get(key:)` for an
+  owned `Optional<V>` that survives dictionary mutation/destruction. Nested
+  optional values are not flattened. Missing subscripts still trap.
 - Checked integer addition, subtraction, multiplication, and array indexing can
   terminate the program on invalid input. Do not disable checks to fix logic.
 - `readFile(path:)` is the implemented file-input primitive; it returns

@@ -1,0 +1,3 @@
+func lookup(values: [String: Int?]): Int? {
+    return values.get(key: "name")
+}

@@ -1266,6 +1266,8 @@ private:
                 return emitConstructDictionary(out, instruction);
             case ir::Opcode::dictionarySet:
                 return emitDictionarySet(out, instruction);
+            case ir::Opcode::dictionaryGet:
+                return emitDictionaryGet(out, instruction);
             case ir::Opcode::fieldAddress:
                 return emitFieldAddress(out, instruction);
             case ir::Opcode::extractField:
@@ -1632,6 +1634,98 @@ private:
                 "declare void @joyeer_dictionary_set_owned_abi(ptr, ptr, ptr)");
         out << "  call void @joyeer_dictionary_set_owned_abi(ptr " << *dictionary
             << ", ptr " << keyAddress << ", ptr " << valueAddress << ")\n";
+        return true;
+    }
+
+    bool emitDictionaryGet(
+            std::ostringstream& out,
+            const ir::Instruction& instruction) {
+        if (instruction.operands.size() != 2 || !instruction.result.has_value()) return false;
+        const auto dictionary = operand(instruction.operands[0]);
+        const auto key = operand(instruction.operands[1]);
+        const auto* dictionaryValue = value(instruction.operands[0]);
+        const auto* dictionaryType = dictionaryValue == nullptr
+                ? nullptr : type(dictionaryValue->type);
+        const auto* optionalType = type(instruction.result->type);
+        const auto enumeration = enumerations.find(instruction.result->type);
+        if (!dictionary.has_value() || !key.has_value() || dictionaryType == nullptr ||
+            dictionaryType->kind != typing::TypeKind::dictionary ||
+            dictionaryType->arguments.size() != 2 || optionalType == nullptr ||
+            optionalType->kind != typing::TypeKind::optional ||
+            optionalType->arguments.size() != 1 ||
+            optionalType->arguments[0] != dictionaryType->arguments[1] ||
+            enumeration == enumerations.end()) {
+            return false;
+        }
+
+        const auto storedType = dictionaryType->arguments[1];
+        std::optional<size_t> someTag;
+        std::optional<size_t> noneTag;
+        for (size_t index = 0; index < enumeration->second->cases.size(); ++index) {
+            const auto& enumCase = enumeration->second->cases[index];
+            if (enumCase.name == "Some" && enumCase.payloadTypes.size() == 1 &&
+                enumCase.payloadTypes[0] == storedType) {
+                someTag = index;
+            } else if (enumCase.name == "None" && enumCase.payloadTypes.empty()) {
+                noneTag = index;
+            }
+        }
+        const auto keyType = llvmType(dictionaryType->arguments[0], instruction.span);
+        const auto keyLayout = layoutFor(dictionaryType->arguments[0]);
+        const auto keyKind = runtimeKeyKind(dictionaryType->arguments[0]);
+        const auto resultType = llvmType(instruction.result->type, instruction.span);
+        const auto valueType = llvmType(storedType, instruction.span);
+        if (!someTag.has_value() || !noneTag.has_value() || !keyType.has_value() ||
+            !keyLayout.has_value() || !keyKind.has_value() || !resultType.has_value() ||
+            !valueType.has_value()) {
+            return false;
+        }
+
+        usesDictionary = true;
+        runtimeDeclarations.insert(
+                "declare ptr @joyeer_dictionary_find_abi(ptr, i64, ptr, i64, i32)");
+        const auto parts = emitHandleParts(out, "%joyeer.dictionary", *dictionary);
+        if (!parts.has_value()) return false;
+        const auto keyAddress = allocateStackSlot(*keyType);
+        const auto storage = allocateStackSlot(*resultType);
+        const auto tagAddress = temporary();
+        const auto valueAddress = temporary();
+        const auto found = temporary();
+        const auto labelSuffix = std::to_string(nextTemporary++);
+        const auto someLabel = "dictionary.get.some." + labelSuffix;
+        const auto doneLabel = "dictionary.get.done." + labelSuffix;
+        out << "  store " << *keyType << ' ' << *key << ", ptr " << keyAddress << "\n"
+            << "  " << valueAddress << " = call ptr @joyeer_dictionary_find_abi(ptr "
+            << parts->data << ", i64 " << parts->count << ", ptr " << keyAddress
+            << ", i64 " << keyLayout->size << ", i32 " << *keyKind << ")\n"
+            << "  store " << *resultType << " zeroinitializer, ptr " << storage << "\n"
+            << "  " << tagAddress << " = getelementptr inbounds " << *resultType
+            << ", ptr " << storage << ", i32 0, i32 0\n"
+            << "  store i32 " << *noneTag << ", ptr " << tagAddress << "\n"
+            << "  " << found << " = icmp ne ptr " << valueAddress << ", null\n"
+            << "  br i1 " << found << ", label %" << someLabel
+            << ", label %" << doneLabel << "\n"
+            << someLabel << ":\n"
+            << "  store i32 " << *someTag << ", ptr " << tagAddress << "\n";
+        if (!isUnit(storedType)) {
+            const auto payloadAddress = temporary();
+            out << "  " << payloadAddress << " = getelementptr inbounds " << *resultType
+                << ", ptr " << storage << ", i32 0, i32 1, i32 0\n";
+            if (ir::requiresDestruction(*module, storedType)) {
+                out << "  call void " << cloneHelper(storedType) << "(ptr "
+                    << payloadAddress << ", ptr " << valueAddress << ")\n";
+            } else {
+                const auto storedValue = temporary();
+                out << "  " << storedValue << " = load " << *valueType
+                    << ", ptr " << valueAddress << "\n"
+                    << "  store " << *valueType << ' ' << storedValue
+                    << ", ptr " << payloadAddress << "\n";
+            }
+        }
+        out << "  br label %" << doneLabel << "\n"
+            << doneLabel << ":\n"
+            << "  " << valueName(instruction.result->id) << " = load "
+            << *resultType << ", ptr " << storage << "\n";
         return true;
     }
 

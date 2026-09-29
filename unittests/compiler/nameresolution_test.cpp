@@ -172,6 +172,35 @@ return text.utf8()
     EXPECT_EQ(resolution.model->symbol(*target)->name, "utf8");
 }
 
+TEST_F(NameResolutionTest, ResolvesDictionaryGetAsBorrowingBuiltinMember) {
+    resolve("func lookup(values: [String: Int]): Int? {\n"
+            "return values.get(key: \"answer\")\n}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(returned->value);
+    const auto& member = referenced(call->callee);
+    EXPECT_EQ(member.kind, SymbolKind::builtinMember);
+    EXPECT_EQ(member.name, "get");
+    EXPECT_FALSE(member.isMutable);
+    ASSERT_TRUE(member.callable.has_value());
+    ASSERT_EQ(member.callable->parameters.size(), 1u);
+    EXPECT_EQ(member.callable->parameters[0].label, std::optional<std::string>("key"));
+    EXPECT_EQ(member.callable->parameters[0].access, joyeer::syntax::AccessEffect::borrowing);
+}
+
+TEST_F(NameResolutionTest, RejectsDictionaryGetArgumentLabelsAndArity) {
+    for (const auto* call : { "values.get()", "values.get(\"answer\")",
+                             "values.get(value: \"answer\")",
+                             "values.get(key: \"answer\", key: \"extra\")" }) {
+        SCOPED_TRACE(call);
+        resolve(std::string("func lookup(values: [String: Int]) {\n") + call + "\n}\n");
+        EXPECT_FALSE(resolution.succeeded());
+    }
+}
+
         TEST_F(NameResolutionTest, ResolvesArrayAppendFromTheBuiltinMemberScope) {
             resolve(R"JOYEER(func add(values: inout [Int]) {
         &values.append(element: 42)
