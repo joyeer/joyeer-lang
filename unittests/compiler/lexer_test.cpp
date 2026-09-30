@@ -99,6 +99,25 @@ TEST_F(LexerTest, ClassifiesIdentifiersWildcardAndPunctuation) {
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
+TEST_F(LexerTest, ClassifiesLoopControlAsSupportedKeywords) {
+    lex("break\ncontinue\nbreakfast continueValue");
+
+    expectKinds({kwBreak, kwContinue, identifier, identifier, endOfFile});
+    EXPECT_TRUE(diagnostics.errors.empty());
+    EXPECT_EQ(source->tokens[0]->span.offset, 0u);
+    EXPECT_EQ(source->tokens[0]->span.length, 5u);
+    EXPECT_EQ(source->tokens[1]->span.offset, 6u);
+    EXPECT_EQ(source->tokens[1]->span.length, 8u);
+    EXPECT_TRUE(source->tokens[1]->startsLine);
+    for (const auto& token : {source->tokens[0], source->tokens[1]}) {
+        EXPECT_TRUE(isKeyword(token->rawValue));
+        EXPECT_EQ(keywordKind(token->rawValue), token->kind);
+        EXPECT_TRUE(isKeywordKind(token->kind));
+        EXPECT_TRUE(tokenKindMatches(token->kind, keyword));
+        EXPECT_FALSE(isDeferredKeyword(token->rawValue));
+    }
+}
+
 TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
     lex("for where public performs pure");
 
@@ -116,6 +135,17 @@ TEST_F(LexerTest, UsesLongestMatchForMvpOperators) {
         plus, minus, multiply, endOfFile
     });
     EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, ClassifiesLogicalAndDivisionOperators) {
+    lex("! != || / %");
+
+    expectKinds({bang, notEqual, orOr, divide, percentage, endOfFile});
+    EXPECT_TRUE(diagnostics.errors.empty());
+    for (size_t index = 0; index + 1 < source->tokens.size(); ++index) {
+        EXPECT_TRUE(isOperatorKind(source->tokens[index]->kind));
+        EXPECT_TRUE(tokenKindMatches(source->tokens[index]->kind, operators));
+    }
 }
 
 TEST_F(LexerTest, TracksEverySupportedNewlineForm) {
@@ -297,12 +327,11 @@ TEST_F(LexerTest, TracksSpansLinesAndCommentTrivia) {
 }
 
 TEST_F(LexerTest, RejectsDeferredMvpSyntaxAsSingleInvalidTokens) {
-    lex("?? ?. || ! / % ; @ # 'x' += << >> 1.2 0xff");
+    lex("?? ?. ; @ # 'x' += << >> 1.2 0xff");
 
     expectKinds({invalid, invalid, invalid, invalid, invalid, invalid,
-                 invalid, invalid, invalid, invalid, invalid, invalid,
-                 invalid, invalid, invalid, endOfFile});
-    EXPECT_EQ(diagnostics.errors.size(), 15u);
+                 invalid, invalid, invalid, invalid, invalid, endOfFile});
+    EXPECT_EQ(diagnostics.errors.size(), 11u);
 }
 
 TEST_F(LexerTest, RejectsCompoundAndShiftOperatorsAsWholeTokens) {

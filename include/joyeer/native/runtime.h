@@ -53,6 +53,8 @@ int64_t joyeer_runtime_active_allocations(void);
 int64_t joyeer_checked_add_int(int64_t left, int64_t right);
 int64_t joyeer_checked_sub_int(int64_t left, int64_t right);
 int64_t joyeer_checked_mul_int(int64_t left, int64_t right);
+int64_t joyeer_checked_div_int(int64_t left, int64_t right);
+int64_t joyeer_checked_rem_int(int64_t left, int64_t right);
 
 void joyeer_print_int(int64_t value);
 void joyeer_print_bool(bool value);

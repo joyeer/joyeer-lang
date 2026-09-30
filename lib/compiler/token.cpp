@@ -45,6 +45,8 @@ const std::string Keywords::IN = "in";
 const std::string Keywords::INIT = "init";
 const std::string Keywords::SELF = "self";
 const std::string Keywords::RETURN = "return";
+const std::string Keywords::BREAK = "break";
+const std::string Keywords::CONTINUE = "continue";
 const std::string Keywords::FILEIMPORT = "fileimport";
 const std::string Keywords::MATCH = "match";
 const std::string Keywords::INOUT = "inout";
@@ -73,6 +75,8 @@ std::unordered_set<std::string> initKeywordMap() {
     map.insert(Keywords::INIT);
     map.insert(Keywords::SELF);
     map.insert(Keywords::RETURN);
+    map.insert(Keywords::BREAK);
+    map.insert(Keywords::CONTINUE);
     map.insert(Keywords::FILEIMPORT);
     map.insert(Keywords::MATCH);
     map.insert(Keywords::INOUT);
@@ -106,6 +110,8 @@ TokenKind keywordKind(std::string_view value) {
     {"init", kwInit},
     {"self", kwSelf},
     {"return", kwReturn},
+    {"break", kwBreak},
+    {"continue", kwContinue},
     {"fileimport", kwFileImport},
     {"match", kwMatch},
     {"inout", kwInout},
@@ -124,8 +130,8 @@ bool isDeferredKeyword(std::string_view value) {
     "extension", "subscript", "deinit", "typealias", "as", "indirect",
     "mutating",
     "public", "internal", "private", "yield", "where",
-    "async", "await", "actor", "throws", "catch", "defer", "break",
-    "continue", "is", "protocol", "trait", "macro", "invariant",
+    "async", "await", "actor", "throws", "catch", "defer",
+    "is", "protocol", "trait", "macro", "invariant",
     "result", "unsafe", "package", "Any"
   };
   return words.contains(value);
@@ -225,4 +231,3 @@ OperatorPriority Operators::getPriority(const std::string& op) {
 const std::string Literals::FALSE = "false";
 const std::string Literals::TRUE = "true";
 const std::string Literals::NIL = "nil";
-

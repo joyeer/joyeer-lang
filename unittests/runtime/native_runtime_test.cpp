@@ -62,6 +62,70 @@ TEST(NativeRuntimeDeathTest, TrapsIntegerOverflow) {
             "integer multiplication overflow");
 }
 
+TEST(NativeRuntimeTest, DividesAndTakesRemaindersWithSignedIntegerSemantics) {
+    const auto minimum = std::numeric_limits<int64_t>::min();
+    const auto maximum = std::numeric_limits<int64_t>::max();
+    const int64_t cases[][4] = {
+        { 7, 3, 2, 1 },
+        { -7, 3, -2, -1 },
+        { 7, -3, -2, 1 },
+        { -7, -3, 2, -1 },
+        { -6, 3, -2, 0 },
+        { -6, -3, 2, 0 },
+        { 0, 1, 0, 0 },
+        { 0, -1, 0, 0 },
+        { 0, minimum, 0, 0 },
+        { minimum, 1, minimum, 0 },
+        { minimum, 2, minimum / 2, 0 },
+        { minimum, 3, -3074457345618258602LL, -2 },
+        { minimum, -3, 3074457345618258602LL, -2 },
+        { minimum, minimum, 1, 0 },
+        { minimum, maximum, -1, -1 },
+        { maximum, minimum, 0, maximum },
+        { maximum, 1, maximum, 0 },
+        { maximum, -1, -maximum, 0 },
+        { maximum, 2, maximum / 2, 1 },
+        { 1, minimum, 0, 1 },
+        { -1, minimum, 0, -1 },
+    };
+    for (const auto& values : cases) {
+        SCOPED_TRACE(testing::Message() << values[0] << ", " << values[1]);
+        EXPECT_EQ(joyeer_checked_div_int(values[0], values[1]), values[2]);
+        EXPECT_EQ(joyeer_checked_rem_int(values[0], values[1]), values[3]);
+    }
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionByZero) {
+    for (const auto dividend : { int64_t { 0 }, std::numeric_limits<int64_t>::min(),
+                                std::numeric_limits<int64_t>::max() }) {
+        SCOPED_TRACE(dividend);
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_checked_div_int(dividend, 0)),
+                "integer division by zero");
+    }
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerRemainderByZero) {
+    for (const auto dividend : { int64_t { 0 }, std::numeric_limits<int64_t>::min(),
+                                std::numeric_limits<int64_t>::max() }) {
+        SCOPED_TRACE(dividend);
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_checked_rem_int(dividend, 0)),
+                "integer remainder by zero");
+    }
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionAndRemainderOverflow) {
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_checked_div_int(
+                    std::numeric_limits<int64_t>::min(), -1)),
+            "integer division overflow");
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_checked_rem_int(
+                    std::numeric_limits<int64_t>::min(), -1)),
+            "integer remainder overflow");
+}
+
 TEST(NativeRuntimeTest, ConcatenatesComparesAndIndexesStrings) {
     const std::string left = "Joy";
     const std::string right = "eer";

@@ -24,6 +24,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:
+        case Opcode::divide:
+        case Opcode::remainder:
         case Opcode::less:
         case Opcode::lessEqual:
         case Opcode::greater:
@@ -1303,6 +1305,25 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     "destroy requires addressable nontrivial storage");
                         }
                         break;
+                    case Opcode::divide:
+                    case Opcode::remainder:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value()) {
+                            const auto* type = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            if (operands[0]->category != ValueCategory::value ||
+                                operands[1]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                operands[0]->type != operands[1]->type ||
+                                instruction.result->type != operands[0]->type ||
+                                type == nullptr || type->kind != typing::TypeKind::integer) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "division and remainder require Int values and an Int result");
+                            }
+                        }
+                        break;
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
@@ -1885,6 +1906,8 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::add: return "add";
         case Opcode::subtract: return "sub";
         case Opcode::multiply: return "mul";
+        case Opcode::divide: return "div";
+        case Opcode::remainder: return "rem";
         case Opcode::less: return "lt";
         case Opcode::lessEqual: return "le";
         case Opcode::greater: return "gt";
@@ -2129,6 +2152,8 @@ std::string dump(const Module& module) {
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
+                    case Opcode::divide:
+                    case Opcode::remainder:
                     case Opcode::less:
                     case Opcode::lessEqual:
                     case Opcode::greater:

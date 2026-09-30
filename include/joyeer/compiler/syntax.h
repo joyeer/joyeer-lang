@@ -57,6 +57,8 @@ enum class Kind {
     contextualCaseExpr,
     blockExpr,
     whileStmt,
+    breakStmt,
+    continueStmt,
     ifExpr,
     returnExpr,
     matchExpr,
@@ -571,6 +573,18 @@ struct WhileStmtSyntax final : Node {
             Node(Kind::whileStmt, span),
             condition(std::move(condition)),
             body(std::move(body)) {}
+};
+
+struct BreakStmtSyntax final : Node {
+    using Ptr = std::shared_ptr<BreakStmtSyntax>;
+
+    explicit BreakStmtSyntax(SourceSpan span): Node(Kind::breakStmt, span) {}
+};
+
+struct ContinueStmtSyntax final : Node {
+    using Ptr = std::shared_ptr<ContinueStmtSyntax>;
+
+    explicit ContinueStmtSyntax(SourceSpan span): Node(Kind::continueStmt, span) {}
 };
 
 struct IfExprSyntax final : ExprSyntax {

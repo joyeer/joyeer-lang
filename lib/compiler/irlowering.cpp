@@ -83,6 +83,13 @@ private:
         std::vector<Cleanup> cleanups;
     };
 
+    struct LoopContext {
+        ir::BlockId header;
+        ir::BlockId exit;
+        size_t scopeDepth;
+        bool hasBreak = false;
+    };
+
     typing::TypeCheckedModel::Ptr model;
     std::shared_ptr<ir::Module> module;
     std::vector<Diagnostic> diagnostics;
@@ -93,6 +100,7 @@ private:
     std::unordered_map<ir::ValueId, ValueOwnership> ownership;
     std::unordered_set<ir::ValueId> liveOwnedTemporaries;
     std::vector<ScopeFrame> scopes;
+    std::vector<LoopContext> loops;
     ir::FunctionId currentFunctionId = ir::invalidFunctionId;
     ir::BlockId currentBlockId = ir::invalidBlockId;
     ir::ValueId nextValue = 0;
@@ -816,6 +824,10 @@ private:
                 lowerWhile(std::static_pointer_cast<syntax::WhileStmtSyntax>(item));
                 result.reset();
                 unitResult = true;
+            } else if (item->kind == syntax::Kind::breakStmt ||
+                       item->kind == syntax::Kind::continueStmt) {
+                lowerLoopControl(item);
+                result.reset();
             } else if (isExpressionKind(item->kind)) {
                 result = lowerExpression(std::static_pointer_cast<syntax::ExprSyntax>(item));
                 unitResult = false;
@@ -1041,8 +1053,22 @@ private:
 
     std::optional<ir::Value> lowerPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
         const auto operand = lowerExpression(expression->operand);
+        if (currentBlockTerminated()) return std::nullopt;
         const auto type = model->typeOf(expression);
         if (!operand.has_value() || !type.has_value()) return std::nullopt;
+        if (expression->op != nullptr && expression->op->kind == bang) {
+            auto constant = makeInstruction(ir::Opcode::booleanConstant, expression->op->span);
+            constant.integerValue = 0;
+            constant.result = makeValue(*type, ir::ValueCategory::value);
+            const auto falseValue = *constant.result;
+            emit(std::move(constant));
+            return emitValue(
+                    ir::Opcode::equal,
+                    *type,
+                    ir::ValueCategory::value,
+                    { operand->id, falseValue.id },
+                    expression->span);
+        }
         if (expression->op == nullptr || expression->op->kind != minus) {
             report(
                     DiagnosticId::unsupportedSyntax,
@@ -1064,8 +1090,9 @@ private:
     }
 
     std::optional<ir::Value> lowerBinary(const syntax::BinaryExprSyntax::Ptr& expression) {
-        if (expression->op != nullptr && expression->op->kind == andAnd) {
-            return lowerLogicalAnd(expression);
+        if (expression->op != nullptr &&
+            (expression->op->kind == andAnd || expression->op->kind == orOr)) {
+            return lowerLogical(expression);
         }
         auto left = lowerExpression(expression->left);
         if (!left.has_value()) return std::nullopt;
@@ -1093,8 +1120,9 @@ private:
                 expression->span);
     }
 
-    std::optional<ir::Value> lowerLogicalAnd(
+    std::optional<ir::Value> lowerLogical(
             const syntax::BinaryExprSyntax::Ptr& expression) {
+        const auto isAnd = expression->op->kind == andAnd;
         pushScope();
         const auto left = lowerExpression(expression->left);
         if (currentBlockTerminated()) {
@@ -1113,9 +1141,13 @@ private:
                 std::nullopt,
                 true);
         emitRawStore(*left, resultAddress, expression->left->span, std::nullopt, true);
-        const auto rightBlock = createBlock("and.rhs");
-        const auto mergeBlock = createBlock("and.merge");
-        emitConditionalBranch(*left, rightBlock, mergeBlock, expression->left->span);
+        const auto rightBlock = createBlock(isAnd ? "and.rhs" : "or.rhs");
+        const auto mergeBlock = createBlock(isAnd ? "and.merge" : "or.merge");
+        emitConditionalBranch(
+                *left,
+                isAnd ? rightBlock : mergeBlock,
+                isAnd ? mergeBlock : rightBlock,
+                expression->left->span);
 
         switchToBlock(rightBlock);
         pushScope();
@@ -1131,7 +1163,7 @@ private:
             report(
                     DiagnosticId::missingType,
                     expression->right->span,
-                    "logical-and right operand did not lower a Boolean value");
+                    "logical right operand did not lower a Boolean value");
             emit(makeInstruction(ir::Opcode::unreachable, expression->right->span, true));
         }
 
@@ -1149,6 +1181,8 @@ private:
             case plus: return ir::Opcode::add;
             case minus: return ir::Opcode::subtract;
             case multiply: return ir::Opcode::multiply;
+            case divide: return ir::Opcode::divide;
+            case percentage: return ir::Opcode::remainder;
             case less: return ir::Opcode::less;
             case lessEqual: return ir::Opcode::lessEqual;
             case greater: return ir::Opcode::greater;
@@ -1977,10 +2011,26 @@ private:
                 expression->span);
     }
 
+    void lowerLoopControl(const syntax::NodePtr& statement) {
+        if (loops.empty()) {
+            report(DiagnosticId::unsupportedSyntax, statement->span,
+                    "loop control requires an enclosing loop");
+            return;
+        }
+        auto& loop = loops.back();
+        for (size_t depth = scopes.size(); depth > loop.scopeDepth; --depth) {
+            emitScopeCleanup(scopes[depth - 1], statement->span, false);
+        }
+        const auto isBreak = statement->kind == syntax::Kind::breakStmt;
+        if (isBreak) loop.hasBreak = true;
+        emitBranch(isBreak ? loop.exit : loop.header, statement->span);
+    }
+
     void lowerWhile(const syntax::WhileStmtSyntax::Ptr& statement) {
         const auto headerBlock = createBlock("while.header");
         const auto bodyBlock = createBlock("while.body");
         const auto exitBlock = createBlock("while.exit");
+        loops.push_back({ headerBlock, exitBlock, scopes.size() });
         emitBranch(headerBlock, statement->span);
 
         switchToBlock(headerBlock);
@@ -1991,7 +2041,10 @@ private:
             switchToBlock(bodyBlock);
             emit(makeInstruction(ir::Opcode::unreachable, statement->body->span, true));
             switchToBlock(exitBlock);
-            emit(makeInstruction(ir::Opcode::unreachable, statement->span, true));
+            if (!loops.back().hasBreak) {
+                emit(makeInstruction(ir::Opcode::unreachable, statement->span, true));
+            }
+            loops.pop_back();
             return;
         }
         if (condition.has_value()) {
@@ -2021,6 +2074,7 @@ private:
         }
 
         switchToBlock(exitBlock);
+        loops.pop_back();
     }
 
     std::optional<ir::Value> lowerCall(const syntax::CallExprSyntax::Ptr& expression) {
@@ -2124,6 +2178,10 @@ private:
         }
         const auto result = instruction.result;
         emit(std::move(instruction));
+        if (type == model->types().neverType()) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span, true));
+            return std::nullopt;
+        }
         if (result.has_value()) {
             recordValue(
                 *result,

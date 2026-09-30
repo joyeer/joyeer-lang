@@ -23,6 +23,7 @@ The parser converts the explicit token stream produced by the
 - byte, integer, string, Boolean, and `nil` literals;
 - member access, calls, subscripts, arrays, dictionaries, `if`, `while`, and
   `return`;
+- unlabeled `break` and `continue` block statements;
 - implemented operator precedence and associativity;
 - recoverable syntax diagnostics with stable spans.
 
@@ -40,8 +41,8 @@ The parser deliberately does **not** implement:
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
-- `/`, `%`, `||`, `!`, `??`, `?.`, compound assignment, ranges, shifts, or
-  bitwise expressions;
+- postfix force unwrap `!`, `??`, `?.`, compound assignment, ranges, shifts,
+  bitwise expressions, or labeled loop control;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
   so the parser produces a spanned AST rather than pretending to be lossless.
@@ -85,6 +86,7 @@ The parser decides only facts visible in the token stream:
 | Do `if` branches and `match` arms have compatible types? | type checking |
 | Is a `match` exhaustive and are payload patterns valid? | pattern type checking + exhaustiveness |
 | Is a `return` valid in the current function and of the correct type? | control-flow + type checking |
+| Does `break` or `continue` occur within a loop? | type checking |
 
 Enum payloads make invocation syntax context-sensitive: ordinary functions and
 struct initializers require labels, while an enum payload may contain
@@ -199,11 +201,21 @@ type arguments.
 block              ::= '{' block_item* '}'
 block_item         ::= binding_decl
                      | while_stmt
+                     | break_stmt
+                     | continue_stmt
                      | expression
 
 while_stmt         ::= 'while' expression block
+break_stmt         ::= 'break'
+continue_stmt      ::= 'continue'
 return_expr        ::= 'return' [ expression ]
 ```
+
+`break` and `continue` are leaf statements, not expressions. They accept no
+label or value; a trailing same-line token receives the ordinary item-boundary
+diagnostic. The parser accepts them in any block and leaves loop-context
+validation to type checking. They are not allowed in expression positions or
+as top-level items.
 
 `if`, `match`, and `return` are expressions. A standalone expression is also a
 block item. The last expression in a block is its value; a later type-checking
@@ -228,13 +240,14 @@ highest to lowest:
 
 | Binding power | Forms | Associativity |
 |---|---|---|
-| 8 | member `.`, call `(...)`, subscript `[...]`, postfix `?` | left |
-| 7 | prefix `-`, access marker `&` | right |
-| 6 | `*` | left |
-| 5 | `+`, `-` | left |
-| 4 | `<`, `<=`, `>`, `>=` | non-associative |
-| 3 | `==`, `!=` | non-associative |
-| 2 | `&&` | left |
+| 9 | member `.`, call `(...)`, subscript `[...]`, postfix `?` | left |
+| 8 | prefix `!`, prefix `-`, access marker `&` | right |
+| 7 | `*`, `/`, `%` | left |
+| 6 | `+`, `-` | left |
+| 5 | `<`, `<=`, `>`, `>=` | non-associative |
+| 4 | `==`, `!=` | non-associative |
+| 3 | `&&` | left |
+| 2 | `\|\|` | left |
 | 1 | `=` | right |
 
 Equivalent structural grammar:
@@ -242,7 +255,8 @@ Equivalent structural grammar:
 ```ebnf
 expression         ::= return_expr
                      | assignment_expr
-assignment_expr    ::= logical_and_expr [ '=' assignment_expr ]
+assignment_expr    ::= logical_or_expr [ '=' assignment_expr ]
+logical_or_expr    ::= logical_and_expr ( '||' logical_and_expr )*
 logical_and_expr   ::= equality_expr ( '&&' equality_expr )*
 equality_expr      ::= comparison_expr [ ( '==' | '!=' ) comparison_expr ]
 comparison_expr    ::= additive_expr
@@ -250,8 +264,8 @@ comparison_expr    ::= additive_expr
 additive_expr      ::= multiplicative_expr
                        ( ( '+' | '-' ) multiplicative_expr )*
 multiplicative_expr
-                   ::= prefix_expr ( '*' prefix_expr )*
-prefix_expr        ::= '-' prefix_expr
+                   ::= prefix_expr ( ( '*' | '/' | '%' ) prefix_expr )*
+prefix_expr        ::= ( '-' | '!' ) prefix_expr
                      | '&' postfix_expr
                      | postfix_expr
 postfix_expr       ::= primary_expr postfix_suffix*
@@ -265,6 +279,8 @@ Consequences that must be visible in AST snapshots:
 
 ```text
 1 + 2 * 3       => 1 + (2 * 3)
+24 / 3 % 5     => (24 / 3) % 5
+!a || b && c   => (!a) || (b && c)
 a - b - c       => (a - b) - c
 a = b = value   => a = (b = value)
 a < b < c       => syntax error: comparison operators do not chain
@@ -431,7 +447,7 @@ Minimum node families:
 | File | `SourceFileSyntax`, ordered top-level items, aggregate source span |
 | Declarations | `BindingDecl` (`let`/`var` retained), `FunctionDecl`, `ParameterDecl`, `StructDecl`, `StructFieldDecl`, `EnumDecl`, `EnumCaseDecl`, `AssociatedTypeSyntax` |
 | Types | nominal, built-in generic argument list, array, dictionary, optional |
-| Blocks/control | `BlockExpr`, `WhileStmt`, `IfExpr`, `ReturnExpr`, `MatchExpr`, `MatchArm` |
+| Blocks/control | `BlockExpr`, `WhileStmt`, `BreakStmt`, `ContinueStmt`, `IfExpr`, `ReturnExpr`, `MatchExpr`, `MatchArm` |
 | Expressions | name, literal, prefix, access marker, binary, assignment, member, call, argument, subscript, array, dictionary, contextual case |
 | Patterns | wildcard, literal, binding, enum case, labeled payload argument |
 | Recovery | error declaration/type/expression/pattern nodes retaining skipped token span |
@@ -446,6 +462,10 @@ Important shape rules:
 - `EnumCaseDecl` keeps labels per associated payload position.
 - `BlockExpr` keeps ordered items. Its final expression is identified without
   moving it into a semantic/type node.
+- `BreakStmtSyntax` and `ContinueStmtSyntax` derive directly from `Node`, retain
+  only their keyword span, and have no children. Name resolution indexes each
+  leaf and records its containing block scope without introducing a symbol or
+  enforcing loop-context rules.
 - Syntax nodes contain no mutable semantic fields such as `typeSlot` or
   `symtable`. Later stages use maps keyed by node ID or build a separate
   resolved/typed representation.
@@ -575,7 +595,7 @@ normalized syntax AST or diagnostic stream. They never execute the program.
 | Calls/cases | labeled function/initializer calls, marker-free borrowing, `&` inout/initializing, `consume` arguments, positional/labeled enum payloads, contextual and qualified cases |
 | Precedence | every neighboring precedence pair, left/right/non-associativity |
 | Assignment | name, member, subscript, `&` target, right-associative chain |
-| Control | standalone/value `if`, else-if, `while`, empty/value blocks, early return |
+| Control | standalone/value `if`, else-if, `while`, unlabeled `break`/`continue`, empty/value blocks, early return |
 | Match | literal/wildcard/unit/binding/case/nested-case patterns, expression/block/return arms |
 | Locations | exact node spans across LF, CR, CRLF, comments, and UTF-8 strings |
 

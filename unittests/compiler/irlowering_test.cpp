@@ -550,6 +550,125 @@ return flag && if true { return true } else { false }
     EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
 }
 
+TEST_F(IRLoweringTest, LowersLogicalOrWithConditionalRightEvaluation) {
+    lower("func probe(): Bool { return false }\n"
+          "func run(flag: Bool): Bool { return !flag || probe() }\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    const auto right = std::find_if(run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "or.rhs"; });
+    ASSERT_NE(right, run.blocks.end());
+    const auto& branch = run.blocks[0].instructions.back();
+    ASSERT_EQ(branch.opcode, joyeer::ir::Opcode::conditionalBranch);
+    ASSERT_EQ(branch.targets.size(), 2u);
+    EXPECT_EQ(branch.targets[1], right->id);
+    EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::equal), 1u);
+    EXPECT_TRUE(std::any_of(right->instructions.begin(), right->instructions.end(),
+            [](const auto& instruction) { return instruction.opcode == joyeer::ir::Opcode::call; }));
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, NeverCallsTerminateLogicalOperands) {
+    lower(R"JOYEER(func stop(): Never { return stop() }
+func rightOr(flag: Bool): Bool { return flag || stop() }
+func rightAnd(flag: Bool): Bool { return flag && stop() }
+func leftOr(): Bool { return stop() || true }
+func leftAnd(): Bool { return stop() && false }
+func negated(): Bool { return !stop() }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    for (const auto* name : { "stop", "rightOr", "rightAnd", "leftOr",
+                              "leftAnd", "negated" }) {
+        const auto& lowered = function(name);
+        bool terminatesAfterCall = false;
+        for (const auto& block : lowered.blocks) {
+            for (size_t index = 1; index < block.instructions.size(); ++index) {
+                terminatesAfterCall |=
+                        block.instructions[index - 1].opcode == joyeer::ir::Opcode::call &&
+                        block.instructions[index].opcode == joyeer::ir::Opcode::unreachable;
+            }
+        }
+        EXPECT_TRUE(terminatesAfterCall) << name << '\n' << joyeer::ir::dump(*result.module);
+    }
+    for (const auto* name : { "rightOr", "rightAnd" }) {
+        EXPECT_EQ(opcodeCount(function(name), joyeer::ir::Opcode::returnValue), 1u);
+    }
+}
+
+TEST_F(IRLoweringTest, LoopExitsCleanOnlyExitedScopesAndCarryJumpLocations) {
+    const std::string source = R"JOYEER(func run(flag: Bool) {
+let outer = "outer" + "!"
+while flag {
+    let inner = "inner" + "!"
+    if flag { break } else { continue }
+}
+print(value: outer)
+}
+)JOYEER";
+    lower(source);
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& run = function("run");
+    const auto header = std::find_if(run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "while.header"; });
+    const auto exit = std::find_if(run.blocks.begin(), run.blocks.end(),
+            [](const auto& block) { return block.name == "while.exit"; });
+    ASSERT_NE(header, run.blocks.end());
+    ASSERT_NE(exit, run.blocks.end());
+    std::optional<joyeer::ir::ValueId> outerAddress;
+    std::optional<joyeer::ir::ValueId> innerAddress;
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            for (const auto& binding : instruction.debugVariableBindings) {
+                const auto& variable = result.module->debugVariables.at(binding.variable);
+                if (variable.name == "outer") outerAddress = binding.address;
+                if (variable.name == "inner") innerAddress = binding.address;
+            }
+        }
+    }
+    ASSERT_TRUE(outerAddress.has_value());
+    ASSERT_TRUE(innerAddress.has_value());
+    size_t jumps = 0;
+    for (const auto& block : run.blocks) {
+        if (block.instructions.empty()) continue;
+        const auto& jump = block.instructions.back();
+        if (jump.opcode != joyeer::ir::Opcode::branch) continue;
+        const auto spelling = source.substr(jump.span.offset, jump.span.length);
+        if (spelling != "break" && spelling != "continue") continue;
+        ++jumps;
+        ASSERT_EQ(jump.targets.size(), 1u);
+        EXPECT_EQ(jump.targets[0], spelling == "break" ? exit->id : header->id);
+        ASSERT_GE(block.instructions.size(), 2u);
+        const auto& cleanup = block.instructions[block.instructions.size() - 2];
+        EXPECT_EQ(cleanup.opcode, joyeer::ir::Opcode::destroy);
+        ASSERT_TRUE(cleanup.debugLocation.has_value());
+        EXPECT_TRUE(cleanup.debugLocation->implicitCode);
+        ASSERT_TRUE(jump.debugLocation.has_value());
+        EXPECT_FALSE(jump.debugLocation->implicitCode);
+        EXPECT_EQ(jump.debugLocation->span.offset, jump.span.offset);
+        bool destroysInner = false;
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::destroy) continue;
+            ASSERT_EQ(instruction.operands.size(), 1u);
+            EXPECT_NE(instruction.operands[0], *outerAddress);
+            if (instruction.operands[0] == *innerAddress) destroysInner = true;
+        }
+        EXPECT_TRUE(destroysInner);
+    }
+    EXPECT_EQ(jumps, 2u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, LowersM006NativeFixture) {
+    ASSERT_NO_FATAL_FAILURE(lower(readFixture("native/control_flow_arithmetic.joyeer")));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+    EXPECT_EQ(opcodeCount(function("quotient"), joyeer::ir::Opcode::divide), 1u);
+    EXPECT_EQ(opcodeCount(function("residue"), joyeer::ir::Opcode::remainder), 1u);
+}
+
 TEST_F(IRLoweringTest, DoesNotAppendCleanupAfterDivergingLoopCondition) {
     lower(R"JOYEER(func run() {
 let text = "kept"

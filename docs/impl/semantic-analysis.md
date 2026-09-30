@@ -43,12 +43,16 @@ The pass models normal continuation versus termination for blocks and
 expressions:
 
 - `return` and expressions of type `Never` terminate a path;
+- `break` and `continue` terminate the current block's path and target the
+  nearest enclosing loop, not the function; statements after either transfer
+  are unreachable;
 - postfix `?` continues on success but checks initialization obligations on
   its potential early-return path;
 - `if` terminates only when both branches terminate;
 - an exhaustive `match` terminates when every arm terminates;
 - `while` is conservatively assumed to fall through, even when its condition
-  is a literal `true`;
+  is a literal `true`; condition evaluation can prove function termination
+  only when it terminates without transferring back to or out of that loop;
 - a final expression assignable to the declared result type is a valid implicit
   return.
 
@@ -76,6 +80,18 @@ and condition states at a fixed point, retaining the zero-iteration path and
 every reachable back edge. The condition's entry requirements are therefore
 checked again for subsequent iterations. Direct assignment reinitializes
 consumed storage, including before a later consume in each loop iteration.
+
+Each `continue` contributes a back edge alongside normal body fallthrough;
+the loop condition is re-evaluated before another body iteration. Each `break`
+instead contributes to the loop's exit join alongside condition-false exits,
+including zero iterations. The loop's scope includes its condition: transfers
+from condition blocks target that loop, and a condition's `continue` starts
+condition evaluation again. Consumption and possible initialization on break
+paths remain visible after the loop without incorrectly becoming back-edge
+effects. Only continuing paths participate in joins within the body.
+Nested loops collect their own transfers. Loop edges discard initialization
+facts and index identities for lexically exited local and pattern bindings,
+while preserving facts for enclosing scopes.
 
 Stored-field and collection-subscript consumption is path-sensitive. Distinct
 struct fields retain independent initialization state; reading the whole
@@ -107,7 +123,7 @@ Joyeer IR represents deferred nontrivial storage with `alloc_stack` followed by
 the source-level contract still requires rejection of reads before
 initialization.
 
-Logical `&&` joins the skipped-right and evaluated-right paths. Effects that
+Logical `&&` and `||` join the skipped-right and evaluated-right paths. Effects that
 occur only on its right cannot establish unconditional initialization or
 termination, but possible consumption and initialization remain visible.
 
@@ -132,9 +148,9 @@ specification. Call-site and argument-evaluation access-path exclusivity is
 enforced by the type checker. Future method/subscript `yield` syntax will need
 additional lifetime analysis, but the current language surface has no
 first-class escaping projection. Explicit `borrowing` uses the existing
-immutable projection behavior. The absence of `break` and `continue` does not
-make loop checking complete: conditions are re-evaluated and each back edge
-must satisfy their entry requirements.
+immutable projection behavior. Loop checking remains conservative about
+conditions: each normal or explicit-continue back edge must satisfy the
+condition's entry requirements.
 
 Diagnostics use the shared [structured source renderer](diagnostics.md), with
 stable IDs, file names, one-based locations, source excerpts, and caret ranges.
@@ -159,5 +175,6 @@ ctest --test-dir build -L semantic-analysis --output-on-failure
 
 The suite covers all-paths-return, implicit returns, `Never`, unreachable
 warnings, branch/loop initialization joins, aggregate and `inout` reads,
+nearest-loop break/continue targeting and scope cleanup, short-circuit effects,
 unused locals/patterns, CLI error/warning behavior, and native execution of
 deferred initialization.

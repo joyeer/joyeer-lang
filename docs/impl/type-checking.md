@@ -78,8 +78,13 @@ The current checker validates:
 - explicit `byteToInt(value: UInt8) -> Int` and
   `byteToString(value: UInt8) -> String` built-in calls;
 - optional value promotion and `Never` as the bottom type;
-- implemented arithmetic, string concatenation, comparison, and `&&` operators;
+- checked `Int` arithmetic including `/` and `%`, string concatenation,
+  comparison, and Boolean `!`, `&&`, and `||` operators;
 - `if`/`while` conditions, `if` branch unification, and return values;
+- unlabeled `break` / `continue` in the current function's nearest loop,
+  including nested condition blocks; invalid contexts report
+  `type-checking.invalid-loop-control`. Exit statements have no value, but a
+  block path ending in an exit is diverging for branch unification;
 - exact function, struct-initializer, enum-case, and `print(value:)` calls;
 - inferred and declared member access;
 - `String[Int] -> UInt8`, `Array<T>[Int] -> T`, and

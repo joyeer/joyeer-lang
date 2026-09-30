@@ -133,6 +133,18 @@ int64_t joyeer_checked_mul_int(int64_t left, int64_t right) {
     return left * right;
 }
 
+int64_t joyeer_checked_div_int(int64_t left, int64_t right) {
+    if (right == 0) joyeer_panic("integer division by zero");
+    if (left == INT64_MIN && right == -1) joyeer_panic("integer division overflow");
+    return left / right;
+}
+
+int64_t joyeer_checked_rem_int(int64_t left, int64_t right) {
+    if (right == 0) joyeer_panic("integer remainder by zero");
+    if (left == INT64_MIN && right == -1) joyeer_panic("integer remainder overflow");
+    return left % right;
+}
+
 void joyeer_print_int(int64_t value) {
     printf("%" PRId64 "\n", value);
 }

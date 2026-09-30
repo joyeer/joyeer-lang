@@ -14,10 +14,11 @@ The linked examples are complete programs, not pseudocode.
   exclude the executable name and `Int` exits must be in `0..255`.
 - Use braces for `if`, `else`, and `while`; parentheses around conditions are
   unnecessary. Prefer explicit `return` for clarity.
-- Local mutation uses `number = number + 1`. Use a loop condition or `return`
-  rather than unsupported `break`/`continue`.
+- Local mutation uses `number = number + 1`. Unlabeled `break` exits the nearest
+  loop; `continue` re-evaluates its condition. Both clean exited scopes.
 - Use short-circuit `&&` to guard subsequent reads, such as checking an index
-  before indexing. Use nested conditionals instead of unsupported `||`.
+  before indexing. Short-circuit `||` evaluates the right operand only when
+  the left is false; prefix `!` negates a Boolean.
 
 See [hello.joyeer](../examples/hello.joyeer) for named calls and a `while` loop.
 

@@ -128,6 +128,71 @@ TEST_F(NameResolutionTest, UnitTypeUsesBuiltinIdentityWhenVoidIsShadowed) {
     EXPECT_EQ(referenced(function->returnType).kind, SymbolKind::builtinType);
 }
 
+TEST_F(NameResolutionTest, IndexesLoopControlLeavesInTheirContainingBlockScopes) {
+    resolve("func run(flag: Bool) {\nbreak\ncontinue\nwhile flag {\n"
+            "if flag { break }\ncontinue\n}\n}\n");
+
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto loop = std::static_pointer_cast<joyeer::syntax::WhileStmtSyntax>(
+            function->body->items[2]);
+    const auto conditional = std::static_pointer_cast<joyeer::syntax::IfExprSyntax>(
+            loop->body->items[0]);
+    const auto checkLeaf = [&](const joyeer::syntax::NodePtr& statement,
+                               const joyeer::syntax::BlockExprSyntax::Ptr& block,
+                               Kind kind) {
+        EXPECT_EQ(statement->kind, kind);
+        const auto id = resolution.model->nodeId(statement);
+        ASSERT_TRUE(id.has_value());
+        EXPECT_EQ(resolution.model->node(*id), statement);
+        const auto scope = resolution.model->introducedScope(block);
+        ASSERT_TRUE(scope.has_value());
+        EXPECT_EQ(resolution.model->containingScope(statement), scope);
+        EXPECT_FALSE(resolution.model->introducedScope(statement).has_value());
+        EXPECT_FALSE(resolution.model->declaredSymbol(statement).has_value());
+        EXPECT_FALSE(resolution.model->referencedSymbol(statement).has_value());
+        EXPECT_EQ(resolution.model->deferredReference(statement), nullptr);
+    };
+    checkLeaf(function->body->items[0], function->body, Kind::breakStmt);
+    checkLeaf(function->body->items[1], function->body, Kind::continueStmt);
+    checkLeaf(conditional->thenBranch->items[0], conditional->thenBranch, Kind::breakStmt);
+    checkLeaf(loop->body->items[1], loop->body, Kind::continueStmt);
+    EXPECT_EQ(referenced(loop->condition).name, "flag");
+    EXPECT_EQ(referenced(conditional->condition).name, "flag");
+
+    const auto second = joyeer::semantic::NameResolver().resolve(parseResult.root);
+    ASSERT_TRUE(second.succeeded());
+    EXPECT_EQ(joyeer::semantic::dump(*resolution.model),
+              joyeer::semantic::dump(*second.model));
+    EXPECT_EQ(resolution.model->nodeId(loop->body->items[1]),
+              second.model->nodeId(loop->body->items[1]));
+}
+
+TEST_F(NameResolutionTest, ResolvesOperandsOfNotOrDivisionAndRemainder) {
+    resolve("func run(flag: Bool, value: Int): Bool {\n"
+            "return !flag || value / 2 % 3 == 0\n}\n");
+
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto disjunction = std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            returned->value);
+    const auto negation = std::static_pointer_cast<joyeer::syntax::PrefixExprSyntax>(
+            disjunction->left);
+    EXPECT_EQ(referenced(negation->operand).name, "flag");
+    const auto equality = std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            disjunction->right);
+    const auto remainder = std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            equality->left);
+    const auto quotient = std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            remainder->left);
+    EXPECT_EQ(referenced(quotient->left).name, "value");
+    EXPECT_EQ(referenced(quotient->left).kind, SymbolKind::parameter);
+}
+
 TEST_F(NameResolutionTest, ResolvesReadFileFromThePrelude) {
         resolve(R"JOYEER(func load(): Result<String, IOError> {
 return readFile(path: "input.json")

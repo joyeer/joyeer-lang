@@ -710,6 +710,61 @@ let absent = nil
             }));
 }
 
+TEST_F(TypeCheckingTest, TypesM006OperatorsAndLoopControl) {
+    check(R"JOYEER(func run(flag: Bool, a: Int, b: Int): Int {
+let negated = !!flag
+let choice = flag || !flag && negated
+var total = a / b + a % b
+while choice {
+    if flag { break }
+    total = total + 1
+    continue
+}
+return total
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsM006WrongOperandTypes) {
+    for (const auto* expression : { "!1", "true || 1", "1 || false",
+                                    "true / false", "1 % b'A'", "\"x\" / \"y\"" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run() { let value = " + std::string(expression) + "\n}\n"));
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id ==
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidOperatorOperands;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, RejectsLoopControlOutsideCurrentFunctionLoop) {
+    for (const auto* statement : { "break", "continue" }) {
+        SCOPED_TRACE(statement);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func inside() { while true { " + std::string(statement) + " } }\n"
+                "func outside() { if true { " + std::string(statement) + " } }\n"));
+        ASSERT_EQ(checking.diagnostics.size(), 1u)
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(checking.diagnostics[0].id,
+                joyeer::typing::TypeCheckingDiagnosticId::invalidLoopControl);
+    }
+}
+
+TEST_F(TypeCheckingTest, LoopExitBranchesAndLogicalOperandsCanDiverge) {
+    check(R"JOYEER(func run(flag: Bool) {
+while if flag { break } else { true } {
+    let value = if flag { continue } else { 7 }
+    let done = flag || if flag { break } else { continue }
+    print(value: value)
+}
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
 TEST_F(TypeCheckingTest, TypesMvpUnaryBinaryAndLogicalOperators) {
     check(R"JOYEER(func operators() {
 let arithmetic = 1 + 2 * 3

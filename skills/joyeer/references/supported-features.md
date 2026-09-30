@@ -26,7 +26,7 @@ require a source checkout, internet access, or access to a moving branch.
 |---|---|
 | Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
-| Control flow | `if`, `else if`, `else`, `while`, `return`, short-circuit `&&`, exhaustive `match` |
+| Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, Boolean `!`, short-circuit `&&` / `||`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
@@ -49,7 +49,7 @@ combination is supported or that the compiler is free of correctness gaps.
   multi-file builds, or dependency packages.
 - Floating-point `Float` / `Double` programs, general tuples, or tuple
   destructuring.
-- `for-in`, `break`, `continue`, `||`, compound assignment such as `+=`,
+- `for-in`, labeled loop exits, compound assignment such as `+=`,
   `is` / `as` casts, match guards, or range/alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. `T?` as an
   Optional type and postfix failure propagation `expr?` are supported;
@@ -59,8 +59,8 @@ combination is supported or that the compiler is free of correctness gaps.
 - `joyeer build`, `run`, `test`, `init`, `toolchain`, `doctor`, `--target`,
   `--version`, or `--help`. These are not current CLI commands/options.
 
-Use a `while` loop with an explicit condition instead of `for-in` or `break`,
-`x = x + 1` instead of `x += 1`, nested conditionals instead of `||`, and
+Use a `while` loop instead of `for-in`,
+`x = x + 1` instead of `x += 1`, and
 explicit `match` for errors that cannot be propagated with `?`.
 
 ## Important semantic and runtime limits
@@ -72,8 +72,11 @@ explicit `match` for errors that cannot be propagated with `?`.
 - Dictionary lookup is currently linear, not hashed. Use `get(key:)` for an
   owned `Optional<V>` that survives dictionary mutation/destruction. Nested
   optional values are not flattened. Missing subscripts still trap.
-- Checked integer addition, subtraction, multiplication, and array indexing can
-  terminate the program on invalid input. Do not disable checks to fix logic.
+- Checked integer addition, subtraction, multiplication, division, remainder,
+  and array indexing can terminate the program on invalid input. Division and
+  remainder trap for zero divisors and minimum `Int` with divisor `-1`.
+  Division truncates toward zero; nonzero remainder has the dividend's sign.
+  Do not disable checks to fix logic.
 - `readFile(path:)` is the implemented file-input primitive; it returns
   `Result<String, IOError>`. There is no general-purpose filesystem library.
 - Windows command-line and file-path encoding have known non-ASCII limitations.

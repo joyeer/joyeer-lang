@@ -425,6 +425,8 @@ private:
             case Kind::wildcardPattern:
             case Kind::literalPattern:
             case Kind::bindingPattern:
+            case Kind::breakStmt:
+            case Kind::continueStmt:
                 break;
         }
     }
@@ -1098,6 +1100,9 @@ private:
         setContainingScope(node, currentScope);
 
         switch (node->kind) {
+            case syntax::Kind::breakStmt:
+            case syntax::Kind::continueStmt:
+                break;
             case syntax::Kind::whileStmt: {
                 const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
                 resolveExpression(statement->condition, currentScope);

@@ -110,7 +110,15 @@ deterministic and inspectable.
 
 Checked `Int` add/subtract/multiply lower to LLVM's signed
 `*.with.overflow.i64` intrinsics, with a branch to the existing panic routine
-on overflow. Array reads and mutable projections lower to null/negative/
+on overflow. Checked `Int` divide/remainder first branch to panic for a zero
+divisor, then for the pair `INT64_MIN` and `-1`, before executing LLVM `sdiv`
+or `srem`. Division truncates toward zero; a nonzero remainder has the
+dividend's sign. Both operations trap on the overflow pair, including
+remainder, so neither can evaluate undefined arithmetic or produce LLVM
+poison on these inputs. The panic messages match the checked C runtime
+entry points.
+
+Array reads and mutable projections lower to null/negative/
 upper-bound checks followed by a typed `getelementptr`, rather than a
 per-access runtime call. The IR verifier checks the array element/result type;
 construction and growth validate the allocation size using that same element

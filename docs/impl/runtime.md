@@ -9,7 +9,7 @@ The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
 
-It supplies checked `Int` add/subtract/multiply, scalar/string printing,
+It supplies checked `Int` add/subtract/multiply/divide/remainder, scalar/string printing,
 string storage and operations, arrays and dictionaries, binary file input,
 panic and bounds traps, and the process entry and allocation-balance check.
 Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
@@ -18,6 +18,14 @@ available for runtime clients. String and dictionary accesses use runtime
 operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
+
+Checked `Int` division truncates toward zero; a nonzero remainder has the
+dividend's sign. Both `joyeer_checked_div_int` and `joyeer_checked_rem_int`
+panic on a zero divisor or `INT64_MIN` with divisor `-1`, before evaluating
+the C arithmetic operation. The generated LLVM checks have the same behavior
+at every optimization level. Diagnostics distinguish `integer division by
+zero`, `integer remainder by zero`, `integer division overflow`, and `integer
+remainder overflow`.
 
 ## Process entry and exit
 

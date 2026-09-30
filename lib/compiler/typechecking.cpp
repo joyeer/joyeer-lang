@@ -333,6 +333,7 @@ private:
     TypeCheckedModel::Ptr model;
     std::vector<TypeCheckingDiagnostic> diagnostics;
     std::optional<TypeId> currentReturnType;
+    size_t loopDepth = 0;
     std::unordered_set<semantic::NodeId> handledDeferredReferences;
 
     void report(
@@ -722,11 +723,14 @@ private:
                     ? model->callable(*functionSymbol)
                     : nullptr;
                 const auto previousReturnType = currentReturnType;
+                const auto previousLoopDepth = loopDepth;
+                loopDepth = 0;
                 currentReturnType = signature == nullptr
                     ? model->typeContext.errorType()
                     : signature->result;
                 checkBlock(function->body);
                 currentReturnType = previousReturnType;
+                loopDepth = previousLoopDepth;
                 break;
                 }
             case syntax::Kind::structDecl: {
@@ -753,7 +757,8 @@ private:
         if (block == nullptr) return model->typeContext.errorType();
         TypeId result = model->typeContext.voidType();
         for (const auto& item : block->items) {
-            result = checkNode(item);
+            const auto itemType = checkNode(item);
+            if (result != model->typeContext.neverType()) result = itemType;
         }
         recordNodeType(block, result);
         return result;
@@ -767,6 +772,7 @@ private:
         }
         if (node->kind == syntax::Kind::whileStmt) {
             const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
+            ++loopDepth;
             const auto condition = checkExpression(statement->condition).value_or(
                     model->typeContext.errorType());
             requireAssignable(
@@ -774,8 +780,22 @@ private:
                     model->typeContext.boolType(),
                     statement->condition->span);
             checkBlock(statement->body);
+            --loopDepth;
             recordNodeType(node, model->typeContext.voidType());
             return model->typeContext.voidType();
+        }
+        if (node->kind == syntax::Kind::breakStmt ||
+            node->kind == syntax::Kind::continueStmt) {
+            if (loopDepth == 0) {
+                report(
+                        TypeCheckingDiagnosticId::invalidLoopControl,
+                        node->span,
+                        node->kind == syntax::Kind::breakStmt
+                                ? "'break' requires an enclosing loop in the current function"
+                                : "'continue' requires an enclosing loop in the current function");
+            }
+            recordNodeType(node, model->typeContext.neverType());
+            return model->typeContext.neverType();
         }
         if (isExpressionKind(node->kind)) {
             return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node)).value_or(
@@ -1050,6 +1070,10 @@ private:
             operand == model->typeContext.intType()) {
             return operand;
         }
+        if (expression->op != nullptr && expression->op->kind == bang &&
+            model->typeContext.isAssignable(operand, model->typeContext.boolType())) {
+            return model->typeContext.boolType();
+        }
         reportInvalidOperator(expression->op, { operand }, expression->span);
         return model->typeContext.errorType();
     }
@@ -1072,6 +1096,8 @@ private:
                 break;
             case minus:
             case multiply:
+            case divide:
+            case percentage:
                 if (left == model->typeContext.intType() && left == right) return left;
                 break;
             case less:
@@ -1092,7 +1118,11 @@ private:
                 }
                 break;
             case andAnd:
-                if (left == model->typeContext.boolType() && left == right) return left;
+            case orOr:
+                if (model->typeContext.isAssignable(left, model->typeContext.boolType()) &&
+                    model->typeContext.isAssignable(right, model->typeContext.boolType())) {
+                    return model->typeContext.boolType();
+                }
                 break;
             default:
                 break;
@@ -2517,6 +2547,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.not-callable";
         case TypeCheckingDiagnosticId::invalidCallArguments:
             return "type-checking.invalid-call-arguments";
+        case TypeCheckingDiagnosticId::invalidLoopControl:
+            return "type-checking.invalid-loop-control";
         case TypeCheckingDiagnosticId::unresolvedReference:
             return "type-checking.unresolved-reference";
     }

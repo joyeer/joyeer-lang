@@ -903,6 +903,20 @@ if(JOYEER_CLANG_EXECUTABLE)
             NativeUnitValues unit_values "${unit_values_output}")
     add_joyeer_native_regression(
             NativeDictionaryGet dictionary_get "dictionary get ok\n" 0 1 2 3)
+    add_joyeer_native_regression(
+            NativeControlFlowArithmetic control_flow_arithmetic "control flow arithmetic ok\n" 0 1 2 3)
+    add_test(NAME NativeControlFlowArithmeticFullDebug
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/control_flow_arithmetic.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/control-flow-arithmetic-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DEXPECTED_OUTPUT=control flow arithmetic ok\n"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeControlFlowArithmeticFullDebug PROPERTIES
+            LABELS "native;llvm-backend;native-runtime;ownership;debug-info"
+            TIMEOUT 60)
     add_test(NAME NativeDictionaryGetFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -981,6 +995,14 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_checked_trap(
             NativeCheckedMinMultiplyOverflow checked_min_multiply_overflow "integer multiplication overflow")
     add_joyeer_native_checked_trap(
+            NativeCheckedDivideZero checked_divide_zero "integer division by zero")
+    add_joyeer_native_checked_trap(
+            NativeCheckedRemainderZero checked_remainder_zero "integer remainder by zero")
+    add_joyeer_native_checked_trap(
+            NativeCheckedDivideOverflow checked_divide_overflow "integer division overflow")
+    add_joyeer_native_checked_trap(
+            NativeCheckedRemainderOverflow checked_remainder_overflow "integer remainder overflow")
+    add_joyeer_native_checked_trap(
             NativeCheckedArrayUpper optimized_bounds "array index out of bounds")
     add_joyeer_native_checked_trap(
             NativeCheckedArrayNegative checked_array_negative_index "array index out of bounds")
@@ -1041,6 +1063,16 @@ add_joyeer_rejected_regression(TypeDictionaryGetExclusivity type-checking
         dictionary_get_exclusivity type-checking.overlapping-access)
 add_joyeer_rejected_regression(TypeDictionaryGetArguments type-checking
         dictionary_get_arguments type-checking.invalid-call-arguments)
+add_joyeer_rejected_regression(TypeLoopControlOutside type-checking
+        loop_control_outside type-checking.invalid-loop-control)
+add_joyeer_rejected_regression(TypeControlFlowOperands type-checking
+        control_flow_operands type-checking.invalid-operator-operands)
+add_joyeer_rejected_regression(FlowLoopContinueConsumed semantic-analysis
+        loop_continue_consumed semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowLoopBreakConsumed semantic-analysis
+        loop_break_consumed semantic-analysis.use-after-consume)
+add_joyeer_rejected_regression(FlowLogicalOrInitialization semantic-analysis
+        logical_or_initialization semantic-analysis.use-before-initialization)
 add_joyeer_rejected_regression(TypePropagationWrongReturn type-checking
         propagation_wrong_return type-checking.invalid-propagation-context)
 add_joyeer_rejected_regression(TypePropagationWrongError type-checking

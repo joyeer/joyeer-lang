@@ -1,7 +1,8 @@
 # joypm M0: Language and Host Contracts
 
 **Status:** discussion draft except M0-02 (single-file native entry), M0-03
-(error propagation), M0-04 (unit values), and M0-05 (`Dict.get(key:)`), which
+(error propagation), M0-04 (unit values), M0-05 (`Dict.get(key:)`), and M0-06
+(control flow and checked division/remainder), which
 have been implemented. Key enumeration remains deferred.
 The remaining recommendations are not approved language changes or implemented
 APIs. M0 is not complete until the other decisions and compatibility
@@ -15,8 +16,8 @@ policy belong in Joyeer. The existing C++ compiler and C11 runtime remain.
 
 M0 defines observable behavior before implementation. Its deliverables are
 semantic contracts, API sketches, compatibility decisions, and acceptance
-cases for later milestones. The accepted entry, propagation, unit-value, and
-safe dictionary lookup slices are implemented; modules, other new operators,
+cases for later milestones. The accepted entry, propagation, unit-value,
+safe dictionary lookup, and M0-06 control-flow/arithmetic slices are implemented; modules,
 filesystem operations, and subprocesses are not.
 
 The current executable baseline is documented in
@@ -34,7 +35,7 @@ Recommendations are **proposed** unless explicitly marked implemented.
 | M0-03 | Error propagation | Implemented: postfix `?` for `Result` / `Optional`, with exact error types and owned early-return cleanup | M2 propagation slice done |
 | M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice |
 | M0-05 | Dictionaries | Implemented: owned `get(key:)` returning `Optional<V>` without changing subscript behavior; key enumeration deferred | M2 lookup slice done |
-| M0-06 | Control flow | Define short-circuiting, loop exits, checked division, and remainder before lowering them | M2 |
+| M0-06 | Control flow | Implemented: Boolean negation, short-circuit OR, unlabeled loop exits, checked division and remainder | M2 control-flow/arithmetic slice done |
 | M0-07 | Paths and files | Separate byte strings from portable path encoding and define non-destructive operations | M3 |
 | M0-08 | Processes | Synchronous execution with separate arguments and explicit completion states | M3 |
 
@@ -214,7 +215,7 @@ temporary cleanup, and unchanged strict subscripts. Lookup remains linear.
 
 ## M0-06: Control-flow and arithmetic boundaries
 
-Define these rules before implementing the new syntax:
+Accepted and implemented:
 
 - Prefix `!` accepts `Bool` and returns its negation.
 - `||` accepts Boolean operands, evaluates left first, and evaluates right
@@ -228,12 +229,18 @@ Define these rules before implementing the new syntax:
 - Signed division truncates toward zero. A nonzero remainder has the sign of
   the dividend.
 - Division or remainder by zero traps at every optimization level.
-- Propose trapping both minimum-`Int` division by `-1` and the corresponding
-  remainder operation. Record this decision explicitly rather than inheriting
-  LLVM undefined or poison behavior.
+- Both minimum-`Int` division by `-1` and the corresponding remainder
+  operation trap, rather than inheriting LLVM undefined or poison behavior.
 
 Do not add labeled jumps, `for-in`, coalescing, optional chaining, or force
 unwrap as part of this contract.
+
+See [expressions](../spec/05-expressions.md#52-arithmetic-comparison-logical-bitwise)
+and [loop exits](../spec/06-statements.md#65-loop-exits) for the normative rules.
+Native acceptance uses
+[`control_flow_arithmetic.joyeer`](../../tests/native/control_flow_arithmetic.joyeer)
+at O0-O3 and with full debug information, plus separate zero-divisor and
+overflow trap fixtures at every optimization level.
 
 ## M0-07: Paths and filesystem operations
 
@@ -321,7 +328,7 @@ own CLI status must be settled explicitly.
 ## Acceptance matrix to prepare in M0
 
 These are acceptance cases for the planned work, except the implemented entry,
-propagation, unit-value, and dictionary lookup slices, which have native and
+propagation, unit-value, dictionary lookup, and M0-06 slices, which have native and
 compiler tests.
 
 | Area | Positive cases | Negative or boundary cases |
@@ -331,8 +338,8 @@ compiler tests.
 | Propagation (implemented) | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
 | Unit results | Construct and match `Result<Void, E>`; propagate success and failure | Invalid zero-sized payload lowering; confusion between `.Ok()` and `.Ok(())` |
 | Dictionary lookup (implemented) | Present key; absent key; owned result survives mutation | Existing subscript still traps; nested optional preserves absence distinctions |
-| Control flow | Short-circuit OR; nested loop exits; repeated `continue` | Skipped side effects; use outside loops; skipped cleanup; invalid loop re-entry state |
-| Arithmetic | Positive and negative division/remainder | Zero divisor; minimum-`Int` edge; consistent optimized and unoptimized behavior |
+| Control flow (implemented) | Short-circuit OR; nested loop exits; repeated `continue` | Skipped side effects; use outside loops; skipped cleanup; invalid loop re-entry state |
+| Arithmetic (implemented) | Positive and negative division/remainder | Zero divisor; minimum-`Int` edge; consistent optimized and unoptimized behavior |
 | Filesystem | Binary contents; Unicode and space-containing paths; create-new | Existing destination; missing parent; permission failure; invalid encoding/NUL; symlink escape |
 | Processes | Successful exit; nonzero exit; Unicode, empty, and metacharacter arguments | Missing executable; bad working directory; launch/wait failure; signal termination; unchanged parent directory |
 

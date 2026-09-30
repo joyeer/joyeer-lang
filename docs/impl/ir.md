@@ -80,6 +80,8 @@ The current instruction set covers:
 - stack allocation, zero initialization, load, and store;
 - explicit `copy`, `take`, and `destroy` ownership operations;
 - implemented arithmetic, comparison, and logical operations;
+- checked `div` / `rem` with exactly two `Int` value operands and an `Int`
+  value result;
 - direct source and external calls;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
@@ -107,9 +109,17 @@ does not create a second return or a false fallthrough value.
 
 `if` expressions merge values through a typed temporary slot. `while` emits a
 header, body, exit, and back edge. A `Never` branch terminates without adding a
-false fallthrough edge. `&&` emits a conditional right-hand block and a Boolean
-merge slot; its right operand and temporaries are evaluated only on the
-true-left path.
+false fallthrough edge. `break` branches to the nearest loop exit and `continue`
+to its header. Both emit cleanup only for scopes deeper than the loop's saved
+scope depth, including pending expression temporaries and match bindings.
+The jump keeps its explicit source location; generated cleanup is implicit.
+
+`&&` and `||` emit conditional right-hand blocks and Boolean merge slots.
+Their right operands and temporaries are evaluated only on the true-left and
+false-left paths respectively. Prefix `!` lowers to Boolean equality with
+`false`, without adding an eager logical operation. Calls returning `Never`
+terminate their IR block with `unreachable`, including when nested under
+negation or on either side of a short-circuit expression.
 
 Postfix `?` evaluates its `Result`/`Optional` operand once, then lowers to an
 enum-tag switch with success, failure, and continuation blocks. The success
@@ -272,7 +282,7 @@ Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
 
 | Area | Implementation |
 |---|---|
-| Conditional evaluation | `&&` branches before right-hand evaluation, including side effects, bounds checks, and early returns. |
+| Conditional evaluation | `&&` and `||` branch before right-hand evaluation, including side effects, bounds checks, early returns, and loop exits. |
 | Pattern payloads | Tag branches guard payload interpretation, including nested enum/String patterns. |
 | Pattern binding ownership | Nontrivial bindings own copies independent of the scrutinee and are destroyed on normal exit and early return. |
 | Binary operand capture | Nontrivial left operands remain alive across right-hand side effects and are cleaned on divergence. |

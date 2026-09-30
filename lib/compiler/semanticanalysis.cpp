@@ -30,6 +30,7 @@ public:
 private:
     typing::TypeCheckedModel::Ptr model;
     std::vector<Diagnostic> diagnostics;
+    std::vector<bool> loopTransfers;
 
     void report(
             DiagnosticId id,
@@ -101,9 +102,18 @@ private:
         }
         if (node->kind == syntax::Kind::whileStmt) {
             const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
-            if (analyzeExpression(statement->condition)) return true;
-            analyzeBlock(statement->body);
-            return false;
+            loopTransfers.push_back(false);
+            const auto conditionTerminates = analyzeExpression(statement->condition);
+            if (!conditionTerminates) analyzeBlock(statement->body);
+            const bool hasTransfer = loopTransfers.back();
+            loopTransfers.pop_back();
+            return conditionTerminates && !hasTransfer;
+        }
+        if (node->kind == syntax::Kind::breakStmt ||
+            node->kind == syntax::Kind::continueStmt) {
+            assert(!loopTransfers.empty());
+            loopTransfers.back() = true;
+            return true;
         }
         if (node->kind == syntax::Kind::blockExpr) {
             return analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(node));
@@ -135,12 +145,12 @@ private:
             case syntax::Kind::matchExpr: {
                 const auto match = std::static_pointer_cast<syntax::MatchExprSyntax>(expression);
                 if (analyzeExpression(match->scrutinee)) return true;
-                return !match->arms.empty() && std::all_of(
-                        match->arms.begin(),
-                        match->arms.end(),
-                        [this](const auto& arm) {
-                            return analyzeExpression(arm->body);
-                        });
+                bool terminates = !match->arms.empty();
+                for (const auto& arm : match->arms) {
+                    const auto armTerminates = analyzeExpression(arm->body);
+                    terminates = terminates && armTerminates;
+                }
+                return terminates;
             }
             case syntax::Kind::blockExpr:
                 return analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
@@ -161,7 +171,8 @@ private:
                 const auto binary = std::static_pointer_cast<syntax::BinaryExprSyntax>(expression);
                 if (analyzeExpression(binary->left)) return true;
                 const auto rightTerminates = analyzeExpression(binary->right);
-                return (binary->op == nullptr || binary->op->kind != andAnd) &&
+                return (binary->op == nullptr ||
+                        (binary->op->kind != andAnd && binary->op->kind != orOr)) &&
                         rightTerminates;
             }
             case syntax::Kind::assignmentExpr: {
@@ -296,9 +307,18 @@ private:
     std::unordered_set<semantic::SymbolId> tracked;
     std::unordered_set<semantic::SymbolId> initializingParameters;
     std::vector<InitializationState::ProjectionPath*> activePaths;
+    std::vector<std::vector<semantic::SymbolId>> localScopes;
+    struct LoopFlow {
+        size_t scopeDepth;
+        std::vector<InitializationState> breaks;
+        std::vector<InitializationState> continues;
+    };
+    std::vector<LoopFlow> loops;
 
     void analyzeFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
         assert(activePaths.empty());
+        assert(localScopes.empty());
+        assert(loops.empty());
         tracked.clear();
         initializingParameters.clear();
         InitializationState state;
@@ -321,7 +341,7 @@ private:
             const syntax::BlockExprSyntax::Ptr& block,
             InitializationState& state) {
         if (block == nullptr) return;
-        std::vector<semantic::SymbolId> locals;
+        localScopes.emplace_back();
         for (const auto& item : block->items) {
             if (!state.reachable) break;
             if (item->kind == syntax::Kind::bindingDecl) {
@@ -330,7 +350,7 @@ private:
                 const auto symbol = model->semanticModel()->declaredSymbol(declaration);
                 if (symbol.has_value()) {
                     tracked.insert(*symbol);
-                    locals.push_back(*symbol);
+                    localScopes.back().push_back(*symbol);
                 }
                 analyzeExpression(declaration->initializer, state);
                 if (state.reachable && declaration->initializer != nullptr &&
@@ -343,6 +363,11 @@ private:
                 analyzeWhile(std::static_pointer_cast<syntax::WhileStmtSyntax>(item), state);
                 continue;
             }
+            if (item->kind == syntax::Kind::breakStmt ||
+                item->kind == syntax::Kind::continueStmt) {
+                analyzeLoopExit(item->kind, state);
+                continue;
+            }
             if (item->kind == syntax::Kind::blockExpr) {
                 analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state);
                 continue;
@@ -351,32 +376,55 @@ private:
                 analyzeExpression(std::static_pointer_cast<syntax::ExprSyntax>(item), state);
             }
         }
-        for (const auto symbol : locals) {
+        for (const auto symbol : localScopes.back()) {
             forgetBinding(symbol, state);
         }
+        localScopes.pop_back();
+    }
+
+    void analyzeLoopExit(syntax::Kind kind, InitializationState& state) {
+        assert(!loops.empty());
+        auto edge = state;
+        auto& loop = loops.back();
+        for (size_t scope = loop.scopeDepth; scope < localScopes.size(); ++scope) {
+            for (const auto symbol : localScopes[scope]) {
+                forgetBinding(symbol, edge);
+            }
+        }
+        auto& edges = kind == syntax::Kind::breakStmt ? loop.breaks : loop.continues;
+        edges.push_back(std::move(edge));
+        state.reachable = false;
     }
 
     void analyzeWhile(
             const syntax::WhileStmtSyntax::Ptr& statement,
             InitializationState& state) {
+        const auto analyzeIteration = [&](InitializationState entry) {
+            loops.push_back(LoopFlow { localScopes.size(), {}, {} });
+            analyzeExpression(statement->condition, entry);
+            auto bodyState = entry;
+            analyzeBlock(statement->body, bodyState);
+            auto flow = std::move(loops.back());
+            loops.pop_back();
+            flow.continues.push_back(std::move(bodyState));
+            return std::make_pair(std::move(entry), std::move(flow));
+        };
         auto conditionEntry = state;
         for (;;) {
             const auto diagnosticCount = diagnostics.size();
-            auto backEdge = conditionEntry;
-            analyzeExpression(statement->condition, backEdge);
-            if (backEdge.reachable) analyzeBlock(statement->body, backEdge);
+            auto iteration = analyzeIteration(conditionEntry);
             diagnostics.resize(diagnosticCount);
 
             // Retain the zero-iteration path and monotonically join every back-edge.
-            auto nextEntry = merge({ conditionEntry, std::move(backEdge) });
+            iteration.second.continues.insert(
+                    iteration.second.continues.begin(), conditionEntry);
+            auto nextEntry = merge(std::move(iteration.second.continues));
             if (nextEntry == conditionEntry) break;
             conditionEntry = std::move(nextEntry);
         }
-        state = std::move(conditionEntry);
-        analyzeExpression(statement->condition, state);
-        if (!state.reachable) return;
-        auto bodyState = state;
-        analyzeBlock(statement->body, bodyState);
+        auto iteration = analyzeIteration(std::move(conditionEntry));
+        iteration.second.breaks.push_back(std::move(iteration.first));
+        state = merge(std::move(iteration.second.breaks));
     }
 
     void analyzeExpression(
@@ -628,7 +676,8 @@ private:
             InitializationState& state) {
         analyzeExpression(expression->left, state);
         if (!state.reachable) return;
-        if (expression->op != nullptr && expression->op->kind == andAnd) {
+        if (expression->op != nullptr &&
+            (expression->op->kind == andAnd || expression->op->kind == orOr)) {
             const auto skippedRight = state;
             auto evaluatedRight = state;
             analyzeExpression(expression->right, evaluatedRight);
@@ -738,12 +787,13 @@ private:
         armStates.reserve(expression->arms.size());
         for (const auto& arm : expression->arms) {
             auto armState = state;
-            std::vector<semantic::SymbolId> bindings;
-            initializePattern(arm->pattern, armState, bindings);
+            localScopes.emplace_back();
+            initializePattern(arm->pattern, armState, localScopes.back());
             analyzeExpression(arm->body, armState);
-            for (const auto symbol : bindings) {
+            for (const auto symbol : localScopes.back()) {
                 forgetBinding(symbol, armState);
             }
+            localScopes.pop_back();
             armStates.push_back(std::move(armState));
         }
         if (!armStates.empty()) state = merge(std::move(armStates));
@@ -1002,7 +1052,8 @@ private:
             if (!path.reachable) continue;
             if (!result.reachable) {
                 result = path;
-                continue;
+                // Scope exits can collapse distinct index identities to the same path.
+                result.consumedProjections.clear();
             }
             for (auto symbol = result.initialized.begin();
                  symbol != result.initialized.end();) {

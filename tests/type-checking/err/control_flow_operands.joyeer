@@ -1,0 +1,6 @@
+func run() {
+    let negation = !1
+    let alternative = true || 1
+    let quotient = true / false
+    let remainder = 1 % b'A'
+}

@@ -57,6 +57,8 @@ enum class Opcode {
     add,
     subtract,
     multiply,
+    divide,
+    remainder,
     less,
     lessEqual,
     greater,

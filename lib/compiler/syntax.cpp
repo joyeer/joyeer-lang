@@ -44,6 +44,8 @@ const char* kindName(Kind kind) {
         case Kind::contextualCaseExpr: return "contextual_case_expr";
         case Kind::blockExpr: return "block_expr";
         case Kind::whileStmt: return "while_stmt";
+        case Kind::breakStmt: return "break_stmt";
+        case Kind::continueStmt: return "continue_stmt";
         case Kind::ifExpr: return "if_expr";
         case Kind::returnExpr: return "return_expr";
         case Kind::matchExpr: return "match_expr";
@@ -93,6 +95,8 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
         case Kind::unitType:
         case Kind::unitExpr:
         case Kind::unitPattern:
+        case Kind::breakStmt:
+        case Kind::continueStmt:
             out << '\n';
             return;
         case Kind::bindingDecl: {

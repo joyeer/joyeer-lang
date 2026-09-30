@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -432,6 +433,184 @@ return sum * difference + left
             }
         }
         EXPECT_EQ(labels.size(), 8u);
+    }
+}
+
+TEST(LLVMArithmeticBackendTest, GuardsDivisionAndRemainderAtEveryOptimizationLevel) {
+    struct Operands {
+        bool constants;
+        int64_t left;
+        int64_t right;
+    };
+    const auto minimum = std::numeric_limits<int64_t>::min();
+    const auto maximum = std::numeric_limits<int64_t>::max();
+    const Operands cases[] = {
+        { false, 0, 0 },
+        { true, 7, 3 },
+        { true, -7, 3 },
+        { true, 7, -3 },
+        { true, -7, -3 },
+        { true, 0, -1 },
+        { true, minimum, 1 },
+        { true, minimum, 3 },
+        { true, minimum, minimum },
+        { true, maximum, -1 },
+        { true, maximum, minimum },
+        { true, 0, 0 },
+        { true, minimum, 0 },
+        { true, maximum, 0 },
+        { true, minimum, -1 },
+    };
+    for (const auto opcode : { joyeer::ir::Opcode::divide, joyeer::ir::Opcode::remainder }) {
+        const std::string operation = opcode == joyeer::ir::Opcode::divide
+            ? "division" : "remainder";
+        const std::string llvmOpcode = opcode == joyeer::ir::Opcode::divide
+            ? "sdiv" : "srem";
+        SCOPED_TRACE(operation);
+        for (const auto& values : cases) {
+            SCOPED_TRACE(testing::Message() << values.constants << ": "
+                                           << values.left << ", " << values.right);
+            joyeer::ir::Module module;
+            module.sourceName = "checked-arithmetic.joyeer";
+            module.types = { { 0, "Int", joyeer::typing::TypeKind::integer } };
+            joyeer::ir::Function function;
+            function.id = 0;
+            function.name = "calculate";
+            function.resultType = 0;
+            function.returnsValue = true;
+            function.entry = 0;
+            joyeer::ir::BasicBlock block { 0, "entry" };
+            if (values.constants) {
+                block.instructions = {
+                    {
+                        joyeer::ir::Opcode::integerConstant,
+                        joyeer::ir::Value { 0, 0, joyeer::ir::ValueCategory::value },
+                        {}, {}, std::nullopt, std::nullopt, values.left,
+                    },
+                    {
+                        joyeer::ir::Opcode::integerConstant,
+                        joyeer::ir::Value { 1, 0, joyeer::ir::ValueCategory::value },
+                        {}, {}, std::nullopt, std::nullopt, values.right,
+                    },
+                };
+            } else {
+                function.parameters = {
+                    { { 0, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "left" },
+                    { { 1, 0, joyeer::ir::ValueCategory::value }, std::nullopt, "right" },
+                };
+            }
+            block.instructions.push_back({
+                opcode,
+                joyeer::ir::Value { 2, 0, joyeer::ir::ValueCategory::value },
+                { 0, 1 },
+            });
+            block.instructions.push_back({
+                joyeer::ir::Opcode::returnValue, std::nullopt, { 2 },
+            });
+            function.blocks.push_back(std::move(block));
+            module.functions.push_back(std::move(function));
+            const auto left = values.constants ? std::to_string(values.left) : "%v0";
+            const auto right = values.constants ? std::to_string(values.right) : "%v1";
+            for (const auto level : { joyeer::OptimizationLevel::O0,
+                                     joyeer::OptimizationLevel::O1,
+                                     joyeer::OptimizationLevel::O2,
+                                     joyeer::OptimizationLevel::O3 }) {
+                SCOPED_TRACE(static_cast<int>(level));
+                joyeer::llvmbackend::EmitOptions options;
+                options.optimizationLevel = level;
+                const auto result = joyeer::llvmbackend::Emitter().emit(module, options);
+                ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+                EXPECT_EQ(result.text.find("@joyeer_checked_"), std::string::npos);
+                EXPECT_EQ(result.text.find("sdiv exact"), std::string::npos);
+                EXPECT_NE(result.text.find("declare void @joyeer_panic(ptr) cold noreturn"),
+                          std::string::npos);
+                for (const auto* failure : { " by zero", " overflow" }) {
+                    EXPECT_NE(result.text.find("integer " + operation + failure + "\\00"),
+                              std::string::npos);
+                }
+
+                const auto zero = result.text.find("icmp eq i64 " + right + ", 0\n");
+                const auto minimumCheck = result.text.find(
+                        "icmp eq i64 " + left + ", -9223372036854775808\n");
+                const auto negativeOne = result.text.find("icmp eq i64 " + right + ", -1\n");
+                const auto overflow = result.text.find(" = and i1 ");
+                const auto arithmetic = result.text.find(
+                        " = " + llvmOpcode + " i64 " + left + ", " + right + "\n");
+                const auto firstContinuation = result.text.find("\nchecked.");
+                ASSERT_NE(firstContinuation, std::string::npos);
+                const auto secondContinuation = result.text.find(
+                        "\nchecked.", firstContinuation + 1);
+                ASSERT_NE(secondContinuation, std::string::npos);
+                ASSERT_NE(zero, std::string::npos);
+                ASSERT_NE(minimumCheck, std::string::npos);
+                ASSERT_NE(negativeOne, std::string::npos);
+                ASSERT_NE(overflow, std::string::npos);
+                ASSERT_NE(arithmetic, std::string::npos);
+                EXPECT_LT(zero, firstContinuation);
+                EXPECT_LT(firstContinuation, minimumCheck);
+                EXPECT_LT(minimumCheck, negativeOne);
+                EXPECT_LT(negativeOne, overflow);
+                EXPECT_LT(overflow, secondContinuation);
+                EXPECT_LT(secondContinuation, arithmetic);
+
+                std::istringstream lines(result.text.substr(0, arithmetic));
+                std::string line;
+                size_t branches = 0;
+                size_t panicCalls = 0;
+                size_t unreachable = 0;
+                std::unordered_set<std::string> labels;
+                while (std::getline(lines, line)) {
+                    if (line.starts_with("  br i1 ")) ++branches;
+                    if (line.starts_with("  call void @joyeer_panic(")) ++panicCalls;
+                    if (line == "  unreachable") ++unreachable;
+                    if (line.starts_with("trap.") || line.starts_with("checked.")) {
+                        EXPECT_TRUE(labels.insert(line).second) << line;
+                    }
+                }
+                EXPECT_EQ(branches, 2u);
+                EXPECT_EQ(panicCalls, 2u);
+                EXPECT_EQ(unreachable, 2u);
+                EXPECT_EQ(labels.size(), 4u);
+            }
+        }
+    }
+}
+
+TEST_F(LLVMBackendTest, PreservesDebugLocationsOnDivisionAndRemainderChecks) {
+    for (const auto level : { joyeer::OptimizationLevel::O0, joyeer::OptimizationLevel::O3 }) {
+        ASSERT_NO_FATAL_FAILURE(emit(
+                R"JOYEER(func calculate(left: Int, right: Int): Int {
+return left / right % right
+}
+)JOYEER",
+                true,
+                joyeer::llvmbackend::EmitOptions {
+                    true, joyeer::DebugInfoFormat::dwarf, level, true,
+                }));
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        std::istringstream lines(result.text);
+        std::string line;
+        size_t checkedInstructions = 0;
+        size_t labels = 0;
+        while (std::getline(lines, line)) {
+            if (line.starts_with("trap.") || line.starts_with("checked.")) {
+                ++labels;
+                EXPECT_EQ(line.find("!dbg"), std::string::npos);
+            }
+            if (line.starts_with("  ") &&
+                (line.find(" = icmp eq i64 ") != std::string::npos ||
+                 line.find(" = and i1 ") != std::string::npos ||
+                 line.find(" = sdiv i64 ") != std::string::npos ||
+                 line.find(" = srem i64 ") != std::string::npos ||
+                 line.find("@joyeer_panic") != std::string::npos ||
+                 line.starts_with("  br i1 ") ||
+                 line.starts_with("  unreachable"))) {
+                ++checkedInstructions;
+                EXPECT_NE(line.find(", !dbg !"), std::string::npos) << line;
+            }
+        }
+        EXPECT_EQ(labels, 8u);
+        EXPECT_EQ(checkedInstructions, 22u);
     }
 }
 

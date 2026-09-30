@@ -33,8 +33,8 @@ machine code and links it with `JoyeerNativeRuntime`.
 |---|---|
 | Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
-| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer arithmetic, comparisons, Boolean `&&`, and string concatenation |
-| Control flow | `if`, `else if`, `else`, `while`, `return`, and exhaustive `match` |
+| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer `+`, `-`, `*`, `/`, `%`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
+| Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
 | Containers | Compiler-known `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` |
@@ -57,7 +57,7 @@ declarations.
 - Top-level executable statements or global storage, modules/imports,
   multi-file compilation, or dependency packages.
 - `Float`, `Double`, general tuples, or tuple destructuring.
-- `for-in`, `break`, `continue`, `||`, compound assignment, `is` / `as`,
+- `for-in`, labeled loop exits, compound assignment, `is` / `as`,
   match guards, range patterns, or alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. Optional
   types use `T?`; postfix `?` propagates only between the same `Result` error

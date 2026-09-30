@@ -1238,6 +1238,8 @@ private:
             case ir::Opcode::add:
             case ir::Opcode::subtract:
             case ir::Opcode::multiply:
+            case ir::Opcode::divide:
+            case ir::Opcode::remainder:
                 return emitArithmetic(out, instruction);
             case ir::Opcode::less:
             case ir::Opcode::lessEqual:
@@ -2304,6 +2306,27 @@ private:
         const auto result = valueName(instruction.result->id);
 
         if (operandType != nullptr && operandType->kind == typing::TypeKind::integer) {
+            if (instruction.opcode == ir::Opcode::divide ||
+                instruction.opcode == ir::Opcode::remainder) {
+                const bool isDivision = instruction.opcode == ir::Opcode::divide;
+                const std::string operation = isDivision ? "division" : "remainder";
+                const auto zero = temporary();
+                out << "  " << zero << " = icmp eq i64 " << *right << ", 0\n";
+                emitTrapIf(out, zero, "integer " + operation + " by zero");
+
+                const auto minimum = temporary();
+                const auto negativeOne = temporary();
+                const auto overflow = temporary();
+                out << "  " << minimum << " = icmp eq i64 " << *left
+                    << ", " << std::to_string(std::numeric_limits<int64_t>::min()) << "\n"
+                    << "  " << negativeOne << " = icmp eq i64 " << *right << ", -1\n"
+                    << "  " << overflow << " = and i1 " << minimum << ", "
+                    << negativeOne << "\n";
+                emitTrapIf(out, overflow, "integer " + operation + " overflow");
+                out << "  " << result << " = " << (isDivision ? "sdiv" : "srem")
+                    << " i64 " << *left << ", " << *right << "\n";
+                return true;
+            }
             std::string intrinsic;
             std::string message;
             switch (instruction.opcode) {

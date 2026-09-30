@@ -544,8 +544,11 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '|':
             if (consumeIf('|')) {
-                consumeIf('=');
-                emitMvpOperator(orOr);
+                if (consumeIf('=')) {
+                    emitUnsupported();
+                } else {
+                    emitMvpOperator(orOr);
+                }
             } else {
                 consumeIf('=');
                 emitUnsupported();
@@ -682,6 +685,8 @@ bool LexParser::isMvpKeyword(TokenKind kind) const {
         case kwIf:
         case kwElse:
         case kwWhile:
+        case kwBreak:
+        case kwContinue:
         case kwReturn:
         case kwMatch:
         case kwInout:
@@ -701,10 +706,14 @@ bool LexParser::isMvpOperator(TokenKind kind) const {
         case notEqual:
         case equalEqual:
         case andAnd:
+        case orOr:
+        case bang:
         case question:
         case plus:
         case minus:
         case multiply:
+        case divide:
+        case percentage:
         case less:
         case lessEqual:
         case greater:

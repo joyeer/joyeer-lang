@@ -42,20 +42,27 @@ create an infinite loop.
 
 The lexer recognizes terminals needed by the current parser:
 
-- identifiers, wildcard `_`, and current/deferred keywords;
+- identifiers, wildcard `_`, and current/deferred keywords, including supported
+  `break` and `continue` terminals;
 - decimal `Int` literals with `int64_t` overflow diagnostics;
 - strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, and
   `\\`;
 - strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
   literals additionally support `\'`, which is not a supported string escape;
 - delimiters, labels, member access, `=>`, `?`, and `&`;
-- assignment, supported arithmetic/comparison operators, and `&&`;
+- assignment, arithmetic/comparison operators including `/` and `%`, logical
+  `&&` and `||`, and `!` for prefix negation;
 - line comments and nested block comments.
 
 The longest valid terminal wins. Unsupported compound, shift, range,
 coalescing, optional-chain, interpolation, float/base-prefixed numeric, and
 other deferred forms are consumed as coherent invalid tokens where possible,
 then reported with stable `lexer.*` IDs.
+
+The lexer emits `!` without deciding whether it is prefix or postfix. The
+parser accepts prefix negation and rejects postfix force unwrap. `break` and
+`continue` are no longer deferred words; labeled jumps and `for-in` remain
+outside the implemented grammar.
 
 ## Invalid input and recovery
 

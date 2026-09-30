@@ -163,6 +163,29 @@ TEST(IRModelTest, VerifiesUnitConstantShapeAndType) {
     EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidInstruction));
 }
 
+TEST(IRModelTest, VerifiesCheckedDivisionAndRemainderTypesAndShapes) {
+    for (const auto opcode : { Opcode::divide, Opcode::remainder }) {
+        auto module = validAddModule();
+        module.types[1].kind = joyeer::typing::TypeKind::integer;
+        module.functions[0].blocks[0].instructions[0].opcode = opcode;
+        ASSERT_TRUE(Verifier().verify(module).succeeded());
+        EXPECT_NE(dump(module).find(std::string(opcodeName(opcode)) + " %0, %1"), std::string::npos);
+
+        auto malformed = module;
+        malformed.functions[0].blocks[0].instructions[0].operands.pop_back();
+        EXPECT_FALSE(Verifier().verify(malformed).succeeded());
+        malformed = module;
+        malformed.types[1].kind = joyeer::typing::TypeKind::boolean;
+        EXPECT_TRUE(hasError(Verifier().verify(malformed), VerificationErrorId::typeMismatch));
+        malformed = module;
+        malformed.functions[0].parameters[0].value.category = ValueCategory::address;
+        EXPECT_TRUE(hasError(Verifier().verify(malformed), VerificationErrorId::typeMismatch));
+        malformed = module;
+        malformed.functions[0].blocks[0].instructions[0].result->type = 2;
+        EXPECT_TRUE(hasError(Verifier().verify(malformed), VerificationErrorId::typeMismatch));
+    }
+}
+
 TEST(IRModelTest, VerifiesSourceMapsAndDebugLocations) {
     auto module = validAddModule();
     module.sourceInfo = SourceInfo {

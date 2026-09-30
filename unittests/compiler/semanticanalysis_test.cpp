@@ -643,6 +643,383 @@ text = "next"
     EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
 }
 
+TEST_F(SemanticAnalysisTest, ReportsUnreachableCodeAfterLoopTransfers) {
+    for (const auto* transfer : { "break", "continue" }) {
+        SCOPED_TRACE(transfer);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func run(flag: Bool) {\nwhile flag {\n" +
+                std::string(transfer) +
+                "\nprint(value: 1)\n}\nprint(value: 2)\n}\n"));
+        EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+        ASSERT_EQ(result.diagnostics.size(), 1u)
+                << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::unreachableCode);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, BreakIsNotAFunctionReturn) {
+    ASSERT_NO_FATAL_FAILURE(analyze(
+            "func incomplete(): Int {\nwhile true { break }\n}\n"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::missingReturn))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ConditionLoopTransfersDoNotProveFunctionReturn) {
+    for (const auto* transfer : { "break", "continue" }) {
+        SCOPED_TRACE(transfer);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func incomplete(flag: Bool): Int {\nwhile if flag { " +
+                std::string(transfer) + " } else { " + transfer + " } {}\n}\n"));
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::missingReturn))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, RecognizesFunctionReturnsInTheLoopCondition) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func valid(flag: Bool): Int {
+while if flag { return 1 } else { return 2 } {}
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, MergesConsumptionFromConditionBreaks) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var text = "owned"
+while if flag {
+take(value: consume text)
+break
+} else { false } {}
+print(value: text)
+}
+)JOYEER"));
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::useAfterConsume);
+}
+
+TEST_F(SemanticAnalysisTest, RechecksConsumptionFromConditionContinues) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var text = "owned"
+while if flag {
+take(value: consume text)
+continue
+} else { false } {}
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ConditionContinuesForgetLocalInitializationFacts) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func initialize(out: initializing String) { &out = "ready" }
+func valid(flag: Bool) {
+while if flag {
+var text: String
+initialize(out: &text)
+print(value: text)
+continue
+} else { false } {}
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, DoesNotAnalyzeStorageAfterLoopTransfers) {
+    for (const auto* transfer : { "break", "continue" }) {
+        SCOPED_TRACE(transfer);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func take(value: consuming String) {}\n"
+                "func valid(flag: Bool) {\nvar text = \"owned\"\nwhile flag {\n" +
+                std::string(transfer) +
+                "\ntake(value: consume text)\n}\nprint(value: text)\n}\n"));
+        EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+        ASSERT_EQ(result.diagnostics.size(), 1u)
+                << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::unreachableCode);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, ChecksUnreachableCodeInEveryMatchArm) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+enum Choice { First, Second, }
+func valid(flag: Bool, choice: Choice) {
+while flag {
+match choice {
+.First => (),
+.Second => { break
+print(value: 1)
+},
+}
+print(value: 2)
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::unreachableCode);
+}
+
+TEST_F(SemanticAnalysisTest, MergesBreakConsumptionWithoutAddingABackEdge) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var text = "owned"
+while flag {
+take(value: consume text)
+break
+}
+print(value: text)
+}
+)JOYEER"));
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::useAfterConsume);
+}
+
+TEST_F(SemanticAnalysisTest, MergesPossibleInitializationAtBreakExits) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func initialize(out: initializing String) { &out = "ready" }
+func invalid(flag: Bool) {
+var text: String
+while flag {
+initialize(out: &text)
+break
+}
+initialize(out: &text)
+print(value: text)
+}
+)JOYEER"));
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(
+            result.diagnostics[0].id,
+            joyeer::analysis::DiagnosticId::initializingInitializedStorage);
+}
+
+TEST_F(SemanticAnalysisTest, MergesConsumedProjectionsAtBreakExits) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+struct Pair { var first: String
+var second: String
+}
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var pair = Pair(first: "first", second: "second")
+while flag {
+take(value: consume pair.first)
+break
+}
+print(value: pair.second)
+print(value: pair.first)
+}
+)JOYEER"));
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::useAfterConsume);
+}
+
+TEST_F(SemanticAnalysisTest, ContinueRechecksTheLoopConditionBeforeRestoration) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func present(value: String): Bool { return true }
+func take(value: consuming String) {}
+func invalid() {
+var text = "owned"
+while present(value: text) {
+take(value: consume text)
+continue
+text = "restored"
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+}
+
+TEST_F(SemanticAnalysisTest, JoinsContinueAndNormalBackEdges) {
+    for (const auto* body : {
+                "if flag { take(value: consume text)\ncontinue }\ntext = \"restored\"",
+                "if flag { continue }\ntake(value: consume text)" }) {
+        SCOPED_TRACE(body);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func take(value: consuming String) {}\n"
+                "func invalid(flag: Bool) {\nvar text = \"owned\"\nwhile flag {\n"
+                "print(value: text)\n" + std::string(body) + "\n}\n}\n"));
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+                << joyeer::analysis::dump(result.diagnostics);
+    }
+}
+
+TEST_F(SemanticAnalysisTest, NestedBreakTargetsOnlyTheInnerLoop) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var text = "owned"
+while flag {
+while flag {
+take(value: consume text)
+break
+}
+print(value: text)
+break
+}
+}
+)JOYEER"));
+    ASSERT_EQ(result.diagnostics.size(), 1u)
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::useAfterConsume);
+}
+
+TEST_F(SemanticAnalysisTest, NestedContinueTargetsOnlyTheInnerLoop) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var text = "owned"
+while flag {
+text = "restored"
+while flag {
+take(value: consume text)
+continue
+}
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+}
+
+TEST_F(SemanticAnalysisTest, IgnoresLoopTransfersAtContinuingBranchJoins) {
+    for (const auto* transfer : { "break", "continue" }) {
+        SCOPED_TRACE(transfer);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func valid(flag: Bool) {\nwhile flag {\nvar text: String\n"
+                "if flag { " + std::string(transfer) +
+                " } else { text = \"ready\" }\nprint(value: text)\nbreak\n}\n}\n"));
+        EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+    }
+}
+
+TEST_F(SemanticAnalysisTest, LoopTransfersDoNotFulfillInitializationObligations) {
+    for (const auto* transfer : { "break", "continue" }) {
+        SCOPED_TRACE(transfer);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func invalid(out: initializing String, flag: Bool) {\n"
+                "while flag {\n" + std::string(transfer) + "\n&out = \"ready\"\n}\n}\n"));
+        EXPECT_TRUE(hasDiagnostic(
+                joyeer::analysis::DiagnosticId::initializingParameterNotInitialized))
+                << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+    }
+}
+
+TEST_F(SemanticAnalysisTest, LoopTransfersDoNotCheckFunctionExitObligations) {
+    for (const auto* transfer : { "break", "continue" }) {
+        SCOPED_TRACE(transfer);
+        ASSERT_NO_FATAL_FAILURE(analyze(
+                "func valid(out: initializing String, flag: Bool) {\n"
+                "while flag { " + std::string(transfer) +
+                " }\n&out = \"ready\"\n}\n"));
+        EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+        EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+    }
+}
+
+TEST_F(SemanticAnalysisTest, ReturnInsideALoopStillChecksFunctionExitObligations) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func invalid(out: initializing String, flag: Bool) {
+while flag {
+if flag { return } else { break }
+}
+&out = "ready"
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(
+            joyeer::analysis::DiagnosticId::initializingParameterNotInitialized))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ContinueForgetsLocalInitializationFacts) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func initialize(out: initializing String) { &out = "ready" }
+func valid(flag: Bool) {
+while flag {
+var text: String
+initialize(out: &text)
+print(value: text)
+continue
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ContinueInvalidatesExitedIndexBindings) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool) {
+var values = ["first", "second"]
+while flag {
+let index = if flag { 0 } else { 1 }
+&values[index] = "restored"
+take(value: consume values[index])
+continue
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ContinueInvalidatesExitedPatternIndexBindings) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func invalid(flag: Bool, selected: Int?) {
+var values = ["first", "second"]
+while flag {
+match selected {
+.Some(index) => {
+&values[index] = "restored"
+take(value: consume values[index])
+continue
+},
+.None => { break },
+}
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, InnerBreakPreservesEnclosingIndexIdentity) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String) {}
+func valid(flag: Bool) {
+var values = ["first", "second"]
+while flag {
+let index = if flag { 0 } else { 1 }
+while flag {
+take(value: consume values[index])
+break
+}
+&values[index] = "restored"
+print(value: values[index])
+continue
+}
+}
+)JOYEER"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, CommitsInitializingEffectsOnlyAfterTheCallReturns) {
     ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
 func initialize(out: initializing String, flag: Bool) { &out = "new" }
@@ -716,6 +1093,42 @@ print(value: text)
 }
 )JOYEER"));
     EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+}
+
+TEST_F(SemanticAnalysisTest, PreservesConditionalLogicalOrEffects) {
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func initialize(out: initializing String): Bool { &out = "new"
+return true
+}
+func invalid(flag: Bool) {
+var text: String
+flag || initialize(out: &text)
+print(value: text)
+initialize(out: &text)
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useBeforeInitialization));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::initializingInitializedStorage));
+
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func take(value: consuming String): Bool { return true }
+func invalid(flag: Bool) {
+var text = "owned"
+flag || take(value: consume text)
+print(value: text)
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume));
+
+    ASSERT_NO_FATAL_FAILURE(analyze(R"JOYEER(
+func stop(): Never { return stop() }
+func incomplete(flag: Bool): Int {
+flag || stop()
+print(value: 1)
+}
+)JOYEER"));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::missingReturn));
     EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
 }
 

@@ -36,13 +36,13 @@ an identifier.
 | Category | Keywords |
 |----------|----------|
 | Bindings | `let`, `var` |
-| Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `yield` |
+| Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `break`, `continue`, `yield` |
 | Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `import`, `as`, `indirect` |
 | Access conventions | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self` |
 | Match guard | `where` |
-| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `break`, `continue`, `is`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
+| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `is`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
 
 `match` does not require a separate "Pattern" lexer feature. The lexer emits
 ordinary identifier/literal/punctuation tokens plus `match`, `where`,

@@ -185,6 +185,123 @@ let invalid = (a + b) = c
     EXPECT_EQ(result.root->items.size(), 2u);
 }
 
+TEST_F(ParserTest, ParsesLogicalOperatorsWithSpecPrecedence) {
+    parse("let value = target = !a || b && c == d < e + f * g\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    const auto assignment = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(assignment, nullptr);
+    const auto disjunction = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            assignment->value);
+    ASSERT_NE(disjunction, nullptr);
+    EXPECT_EQ(disjunction->op->kind, orOr);
+    const auto negation = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(
+            disjunction->left);
+    ASSERT_NE(negation, nullptr);
+    EXPECT_EQ(negation->op->kind, bang);
+    const auto conjunction = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            disjunction->right);
+    ASSERT_NE(conjunction, nullptr);
+    EXPECT_EQ(conjunction->op->kind, andAnd);
+    const auto equality = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            conjunction->right);
+    ASSERT_NE(equality, nullptr);
+    EXPECT_EQ(equality->op->kind, equalEqual);
+    const auto comparison = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            equality->right);
+    ASSERT_NE(comparison, nullptr);
+    EXPECT_EQ(comparison->op->kind, less);
+    const auto addition = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            comparison->right);
+    ASSERT_NE(addition, nullptr);
+    EXPECT_EQ(addition->op->kind, plus);
+    const auto product = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            addition->right);
+    ASSERT_NE(product, nullptr);
+    EXPECT_EQ(product->op->kind, multiply);
+}
+
+TEST_F(ParserTest, ParsesDivisionAndRemainderLeftAssociatively) {
+    parse("let value = 2 + 24 / 3 % 5 * 4\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    const auto addition = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(addition, nullptr);
+    EXPECT_EQ(addition->op->kind, plus);
+    const auto product = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            addition->right);
+    ASSERT_NE(product, nullptr);
+    EXPECT_EQ(product->op->kind, multiply);
+    const auto remainder = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            product->left);
+    ASSERT_NE(remainder, nullptr);
+    EXPECT_EQ(remainder->op->kind, percentage);
+    const auto quotient = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            remainder->left);
+    ASSERT_NE(quotient, nullptr);
+    EXPECT_EQ(quotient->op->kind, divide);
+}
+
+TEST_F(ParserTest, ParsesLogicalOrLeftAssociatively) {
+    parse("let value = a || b || c\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    const auto outer = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(outer, nullptr);
+    EXPECT_EQ(outer->op->kind, orOr);
+    const auto inner = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(outer->left);
+    ASSERT_NE(inner, nullptr);
+    EXPECT_EQ(inner->op->kind, orOr);
+    EXPECT_EQ(outer->right->kind, Kind::nameExpr);
+}
+
+TEST_F(ParserTest, ParsesPrefixNotAfterReturnAndBeforePostfixChains) {
+    parse("func run() { return !!items[0].ready(value: true)? }\n"
+          "func bare() { return\n!false }\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto outer = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(
+            returned->value);
+    ASSERT_NE(outer, nullptr);
+    EXPECT_EQ(outer->op->kind, bang);
+    const auto inner = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(outer->operand);
+    ASSERT_NE(inner, nullptr);
+    EXPECT_EQ(inner->op->kind, bang);
+    EXPECT_EQ(inner->operand->kind, Kind::propagateExpr);
+    const auto bare = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[1]);
+    ASSERT_EQ(bare->body->items.size(), 2u);
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            bare->body->items[0])->value, nullptr);
+    EXPECT_EQ(bare->body->items[1]->kind, Kind::prefixExpr);
+}
+
+TEST_F(ParserTest, RejectsPostfixForceUnwrapAndMissingNotOperand) {
+    parse("func run() { value!\nlet kept = 1 }\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::sameLineItems));
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(function->body->items.size(), 2u);
+    EXPECT_EQ(function->body->items[0]->kind, Kind::nameExpr);
+    EXPECT_EQ(function->body->items[1]->kind, Kind::bindingDecl);
+
+    parse("func run() { ! }\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::expectedExpression));
+}
+
 TEST_F(ParserTest, SuggestsMissingDelimiterInsertion) {
     parse(R"JOYEER(func value(): Int {
 return (1 + 2
@@ -548,6 +665,82 @@ return if x > 0 { x } else { -x }
     const auto valuedReturn = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
             function->body->items[2]);
     EXPECT_EQ(valuedReturn->value->kind, Kind::ifExpr);
+}
+
+TEST_F(ParserTest, ParsesBreakAndContinueAsSpannedLeafStatements) {
+    const std::string text = "func run() {\nbreak\ncontinue\n}\n";
+    parse(text);
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(function->body->items.size(), 2u);
+    const auto breakStatement = std::dynamic_pointer_cast<joyeer::syntax::BreakStmtSyntax>(
+            function->body->items[0]);
+    ASSERT_NE(breakStatement, nullptr);
+    EXPECT_EQ(breakStatement->kind, Kind::breakStmt);
+    EXPECT_EQ(breakStatement->span.offset, text.find("break"));
+    EXPECT_EQ(breakStatement->span.length, 5u);
+    EXPECT_EQ(joyeer::syntax::dump(breakStatement),
+              "break_stmt@" + std::to_string(text.find("break")) + ":5\n");
+    const auto continueStatement = std::dynamic_pointer_cast<joyeer::syntax::ContinueStmtSyntax>(
+            function->body->items[1]);
+    ASSERT_NE(continueStatement, nullptr);
+    EXPECT_EQ(continueStatement->kind, Kind::continueStmt);
+    EXPECT_EQ(continueStatement->span.offset, text.find("continue"));
+    EXPECT_EQ(continueStatement->span.length, 8u);
+    EXPECT_EQ(joyeer::syntax::dump(continueStatement),
+              "continue_stmt@" + std::to_string(text.find("continue")) + ":8\n");
+    EXPECT_EQ(std::dynamic_pointer_cast<joyeer::syntax::ExprSyntax>(breakStatement), nullptr);
+    EXPECT_EQ(std::dynamic_pointer_cast<joyeer::syntax::ExprSyntax>(continueStatement), nullptr);
+}
+
+TEST_F(ParserTest, ParsesLoopControlInNestedBlocks) {
+    parse("func run() {\nwhile true {\n"
+          "if true { break }\nwhile false { continue }\ncontinue\n}\n}\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    const auto outer = std::static_pointer_cast<joyeer::syntax::WhileStmtSyntax>(
+            function->body->items[0]);
+    ASSERT_EQ(outer->body->items.size(), 3u);
+    const auto conditional = std::static_pointer_cast<joyeer::syntax::IfExprSyntax>(
+            outer->body->items[0]);
+    EXPECT_EQ(conditional->thenBranch->items[0]->kind, Kind::breakStmt);
+    const auto inner = std::static_pointer_cast<joyeer::syntax::WhileStmtSyntax>(
+            outer->body->items[1]);
+    EXPECT_EQ(inner->body->items[0]->kind, Kind::continueStmt);
+    EXPECT_EQ(outer->body->items[2]->kind, Kind::continueStmt);
+}
+
+TEST_F(ParserTest, RejectsLoopControlLabelsAndValuesAndRecoversAtFollowingJumps) {
+    for (const auto* statement : {
+            "break outer", "continue outer", "break 1", "continue false",
+            "break: outer", "continue: outer", "break continue"}) {
+        SCOPED_TRACE(statement);
+        parse(std::string("func run() {\n") + statement + "\ncontinue\nbreak\n}\n");
+
+        ASSERT_EQ(result.diagnostics.size(), 1u) << joyeer::parser::dump(result.diagnostics);
+        EXPECT_EQ(result.diagnostics[0].id, DiagnosticId::sameLineItems);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                result.root->items[0]);
+        ASSERT_EQ(function->body->items.size(), 3u);
+        EXPECT_EQ(function->body->items[1]->kind, Kind::continueStmt);
+        EXPECT_EQ(function->body->items[2]->kind, Kind::breakStmt);
+    }
+}
+
+TEST_F(ParserTest, RejectsLoopControlOutsideBlockStatementPositions) {
+    for (const auto* text : {
+            "break\n", "continue\n", "let value = break\n", "let value = continue\n",
+            "func run() { call(value: break) }\n",
+            "func run() { return continue }\n",
+            "func run() { match true { true => break } }\n"}) {
+        SCOPED_TRACE(text);
+        parse(text);
+        EXPECT_FALSE(result.succeeded());
+    }
 }
 
 TEST_F(ParserTest, ParsesJsonMvpMatchPatternsAndDivergingArm) {

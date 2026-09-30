@@ -619,6 +619,12 @@ syntax::NodePtr Parser::parseBlockItem() {
     if (cursor.at(kwWhile)) {
         return parseWhileStmt();
     }
+    if (const auto token = cursor.eat(kwBreak)) {
+        return std::make_shared<syntax::BreakStmtSyntax>(tokenSpan(token));
+    }
+    if (const auto token = cursor.eat(kwContinue)) {
+        return std::make_shared<syntax::ContinueStmtSyntax>(tokenSpan(token));
+    }
     if (isExpressionStart(cursor.peek())) {
         return parseExpression();
     }
@@ -700,11 +706,12 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
 
 syntax::ExprPtr Parser::parsePrefixExpr() {
     const size_t start = cursor.position();
-    if (cursor.at(minus)) {
+    if (cursor.at(minus) || cursor.at(bang)) {
         auto op = cursor.advance();
         auto operand = parsePrefixExpr();
         if (operand == nullptr) {
-            reportExpected(DiagnosticId::expectedExpression, "an operand after '-'");
+            reportExpected(DiagnosticId::expectedExpression,
+                           "an operand after " + quotedToken(op));
             operand = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         }
         return std::make_shared<syntax::PrefixExprSyntax>(
@@ -1155,7 +1162,8 @@ bool Parser::isExpressionStart(const Token::Ptr& token) const {
             token->kind == leftParen || token->kind == leftSquare ||
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
-            token->kind == minus || token->kind == ampersand);
+            token->kind == minus || token->kind == bang ||
+            token->kind == ampersand);
 }
 
 bool Parser::isTopLevelStart(const Token::Ptr& token) const {
@@ -1168,7 +1176,8 @@ bool Parser::isTopLevelStart(const Token::Ptr& token) const {
 bool Parser::isBlockItemStart(const Token::Ptr& token) const {
     return token != nullptr &&
            (token->kind == kwLet || token->kind == kwVar ||
-            token->kind == kwWhile || isExpressionStart(token));
+            token->kind == kwWhile || token->kind == kwBreak ||
+            token->kind == kwContinue || isExpressionStart(token));
 }
 
 bool Parser::isAssignmentTarget(const syntax::ExprPtr& expression) const {
@@ -1194,16 +1203,19 @@ bool Parser::shouldParseReturnValue() const {
 Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
     switch (kind) {
         case equal: return {1, true, false, true};
-        case andAnd: return {2, false, false, false};
+        case orOr: return {2, false, false, false};
+        case andAnd: return {3, false, false, false};
         case equalEqual:
-        case notEqual: return {3, false, true, false};
+        case notEqual: return {4, false, true, false};
         case less:
         case lessEqual:
         case greater:
-        case greaterEqual: return {4, false, true, false};
+        case greaterEqual: return {5, false, true, false};
         case plus:
-        case minus: return {5, false, false, false};
-        case multiply: return {6, false, false, false};
+        case minus: return {6, false, false, false};
+        case multiply:
+        case divide:
+        case percentage: return {7, false, false, false};
         default: return {0, false, false, false};
     }
 }

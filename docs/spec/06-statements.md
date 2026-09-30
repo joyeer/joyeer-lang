@@ -5,6 +5,7 @@ statement       ::= binding ';'?
                  |  expression ';'?
                  |  if_stmt | while_stmt | for_stmt
                  |  return_stmt
+                 |  break_stmt | continue_stmt
                  |  block
 
 block           ::= '{' statement* '}'
@@ -46,10 +47,7 @@ return_expr     ::= 'return' [ expression ]
 return_stmt     ::= return_expr
 ```
 
-`return` may be omitted in single-expression function bodies
-(§3.2.2). `break` and `continue` (including the labeled `break label` /
-`continue label` forms) are reserved ⏳ for v0.2 (§15); a v0.1 loop is exited
-only by its condition or by `return`.
+`return` may be omitted in single-expression function bodies (§3.2.2).
 
 The statement and expression forms are the same syntax node. Used as an
 expression, `return e` has type `Never` (§2.9); this is why it may appear as
@@ -60,5 +58,28 @@ When present, the returned expression must begin on the same physical line as
 the expression has begun, it may continue across lines according to the usual
 delimiter and operator-continuation rules.
 
----
+### 6.5 Loop exits
 
+```
+break_stmt      ::= 'break'
+continue_stmt   ::= 'continue'
+```
+
+`break` exits the nearest enclosing loop in the current function. `continue`
+starts that loop's next iteration; for `while`, execution resumes by evaluating
+the condition again. A loop context includes its condition and body, so a
+block nested in a condition can also exit or restart that loop.
+
+These are statements, not value expressions. A block path ending in either
+does not fall through and can be combined with value-producing branches.
+Using either outside a loop is an error. Neither takes a value or label;
+labeled forms remain reserved (§15).
+
+Every jump destroys values and pending temporaries in exited scopes in reverse
+cleanup order, without destroying values in enclosing scopes that remain active.
+Ownership and definite initialization are checked across all break exits and
+continue back edges. In particular, `continue` cannot bypass reinitialization
+required before the next use of consumed storage. Statements after an
+unconditional jump are unreachable.
+
+---
