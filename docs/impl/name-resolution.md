@@ -48,12 +48,20 @@ Resolution is deliberately split into three deterministic passes:
 3. **Resolve bodies.** Walk initializers and expressions, create local/block
    and match-arm scopes, and bind each use to the nearest declaration.
 
-In directory mode the service first discovers canonical source inputs and
-validates an acyclic graph of explicit file-local imports. The resolver
-indexes every file and collects declarations for every module before resolving
-any signature. A synthetic root holds the graph's syntax items for the later
-whole-graph passes; it does not merge or rewrite source text or byte offsets.
-`SourceSpan::sourceId` selects the original file for diagnostics and debug info.
+In named compilation mode the service validates all explicitly supplied
+source sets, canonicalizes and sorts their file paths, then builds an acyclic
+graph from file-local imports. It does not discover files or infer membership
+from directories. Each complete dot-qualified name identifies one compilation
+unit; repeated dependency inputs for that name add files to that same unit,
+not new modules. Name prefixes do not imply parent modules or submodules.
+
+The resolver indexes every reachable file and collects declarations for every
+reachable module before resolving any signature. A synthetic root holds the
+graph's syntax items for the later whole-graph passes; it does not merge
+logical module scopes or rewrite source text or byte offsets.
+`SourceSpan::sourceId` selects the original file for diagnostics and debug info,
+including files in nested or unrelated directories. The
+[compiler input contract](backend.md#2-cli) owns path resolution and validation.
 
 Non-private top-level declarations are visible throughout their module.
 Each file has its own scope, whose parent is its module scope; private names
@@ -70,7 +78,7 @@ scope, but a duplicate in the same scope is diagnosed.
 The model contains these scope kinds:
 
 - compiler prelude;
-- module (directory mode);
+- module (named compilation unit);
 - source file;
 - function;
 - lexical block;
@@ -112,6 +120,8 @@ Imports occupy a separate file-local qualified-name table, not the value or
 type namespace. An import prefix colliding with a declaration in that file is
 diagnosed explicitly. `project.config.Record` resolves to the actual exported
 type's symbol, and `project.config.make` to the actual function symbol.
+The import matches the exact supplied name `project.config`; neither a
+directory layout nor an implicit `project` module participates in lookup.
 `SemanticModel::isModuleQualified` distinguishes these paths from runtime
 field access; namespace prefixes are never evaluated as values.
 

@@ -24,8 +24,8 @@ require a source checkout, internet access, or access to a moving branch.
 
 | Area | Current surface |
 |---|---|
-| Programs | Single-file or directory-module compilation; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` |
-| Modules | Explicit directory mappings; file-local qualified imports; `private` / `internal` / `public`; dependency-cycle and exposed-type checking |
+| Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` |
+| Modules | Named source-file sets; file-local qualified imports; `private` / `internal` / `public`; dependency-cycle and exposed-type checking; per-file source/debug locations |
 | Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, Boolean `!`, short-circuit `&&` / `||`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
@@ -40,6 +40,23 @@ require a source checkout, internet access, or access to a moving branch.
 
 This is an implemented subset with regression coverage, not a claim that every
 combination is supported or that the compiler is free of correctness gaps.
+
+Named mode uses `--module-name` with positional root source files and repeated
+`--module-source name=file` dependency inputs. Repeating a dependency name adds
+files to one module. The complete name is a logical identity, not an implicit
+parent/submodule tree. Directories do not create modules: one source set can
+span directories, and distinct sets can share a directory without sharing
+files. The compiler never discovers files, adds siblings, reads manifests, or
+fetches packages; build tools select files. All supplied sets are validated
+before compiling reachable dependencies, with deterministic canonical path
+ordering and physical-file duplicate rejection.
+
+Legacy one-file compilation remains supported. Multiple root files or
+dependencies require a valid nonempty root name; dependency names cannot equal
+the root name. Removed `--module-root` and `--module` flags report migration
+errors. See [CLI usage](cli.md#named-compilation-units) for exact input and
+path rules. This does not add library artifacts, a manifest format, or cleanup
+facilities.
 
 ## Do not generate these as supported features
 

@@ -39,7 +39,7 @@ auto resolve(const std::vector<ModuleInput>& modules) {
     return joyeer::semantic::NameResolver().resolve(modules);
 }
 
-TEST(DirectoryModules, ResolvesTwoRootFilesAndQualifiedPublicTypesAndFunctions) {
+TEST(CompilationUnitModules, ResolvesTwoRootFilesAndQualifiedPublicTypesAndFunctions) {
     auto main = parseFile(
             "import project.config\n"
             "func main() {\n"
@@ -63,7 +63,7 @@ TEST(DirectoryModules, ResolvesTwoRootFilesAndQualifiedPublicTypesAndFunctions) 
     EXPECT_EQ(result.model->symbol(*symbol)->span.sourceId, 2u);
 }
 
-TEST(DirectoryModules, FilePrivateShadowsOnlyWithinItsOwnFile) {
+TEST(CompilationUnitModules, FilePrivateShadowsOnlyWithinItsOwnFile) {
     auto first = parseFile("private func value(): Int { 1 }\nfunc first(): Int { value() }\n", 0);
     auto second = parseFile("func value(): Int { 2 }\nfunc second(): Int { value() }\n", 1);
     const auto result = resolve({{"", {first, second}}});
@@ -78,7 +78,7 @@ TEST(DirectoryModules, FilePrivateShadowsOnlyWithinItsOwnFile) {
               result.model->declaredSymbol(second->items.front()));
 }
 
-TEST(DirectoryModules, RejectsDuplicateNonPrivateDeclarationsAcrossFilesAndNamespaces) {
+TEST(CompilationUnitModules, RejectsDuplicateNonPrivateDeclarationsAcrossFilesAndNamespaces) {
     const auto result = resolve({{"", {
             parseFile("func duplicate() {}\n", 0),
             parseFile("struct duplicate {}\n", 1)}}});
@@ -87,13 +87,13 @@ TEST(DirectoryModules, RejectsDuplicateNonPrivateDeclarationsAcrossFilesAndNames
     EXPECT_EQ(result.diagnostics.front().span.sourceId, 1u);
 }
 
-TEST(DirectoryModules, RejectsPrivateAndNonPrivateDuplicateInSameFile) {
+TEST(CompilationUnitModules, RejectsPrivateAndNonPrivateDuplicateInSameFile) {
     const auto result = resolve({{"", {parseFile(
             "private func value() {}\nfunc value() {}\n", 0)}}});
     EXPECT_TRUE(hasDiagnostic(result, NameResolutionDiagnosticId::duplicateDeclaration));
 }
 
-TEST(DirectoryModules, ImportsAreFileLocalAndNeverInjectUnqualifiedNames) {
+TEST(CompilationUnitModules, ImportsAreFileLocalAndNeverInjectUnqualifiedNames) {
     const auto dependency = parseFile("public func value(): Int { 1 }\n", 2);
     for (const auto& text : {
             "func main(): Int { dep.value() }\n",
@@ -105,35 +105,35 @@ TEST(DirectoryModules, ImportsAreFileLocalAndNeverInjectUnqualifiedNames) {
     }
 }
 
-TEST(DirectoryModules, RejectsImportDeclarationCollisions) {
+TEST(CompilationUnitModules, RejectsImportDeclarationCollisions) {
     const auto result = resolve({
             {"", {parseFile("import project.config\nfunc project() {}\n", 0)}},
             {"project.config", {parseFile("public func value() {}\n", 1)}}});
     EXPECT_TRUE(hasDiagnostic(result, NameResolutionDiagnosticId::importCollision));
 }
 
-TEST(DirectoryModules, RejectsUnknownImportAndSingleFileImports) {
+TEST(CompilationUnitModules, RejectsUnknownImportAndSingleFileImports) {
     auto file = parseFile("import missing\nfunc main() {}\n", 0);
     EXPECT_TRUE(hasDiagnostic(resolve({{"", {file}}}), NameResolutionDiagnosticId::unknownImport));
     EXPECT_TRUE(hasDiagnostic(joyeer::semantic::NameResolver().resolve(file),
                               NameResolutionDiagnosticId::unknownImport));
 }
 
-TEST(DirectoryModules, RejectsInternalImportedFunction) {
+TEST(CompilationUnitModules, RejectsInternalImportedFunction) {
     const auto result = resolve({
             {"", {parseFile("import dep\nfunc main() { dep.hidden() }\n", 0)}},
             {"dep", {parseFile("func hidden() {}\n", 1)}}});
     EXPECT_TRUE(hasDiagnostic(result, NameResolutionDiagnosticId::inaccessibleDeclaration));
 }
 
-TEST(DirectoryModules, RejectsPrivateFunctionInAnotherFile) {
+TEST(CompilationUnitModules, RejectsPrivateFunctionInAnotherFile) {
     const auto result = resolve({{"", {
             parseFile("func main() { hidden() }\n", 0),
             parseFile("private func hidden() {}\n", 1)}}});
     EXPECT_TRUE(hasDiagnostic(result, NameResolutionDiagnosticId::undefinedName));
 }
 
-TEST(DirectoryModules, RejectsPrivateMemberInAnotherFileAndInternalImportedMember) {
+TEST(CompilationUnitModules, RejectsPrivateMemberInAnotherFileAndInternalImportedMember) {
     for (const bool imported : {false, true}) {
         const auto consumer = parseFile(imported
                 ? "import dep\nfunc use(item: dep.Record): Int { item.hidden }\n"
@@ -148,7 +148,7 @@ TEST(DirectoryModules, RejectsPrivateMemberInAnotherFileAndInternalImportedMembe
     }
 }
 
-TEST(DirectoryModules, InferredMemberLookupCannotBypassVisibility) {
+TEST(CompilationUnitModules, InferredMemberLookupCannotBypassVisibility) {
     const auto result = resolve({
             {"", {parseFile("import dep\nfunc main() {\nlet item = dep.make()\n"
                            "print(value: item.hidden)\n}\n", 0)}},
@@ -164,14 +164,14 @@ TEST(DirectoryModules, InferredMemberLookupCannotBypassVisibility) {
             }));
 }
 
-TEST(DirectoryModules, SynthesizedInitializerIsAsRestrictedAsItsLeastVisibleField) {
+TEST(CompilationUnitModules, SynthesizedInitializerIsAsRestrictedAsItsLeastVisibleField) {
     const auto result = resolve({
             {"", {parseFile("import dep\nfunc main() { dep.Record(hidden: 1) }\n", 0)}},
             {"dep", {parseFile("public struct Record {\nprivate let hidden: Int\n}\n", 1)}}});
     EXPECT_TRUE(hasDiagnostic(result, NameResolutionDiagnosticId::inaccessibleDeclaration));
 }
 
-TEST(DirectoryModules, RejectsPublicSignaturesFieldsAndEnumPayloadsExposingHiddenTypes) {
+TEST(CompilationUnitModules, RejectsPublicSignaturesFieldsAndEnumPayloadsExposingHiddenTypes) {
     for (const auto& text : {
             "struct Hidden {}\npublic func expose(value: [Hidden]) {}\n",
             "struct Hidden {}\npublic struct Export {\npublic let value: Hidden?\n}\n",
@@ -181,7 +181,7 @@ TEST(DirectoryModules, RejectsPublicSignaturesFieldsAndEnumPayloadsExposingHidde
     }
 }
 
-TEST(DirectoryModules, ImportedEnumCasesAndQualifiedPatternsUseTypeIdentity) {
+TEST(CompilationUnitModules, ImportedEnumCasesAndQualifiedPatternsUseTypeIdentity) {
     const auto result = resolve({
             {"", {parseFile("import dep\nfunc use(value: dep.Choice): Int {\n"
                            "match value {\ndep.Choice.First => 1\ndep.Choice.Second => 2\n}\n"
@@ -192,7 +192,7 @@ TEST(DirectoryModules, ImportedEnumCasesAndQualifiedPatternsUseTypeIdentity) {
     EXPECT_TRUE(checked.succeeded()) << joyeer::typing::dump(checked.diagnostics);
 }
 
-TEST(DirectoryModules, ParserPreservesPerFileSpansAndRejectsLateImports) {
+TEST(CompilationUnitModules, ParserPreservesPerFileSpansAndRejectsLateImports) {
     auto source = std::make_shared<SourceFile>("func main() {}\nimport dep\n");
     Diagnostics diagnostics;
     LexParser(&diagnostics).parse(source);

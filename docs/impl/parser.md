@@ -38,6 +38,10 @@ Qualified nominal types and enum patterns retain the full dotted spelling.
 Imports are stored separately on `SourceFileSyntax` and are not executable
 items. Every combined or recovery span retains its token's `sourceId` and
 file-local offset; parsing never joins token streams from different files.
+The compiler parses each file in an explicit compilation unit independently.
+Directories do not affect grammar, module membership, or import names. The
+parser records a complete dot-qualified import name; name resolution matches
+it to a supplied module rather than traversing folders or implicit submodules.
 
 The parser deliberately does **not** implement:
 
@@ -113,7 +117,10 @@ comma unless a rule says otherwise.
 ### 4.1 Source file and declarations
 
 ```ebnf
-source_file        ::= top_level_item* EOF
+source_file        ::= import_decl* top_level_item* EOF
+
+import_decl        ::= 'import' import_path
+import_path        ::= identifier ( '.' identifier )*
 
 top_level_item     ::= binding_decl
                      | func_decl

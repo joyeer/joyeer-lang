@@ -332,18 +332,29 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;native-runtime"
     )
 
-    add_test(NAME NativeExecutableDirectoryModules
-            COMMAND ${CMAKE_COMMAND}
-                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DMODULE_ROOT=${JOYEER_TESTS_DIR}/modules/root
-                    "-DCOMPILER_ARGS=--module;project.config=${JOYEER_TESTS_DIR}/modules/config"
-                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-modules${CMAKE_EXECUTABLE_SUFFIX}
-                    -DEXPECTED_OUTPUT=42\n
-                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    set(module_sources
+            "${JOYEER_TESTS_DIR}/modules/root/main.joyeer"
+            "${JOYEER_TESTS_DIR}/modules/root/implementation files/helper.joyeer"
     )
-    set_tests_properties(NativeExecutableDirectoryModules PROPERTIES
-            LABELS "modules;native;llvm-backend"
+    set(module_dependency_args
+            --module-source "project.config=${JOYEER_TESTS_DIR}/modules/config/entry.joyeer"
+            --module-source "project.config=${JOYEER_TESTS_DIR}/modules/config/types/record.joyeer"
     )
+    foreach(level IN ITEMS 0 1 2 3)
+        add_test(NAME NativeExecutableCompilationUnitsO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DMODULE_NAME=project.app
+                        "-DINPUT_FILES=${module_sources}"
+                        "-DCOMPILER_ARGS=-O${level};${module_dependency_args}"
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-modules-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        -DEXPECTED_OUTPUT=42\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableCompilationUnitsO${level} PROPERTIES
+                LABELS "modules;native;llvm-backend"
+        )
+    endforeach()
 
     if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE)
         add_test(NAME NativeExecutableArchitecture
@@ -438,11 +449,12 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
 
         if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE AND JOYEER_LLVM_PDBUTIL_EXECUTABLE)
-        add_test(NAME NativeExecutableDirectoryModulesDebug
+        add_test(NAME NativeExecutableCompilationUnitsDebug
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DMODULE_ROOT=${JOYEER_TESTS_DIR}/modules/root
-                        "-DCOMPILER_ARGS=-O0;-gfull;-gcodeview;--module;project.config=${JOYEER_TESTS_DIR}/modules/config"
+                        -DMODULE_NAME=project.app
+                        "-DINPUT_FILES=${module_sources}"
+                        "-DCOMPILER_ARGS=-O0;-gfull;-gcodeview;${module_dependency_args}"
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-modules-debug${CMAKE_EXECUTABLE_SUFFIX}
                         -DEXPECT_PDB=ON
                         -DLLVM_PDBUTIL=${JOYEER_LLVM_PDBUTIL_EXECUTABLE}
@@ -450,7 +462,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableDirectoryModulesDebug PROPERTIES
+        set_tests_properties(NativeExecutableCompilationUnitsDebug PROPERTIES
                 LABELS "modules;native;llvm-backend;debug-info"
         )
 

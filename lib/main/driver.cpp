@@ -99,7 +99,8 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->outputMode,
                 arguments->optimizationLevel,
                 arguments->debugInfo,
-                arguments->moduleRoot,
+                arguments->moduleName,
+                arguments->sourceFiles,
                 arguments->modules,
             });
 }

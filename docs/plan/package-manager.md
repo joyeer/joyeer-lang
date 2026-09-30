@@ -1,10 +1,13 @@
 # Joyeer Package Manager Plan
 
 > **Status:** Planning and requirements for the Joyeer package manager
-> (provisionally named `joypm`). The foundational language, module, and host
-> runtime contracts required by this plan are implemented in the compiler and
-> native runtime (see [Implemented Language Surface](../impl/supported-features.md)
-> and [Portable Host Operations](../spec/18-host.md)).
+> (provisionally named `joypm`). Named compilation units and the first portable
+> host interface provide an implemented foundation (see
+> [Implemented Language Surface](../impl/supported-features.md)
+> and [Portable Host Operations](../spec/18-host.md)). The manifest, build-tool
+> policies, and CLI below are proposals, not implemented tool guarantees.
+> Independent binary libraries, host path canonicalization, and anchored
+> recursive cleanup require additional contracts and implementation.
 
 ---
 
@@ -22,13 +25,15 @@ dependency resolution, and program execution policy belong in this tool.
   `joypm test`, and `joypm init`).
 - **Manifest parsing and validation:** load and validate package declarations,
   target definitions, and module dependencies.
-- **Build planning:** map logical module dependencies to physical directories,
-  verify acyclic module graphs, and invoke `joyeer` with `--module-root` and
-  repeatable `--module` arguments.
+- **Build planning:** select explicit source-file sets using tool-owned source
+  roots and include/exclude rules, associate them with logical module names,
+  verify acyclic module graphs, and invoke `joyeer` with `--module-name`,
+  positional root files, and repeatable `--module-source name=file` arguments.
 - **Execution policy:** execute built binaries synchronously with inherited
   environment/streams and translate process exit states to tool exit codes.
-- **Artifact lifecycle:** track output directories and clean tool-owned
-  artifacts without following symbolic links.
+- **Artifact lifecycle (future):** track output directories and, once suitable
+  host operations exist, clean tool-owned artifacts without following symbolic
+  links. Clean-before-rebuild is not a current guarantee.
 
 ---
 
@@ -37,9 +42,11 @@ dependency resolution, and program execution policy belong in this tool.
 The package manager relies on the host facilities and language features
 implemented in Joyeer:
 
-- **Modules and visibility (§12):** directory-based modules with explicit
-  `--module-root` and `--module name=dir` CLI mappings, qualified imports, and
-  `public` / `internal` / `private` access boundaries.
+- **Modules and visibility (§12):** named explicit source-file sets with
+  `--module-name` and `--module-source name=file` inputs, file-local qualified
+  imports, and `public` / `internal` / `private` access boundaries. Repeating a
+  dependency name adds files to the same unit. Complete dot-qualified names
+  are logical identities, not directory trees or implicit parent modules.
 - **Program entry and argument passing (§3.2.6):** `func main(args: [String]): Int`
   with borrowed user arguments and an exit code in `0..255`.
 - **Error handling (§8):** typed errors (`Result<T, E>`), unit fallible
@@ -85,27 +92,57 @@ The CLI commands follow a standard three-state status mapping:
 
 ### Manifest Structure
 
-A package manifest defines:
+A proposed package manifest would describe the following; no concrete manifest
+format is specified or implemented by this plan:
 
 1. **Package metadata:** package name, version, and edition.
-2. **Targets:** executable targets (with a root module entry) and library
-   targets.
-3. **Module mapping:** source directory roots and logical module names.
+2. **Targets:** executable targets, each selecting a root compilation unit
+   and its source dependency graph. Independently emitted binary library
+   targets require future compiler output and ABI support.
+3. **Source selection and module mapping:** logical module names with explicit
+   files or tool-defined source roots and include/exclude rules that expand
+   into explicit file sets before invoking the compiler.
 4. **Dependencies:** internal module-to-module dependencies and local path
    dependencies. Remote package fetching is deferred to a future milestone.
 
+A project may initially contain one main compilation unit, but neither a
+package nor a target is inherently one module. Future test targets may use
+separate compilation units. A module may select files in nested or unrelated
+directories, and distinct modules may select distinct files in one directory.
+Folders do not create namespaces, modules, or implicit dependencies.
+
 ### Graph Validation and Compilation
 
-The build planner:
+The proposed build planner:
 
-1. Discovers module directories and computes canonical paths.
-2. Detects and rejects duplicate physical directory inputs and identity
-   collisions (including symlink aliasing).
-3. Verifies that module dependencies form a directed acyclic graph (DAG).
-4. Generates compiler invocations using:
+1. Expands its source-selection policy into nonempty file sets with explicit
+   logical names. Any directory traversal belongs to the tool, not the compiler.
+2. Resolves tool-relative paths before invoking the compiler, or chooses the
+   child working directory consistently: compiler CLI paths use that process
+   directory. Portable `joinPath` is lexical, not a canonicalization API.
+3. Checks logical names and dependencies, verifies a directed acyclic graph
+   (DAG), and leaves authoritative physical-file identity validation to the
+   compiler. General canonicalization and hard-link identity APIs are not
+   currently exposed by the portable host interface.
+4. Generates compiler invocations with separate argument-array elements, for
+   example:
    ```text
-   joyeer --module-root <root-dir> --module <name1>=<dir1> --module <name2>=<dir2> -o <output>
+   joyeer --module-name acme.app root1.joyeer nested\root2.joyeer --module-source acme.config=path\config.joyeer --module-source acme.config=other\parser.joyeer -o app.exe
    ```
+
+The two `acme.config` inputs form one dependency module. The root requires a
+valid nonempty name and positional source files; a dependency cannot use the
+root name. The compiler canonicalizes and sorts source paths and rejects
+missing/nonregular inputs, empty sets, and duplicate physical files within or
+across all supplied modules, including symlink and hard-link aliases. This
+validation precedes compilation of reachable dependencies, even for unused
+source sets. Whole-graph code generation does not merge logical modules.
+
+The compiler does not discover files, add siblings, read manifests, or fetch
+packages. Legacy single-file compilation remains available; multiple root
+files and dependencies require named mode. Removed `--module-root` and
+`--module` directory flags produce migration errors, not directory discovery.
+See the [compiler interface](../impl/backend.md#2-cli) for the input contract.
 
 ### Key Enumeration Policy
 
@@ -129,14 +166,17 @@ keys explicitly.
 
 ### Artifact Management and Deletion
 
-Tool-owned output directories are cleaned before rebuilds:
+Future artifact policy must be designed around suitable host facilities; the
+current interface does not provide anchored recursive cleanup, replacement,
+or atomic publication. This plan does not promise automatic cleaning before
+rebuilds. Requirements for a later implementation include:
 - **Anchored deletion:** cleanup must operate strictly within designated output
   directories.
 - **No link following:** deletion must never follow symbolic links into external
   directories; only the leaf symlink entry may be removed.
-- **Create-new semantics:** newly produced build outputs use non-replacing
-  creation (`writeFileNew`) or write to temporary locations followed by atomic
-  publication when supported by host facilities.
+- **Publication semantics:** `writeFileNew` supports non-replacing tool-written
+  files, but does not establish atomic publication of compiler outputs. A later
+  publication protocol must define replacement and failure behavior explicitly.
 
 ---
 
@@ -146,14 +186,15 @@ Tool-owned output directories are cleaned before rebuilds:
 
 - Implement manifest parsing in Joyeer.
 - Implement module dependency sorting and validation.
-- Generate and execute compiler commands for local executable and library
-  targets.
+- Expand tool-defined source selection and execute compiler commands for local
+  executable targets and their source-module graphs.
 
 ### Phase 2: Execution and Test Runner
 
 - Implement `joypm run` with argument forwarding and exit status reporting.
 - Implement `joypm test` with test discovery and structured summary reporting.
-- Implement anchored output cleaning.
+- Implement anchored output cleaning only after the required host contract and
+  operations are available.
 
 ### Phase 3: Workspaces and Package Initialization
 

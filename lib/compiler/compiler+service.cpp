@@ -124,10 +124,10 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     sourceFiles.clear();
     compilationSources.clear();
     lastCompiledSourceFile.reset();
-    if (!options.moduleRoot.empty()) {
+    if (!options.moduleName.empty() || !options.sourceFiles.empty()) {
         if (!inputFile.empty()) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "module.conflicting-input",
-                    "module root and a positional source file are mutually exclusive");
+                    "explicit compilation-unit sources and the single-file compile argument are mutually exclusive");
             return;
         }
         compileModules();
@@ -135,7 +135,7 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     }
     if (!options.modules.empty()) {
         diagnostics->reportDiagnostic(ErrorLevel::failure, "module.missing-root",
-                "module mappings require a module root");
+                "dependency source sets require a named root compilation unit");
         return;
     }
     auto sourcefile = findSourceFile(inputFile);
@@ -145,7 +145,7 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     if (root == nullptr) return;
     for (const auto& import : root->imports) {
         reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
-                "module.unknown-import", "unknown module '" + import.name + "'; use --module-root and --module");
+                "module.unknown-import", "unknown module '" + import.name + "'; use --module-name and --module-source");
     }
     CHECK_ERROR_RETURN
     compile({joyeer::semantic::ModuleInput {"", {root}}});
@@ -182,7 +182,6 @@ bool CompilerService::protectInputs(const std::vector<std::filesystem::path>& in
 void CompilerService::compileModules() {
     struct Module {
         std::string name;
-        std::filesystem::path directory;
         std::vector<std::filesystem::path> files;
         joyeer::semantic::ModuleInput syntax;
         enum State { unseen, visiting, done } state = unseen;
@@ -190,66 +189,58 @@ void CompilerService::compileModules() {
     std::vector<Module> graph;
     std::vector<std::filesystem::path> allInputs;
     std::unordered_map<std::string, size_t> names;
-    auto mappings = options.modules;
-    mappings.insert(mappings.begin(), {"", options.moduleRoot});
-    for (const auto& mapping : mappings) {
-        if ((!mapping.name.empty() && !joyeer::isModuleName(mapping.name)) ||
-            (mapping.name.empty() && !graph.empty())) {
+    auto sourceSets = options.modules;
+    sourceSets.insert(sourceSets.begin(), {options.moduleName, options.sourceFiles});
+    for (const auto& sourceSet : sourceSets) {
+        if (!joyeer::isModuleName(sourceSet.name)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-name",
-                    "invalid logical module name '" + mapping.name + "'");
+                    "invalid logical module name '" + sourceSet.name + "'");
             return;
         }
-        if (names.contains(mapping.name)) {
+        if (names.contains(sourceSet.name)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "module.duplicate-name",
-                    "duplicate module mapping '" + mapping.name + "'");
+                    "duplicate module source set '" + sourceSet.name + "'");
             return;
         }
-        std::error_code error;
-        const auto directory = std::filesystem::canonical(mapping.directory, error);
-        if (error || !std::filesystem::is_directory(directory, error)) {
-            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-directory",
-                    "cannot read module directory '" + mapping.directory.string() + "'");
+        if (sourceSet.files.empty()) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.empty",
+                    "module '" + sourceSet.name + "' has no source files");
             return;
         }
-        for (const auto& existing : graph) {
-            if (pathsAlias(existing.directory, directory)) {
-                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.duplicate-directory",
-                        "module directory is mapped more than once: '" + directory.string() + "'");
+        Module module {sourceSet.name, {}, {sourceSet.name, {}}};
+        for (const auto& input : sourceSet.files) {
+            if (input.empty()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",
+                        "module '" + sourceSet.name + "' contains an empty source path");
                 return;
             }
-        }
-        Module module {mapping.name, directory, {}, {mapping.name, {}}};
-        std::filesystem::directory_iterator iterator(directory, error);
-        const std::filesystem::directory_iterator end;
-        while (!error && iterator != end) {
-            const auto path = iterator->path();
-            if (path.extension() == ".joyeer" && iterator->is_regular_file(error)) {
-                module.files.push_back(path);
-            }
-            if (!error) iterator.increment(error);
-        }
-        if (error) {
-            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-directory",
-                    "cannot enumerate module directory '" + directory.string() + "': " + error.message());
-            return;
-        }
-        std::sort(module.files.begin(), module.files.end());
-        for (auto& file : module.files) {
-            file = std::filesystem::canonical(file, error);
+            std::error_code error;
+            const auto path = input.is_relative() ? options.workingDirectory / input : input;
+            const auto file = std::filesystem::canonical(path, error);
             if (error) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",
-                        "cannot resolve a source file in module directory '" + directory.string() + "'");
+                        "cannot resolve source file '" + path.string() +
+                        "' for module '" + sourceSet.name + "': " + error.message());
+                return;
+            }
+            const bool regular = std::filesystem::is_regular_file(file, error);
+            if (error || !regular) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",
+                        "module '" + sourceSet.name + "' requires a regular source file: '" +
+                        path.string() + "'" + (error ? ": " + error.message() : ""));
                 return;
             }
             if (std::any_of(allInputs.begin(), allInputs.end(),
-                    [&](const auto& input) { return pathsAlias(input, file); })) {
+                    [&](const auto& earlier) { return pathsAlias(earlier, file); })) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.duplicate-source",
-                        "source file belongs to more than one module input: '" + file.string() + "'");
+                        "source file is supplied more than once: '" + file.string() + "'");
                 return;
             }
             allInputs.push_back(file);
+            module.files.push_back(file);
         }
-        names.emplace(mapping.name, graph.size());
+        std::sort(module.files.begin(), module.files.end());
+        names.emplace(sourceSet.name, graph.size());
         graph.push_back(std::move(module));
     }
     if (!protectInputs(allInputs)) return;
@@ -261,11 +252,6 @@ void CompilerService::compileModules() {
         if (module.state == Module::done) return true;
         module.state = Module::visiting;
         stack.push_back(index);
-        if (module.files.empty()) {
-            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.empty",
-                    "module directory contains no direct .joyeer files: '" + module.directory.string() + "'");
-            return false;
-        }
         for (const auto& path : module.files) {
             auto file = findSourceFile(path);
             if (lastCompiledSourceFile == nullptr) lastCompiledSourceFile = file;
@@ -280,7 +266,7 @@ void CompilerService::compileModules() {
                 const auto found = names.find(import.name);
                 if (found == names.end()) {
                     reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
-                            "module.unknown-import", "unknown module '" + import.name + "'; provide an explicit --module mapping");
+                            "module.unknown-import", "unknown module '" + import.name + "'; provide --module-source name=file inputs");
                     return false;
                 }
                 if (graph[found->second].state == Module::visiting) {

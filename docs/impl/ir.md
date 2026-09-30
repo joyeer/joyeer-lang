@@ -18,9 +18,13 @@ A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
 `--emit-llvm` and `-o`; see the [compiler backend](backend.md).
 
-Module compilation lowers the entire reachable graph into one IR module.
-The semantic model's aggregate root contains declarations from every graph
-file; it does not concatenate source text or relocate byte offsets.
+Named compilation lowers the entire reachable graph into one IR module.
+Each source-language module is an explicit source-file set with its own
+logical identity and visibility boundaries; sharing an `ir::Module` for code
+generation does not merge those units. Directories do not define IR or
+source-language modules. The semantic model's aggregate root contains
+declarations from every reachable graph file; it does not concatenate source
+text or relocate byte offsets.
 `Lowerer::lower(model, sourceName, sourceInfo, sources)` accepts the graph's
 source table as its fourth argument. The table order must match the
 `SourceSpan::sourceId` values assigned by the frontend.

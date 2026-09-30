@@ -19,6 +19,12 @@ The lexer decides token boundaries, literal decoding, trivia, and source
 spans. Pattern structure, precedence, name binding, and types belong to later
 stages.
 
+Each explicitly supplied source file is lexed independently, even when
+several files belong to one named compilation unit. The lexer does not
+discover sibling files or derive a namespace from a directory. Dots in an
+import name remain ordinary tokens; the complete logical module identity is
+resolved later.
+
 ## Token model
 
 Each token carries:

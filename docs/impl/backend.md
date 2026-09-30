@@ -34,7 +34,10 @@ The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
 from LLVM's C++ model by an inspectable format.
 
 For module compilation, one verified Joyeer IR module contains the reachable
-source-module graph. LLVM function linkage uses `joyeer_fn_<FunctionId>`;
+graph of named explicit source-file sets. This whole-graph code-generation
+container does not merge logical modules or their visibility boundaries, and
+does not imply separately linkable library artifacts or a library ABI.
+LLVM function linkage uses `joyeer_fn_<FunctionId>`;
 aggregate types and ownership helpers likewise use numeric type IDs rather
 than source names. Equal names in different modules or file-private scopes
 therefore do not collide, and source declarations are not renamed to enforce
@@ -98,30 +101,64 @@ Build a native executable:
 joyeer -o output.exe source.joyeer
 ```
 
-Compile a root module and explicitly map its dependencies:
+Compile a named root source set and explicitly supply its dependency files
+(example paths):
 
 ```pwsh
-joyeer --module-root .\tests\modules\root --module project.config=.\tests\modules\config
-joyeer --module-root .\tests\modules\root --module project.config=.\tests\modules\config --emit-llvm modules.ll
-joyeer --module-root .\tests\modules\root --module project.config=.\tests\modules\config -o modules.exe
+joyeer --module-name acme.app root1.joyeer nested\root2.joyeer --module-source acme.config=path\config.joyeer --module-source acme.config=other\parser.joyeer -o app.exe
 ```
 
-`--module-root <directory>` is mutually exclusive with a positional source
-file. `--module <logical.dotted.name=directory>` is repeatable and requires
-`--module-root`. Paths are resolved relative to the invocation directory.
-Each module contains its directly contained `.joyeer` files in sorted order;
-subdirectories are not merged. Files keep separate syntax trees, source spans,
-and debug identities. The compiler resolves file-local imports through the
-explicit mappings and compiles the reachable graph together, rejecting unknown
-imports and cycles with diagnostics. It does not fetch dependencies or read
-package manifests.
+`--module-name <logical.name>` selects named compilation mode and names the
+root unit. It requires a valid, nonempty module name and at least one
+positional source file. `--module-source <logical.name>=<source-file>` requires
+named mode and supplies one dependency file. Repeating it with the same name
+**adds files to one dependency module**; it does not declare duplicate modules.
+A dependency name must also be valid and nonempty and cannot use the root
+module's name. Names use the existing ASCII dotted-name syntax. Each complete
+name is a logical identity, not a directory path or parent/submodule relationship.
 
-All mapped directories must exist and have unique logical names and directory
-identities. Canonical paths and filesystem equivalence checks reject duplicate
-directories or source files, including aliases. Unreachable mappings are not
-parsed, but their direct source files are still protected against overwrites.
-Output must not alias any module input; on Windows this also applies to the
-native output's sibling PDB cleanup path.
+Without `--module-name`, the legacy `joyeer input.joyeer` form accepts exactly
+one source file and no dependencies. Multiple positional files or any
+`--module-source` without a root name are errors. The old `--module-root` and
+`--module` directory options have been removed as an intentional breaking
+early-development interface change. They produce migration errors: replace
+the root directory with `--module-name` plus explicit positional source files,
+and each dependency directory with one `--module-source name=file` per file.
+They are not aliases for the new options.
+
+CLI source paths resolve against the process working directory, including
+dependency paths, not against the first source file or another module.
+In the service API, `CompileOptions.moduleName` names the root unit,
+`CompileOptions.sourceFiles` lists its explicit source files, and
+`CompileOptions.modules` contains dependency `ModuleSources { name, files }`
+records. The former `ModuleMapping` and `moduleRoot` API are removed, not
+directory-discovery alternatives. Relative source files resolve against
+`options.workingDirectory`, falling back to the process working directory when
+it is empty. Source paths are canonicalized and sorted for deterministic
+ordering. All supplied root and dependency sets must be nonempty, and every
+path must exist and name a regular file. Duplicate source identities within
+one module or across any supplied modules are errors, including aliases
+through symlinks or hard links. Validation covers **all supplied sets** before
+compilation of reachable dependencies, including unused dependency inputs.
+Source files do not require a `.joyeer` extension, and their paths may contain
+spaces; there is no extension-based filtering. Quote a CLI path containing spaces, or
+the complete dependency argument, for example
+`--module-source "acme.config=path with spaces\config.joyeer"`. Process APIs
+should pass each path or `name=file` value as one argument without shell quotes.
+
+Files in one module may be nested or unrelated on disk, and different modules
+may select distinct files in the same directory. The compiler does not scan
+directories, recursively or otherwise, add sibling files, read manifests, or
+fetch dependencies. A build or package tool owns source-root and include/exclude
+policy and supplies the selected file paths.
+
+Files retain separate syntax trees, spans, and debug identities. The compiler
+resolves file-local imports through the exact supplied names and compiles only
+the reachable graph, rejecting unknown imports and cycles with diagnostics.
+Unused dependency sets are validated but not parsed. Output must not alias any
+supplied source, including unused dependency inputs; on Windows this also
+applies to the native output's sibling PDB cleanup path. Use `--emit-llvm`
+instead of `-o` for textual IR, or omit both for validation and lowering only.
 
 A native executable requires one root-module `func main()` returning `Void` or
 `func main(args: [String]): Int` with a borrowing `args` parameter. The emitter
@@ -352,6 +389,13 @@ ABI/version without exposing C++ types. Native artifact tests additionally
 validate no-debug output, Windows PDB source and line records, embedded
 Windows/ELF DWARF sections, platform artifact retention, safe metacharacter
 paths, and refusal to overwrite output/PDB directories.
+
+`NativeExecutableCompilationUnitsO0`, `NativeExecutableCompilationUnitsO1`,
+`NativeExecutableCompilationUnitsO2`, and `NativeExecutableCompilationUnitsO3`
+exercise the explicit source-set graph at each optimization level.
+`NativeExecutableCompilationUnitsDebug` covers the same compilation-unit
+boundary with debug information. The fixtures include nested source paths and
+a directory containing spaces while retaining per-file debug identities.
 
 Optimization tests verify the default and all accepted CLI levels, then
 compile at `-O2` and prove checked integer overflow and array bounds still

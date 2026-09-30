@@ -8,7 +8,8 @@ The linked examples are complete programs, not pseudocode.
 - Prefer `let name = expression` for immutable locals and `var name = expression`
   for mutable locals. Explicit annotations use `let name: Int = expression`.
 - Functions use `func add(left: Int, right: Int): Int { ... }`; call them with
-  `add(left: 20, right: 22)`. Do not use Swift's `->` or Rust's `fn`.
+  `add(left: 20, right: 22)`. The declaration keyword is `func`; result types
+  follow `:`, not `->`.
 - A function without a result annotation returns `Void`. Native entry
   points are `func main()` and `func main(args: [String]): Int`; arguments
   exclude the executable name and `Int` exits must be in `0..255`.
@@ -22,12 +23,49 @@ The linked examples are complete programs, not pseudocode.
 
 See [hello.joyeer](../examples/hello.joyeer) for named calls and a `while` loop.
 
+## Modules and imports
+
+A module is a named explicit set of source files compiled as one unit.
+Directories do not define modules or namespaces. One unit can span nested or
+unrelated directories; distinct units can select different files from the
+same directory. A complete dot-qualified name such as `acme.config` is an
+opaque logical identity, not a parent/submodule tree.
+
+List root files after `--module-name acme.app` and add dependency files with
+`--module-source acme.config=file.joyeer`. Repeating that dependency name adds
+files to the same unit. The compiler does not discover files or add siblings;
+source-root and include/exclude policy belongs to a build/package tool.
+See [CLI usage](cli.md#named-compilation-units) for validation and migration rules.
+
+Imports precede declarations and apply only to their own file:
+
+```joyeer
+import acme.config
+
+func main() {
+    acme.config.describe()
+}
+```
+
+This requires an explicitly supplied module named exactly `acme.config` with a
+`public func describe()`. It does not import `acme` or inject `describe` as an
+unqualified name. `internal` is the default and is visible across the module's
+files; `private` is file-local; only `public` declarations cross imports.
+Declarations are collected before bodies, so source-file order does not
+control visibility. Dependency cycles, unresolved imports, and inaccessible
+names or exposed types are errors. Aliases, wildcards, and re-exports are not
+supported.
+
+Only the root compilation unit supplies the executable entry. Dependency
+functions named `main` remain ordinary functions. Whole-graph code generation
+preserves separate module identities, file-local spans, and debug scopes.
+
 ## Scalars, strings, and bytes
 
 `Int` is signed 64-bit, `Bool` has `true` and `false`, and a byte literal such as
 `b'A'` has type `UInt8`. Use `byteToInt(value: byte)` or
 `byteToString(value: byte)` for the implemented explicit byte conversions.
-Do not assume arbitrary numeric conversions or C-style casts exist.
+Do not assume arbitrary numeric conversions or cast syntax exist.
 
 Strings support `+`, comparisons, `.count`, indexing, and `.utf8()`. Count and
 index are byte-based. `.utf8()` returns an independent owned `[UInt8]`; changing

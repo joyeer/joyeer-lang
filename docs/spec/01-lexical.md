@@ -7,7 +7,7 @@
 - Whitespace separates tokens. Horizontal whitespace is otherwise
     insignificant; a line break may terminate a statement when its optional
     semicolon is omitted (§6).
-- Indentation is **not** semantically significant (unlike Python).
+- Indentation is **not** semantically significant.
 
 ### 1.2 Comments
 
@@ -54,7 +54,7 @@ performs binding and exhaustiveness checks (§7).
 > v0.1 (§15).
 
 > `as` is reserved for future import aliases and type casts (`x as T`).
-> Neither use is accepted by the implemented directory-module grammar (§12).
+> Neither use is accepted by the implemented module/import grammar (§12).
 > The `is` type-test operator is also deferred (§15).
 
 ### 1.5 Literals
@@ -116,7 +116,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 String interpolation is reserved for a future version, not part of v0.1.
 
-When added, the syntax will be Swift-style `"\(expr)"`, where the expression
+When added, the syntax will be `"\(expr)"`, where the expression
 inside `\(...)` is any `expression` whose result is one of the built-in
 printable types (the integer and floating types, `Bool`, `Char`, `UInt8`,
 `String`):

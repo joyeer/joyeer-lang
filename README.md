@@ -1,8 +1,8 @@
 # Joyeer
 
-Joyeer is an **AI-era systems programming language** with Swift-inspired
+Joyeer is an **AI-era systems programming language** with explicit, concise
 syntax. It is designed for a workflow where AI writes most code and humans
-review and assist, with the long-term goal of replacing C++ for new code.
+review and assist, with the long-term goal of supporting production systems.
 
 > **Status:** early development. The language and toolchain are not released
 > and may change without compatibility guarantees.
@@ -14,7 +14,7 @@ review and assist, with the long-term goal of replacing C++ for new code.
 - **No garbage collector:** value semantics, stack allocation, and RAII are
   the default model.
 - **Zero-cost abstractions:** unused features should not impose runtime cost.
-- **Swift-like syntax:** familiar, readable, and concise.
+- **Readable syntax:** explicit declarations and concise expressions.
 - **`struct`-first:** aggregates are value types; `class` is not part of the
   implemented language surface.
 
@@ -46,7 +46,7 @@ performance benchmark; see its
 Implemented features include integers, booleans, bytes, strings, `let`/`var`,
 checked arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
-`Optional`, `Result`, postfix `?` propagation, directory modules with explicit
+`Optional`, `Result`, postfix `?` propagation, named compilation units with explicit
 qualified imports and visibility, portable filesystem operations, synchronous
 subprocesses, deterministic ownership cleanup, projection consumption,
 exclusivity checking, and structured diagnostics.
@@ -62,7 +62,7 @@ current implementation boundary and
 
 ## Example
 
-```swift
+```joyeer
 func add(left: Int, right: Int): Int {
     return left + right
 }
@@ -240,21 +240,40 @@ Validate and lower a source file:
 .\out\build\x64-debug\bin\joyeer.exe .\tests\native\hello.joyeer
 ```
 
-Alternatively, compile a directory-based root module with explicit dependency
-mappings:
+Alternatively, compile a named root unit with explicit root and dependency
+source files:
 
 ```pwsh
-.\out\build\x64-debug\bin\joyeer.exe --module-root .\tests\modules\root --module project.config=.\tests\modules\config
-.\out\build\x64-debug\bin\joyeer.exe --module-root .\tests\modules\root --module project.config=.\tests\modules\config -o .\out\modules.exe
+.\out\build\x64-debug\bin\joyeer.exe --module-name project.app `
+    .\tests\modules\root\main.joyeer ".\tests\modules\root\implementation files\helper.joyeer" `
+    --module-source project.config=.\tests\modules\config\entry.joyeer `
+    --module-source project.config=.\tests\modules\config\types\record.joyeer `
+    -o .\out\modules.exe
 .\out\modules.exe
 ```
 
-The module fixture prints `42`. Repeat `--module logical.name=directory` for
-additional dependencies. `--module-root` replaces the positional source file;
-the two input forms cannot be combined. Modules contain only directly contained
-`.joyeer` files, discovered in sorted order. Only dependencies reached through
-imports are compiled; the compiler does not search for or download packages.
-See [Modules](docs/spec/12-modules.md) for file-local imports and visibility.
+The module fixture prints `42`. Repeated `--module-source project.config=...`
+arguments add files to the **same** dependency unit. The complete logical name
+is its identity, not a folder path or an implicit parent/submodule tree. Module
+files may span nested or unrelated directories, and separate modules may use
+distinct files in one directory. Every source path is relative to the process
+working directory unless absolute.
+Quote paths containing spaces as shown above. Explicit source files need not
+have a `.joyeer` extension; there is no implicit filename filtering.
+
+Named mode requires a valid nonempty root name and at least one positional
+source. Multiple root files or dependencies require `--module-name`; a
+dependency cannot reuse the root name. All supplied source sets are validated,
+canonicalized, sorted, and checked for duplicate physical files before
+reachable dependencies are compiled. The compiler never discovers files,
+adds siblings, reads manifests, or fetches dependencies; build tools own
+source selection.
+
+The legacy `joyeer input.joyeer` form remains supported. The old `--module-root`
+and `--module` directory flags are removed and report migration errors: supply
+the root name and every selected file explicitly. See the
+[compiler interface](docs/impl/backend.md#2-cli) for validation details and
+[Modules](docs/spec/12-modules.md) for file-local imports and visibility.
 
 Emit textual LLVM IR:
 

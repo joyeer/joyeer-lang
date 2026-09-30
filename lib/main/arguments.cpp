@@ -98,6 +98,7 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     auto iterator = arguments.begin();
     executableLocation = *iterator;
     bool parseOptions = true;
+    bool moduleNameProvided = false;
 
     iterator++;
     for (; iterator != arguments.end(); ++iterator) {
@@ -137,6 +138,12 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gfull, -gdwarf, or -gcodeview",
                     iterator->c_str());
         } else if (parseOptions && (*iterator == "--module-root" || *iterator == "--module")) {
+            diagnostics->reportError(
+                    ErrorLevel::failure,
+                    "%s directory inputs are no longer supported; use --module-name with explicit source files and --module-source name=file",
+                    iterator->c_str());
+            if (iterator + 1 != arguments.end() && !(iterator + 1)->starts_with('-')) ++iterator;
+        } else if (parseOptions && (*iterator == "--module-name" || *iterator == "--module-source")) {
             const auto option = *iterator;
             ++iterator;
             if (iterator == arguments.end()) {
@@ -148,12 +155,15 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                 if (!iterator->empty()) --iterator;
                 continue;
             }
-            if (option == "--module-root") {
-                if (!moduleRoot.empty()) {
-                    diagnostics->reportError(ErrorLevel::failure, "--module-root may only be specified once");
+            if (option == "--module-name") {
+                if (moduleNameProvided) {
+                    diagnostics->reportError(ErrorLevel::failure, "--module-name may only be specified once");
+                } else if (!joyeer::isModuleName(*iterator)) {
+                    diagnostics->reportError(ErrorLevel::failure, "invalid logical module name '%s'", iterator->c_str());
                 } else {
-                    moduleRoot = absoluteNormalized(std::filesystem::path(*iterator));
+                    moduleName = *iterator;
                 }
+                moduleNameProvided = true;
             } else {
                 const auto separator = iterator->find('=');
                 const auto name = iterator->substr(0, separator);
@@ -161,14 +171,17 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     !joyeer::isModuleName(name)) {
                     diagnostics->reportError(
                             ErrorLevel::failure,
-                            "--module requires a logical.dotted.name=directory mapping");
-                } else if (std::any_of(modules.begin(), modules.end(), [&](const auto& mapping) {
-                    return mapping.name == name;
-                })) {
-                    diagnostics->reportError(ErrorLevel::failure, "duplicate module mapping '%s'", name.c_str());
+                            "--module-source requires a logical.dotted.name=file mapping");
                 } else {
-                    modules.push_back({name, absoluteNormalized(
-                            std::filesystem::path(iterator->substr(separator + 1)))});
+                    const auto file = absoluteNormalized(
+                            std::filesystem::path(iterator->substr(separator + 1)));
+                    const auto found = std::find_if(modules.begin(), modules.end(),
+                            [&](const auto& module) { return module.name == name; });
+                    if (found == modules.end()) {
+                        modules.push_back({name, {file}});
+                    } else {
+                        found->files.push_back(file);
+                    }
                 }
             }
         } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o")) {
@@ -199,32 +212,60 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     ErrorLevel::failure,
                     "unknown option '%s'",
                     iterator->c_str());
-        } else if (!inputfile.empty()) {
-            diagnostics->reportError(
-                    ErrorLevel::failure,
-                    "multiple input files are not supported: '%s'",
-                    iterator->c_str());
         } else {
             parseInputFile(*iterator);
         }
     }
 
-    if (!moduleRoot.empty() && !inputfile.empty()) {
-        diagnostics->reportError(ErrorLevel::failure, "--module-root and a positional source file are mutually exclusive");
-    }
-    if (moduleRoot.empty() && !modules.empty()) {
-        diagnostics->reportError(ErrorLevel::failure, "--module requires --module-root");
-    }
-    if (!moduleRoot.empty()) {
-        workingDirectory = moduleRoot;
+    if (moduleName.empty()) {
+        if (!modules.empty()) {
+            diagnostics->reportError(ErrorLevel::failure, "--module-source requires --module-name");
+        }
+        if (sourceFiles.size() > 1) {
+            diagnostics->reportError(ErrorLevel::failure, "multiple input files require --module-name");
+        }
+        if (!sourceFiles.empty()) {
+            inputfile = sourceFiles.front();
+            workingDirectory = inputfile.parent_path();
+        }
+    } else {
         std::error_code error;
-        if (!std::filesystem::is_directory(moduleRoot, error)) {
-            diagnostics->reportError(ErrorLevel::failure, "module root must be a directory");
+        workingDirectory = std::filesystem::current_path(error);
+        if (error) {
+            diagnostics->reportError(
+                    ErrorLevel::failure, "cannot determine compiler working directory: %s",
+                    error.message().c_str());
+        }
+        if (sourceFiles.empty()) {
+            diagnostics->reportError(ErrorLevel::failure, "--module-name requires at least one source file");
         }
     }
-    if ((inputfile.empty() && moduleRoot.empty() && !diagnostics->hasFailure()) ||
-        (!inputfile.empty() && !std::filesystem::exists(inputfile))) {
+    if (sourceFiles.empty() && moduleName.empty() && !diagnostics->hasFailure()) {
         diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
+    }
+    auto inputs = sourceFiles;
+    for (const auto& module : modules) {
+        if (module.name == moduleName) {
+            diagnostics->reportError(
+                    ErrorLevel::failure, "dependency module '%s' conflicts with the root module", module.name.c_str());
+        }
+        inputs.insert(inputs.end(), module.files.begin(), module.files.end());
+    }
+    for (size_t index = 0; index < inputs.size(); ++index) {
+        std::error_code error;
+        if (!moduleName.empty() && !std::filesystem::is_regular_file(inputs[index], error)) {
+            diagnostics->reportDiagnostic(
+                    ErrorLevel::failure, "module.read-source",
+                    "module input must be a regular source file: '" + inputs[index].string() + "'" +
+                    (error ? ": " + error.message() : ""));
+        } else if (moduleName.empty() && !std::filesystem::exists(inputs[index], error)) {
+            diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
+        }
+        if (std::any_of(inputs.begin(), inputs.begin() + index,
+                [&](const auto& earlier) { return pathsAlias(earlier, inputs[index]); })) {
+            diagnostics->reportError(
+                    ErrorLevel::failure, "duplicate source file: '%s'", inputs[index].string().c_str());
+        }
     }
 
 #if !defined(_WIN32)
@@ -235,11 +276,21 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     }
 #endif
 
-    if (!inputfile.empty() && outputMode != OutputMode::validate &&
-        pathsAlias(inputfile, outputFile)) {
-        diagnostics->reportError(
-                ErrorLevel::failure,
-                "output path must not overwrite the input file");
+    if (outputMode != OutputMode::validate) {
+        for (const auto& input : inputs) {
+            if (pathsAlias(input, outputFile)) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "output path must not overwrite the input file");
+            }
+#if defined(_WIN32)
+            if (outputMode == OutputMode::executable && pathsAlias(input, pdbPathFor(outputFile))) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "sibling PDB cleanup path must not overwrite the input file");
+            }
+#endif
+        }
     }
 #if defined(_WIN32)
     if (outputMode != OutputMode::validate &&
@@ -248,24 +299,19 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                 ErrorLevel::failure,
                 "output paths must not use Windows alternate data streams");
     }
-    if (!inputfile.empty() && outputMode == OutputMode::executable &&
-        pathsAlias(inputfile, pdbPathFor(outputFile))) {
-        diagnostics->reportError(
-                ErrorLevel::failure,
-                "sibling PDB cleanup path must not overwrite the input file");
-    }
 #endif
 
-    if (!inputfile.empty() || !moduleRoot.empty()) accepted = true;
+    if (moduleName.empty()) sourceFiles.clear();
+    accepted = (!inputfile.empty() || !sourceFiles.empty()) && !diagnostics->hasFailure();
 }
 
 void CommandLineArguments::printUsage() {
-    std::cout << "Module usage: joyeer --module-root <directory> [--module <name=directory>]... [output options]" << std::endl;
+    std::cout << "Module usage: joyeer --module-name <name> <source>... [--module-source <name=file>]... [output options]" << std::endl;
     std::cout << "Usage: joyeer [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
     std::cout << "  -o <file>           write a native executable" << std::endl;
-    std::cout << "  --module-root <dir> compile direct .joyeer files as the root module" << std::endl;
-    std::cout << "  --module <name=dir> map a dependency module (repeatable; requires --module-root)" << std::endl;
+    std::cout << "  --module-name <name> name the root compilation unit of explicit source files" << std::endl;
+    std::cout << "  --module-source <name=file> add a file to a dependency module (repeatable)" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
     std::cout << "  -g|-gline-tables-only emit source line tables using the platform format" << std::endl;
@@ -275,9 +321,9 @@ void CommandLineArguments::printUsage() {
 }
 
 void CommandLineArguments::parseInputFile(const std::string& inputpath) {
-    inputfile = std::filesystem::path(inputpath);
-    if (inputfile.is_relative()) {
-        inputfile = std::filesystem::absolute(inputfile).lexically_normal();
+    if (inputpath.empty()) {
+        diagnostics->reportError(ErrorLevel::failure, "source file path must not be empty");
+        return;
     }
-    workingDirectory = inputfile.parent_path();
+    sourceFiles.push_back(absoluteNormalized(std::filesystem::path(inputpath)));
 }

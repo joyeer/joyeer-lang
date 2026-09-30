@@ -40,7 +40,8 @@ separately when using a process API; do not concatenate an untrusted shell
 command. Run only after a zero compiler exit status so a stale executable
 cannot be mistaken for the newly compiled program.
 
-The compiler accepts one input file or a directory module. `--` ends option parsing, for example
+The compiler accepts one legacy input file or named explicit compilation units.
+`--` ends option parsing, for example
 `joyeer -o output.exe -- -input.joyeer`. Use only one output mode at a time.
 Native output needs either `func main()` returning `Void` or
 `func main(args: [String]): Int`. The latter receives arguments excluding
@@ -48,31 +49,72 @@ the executable name and must return a status in `0..255`; other values
 produce an explicit runtime error. An entry returning `Int` cannot use
 postfix `?` directly; handle the final `Result`/`Optional` with `match`.
 
-## Directory modules
+## Named compilation units
 
-Use `--module-root app` instead of a positional input file. Each module
-contains only directly contained `.joyeer` files, not files in subdirectories.
-Map imported names explicitly with repeatable `--module name=directory`:
+A module is a named explicit set of source files, not a directory.
+Use `--module-name <name>` with positional root files and repeat
+`--module-source <name>=<file>` for dependency files. For example, with these
+paths relative to the compiler process's working directory:
 
 ```text
-joyeer --module-root app --module project.config=config -o output.exe
+joyeer --module-name acme.app root1.joyeer nested\root2.joyeer --module-source acme.config=path\config.joyeer --module-source acme.config=other\parser.joyeer -o app.exe
 ```
 
-Source files can then write `import project.config` before declarations and
-call public names through `project.config.name(...)`. Imports are file-local.
+The two `acme.config` inputs add files to **one** dependency module. The
+complete dot-qualified name is its logical identity: it does not imply an
+`acme` parent module, submodules, or a folder tree. Files may span nested or
+unrelated directories; distinct modules can select distinct files in the same
+directory. Use host-appropriate path separators; the example uses Windows paths.
+
+Named mode requires a valid nonempty root name and at least one positional
+source. Dependency inputs require named mode and a valid nonempty name
+different from the root name. Module names use ASCII dotted-name syntax.
+Without `--module-name`, only `joyeer input.joyeer` with one source and no
+dependencies is accepted; multiple positional files are an error.
+
+Source paths, including dependency paths, resolve against the process working
+directory unless absolute. They are canonicalized and sorted for deterministic
+ordering. Missing/nonregular files, empty source sets, and duplicate physical
+files within or across any supplied modules are rejected, including symlink
+and hard-link aliases. All supplied sets are validated before reachable
+dependencies are compiled, including unused dependencies.
+
+Explicit source files do not require a `.joyeer` extension. There is no
+extension filter, and source paths may contain spaces. Quote each such root
+path, for example `"implementation files\helper.joyeer"`, or the complete
+dependency value, for example
+`--module-source "acme.config=shared files\config.joyeer"`. With a process API,
+pass each path or `name=file` value as one argument without shell quotes.
+
+Source files can write `import acme.config` before declarations and call public
+names through `acme.config.name(...)`. Imports are file-local and do not make
+names available unqualified or import modules sharing a name prefix.
 Default `internal` declarations are visible throughout their module;
 `private` declarations are file-local, and `public` declarations can cross
 imports. Only the root module supplies the executable entry. Dependency
-cycles, unresolved imports, and inaccessible names/types are errors.
+cycles, unresolved imports, and inaccessible names/types are errors. All
+module declarations are collected before bodies are resolved; source spans
+and debug scopes remain per-file. Whole-graph code generation does not merge
+logical modules.
 
-The compiler does not fetch dependencies, read a package manifest, or support
-import aliases, wildcard imports, or re-exports. Explicit module mappings
-are not project-manager commands.
+The compiler never discovers files, recursively or otherwise, or adds
+siblings. Build/package tools choose source roots and include/exclude rules
+and supply file paths. The compiler does not fetch dependencies, read
+manifests, or support import aliases, wildcard imports, or re-exports.
+These flags do not introduce a manifest format, separate binary library ABI,
+or project-manager commands.
+
+The old `--module-root` and `--module` directory flags are removed and produce
+clear migration errors. Replace a root directory with `--module-name` and its
+explicit positional files; replace each dependency directory with one
+`--module-source name=file` argument per selected file.
 
 ## Options
 
 | Option | Behavior |
 |---|---|
+| `--module-name <name>` | Name the root compilation unit; requires positional root files |
+| `--module-source <name>=<file>` | Add a file to a dependency unit; repeat to add more files; requires named mode |
 | `-O0`, `-O1`, `-O2`, `-O3` | Native optimization level; default `-O2` |
 | `-g0` | Disable debug information; default |
 | `-g`, `-gline-tables-only` | Enable source line tables in the platform format |

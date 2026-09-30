@@ -101,9 +101,10 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
     add_test(NAME NativeModuleHost${mode}
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DMODULE_ROOT=${JOYEER_SOURCE_DIR}/tests/modules/host_app
+                    -DMODULE_NAME=host.app
+                    -DINPUT_FILES=${JOYEER_SOURCE_DIR}/tests/modules/host_app/main.joyeer
                     -DOUTPUT_FILE=${module_host_output}
-                    "-DCOMPILER_ARGS=${host_compiler_args};--module;host.services=${JOYEER_SOURCE_DIR}/tests/modules/host_lib"
+                    "-DCOMPILER_ARGS=${host_compiler_args};--module-source;host.services=${JOYEER_SOURCE_DIR}/tests/modules/host_lib/files.joyeer;--module-source;host.services=${JOYEER_SOURCE_DIR}/tests/modules/host_lib/process.joyeer"
                     "-DPROGRAM_ARGUMENT_1=${module_host_output}"
                     "-DPROGRAM_ARGUMENT_2=${host_work_directory}"
                     "-DEXPECTED_OUTPUT=module host ok\n"

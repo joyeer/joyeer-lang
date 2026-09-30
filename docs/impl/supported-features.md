@@ -8,11 +8,27 @@
 
 ## Compilation boundary
 
-The compiler accepts one Joyeer source file or a root directory module with
-explicit dependency mappings. It runs the source graph through lexing,
+The compiler accepts one Joyeer source file in legacy mode, or a named root
+compilation unit with explicit source-file sets for its dependencies. A module
+is a named source set, not a directory: files can span nested or unrelated
+directories, and distinct modules can use distinct files from one directory.
+It runs the source graph through lexing,
 parsing, name resolution, type checking, semantic analysis, verified Joyeer
 IR, and textual LLVM IR emission. Native executable output additionally
 generates machine code and links it with `JoyeerNativeRuntime`.
+
+Named mode uses `--module-name <name>` with positional root files and repeatable
+`--module-source <name>=<file>` dependency inputs. Repeated dependency names
+add files to one unit; the exact complete name is its logical identity, not an
+implicit parent/submodule hierarchy. The compiler never discovers source files,
+adds siblings, reads manifests, or fetches dependencies. Build tools choose
+source roots and include/exclude rules and pass explicit paths. All supplied
+sets are validated before reachable dependencies are compiled, with
+canonicalized, sorted paths and duplicate physical-file rejection. The removed
+`--module-root` and `--module` flags report migration errors; see the
+[CLI/API input contract](backend.md#2-cli).
+Explicit inputs must be regular files, but need not use the `.joyeer` extension;
+paths containing spaces are supported and require appropriate CLI quoting.
 
 ## Compiler pipeline
 
@@ -32,8 +48,8 @@ generates machine code and links it with `JoyeerNativeRuntime`.
 
 | Area | Current surface |
 |---|---|
-| Programs | Single-file or directory-module compilation; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
-| Modules | Explicit directory mappings, file-local qualified imports, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
+| Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
+| Modules | Named source-file sets, file-local qualified imports, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
 | Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
 | Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer `+`, `-`, `*`, `/`, `%`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |

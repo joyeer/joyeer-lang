@@ -147,8 +147,10 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 
 #### 3.2.6 Executable entry point
 
-A native executable has exactly one root-module `main` function (the input
-file is the root in single-file mode). Dependency functions named `main` are
+A native executable has exactly one `main` function across the root module's
+explicit source-file set (the input file is the root unit in legacy single-file
+mode). The root module is a compilation unit, not a directory.
+Dependency functions named `main` are
 ordinary functions, not executable entries. The supported entry signatures are
 `func main()` (returning `Void`, whether written explicitly or omitted) and
 `func main(args: [String]): Int`. The latter's external parameter label is
@@ -355,7 +357,7 @@ deinit_decl     ::= 'deinit' '(' ')' function_body
 ### 3.8 Import declarations
 
 ```
-import_decl     ::= 'import' import_path [ 'as' identifier ]
+import_decl     ::= 'import' import_path
 import_path     ::= identifier ( '.' identifier )*
 ```
 
@@ -364,6 +366,11 @@ import std.io
 import std.collections
 ```
 
-See §12 for module rules.
+Imports precede declarations and apply only to their source file. An import
+selects the exact complete logical name of an explicitly supplied compilation
+unit; it does not select a directory or imply parent/submodule relationships.
+Only public declarations are accessible from another module, through the
+qualified name. Import aliases (`as`), wildcard imports, and re-exports are
+not supported. See §12 for module rules.
 
 ---

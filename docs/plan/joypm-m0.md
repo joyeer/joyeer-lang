@@ -1,7 +1,7 @@
 # joypm M0: Language and Host Contracts
 
-**Status:** accepted first-scope contracts and implementation. Directory
-modules, program entry, propagation, unit values, safe dictionary lookup,
+**Status:** accepted first-scope contracts and implementation. Named explicit
+compilation units, program entry, propagation, unit values, safe dictionary lookup,
 control flow/checked arithmetic, portable filesystem operations, and
 synchronous processes are implemented. Key enumeration, recursive cleanup,
 replacement/atomic publication, and advanced process facilities remain
@@ -31,7 +31,7 @@ facilities are not implied by these entries.
 
 | ID | Area | Recommended direction | Implementation milestone |
 |---|---|---|---|
-| M0-01 | Modules | Directory-based modules, explicit mappings, qualified imports, visibility, and root-only entry | M1 first scope done |
+| M0-01 | Modules | Named explicit source-file sets, qualified imports, visibility, and root-only entry | M1 first scope done |
 | M0-02 | Program entry | Preserve `main()`; accept borrowed arguments and an integer exit status; Windows invalid-encoding coverage | M3 entry slice done |
 | M0-03 | Error propagation | Implemented: postfix `?` for `Result` / `Optional`, with exact error types and owned early-return cleanup | M2 propagation slice done |
 | M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice done |
@@ -44,14 +44,20 @@ facilities are not implied by these entries.
 
 Accepted and implemented according to [the module contract](../spec/12-modules.md):
 
-- One module is one directory of directly contained `.joyeer` files.
-  Subdirectories are not recursively merged into the same module.
-- The compiler receives a root module and an explicit mapping from logical
-  dependency names to module directories. It does not fetch packages or
-  interpret the project manager's manifest.
+- One module is a named explicit source-file set, compiled as one unit. Files
+  may span nested or unrelated directories; distinct modules may select
+  distinct files in the same directory. Folders do not create namespaces.
+- The compiler receives a named root unit and explicit dependency source sets.
+  A complete dot-qualified name is a logical identity, not a directory tree
+  or an implicit parent/submodule relationship.
+- Source roots and include/exclude rules belong to the build or package tool,
+  which supplies selected file paths. The compiler does not discover files,
+  recursively or otherwise, add siblings, fetch packages, or read manifests.
+- A project may start with one main compilation unit, but packages and targets
+  are not inherently single modules; future test targets may use separate units.
 - The single-file compiler invocation remains supported.
 - Declaration collection spans the module before function bodies are checked.
-  Source-file discovery order must not affect name resolution.
+  Source-file argument order must not affect name resolution.
 - Imports are file-local and precede declarations. Initially, import a module
   and access its public names through a qualified name; do not implicitly
   inject all exported names into the importing file.
@@ -81,14 +87,27 @@ func main() {
 
 `describe` must be public in the imported module.
 
-The CLI uses `--module-root <directory>` and repeatable
-`--module <logical.name>=<directory>`, instead of a positional source file.
-Duplicate physical source inputs and logical mappings are rejected rather
-than silently compiled twice. An imported root name cannot collide with a
-declaration in the importing file. File-private declarations can shadow names
-from other files locally; duplicate non-private module declarations are
-errors. The backend compiles the graph together; separate binary modules,
-caching, and a stable library ABI are deferred.
+The CLI uses `--module-name <logical.name>` with positional root files and
+repeatable `--module-source <logical.name>=<source-file>` dependencies.
+Repeated dependency names add files to **one** module. Named mode requires a
+valid nonempty root name and at least one positional source; dependencies
+require named mode and cannot reuse the root name. Multiple positional files
+also require named mode. The old `--module-root` and `--module` options are
+removed with migration errors, not preserved as directory-discovery aliases.
+
+CLI source paths resolve against the process working directory; the
+`CompileOptions` API uses `options.workingDirectory`, falling back to the
+process directory when empty. The compiler canonicalizes and sorts paths and
+validates every supplied source set before compiling reachable dependencies.
+Missing/nonregular inputs, empty sets, and duplicate physical sources within
+or across modules are errors, including symlink and hard-link aliases. See the
+[compiler interface](../impl/backend.md#2-cli) for details.
+
+An import's first name component cannot collide with a declaration in the
+importing file. File-private declarations can shadow names from other files
+locally; duplicate non-private module declarations are errors. The backend
+compiles the reachable graph together without merging logical modules;
+separate binary modules, caching, and a stable library ABI are deferred.
 
 ## M0-02: Program entry and exit status
 
@@ -325,7 +344,7 @@ passing Windows ARM64 tests alone is not proof of POSIX behavior.
 
 | Area | Positive cases | Negative or boundary cases |
 |---|---|---|
-| Modules | Same-module forward calls; public imported calls; correct per-file diagnostics | Duplicate declarations; invisible names; unresolved imports; dependency cycles; multiple root entries |
+| Modules | Explicit sets across directories; distinct sets in one directory; repeated dependency inputs; same-module forward calls; public imported calls; correct per-file diagnostics | Invalid/empty sets; duplicate physical sources including aliases; duplicate declarations; invisible names; unresolved imports; dependency cycles; multiple root entries; removed directory flags |
 | Entry | Legacy entry; zero arguments; empty and spaced arguments; normal nonzero return | Unsupported signature; invalid exit range; cleanup before reporting status; Windows-only invalid UTF-16 encoding tests |
 | Propagation (implemented) | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
 | Unit results | Construct and match `Result<Void, E>`; propagate success and failure | Invalid zero-sized payload lowering; confusion between `.Ok()` and `.Ok(())` |

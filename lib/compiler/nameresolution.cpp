@@ -191,7 +191,7 @@ public:
         model->sourceModules_[root->span.sourceId] = 0;
         for (const auto& import : root->imports) {
             report(NameResolutionDiagnosticId::unknownImport, import.span,
-                   "imports require directory-module compilation and an explicit mapping");
+                   "imports require named compilation units and explicit dependency source files");
         }
 
         collectTopLevelDeclarations(root);

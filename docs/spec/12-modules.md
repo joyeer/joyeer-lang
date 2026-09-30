@@ -1,35 +1,45 @@
 ## §12 Modules & Imports
 
-**Implementation status:** directory modules, explicit dependency mappings,
+**Implementation status:** named explicit compilation units, dependency source sets,
 qualified file-local imports, and visibility are implemented. Import aliases,
 wildcards, re-exports, package fetching, and separate binary modules are not.
 
 ### 12.1 Module unit
 
-A **module** is a directory of directly contained `.joyeer` source files
-compiled together. Subdirectories do not contribute source files. Files are
-discovered in deterministic path order, but declaration visibility does not
-depend on that order: all module declarations are collected before signatures
-and bodies are resolved.
+A **module** is a named, explicit, nonempty set of source files compiled
+together as one **compilation unit**. Its name is a nonempty dot-qualified
+logical identity. The complete name identifies the module: `acme.config`
+does not create or imply a parent module `acme`, a submodule relationship,
+or a directory hierarchy.
 
-The compiler accepts `--module-root <directory>` and repeatable
-`--module <logical.dotted.name>=<directory>` dependency mappings. These options
-are mutually exclusive with a positional single-file input. The original
-single-file invocation remains supported as a module with one source file and
-no dependency mappings.
+Folders do not create modules or namespaces. One module's files may span
+nested or unrelated directories; distinct modules may select different files
+from the same directory. Module membership comes only from the supplied
+source-file set, not from a file's location or an import's spelling.
+Declaration visibility does not depend on source-file order: all module
+declarations are collected before signatures and bodies are resolved.
 
-Directories are canonicalized. Duplicate logical names, directory identities,
-and source-file identities are errors, including aliases through symlinks or
-hard links. Directory enumeration and file reads must report failures rather
-than silently omitting inputs. Module resolution uses explicit mappings only:
-the compiler does not fetch packages or interpret manifests.
+Source selection is tool policy, not source-language syntax. A build or
+package tool may choose source roots and include/exclude rules, but it must
+supply the resulting file paths and module names to the compiler. The
+compiler does not discover source files, recursively or otherwise, add sibling
+files, read manifests, or fetch dependencies. A package or build target is not
+inherently one module: a project may begin with one main compilation unit and
+later use separate units for dependencies or test targets.
+
+The legacy single-file invocation remains supported as a one-file root unit
+without an explicit name or dependency mappings. Named input validation,
+path identity, and migration from the removed directory flags are documented
+in the [compiler interface](../impl/backend.md#2-cli), separately from these
+source-language rules.
 
 Imports determine the dependency graph before declaration resolution. Unknown
 imports and dependency cycles are errors; a cycle diagnostic identifies the
 cycle. Recursive functions within an acyclic module graph remain legal.
-Reachable modules may be compiled together, but source texts are never
-concatenated: every syntax/semantic/IR location retains its source-file identity
-and its file-local byte span.
+Reachable modules may share whole-graph code generation, but this does not
+merge their logical identities or visibility boundaries. Source texts are
+never concatenated: every syntax/semantic/IR location retains its source-file
+identity and its file-local byte span and debug scope.
 
 ### 12.2 Visibility
 
@@ -78,10 +88,12 @@ func main() {
 
 Imports appear before all declarations and apply only to the importing file.
 An import makes a module's public names available through its complete logical
-name, not as unqualified names. The example requires a mapping for
+name, not as unqualified names. The example requires an explicit source set for
 `project.config` and a public function `describe` in that module. Qualified
 types and enum cases use the same prefix, for example
 `project.config.Record` and `project.config.Mode.Release`.
+Importing `project.config` does not import `project` or any other name sharing
+its prefix; each dependency is identified by its exact complete name.
 
 An import's first name component must not collide with a top-level declaration
 in its importing file. A declaration in another file does not create that

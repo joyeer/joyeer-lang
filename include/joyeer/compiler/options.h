@@ -40,9 +40,9 @@ enum class OutputMode {
     executable,
 };
 
-struct ModuleMapping {
+struct ModuleSources {
     std::string name;
-    std::filesystem::path directory;
+    std::vector<std::filesystem::path> files;
 };
 
 [[nodiscard]] inline bool isModuleName(std::string_view name) {
@@ -68,8 +68,9 @@ struct CompileOptions {
     OutputMode outputMode = OutputMode::validate;
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;
     DebugInfoOptions debugInfo;
-    std::filesystem::path moduleRoot;
-    std::vector<ModuleMapping> modules;
+    std::string moduleName;
+    std::vector<std::filesystem::path> sourceFiles;
+    std::vector<ModuleSources> modules;
 };
 
 } // namespace joyeer
