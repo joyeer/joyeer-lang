@@ -16,6 +16,8 @@ struct CommandLineArguments {
     std::filesystem::path inputfile;
     std::filesystem::path workingDirectory;
     std::filesystem::path outputFile;
+    std::filesystem::path moduleRoot;
+    std::vector<joyeer::ModuleMapping> modules;
 
     bool accepted = false;
     joyeer::OutputMode outputMode = joyeer::OutputMode::validate;

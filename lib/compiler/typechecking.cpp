@@ -1,4 +1,5 @@
 #include "joyeer/compiler/typechecking.h"
+#include "joyeer/compiler/hostbuiltins.h"
 #include "joyeer/compiler/nameresolution.h"
 
 #include <algorithm>
@@ -39,6 +40,11 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerConcreteBuiltin("String", TypeKind::string, stringTypeId);
     registerConcreteBuiltin("UInt8", TypeKind::uint8, uint8TypeId);
     registerConcreteBuiltin("IOError", TypeKind::enumeration, ioErrorTypeId);
+    for (const auto& descriptor : hostbuiltins::enumerations) {
+        TypeId registeredType = invalidTypeId;
+        registerConcreteBuiltin(
+                std::string(descriptor.name), TypeKind::enumeration, registeredType);
+    }
 
     registerGenericBuiltin("Array", TypeKind::array, 1);
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
@@ -400,6 +406,44 @@ private:
         const auto* prelude = model->semanticModelValue->scope(
                 model->semanticModelValue->preludeScope());
         assert(prelude != nullptr);
+
+        const auto hostEnumeration = [this](std::string_view name) {
+            const auto symbol = model->typeContext.builtinSymbol(std::string(name));
+            assert(symbol.has_value());
+            const auto type = model->typeContext.typeForSymbol(*symbol);
+            assert(type.has_value());
+            return *type;
+        };
+        const auto hostType = [this, &hostEnumeration](hostbuiltins::ValueKind kind) {
+            switch (kind) {
+                case hostbuiltins::ValueKind::string:
+                    return model->typeContext.stringType();
+                case hostbuiltins::ValueKind::strings:
+                    return model->typeContext.arrayType(model->typeContext.stringType());
+                case hostbuiltins::ValueKind::unit:
+                    return model->typeContext.voidType();
+                case hostbuiltins::ValueKind::fileKind:
+                    return hostEnumeration("FileKind");
+                case hostbuiltins::ValueKind::processStatus:
+                    return hostEnumeration("ProcessStatus");
+            }
+            assert(false && "unrecognized host value kind");
+            return model->typeContext.errorType();
+        };
+        for (const auto& descriptor : hostbuiltins::functions) {
+            const auto found = prelude->values.find(std::string(descriptor.name));
+            assert(found != prelude->values.end());
+            std::vector<TypeId> parameters;
+            for (const auto& parameter : descriptor.parameters) {
+                parameters.push_back(hostType(parameter.kind));
+            }
+            const auto result = model->typeContext.resultType(
+                    hostType(descriptor.result), hostEnumeration(descriptor.error));
+            model->symbolTypes[found->second] = result;
+            model->callables[found->second] = TypedCallableSignature {
+                semantic::CallableKind::function, true, std::move(parameters), result,
+            };
+        }
 
         const auto print = prelude->values.find("print");
         if (print != prelude->values.end()) {
@@ -1171,6 +1215,9 @@ private:
     }
 
     TypeId checkMember(const syntax::MemberExprSyntax::Ptr& expression) {
+        if (model->semanticModelValue->isModuleQualified(expression)) {
+            return referencedValueType(expression);
+        }
         const auto base = checkExpression(expression->base).value_or(
                 model->typeContext.errorType());
         auto member = model->referencedSymbol(expression);
@@ -1180,7 +1227,12 @@ private:
                     expression->member == nullptr
                             ? std::string()
                             : expression->member->rawValue);
-            if (member.has_value()) recordResolvedReference(expression, *member);
+            if (member.has_value()) {
+                if (!requireAccessible(*member, expression->span)) {
+                    return model->typeContext.errorType();
+                }
+                recordResolvedReference(expression, *member);
+            }
         }
         if (!member.has_value()) {
             if (base != model->typeContext.errorType()) {
@@ -1216,6 +1268,14 @@ private:
         return found->second;
     }
 
+    bool requireAccessible(semantic::SymbolId target, SourceSpan use) {
+        if (model->semanticModelValue->isAccessible(target, use)) return true;
+        report(TypeCheckingDiagnosticId::inaccessibleDeclaration, use,
+               "declaration '" + model->semanticModelValue->symbol(target)->name +
+               "' is not accessible from this file");
+        return false;
+    }
+
     struct AccessPath {
         semantic::SymbolId root = semantic::invalidSymbolId;
         std::vector<std::optional<semantic::SymbolId>> projections;
@@ -1246,6 +1306,9 @@ private:
                 }
             }
             if (target.has_value()) {
+                if (!requireAccessible(*target, expression->span)) {
+                    return model->typeContext.errorType();
+                }
                 recordResolvedCallTarget(expression, *target);
                 for (auto& diagnostic : semantic::validateCallArguments(
                         *expression, *model->semanticModelValue->symbol(*target))) {
@@ -2009,6 +2072,9 @@ private:
             return model->typeContext.errorType();
         }
 
+        if (!requireAccessible(*caseSymbol, expression->span)) {
+            return model->typeContext.errorType();
+        }
         recordResolvedReference(expression, *caseSymbol);
         recordResolvedCallTarget(expression, *caseSymbol);
         validateContextualCaseArguments(*expression, *caseSymbol, *signature);
@@ -2240,6 +2306,7 @@ private:
             return {};
         }
 
+        if (!requireAccessible(*caseSymbol, pattern->span)) return {};
         recordResolvedReference(pattern, *caseSymbol);
         return PatternCoverage {
             false,
@@ -2523,6 +2590,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.mismatched-propagation-error";
         case TypeCheckingDiagnosticId::unknownMember:
             return "type-checking.unknown-member";
+        case TypeCheckingDiagnosticId::inaccessibleDeclaration:
+            return "type-checking.inaccessible-declaration";
         case TypeCheckingDiagnosticId::notSubscriptable:
             return "type-checking.not-subscriptable";
         case TypeCheckingDiagnosticId::unknownEnumCase:

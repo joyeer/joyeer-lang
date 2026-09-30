@@ -1,4 +1,5 @@
 #include "joyeer/compiler/irlowering.h"
+#include "joyeer/compiler/hostbuiltins.h"
 
 #include <algorithm>
 #include <cassert>
@@ -37,12 +38,14 @@ public:
     Result build(
             const typing::TypeCheckedModel::Ptr& checkedModel,
             std::string sourceName,
-            std::optional<ir::SourceInfo> sourceInfo) {
+            std::optional<ir::SourceInfo> sourceInfo,
+            std::vector<ir::SourceInfo> sources) {
         assert(checkedModel != nullptr);
         model = checkedModel;
         module = std::make_shared<ir::Module>();
         module->sourceName = std::move(sourceName);
         module->sourceInfo = std::move(sourceInfo);
+        module->sourceFiles = std::move(sources);
 
         snapshotTypes();
         collectAggregateDefinitions();
@@ -113,7 +116,7 @@ private:
     std::optional<ir::DebugScopeId> ensureDebugScope(
             semantic::ScopeId semanticScopeId,
             ir::FunctionId functionId) {
-        if (!module->sourceInfo.has_value()) return std::nullopt;
+        if (module->sourceFile(0) == nullptr) return std::nullopt;
         const auto existing = debugScopes.find(semanticScopeId);
         if (existing != debugScopes.end()) return existing->second;
 
@@ -168,7 +171,7 @@ private:
             semantic::SymbolId symbolId,
             ir::FunctionId functionId,
             std::optional<uint32_t> parameterIndex = std::nullopt) {
-        if (!module->sourceInfo.has_value()) return std::nullopt;
+        if (module->sourceFile(0) == nullptr) return std::nullopt;
         const auto existing = debugVariables.find(symbolId);
         if (existing != debugVariables.end()) return existing->second;
 
@@ -376,6 +379,10 @@ private:
                 type->symbol,
                 type->arguments,
             });
+            const auto* symbol = model->semanticModel()->symbol(type->symbol);
+            if (symbol != nullptr && symbol->declaration.has_value()) {
+                module->types.back().declarationSpan = symbol->span;
+            }
         }
     }
 
@@ -518,6 +525,7 @@ private:
         collectPrint();
         collectReadFile();
         collectByteConversions();
+        collectHostFunctions();
         const auto& semanticModel = *model->semanticModel();
         const auto& root = semanticModel.root();
         if (root == nullptr) return;
@@ -587,6 +595,37 @@ private:
         module->functions.push_back(std::move(function));
     }
 
+    void collectHostFunctions() {
+        const auto& semanticModel = *model->semanticModel();
+        const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
+        assert(prelude != nullptr);
+        for (const auto& descriptor : hostbuiltins::functions) {
+            const auto found = prelude->values.find(std::string(descriptor.name));
+            assert(found != prelude->values.end());
+            const auto* signature = model->callable(found->second);
+            assert(signature != nullptr &&
+                   signature->parameters.size() == descriptor.parameters.size());
+            ir::Function function;
+            function.id = static_cast<ir::FunctionId>(module->functions.size());
+            function.symbol = found->second;
+            function.name = descriptor.name;
+            for (size_t index = 0; index < signature->parameters.size(); ++index) {
+                function.parameters.push_back(ir::Parameter {
+                    ir::Value {
+                        static_cast<ir::ValueId>(index), signature->parameters[index],
+                        ir::ValueCategory::value,
+                    },
+                    std::nullopt, std::string(descriptor.parameters[index].name), false, {},
+                });
+            }
+            function.resultType = signature->result;
+            function.returnsValue = true;
+            function.isExternal = true;
+            functions.emplace(found->second, function.id);
+            module->functions.push_back(std::move(function));
+        }
+    }
+
     void collectByteConversions() {
         const auto& semanticModel = *model->semanticModel();
         const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
@@ -637,7 +676,8 @@ private:
         function.symbol = symbol;
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
-        if (module->sourceInfo.has_value()) {
+        function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
+        if (module->sourceFile(0) != nullptr) {
             function.debugScope = debugScopeForNode(declaration, function.id);
             function.debugLocation = ir::DebugLocation {
                 declaration->span,
@@ -2536,7 +2576,7 @@ private:
             bool implicitCode = false) const {
         auto instruction = ir::Instruction { opcode };
         instruction.span = span;
-        if (module->sourceInfo.has_value()) {
+        if (module->sourceFile(0) != nullptr) {
             instruction.debugLocation = ir::DebugLocation {
                 span,
                 implicitCode,
@@ -2615,8 +2655,10 @@ private:
 Result Lowerer::lower(
         const typing::TypeCheckedModel::Ptr& model,
         std::string sourceName,
-        std::optional<ir::SourceInfo> sourceInfo) const {
-    return Builder().build(model, std::move(sourceName), std::move(sourceInfo));
+        std::optional<ir::SourceInfo> sourceInfo,
+        std::vector<ir::SourceInfo> sources) const {
+    return Builder().build(
+            model, std::move(sourceName), std::move(sourceInfo), std::move(sources));
 }
 
 const char* diagnosticName(DiagnosticId id) {

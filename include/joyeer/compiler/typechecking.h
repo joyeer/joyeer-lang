@@ -138,6 +138,7 @@ enum class TypeCheckingDiagnosticId {
     invalidPropagationContext,
     mismatchedPropagationError,
     unknownMember,
+    inaccessibleDeclaration,
     notSubscriptable,
     unknownEnumCase,
     enumCaseArgumentMismatch,

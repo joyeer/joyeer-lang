@@ -18,6 +18,13 @@ A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
 `--emit-llvm` and `-o`; see the [compiler backend](backend.md).
 
+Module compilation lowers the entire reachable graph into one IR module.
+The semantic model's aggregate root contains declarations from every graph
+file; it does not concatenate source text or relocate byte offsets.
+`Lowerer::lower(model, sourceName, sourceInfo, sources)` accepts the graph's
+source table as its fourth argument. The table order must match the
+`SourceSpan::sourceId` values assigned by the frontend.
+
 ---
 
 ## 2. Representation
@@ -30,9 +37,17 @@ The module owns:
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
   source-spanned instructions;
-- an optional immutable source map (file name, directory, byte length, and
-  UTF-8 byte offsets for line starts) plus function/instruction debug
+- an optional immutable source-file table (file name, directory, byte length,
+  and UTF-8 byte offsets for line starts) plus function/instruction debug
   locations.
+
+Functions, types, fields, and enum cases retain graph-wide numeric identities.
+Source names are display names, not lookup or linkage keys, so distinct
+module declarations and file-private declarations may have identical names.
+Qualified calls, constructors, and enum cases lower from their resolved
+symbols without evaluating module-name prefixes. `Function::isRootModule`
+records whether a function can be considered for executable entry selection;
+dependency declarations named `main` keep their source name.
 
 Debug locations are optional so hand-built/backend-only modules remain valid
 without source metadata and byte offset zero remains distinguishable from no
@@ -41,9 +56,13 @@ source anchor but are marked implicit, allowing a backend to avoid misleading
 source-level stepping stops.
 
 Source-map offsets index the exact binary-preserved `SourceFile::content`
-buffer. File name and directory are stored as UTF-8 strings; spans and line
-starts remain 32-bit, so the verifier rejects larger source maps before a
-backend can observe truncated coordinates.
+buffer for the selected file. `Module::sourceFiles` is indexed directly by
+`SourceSpan::sourceId`. A nonempty table is authoritative; when it is empty,
+the legacy optional `Module::sourceInfo` supplies only source ID zero.
+Function, instruction, lexical-scope, variable, and type-declaration spans
+retain their source IDs and file-local offsets. File name and directory are
+stored as UTF-8 strings; spans and line starts remain 32-bit, so the verifier
+rejects larger source maps before a backend can observe truncated coordinates.
 
 The IR also snapshots source lexical scopes, parameters, local/pattern
 variables, and the exact event where each variable gains stable address
@@ -82,7 +101,7 @@ The current instruction set covers:
 - implemented arithmetic, comparison, and logical operations;
 - checked `div` / `rem` with exactly two `Int` value operands and an `Int`
   value result;
-- direct source and external calls;
+- direct source and external calls, including external host builtins;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction and payload extraction;
@@ -220,8 +239,8 @@ plus case symbol, including distinct builtin container instantiations.
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - malformed recursive patterns;
-- malformed source maps, out-of-bounds debug spans, or locations without a
-  module source map;
+- malformed source maps, unknown source IDs, debug spans outside their own
+  file's byte bounds, or locations without module source information;
 - detached/cyclic/cross-function lexical scopes, invalid parameter indices,
   untyped variables, or source locations using the wrong scope;
 - missing/duplicate debug-variable bindings, non-address or wrong-typed

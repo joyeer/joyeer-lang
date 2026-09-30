@@ -91,6 +91,10 @@ CommandLineArguments::CommandLineArguments(
 }
 
 void CommandLineArguments::parse(std::vector<std::string>& arguments) {
+    if (arguments.empty()) {
+        diagnostics->reportError(ErrorLevel::failure, "missing compiler arguments");
+        return;
+    }
     auto iterator = arguments.begin();
     executableLocation = *iterator;
     bool parseOptions = true;
@@ -132,6 +136,41 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     ErrorLevel::failure,
                     "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gfull, -gdwarf, or -gcodeview",
                     iterator->c_str());
+        } else if (parseOptions && (*iterator == "--module-root" || *iterator == "--module")) {
+            const auto option = *iterator;
+            ++iterator;
+            if (iterator == arguments.end()) {
+                diagnostics->reportError(ErrorLevel::failure, "%s requires a value", option.c_str());
+                break;
+            }
+            if (iterator->empty() || iterator->starts_with('-')) {
+                diagnostics->reportError(ErrorLevel::failure, "%s requires a value", option.c_str());
+                if (!iterator->empty()) --iterator;
+                continue;
+            }
+            if (option == "--module-root") {
+                if (!moduleRoot.empty()) {
+                    diagnostics->reportError(ErrorLevel::failure, "--module-root may only be specified once");
+                } else {
+                    moduleRoot = absoluteNormalized(std::filesystem::path(*iterator));
+                }
+            } else {
+                const auto separator = iterator->find('=');
+                const auto name = iterator->substr(0, separator);
+                if (separator == std::string::npos || separator + 1 == iterator->size() ||
+                    !joyeer::isModuleName(name)) {
+                    diagnostics->reportError(
+                            ErrorLevel::failure,
+                            "--module requires a logical.dotted.name=directory mapping");
+                } else if (std::any_of(modules.begin(), modules.end(), [&](const auto& mapping) {
+                    return mapping.name == name;
+                })) {
+                    diagnostics->reportError(ErrorLevel::failure, "duplicate module mapping '%s'", name.c_str());
+                } else {
+                    modules.push_back({name, absoluteNormalized(
+                            std::filesystem::path(iterator->substr(separator + 1)))});
+                }
+            }
         } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o")) {
             const auto option = *iterator;
             ++iterator;
@@ -170,7 +209,20 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         }
     }
 
-    if ((inputfile.empty() && !diagnostics->hasFailure()) ||
+    if (!moduleRoot.empty() && !inputfile.empty()) {
+        diagnostics->reportError(ErrorLevel::failure, "--module-root and a positional source file are mutually exclusive");
+    }
+    if (moduleRoot.empty() && !modules.empty()) {
+        diagnostics->reportError(ErrorLevel::failure, "--module requires --module-root");
+    }
+    if (!moduleRoot.empty()) {
+        workingDirectory = moduleRoot;
+        std::error_code error;
+        if (!std::filesystem::is_directory(moduleRoot, error)) {
+            diagnostics->reportError(ErrorLevel::failure, "module root must be a directory");
+        }
+    }
+    if ((inputfile.empty() && moduleRoot.empty() && !diagnostics->hasFailure()) ||
         (!inputfile.empty() && !std::filesystem::exists(inputfile))) {
         diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
     }
@@ -204,13 +256,16 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     }
 #endif
 
-    if (!inputfile.empty()) accepted = true;
+    if (!inputfile.empty() || !moduleRoot.empty()) accepted = true;
 }
 
 void CommandLineArguments::printUsage() {
+    std::cout << "Module usage: joyeer --module-root <directory> [--module <name=directory>]... [output options]" << std::endl;
     std::cout << "Usage: joyeer [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
     std::cout << "  -o <file>           write a native executable" << std::endl;
+    std::cout << "  --module-root <dir> compile direct .joyeer files as the root module" << std::endl;
+    std::cout << "  --module <name=dir> map a dependency module (repeatable; requires --module-root)" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
     std::cout << "  -g|-gline-tables-only emit source line tables using the platform format" << std::endl;

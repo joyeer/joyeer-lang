@@ -99,6 +99,8 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->outputMode,
                 arguments->optimizationLevel,
                 arguments->debugInfo,
+                arguments->moduleRoot,
+                arguments->modules,
             });
 }
 
@@ -128,7 +130,7 @@ int Driver::run() {
                         arguments->outputFile,
                         arguments->optimizationLevel,
                         arguments->debugInfo,
-                        arguments->inputfile,
+                        source->getAbstractPath(),
                     });
             for (const auto& diagnostic : linking.diagnostics) {
                         diagnostics->reportDiagnostic(

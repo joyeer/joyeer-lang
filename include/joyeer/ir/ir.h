@@ -211,6 +211,7 @@ struct Function {
     std::optional<DebugLocation> debugLocation;
     std::optional<DebugScopeId> debugScope;
     std::vector<DebugVariableBinding> entryDebugVariableBindings;
+    bool isRootModule = true;
 };
 
 struct TypeName {
@@ -219,6 +220,7 @@ struct TypeName {
     typing::TypeKind kind = typing::TypeKind::error;
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     std::vector<TypeId> arguments;
+    std::optional<SourceSpan> declarationSpan;
 };
 
 struct FieldDefinition {
@@ -257,6 +259,15 @@ struct Module {
     std::optional<SourceInfo> sourceInfo;
     std::vector<DebugScope> debugScopes;
     std::vector<DebugVariable> debugVariables;
+    // SourceSpan::sourceId indexes this table; sourceInfo is the legacy ID-zero fallback.
+    std::vector<SourceInfo> sourceFiles;
+
+    [[nodiscard]] const SourceInfo* sourceFile(uint32_t sourceId) const {
+        if (!sourceFiles.empty()) {
+            return sourceId < sourceFiles.size() ? &sourceFiles[sourceId] : nullptr;
+        }
+        return sourceId == 0 && sourceInfo.has_value() ? &*sourceInfo : nullptr;
+    }
 };
 
 enum class VerificationErrorId {

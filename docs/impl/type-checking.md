@@ -114,7 +114,13 @@ The current checker validates:
   and mandatory `&` on the subscript projection;
 - borrowing `Dict<K,V>.get(key: K)` returning exactly `Optional<V>`, without
   optional flattening or receiver/key access markers. The receiver remains
-  borrowed throughout key evaluation.
+  borrowed throughout key evaluation;
+- exact typing and borrowing parameter matching for portable host builtins
+  (`readFileUtf8`, `writeFileNew`, `createDirectory`, `listDirectory`,
+  `fileKind`, `removeFile`, `removeDirectory`, `joinPath`, and `runProcess`)
+  returning concrete `Result` types;
+- imported module symbol resolution and visibility enforcement (`public`,
+  `internal`, `private`) across file and module boundaries.
 
   Call-site exclusivity compares typed access paths. Multiple borrowing
   arguments may overlap. Any inout, consuming, or initializing argument must be

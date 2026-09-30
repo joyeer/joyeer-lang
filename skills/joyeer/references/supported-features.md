@@ -24,7 +24,8 @@ require a source checkout, internet access, or access to a moving branch.
 
 | Area | Current surface |
 |---|---|
-| Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
+| Programs | Single-file or directory-module compilation; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` |
+| Modules | Explicit directory mappings; file-local qualified imports; `private` / `internal` / `public`; dependency-cycle and exposed-type checking |
 | Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, Boolean `!`, short-circuit `&&` / `||`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
@@ -34,7 +35,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Propagation | Postfix `?` on `Result<T, E>` in `Result<U, E>` functions with identical `E`, or on `Optional<T>` in Optional-returning functions |
 | Unit results | `Result<Void, E>` with `.Ok(())`; unit expressions, bindings, fields, container elements, and patterns |
 | Strings | Concatenation, comparisons, byte count/indexing, owned `utf8()` byte array |
-| Built-ins | `print(value:)` for supported primitive/string values; `byteToInt(value:)`, `byteToString(value:)`, `readFile(path:)` |
+| Built-ins | Primitive/string `print(value:)`, byte conversions, legacy `readFile(path:)`, portable filesystem functions, synchronous `runProcess` |
 | Output | Frontend validation, textual LLVM IR, native executables, optimization and debug flags |
 
 This is an implemented subset with regression coverage, not a claim that every
@@ -45,8 +46,9 @@ combination is supported or that the compiler is free of correctness gaps.
 - User-defined generics, traits/protocols/interfaces, classes, closures,
   concurrency, or async functions.
 - User-defined `init` / `deinit` bodies or explicit copy initializers.
-- Top-level executable statements or global storage, modules/imports,
-  multi-file builds, or dependency packages.
+- Top-level executable statements or global storage, import aliases,
+  wildcard imports, re-exports, dependency fetching, separate binary modules,
+  or a stable source-library ABI.
 - Floating-point `Float` / `Double` programs, general tuples, or tuple
   destructuring.
 - `for-in`, labeled loop exits, compound assignment such as `+=`,
@@ -77,11 +79,15 @@ explicit `match` for errors that cannot be propagated with `?`.
   remainder trap for zero divisors and minimum `Int` with divisor `-1`.
   Division truncates toward zero; nonzero remainder has the dividend's sign.
   Do not disable checks to fix logic.
-- `readFile(path:)` is the implemented file-input primitive; it returns
-  `Result<String, IOError>`. There is no general-purpose filesystem library.
-- Windows command-line and file-path encoding have known non-ASCII limitations.
-  Report them rather than treating them as language syntax errors. Do not
-  modify the user's global environment as a workaround.
+- Legacy `readFile(path:)` returns `Result<String, IOError>` unchanged.
+  New filesystem APIs return `Result<T, FileSystemError>`; `runProcess`
+  returns `Result<ProcessStatus, ProcessError>`. See the language guide for
+  exact signatures. Replacement, recursive cleanup, process capture, timeouts,
+  and asynchronous handles are not supported.
+- Portable host paths and arguments require valid UTF-8 without embedded
+  NUL; file contents still preserve arbitrary bytes. The compiler's own
+  Windows CLI and legacy `readFile` retain non-ASCII limitations. Report those
+  limitations instead of modifying the user's global environment.
 - The checked-in JSON parser is an acceptance workload, not a fully conforming
   JSON library or a measured performance guarantee. It omits floating-point
   numbers and Unicode escape decoding, accepts leading-zero numbers and raw

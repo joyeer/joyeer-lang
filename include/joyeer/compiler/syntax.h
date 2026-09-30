@@ -10,6 +10,12 @@
 
 namespace joyeer::syntax {
 
+enum class Visibility {
+    private_,
+    internal,
+    public_,
+};
+
 enum class AccessEffect {
     borrowing,
     inout,
@@ -78,6 +84,8 @@ struct Node {
 
     Kind kind;
     SourceSpan span;
+    Visibility visibility = Visibility::internal;
+    bool explicitVisibility = false;
 
     virtual ~Node() = default;
 
@@ -123,10 +131,16 @@ protected:
 
 using PatternPtr = PatternSyntax::Ptr;
 
+struct ImportSyntax {
+    std::string name;
+    SourceSpan span;
+};
+
 struct SourceFileSyntax final : Node {
     using Ptr = std::shared_ptr<SourceFileSyntax>;
 
     std::vector<NodePtr> items;
+    std::vector<ImportSyntax> imports;
 
     SourceFileSyntax(SourceSpan span, std::vector<NodePtr> items):
             Node(Kind::sourceFile, span), items(std::move(items)) {}

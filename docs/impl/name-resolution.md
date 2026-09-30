@@ -2,7 +2,8 @@
 
 > **Status:** Implemented for the type-independent portion of the current
 > syntax AST.
-> **Input:** `syntax::SourceFileSyntax`.
+> **Input:** `syntax::SourceFileSyntax`, or a graph of `semantic::ModuleInput`
+> records containing individually parsed source files.
 > **Output:** `semantic::SemanticModel` plus stable, spanned diagnostics.
 
 ---
@@ -47,7 +48,18 @@ Resolution is deliberately split into three deterministic passes:
 3. **Resolve bodies.** Walk initializers and expressions, create local/block
    and match-arm scopes, and bind each use to the nearest declaration.
 
-Top-level declarations are visible throughout the file. Local bindings become
+In directory mode the service first discovers canonical source inputs and
+validates an acyclic graph of explicit file-local imports. The resolver
+indexes every file and collects declarations for every module before resolving
+any signature. A synthetic root holds the graph's syntax items for the later
+whole-graph passes; it does not merge or rewrite source text or byte offsets.
+`SourceSpan::sourceId` selects the original file for diagnostics and debug info.
+
+Non-private top-level declarations are visible throughout their module.
+Each file has its own scope, whose parent is its module scope; private names
+remain in the file scope and may shadow a different file's declarations.
+Non-private names are published into the module scope with duplicate checks
+across both namespaces. Local bindings become
 visible after their initializer. A declaration may shadow one in an outer
 scope, but a duplicate in the same scope is diagnosed.
 
@@ -58,6 +70,7 @@ scope, but a duplicate in the same scope is diagnosed.
 The model contains these scope kinds:
 
 - compiler prelude;
+- module (directory mode);
 - source file;
 - function;
 - lexical block;
@@ -73,14 +86,19 @@ ambiguous.
 The current prelude declares:
 
 - types: `Void`, `Never`, `Int`, `Bool`, `String`, `UInt8`, `Array`, `Dict`,
-  `Optional`, `Result`, and `IOError`;
+  `Optional`, `Result`, `IOError`, `FileSystemError`, `FileKind`,
+  `ProcessStatus`, and `ProcessError`;
 - `String.count`, `Array.count`, and `Dict.count`;
 - `String.utf8()` and mutating `Array.append(element:)`;
 - borrowing `Dict.get(key:)`, with concrete key/result types supplied by typing;
 - `Optional.Some` / `Optional.None` and `Result.Ok` / `Result.Err`;
-- the builtin `IOError` cases;
-- `print(value:)`, `readFile(path:)`, `byteToInt(value:)`, and
-  `byteToString(value:)`.
+- the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
+  `ProcessError` cases;
+- builtin functions: `print(value:)`, `byteToInt(value:)`, `byteToString(value:)`,
+  `readFile(path:)`, `readFileUtf8(path:)`, `writeFileNew(path:contents:)`,
+  `createDirectory(path:)`, `listDirectory(path:)`, `fileKind(path:)`,
+  `removeFile(path:)`, `removeDirectory(path:)`, `joinPath(base:path:)`, and
+  `runProcess(executable:arguments:workingDirectory:)`.
 
 An internal `Any` marker also exists in the semantic prelude; the source
 spelling is reserved and is not a supported dynamic-value type.
@@ -88,6 +106,19 @@ spelling is reserved and is not a supported dynamic-value type.
 Struct declarations receive a separate synthesized memberwise-initializer
 symbol. Its parameters retain field labels, declaration order, field types,
 and whether a field initializer makes the argument optional.
+Its visibility is the minimum of the type and all stored-field visibilities.
+
+Imports occupy a separate file-local qualified-name table, not the value or
+type namespace. An import prefix colliding with a declaration in that file is
+diagnosed explicitly. `project.config.Record` resolves to the actual exported
+type's symbol, and `project.config.make` to the actual function symbol.
+`SemanticModel::isModuleQualified` distinguishes these paths from runtime
+field access; namespace prefixes are never evaluated as values.
+
+Symbols retain module identity, root-module membership, and visibility.
+`SemanticModel::isAccessible` is shared by resolution and deferred type-directed
+member/case/call resolution. Exported signatures and container element types
+are checked for less-accessible types before bodies are resolved.
 
 ---
 
@@ -134,7 +165,8 @@ mutability, exhaustiveness, layout, and lowering remain outside this pass.
 
 ## 6. Diagnostics and validation
 
-Stable diagnostics cover duplicate declarations, undefined values/types,
+Stable diagnostics cover import collisions, inaccessible names/exposed types,
+duplicate declarations, undefined values/types,
 unknown members/cases, non-callable targets, payload-clause misuse, argument
 count, labels, and order. CLI rendering preserves the syntax-node source span.
 

@@ -38,19 +38,19 @@
 - Exercise ELF and Mach-O behavior on their native platforms in addition to
   Windows release validation.
 
-### 4. Broaden file, path, and process support
+### 4. Extend host facilities beyond the first portable interface
 
-- Define portable path encoding and use wide-character Windows host
-  boundaries for command-line arguments and filesystem operations.
-- Add non-destructive filesystem operations, streaming, writing, metadata, and
-  explicit error contracts.
-- Design synchronous process execution with argument arrays, working-directory
-  control, typed launch/wait failures, and no implicit shell evaluation.
-- Preserve the compatibility contract of the existing `readFile(path:)`
-  builtin while introducing richer APIs.
+- Address the remaining Windows compiler-CLI encoding boundary without
+  silently changing legacy `readFile(path:)` compatibility.
+- Specify streaming and richer filesystem metadata before exposing them.
+- Define anchored, non-link-following recursive cleanup and replacement or
+  atomic-publication guarantees before adding destructive operations.
+- Define cancellation, capture, timeout, and asynchronous process ownership
+  before extending the synchronous interface.
 
-The proposed host contracts and acceptance cases are tracked in
-[joypm M0](joypm-m0.md).
+The accepted first-scope host contracts are in
+[portable host operations](../spec/18-host.md); tool-level requirements and
+explicit deferrals are tracked in [package manager plan](package-manager.md).
 
 ### 5. Establish performance and footprint evidence
 
@@ -66,11 +66,13 @@ when defining workloads and acceptance thresholds.
 
 ### 6. Expand the language deliberately
 
-- Complete the design and end-to-end implementation boundaries for modules,
-  user-defined generics, and runtime contracts before
+- Complete the design and end-to-end implementation boundaries for
+  user-defined generics and runtime contracts before
   admitting their syntax as supported.
 - Keep `Optional`, `Result`, `Array`, and `Dict` on their compiler-known path
   until general generic declarations and monomorphization are specified.
+  If dictionary key enumeration is needed for manifest validation, define it as
+  an independent owned snapshot with unspecified traversal order.
 - Treat standard-library growth as an API, ownership, portability, and
   diagnostics task rather than exposing runtime helpers ad hoc.
 

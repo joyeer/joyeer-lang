@@ -24,7 +24,7 @@ stages.
 Each token carries:
 
 - an explicit `TokenKind`;
-- `SourceSpan { offset, length }` in UTF-8 bytes;
+- `SourceSpan { offset, length, sourceId }`, with file-local UTF-8 byte offsets;
 - zero-based line and byte-column values;
 - `startsLine`, derived from skipped newline trivia;
 - `rawValue`, plus `intValue` for integer and byte literals.
@@ -43,7 +43,7 @@ create an infinite loop.
 The lexer recognizes terminals needed by the current parser:
 
 - identifiers, wildcard `_`, and current/deferred keywords, including supported
-  `break` and `continue` terminals;
+  `break`, `continue`, `import`, `public`, `internal`, and `private` terminals;
 - decimal `Int` literals with `int64_t` overflow diagnostics;
 - strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, and
   `\\`;

@@ -1,6 +1,9 @@
 add_joyeer_library(JoyeerNativeRuntime STATIC
         runtime.c
         entry.c
+        host.c
+        filesystem.c
+        process.c
 )
 
 set_target_properties(JoyeerNativeRuntime PROPERTIES

@@ -40,13 +40,34 @@ separately when using a process API; do not concatenate an untrusted shell
 command. Run only after a zero compiler exit status so a stale executable
 cannot be mistaken for the newly compiled program.
 
-The compiler accepts one input file. `--` ends option parsing, for example
+The compiler accepts one input file or a directory module. `--` ends option parsing, for example
 `joyeer -o output.exe -- -input.joyeer`. Use only one output mode at a time.
 Native output needs either `func main()` returning `Void` or
 `func main(args: [String]): Int`. The latter receives arguments excluding
 the executable name and must return a status in `0..255`; other values
 produce an explicit runtime error. An entry returning `Int` cannot use
 postfix `?` directly; handle the final `Result`/`Optional` with `match`.
+
+## Directory modules
+
+Use `--module-root app` instead of a positional input file. Each module
+contains only directly contained `.joyeer` files, not files in subdirectories.
+Map imported names explicitly with repeatable `--module name=directory`:
+
+```text
+joyeer --module-root app --module project.config=config -o output.exe
+```
+
+Source files can then write `import project.config` before declarations and
+call public names through `project.config.name(...)`. Imports are file-local.
+Default `internal` declarations are visible throughout their module;
+`private` declarations are file-local, and `public` declarations can cross
+imports. Only the root module supplies the executable entry. Dependency
+cycles, unresolved imports, and inaccessible names/types are errors.
+
+The compiler does not fetch dependencies, read a package manifest, or support
+import aliases, wildcard imports, or re-exports. Explicit module mappings
+are not project-manager commands.
 
 ## Options
 

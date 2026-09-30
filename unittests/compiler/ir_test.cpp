@@ -217,6 +217,55 @@ TEST(IRModelTest, RejectsMalformedSourceMapsAndOutOfBoundsDebugLocations) {
     EXPECT_TRUE(hasError(verification, VerificationErrorId::invalidSourceLocation));
 }
 
+TEST(IRModelTest, VerifiesSourceIdsAgainstTheirOwnFileMaps) {
+    auto module = validAddModule();
+    module.sourceFiles = {
+        SourceInfo { "root.joyeer", "C:/source", 1, { 0 } },
+        SourceInfo { "dependency.joyeer", "C:/source/dep", 24, { 0, 10, 20 } },
+    };
+    auto& function = module.functions[0];
+    function.debugLocation = DebugLocation { SourceSpan { 0, 24, 1 } };
+    for (auto& instruction : function.blocks[0].instructions) {
+        instruction.span.sourceId = 1;
+        instruction.debugLocation = DebugLocation { instruction.span };
+    }
+    ASSERT_TRUE(Verifier().verify(module).succeeded()) << dump(Verifier().verify(module));
+    EXPECT_NE(dump(module).find("source #1 \"dependency.joyeer\""), std::string::npos);
+    EXPECT_NE(dump(module).find("@10:3 source#1"), std::string::npos);
+    function.debugLocation->span.sourceId = 0;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+    function.debugLocation->span.sourceId = 2;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+    function.debugLocation->span.sourceId = 1;
+    module.sourceFiles[1].lineStarts = { 0, 25 };
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+}
+
+TEST(IRModelTest, ValidatesGraphScopeVariableAndTypeSourceIds) {
+    auto module = validAddModule();
+    addValidVariableDebugInfo(module);
+    module.sourceFiles = { *module.sourceInfo, *module.sourceInfo };
+    module.sourceInfo.reset();
+    ASSERT_TRUE(Verifier().verify(module).succeeded());
+    module.debugScopes[0].span.sourceId = 2;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+    module.debugScopes[0].span.sourceId = 1;
+    module.debugVariables[0].span.sourceId = 2;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+    module.debugVariables[0].span.sourceId = 1;
+    module.types[1].declarationSpan = SourceSpan { 0, 1, 2 };
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+    module.types[1].declarationSpan->sourceId = 1;
+    EXPECT_TRUE(Verifier().verify(module).succeeded());
+}
+
+TEST(IRModelTest, LegacySourceInfoOnlyAcceptsSourceIdZero) {
+    auto module = validAddModule();
+    addValidVariableDebugInfo(module);
+    module.functions[0].debugLocation->span.sourceId = 1;
+    EXPECT_TRUE(hasError(Verifier().verify(module), VerificationErrorId::invalidSourceLocation));
+}
+
 TEST(IRModelTest, RejectsDebugLocationsWithoutSourceInfo) {
     auto module = validAddModule();
     module.functions[0].debugLocation = DebugLocation { SourceSpan { 0, 1 }, false };

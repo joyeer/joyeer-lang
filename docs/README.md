@@ -25,7 +25,8 @@ Explanations and plans do not add language rules or implementation guarantees.
 
 The files under [spec/](spec/) contain the normative chapters:
 lexical structure, types, declarations, memory, expressions, statements,
-patterns, errors, contracts, modules, naming, examples, and grammar.
+patterns, errors, contracts, modules, naming, examples, grammar, and portable
+host operations.
 [spec.md](spec.md) is their index and change log, not an assembled copy of
 the chapter text.
 
@@ -48,7 +49,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
-| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, and file input |
+| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
 | [string.md](impl/string.md) | String representation and operations |
 
 ## Plans
@@ -59,7 +60,7 @@ work.
 | Document | Topic |
 |---|---|
 | [roadmap.md](plan/roadmap.md) | Active implementation priorities |
-| [joypm-m0.md](plan/joypm-m0.md) | Draft language and host contracts for a project manager written in Joyeer |
+| [package-manager.md](plan/package-manager.md) | Architecture, execution policy, and milestone planning for the Joyeer package manager |
 
 ## Conventions
 

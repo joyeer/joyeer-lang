@@ -6,6 +6,7 @@
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/diagnostic/diagnostic.h"
 #include "joyeer/ir/ir.h"
+#include "module_lowering_fixture.h"
 
 #include <gtest/gtest.h>
 
@@ -104,6 +105,75 @@ return left + right
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::load), 2u);
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::add), 1u);
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::returnValue), 1u);
+}
+
+TEST_F(IRLoweringTest, PreservesGraphSymbolIdentityAndFileLocalDebugSpans) {
+    result = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_EQ(result.module->sourceFiles.size(), 3u);
+    EXPECT_FALSE(result.module->sourceInfo.has_value());
+    std::unordered_map<joyeer::semantic::SymbolId, joyeer::ir::FunctionId> symbols;
+    size_t helpers = 0;
+    size_t entries = 0;
+    size_t dependencyMains = 0;
+    for (const auto& item : result.module->functions) {
+        if (item.isExternal) continue;
+        ASSERT_TRUE(item.symbol.has_value());
+        EXPECT_TRUE(symbols.emplace(*item.symbol, item.id).second);
+        ASSERT_TRUE(item.debugLocation.has_value());
+        if (item.name == "helper") ++helpers;
+        if (item.name == "main") {
+            if (item.isRootModule) ++entries;
+            else {
+                ++dependencyMains;
+                EXPECT_EQ(item.debugLocation->span.sourceId, 2u);
+            }
+        }
+        for (const auto& block : item.blocks) {
+            for (const auto& instruction : block.instructions) {
+                ASSERT_TRUE(instruction.debugLocation.has_value());
+                EXPECT_EQ(instruction.debugLocation->span.sourceId,
+                          item.debugLocation->span.sourceId);
+                if (instruction.opcode == joyeer::ir::Opcode::call) {
+                    ASSERT_TRUE(instruction.callee.has_value());
+                    const auto& callee = result.module->functions.at(*instruction.callee);
+                    if (callee.name == "helper") {
+                        ASSERT_TRUE(callee.debugLocation.has_value());
+                        EXPECT_EQ(callee.debugLocation->span.sourceId,
+                                  item.debugLocation->span.sourceId);
+                    }
+                    if (callee.name == "produce") EXPECT_FALSE(callee.isRootModule);
+                }
+            }
+        }
+    }
+    EXPECT_EQ(helpers, 3u);
+    EXPECT_EQ(entries, 1u);
+    EXPECT_EQ(dependencyMains, 1u);
+    ASSERT_EQ(result.module->structures.size(), 3u);
+    EXPECT_NE(result.module->structures[0].type, result.module->structures[1].type);
+    EXPECT_NE(result.module->structures[0].type, result.module->structures[2].type);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, LowersQualifiedConstructorsAndEnumCasesWithoutEvaluatingModulePrefixes) {
+    result = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer",
+          "import dep\nfunc main() {\n"
+          "let record = dep.Record(value: 7)\n"
+          "let empty = dep.Choice.Empty\n"
+          "let payload = dep.Choice.Value(9)\n"
+          "print(value: dep.answer())\n}\n" },
+        { "dep", "types.joyeer",
+          "public struct Record { public var value: Int }\n"
+          "public enum Choice { Empty, Value(Int) }\n"
+          "public func answer(): Int { return 42 }\n" },
+    });
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("main"), joyeer::ir::Opcode::constructStruct), 1u);
+    EXPECT_EQ(opcodeCount(function("main"), joyeer::ir::Opcode::constructEnum), 2u);
+    EXPECT_EQ(opcodeCount(function("main"), joyeer::ir::Opcode::call), 2u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
 TEST_F(IRLoweringTest, LowersUnitCallsAndReturnsWithoutLosingEffects) {

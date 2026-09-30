@@ -13,6 +13,8 @@ The parser converts the explicit token stream produced by the
 [lexer](lexer.md) into a syntax-only AST. Its current surface includes:
 
 - typed `func` declarations and mandatory call-site labels;
+- file-leading dotted module imports (without aliases or wildcards);
+- `public`, `internal`, and `private` top-level declarations and stored fields;
 - `let` / `var` bindings;
 - field-only `struct` declarations and memberwise construction;
 - payload-carrying `enum` declarations and construction;
@@ -32,11 +34,16 @@ Dedicated syntax nodes distinguish them from parenthesized expressions.
 `Result<Void, E>` success is written `.Ok(())`; an empty enum payload clause
 is still rejected. This does not add general tuples.
 
+Qualified nominal types and enum patterns retain the full dotted spelling.
+Imports are stored separately on `SourceFileSyntax` and are not executable
+items. Every combined or recovery span retains its token's `sourceId` and
+file-local offset; parsing never joins token streams from different files.
+
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, `for-in`, imports, extensions, explicit `init` / `deinit`, methods,
-  subscript declarations, visibility, or user-defined generics;
+- `class`, `for-in`, extensions, explicit `init` / `deinit`, methods,
+  subscript declarations, or user-defined generics;
 - `mutating`, `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range

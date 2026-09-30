@@ -20,6 +20,15 @@ enum class NameResolutionDiagnosticId {
     missingArgumentLabel,
     unexpectedArgumentLabel,
     argumentOutOfOrder,
+    inaccessibleDeclaration,
+    inaccessibleExposedType,
+    importCollision,
+    unknownImport,
+};
+
+struct ModuleInput {
+    std::string name;
+    std::vector<syntax::SourceFileSyntax::Ptr> files;
 };
 
 struct NameResolutionDiagnostic {
@@ -41,6 +50,8 @@ class NameResolver {
 public:
     [[nodiscard]] NameResolutionResult resolve(
             const syntax::SourceFileSyntax::Ptr& root) const;
+    [[nodiscard]] NameResolutionResult resolve(
+            const std::vector<ModuleInput>& modules) const;
 };
 
 [[nodiscard]] std::vector<NameResolutionDiagnostic> validateCallArguments(

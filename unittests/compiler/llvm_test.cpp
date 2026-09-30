@@ -6,6 +6,7 @@
 #include "joyeer/compiler/sourcefile.h"
 #include "joyeer/compiler/typechecking.h"
 #include "joyeer/diagnostic/diagnostic.h"
+#include "module_lowering_fixture.h"
 
 #include <gtest/gtest.h>
 
@@ -73,6 +74,111 @@ print(value: 42)
     emit(text, true);
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_EQ(result.text, withoutLocations);
+}
+
+TEST_F(LLVMBackendTest, EmitsCollidingGraphSymbolsAndOnlyRootMainAsEntry) {
+    const auto lowered = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    result = joyeer::llvmbackend::Emitter().emit(*lowered.module);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(result.hasEntryPoint);
+    for (const auto& function : lowered.module->functions) {
+        if (function.isExternal) continue;
+        const auto linkage = "@joyeer_fn_" + std::to_string(function.id) + "(";
+        EXPECT_NE(result.text.find(linkage), std::string::npos);
+        if (function.name == "main" && function.isRootModule) {
+            EXPECT_NE(result.text.find("call void " + linkage + ")"), std::string::npos);
+        }
+    }
+    auto dependencyOnly = *lowered.module;
+    for (auto& function : dependencyOnly.functions) function.isRootModule = false;
+    result = joyeer::llvmbackend::Emitter().emit(dependencyOnly);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_FALSE(result.hasEntryPoint);
+    EXPECT_EQ(result.text.find("define i64 @joyeer_main("), std::string::npos);
+}
+
+TEST_F(LLVMBackendTest, RejectsMultiplePrivateRootMainCandidatesAcrossFiles) {
+    const auto lowered = joyeer::testing::lowerGraph({
+        { "app", "first.joyeer", "private func main() {}\n" },
+        { "app", "second.joyeer", "private func main() {}\n" },
+        { "dep", "library.joyeer", "func main(value: Int): Int { return value }\n" },
+    });
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    result = joyeer::llvmbackend::Emitter().emit(*lowered.module);
+    ASSERT_EQ(result.diagnostics.size(), 1u);
+    EXPECT_EQ(result.diagnostics[0].id, joyeer::llvmbackend::DiagnosticId::invalidEntryPoint);
+    EXPECT_EQ(result.diagnostics[0].span.sourceId, 1u);
+    EXPECT_NE(result.diagnostics[0].message.find("multiple"), std::string::npos);
+    EXPECT_FALSE(result.hasEntryPoint);
+}
+
+TEST_F(LLVMBackendTest, DoesNotValidateDependencyMainAsEntry) {
+    const auto lowered = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer", "func main() {}\n" },
+        { "dep", "library.joyeer", "func main(value: Int): Int { return value }\n" },
+    });
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    result = joyeer::llvmbackend::Emitter().emit(*lowered.module);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(result.hasEntryPoint);
+}
+
+TEST_F(LLVMBackendTest, EmitsRealFilesForGraphFunctionsScopesVariablesAndTypes) {
+    const auto lowered = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    for (const auto format : { joyeer::DebugInfoFormat::dwarf, joyeer::DebugInfoFormat::codeView }) {
+        result = joyeer::llvmbackend::Emitter().emit(
+                *lowered.module,
+                joyeer::llvmbackend::EmitOptions {
+                    true, format, joyeer::OptimizationLevel::O0, true,
+                });
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        const auto metadataLine = [this](const std::string& marker) {
+            const auto found = result.text.find(marker);
+            if (found == std::string::npos) return std::string();
+            const auto start = result.text.rfind('\n', found);
+            return result.text.substr(start + 1, result.text.find('\n', found) - start - 1);
+        };
+        const auto dependencyFile = metadataLine("!DIFile(filename: \"library.joyeer\"");
+        ASSERT_FALSE(dependencyFile.empty());
+        const auto fileReference = dependencyFile.substr(0, dependencyFile.find(" ="));
+        EXPECT_NE(result.text.find("!DIFile(filename: \"main.joyeer\""), std::string::npos);
+        EXPECT_NE(result.text.find("!DIFile(filename: \"other.joyeer\""), std::string::npos);
+        const auto produce = metadataLine("!DISubprogram(name: \"produce\"");
+        EXPECT_NE(produce.find("file: " + fileReference + ", line: 4"), std::string::npos);
+        const auto scope = produce.substr(0, produce.find(" ="));
+        const auto body = metadataLine("!DILexicalBlock(scope: " + scope);
+        EXPECT_NE(body.find("file: " + fileReference + ", line: 4"), std::string::npos);
+        EXPECT_NE(result.text.find("file: " + fileReference + ", line: 5, type:"),
+                  std::string::npos);
+        EXPECT_NE(result.text.find("name: \"Box\", file: " + fileReference), std::string::npos);
+    }
+
+}
+
+TEST_F(LLVMBackendTest, WrapsCrossFileInstructionScopesForLineTablesAndFullDebug) {
+    auto lowered = joyeer::testing::lowerGraph({
+        { "app", "first.joyeer", "func main() {\nprint(value: 1)\n}\n" },
+        { "app", "second.joyeer", "\n\nfunc other() {}\n" },
+    });
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    auto& main = *std::find_if(lowered.module->functions.begin(), lowered.module->functions.end(),
+                             [](const auto& function) { return function.name == "main"; });
+    for (auto& instruction : main.blocks.front().instructions) {
+        if (instruction.opcode == joyeer::ir::Opcode::call) {
+            instruction.debugLocation->span = SourceSpan { 2, 1, 1 };
+        }
+    }
+    for (const auto full : { false, true }) {
+        result = joyeer::llvmbackend::Emitter().emit(
+                *lowered.module, joyeer::llvmbackend::EmitOptions {
+                    true, joyeer::DebugInfoFormat::dwarf, joyeer::OptimizationLevel::O0, full,
+                });
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        EXPECT_NE(result.text.find("!DILexicalBlockFile(scope:"), std::string::npos);
+        EXPECT_NE(result.text.find("!DILocation(line: 3, column: 1,"), std::string::npos);
+    }
 }
 
 TEST_F(LLVMBackendTest, UnitConstantsDoNotAllocateOrStorePayloads) {

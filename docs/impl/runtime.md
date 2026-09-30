@@ -1,7 +1,9 @@
 # Runtime Implementation
 
-The C11 runtime is declared in `include/joyeer/native/runtime.h` and
-implemented in `lib/native/runtime.c` and `lib/native/entry.c`. The
+The C11 runtime is declared in `include/joyeer/native/runtime.h`, with portable
+host ABIs in `include/joyeer/native/filesystem.h` and
+`include/joyeer/native/process.h`. Its implementation lives under
+`lib/native/`, including shared strict UTF-8 host conversion. The
 `JoyeerNativeRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -11,7 +13,8 @@ freestanding, kernel, embedded, and no-libc profiles are not supported.
 
 It supplies checked `Int` add/subtract/multiply/divide/remainder, scalar/string printing,
 string storage and operations, arrays and dictionaries, binary file input,
-panic and bounds traps, and the process entry and allocation-balance check.
+portable filesystem operations, synchronous processes, panic and bounds
+traps, and the process entry and allocation-balance check.
 Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
 the checked arithmetic and generic array-indexing C entry points remain
 available for runtime clients. String and dictionary accesses use runtime
@@ -29,8 +32,10 @@ remainder overflow`.
 
 ## Process entry and exit
 
-The compiler accepts exactly one `func main()` returning `Void` or
-`func main(args: [String]): Int` with a borrowing `args` parameter. It emits
+Native executables require exactly one root-module entry: `func main()`
+returning `Void` or `func main(args: [String]): Int` with a borrowing `args`
+parameter. A single-file input is its own root module; dependency functions
+named `main` remain ordinary functions and are not selected as entries. The compiler emits
 C-callable `joyeer_main_uses_arguments` and `joyeer_main` wrappers; the latter
 receives a pointer to runtime-owned argument storage and returns an `int64_t`
 status (zero for parameterless `main`). No collection is passed by value
@@ -145,8 +150,58 @@ pointer/count with owned-string and error-code out-pointers to
 constructs the concrete `IOError` and `Result` tags without making the
 runtime depend on frontend case ordering or aggregate layout. A path with
 embedded NUL produces `InvalidPath`. Windows currently uses the active
-narrow-character CRT path encoding; a portable Unicode path API remains
-future work.
+narrow-character CRT path encoding. This compatibility function is unchanged;
+new code can use the separate portable filesystem interface below.
+
+## Portable filesystem and process boundaries
+
+The source signatures and compatibility rules are specified in
+[portable host operations](../spec/18-host.md). The new functions are
+compiler-known borrowing operations, not source-language FFI. Filesystem
+operations return `Result<T, FileSystemError>`; `runProcess` returns
+`Result<ProcessStatus, ProcessError>`. The existing `IOError` cases and
+`readFile` result type are not extended or converted implicitly.
+
+`host.c` validates Unicode scalar UTF-8, excluding overlong sequences,
+surrogates, truncated sequences, and code points beyond U+10FFFF. Host string
+conversion additionally rejects embedded NUL and empty paths, while allowing
+empty process arguments. Windows conversion uses strict UTF-8/UTF-16 APIs.
+File contents are not passed through path validation and remain arbitrary
+bytes.
+
+The private runtime ABI uses flat data/count inputs, scalar error-kind
+returns, and output pointers. No platform-dependent C aggregate is passed or
+returned by value. Runtime tags are stable constants in the host headers;
+the LLVM emitter maps them by source enum case name, rather than assuming
+that a source enum's declaration order is its C ABI representation.
+
+| Operation group | Runtime outputs on success |
+|---|---|
+| File read and lexical path join | Owned `JoyeerString` |
+| Directory listing | Owned `JoyeerArray` of owned `JoyeerString` names |
+| File classification | Scalar `JoyeerFileKind` |
+| Create-new write, mkdir, file removal, empty-directory removal | No payload; the compiler constructs `Ok(())` |
+| Synchronous process | Scalar completion kind and full signed-64-bit status storage |
+
+Failures return a stable category and original platform code, without
+publishing a partially owned success value. Returned strings and arrays use
+the ordinary tracked runtime allocation and recursive destruction paths.
+Host conversion buffers and OS resources have shorter native lifetimes and
+are released by the host operation.
+
+Exclusive creation enforces `writeFileNew`'s nonreplacement contract at the
+OS operation. A failed write can leave its own partially created file; it
+must not remove or replace an unrelated preexisting destination.
+`fileKind` examines the final link itself, `removeFile` unlinks the final
+entry, and `removeDirectory` handles only empty real directories. There is
+no recursive cleanup API or confinement guarantee.
+
+Processes use an explicit executable path, an argument array, and a child
+working directory, without shell evaluation or PATH fallback. The runtime
+preserves native nonzero completion separately from launch/wait errors.
+Windows status values are widened without signed-32-bit truncation; POSIX
+signal completion remains distinct. Native standard streams and environment
+are inherited, and the parent's working directory is unchanged.
 
 ## Limits and validation
 
@@ -154,20 +209,31 @@ The native pipeline supports compiler-known heap-backed values and recursive
 aggregates; user-defined `deinit`, noncopyable user types, and explicit copy
 initializers are not implemented. `print` supports primitives and strings,
 not arbitrary aggregates. File input is synchronous and whole-file only;
-streaming, writing, and metadata APIs are not available. See the
+streaming is not available. Portable writing is create-new only; classification
+does not expose general metadata. Replacement, recursive cleanup, process
+capture, timeouts, and asynchronous handles remain outside this interface.
+See the
 [backend limitations](backend.md#5-known-limitations) and
 [IR verification bounds](ir.md#5-verification) for other gaps.
 
 Panic flushes stderr and uses C11 `_Exit` with a nonzero status, avoiding
 platform crash dialogs while remaining unrecoverable.
 
-Focused test labels are `native-runtime`, `native`, and `file-io`.
+Focused test labels include `native-runtime`, `native`, `file-io`, `filesystem`,
+`process`, and `host`.
 Native tests verify string/collection ownership, runtime traps, argument
 boundaries, return statuses, and zero final allocation balance. Entry tests
 cover both `main` forms, empty and spaced arguments, Unicode arguments,
 POSIX raw bytes, normal and out-of-range statuses, and missing, duplicate,
-or invalid signatures. An invalid UTF-16 startup argument still needs a
-Windows-only test. File-input tests cover binary data and missing files.
+or invalid signatures. Windows-only entry tests reject unpaired high and low
+UTF-16 surrogates and verify supplementary Unicode conversion and cleanup.
+File-input tests cover binary data and missing files.
+Portable host tests cover Unicode, malformed encoding, create-new
+preservation, classification/enumeration, empty-directory removal, link-target
+preservation, argument quoting, completion statuses, inherited streams and
+environment, explicit executable resolution, and unchanged parent directories.
+Source-level host fixtures exercise concrete result types, early propagation,
+owned outputs, unit successes, optimization, and full debug emission.
 Existing ownership-heavy native tests run at the default `-O2` and retain
 the zero-allocation-balance check. Many native executable tests are registered
 only when `JOYEER_CLANG_EXECUTABLE` was found during CMake configuration; see

@@ -1,5 +1,9 @@
-if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED INPUT_FILE OR NOT DEFINED OUTPUT_FILE OR NOT DEFINED EXPECTED_OUTPUT)
-    message(FATAL_ERROR "JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, and EXPECTED_OUTPUT are required")
+if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED OUTPUT_FILE OR NOT DEFINED EXPECTED_OUTPUT OR
+   (NOT DEFINED INPUT_FILE AND NOT DEFINED MODULE_ROOT))
+    message(FATAL_ERROR "JOYEER_EXECUTABLE, INPUT_FILE or MODULE_ROOT, OUTPUT_FILE, and EXPECTED_OUTPUT are required")
+endif()
+if(DEFINED INPUT_FILE AND DEFINED MODULE_ROOT)
+    message(FATAL_ERROR "INPUT_FILE and MODULE_ROOT are mutually exclusive")
 endif()
 
 get_filename_component(output_directory "${OUTPUT_FILE}" DIRECTORY)
@@ -42,7 +46,12 @@ set(compiler_command "${JOYEER_EXECUTABLE}")
 if(DEFINED COMPILER_ARGS)
     list(APPEND compiler_command ${COMPILER_ARGS})
 endif()
-list(APPEND compiler_command -o "${OUTPUT_FILE}" "${INPUT_FILE}")
+list(APPEND compiler_command -o "${OUTPUT_FILE}")
+if(DEFINED MODULE_ROOT)
+    list(APPEND compiler_command --module-root "${MODULE_ROOT}")
+else()
+    list(APPEND compiler_command "${INPUT_FILE}")
+endif()
 
 execute_process(
         COMMAND ${compiler_command}

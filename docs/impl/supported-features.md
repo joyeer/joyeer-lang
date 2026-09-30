@@ -8,10 +8,11 @@
 
 ## Compilation boundary
 
-The compiler accepts one Joyeer source file and runs it through lexing, parsing,
-name resolution, type checking, semantic analysis, verified Joyeer IR, and
-textual LLVM IR emission. Native executable output additionally generates
-machine code and links it with `JoyeerNativeRuntime`.
+The compiler accepts one Joyeer source file or a root directory module with
+explicit dependency mappings. It runs the source graph through lexing,
+parsing, name resolution, type checking, semantic analysis, verified Joyeer
+IR, and textual LLVM IR emission. Native executable output additionally
+generates machine code and links it with `JoyeerNativeRuntime`.
 
 ## Compiler pipeline
 
@@ -31,7 +32,8 @@ machine code and links it with `JoyeerNativeRuntime`.
 
 | Area | Current surface |
 |---|---|
-| Programs | One source file; typed functions; recursion; `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
+| Programs | Single-file or directory-module compilation; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
+| Modules | Explicit directory mappings, file-local qualified imports, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
 | Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
 | Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer `+`, `-`, `*`, `/`, `%`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
@@ -41,7 +43,9 @@ machine code and links it with `JoyeerNativeRuntime`.
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
-| Built-ins | `print(value:)` for supported primitive/string values, `byteToInt(value:)`, `byteToString(value:)`, and `readFile(path:)` |
+| Built-ins | Primitive/string `print(value:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
+| Filesystem | UTF-8 paths, binary `readFileUtf8`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
+| Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
@@ -54,8 +58,9 @@ declarations.
   asynchronous/concurrent functions.
 - User-defined `init` / `deinit` bodies, explicit copy initializers, or
   user-defined accessors.
-- Top-level executable statements or global storage, modules/imports,
-  multi-file compilation, or dependency packages.
+- Top-level executable statements or global storage, import aliases,
+  wildcard imports, re-exports, dependency fetching, separate binary modules,
+  or a stable source-library ABI.
 - `Float`, `Double`, general tuples, or tuple destructuring.
 - `for-in`, labeled loop exits, compound assignment, `is` / `as`,
   match guards, range patterns, or alternative patterns.
@@ -86,14 +91,20 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   allocate. Subscript access still traps for a missing key.
 - Checked integer arithmetic and bounds checks can terminate a program on
   invalid input in every optimization mode.
-- `readFile(path:)` is the implemented file-input primitive and returns
-  `Result<String, IOError>`. There is no general filesystem API.
+- Legacy `readFile(path:)` returns `Result<String, IOError>` unchanged.
+  Portable filesystem operations use a separate `FileSystemError`;
+  synchronous processes use `ProcessError` and `ProcessStatus`. See the
+  [exact signatures and boundaries](../spec/18-host.md). Recursive cleanup,
+  replacement/atomic publication, canonicalization, process output capture,
+  timeouts, and asynchronous handles are not provided.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original
   bytes. The entry return status must be in `0..255`; other values produce
   a runtime error rather than truncation. The compiler CLI and existing
-  Windows file-path handling still have non-ASCII limitations; portable path
-  encoding remains future work.
+  Windows legacy `readFile` handling still have non-ASCII limitations. New
+  host operations require strict UTF-8 paths/arguments and use wide Windows
+  APIs; invalid bytes are errors, not replacement characters. Host operations
+  are not a filesystem sandbox.
 - Debug emission includes source line tables, lexical variables/types/scopes,
   and PDB/DWARF/dSYM artifact handling. Optimized-value and aggregate-projection
   inspection remains incomplete.

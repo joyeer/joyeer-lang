@@ -33,6 +33,13 @@ The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
 `lib/backend/llvm.cpp`. It emits text so verified Joyeer IR remains separated
 from LLVM's C++ model by an inspectable format.
 
+For module compilation, one verified Joyeer IR module contains the reachable
+source-module graph. LLVM function linkage uses `joyeer_fn_<FunctionId>`;
+aggregate types and ownership helpers likewise use numeric type IDs rather
+than source names. Equal names in different modules or file-private scopes
+therefore do not collide, and source declarations are not renamed to enforce
+entry-point rules.
+
 The native linker lives in `include/joyeer/backend/linker.h` and
 `lib/backend/linker.cpp`. It calls the versioned C ABI in
 `include/joyeer/backend/native_backend.h` on every platform. The
@@ -91,8 +98,38 @@ Build a native executable:
 joyeer -o output.exe source.joyeer
 ```
 
-A native executable requires one `func main()` returning `Void` or
+Compile a root module and explicitly map its dependencies:
+
+```pwsh
+joyeer --module-root .\tests\modules\root --module project.config=.\tests\modules\config
+joyeer --module-root .\tests\modules\root --module project.config=.\tests\modules\config --emit-llvm modules.ll
+joyeer --module-root .\tests\modules\root --module project.config=.\tests\modules\config -o modules.exe
+```
+
+`--module-root <directory>` is mutually exclusive with a positional source
+file. `--module <logical.dotted.name=directory>` is repeatable and requires
+`--module-root`. Paths are resolved relative to the invocation directory.
+Each module contains its directly contained `.joyeer` files in sorted order;
+subdirectories are not merged. Files keep separate syntax trees, source spans,
+and debug identities. The compiler resolves file-local imports through the
+explicit mappings and compiles the reachable graph together, rejecting unknown
+imports and cycles with diagnostics. It does not fetch dependencies or read
+package manifests.
+
+All mapped directories must exist and have unique logical names and directory
+identities. Canonical paths and filesystem equivalence checks reject duplicate
+directories or source files, including aliases. Unreachable mappings are not
+parsed, but their direct source files are still protected against overwrites.
+Output must not alias any module input; on Windows this also applies to the
+native output's sibling PDB cleanup path.
+
+A native executable requires one root-module `func main()` returning `Void` or
 `func main(args: [String]): Int` with a borrowing `args` parameter. The emitter
+does not select a dependency module's `main` as the executable entry point. It
+rejects multiple root-module `main` candidates, including distinct file-private
+declarations, with an entry diagnostic instead of selecting the first.
+Dependency functions named `main` are ordinary functions and need not have an
+entry-compatible signature. The emitter
 provides C-callable `joyeer_main_uses_arguments` and `joyeer_main` trampolines;
 the latter receives a pointer to runtime-owned argument storage and returns
 an `int64_t` status (zero for the parameterless form). No collection is passed
@@ -144,6 +181,16 @@ options compose in command-line order; for example `-gdwarf -g0 -g` produces
 DWARF line tables. Debug and optimization are orthogonal: `-O0` marks the
 compile unit unoptimized, while `-O1`…`-O3` carry optimized debug flags without
 changing the emitted pre-optimization instructions.
+
+The graph's `Module::sourceFiles` table supplies one `DIFile` per real input
+file. The compile unit uses the first root source; each source function,
+lexical block, variable, and declared aggregate type selects its own file
+from `SourceSpan::sourceId`. Line and column lookup uses that file's line-start
+table and unshifted byte offsets. If an instruction location names a different
+file from its enclosing scope, a `DILexicalBlockFile` preserves the scope's
+function while selecting the location's file. This applies to both line-table
+and full-debug emission, in DWARF and CodeView formats. The legacy single-file
+`sourceInfo` form remains supported as source ID zero.
 
 Native artifacts follow the host format. Windows CodeView keeps a sibling PDB
 with the executable and embeds a CodeView debug-directory reference. Windows

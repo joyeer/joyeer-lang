@@ -53,6 +53,9 @@ enum TokenKind {
     kwConsuming,
     kwInitializing,
     kwConsume,
+    kwPublic,
+    kwInternal,
+    kwPrivate,
 
     leftCurly,
     rightCurly,
@@ -90,6 +93,7 @@ enum TokenKind {
 struct SourceSpan {
         uint32_t offset = 0;
         uint32_t length = 0;
+        uint32_t sourceId = 0;
 };
 
 struct Token {

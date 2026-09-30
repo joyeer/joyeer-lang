@@ -1,4 +1,5 @@
 #include "joyeer/backend/llvm.h"
+#include "joyeer/compiler/hostbuiltins.h"
 #include "joyeer/native/runtime.h"
 
 #include <algorithm>
@@ -101,7 +102,7 @@ public:
             sourceDebugVariables.emplace(variable.id, &variable);
         }
         if (options.emitLineTables) {
-            if (!source.sourceInfo.has_value()) {
+            if (source.sourceFile(0) == nullptr) {
                 report(
                         DiagnosticId::invalidModule,
                         {},
@@ -181,6 +182,8 @@ private:
     std::vector<size_t> moduleFlagMetadata;
     std::optional<size_t> compileUnitMetadata;
     std::optional<size_t> debugFileMetadata;
+    std::vector<size_t> debugFileMetadataBySource;
+    std::unordered_map<size_t, std::unordered_map<uint32_t, size_t>> debugFileScopes;
     std::optional<size_t> subroutineTypeMetadata;
     std::optional<size_t> currentSubprogramMetadata;
     std::unordered_map<ir::TypeId, size_t> debugTypeMetadata;
@@ -252,11 +255,15 @@ private:
     }
 
     void initializeDebugMetadata() {
-        assert(module->sourceInfo.has_value());
-        const auto& source = *module->sourceInfo;
-        debugFileMetadata = addMetadata(
-                "!DIFile(filename: \"" + escapeQuoted(source.fileName) +
-                "\", directory: \"" + escapeQuoted(source.directory) + "\")");
+        assert(module->sourceFile(0) != nullptr);
+        const auto sourceCount = module->sourceFiles.empty() ? 1 : module->sourceFiles.size();
+        for (size_t index = 0; index < sourceCount; ++index) {
+            const auto& source = *module->sourceFile(static_cast<uint32_t>(index));
+            debugFileMetadataBySource.push_back(addMetadata(
+                    "!DIFile(filename: \"" + escapeQuoted(source.fileName) +
+                    "\", directory: \"" + escapeQuoted(source.directory) + "\")"));
+        }
+        debugFileMetadata = debugFileMetadataBySource.front();
         if (!emitsFullDebug()) {
             subroutineTypeMetadata = addMetadata("!DISubroutineType(types: !{})");
         } else {
@@ -282,9 +289,15 @@ private:
         }
     }
 
-    std::pair<uint32_t, uint32_t> sourcePosition(uint32_t offset) const {
-        assert(module->sourceInfo.has_value());
-        const auto& starts = module->sourceInfo->lineStarts;
+    size_t debugFileFor(SourceSpan span) const {
+        return debugFileMetadataBySource.at(span.sourceId);
+    }
+
+    std::pair<uint32_t, uint32_t> sourcePosition(SourceSpan span) const {
+        const auto* source = module->sourceFile(span.sourceId);
+        assert(source != nullptr);
+        const auto& starts = source->lineStarts;
+        const auto offset = span.offset;
         const auto upper = std::upper_bound(starts.begin(), starts.end(), offset);
         const auto lineIndex = upper == starts.begin()
                 ? size_t { 0 }
@@ -339,7 +352,9 @@ private:
                 definition =
                         "!DICompositeType(tag: DW_TAG_structure_type, name: \"" +
                         escapeQuoted(valueType->name) + "\", file: " +
-                        metadataReference(*debugFileMetadata) +
+                        metadataReference(valueType->declarationSpan.has_value()
+                                ? debugFileFor(*valueType->declarationSpan)
+                                : *debugFileMetadata) +
                         ", line: 0, size: " + std::to_string(layout->size * 8) +
                         ", elements: !{})";
                 break;
@@ -384,10 +399,10 @@ private:
         const auto parent = metadataForDebugScope(*scope.parent);
         if (!parent.has_value()) return std::nullopt;
         assert(debugFileMetadata.has_value());
-        const auto [line, column] = sourcePosition(scope.span.offset);
+        const auto [line, column] = sourcePosition(scope.span);
         const auto metadata = addMetadata(
                 "distinct !DILexicalBlock(scope: " + metadataReference(*parent) +
-                ", file: " + metadataReference(*debugFileMetadata) +
+                ", file: " + metadataReference(debugFileFor(scope.span)) +
                 ", line: " + std::to_string(line) +
                 ", column: " + std::to_string(column) + ")");
         debugScopeMetadata.emplace(id, metadata);
@@ -405,7 +420,7 @@ private:
         const auto variableType = addDebugTypeMetadata(variable.type);
         if (!scope.has_value() || !variableType.has_value()) return std::nullopt;
         assert(debugFileMetadata.has_value());
-        const auto [line, column] = sourcePosition(variable.span.offset);
+        const auto [line, column] = sourcePosition(variable.span);
         (void)column;
         std::string definition =
                 "!DILocalVariable(name: \"" + escapeQuoted(variable.name) + "\"";
@@ -414,7 +429,7 @@ private:
         }
         definition +=
                 ", scope: " + metadataReference(*scope) +
-                ", file: " + metadataReference(*debugFileMetadata) +
+                ", file: " + metadataReference(debugFileFor(variable.span)) +
                 ", line: " + std::to_string(line) +
                 ", type: " + metadataReference(*variableType) + ")";
         const auto metadata = addMetadata(std::move(definition));
@@ -428,9 +443,9 @@ private:
         if (cached != debugVariableLocationMetadata.end()) return cached->second;
         const auto found = sourceDebugVariables.find(id);
         if (found == sourceDebugVariables.end()) return std::nullopt;
-        const auto scope = metadataForDebugScope(found->second->scope);
+        const auto scope = debugLocationScope(found->second->scope, found->second->span);
         if (!scope.has_value()) return std::nullopt;
-        const auto [line, column] = sourcePosition(found->second->span.offset);
+        const auto [line, column] = sourcePosition(found->second->span);
         const auto metadata = addMetadata(
                 "!DILocation(line: " + std::to_string(line) +
                 ", column: " + std::to_string(column) +
@@ -448,15 +463,16 @@ private:
         const auto functionType = emitsFullDebug()
             ? addFunctionTypeMetadata(function)
             : *subroutineTypeMetadata;
-        const auto [line, column] = sourcePosition(function.debugLocation->span.offset);
+        const auto [line, column] = sourcePosition(function.debugLocation->span);
+        const auto file = debugFileFor(function.debugLocation->span);
         (void)column;
         auto flags = std::string("DISPFlagDefinition");
         if (isOptimized()) flags += " | DISPFlagOptimized";
         const auto metadata = addMetadata(
                 "distinct !DISubprogram(name: \"" + escapeQuoted(function.name) +
                 "\", linkageName: \"" + escapeQuoted(functionLinkageName(function)) +
-                "\", scope: " + metadataReference(*debugFileMetadata) +
-                ", file: " + metadataReference(*debugFileMetadata) +
+                "\", scope: " + metadataReference(file) +
+                ", file: " + metadataReference(file) +
                 ", line: " + std::to_string(line) +
                 ", type: " + metadataReference(functionType) +
                 ", scopeLine: " + std::to_string(line) +
@@ -468,6 +484,29 @@ private:
         return metadata;
     }
 
+    std::optional<size_t> debugLocationScope(
+            std::optional<ir::DebugScopeId> id,
+            SourceSpan span) {
+        auto scope = currentSubprogramMetadata;
+        auto sourceId = currentFunction != nullptr && currentFunction->debugLocation.has_value()
+                ? currentFunction->debugLocation->span.sourceId : 0u;
+        if (emitsFullDebug() && id.has_value()) {
+            scope = metadataForDebugScope(*id);
+            const auto found = sourceDebugScopes.find(*id);
+            if (found != sourceDebugScopes.end()) sourceId = found->second->span.sourceId;
+        }
+        if (!scope.has_value() || sourceId == span.sourceId) return scope;
+        auto& files = debugFileScopes[*scope];
+        const auto found = files.find(span.sourceId);
+        if (found != files.end()) return found->second;
+        const auto metadata = addMetadata(
+                "!DILexicalBlockFile(scope: " + metadataReference(*scope) +
+                ", file: " + metadataReference(debugFileFor(span)) +
+                ", discriminator: 0)");
+        files.emplace(span.sourceId, metadata);
+        return metadata;
+    }
+
     std::optional<size_t> addLocationMetadata(const ir::Instruction& instruction) {
         if (!options.emitLineTables || !currentSubprogramMetadata.has_value() ||
             !instruction.debugLocation.has_value() ||
@@ -475,11 +514,9 @@ private:
             return std::nullopt;
         }
         const auto [line, column] = sourcePosition(
-                instruction.debugLocation->span.offset);
-        auto scope = currentSubprogramMetadata;
-        if (emitsFullDebug() && instruction.debugLocation->scope.has_value()) {
-            scope = metadataForDebugScope(*instruction.debugLocation->scope);
-        }
+                instruction.debugLocation->span);
+        const auto scope = debugLocationScope(
+                instruction.debugLocation->scope, instruction.debugLocation->span);
         if (!scope.has_value()) return std::nullopt;
         return addMetadata(
                 "!DILocation(line: " + std::to_string(line) +
@@ -989,13 +1026,26 @@ private:
     }
 
     void emitEntryPoint() {
+        const auto isEntryCandidate = [](const auto& function) {
+            return !function.isExternal && function.isRootModule && function.name == "main";
+        };
         const auto found = std::find_if(
                 module->functions.begin(),
                 module->functions.end(),
-                [](const auto& function) {
-                    return !function.isExternal && function.name == "main";
-                });
+                isEntryCandidate);
         if (found == module->functions.end()) return;
+        const auto duplicate = std::find_if(
+                found + 1, module->functions.end(), isEntryCandidate);
+        if (duplicate != module->functions.end()) {
+            report(
+                    DiagnosticId::invalidEntryPoint,
+                    duplicate->debugLocation.has_value()
+                            ? duplicate->debugLocation->span : SourceSpan {},
+                    duplicate->id,
+                    std::nullopt,
+                    "root module contains multiple 'main' entry functions");
+            return;
+        }
         const auto* resultType = type(found->resultType);
         const bool legacyEntry = found->parameters.empty() &&
                 resultType != nullptr && resultType->kind == typing::TypeKind::voidType;
@@ -2465,6 +2515,9 @@ private:
             if (callee.name == "readFile" && instruction.operands.size() == 1) {
                 return emitReadFile(out, instruction, callee);
             }
+            if (const auto* host = hostbuiltins::findFunction(callee.name)) {
+                return emitHostCall(out, instruction, callee, *host);
+            }
             if ((callee.name == "byteToInt" || callee.name == "byteToString") &&
                 instruction.operands.size() == 1) {
                 return emitByteConversion(out, instruction, callee);
@@ -2693,6 +2746,264 @@ private:
             << doneLabel << ":\n"
             << "  " << valueName(instruction.result->id) << " = load "
             << *resultType << ", ptr " << storage << "\n";
+        return true;
+    }
+
+    bool matchesHostValue(ir::TypeId id, hostbuiltins::ValueKind kind) const {
+        const auto* record = type(id);
+        if (record == nullptr) return false;
+        switch (kind) {
+            case hostbuiltins::ValueKind::string:
+                return record->kind == typing::TypeKind::string;
+            case hostbuiltins::ValueKind::unit:
+                return record->kind == typing::TypeKind::voidType;
+            case hostbuiltins::ValueKind::strings:
+                return record->kind == typing::TypeKind::array &&
+                       record->arguments.size() == 1 &&
+                       type(record->arguments[0]) != nullptr &&
+                       type(record->arguments[0])->kind == typing::TypeKind::string;
+            case hostbuiltins::ValueKind::fileKind:
+                return record->kind == typing::TypeKind::enumeration &&
+                       record->name == "FileKind";
+            case hostbuiltins::ValueKind::processStatus:
+                return record->kind == typing::TypeKind::enumeration &&
+                       record->name == "ProcessStatus";
+        }
+        return false;
+    }
+
+    std::optional<std::vector<size_t>> hostEnumTags(
+            ir::TypeId id,
+            const hostbuiltins::Enumeration& descriptor,
+            SourceSpan span) {
+        const auto* record = type(id);
+        const auto found = enumerations.find(id);
+        std::vector<size_t> tags;
+        if (record != nullptr && record->kind == typing::TypeKind::enumeration &&
+            record->name == descriptor.name && found != enumerations.end() &&
+            found->second->cases.size() == descriptor.cases.size()) {
+            for (const auto name : descriptor.cases) {
+                for (size_t index = 0; index < found->second->cases.size(); ++index) {
+                    const auto& candidate = found->second->cases[index];
+                    if (candidate.name != name) continue;
+                    if (!descriptor.integerPayload && candidate.payloadTypes.empty()) {
+                        tags.push_back(index);
+                    } else if (descriptor.integerPayload && candidate.payloadTypes.size() == 1) {
+                        const auto* payload = type(candidate.payloadTypes[0]);
+                        if (payload != nullptr && payload->kind == typing::TypeKind::integer) {
+                            tags.push_back(index);
+                        }
+                    }
+                    break;
+                }
+            }
+            if (tags.size() == descriptor.cases.size()) return tags;
+        }
+        reportHere(
+                DiagnosticId::unsupportedExternal, span,
+                "invalid host enumeration shape for '" + std::string(descriptor.name) + "'");
+        return std::nullopt;
+    }
+
+    std::string emitHostEnumTag(
+            std::ostringstream& out,
+            const std::string& nativeTag,
+            const hostbuiltins::Enumeration& descriptor,
+            const std::vector<size_t>& tags) {
+        assert(!tags.empty());
+        const auto below = temporary();
+        const auto above = temporary();
+        const auto invalid = temporary();
+        out << "  " << below << " = icmp ult i32 " << nativeTag << ", "
+            << descriptor.firstAbiTag << "\n"
+            << "  " << above << " = icmp ugt i32 " << nativeTag << ", "
+            << descriptor.firstAbiTag + tags.size() - 1 << "\n"
+            << "  " << invalid << " = or i1 " << below << ", " << above << "\n";
+        emitTrapIf(out, invalid, "invalid native " + std::string(descriptor.name) + " tag");
+        auto selected = std::to_string(tags.front());
+        for (size_t index = 1; index < tags.size(); ++index) {
+            const auto matches = temporary();
+            const auto next = temporary();
+            out << "  " << matches << " = icmp eq i32 " << nativeTag << ", "
+                << descriptor.firstAbiTag + index << "\n"
+                << "  " << next << " = select i1 " << matches << ", i32 "
+                << tags[index] << ", i32 " << selected << "\n";
+            selected = next;
+        }
+        return selected;
+    }
+
+    void emitHostEnumValue(
+            std::ostringstream& out,
+            const std::string& typeText,
+            const std::string& destination,
+            const std::string& tag,
+            const std::optional<std::string>& integerPayload = std::nullopt) {
+        const auto tagAddress = temporary();
+        out << "  store " << typeText << " zeroinitializer, ptr " << destination << "\n"
+            << "  " << tagAddress << " = getelementptr inbounds " << typeText
+            << ", ptr " << destination << ", i32 0, i32 0\n"
+            << "  store i32 " << tag << ", ptr " << tagAddress << "\n";
+        if (integerPayload.has_value()) {
+            const auto payloadAddress = temporary();
+            out << "  " << payloadAddress << " = getelementptr inbounds " << typeText
+                << ", ptr " << destination << ", i32 0, i32 1, i32 0\n"
+                << "  store i64 " << *integerPayload << ", ptr " << payloadAddress << "\n";
+        }
+    }
+
+    bool emitHostCall(
+            std::ostringstream& out,
+            const ir::Instruction& instruction,
+            const ir::Function& callee,
+            const hostbuiltins::Function& descriptor) {
+        const auto* result = type(callee.resultType);
+        const auto resultEnumeration = enumerations.find(callee.resultType);
+        if (!instruction.result.has_value() ||
+            instruction.operands.size() != descriptor.parameters.size() ||
+            result == nullptr || result->kind != typing::TypeKind::result ||
+            result->arguments.size() != 2 ||
+            !matchesHostValue(result->arguments[0], descriptor.result) ||
+            resultEnumeration == enumerations.end()) {
+            reportHere(DiagnosticId::unsupportedExternal, instruction.span,
+                       "invalid signature for host function '" + callee.name + "'");
+            return false;
+        }
+        std::optional<size_t> okTag;
+        std::optional<size_t> errorTag;
+        for (size_t index = 0; index < resultEnumeration->second->cases.size(); ++index) {
+            const auto& candidate = resultEnumeration->second->cases[index];
+            if (candidate.payloadTypes == std::vector<ir::TypeId> { result->arguments[0] } &&
+                candidate.name == "Ok") okTag = index;
+            if (candidate.payloadTypes == std::vector<ir::TypeId> { result->arguments[1] } &&
+                candidate.name == "Err") errorTag = index;
+        }
+        if (!okTag.has_value() || !errorTag.has_value()) {
+            reportHere(DiagnosticId::unsupportedExternal, instruction.span,
+                       "host function requires concrete Result cases");
+            return false;
+        }
+        const auto* errorDescriptor = hostbuiltins::findEnumeration(descriptor.error);
+        assert(errorDescriptor != nullptr);
+        const auto errorTags = hostEnumTags(
+                result->arguments[1], *errorDescriptor, instruction.span);
+        const auto resultText = llvmType(callee.resultType, instruction.span);
+        const auto successText = llvmType(result->arguments[0], instruction.span);
+        const auto errorText = llvmType(result->arguments[1], instruction.span);
+        if (!errorTags.has_value() || !resultText.has_value() ||
+            !successText.has_value() || !errorText.has_value()) return false;
+
+        const bool process = descriptor.result == hostbuiltins::ValueKind::processStatus;
+        const bool enumSuccess = process || descriptor.result == hostbuiltins::ValueKind::fileKind;
+        const auto* successDescriptor = enumSuccess
+                ? hostbuiltins::findEnumeration(process ? "ProcessStatus" : "FileKind")
+                : nullptr;
+        std::optional<std::vector<size_t>> successTags;
+        if (successDescriptor != nullptr) {
+            successTags = hostEnumTags(
+                    result->arguments[0], *successDescriptor, instruction.span);
+            if (!successTags.has_value()) return false;
+        }
+
+        std::vector<std::string> abiTypes;
+        std::vector<std::string> abiArguments;
+        const auto argument = [&](const std::string& abiType, const std::string& value) {
+            abiTypes.push_back(abiType);
+            abiArguments.push_back(abiType + " " + value);
+        };
+        std::string outputAddress;
+        std::string statusAddress;
+        if (descriptor.result != hostbuiltins::ValueKind::unit) {
+            const auto outputType = enumSuccess ? std::string("i32") : *successText;
+            outputAddress = allocateStackSlot(outputType);
+            out << "  store " << outputType << " zeroinitializer, ptr " << outputAddress << "\n";
+            argument("ptr", outputAddress);
+        }
+        if (process) {
+            statusAddress = allocateStackSlot("i64");
+            out << "  store i64 0, ptr " << statusAddress << "\n";
+            argument("ptr", statusAddress);
+        }
+        const auto errorAddress = allocateStackSlot("i64");
+        out << "  store i64 0, ptr " << errorAddress << "\n";
+        argument("ptr", errorAddress);
+        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+            const auto* inputValue = value(instruction.operands[index]);
+            const auto input = operand(instruction.operands[index]);
+            if (inputValue == nullptr || !input.has_value() ||
+                !matchesHostValue(inputValue->type, descriptor.parameters[index].kind)) {
+                reportHere(DiagnosticId::unsupportedExternal, instruction.span,
+                           "invalid argument to host function '" + callee.name + "'");
+                return false;
+            }
+            const auto parts = emitHandleParts(
+                    out, descriptor.parameters[index].kind == hostbuiltins::ValueKind::strings
+                            ? "%joyeer.array" : "%joyeer.string",
+                    *input);
+            if (!parts.has_value()) return false;
+            argument("ptr", parts->data);
+            argument("i64", parts->count);
+        }
+        std::ostringstream declaration;
+        declaration << "declare i32 @" << descriptor.runtimeName << '(';
+        const auto errorKind = temporary();
+        out << "  " << errorKind << " = call i32 @" << descriptor.runtimeName << '(';
+        for (size_t index = 0; index < abiTypes.size(); ++index) {
+            if (index != 0) {
+                declaration << ", ";
+                out << ", ";
+            }
+            declaration << abiTypes[index];
+            out << abiArguments[index];
+        }
+        declaration << ')';
+        out << ")\n";
+        runtimeDeclarations.insert(declaration.str());
+
+        const auto storage = allocateStackSlot(*resultText);
+        const auto tagAddress = temporary();
+        const auto payloadAddress = temporary();
+        const auto succeeded = temporary();
+        const auto suffix = std::to_string(nextTemporary++);
+        const auto okLabel = "host.ok." + suffix;
+        const auto errorLabel = "host.error." + suffix;
+        const auto doneLabel = "host.done." + suffix;
+        out << "  store " << *resultText << " zeroinitializer, ptr " << storage << "\n"
+            << "  " << tagAddress << " = getelementptr inbounds " << *resultText
+            << ", ptr " << storage << ", i32 0, i32 0\n"
+            << "  " << payloadAddress << " = getelementptr inbounds " << *resultText
+            << ", ptr " << storage << ", i32 0, i32 1, i32 0\n"
+            << "  " << succeeded << " = icmp eq i32 " << errorKind << ", 0\n"
+            << "  br i1 " << succeeded << ", label %" << okLabel
+            << ", label %" << errorLabel << "\n"
+            << okLabel << ":\n"
+            << "  store i32 " << *okTag << ", ptr " << tagAddress << "\n";
+        if (enumSuccess) {
+            const auto nativeTag = temporary();
+            out << "  " << nativeTag << " = load i32, ptr " << outputAddress << "\n";
+            const auto tag = emitHostEnumTag(out, nativeTag, *successDescriptor, *successTags);
+            std::optional<std::string> status;
+            if (process) {
+                status = temporary();
+                out << "  " << *status << " = load i64, ptr " << statusAddress << "\n";
+            }
+            emitHostEnumValue(out, *successText, payloadAddress, tag, status);
+        } else if (descriptor.result != hostbuiltins::ValueKind::unit) {
+            const auto success = temporary();
+            out << "  " << success << " = load " << *successText << ", ptr " << outputAddress << "\n"
+                << "  store " << *successText << ' ' << success << ", ptr " << payloadAddress << "\n";
+        }
+        out << "  br label %" << doneLabel << "\n"
+            << errorLabel << ":\n"
+            << "  store i32 " << *errorTag << ", ptr " << tagAddress << "\n";
+        const auto tag = emitHostEnumTag(out, errorKind, *errorDescriptor, *errorTags);
+        const auto code = temporary();
+        out << "  " << code << " = load i64, ptr " << errorAddress << "\n";
+        emitHostEnumValue(out, *errorText, payloadAddress, tag, code);
+        out << "  br label %" << doneLabel << "\n"
+            << doneLabel << ":\n"
+            << "  " << valueName(instruction.result->id) << " = load "
+            << *resultText << ", ptr " << storage << "\n";
         return true;
     }
 

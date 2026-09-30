@@ -1,12 +1,12 @@
 # joypm M0: Language and Host Contracts
 
-**Status:** discussion draft except M0-02 (single-file native entry), M0-03
-(error propagation), M0-04 (unit values), M0-05 (`Dict.get(key:)`), and M0-06
-(control flow and checked division/remainder), which
-have been implemented. Key enumeration remains deferred.
-The remaining recommendations are not approved language changes or implemented
-APIs. M0 is not complete until the other decisions and compatibility
-boundaries are accepted.
+**Status:** accepted first-scope contracts and implementation. Directory
+modules, program entry, propagation, unit values, safe dictionary lookup,
+control flow/checked arithmetic, portable filesystem operations, and
+synchronous processes are implemented. Key enumeration, recursive cleanup,
+replacement/atomic publication, and advanced process facilities remain
+explicitly deferred. This closes the first M0 language/host scope, not the
+implementation of `joypm` itself or native validation on every platform.
 
 ## Goal and scope
 
@@ -16,9 +16,9 @@ policy belong in Joyeer. The existing C++ compiler and C11 runtime remain.
 
 M0 defines observable behavior before implementation. Its deliverables are
 semantic contracts, API sketches, compatibility decisions, and acceptance
-cases for later milestones. The accepted entry, propagation, unit-value,
-safe dictionary lookup, and M0-06 control-flow/arithmetic slices are implemented; modules,
-filesystem operations, and subprocesses are not.
+cases for later milestones. Its accepted first-scope language and host slices
+are implemented. The project manager's CLI, manifest validation, build
+planning, dependency acquisition, and execution policy remain separate work.
 
 The current executable baseline is documented in
 [Implemented Language Surface](../impl/supported-features.md). Specification
@@ -26,23 +26,23 @@ examples may describe a broader design than that baseline.
 
 ## Decision register
 
-Recommendations are **proposed** unless explicitly marked implemented.
+The first-scope decisions below are accepted and implemented; deferred
+facilities are not implied by these entries.
 
 | ID | Area | Recommended direction | Implementation milestone |
 |---|---|---|---|
-| M0-01 | Modules | Directory-based modules, explicit dependencies, qualified imports, existing visibility levels | M1 |
-| M0-02 | Program entry | Implemented for single-file native executables: preserve `main()`; accept borrowed arguments and an integer exit status | M3 entry slice done |
+| M0-01 | Modules | Directory-based modules, explicit mappings, qualified imports, visibility, and root-only entry | M1 first scope done |
+| M0-02 | Program entry | Preserve `main()`; accept borrowed arguments and an integer exit status; Windows invalid-encoding coverage | M3 entry slice done |
 | M0-03 | Error propagation | Implemented: postfix `?` for `Result` / `Optional`, with exact error types and owned early-return cleanup | M2 propagation slice done |
-| M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice |
+| M0-04 | Fallible procedures | Implemented: `()` and `Result<Void, E>` through native execution | M2 unit-value slice done |
 | M0-05 | Dictionaries | Implemented: owned `get(key:)` returning `Optional<V>` without changing subscript behavior; key enumeration deferred | M2 lookup slice done |
 | M0-06 | Control flow | Implemented: Boolean negation, short-circuit OR, unlabeled loop exits, checked division and remainder | M2 control-flow/arithmetic slice done |
-| M0-07 | Paths and files | Separate byte strings from portable path encoding and define non-destructive operations | M3 |
-| M0-08 | Processes | Synchronous execution with separate arguments and explicit completion states | M3 |
+| M0-07 | Paths and files | Strict UTF-8 paths, byte-preserving contents, create-new and nonrecursive filesystem operations | M3 first scope done |
+| M0-08 | Processes | Synchronous explicit-path execution with separate arguments and typed completion/errors | M3 first scope done |
 
 ## M0-01: Modules and visibility
 
-Follow [the module design](../spec/12-modules.md), with a deliberately small
-first implementation:
+Accepted and implemented according to [the module contract](../spec/12-modules.md):
 
 - One module is one directory of directly contained `.joyeer` files.
   Subdirectories are not recursively merged into the same module.
@@ -69,7 +69,7 @@ first implementation:
 - Preserve per-file source spans and debug scopes. Module compilation is not
   source-text concatenation.
 
-Example of the proposed import style:
+Example of the accepted import style:
 
 ```joyeer
 import project.config
@@ -79,18 +79,20 @@ func main() {
 }
 ```
 
-This example is not accepted by the current compiler. `describe` would have
-to be public in the imported module.
+`describe` must be public in the imported module.
 
-Before accepting this contract, specify the compiler CLI representation of
-the module mapping, duplicate-file handling, collisions between imported
-module names and local declarations, and file-private shadowing rules.
-The initial backend may compile the entire module graph together; separate
-binary modules, caching, and a stable library ABI are not prerequisites.
+The CLI uses `--module-root <directory>` and repeatable
+`--module <logical.name>=<directory>`, instead of a positional source file.
+Duplicate physical source inputs and logical mappings are rejected rather
+than silently compiled twice. An imported root name cannot collide with a
+declaration in the importing file. File-private declarations can shadow names
+from other files locally; duplicate non-private module declarations are
+errors. The backend compiles the graph together; separate binary modules,
+caching, and a stable library ABI are deferred.
 
 ## M0-02: Program entry and exit status
 
-Accepted and implemented for single-file native executables; see
+Accepted and implemented for native executables; see
 [declarations](../spec/03-declarations.md#326-executable-entry-point) for the
 normative contract. Keep the original entry form:
 
@@ -111,8 +113,8 @@ func main(args: [String]): Int {
 
 Implemented contract:
 
-- A single-file executable has exactly one entry point; module-root entry
-  selection remains part of M0-01.
+- An executable has exactly one root entry point; dependency-module functions
+  do not become program entries.
 - Legacy `main()` succeeds with status zero after normal cleanup.
 - `args` contains user arguments only, excluding the executable name.
 - Empty arguments, spaces, and argument boundaries are preserved.
@@ -127,7 +129,7 @@ Implemented contract:
 - Do not add an unrestricted termination primitive as a substitute for entry
   return semantics.
 
-When M0-01 adds modules, preserve the single root-module entry rule without
+Module compilation preserves the single root-module entry rule without
 changing either signature. A subprocess status must still retain the full
 platform exit code; it is not restricted by the range for Joyeer's own entry
 points.
@@ -182,8 +184,8 @@ The compiler now accepts `()` in expression, type, and pattern positions.
 Unit values work in bindings, calls, returns, aggregates, and builtin
 containers, with initialization and consumption checks preserved.
 `.Ok()` and general tuples remain rejected. The native acceptance fixture is
-[`unit_values.joyeer`](../../tests/native/unit_values.joyeer). Filesystem
-operations remain separate work. The normative rules are in
+[`unit_values.joyeer`](../../tests/native/unit_values.joyeer). M0-07 filesystem
+procedures use these unit results. The normative rules are in
 [types](../spec/02-types.md#212-void-and-the-unit-value) and
 [error handling](../spec/08-error-handling.md#822-fallible-operations-without-success-data).
 
@@ -244,52 +246,39 @@ overflow trap fixtures at every optimization level.
 
 ## M0-07: Paths and filesystem operations
 
-Keep three concepts distinct: arbitrary file bytes, language strings, and
-operating-system paths. The current runtime preserves arbitrary string bytes;
-valid UTF-8 is not an enforced invariant.
+Accepted and implemented. The normative signatures, ownership, errors, and
+link behavior are in [portable filesystem operations](../spec/18-host.md#182-filesystem-operations).
 
-Recommended boundary:
+- `readFileUtf8`, `writeFileNew`, `createDirectory`, `listDirectory`,
+  `fileKind`, `removeFile`, `removeDirectory`, and `joinPath` form the first
+  interface. No user-defined generic library support is implied.
+- New host paths are nonempty strict UTF-8 without NUL, with wide Windows
+  APIs. Binary file contents retain arbitrary bytes. Relative paths use the
+  parent process directory.
+- Exclusive creation never replaces an existing destination. Directory
+  creation/removal is nonrecursive; enumeration has unspecified order.
+- File classification does not follow the final link. File removal removes
+  the entry itself, not its target; normal ancestor resolution is not a
+  sandbox guarantee. Lexical joining does not canonicalize or prove confinement.
+- `FileSystemError` is separate from `IOError`. Existing `readFile` and its
+  narrow Windows compatibility behavior are unchanged; conversions are explicit.
 
-- Guarantee UTF-8 paths for the new portable filesystem interface.
-- Reject embedded NUL bytes in paths and report invalid encoding explicitly;
-  never replace invalid data silently.
-- Use Windows wide-character APIs for the portable interface.
-- Preserve binary file contents, including embedded NUL bytes.
-- Define relative paths against an explicit base or the current process
-  directory, never against the executable's installation directory.
-- Separate lexical path operations from filesystem canonicalization.
-  Collapsing `..` must not be treated as proof of confinement in the presence
-  of symlinks.
-- Define missing paths, wrong entry types, permissions, and already-existing
-  destinations as recoverable failures.
-- Distinguish create-new from replacement. `init` requires create-new
-  semantics enforced by the operation, not just an earlier existence check.
-- Do not follow symlinks during recursive cleanup of tool-owned outputs.
-- Treat enumeration order as unspecified; sort where reproducibility matters.
-
-The existing `readFile(path:) -> Result<String, IOError>` is a compatibility
-surface. Decide how its Windows path behavior relates to the new portable
-interface rather than silently changing its encoding or result type.
-
-Also decide whether richer filesystem failures use a new error enum or extend
-`IOError`. Adding enum cases affects existing exhaustive matches. The
-recommended compatibility-preserving direction is a separate richer error
-type for new APIs, with explicit adapters where needed.
-
-Non-UTF-8 POSIX paths, atomic replacement guarantees, detailed symlink
-behavior, and the exact operation signatures remain decisions to close.
-M0 must either define them or explicitly defer unsupported behavior.
+Arbitrary-byte POSIX paths, replacement/atomic publication, canonicalization,
+streaming, and recursive cleanup are explicitly deferred. In particular, no
+unsafe check-then-recurse deletion API substitutes for anchored,
+non-link-following cleanup of tool-owned outputs.
 
 ## M0-08: Synchronous subprocesses
 
-Propose an operation with these conceptual inputs:
+Accepted and implemented as `runProcess(executable:arguments:workingDirectory:)`
+returning `Result<ProcessStatus, ProcessError>`, with these inputs:
 
 - An executable path.
 - An array of arguments excluding the executable name.
 - A working directory for the child.
 
-Use a result that separates launch/wait failures from process completion.
-The proposed completion type can be represented with existing enum concepts:
+The result separates launch/wait failures from process completion.
+The completion type uses existing enum concepts:
 
 ```joyeer
 enum ProcessStatus {
@@ -308,39 +297,42 @@ Required semantics:
 - Inherit standard input, output, error, and environment initially.
 - Pass arguments separately. Do not perform shell expansion, wildcard
   expansion, variable substitution, or command-string evaluation.
-- On Windows, define argument encoding for the supported executable argument
-  convention; do not claim that an arbitrary program's private command-line
-  parser can be made equivalent to an argument array.
-- Resolve executable lookup separately from process creation. An explicit
-  executable path must not silently fall back to another executable on PATH.
+- On Windows, encode strict UTF-8 input as UTF-16 using Microsoft C-runtime
+  argument quoting; arbitrary private command-line parsers are not covered.
+- Resolve explicit executable paths against the parent directory, before
+  setting the child directory. Do not perform PATH lookup, even for a bare
+  relative name.
 - Set the child's working directory without changing the parent's directory.
 - Preserve empty arguments, spaces, Unicode, and literal metacharacters.
 - Distinguish invalid input, executable-not-found, permission, launch, and
   wait failures through typed errors and original platform codes.
-- Define cleanup if an error occurs after a child was created; do not leave
+- Clean up if an error occurs after a child was created; do not leave
   an unreported orphan or zombie.
 
 Pipes, output capture, timeouts, asynchronous handles, and shell scripts as
 implicit executable substitutes are outside the first interface.
-Cancellation behavior and the mapping from a child status to `joypm run`'s
-own CLI status must be settled explicitly.
+There is no cancellation API; native signal/control behavior applies. The
+planned `joypm run` policy uses zero for successful completion, one for
+unsuccessful completion or launch/wait failure, and two for invalid CLI usage,
+reporting original status/error values without truncation. See the complete
+[process contract](../spec/18-host.md#183-synchronous-processes).
 
-## Acceptance matrix to prepare in M0
+## Acceptance matrix
 
-These are acceptance cases for the planned work, except the implemented entry,
-propagation, unit-value, dictionary lookup, and M0-06 slices, which have native and
-compiler tests.
+The first-scope implementation has compiler, runtime, and native acceptance
+coverage. Platform-conditional tests require execution on their native host;
+passing Windows ARM64 tests alone is not proof of POSIX behavior.
 
 | Area | Positive cases | Negative or boundary cases |
 |---|---|---|
 | Modules | Same-module forward calls; public imported calls; correct per-file diagnostics | Duplicate declarations; invisible names; unresolved imports; dependency cycles; multiple root entries |
-| Entry (implemented for single-file programs) | Legacy entry; zero arguments; empty and spaced arguments; normal nonzero return | Unsupported signature; invalid exit range; cleanup before reporting status. Windows encoding failure still needs a Windows-only test |
+| Entry | Legacy entry; zero arguments; empty and spaced arguments; normal nonzero return | Unsupported signature; invalid exit range; cleanup before reporting status; Windows-only invalid UTF-16 encoding tests |
 | Propagation (implemented) | Successful unwrap; error propagation; nested calls | Wrong error type; wrong enclosing return family; single evaluation; early-return temporary cleanup |
 | Unit results | Construct and match `Result<Void, E>`; propagate success and failure | Invalid zero-sized payload lowering; confusion between `.Ok()` and `.Ok(())` |
 | Dictionary lookup (implemented) | Present key; absent key; owned result survives mutation | Existing subscript still traps; nested optional preserves absence distinctions |
 | Control flow (implemented) | Short-circuit OR; nested loop exits; repeated `continue` | Skipped side effects; use outside loops; skipped cleanup; invalid loop re-entry state |
 | Arithmetic (implemented) | Positive and negative division/remainder | Zero divisor; minimum-`Int` edge; consistent optimized and unoptimized behavior |
-| Filesystem | Binary contents; Unicode and space-containing paths; create-new | Existing destination; missing parent; permission failure; invalid encoding/NUL; symlink escape |
+| Filesystem | Binary contents; Unicode and space-containing paths; create-new | Existing destination; missing parent; permission failure; invalid encoding/NUL; leaf-link target preservation; no confinement claim |
 | Processes | Successful exit; nonzero exit; Unicode, empty, and metacharacter arguments | Missing executable; bad working directory; launch/wait failure; signal termination; unchanged parent directory |
 
 ## Documentation work and M0 exit criteria

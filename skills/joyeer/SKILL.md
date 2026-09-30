@@ -7,7 +7,7 @@ description: Write, compile, run, and debug Joyeer programs. Use when a task inv
 
 Use the Joyeer compiler as the feedback loop. Do not infer language support
 from resemblance to Swift, Rust, Go, or C++. This skill describes the current
-single-file native implementation, not every feature in the draft specification.
+native implementation, not every feature in the draft specification.
 
 ## Before writing code
 
@@ -36,8 +36,10 @@ single-file native implementation, not every feature in the draft specification.
 - Use exhaustive `match` for enums and when handling errors at a CLI boundary.
   Inside compatible `Result`/`Optional` functions, postfix `?` propagates
   failure with cleanup; never replace failure with an apparent success.
-- Keep compilation to one source file. Do not invent imports, external
-  packages, standard-library methods, or project-manager commands.
+- Use single-file compilation or directory modules with explicit dependency
+  mappings as described in the CLI reference. Imports are file-local and
+  qualified; do not invent package fetching, aliases, standard-library
+  methods, or project-manager commands.
 - Consult the [tested examples](examples/README.md) for concrete spellings.
   Adapt them to the task; do not treat them as a complete standard library.
 

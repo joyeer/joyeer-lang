@@ -53,9 +53,9 @@ performs binding and exhaustiveness checks (§7).
 > `struct` for aggregates. The other reserved words are also rejected in
 > v0.1 (§15).
 
-> `as` is a contextual keyword: in v0.1 it is used **only** for `import`
-> aliasing (§3.8). Its type-cast meaning (`x as T`) and the `is` type-test
-> operator are deferred to v0.2 (§15).
+> `as` is reserved for future import aliases and type casts (`x as T`).
+> Neither use is accepted by the implemented directory-module grammar (§12).
+> The `is` type-test operator is also deferred (§15).
 
 ### 1.5 Literals
 

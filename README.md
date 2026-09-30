@@ -46,9 +46,10 @@ performance benchmark; see its
 Implemented features include integers, booleans, bytes, strings, `let`/`var`,
 checked arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
-`Optional`, `Result`, postfix `?` propagation, file input, deterministic
-ownership cleanup, projection consumption, exclusivity checking, and
-structured diagnostics.
+`Optional`, `Result`, postfix `?` propagation, directory modules with explicit
+qualified imports and visibility, portable filesystem operations, synchronous
+subprocesses, deterministic ownership cleanup, projection consumption,
+exclusivity checking, and structured diagnostics.
 
 Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,
@@ -238,6 +239,22 @@ Validate and lower a source file:
 ```pwsh
 .\out\build\x64-debug\bin\joyeer.exe .\tests\native\hello.joyeer
 ```
+
+Alternatively, compile a directory-based root module with explicit dependency
+mappings:
+
+```pwsh
+.\out\build\x64-debug\bin\joyeer.exe --module-root .\tests\modules\root --module project.config=.\tests\modules\config
+.\out\build\x64-debug\bin\joyeer.exe --module-root .\tests\modules\root --module project.config=.\tests\modules\config -o .\out\modules.exe
+.\out\modules.exe
+```
+
+The module fixture prints `42`. Repeat `--module logical.name=directory` for
+additional dependencies. `--module-root` replaces the positional source file;
+the two input forms cannot be combined. Modules contain only directly contained
+`.joyeer` files, discovered in sorted order. Only dependencies reached through
+imports are compiled; the compiler does not search for or download packages.
+See [Modules](docs/spec/12-modules.md) for file-local imports and visibility.
 
 Emit textual LLVM IR:
 

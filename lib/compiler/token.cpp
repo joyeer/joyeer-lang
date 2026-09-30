@@ -84,6 +84,9 @@ std::unordered_set<std::string> initKeywordMap() {
     map.insert(Keywords::CONSUMING);
     map.insert(Keywords::INITIALIZING);
     map.insert(Keywords::CONSUME);
+    map.insert("public");
+    map.insert("internal");
+    map.insert("private");
 
     return map;
 }
@@ -119,6 +122,9 @@ TokenKind keywordKind(std::string_view value) {
     {"consuming", kwConsuming},
     {"initializing", kwInitializing},
     {"consume", kwConsume},
+    {"public", kwPublic},
+    {"internal", kwInternal},
+    {"private", kwPrivate},
   };
 
   const auto found = kinds.find(value);
@@ -129,7 +135,7 @@ bool isDeferredKeyword(std::string_view value) {
   static const std::unordered_set<std::string_view> words = {
     "extension", "subscript", "deinit", "typealias", "as", "indirect",
     "mutating",
-    "public", "internal", "private", "yield", "where",
+    "yield", "where",
     "async", "await", "actor", "throws", "catch", "defer",
     "is", "protocol", "trait", "macro", "invariant",
     "result", "unsafe", "package", "Any"
@@ -138,7 +144,7 @@ bool isDeferredKeyword(std::string_view value) {
 }
 
 bool isKeywordKind(TokenKind kind) {
-  return kind >= kwFunc && kind <= kwConsume;
+  return kind >= kwFunc && kind <= kwPrivate;
 }
 
 bool isPunctuationKind(TokenKind kind) {

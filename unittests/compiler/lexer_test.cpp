@@ -119,11 +119,22 @@ TEST_F(LexerTest, ClassifiesLoopControlAsSupportedKeywords) {
 }
 
 TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
-    lex("for where public performs pure");
+    lex("for where yield performs pure");
 
     expectKinds({deferredKeyword, deferredKeyword, deferredKeyword,
                  identifier, identifier, endOfFile});
     ASSERT_EQ(diagnostics.errors.size(), 3u);
+}
+
+TEST_F(LexerTest, ClassifiesModuleKeywords) {
+    lex("import public internal private");
+    expectKinds({kwImport, kwPublic, kwInternal, kwPrivate, endOfFile});
+    EXPECT_TRUE(diagnostics.errors.empty());
+    for (size_t index = 0; index < 4; ++index) {
+        EXPECT_TRUE(isKeyword(source->tokens[index]->rawValue));
+        EXPECT_TRUE(isKeywordKind(source->tokens[index]->kind));
+        EXPECT_FALSE(isDeferredKeyword(source->tokens[index]->rawValue));
+    }
 }
 
 TEST_F(LexerTest, UsesLongestMatchForMvpOperators) {

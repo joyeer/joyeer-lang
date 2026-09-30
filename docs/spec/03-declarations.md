@@ -147,7 +147,9 @@ connect(host: "localhost", timeout: 5)        // port = 8080
 
 #### 3.2.6 Executable entry point
 
-A native executable has one `main` function. The supported signatures are
+A native executable has exactly one root-module `main` function (the input
+file is the root in single-file mode). Dependency functions named `main` are
+ordinary functions, not executable entries. The supported entry signatures are
 `func main()` (returning `Void`, whether written explicitly or omitted) and
 `func main(args: [String]): Int`. The latter's external parameter label is
 `args`, and its access effect is `borrowing` (the default); the internal

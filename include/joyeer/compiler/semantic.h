@@ -23,6 +23,7 @@ inline constexpr ScopeId invalidScopeId = std::numeric_limits<ScopeId>::max();
 
 enum class ScopeKind {
     prelude,
+    module,
     file,
     function,
     block,
@@ -94,6 +95,9 @@ struct Symbol {
     std::optional<CallableSignature> callable;
     bool isMutable = false;
     bool isInvalid = false;
+    syntax::Visibility visibility = syntax::Visibility::public_;
+    uint32_t moduleId = 0;
+    bool isRootModule = true;
 };
 
 struct Scope {
@@ -138,6 +142,8 @@ public:
     [[nodiscard]] const std::vector<Symbol>& symbols() const;
     [[nodiscard]] const std::vector<Scope>& scopes() const;
     [[nodiscard]] const std::vector<DeferredReference>& deferredReferences() const;
+    [[nodiscard]] bool isAccessible(SymbolId symbol, SourceSpan use) const;
+    [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
 
 private:
     friend class NameResolutionBuilder;
@@ -162,6 +168,8 @@ private:
     std::unordered_map<NodeId, SymbolId> qualifierSymbols_;
     std::unordered_map<NodeId, SymbolId> callTargets_;
     std::unordered_map<NodeId, size_t> deferredReferenceIndices_;
+    std::unordered_map<uint32_t, uint32_t> sourceModules_;
+    std::unordered_map<NodeId, bool> moduleQualified_;
 };
 
 [[nodiscard]] const char* scopeKindName(ScopeKind kind);

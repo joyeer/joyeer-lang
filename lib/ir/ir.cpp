@@ -201,8 +201,7 @@ VerificationResult Verifier::verify(const Module& module) const {
         });
     };
 
-    if (module.sourceInfo.has_value()) {
-        const auto& source = *module.sourceInfo;
+    auto verifySourceInfo = [&report](const SourceInfo& source) {
         if (source.byteLength > std::numeric_limits<uint32_t>::max()) {
             report(
                     VerificationErrorId::invalidSourceLocation,
@@ -247,6 +246,11 @@ VerificationResult Verifier::verify(const Module& module) const {
                 break;
             }
         }
+    };
+    if (!module.sourceFiles.empty()) {
+        for (const auto& source : module.sourceFiles) verifySourceInfo(source);
+    } else if (module.sourceInfo.has_value()) {
+        verifySourceInfo(*module.sourceInfo);
     } else {
         const auto hasDebugLocations = !module.debugScopes.empty() ||
                 !module.debugVariables.empty() || std::any_of(
@@ -286,13 +290,23 @@ VerificationResult Verifier::verify(const Module& module) const {
             std::optional<BlockId> block,
             std::optional<size_t> instruction,
             const std::string& owner) {
-        if (!module.sourceInfo.has_value()) {
+        if (module.sourceFile(0) == nullptr) {
             return;
         }
-        const auto& source = *module.sourceInfo;
+        const auto* source = module.sourceFile(location.span.sourceId);
+        if (source == nullptr) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    function,
+                    block,
+                    instruction,
+                    owner + " debug span references unknown source file " +
+                            std::to_string(location.span.sourceId));
+            return;
+        }
         const auto end = static_cast<uint64_t>(location.span.offset) +
                 static_cast<uint64_t>(location.span.length);
-        if (location.span.offset > source.byteLength || end > source.byteLength) {
+        if (location.span.offset > source->byteLength || end > source->byteLength) {
             report(
                     VerificationErrorId::invalidSourceLocation,
                     function,
@@ -304,6 +318,14 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     std::unordered_map<TypeId, const TypeName*> types;
     for (const auto& type : module.types) {
+        if (type.declarationSpan.has_value()) {
+            verifyDebugLocation(
+                    DebugLocation { *type.declarationSpan },
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "type '" + type.name + "'");
+        }
         if (!types.emplace(type.id, &type).second) {
             report(
                     VerificationErrorId::duplicateId,
@@ -2005,6 +2027,11 @@ std::string dump(const Module& module) {
 
     std::ostringstream out;
     out << "module \"" << escape(module.sourceName) << "\" {\n";
+    for (size_t index = 0; index < module.sourceFiles.size(); ++index) {
+        const auto& source = module.sourceFiles[index];
+        out << "  source #" << index << " \"" << escape(source.fileName)
+            << "\" directory=\"" << escape(source.directory) << "\"\n";
+    }
     for (const auto* type : sortedTypes) {
         out << "  type !" << type->id << " = \"" << escape(type->name) << "\"\n";
     }
@@ -2051,7 +2078,9 @@ std::string dump(const Module& module) {
         if (scope->semanticScope.has_value()) {
             out << " semantic-scope#" << *scope->semanticScope;
         }
-        out << " @" << scope->span.offset << ':' << scope->span.length << '\n';
+        out << " @" << scope->span.offset << ':' << scope->span.length;
+        if (scope->span.sourceId != 0) out << " source#" << scope->span.sourceId;
+        out << '\n';
     }
     for (const auto* variable : sortedDebugVariables) {
         out << "  debug_var #" << variable->id << ' ';
@@ -2068,7 +2097,9 @@ std::string dump(const Module& module) {
         }
         if (variable->isMutable) out << " var";
         if (variable->symbol.has_value()) out << " symbol#" << *variable->symbol;
-        out << " @" << variable->span.offset << ':' << variable->span.length << '\n';
+        out << " @" << variable->span.offset << ':' << variable->span.length;
+        if (variable->span.sourceId != 0) out << " source#" << variable->span.sourceId;
+        out << '\n';
     }
     if ((!sortedStructures.empty() || !sortedEnumerations.empty()) &&
         (!sortedDebugScopes.empty() || !sortedDebugVariables.empty() ||
@@ -2100,6 +2131,7 @@ std::string dump(const Module& module) {
             continue;
         }
         if (function.debugScope.has_value()) out << " debug_scope#" << *function.debugScope;
+        if (!function.isRootModule) out << " dependency";
         out << " {\n";
         for (const auto& binding : function.entryDebugVariableBindings) {
             out << "    debug_bind #" << binding.variable << " -> "
@@ -2233,7 +2265,11 @@ std::string dump(const Module& module) {
                     instruction.debugLocation->scope.has_value()) {
                     out << " scope#" << *instruction.debugLocation->scope;
                 }
-                out << " @" << instruction.span.offset << ':' << instruction.span.length << '\n';
+                out << " @" << instruction.span.offset << ':' << instruction.span.length;
+                if (instruction.span.sourceId != 0) {
+                    out << " source#" << instruction.span.sourceId;
+                }
+                out << '\n';
                 for (const auto& binding : instruction.debugVariableBindings) {
                     out << "        debug_bind #" << binding.variable << " -> "
                         << valueName(binding.address) << '\n';

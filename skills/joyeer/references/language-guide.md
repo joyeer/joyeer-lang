@@ -110,3 +110,53 @@ unverified error cases or a universal `.message` property.
 
 See [read-file.joyeer](../examples/read-file.joyeer). It counts LF bytes, not
 Unicode characters or an assumed universal definition of text lines.
+
+## Portable filesystem and processes
+
+These built-ins borrow their arguments; successful strings and arrays are
+independently owned:
+
+```joyeer
+func readFileUtf8(path: String): Result<String, FileSystemError>
+func writeFileNew(path: String, contents: String): Result<Void, FileSystemError>
+func createDirectory(path: String): Result<Void, FileSystemError>
+func listDirectory(path: String): Result<[String], FileSystemError>
+func fileKind(path: String): Result<FileKind, FileSystemError>
+func removeFile(path: String): Result<Void, FileSystemError>
+func removeDirectory(path: String): Result<Void, FileSystemError>
+func joinPath(base: String, path: String): Result<String, FileSystemError>
+func runProcess(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError>
+```
+
+These lines document signatures; do not redeclare the built-ins in a program.
+Paths must be nonempty valid UTF-8 without NUL and use host path syntax.
+Windows uses wide-character APIs. `readFileUtf8` preserves arbitrary content
+bytes: its name describes path encoding, not text decoding.
+
+`writeFileNew` fails rather than overwriting an existing destination.
+`createDirectory` creates one directory, not missing parents.
+`listDirectory` returns unsorted entry names without `.` or `..`;
+`fileKind` returns `.File`, `.Directory`, `.Symlink`, or `.Other` without
+following the final link. `removeFile` removes a file or the link itself;
+`removeDirectory` removes only an empty real directory. `joinPath` is lexical,
+not canonicalization or proof that a path stays inside a directory. There is
+no recursive deletion or replacement API.
+
+`FileSystemError` cases are `.InvalidPath(code)`, `.NotFound(code)`,
+`.PermissionDenied(code)`, `.AlreadyExists(code)`, `.NotDirectory(code)`,
+`.IsDirectory(code)`, and `.Other(code)`. Existing `IOError` is unchanged and
+requires explicit error wrapping rather than implicit propagation conversion.
+
+`runProcess` takes an explicit executable path and arguments excluding its
+name. It waits, inherits environment and standard streams, changes only the
+child's working directory, and performs neither PATH lookup nor shell
+evaluation. Empty individual arguments are valid; executable and directory
+paths cannot be empty. Relative executable paths resolve against the parent.
+Windows quoting supports Microsoft C-runtime argument parsing.
+
+Success contains `.Exited(code)` or `.Signaled(signal)`; a nonzero exit is
+still a successful launch/completion result. Preserve the full child status
+and map it explicitly into the CLI entry's `0..255` range.
+`ProcessError` cases are `.InvalidInput(code)`, `.NotFound(code)`,
+`.PermissionDenied(code)`, `.LaunchFailed(code)`, and `.WaitFailed(code)`.
+There are no implicit shell scripts, capture, timeout, or async APIs.
