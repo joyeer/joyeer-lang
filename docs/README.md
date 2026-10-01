@@ -60,7 +60,7 @@ work.
 | Document | Topic |
 |---|---|
 | [roadmap.md](plan/roadmap.md) | Active implementation priorities |
-| [package-manager.md](plan/package-manager.md) | Architecture, execution policy, and milestone planning for the Joyeer package manager |
+| [package-manager.md](plan/package-manager.md) | Cargo-like project workflow, proposed manifest, implementation PRs, and acceptance gates for `joypm` |
 
 ## Conventions
 

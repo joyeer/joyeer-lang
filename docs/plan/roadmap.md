@@ -106,6 +106,19 @@ when defining workloads and acceptance thresholds.
   behavior.
 - Do not promise automatic proof of arbitrary program properties.
 
+### 10. Deliver the first local project-manager workflow
+
+- Follow the dependency-ordered
+  [project manager implementation plan](package-manager.md#7-dependency-ordered-milestones)
+  from the implemented named-module and portable-host foundation.
+- Start with a Joyeer-written `joypm`, strict manifest validation, explicit
+  source-module planning, and `init/check/build/run/test` for one local package.
+- Establish stderr diagnostics and explicit compiler discovery policy; close
+  the Windows compiler-CLI encoding gap before claiming Unicode project paths.
+- Add local path dependencies and workspaces after the single-package workflow.
+  Keep remote resolution, caching, and anchored cleanup behind their own
+  contracts and acceptance gates.
+
 ## Planning policy
 
 - Keep completed behavior in [implementation documentation](../impl/) and
