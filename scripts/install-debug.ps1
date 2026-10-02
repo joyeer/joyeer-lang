@@ -104,8 +104,15 @@ if ($installPath -eq $sourceDir -or $installPath -eq $buildPath -or
     throw 'Choose an install directory outside the build tree and not the source root.'
 }
 
+$runtimeArtifacts = @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib')
 $symbols = @('joyeer.pdb', 'joyeer-backend.pdb')
-foreach ($name in @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib') + $symbols) {
+$installJoypm = $cache.ContainsKey('JOYEER_BUILD_JOYPM') -and
+    $cache['JOYEER_BUILD_JOYPM'] -match '^(1|ON|YES|TRUE|Y)$'
+if ($installJoypm) {
+    $runtimeArtifacts += 'joypm.exe'
+    $symbols += 'joypm.pdb'
+}
+foreach ($name in $runtimeArtifacts + $symbols) {
     $artifact = Join-Path $binaryDir $name
     if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or
         (Get-Item -LiteralPath $artifact).Length -eq 0) {
@@ -159,7 +166,13 @@ $cmake = (Get-Command cmake -CommandType Application -ErrorAction Stop).Source
 if ($LASTEXITCODE -ne 0) {
     throw "CMake installation failed with exit code $LASTEXITCODE."
 }
-foreach ($name in @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib', 'licenses\LICENSE')) {
+if ($installJoypm) {
+    & $cmake --install $buildPath --config Debug --component PRODUCT --prefix $installPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "CMake joypm installation failed with exit code $LASTEXITCODE."
+    }
+}
+foreach ($name in $runtimeArtifacts + @('licenses\LICENSE')) {
     $artifact = Join-Path $installPath $name
     if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or
         (Get-Item -LiteralPath $artifact).Length -eq 0) {

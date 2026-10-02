@@ -13,7 +13,8 @@ freestanding, kernel, embedded, and no-libc profiles are not supported.
 
 It supplies checked `Int` add/subtract/multiply/divide/remainder, scalar/string printing,
 string storage and operations, arrays and dictionaries, binary file input,
-portable filesystem operations, synchronous processes, panic and bounds
+portable filesystem operations, synchronous processes, fallible byte-exact
+standard-error writing, panic and bounds
 traps, and the process entry and allocation-balance check.
 Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
 the checked arithmetic and generic array-indexing C entry points remain
@@ -189,6 +190,59 @@ the ordinary tracked runtime allocation and recursive destruction paths.
 Host conversion buffers and OS resources have shorter native lifetimes and
 are released by the host operation.
 
+### Bounded prefix input
+
+`readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>`
+uses the stable exported C ABI
+`int32_t joyeer_fs_read_file_prefix_abi(JoyeerString* result, int64_t* errorCode, const uint8_t* pathData, int64_t pathCount, int64_t maximumBytes)`.
+The string output is a pointer to runtime data/count storage, followed by the
+error-code pointer, borrowed path data/count, and the scalar signed-64-bit
+limit. No string or `Result` aggregate is passed by value. On success the
+runtime returns zero, clears the error code, and transfers one owned string;
+on failure the output stays empty and the original platform code is retained.
+
+The host descriptor declares concrete `String`/`Int` parameters and a
+`Result<String, FileSystemError>` result. `ValueKind::integer` maps to `Int`
+in name resolution and type checking. LLVM's flat host-call lowering matches
+an integer and emits one `i64` operand, rather than a string/array data-count
+pair. Those scalar branches are integrated and compiled in the Windows x64
+Debug build. Ordinary Joyeer IR host-call collection consumes the descriptor;
+this needs no new IR opcode, source-language FFI, or user-defined generic
+support. The added compiler/runtime regressions have not executed under CTest.
+
+The shared native reader keeps `readFileUtf8`'s unbounded growth and final-copy
+behavior unchanged. Prefix reads use the same strict UTF-8 path conversion,
+wide Windows `CreateFileW`/`ReadFile`, and narrow POSIX `open`/`read` behavior,
+including interrupted-read retry and resource cleanup. They read at most the
+requested bytes without querying a file size, reading the tail, or probing
+another byte after the cap. Contents are not decoded or UTF-8 validated; a
+prefix can cut a multibyte sequence. A zero limit still opens and closes the
+path before returning an owned empty string. The prefix reader does not itself
+require a regular file; joypm's loader classifies the manifest first and
+rejects final symlinks and other nonregular entries. Negative limits return the
+existing `Other` tag with `ERROR_INVALID_PARAMETER` or `EINVAL` before path
+conversion, deliberately bypassing the invalid-path error mapper.
+
+Prefix storage starts as a one-byte tracked empty-string allocation, grows
+geometrically from at most 4096 bytes, and clamps every growth to
+`maximumBytes`. Reallocation preserves that single tracked libc block, which
+is transferred directly to the output without a second content copy. Content
+capacity cannot exceed the limit (one byte for an empty result); path
+conversion storage and native/allocator bookkeeping are separate. Early EOF
+can retain spare capacity within the cap. Read or close failure destroys this
+storage without publishing partial success. Ordinary
+`joyeer_string_destroy_abi` balances successful output ownership.
+
+For a 65,536-byte manifest limit, the caller requests 65,537 bytes and rejects
+a returned count above 65,536. A result exactly as long as the requested cap
+does not distinguish an exact-size file from a larger file. The caller should
+classify tool inputs using `fileKind` before reading to reject directories,
+links, and other nonregular entries; that check is not race-free confinement.
+This interface remains synchronous and bounded, not streaming. The legacy
+`readFile`/`IOError` boundary and all existing error enum cases are unchanged.
+
+### Other portable operations
+
 Exclusive creation enforces `writeFileNew`'s nonreplacement contract at the
 OS operation. A failed write can leave its own partially created file; it
 must not remove or replace an unrelated preexisting destination.
@@ -203,13 +257,49 @@ Windows status values are widened without signed-32-bit truncation; POSIX
 signal completion remains distinct. Native standard streams and environment
 are inherited, and the parent's working directory is unchanged.
 
+## Standard-error boundary
+
+The exact source signature is
+`writeStderr(contents: String): Result<Void, StderrError>`, with the single
+`StderrError.WriteFailed(Int)` case. It is a compiler-known borrowing operation
+described by the same host builtin table as filesystem/process operations.
+Name resolution, concrete result typing, Joyeer IR lowering, and LLVM emission
+consume that descriptor; there is no dedicated stderr IR instruction or second
+error conversion path. The existing unit-result machinery constructs `Ok(())`
+without loading or storing LLVM `void`.
+
+The stable C ABI is
+`int32_t joyeer_write_stderr_abi(int64_t* errorCode, const uint8_t* data, int64_t count)`.
+It returns `0` with `*errorCode = 0` on success, or `1` with the native CRT
+`errno` for `WriteFailed` (falling back to `EIO` when none was supplied). LLVM
+maps that stable error kind to the source enum by case name. The runtime never
+receives a `Result` aggregate or owns the borrowed contents, and makes no
+runtime-tracked allocation.
+
+The implementation uses a byte-counted `fwrite`, appends nothing, and checks
+both short writes and `fflush(stderr)`. Empty contents still flush the stream.
+The first observed failure is retained even if a subsequent flush also fails.
+On Windows, pending CRT output is flushed before switching temporarily to
+`_O_BINARY`; the previous mode is restored after the write/flush, including
+the failure path. Mode failures are fallible CRT errors too. NUL, invalid UTF-8,
+and newline bytes are not transformed. This does not modify global console
+code pages or establish how a terminal displays arbitrary bytes.
+
+Null error-code storage, a negative count, a count unrepresentable as `size_t`,
+or null data with a nonzero count is ABI misuse and panics, matching the other
+host write/owned-value boundaries. Null data with count zero is valid.
+Failures may leave partial output; no rollback or message-level atomicity is
+guaranteed. Native signals (including default POSIX `SIGPIPE`) and concurrent
+foreign CRT mode/stream reconfiguration remain host concerns.
+
 ## Limits and validation
 
 The native pipeline supports compiler-known heap-backed values and recursive
 aggregates; user-defined `deinit`, noncopyable user types, and explicit copy
 initializers are not implemented. `print` supports primitives and strings,
-not arbitrary aggregates. File input is synchronous and whole-file only;
-streaming is not available. Portable writing is create-new only; classification
+not arbitrary aggregates. File input is synchronous, with whole-file reads and
+the bounded `readFilePrefix` interface; streaming is not available. Portable
+writing is create-new only; classification
 does not expose general metadata. Replacement, recursive cleanup, process
 capture, timeouts, and asynchronous handles remain outside this interface.
 See the
@@ -228,12 +318,27 @@ POSIX raw bytes, normal and out-of-range statuses, and missing, duplicate,
 or invalid signatures. Windows-only entry tests reject unpaired high and low
 UTF-16 surrogates and verify supplementary Unicode conversion and cleanup.
 File-input tests cover binary data and missing files.
+Stderr unit coverage in the existing runtime test target checks empty writes,
+binary bytes including NUL/invalid UTF-8/newlines, no appended newline, Windows
+CRT mode restoration, write and buffered/empty flush failures with the native
+CRT error code, and misuse traps. Failure injection is isolated in death-test
+subprocesses rather than modifying the test runner's standard-error descriptor.
 Portable host tests cover Unicode, malformed encoding, create-new
 preservation, classification/enumeration, empty-directory removal, link-target
 preservation, argument quoting, completion statuses, inherited streams and
 environment, explicit executable resolution, and unchanged parent directories.
+Prefix unit coverage includes zero/partial/exact/greater-than-EOF limits,
+arbitrary binary bytes and cuts inside UTF-8, clamped growth and the 65,537-byte
+manifest sentinel, negative-limit platform errors, opening/validation at zero,
+and allocation balances on success and failure. Compiler coverage checks the
+descriptor, exact `String`/`Int` signature, unchanged exhaustive filesystem
+errors, same-error propagation, rejection of incorrect types/error conversions,
+verified IR scalar operands, and the flat prefix ABI with full debug emission.
 Source-level host fixtures exercise concrete result types, early propagation,
 owned outputs, unit successes, optimization, and full debug emission.
+Host compiler unit tests additionally exercise `StderrError` construction and
+matching, same-error propagation, rejection of implicit error conversions,
+the flat stderr ABI declaration/call, and full-debug unit-result emission.
 Existing ownership-heavy native tests run at the default `-O2` and retain
 the zero-allocation-balance check. Many native executable tests are registered
 only when `JOYEER_CLANG_EXECUTABLE` was found during CMake configuration; see

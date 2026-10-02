@@ -420,6 +420,8 @@ private:
                     return model->typeContext.stringType();
                 case hostbuiltins::ValueKind::strings:
                     return model->typeContext.arrayType(model->typeContext.stringType());
+                case hostbuiltins::ValueKind::integer:
+                    return model->typeContext.intType();
                 case hostbuiltins::ValueKind::unit:
                     return model->typeContext.voidType();
                 case hostbuiltins::ValueKind::fileKind:

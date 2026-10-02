@@ -1,0 +1,4 @@
+func main(args: [String]): Int {
+    print(value: "after failure fixture")
+    return 0
+}

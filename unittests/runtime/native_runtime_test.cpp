@@ -3,12 +3,23 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <string>
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -41,6 +52,220 @@ void cloneString(void* destination, const void* source) {
 void destroyString(void* value) {
     ++destroyCount;
     joyeer_string_destroy_abi(static_cast<JoyeerString*>(value));
+}
+
+// Used only inside death-test subprocesses, so buffering and descriptor
+// changes cannot corrupt the test runner's stderr (or its Windows CRT mode).
+bool prepareFailingStderr(char* buffer, size_t count, bool buffered = true) {
+#if defined(_WIN32)
+#if defined(_MSC_VER)
+    FILE* reopened = nullptr;
+    if (freopen_s(&reopened, "NUL", "wb", stderr) != 0) return false;
+#else
+    if (std::freopen("NUL", "wb", stderr) == nullptr) return false;
+#endif
+    const int input = _open("NUL", _O_RDONLY | _O_BINARY);
+#else
+    if (std::freopen("/dev/null", "wb", stderr) == nullptr) return false;
+    const int input = open("/dev/null", O_RDONLY);
+#endif
+    if (input < 0) return false;
+        const bool configured = std::setvbuf(
+            stderr, buffered ? buffer : nullptr, buffered ? _IOFBF : _IONBF, count) == 0;
+#if defined(_WIN32)
+    const bool redirected = _dup2(input, _fileno(stderr)) == 0;
+    _close(input);
+#else
+    const bool redirected = dup2(input, fileno(stderr)) >= 0;
+    close(input);
+#endif
+    return configured && redirected;
+}
+
+int failingStderrErrno() {
+    errno = 0;
+    int code = std::fputc('x', stderr) == EOF ? (errno == 0 ? EIO : errno) : 0;
+    errno = 0;
+    if (std::fflush(stderr) != 0 && code == 0) code = errno == 0 ? EIO : errno;
+    std::clearerr(stderr);
+    return code;
+}
+
+#if defined(_WIN32)
+thread_local int stderrInvalidParameterCalls = 0;
+
+void __cdecl recordStderrInvalidParameter(
+        const wchar_t*,
+        const wchar_t*,
+        const wchar_t*,
+        unsigned int,
+        uintptr_t) {
+    ++stderrInvalidParameterCalls;
+}
+#endif
+
+TEST(NativeRuntimeTest, WritesExactBinaryStderrWithoutAppendingNewline) {
+    const std::array<uint8_t, 9> bytes { 'J', 0, '\n', '\r', 0xff, 0xc0, 0xaf, 'y', 'r' };
+    const auto allocations = joyeer_runtime_active_allocations();
+    testing::internal::CaptureStderr();
+    int64_t errorCode = -1;
+    const auto status = joyeer_write_stderr_abi(&errorCode, bytes.data(), bytes.size());
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_EQ(captured, std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+}
+
+TEST(NativeRuntimeTest, AcceptsNullEmptyStderrAndResetsErrorStorage) {
+    testing::internal::CaptureStderr();
+    int64_t errorCode = 123;
+    const auto status = joyeer_write_stderr_abi(&errorCode, nullptr, 0);
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_TRUE(captured.empty());
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+#if defined(_WIN32)
+TEST(NativeRuntimeTest, RestoresWindowsStderrTextModeAfterExactWrite) {
+    testing::internal::CaptureStderr();
+    const int previous = _setmode(_fileno(stderr), _O_TEXT);
+    int64_t errorCode = -1;
+    const uint8_t newline = '\n';
+    const auto status = joyeer_write_stderr_abi(&errorCode, &newline, 1);
+    const int restored = _setmode(_fileno(stderr), previous);
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_NE(previous, -1);
+    EXPECT_EQ(restored, _O_TEXT);
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_EQ(captured, "\n"); // Not Windows text mode's CRLF.
+}
+
+TEST(NativeRuntimeTest, RestoresWindowsInvalidParameterHandlerAfterStderrWrite) {
+    testing::internal::CaptureStderr();
+    const auto previousHandler =
+            _set_thread_local_invalid_parameter_handler(recordStderrInvalidParameter);
+    stderrInvalidParameterCalls = 0;
+    const auto allocations = joyeer_runtime_active_allocations();
+    int64_t errorCode = -1;
+    const uint8_t byte = 'x';
+    const auto status = joyeer_write_stderr_abi(&errorCode, &byte, 1);
+    const auto restoredHandler =
+            _set_thread_local_invalid_parameter_handler(previousHandler);
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(restoredHandler, recordStderrInvalidParameter);
+    EXPECT_EQ(stderrInvalidParameterCalls, 0);
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_EQ(captured, "x");
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+}
+#endif
+
+TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrWriteFailure) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer), false)) std::_Exit(120);
+        const int expected = failingStderrErrno();
+        int64_t code = 0;
+        const uint8_t byte = 'x';
+        const auto status = joyeer_write_stderr_abi(&code, &byte, 1);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == expected ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+
+TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrFlushFailure) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer))) std::_Exit(120);
+        const int expected = failingStderrErrno();
+        int64_t code = 0;
+        const uint8_t byte = 'x';
+        const auto status = joyeer_write_stderr_abi(&code, &byte, 1);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == expected ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+
+#if defined(_WIN32)
+TEST(NativeRuntimeDeathTest, ReturnsBadDescriptorForClosedWindowsStderrWithoutLeaking) {
+    const std::array<_invalid_parameter_handler, 2> handlers {
+        nullptr, recordStderrInvalidParameter,
+    };
+    for (const auto handler : handlers) {
+        SCOPED_TRACE(handler == nullptr ? "default handler" : "thread-local handler");
+        for (const int64_t count : { 0, 1 }) {
+            SCOPED_TRACE(count);
+            EXPECT_EXIT({
+                if (std::fflush(stderr) != 0) std::_Exit(120);
+                const int descriptor = _fileno(stderr);
+                const int saved = _dup(descriptor);
+                if (saved < 0) std::_Exit(121);
+                if (_close(descriptor) != 0) {
+                    _close(saved);
+                    std::_Exit(122);
+                }
+                // Keep FILE alive and restore the subprocess's captured stderr
+                // before exiting, so diagnostics retain their original stream.
+                const auto previousHandler =
+                        _set_thread_local_invalid_parameter_handler(handler);
+                stderrInvalidParameterCalls = 0;
+                const auto allocations = joyeer_runtime_active_allocations();
+                int64_t code = 123;
+                const uint8_t byte = 'x';
+                const auto status = joyeer_write_stderr_abi(
+                        &code, count == 0 ? nullptr : &byte, count);
+                const bool noLeak = joyeer_runtime_active_allocations() == allocations;
+                const auto restoredHandler =
+                        _set_thread_local_invalid_parameter_handler(previousHandler);
+                const int restored = _dup2(saved, descriptor);
+                const int closed = _close(saved);
+                std::clearerr(stderr);
+                std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == EBADF &&
+                        noLeak && restoredHandler == handler && stderrInvalidParameterCalls == 0 &&
+                        restored == 0 && closed == 0 ? 0 : 123);
+            }, testing::ExitedWithCode(0), "");
+        }
+    }
+}
+
+TEST(NativeRuntimeDeathTest, RestoresWindowsStderrModeAfterFailedWrite) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer), false)) std::_Exit(120);
+        if (_setmode(_fileno(stderr), _O_TEXT) == -1) std::_Exit(121);
+        int64_t code = 0;
+        const uint8_t byte = 'x';
+        const auto status = joyeer_write_stderr_abi(&code, &byte, 1);
+        const int restored = _setmode(_fileno(stderr), _O_BINARY);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code != 0 &&
+                restored == _O_TEXT ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+#endif
+
+TEST(NativeRuntimeDeathTest, FlushesPendingStderrEvenForEmptyContents) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer))) std::_Exit(120);
+        const int expected = failingStderrErrno();
+        if (std::fputc('x', stderr) == EOF) std::_Exit(121);
+        int64_t code = 0;
+        const auto status = joyeer_write_stderr_abi(&code, nullptr, 0);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == expected ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+
+TEST(NativeRuntimeDeathTest, TrapsInvalidStderrAbiStorageAndContents) {
+    int64_t code = 0;
+    EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(nullptr, nullptr, 0)),
+                 "stderr error output is null");
+    EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(&code, nullptr, -1)),
+                 "invalid stderr contents");
+    EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(&code, nullptr, 1)),
+                 "invalid stderr contents");
 }
 
 TEST(NativeRuntimeTest, PerformsCheckedIntegerArithmetic) {

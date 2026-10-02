@@ -55,6 +55,16 @@ Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,
 optimization policy, and broader language surface remain incomplete.
 
+The source tree now includes the Joyeer-written `joypm` local project manager:
+`init`, `check`, `build`, `run`, and `test`, with a strict single-package
+manifest and explicit compiler path. CMake bootstrap integration and nine
+acceptance gates are added. A Windows x64 Debug build with unit tests enabled
+and a local-project smoke run succeeded. Bounded regular-file manifest
+acquisition is integrated. **CTest has not run for this change set**; the full
+native acceptance gate, other platforms, package installation, and self-build
+remain pending, so v0 is not released or release-complete. See
+[joypm](docs/impl/joypm.md) for the exact boundary and validation evidence.
+
 See
 [docs/impl/supported-features.md](docs/impl/supported-features.md) for the
 current implementation boundary and
@@ -188,9 +198,14 @@ Pass the SDK root explicitly if `LLVM_HOME` is unavailable:
 cmake --preset x64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON
 ```
 
-The staged Windows package contains `joyeer.exe`,
-`joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, and licenses. Users of
-that package do not install LLVM or Clang. Creating Windows native executables
+The staged Windows package contains `joyeer.exe`, `joyeer-backend.dll`,
+`JoyeerNativeRuntime.lib`, optional `joypm.exe`, and licenses.
+`JOYEER_BUILD_JOYPM=ON` is the default: CMake builds `joypm` with the new
+compiler as part of `ALL`; `OFF` selects a compiler-only build. Bootstrap
+uses `-O0 -gfull` in Debug and `-O2 -g0` in Release; macOS Debug uses `-g0`
+if `dsymutil` is unavailable. It requires neither a preinstalled `joypm` nor
+Python. Users of that package
+do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
 through Visual Studio Setup Configuration and the registry. `INSTALL_GTEST=OFF`
 prevents test-only headers and libraries from being added to the package.
@@ -201,8 +216,9 @@ platform details, and troubleshooting.
 
 Linux and macOS use the same install layout with platform suffixes: the
 `joyeer` executable, `joyeer-backend` shared library, native runtime archive,
-and licenses are installed together. The executable resolves the backend and
-runtime relative to its own location.
+optional `joypm`, and licenses are installed together. The compiler resolves
+the backend and runtime relative to its own location; `joypm` still requires
+`--compiler <path>` and does not discover its sibling or search PATH.
 
 For a local Windows Debug installation from an existing build:
 
@@ -215,13 +231,15 @@ The script selects `out/build/arm64-debug` on ARM64 Windows or
 current working directory. That Debug build must already exist; use
 `-BuildDir` to override the selection.
 
-This installs the compiler, backend, runtime, and PDBs to
+This installs the compiler, backend, runtime, their PDBs, and (when enabled)
+`joypm.exe` and its PDB to
 `$HOME\.joyeer\bin` and adds that directory to the user and current PowerShell
 PATH without duplicating existing entries. Use `-SkipPathUpdate` to leave PATH
 unchanged. The complete Joyeer skill is also installed to
 `$HOME\.agents\skills\joyeer` for VS Code Copilot, Copilot CLI, and Codex.
 Use `-SkillDir` to select another destination or `-SkipSkillInstall` to install
-only the compiler. Empty skill directories are accepted, and identical files
+only the binaries, including joypm when enabled. Empty skill directories are
+accepted, and identical files
 are left unchanged. Use `-Force` after reviewing and backing up local skill
 edits to overwrite differing files and restore missing ones. Extra files and
 other skills are not deleted. Reload your agent session after installation. See
@@ -293,6 +311,38 @@ information is off by default. `-g` and `-gline-tables-only` emit line tables,
 while `-gfull` also emits source variables, lexical scopes, and physical types.
 Use `-gdwarf` or `-gcodeview` to select the format.
 
+## Local projects with joypm
+
+`joypm --version` reports `joypm 0.1.0`, an independent early-development tool
+version; the compiler CMake project remains `0.0.1`. Windows x64 build/smoke
+validation does not replace the pending full native acceptance gate. After building,
+run from this checkout with a new or empty `hello` directory and existing parent:
+
+```powershell
+$compiler = (Resolve-Path .\out\build\x64-debug\bin\joyeer.exe).Path
+$joypm = (Resolve-Path .\out\build\x64-debug\bin\joypm.exe).Path
+& $joypm init .\hello --name hello
+& $joypm check --compiler $compiler --manifest-path .\hello\joyeer.toml
+& $joypm build --compiler $compiler --manifest-path .\hello\joyeer.toml --release
+& $joypm run --compiler $compiler --manifest-path .\hello\joyeer.toml -- "an argument"
+& $joypm test --compiler $compiler --manifest-path .\hello\joyeer.toml
+```
+
+Check each command's exit status before continuing. Use the platform's matching
+preset and executable suffix on Linux/macOS. `init` creates one `bin` target;
+`test` reports `0 tests` until executable `test` targets are declared.
+
+The default manifest is `joyeer.toml` in the invocation directory, with no
+upward scanning. Commands that use the compiler require an explicit path;
+there is no PATH lookup or shell execution. Debug uses `-O0 -gfull`, release
+uses `-O2 -g0`. Selected native targets always rebuild serially into fresh
+generations, with at most 128 claims per target/profile and no automatic
+deletion or cache. Use only trusted local projects: compiled programs and
+tests run with the user's permissions. Local path dependencies, workspaces,
+registries, and self-build acceptance are deferred. See the
+[manifest and workflow reference](docs/impl/joypm.md) and
+[remaining plan](docs/plan/package-manager.md).
+
 ## Test
 
 The required CMake acceptance gate is an unfiltered CTest run with unit tests
@@ -316,6 +366,11 @@ ctest --preset x64-debug -L debug-info
 C++ unit tests use GoogleTest. End-to-end compiler and native fixtures live in
 stage-specific folders under [tests/](tests/) and are registered in
 [unittests/compiler/CMakeLists.txt](unittests/compiler/CMakeLists.txt).
+The nine joypm gates in [tests/joypm/CMakeLists.txt](tests/joypm/CMakeLists.txt),
+including `Joypm.ManifestLimits`,
+are registered when `BUILD_TESTING` and `JOYEER_BUILD_JOYPM` are enabled,
+independently of `JOYEER_BUILD_UNITTESTS`. Registration is not execution;
+they have not run for this change set.
 
 ## Project layout
 
@@ -323,6 +378,7 @@ stage-specific folders under [tests/](tests/) and are registered in
 |---|---|
 | [include/joyeer/](include/joyeer/) | Public compiler, IR, backend, CLI, diagnostic, and native runtime headers |
 | [lib/](lib/) | C++ compiler/backend and C11 native runtime implementations |
+| [src/tools/joypm/](src/tools/joypm/) | Joyeer-written local project manager and CMake bootstrap |
 | [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
 | [scripts/](scripts/) | CMake integration-test helpers |
@@ -344,6 +400,8 @@ Useful examples include the
   priorities
 - [docs/impl/backend.md](docs/impl/backend.md): LLVM backend and linking
 - [docs/impl/runtime.md](docs/impl/runtime.md): process entry and C runtime
+- [docs/impl/joypm.md](docs/impl/joypm.md): local project workflow, manifest,
+  bootstrap, Windows x64 validation evidence, and pending acceptance gates
 
 Build, test, and contribution conventions are in [AGENTS.md](AGENTS.md).
 

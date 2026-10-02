@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -9,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -43,6 +46,7 @@ std::string utf8(const std::filesystem::path& path) {
 }
 
 std::string text(const JoyeerString& value) {
+    if (value.count == 0) return {};
     return { reinterpret_cast<const char*>(value.data),
              static_cast<size_t>(value.count) };
 }
@@ -111,6 +115,195 @@ TEST_F(FileSystemTest, WritesReadsBinaryAndPreservesExistingFiles) {
     EXPECT_EQ(text(static_cast<const JoyeerString*>(names.data)[0]),
             utf8(file.filename()));
     joyeer_array_destroy_abi(&names);
+}
+
+TEST_F(FileSystemTest, ReadsPrefixesAtZeroPartialExactAndPastEofLimits) {
+    const auto file = track(root_ / std::filesystem::path(u8"prefix ☃ 😀.bin"));
+    const auto path = bytes(utf8(file));
+    const std::string contents("one\0two\xff", 8);
+    const auto input = bytes(contents);
+    int64_t code = -1;
+    ASSERT_EQ(joyeer_fs_write_file_new_abi(
+            &code, path.data, path.count, input.data, input.count), JOYEER_FS_ERROR_NONE);
+    const auto baseline = joyeer_runtime_active_allocations();
+    for (const auto maximum : std::array<int64_t, 7> {
+            0, 1, 4, 8, 9, 65537, (std::numeric_limits<int64_t>::max)(),
+         }) {
+        SCOPED_TRACE(maximum);
+        JoyeerString output {};
+        code = -1;
+        EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+                &output, &code, path.data, path.count, maximum), JOYEER_FS_ERROR_NONE);
+        EXPECT_EQ(code, 0);
+            EXPECT_EQ(output.count, (std::min)(maximum, input.count));
+        EXPECT_EQ(text(output), contents.substr(0, static_cast<size_t>(maximum)));
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 1);
+        joyeer_string_destroy_abi(&output);
+        EXPECT_EQ(output.data, nullptr);
+        EXPECT_EQ(output.count, 0);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+    }
+
+    const auto emptyFile = track(root_ / "empty");
+    const auto emptyPath = bytes(utf8(emptyFile));
+    ASSERT_EQ(joyeer_fs_write_file_new_abi(
+            &code, emptyPath.data, emptyPath.count, nullptr, 0), JOYEER_FS_ERROR_NONE);
+    JoyeerString empty {};
+    EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &empty, &code, emptyPath.data, emptyPath.count, 65537), JOYEER_FS_ERROR_NONE);
+    EXPECT_EQ(code, 0);
+    EXPECT_EQ(empty.count, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 1);
+    joyeer_string_destroy_abi(&empty);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST_F(FileSystemTest, PreservesBinaryPrefixesEndingInsideUtf8) {
+    const auto file = track(root_ / "utf8-cut.bin");
+    const auto path = bytes(utf8(file));
+    const std::string contents("a\0\xff\xe2\x98\x83z", 7);
+    const auto input = bytes(contents);
+    int64_t code = -1;
+    ASSERT_EQ(joyeer_fs_write_file_new_abi(
+            &code, path.data, path.count, input.data, input.count), JOYEER_FS_ERROR_NONE);
+    const auto baseline = joyeer_runtime_active_allocations();
+    for (const auto maximum : std::array<int64_t, 3> { 3, 4, 5 }) {
+        SCOPED_TRACE(maximum);
+        JoyeerString output {};
+        EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+                &output, &code, path.data, path.count, maximum), JOYEER_FS_ERROR_NONE);
+        EXPECT_EQ(code, 0);
+        EXPECT_EQ(output.count, maximum);
+        EXPECT_EQ(text(output), contents.substr(0, static_cast<size_t>(maximum)));
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 1);
+        joyeer_string_destroy_abi(&output);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+    }
+}
+
+TEST_F(FileSystemTest, CapsGrowthAndReturnsTheManifestSentinelByte) {
+    const auto file = track(root_ / "large.bin");
+    const auto path = bytes(utf8(file));
+    std::string contents(131072, 'x');
+    contents[65536] = '\xff';
+    const auto input = bytes(contents);
+    int64_t code = -1;
+    ASSERT_EQ(joyeer_fs_write_file_new_abi(
+            &code, path.data, path.count, input.data, input.count), JOYEER_FS_ERROR_NONE);
+    const auto baseline = joyeer_runtime_active_allocations();
+    for (const auto maximum : std::array<int64_t, 4> { 4095, 4096, 4097, 65537 }) {
+        SCOPED_TRACE(maximum);
+        JoyeerString output {};
+        EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+                &output, &code, path.data, path.count, maximum), JOYEER_FS_ERROR_NONE);
+        EXPECT_EQ(code, 0);
+        EXPECT_EQ(output.count, maximum);
+        EXPECT_EQ(text(output), contents.substr(0, static_cast<size_t>(maximum)));
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 1);
+        joyeer_string_destroy_abi(&output);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+    }
+    JoyeerString whole {};
+    EXPECT_EQ(joyeer_fs_read_file_abi(&whole, &code, path.data, path.count),
+            JOYEER_FS_ERROR_NONE);
+    EXPECT_EQ(code, 0);
+    EXPECT_EQ(whole.count, input.count);
+    EXPECT_EQ(text(whole), contents);
+    joyeer_string_destroy_abi(&whole);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+
+        std::filesystem::resize_file(file, 65536);
+        JoyeerString exactManifest {};
+        EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &exactManifest, &code, path.data, path.count, 65537), JOYEER_FS_ERROR_NONE);
+        EXPECT_EQ(code, 0);
+        EXPECT_EQ(exactManifest.count, 65536);
+        EXPECT_EQ(text(exactManifest), contents.substr(0, 65536));
+        joyeer_string_destroy_abi(&exactManifest);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST_F(FileSystemTest, RejectsNegativePrefixLimitsAsOtherWithoutAllocations) {
+    const auto missing = bytes(utf8(root_ / "absent"));
+    const auto baseline = joyeer_runtime_active_allocations();
+    for (const auto maximum : std::array<int64_t, 2> {
+            -1, (std::numeric_limits<int64_t>::min)(),
+         }) {
+        SCOPED_TRACE(maximum);
+        JoyeerString output {};
+        int64_t code = 0;
+        EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+                &output, &code, missing.data, missing.count, maximum),
+                JOYEER_FS_ERROR_OTHER);
+#ifdef _WIN32
+        EXPECT_EQ(code, ERROR_INVALID_PARAMETER);
+#else
+        EXPECT_EQ(code, EINVAL);
+#endif
+        EXPECT_EQ(output.data, nullptr);
+        EXPECT_EQ(output.count, 0);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+        joyeer_string_destroy_abi(&output);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+    }
+}
+
+TEST_F(FileSystemTest, ZeroPrefixStillValidatesAndOpensItsPath) {
+    const auto missing = bytes(utf8(root_ / "absent"));
+    JoyeerString output {};
+    int64_t code = 0;
+    const auto baseline = joyeer_runtime_active_allocations();
+    EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &output, &code, missing.data, missing.count, 0), JOYEER_FS_ERROR_NOT_FOUND);
+#ifdef _WIN32
+    EXPECT_EQ(code, ERROR_FILE_NOT_FOUND);
+#else
+    EXPECT_EQ(code, ENOENT);
+#endif
+    const auto nul = bytes(std::string("bad\0path", 8));
+    EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &output, &code, nul.data, nul.count, 0), JOYEER_FS_ERROR_INVALID_PATH);
+#ifdef _WIN32
+    EXPECT_EQ(code, ERROR_INVALID_PARAMETER);
+#else
+    EXPECT_EQ(code, EINVAL);
+#endif
+    const auto malformed = bytes(std::string("\xc0\xaf", 2));
+    EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &output, &code, malformed.data, malformed.count, 0), JOYEER_FS_ERROR_INVALID_PATH);
+#ifdef _WIN32
+    EXPECT_EQ(code, ERROR_NO_UNICODE_TRANSLATION);
+#else
+    EXPECT_EQ(code, EILSEQ);
+#endif
+    EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &output, &code, nullptr, 0, 0), JOYEER_FS_ERROR_INVALID_PATH);
+#ifdef _WIN32
+    EXPECT_EQ(code, ERROR_INVALID_PARAMETER);
+#else
+    EXPECT_EQ(code, EINVAL);
+#endif
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.count, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST_F(FileSystemTest, PrefixFailureDoesNotPublishOrLeakPartialStorage) {
+    const auto directory = bytes(utf8(root_));
+    JoyeerString output {};
+    int64_t code = 0;
+    const auto baseline = joyeer_runtime_active_allocations();
+    EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &output, &code, directory.data, directory.count, 65537),
+            JOYEER_FS_ERROR_IS_DIRECTORY);
+#ifdef _WIN32
+    EXPECT_EQ(code, ERROR_ACCESS_DENIED);
+#else
+    EXPECT_EQ(code, EISDIR);
+#endif
+    EXPECT_EQ(output.data, nullptr);
+    EXPECT_EQ(output.count, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
 }
 
 TEST_F(FileSystemTest, ValidatesPathsAndReportsPlatformErrors) {
@@ -321,6 +514,11 @@ TEST_F(FileSystemTest, RemovesLinkWithoutTouchingItsTarget) {
             JOYEER_FS_ERROR_NONE);
     EXPECT_EQ(text(followed), "still here");
     joyeer_string_destroy_abi(&followed);
+        EXPECT_EQ(joyeer_fs_read_file_prefix_abi(
+            &followed, &code, path.data, path.count, 5), JOYEER_FS_ERROR_NONE);
+        EXPECT_EQ(code, 0);
+        EXPECT_EQ(text(followed), "still");
+        joyeer_string_destroy_abi(&followed);
     EXPECT_EQ(joyeer_fs_remove_file_abi(&code, path.data, path.count),
             JOYEER_FS_ERROR_NONE);
     EXPECT_TRUE(std::filesystem::exists(target));

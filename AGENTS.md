@@ -52,6 +52,14 @@ ctest --test-dir build --output-on-failure
   presets use `out/build/<preset>/bin/`.
 - Enable `JOYEER_BUILD_UNITTESTS` for the full acceptance gate and run
   unfiltered CTest. Label filters are for focused iteration only.
+- `JOYEER_BUILD_JOYPM` defaults to `ON`: CMake bootstraps the Joyeer-written
+  `joypm` as an `ALL` target using the build-tree compiler. Set it to `OFF`
+  for a compiler-only build. Its nine acceptance gates require `BUILD_TESTING`
+  and `JOYEER_BUILD_JOYPM`, independently of `JOYEER_BUILD_UNITTESTS`.
+- Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release; macOS Debug
+  falls back to `-g0` when `dsymutil` is unavailable. Debug PDB/dSYM sidecars
+  are CMake byproducts when produced; Windows Debug installs the joypm PDB
+  with component `PRODUCT`.
 - Re-run CMake configure after adding or removing registered fixtures or test
   targets.
 - C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
@@ -69,6 +77,7 @@ ctest --test-dir build --output-on-failure
 | LLVM/native backend | [include/joyeer/backend/](include/joyeer/backend/) | [lib/backend/](lib/backend/) |
 | Native runtime | [include/joyeer/native/runtime.h](include/joyeer/native/runtime.h) | [lib/native/](lib/native/) |
 | Diagnostics | [include/joyeer/diagnostic/diagnostic.h](include/joyeer/diagnostic/diagnostic.h) | [lib/diagnostic/diagnostic.cpp](lib/diagnostic/diagnostic.cpp) |
+| Local project manager | No C++ API | [src/tools/joypm/](src/tools/joypm/); behavior and validation boundary in [docs/impl/joypm.md](docs/impl/joypm.md) |
 
 ## Joyeer source conventions
 
@@ -97,8 +106,12 @@ ctest --test-dir build --output-on-failure
 ## Packaging and automation
 
 - Windows packages should contain only `joyeer.exe`, `joyeer-backend.dll`,
-  `JoyeerNativeRuntime.lib`, and required licenses/notices, not test SDKs or
-  LLVM tools/DLLs. See [docs/building.md](docs/building.md#release-staging).
+  `JoyeerNativeRuntime.lib`, optional `joypm.exe` (enabled by default), and
+  required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
+  backend, runtime, and the current license use install component
+  `JoyeerRuntime`; `joypm` uses `PRODUCT`. The Debug installer includes
+  `joypm` and its PDB when enabled. Third-party notice staging remains open;
+  see [docs/building.md](docs/building.md#release-staging).
 - Packaged native linking needs MSVC Build Tools and a Windows SDK, but not
   an LLVM installation. Clang executables are test/inspection tools, not
   product linkers.

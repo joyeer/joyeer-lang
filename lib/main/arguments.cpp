@@ -3,10 +3,44 @@
 #include <algorithm>
 #include <cwctype>
 #include <iostream>
+#include <system_error>
+#include <utility>
+
+#if defined(_WIN32)
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 using joyeer::OutputMode;
 
 namespace {
+
+std::string pathUtf8(const std::filesystem::path& path) {
+    const auto encoded = path.u8string();
+    return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+}
+
+bool parseUtf8Path(
+        Diagnostics* diagnostics,
+        const std::string& text,
+        std::filesystem::path& result,
+        const char* diagnosticCode) {
+    if (text.find('\0') != std::string::npos) {
+        diagnostics->reportDiagnostic(
+                ErrorLevel::failure, diagnosticCode, "path must not contain NUL bytes");
+        return false;
+    }
+    try {
+        result = std::filesystem::u8path(text);
+        return true;
+    } catch (const std::system_error&) {
+        // Do not echo invalid encoding into an otherwise UTF-8 diagnostic.
+        diagnostics->reportDiagnostic(
+                ErrorLevel::failure, diagnosticCode, "path cannot be decoded as UTF-8");
+        return false;
+    }
+}
 
 std::filesystem::path absoluteNormalized(const std::filesystem::path& path) {
     std::error_code error;
@@ -90,13 +124,60 @@ CommandLineArguments::CommandLineArguments(
     parse(arguments);
 }
 
+#if defined(_WIN32)
+CommandLineArguments::CommandLineArguments(
+        Diagnostics* diagnostics,
+        int argc,
+        wchar_t** argv):
+        diagnostics(diagnostics) {
+    std::vector<std::string> arguments;
+    if (argc > 0 && argv != nullptr) {
+        arguments.reserve(static_cast<size_t>(argc));
+        for (int index = 0; index < argc; ++index) {
+            const char* code = "source-file.read-failed";
+            if (!arguments.empty()) {
+                if (arguments.back() == "-o" || arguments.back() == "--emit-llvm") {
+                    code = "driver.output-file-error";
+                } else if (arguments.back() == "--module-source") {
+                    code = "module.read-source";
+                }
+            }
+            const int count = argv[index] == nullptr ? 0 : WideCharToMultiByte(
+                    CP_UTF8, WC_ERR_INVALID_CHARS, argv[index], -1,
+                    nullptr, 0, nullptr, nullptr);
+            if (count == 0) {
+                diagnostics->reportDiagnostic(
+                        ErrorLevel::failure, code,
+                        "invalid Windows command line argument encoding at argument " +
+                        std::to_string(index));
+                return;
+            }
+            std::string text(static_cast<size_t>(count), '\0');
+            if (WideCharToMultiByte(
+                    CP_UTF8, WC_ERR_INVALID_CHARS, argv[index], -1,
+                    text.data(), count, nullptr, nullptr) != count) {
+                diagnostics->reportDiagnostic(
+                        ErrorLevel::failure, code,
+                        "cannot convert Windows command line argument " + std::to_string(index));
+                return;
+            }
+            text.pop_back(); // Exclude the terminator; preserve an empty argument.
+            arguments.push_back(std::move(text));
+        }
+    }
+    parse(arguments);
+}
+#endif
+
 void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     if (arguments.empty()) {
         diagnostics->reportError(ErrorLevel::failure, "missing compiler arguments");
         return;
     }
     auto iterator = arguments.begin();
-    executableLocation = *iterator;
+    if (!parseUtf8Path(diagnostics, *iterator, executableLocation, "source-file.read-failed")) {
+        return;
+    }
     bool parseOptions = true;
     bool moduleNameProvided = false;
 
@@ -173,8 +254,11 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                             ErrorLevel::failure,
                             "--module-source requires a logical.dotted.name=file mapping");
                 } else {
-                    const auto file = absoluteNormalized(
-                            std::filesystem::path(iterator->substr(separator + 1)));
+                    std::filesystem::path decoded;
+                    if (!parseUtf8Path(
+                            diagnostics, iterator->substr(separator + 1), decoded,
+                            "module.read-source")) continue;
+                    const auto file = absoluteNormalized(decoded);
                     const auto found = std::find_if(modules.begin(), modules.end(),
                             [&](const auto& module) { return module.name == name; });
                     if (found == modules.end()) {
@@ -206,7 +290,13 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             outputMode = option == "--emit-llvm"
                     ? OutputMode::llvmIR
                     : OutputMode::executable;
-            outputFile = std::filesystem::path(*iterator);
+            if (iterator->empty()) {
+                diagnostics->reportDiagnostic(
+                        ErrorLevel::failure, "driver.output-file-error",
+                        option + " requires a nonempty output path");
+            } else {
+                parseUtf8Path(diagnostics, *iterator, outputFile, "driver.output-file-error");
+            }
         } else if (parseOptions && iterator->starts_with('-')) {
             diagnostics->reportError(
                     ErrorLevel::failure,
@@ -256,15 +346,19 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         if (!moduleName.empty() && !std::filesystem::is_regular_file(inputs[index], error)) {
             diagnostics->reportDiagnostic(
                     ErrorLevel::failure, "module.read-source",
-                    "module input must be a regular source file: '" + inputs[index].string() + "'" +
+                    "module input must be a regular source file: '" + pathUtf8(inputs[index]) + "'" +
                     (error ? ": " + error.message() : ""));
         } else if (moduleName.empty() && !std::filesystem::exists(inputs[index], error)) {
-            diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
+            diagnostics->reportDiagnostic(
+                    ErrorLevel::failure, "source-file.read-failed",
+                    std::string(Diagnostics::errorNoSuchFileOrDirectory) + " '" +
+                    pathUtf8(inputs[index]) + "'" + (error ? ": " + error.message() : ""));
         }
         if (std::any_of(inputs.begin(), inputs.begin() + index,
                 [&](const auto& earlier) { return pathsAlias(earlier, inputs[index]); })) {
-            diagnostics->reportError(
-                    ErrorLevel::failure, "duplicate source file: '%s'", inputs[index].string().c_str());
+            diagnostics->reportDiagnostic(
+                    ErrorLevel::failure, "module.duplicate-source",
+                    "duplicate source file: '" + pathUtf8(inputs[index]) + "'");
         }
     }
 
@@ -325,5 +419,8 @@ void CommandLineArguments::parseInputFile(const std::string& inputpath) {
         diagnostics->reportError(ErrorLevel::failure, "source file path must not be empty");
         return;
     }
-    sourceFiles.push_back(absoluteNormalized(std::filesystem::path(inputpath)));
+    std::filesystem::path decoded;
+    if (parseUtf8Path(diagnostics, inputpath, decoded, "source-file.read-failed")) {
+        sourceFiles.push_back(absoluteNormalized(decoded));
+    }
 }

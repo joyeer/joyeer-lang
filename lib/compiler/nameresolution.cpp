@@ -810,7 +810,8 @@ private:
                 signature.parameters.push_back(CallableParameter {
                     std::string(parameter.name), true, std::nullopt, std::nullopt,
                     parameter.kind == hostbuiltins::ValueKind::strings
-                            ? arrayType : stringType,
+                            ? arrayType : parameter.kind == hostbuiltins::ValueKind::integer
+                            ? intType : stringType,
                 });
             }
             const auto function = declareSymbol(

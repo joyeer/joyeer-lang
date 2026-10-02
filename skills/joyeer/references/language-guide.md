@@ -75,6 +75,16 @@ that array does not change the string. The implemented escape set includes
 `print(value:)` accepts supported primitive/string values, not arbitrary
 aggregates. Print fields or explicitly matched payloads instead.
 
+For fallible stderr output, the added source signature is
+`writeStderr(contents: String): Result<Void, StderrError>`, with
+`.WriteFailed(Int)` carrying CRT `errno`. It writes exact bytes without adding
+a newline or decoding text, then flushes; failure may be partial. Windows
+uses binary mode and restores the old mode, not a console code-page change.
+Handle it with `match` at an `Int` entry point or propagate only within the
+same error type. The implementation/compiler/runtime regressions compile in
+the Windows x64 Debug build, but the regressions have not executed; this is
+not a general streaming API.
+
 ## Structs, enums, and matching
 
 Use `struct Counter { var value: Int }` and named field construction
@@ -156,6 +166,7 @@ independently owned:
 
 ```joyeer
 func readFileUtf8(path: String): Result<String, FileSystemError>
+func readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>
 func writeFileNew(path: String, contents: String): Result<Void, FileSystemError>
 func createDirectory(path: String): Result<Void, FileSystemError>
 func listDirectory(path: String): Result<[String], FileSystemError>
@@ -170,6 +181,20 @@ These lines document signatures; do not redeclare the built-ins in a program.
 Paths must be nonempty valid UTF-8 without NUL and use host path syntax.
 Windows uses wide-character APIs. `readFileUtf8` preserves arbitrary content
 bytes: its name describes path encoding, not text decoding.
+
+`readFilePrefix` reads at most `maximumBytes` bytes and returns owned arbitrary
+bytes, which can end inside a UTF-8 sequence. Zero still opens/closes the path;
+negative limits return `.Other` with a platform invalid-parameter code. Its
+`Int` host descriptor is integrated through name resolution/type checking and
+scalar LLVM lowering, and compiled in the Windows x64 Debug build; boundary
+and error regressions have not run. Check provenance before targeting older
+binaries. This is synchronous bounded input, not generic streaming.
+
+joypm first uses `fileKind` to accept only `.File`, rejecting final symlinks,
+devices/FIFOs, and other nonregular manifests, then reads at most 65537 bytes
+to detect input exceeding 65536. Classification is not race-free confinement.
+Returned bytes still require strict manifest UTF-8/scalar validation. Legacy
+narrow `readFile(path:)` and its `IOError` contract remain unchanged.
 
 `writeFileNew` fails rather than overwriting an existing destination.
 `createDirectory` creates one directory, not missing parents.
@@ -198,3 +223,20 @@ and map it explicitly into the CLI entry's `0..255` range.
 `ProcessError` cases are `.InvalidInput(code)`, `.NotFound(code)`,
 `.PermissionDenied(code)`, `.LaunchFailed(code)`, and `.WaitFailed(code)`.
 There are no implicit shell scripts, capture, timeout, or async APIs.
+
+## Project configuration is not language syntax
+
+The separate source-implemented joypm consumes a strict TOML profile with
+explicit modules/files and `bin`/`test` targets; it does not add Joyeer imports,
+test attributes, compiler subcommands, or user-defined generics. Manifest
+basic strings support `\uXXXX`/`\UXXXXXXXX` scalar escapes, unlike current
+Joyeer source strings. Manifest limits are 65536 input bytes, 4096 decoded
+bytes/string, 256 modules/targets each, and 1024 entries/string array.
+
+See [local project CLI](cli.md#local-projects-with-joypm) for explicit compiler
+paths, profiles, serial rebuilds, and trust limits. Windows x64 Debug bootstrap
+and local-project smoke validation succeeded; bounded acquisition and Windows
+UTF-8 compiler/linker-path fixes are integrated and compiled. CTest has not run:
+the nine gates, full native acceptance, other platforms, package installation,
+and self-build remain pending. Do not infer general Unicode support or a
+completed release from the scoped smoke result or implementation examples.

@@ -82,6 +82,38 @@ versions and platform prerequisites are documented in
 
 ## 2. CLI
 
+### Argument encoding and filesystem boundary
+
+On Windows the compiler uses `wmain`, not narrow `main`. Its CLI constructor
+converts each UTF-16 argument once to UTF-8 with `WideCharToMultiByte(CP_UTF8,
+WC_ERR_INVALID_CHARS)`, using a sizing pass followed by the conversion. This
+preserves empty arguments, spaces, and supplementary Unicode. Invalid surrogate
+sequences are rejected before option parsing, without replacement characters.
+The existing `source-file.read-failed`, `driver.output-file-error`, and
+`module.read-source` diagnostic IDs identify invalid source/general, output,
+and dependency-source arguments respectively. No console code page is changed.
+
+The shared narrow parser treats executable, positional input, output, and
+`--module-source name=file` paths as UTF-8 via `std::filesystem::u8path`, not the
+Windows active code page. CLI missing/duplicate-source diagnostics encode
+their paths with `u8string`. Logical module names retain their ASCII syntax.
+Native path objects are passed unchanged through `CompileOptions`; `SourceFile`
+opens them with the filesystem-path stream overload and already uses UTF-8
+for source/debug identities. Successful validation and textual-IR output
+therefore do not require narrowing the CLI source/output paths.
+
+The compiler service uses UTF-8 for module/output path diagnostics. Native
+artifact and temporary-path construction preserves filesystem path objects;
+suffixes are appended without narrowing, and backend/linker path strings use
+UTF-8 at the C ABI boundary. These changes are integrated and compiled in the
+Windows x64 Debug build. The observed joypm project smoke workflow succeeded,
+but the registered Unicode and temporary-path/failure regressions have not run;
+this does not establish general Unicode-complete linking or recovery.
+Detailed smoke evidence belongs in [joypm](joypm.md#5-added-tests-versus-validation).
+Diagnostic argument/path text is UTF-8, but OS-provided error messages and
+console rendering remain host-dependent.
+Legacy source-language `readFile` narrow CRT behavior is unchanged.
+
 Validation only:
 
 ```pwsh
@@ -240,10 +272,11 @@ them. Paths cross the DLL as UTF-8 C strings and LLD receives an argument
 array, so user paths are not subject to shell expansion.
 
 UTF-8 at the backend boundary does not imply end-to-end Windows Unicode path
-support. Narrow `argv` can lose characters, and native temporary-path
-construction currently narrows a `std::filesystem::path` through `.string()`.
-A temporary directory containing characters outside the active code page can
-therefore crash compilation even with ASCII source and output arguments.
+support for every path or failure mode. The wide compiler entry and native
+artifact/temporary-path preservation are integrated and compiled, with scoped
+Windows x64 joypm smoke evidence. Registered source/output/temporary-path and
+backend regressions still need execution; the smoke workflow is not full
+Unicode, native-platform, or release acceptance.
 
 ### C ABI lifetimes and failure contract
 
@@ -298,6 +331,17 @@ The C11 [runtime](runtime.md) owns process startup, checked
 arithmetic and bounds helpers, value storage, collections, file input, and
 allocation-balance checking. It is a static archive linked into generated
 programs, not a dependency on LLVM/LLD.
+
+Descriptor-driven host calls include
+`writeStderr(contents: String): Result<Void, StderrError>`, where
+`StderrError` has `WriteFailed(Int)`. The emitter declares/calls
+`i32 @joyeer_write_stderr_abi(ptr, ptr, i64)` with the error-code out-pointer
+first and borrowed contents data/count afterward. ABI status `0` constructs
+`Ok(())`; status `1` constructs `Err(.WriteFailed(code))`. Error tags are mapped
+by enum case name, and invalid runtime tags trap. Unit successes use the
+existing zero-sized representation, not a runtime result out-pointer. See the
+[standard-error boundary](runtime.md#standard-error-boundary) for byte/flush
+semantics and CRT error reporting.
 
 ---
 
@@ -372,6 +416,14 @@ ctest --test-dir build -L native --output-on-failure
 ctest --test-dir build -L optimization --output-on-failure
 ctest --test-dir build -L debug-info --output-on-failure
 ```
+
+The existing host compiler unit file checks stderr's concrete signature,
+error payload/matches, type/error-conversion rejections, and flat ABI emission
+with full debug locations. The CLI unit file checks UTF-8 and Windows wide
+input/output/dependency paths containing supplementary Unicode and spaces,
+UTF-8 path diagnostics, empty wide arguments, and unpaired surrogate rejection
+with existing diagnostic IDs. These CLI tests inspect parsing/path ownership;
+they do not assert that native linking is Unicode-complete.
 
 The Clang executable is an optional test tool, not a product linker. The
 independent textual-IR oracle and many native-executable regression tests are

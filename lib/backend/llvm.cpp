@@ -2755,6 +2755,8 @@ private:
         switch (kind) {
             case hostbuiltins::ValueKind::string:
                 return record->kind == typing::TypeKind::string;
+            case hostbuiltins::ValueKind::integer:
+                return record->kind == typing::TypeKind::integer;
             case hostbuiltins::ValueKind::unit:
                 return record->kind == typing::TypeKind::voidType;
             case hostbuiltins::ValueKind::strings:
@@ -2935,6 +2937,10 @@ private:
                 reportHere(DiagnosticId::unsupportedExternal, instruction.span,
                            "invalid argument to host function '" + callee.name + "'");
                 return false;
+            }
+            if (descriptor.parameters[index].kind == hostbuiltins::ValueKind::integer) {
+                argument("i64", *input);
+                continue;
             }
             const auto parts = emitHandleParts(
                     out, descriptor.parameters[index].kind == hostbuiltins::ValueKind::strings

@@ -42,6 +42,14 @@ enum JoyeerFileKind {
 int32_t joyeer_fs_read_file_abi(
     JoyeerString* result, int64_t* errorCode,
     const uint8_t* pathData, int64_t pathCount);
+// Reads at most maximumBytes bytes from the beginning, without a file-size
+// allocation or an extra EOF probe at the limit. Contents may end mid-UTF-8.
+// Zero still opens/closes the path and returns an owned empty String on success.
+// A negative limit returns OTHER with ERROR_INVALID_PARAMETER / EINVAL, not
+// INVALID_PATH. String storage never exceeds the limit (one byte when empty).
+int32_t joyeer_fs_read_file_prefix_abi(
+    JoyeerString* result, int64_t* errorCode,
+    const uint8_t* pathData, int64_t pathCount, int64_t maximumBytes);
 // Creates a new file exclusively; never truncates or replaces an existing one.
 int32_t joyeer_fs_write_file_new_abi(
     int64_t* errorCode, const uint8_t* pathData, int64_t pathCount,

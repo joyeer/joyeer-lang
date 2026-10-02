@@ -135,12 +135,22 @@ static bool fsWideName(
 }
 #endif
 
-int32_t joyeer_fs_read_file_abi(
+static int32_t fsReadFileWithLimit(
         JoyeerString* result, int64_t* errorCode,
-        const uint8_t* pathData, int64_t pathCount) {
+        const uint8_t* pathData, int64_t pathCount,
+        int64_t maximumBytes, bool bounded) {
     if (result == NULL) joyeer_panic("filesystem result is null");
     *result = (JoyeerString) { 0 };
     fsCheck(errorCode);
+    if (bounded && maximumBytes < 0) {
+#ifdef _WIN32
+        *errorCode = ERROR_INVALID_PARAMETER;
+#else
+        *errorCode = EINVAL;
+#endif
+        // This is an invalid limit, not an invalid path; keep the existing tags.
+        return JOYEER_FS_ERROR_OTHER;
+    }
     JoyeerHostChar* path;
     int32_t kind = fsPath(pathData, pathCount, &path, errorCode);
     if (kind != JOYEER_FS_ERROR_NONE) return kind;
@@ -161,8 +171,14 @@ int32_t joyeer_fs_read_file_abi(
     if (code != 0) return fsError(errorCode, code);
     size_t count = 0;
     size_t capacity = 0;
-    uint8_t* bytes = NULL;
+    JoyeerString buffer = { 0 };
+    // Start with one tracked String allocation. Reallocating this same libc
+    // block preserves its allocation balance and avoids a second prefix copy.
+    if (bounded) joyeer_string_clone_abi(&buffer, NULL, 0);
+    uint8_t* bytes = (uint8_t*)buffer.data;
     for (;;) {
+        // Reaching the limit is success; never read a sentinel byte implicitly.
+        if (bounded && (uint64_t)count == (uint64_t)maximumBytes) break;
         if (count == capacity) {
             if (capacity >= (size_t)INT64_MAX) {
 #ifdef _WIN32
@@ -174,6 +190,8 @@ int32_t joyeer_fs_read_file_abi(
             }
             size_t next = capacity < 4096 ? 4096 : capacity > (size_t)INT64_MAX / 2
                     ? (size_t)INT64_MAX : capacity * 2;
+            if (bounded && (uint64_t)next > (uint64_t)maximumBytes)
+                next = (size_t)maximumBytes;
             bytes = (uint8_t*)fsReallocate(bytes, next);
             capacity = next;
         }
@@ -202,9 +220,30 @@ int32_t joyeer_fs_read_file_abi(
 #else
     if (close(file) != 0 && code == 0) code = errno;
 #endif
-    if (code == 0) joyeer_string_clone_abi(result, bytes, (int64_t)count);
-    free(bytes);
+    if (bounded) {
+        buffer.data = bytes;
+        buffer.count = (int64_t)count;
+        if (code == 0) *result = buffer;
+        else joyeer_string_destroy_abi(&buffer);
+    } else {
+        // Preserve the existing whole-file reader's allocation/copy behavior.
+        if (code == 0) joyeer_string_clone_abi(result, bytes, (int64_t)count);
+        free(bytes);
+    }
     return code == 0 ? JOYEER_FS_ERROR_NONE : fsError(errorCode, code);
+}
+
+int32_t joyeer_fs_read_file_abi(
+        JoyeerString* result, int64_t* errorCode,
+        const uint8_t* pathData, int64_t pathCount) {
+    return fsReadFileWithLimit(result, errorCode, pathData, pathCount, 0, false);
+}
+
+int32_t joyeer_fs_read_file_prefix_abi(
+        JoyeerString* result, int64_t* errorCode,
+        const uint8_t* pathData, int64_t pathCount, int64_t maximumBytes) {
+    return fsReadFileWithLimit(
+            result, errorCode, pathData, pathCount, maximumBytes, true);
 }
 
 int32_t joyeer_fs_write_file_new_abi(

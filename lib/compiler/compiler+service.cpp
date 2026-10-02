@@ -165,13 +165,13 @@ bool CompilerService::protectInputs(const std::vector<std::filesystem::path>& in
     for (const auto& input : inputs) {
         if (pathsAlias(input, options.outputFile)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.output-file-error",
-                    "output path must not overwrite input file '" + input.string() + "'");
+                "output path must not overwrite input file '" + pathUtf8(input) + "'");
             return false;
         }
 #if defined(_WIN32)
         if (options.outputMode == joyeer::OutputMode::executable && pathsAlias(input, pdb)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.output-file-error",
-                    "sibling PDB cleanup path must not overwrite input file '" + input.string() + "'");
+                "sibling PDB cleanup path must not overwrite input file '" + pathUtf8(input) + "'");
             return false;
         }
 #endif
@@ -219,7 +219,7 @@ void CompilerService::compileModules() {
             const auto file = std::filesystem::canonical(path, error);
             if (error) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",
-                        "cannot resolve source file '" + path.string() +
+                        "cannot resolve source file '" + pathUtf8(path) +
                         "' for module '" + sourceSet.name + "': " + error.message());
                 return;
             }
@@ -227,13 +227,13 @@ void CompilerService::compileModules() {
             if (error || !regular) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",
                         "module '" + sourceSet.name + "' requires a regular source file: '" +
-                        path.string() + "'" + (error ? ": " + error.message() : ""));
+                    pathUtf8(path) + "'" + (error ? ": " + error.message() : ""));
                 return;
             }
             if (std::any_of(allInputs.begin(), allInputs.end(),
                     [&](const auto& earlier) { return pathsAlias(earlier, file); })) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.duplicate-source",
-                        "source file is supplied more than once: '" + file.string() + "'");
+                    "source file is supplied more than once: '" + pathUtf8(file) + "'");
                 return;
             }
             allInputs.push_back(file);
@@ -463,7 +463,7 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
                         ErrorLevel::failure,
                         "driver.output-file-error",
                         "cannot write LLVM IR output: " +
-                        options.outputFile.string());
+                        pathUtf8(options.outputFile));
         }
     }
 }

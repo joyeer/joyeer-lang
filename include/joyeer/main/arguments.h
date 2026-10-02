@@ -27,7 +27,13 @@ struct CommandLineArguments {
 
     Diagnostics* diagnostics;
 
+    // Narrow arguments use UTF-8 paths, not the Windows active code page.
     CommandLineArguments(Diagnostics* diagnostics, int argc, char** argv);
+#if defined(_WIN32)
+    // The compiler entry converts each UTF-16 argument strictly once before
+    // parsing; malformed surrogate sequences are diagnostics, not replacements.
+    CommandLineArguments(Diagnostics* diagnostics, int argc, wchar_t** argv);
+#endif
     static void printUsage();
 
     void parse(std::vector<std::string>& arguments);

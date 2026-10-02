@@ -10,6 +10,7 @@ namespace joyeer::hostbuiltins {
 enum class ValueKind {
     string,
     strings,
+    integer,
     unit,
     fileKind,
     processStatus,
@@ -35,11 +36,15 @@ inline constexpr std::array<std::string_view, 2> processStatuses {
 inline constexpr std::array<std::string_view, 5> processErrors {
     "InvalidInput", "NotFound", "PermissionDenied", "LaunchFailed", "WaitFailed",
 };
-inline constexpr std::array<Enumeration, 4> enumerations {{
+inline constexpr std::array<std::string_view, 1> stderrErrors {
+    "WriteFailed",
+};
+inline constexpr std::array<Enumeration, 5> enumerations {{
     { "FileSystemError", filesystemErrors, true, 1 },
     { "FileKind", fileKinds, false, 0 },
     { "ProcessStatus", processStatuses, true, 0 },
     { "ProcessError", processErrors, true, 1 },
+    { "StderrError", stderrErrors, true, 1 },
 }};
 
 struct Parameter {
@@ -50,8 +55,14 @@ struct Parameter {
 inline constexpr std::array<Parameter, 1> pathParameters {{
     { "path", ValueKind::string },
 }};
+inline constexpr std::array<Parameter, 2> readPrefixParameters {{
+    { "path", ValueKind::string }, { "maximumBytes", ValueKind::integer },
+}};
 inline constexpr std::array<Parameter, 2> writeParameters {{
     { "path", ValueKind::string }, { "contents", ValueKind::string },
+}};
+inline constexpr std::array<Parameter, 1> stderrParameters {{
+    { "contents", ValueKind::string },
 }};
 inline constexpr std::array<Parameter, 2> joinParameters {{
     { "base", ValueKind::string }, { "path", ValueKind::string },
@@ -70,9 +81,11 @@ struct Function {
     std::span<const Parameter> parameters;
 };
 
-inline constexpr std::array<Function, 9> functions {{
+inline constexpr std::array<Function, 11> functions {{
     { "readFileUtf8", "joyeer_fs_read_file_abi", ValueKind::string,
       "FileSystemError", pathParameters },
+        { "readFilePrefix", "joyeer_fs_read_file_prefix_abi", ValueKind::string,
+            "FileSystemError", readPrefixParameters },
     { "writeFileNew", "joyeer_fs_write_file_new_abi", ValueKind::unit,
       "FileSystemError", writeParameters },
     { "createDirectory", "joyeer_fs_create_directory_abi", ValueKind::unit,
@@ -89,6 +102,8 @@ inline constexpr std::array<Function, 9> functions {{
       "FileSystemError", joinParameters },
     { "runProcess", "joyeer_run_process_abi", ValueKind::processStatus,
       "ProcessError", processParameters },
+        { "writeStderr", "joyeer_write_stderr_abi", ValueKind::unit,
+            "StderrError", stderrParameters },
 }};
 
 inline const Function* findFunction(std::string_view name) {

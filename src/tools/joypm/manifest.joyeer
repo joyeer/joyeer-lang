@@ -1,0 +1,973 @@
+// All joypm sources belong to the compiler-supplied joypm.app module.
+// This is a schema-directed TOML 1.0 profile, not a general TOML parser.
+// Limits: 65536 input bytes, 4096 decoded bytes per string, 256 modules,
+// 256 targets, and 1024 strings per array. Arrays cannot be nested.
+// Locations are zero-based byte offsets in the original manifest.
+
+struct ModuleSpec {
+    let name: String
+    let sources: [String]
+    let dependencies: [String]
+    let pos: Int
+}
+
+struct TargetSpec {
+    let name: String
+    let kind: String
+    let module: String
+    let pos: Int
+}
+
+struct PackageManifest {
+    let name: String
+    let version: String
+    let modules: [ModuleSpec]
+    let targets: [TargetSpec]
+}
+
+// Keep only the input and cursor here. Borrowing this cursor does not clone
+// accumulated records, and every mutation uses a supported field access.
+private struct ManifestCursor {
+    let input: String
+    var pos: Int
+}
+
+private struct ManifestTable {
+    let name: String
+    let array: Bool
+    let pos: Int
+}
+
+private struct ManifestPackage {
+    let name: String
+    let version: String
+}
+
+private func manifestLetter(byte: UInt8): Bool {
+    return (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z')
+}
+
+private func manifestDigit(byte: UInt8): Bool {
+    return byte >= b'0' && byte <= b'9'
+}
+
+private func manifestFold(byte: UInt8): Int {
+    let value = byteToInt(value: byte)
+    if value >= 65 && value <= 90 { return value + 32 }
+    return value
+}
+
+private func manifestAsciiEqual(first: String, second: String): Bool {
+    if first.count != second.count { return false }
+    var index = 0
+    while index < first.count {
+        if manifestFold(byte: first[index]) != manifestFold(byte: second[index]) {
+            return false
+        }
+        index = index + 1
+    }
+    return true
+}
+
+private func manifestDeviceName(name: String): Bool {
+    if manifestAsciiEqual(first: name, second: "con") { return true }
+    if manifestAsciiEqual(first: name, second: "prn") { return true }
+    if manifestAsciiEqual(first: name, second: "aux") { return true }
+    if manifestAsciiEqual(first: name, second: "nul") { return true }
+    if manifestAsciiEqual(first: name, second: "conin$") { return true }
+    if manifestAsciiEqual(first: name, second: "conout$") { return true }
+    if name.count == 4 {
+        let prefix = textSlice(text: name, start: 0, end: 3)
+        let digit = name[3]
+        if digit >= b'1' && digit <= b'9' {
+            return manifestAsciiEqual(first: prefix, second: "com") ||
+                manifestAsciiEqual(first: prefix, second: "lpt")
+        }
+    }
+    return false
+}
+
+func validPortableName(name: String): Bool {
+    if name.count == 0 || name.count > 64 { return false }
+    if !manifestLetter(byte: name[0]) { return false }
+    var index = 1
+    while index < name.count {
+        let byte = name[index]
+        if !manifestLetter(byte: byte) && !manifestDigit(byte: byte) &&
+            byte != b'-' && byte != b'_' {
+            return false
+        }
+        index = index + 1
+    }
+    if hostWindows() && manifestDeviceName(name: name) { return false }
+    return true
+}
+
+// Match joyeer::isModuleName, not the portable output-component grammar.
+// Logical identities remain case-sensitive, including on Windows.
+private func manifestModuleName(name: String): Bool {
+    if name.count == 0 { return false }
+    var componentStart = true
+    var index = 0
+    while index < name.count {
+        let byte = name[index]
+        if byte == b'.' {
+            if componentStart { return false }
+            componentStart = true
+        } else {
+            let head = manifestLetter(byte: byte) || byte == b'_'
+            if !head && (componentStart || !manifestDigit(byte: byte)) {
+                return false
+            }
+            componentStart = false
+        }
+        index = index + 1
+    }
+    return !componentStart
+}
+
+private func manifestVersion(version: String): Bool {
+    // Components are metadata, not machine integers: no overflow-prone
+    // accumulation and no arbitrary Int-sized upper bound on a component.
+    var index = 0
+    var component = 0
+    while component < 3 {
+        if index >= version.count { return false }
+        let start = index
+        while index < version.count {
+            if !manifestDigit(byte: version[index]) { break }
+            index = index + 1
+        }
+        if index == start { return false }
+        if index - start > 1 && version[start] == b'0' { return false }
+        component = component + 1
+        if component < 3 {
+            if index >= version.count { return false }
+            if version[index] != b'.' { return false }
+            index = index + 1
+        }
+    }
+    return index == version.count
+}
+
+private func manifestSeparator(byte: UInt8): Bool {
+    return byte == b'/' || (hostWindows() && byte == b'\\')
+}
+
+private func manifestSourcePath(path: String): Bool {
+    if path.count == 0 { return false }
+    if manifestSeparator(byte: path[0]) { return false }
+    // Drive-relative and drive-absolute spellings are forbidden on every host.
+    if path.count >= 2 {
+        if manifestLetter(byte: path[0]) && path[1] == b':' { return false }
+    }
+    if manifestSeparator(byte: path[path.count - 1]) { return false }
+    var start = 0
+    var index = 0
+    while index <= path.count {
+        var boundary = index == path.count
+        if index < path.count {
+            let byte = path[index]
+            let value = byteToInt(value: byte)
+            if value == 0 { return false }
+            boundary = manifestSeparator(byte: byte)
+            if hostWindows() && !boundary {
+                // Exclude ADS/device syntax and Win32 trimming aliases, which
+                // could otherwise disguise a parent-traversal component.
+                if value < 32 || byte == b':' || byte == b'*' || byte == b'?' ||
+                    byte == b'"' || byte == b'<' || byte == b'>' || byte == b'|' {
+                    return false
+                }
+            }
+        }
+        if boundary {
+            let length = index - start
+            if length == 2 {
+                if path[start] == b'.' && path[start + 1] == b'.' { return false }
+            }
+            let dot = length == 1 && path[start] == b'.'
+            if index == path.count && (length == 0 || dot) { return false }
+            if hostWindows() && length > 0 && !dot {
+                let last = path[index - 1]
+                if last == b'.' || last == b' ' { return false }
+                var stemEnd = start
+                while stemEnd < index {
+                    if path[stemEnd] == b'.' { break }
+                    stemEnd = stemEnd + 1
+                }
+                let stem = textSlice(text: path, start: start, end: stemEnd)
+                if manifestDeviceName(name: stem) { return false }
+            }
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return true
+}
+
+private func manifestSourceKey(path: String): String {
+    // A lexical duplicate key only. Physical aliases and Unicode filesystem
+    // case folding remain the compiler's authoritative input checks.
+    let lower = "abcdefghijklmnopqrstuvwxyz"
+    var key = ""
+    var start = 0
+    var index = 0
+    while index <= path.count {
+        var boundary = index == path.count
+        if index < path.count { boundary = manifestSeparator(byte: path[index]) }
+        if boundary {
+            let length = index - start
+            let dot = length == 1 && path[start] == b'.'
+            if length > 0 && !dot {
+                if key.count > 0 { key = key + "/" }
+                if hostWindows() {
+                    var cursor = start
+                    while cursor < index {
+                        let byte = path[cursor]
+                        let value = byteToInt(value: byte)
+                        if value >= 65 && value <= 90 {
+                            // value - 65 is in 0..25 by the guard above.
+                            key = key + byteToString(value: lower[value - 65])
+                        } else {
+                            key = key + byteToString(value: byte)
+                        }
+                        cursor = cursor + 1
+                    }
+                } else {
+                    key = key + textSlice(text: path, start: start, end: index)
+                }
+            }
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return key
+}
+
+private func manifestCurrent(p: borrowing ManifestCursor): UInt8 {
+    if p.pos < 0 || p.pos >= p.input.count { return b'\0' }
+    return p.input[p.pos]
+}
+
+private func manifestAdvance(p: inout ManifestCursor) {
+    if p.pos >= 0 && p.pos < p.input.count { &p.pos = p.pos + 1 }
+}
+
+private func manifestHorizontal(p: inout ManifestCursor) {
+    while p.pos < p.input.count {
+        let byte = manifestCurrent(p: p)
+        if byte != b' ' && byte != b'\t' { break }
+        manifestAdvance(p: &p)
+    }
+}
+
+private func manifestNewline(p: inout ManifestCursor): Result<Void, ToolError> {
+    let pos = p.pos
+    let byte = manifestCurrent(p: p)
+    if byte == b'\n' {
+        manifestAdvance(p: &p)
+        return .Ok(())
+    }
+    if byte == b'\r' {
+        manifestAdvance(p: &p)
+        if p.pos < p.input.count && manifestCurrent(p: p) == b'\n' {
+            manifestAdvance(p: &p)
+            return .Ok(())
+        }
+    }
+    return .Err(ToolError(message: "manifest newlines must be LF or CRLF", pos: pos))
+}
+
+private func manifestComment(p: inout ManifestCursor): Result<Void, ToolError> {
+    manifestAdvance(p: &p)
+    while p.pos < p.input.count {
+        let byte = manifestCurrent(p: p)
+        if byte == b'\n' || byte == b'\r' { break }
+        let value = byteToInt(value: byte)
+        if (value < 32 && byte != b'\t') || value == 127 {
+            return .Err(ToolError(message: "control byte in TOML comment", pos: p.pos))
+        }
+        manifestAdvance(p: &p)
+    }
+    return .Ok(())
+}
+
+private func manifestTrivia(p: inout ManifestCursor): Result<Void, ToolError> {
+    while p.pos < p.input.count {
+        let byte = manifestCurrent(p: p)
+        if byte == b' ' || byte == b'\t' {
+            manifestAdvance(p: &p)
+        } else if byte == b'#' {
+            manifestComment(p: &p)?
+        } else if byte == b'\n' || byte == b'\r' {
+            manifestNewline(p: &p)?
+        } else {
+            break
+        }
+    }
+    return .Ok(())
+}
+
+private func manifestLineEnd(p: inout ManifestCursor): Result<Void, ToolError> {
+    manifestHorizontal(p: &p)
+    if p.pos < p.input.count && manifestCurrent(p: p) == b'#' {
+        manifestComment(p: &p)?
+    }
+    if p.pos == p.input.count { return .Ok(()) }
+    let byte = manifestCurrent(p: p)
+    if byte == b'\n' || byte == b'\r' {
+        manifestNewline(p: &p)?
+        return .Ok(())
+    }
+    return .Err(ToolError(message: "trailing input; expected comment or end of line", pos: p.pos))
+}
+
+private func manifestBare(byte: UInt8): Bool {
+    return manifestLetter(byte: byte) || manifestDigit(byte: byte) ||
+        byte == b'_' || byte == b'-'
+}
+
+private func manifestBareKey(p: inout ManifestCursor): Result<String, ToolError> {
+    let start = p.pos
+    while p.pos < p.input.count {
+        if !manifestBare(byte: manifestCurrent(p: p)) { break }
+        manifestAdvance(p: &p)
+    }
+    if p.pos == start {
+        return .Err(ToolError(message: "expected bare key; quoted and dotted keys are unsupported", pos: start))
+    }
+    return .Ok(textSlice(text: p.input, start: start, end: p.pos))
+}
+
+private func manifestKey(p: inout ManifestCursor): Result<String, ToolError> {
+    let key = manifestBareKey(p: &p)?
+    manifestHorizontal(p: &p)
+    if p.pos >= p.input.count || manifestCurrent(p: p) != b'=' {
+        return .Err(ToolError(message: "expected '=' after bare key; dotted keys are unsupported", pos: p.pos))
+    }
+    manifestAdvance(p: &p)
+    manifestHorizontal(p: &p)
+    return .Ok(key)
+}
+
+private func manifestHeader(p: inout ManifestCursor): Result<ManifestTable, ToolError> {
+    let pos = p.pos
+    if p.pos >= p.input.count || manifestCurrent(p: p) != b'[' {
+        return .Err(ToolError(message: "expected [package], [[modules]], or [[targets]]", pos: pos))
+    }
+    manifestAdvance(p: &p)
+    var array = false
+    if p.pos < p.input.count && manifestCurrent(p: p) == b'[' {
+        array = true
+        manifestAdvance(p: &p)
+    }
+    manifestHorizontal(p: &p)
+    let name = manifestBareKey(p: &p)?
+    manifestHorizontal(p: &p)
+    if p.pos >= p.input.count || manifestCurrent(p: p) != b']' {
+        return .Err(ToolError(message: "expected closing table bracket; dotted tables are unsupported", pos: p.pos))
+    }
+    manifestAdvance(p: &p)
+    if array {
+        if p.pos >= p.input.count || manifestCurrent(p: p) != b']' {
+            return .Err(ToolError(message: "expected ']]' for array of tables", pos: p.pos))
+        }
+        manifestAdvance(p: &p)
+    }
+    manifestLineEnd(p: &p)?
+    return .Ok(ManifestTable(name: name, array: array, pos: pos))
+}
+
+private func manifestHex(byte: UInt8): Int {
+    if manifestDigit(byte: byte) {
+        return byteToInt(value: byte) - byteToInt(value: b'0')
+    }
+    if byte >= b'a' && byte <= b'f' {
+        return byteToInt(value: byte) - byteToInt(value: b'a') + 10
+    }
+    if byte >= b'A' && byte <= b'F' {
+        return byteToInt(value: byte) - byteToInt(value: b'A') + 10
+    }
+    return -1
+}
+
+private func manifestSchemaOne(token: String): Bool {
+    // Accept TOML integer representations of the value 1, including +1 and
+    // base-prefixed integers with legal underscores. Never accumulate a
+    // value above 1, so oversized/hostile integers cannot overflow.
+    if token == "1" || token == "+1" { return true }
+    if token.count < 3 { return false }
+    if token[0] != b'0' { return false }
+    var base = 0
+    if token[1] == b'x' { base = 16 }
+    if token[1] == b'o' { base = 8 }
+    if token[1] == b'b' { base = 2 }
+    if base == 0 { return false }
+    var index = 2
+    var value = 0
+    var previousDigit = false
+    while index < token.count {
+        let byte = token[index]
+        if byte == b'_' {
+            if !previousDigit { return false }
+            previousDigit = false
+        } else {
+            let digit = manifestHex(byte: byte)
+            if digit < 0 || digit >= base { return false }
+            if value > 0 { return false }
+            value = digit
+            if value > 1 { return false }
+            previousDigit = true
+        }
+        index = index + 1
+    }
+    return previousDigit && value == 1
+}
+
+private func manifestSchema(p: inout ManifestCursor): Result<Void, ToolError> {
+    let pos = p.pos
+    while p.pos < p.input.count {
+        let byte = manifestCurrent(p: p)
+        if byte == b' ' || byte == b'\t' || byte == b'\n' || byte == b'\r' || byte == b'#' {
+            break
+        }
+        manifestAdvance(p: &p)
+    }
+    let token = textSlice(text: p.input, start: pos, end: p.pos)
+    if !manifestSchemaOne(token: token) {
+        return .Err(ToolError(message: "schema-version must be the TOML integer 1", pos: pos))
+    }
+    return .Ok(())
+}
+
+private func manifestByte(value: Int, pos: Int): Result<String, ToolError> {
+    // Joyeer has no Int-to-UInt8 conversion. The ASCII lookup deliberately
+    // contains raw C0 bytes (except the supported Joyeer newline escapes).
+    // The other lookups are valid UTF-8 source strings: select continuation
+    // bytes or leading bytes rather than assuming Unicode escape syntax in
+    // Joyeer itself. All computed indexes are checked before subscripting.
+    if value >= 0 && value < 128 {
+        let ascii = "\0\t\n\r !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+        if value < ascii.count {
+            return .Ok(byteToString(value: ascii[value]))
+        }
+    }
+    if value >= 128 && value <= 191 {
+        let continuation = "ĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĲĳĴĵĶķĸĹĺĻļĽľĿ"
+        let index = (value - 128) * 2 + 1
+        if index < continuation.count {
+            return .Ok(byteToString(value: continuation[index]))
+        }
+    }
+    if value >= 194 && value <= 223 {
+        let leading = "ÀĀŀƀǀȀɀʀˀ̀̀΀πЀрҀӀԀՀր׀؀ـڀۀ܀݀ހ߀"
+        let index = (value - 194) * 2
+        if index < leading.count {
+            return .Ok(byteToString(value: leading[index]))
+        }
+    }
+    if value >= 224 && value <= 239 {
+        let leading = "ࠀက 　䀀倀怀瀀耀退ꀀ뀀쀀퀀"
+        let index = (value - 224) * 3
+        if index < leading.count {
+            return .Ok(byteToString(value: leading[index]))
+        }
+    }
+    if value >= 240 && value <= 244 {
+        let leading = "𐀀񀀀򀀀󀀀􀀀"
+        let index = (value - 240) * 4
+        if index < leading.count {
+            return .Ok(byteToString(value: leading[index]))
+        }
+    }
+    return .Err(ToolError(message: "invalid Unicode encoding byte", pos: pos))
+}
+
+private func manifestScalar(value: Int, pos: Int): Result<String, ToolError> {
+    if value < 0 || value > 1114111 || (value >= 55296 && value <= 57343) {
+        return .Err(ToolError(message: "Unicode escape is not a Unicode scalar", pos: pos))
+    }
+    if value < 128 { return manifestByte(value: value, pos: pos) }
+    if value < 2048 {
+        let first = manifestByte(value: 192 + value / 64, pos: pos)?
+        let second = manifestByte(value: 128 + value % 64, pos: pos)?
+        return .Ok(first + second)
+    }
+    if value < 65536 {
+        let first = manifestByte(value: 224 + value / 4096, pos: pos)?
+        let second = manifestByte(value: 128 + (value / 64) % 64, pos: pos)?
+        let third = manifestByte(value: 128 + value % 64, pos: pos)?
+        return .Ok(first + second + third)
+    }
+    let first = manifestByte(value: 240 + value / 262144, pos: pos)?
+    let second = manifestByte(value: 128 + (value / 4096) % 64, pos: pos)?
+    let third = manifestByte(value: 128 + (value / 64) % 64, pos: pos)?
+    let fourth = manifestByte(value: 128 + value % 64, pos: pos)?
+    return .Ok(first + second + third + fourth)
+}
+
+private func manifestEscape(p: inout ManifestCursor): Result<String, ToolError> {
+    let pos = p.pos
+    manifestAdvance(p: &p)
+    if p.pos >= p.input.count {
+        return .Err(ToolError(message: "unterminated basic string escape", pos: pos))
+    }
+    let byte = manifestCurrent(p: p)
+    manifestAdvance(p: &p)
+    if byte == b'"' { return .Ok("\"") }
+    if byte == b'\\' { return .Ok("\\") }
+    if byte == b'b' { return manifestByte(value: 8, pos: pos) }
+    if byte == b't' { return .Ok("\t") }
+    if byte == b'n' { return .Ok("\n") }
+    if byte == b'f' { return manifestByte(value: 12, pos: pos) }
+    if byte == b'r' { return .Ok("\r") }
+    var digits = 0
+    if byte == b'u' { digits = 4 }
+    if byte == b'U' { digits = 8 }
+    if digits == 0 {
+        return .Err(ToolError(message: "unsupported TOML basic string escape", pos: pos))
+    }
+    var value = 0
+    var index = 0
+    while index < digits {
+        if p.pos >= p.input.count {
+            return .Err(ToolError(message: "incomplete Unicode escape", pos: pos))
+        }
+        let digit = manifestHex(byte: manifestCurrent(p: p))
+        if digit < 0 {
+            return .Err(ToolError(message: "expected hexadecimal Unicode escape digit", pos: p.pos))
+        }
+        // At most eight hex digits: the maximum is 4294967295, within Int.
+        value = value * 16 + digit
+        manifestAdvance(p: &p)
+        index = index + 1
+    }
+    return manifestScalar(value: value, pos: pos)
+}
+
+private func manifestString(p: inout ManifestCursor): Result<String, ToolError> {
+    let pos = p.pos
+    if p.pos >= p.input.count {
+        return .Err(ToolError(message: "expected single-line string", pos: pos))
+    }
+    let quote = manifestCurrent(p: p)
+    if quote != b'"' && quote != b'\'' {
+        return .Err(ToolError(message: "expected basic or literal single-line string", pos: pos))
+    }
+    manifestAdvance(p: &p)
+    if p.input.count - p.pos >= 2 {
+        if p.input[p.pos] == quote && p.input[p.pos + 1] == quote {
+            return .Err(ToolError(message: "multiline strings are unsupported", pos: pos))
+        }
+    }
+    var text = ""
+    var start = p.pos
+    while p.pos < p.input.count {
+        let byte = manifestCurrent(p: p)
+        if byte == quote {
+            let tail = textSlice(text: p.input, start: start, end: p.pos)
+            manifestAdvance(p: &p)
+            return .Ok(text + tail)
+        }
+        if byte == b'\\' && quote == b'"' {
+            text = text + textSlice(text: p.input, start: start, end: p.pos)
+            let escaped = manifestEscape(p: &p)?
+            if text.count + escaped.count > 4096 {
+                return .Err(ToolError(message: "decoded string exceeds 4096 bytes", pos: pos))
+            }
+            text = text + escaped
+            start = p.pos
+        } else {
+            let value = byteToInt(value: byte)
+            if (value < 32 && byte != b'\t') || value == 127 {
+                return .Err(ToolError(message: "unescaped control byte or newline in single-line string", pos: p.pos))
+            }
+            if text.count + p.pos - start >= 4096 {
+                return .Err(ToolError(message: "decoded string exceeds 4096 bytes", pos: pos))
+            }
+            manifestAdvance(p: &p)
+        }
+    }
+    return .Err(ToolError(message: "unterminated single-line string", pos: pos))
+}
+
+private func manifestArray(p: inout ManifestCursor, sources: Bool): Result<[String], ToolError> {
+    let pos = p.pos
+    if p.pos >= p.input.count || manifestCurrent(p: p) != b'[' {
+        return .Err(ToolError(message: "expected array of strings", pos: pos))
+    }
+    manifestAdvance(p: &p)
+    var values: [String] = []
+    var keys: [String] = []
+    manifestTrivia(p: &p)?
+    while p.pos < p.input.count {
+        if manifestCurrent(p: p) == b']' {
+            manifestAdvance(p: &p)
+            return .Ok(values)
+        }
+        let itemPos = p.pos
+        if values.count >= 1024 {
+            return .Err(ToolError(message: "array exceeds 1024 entries", pos: itemPos))
+        }
+        let value = manifestString(p: &p)?
+        var key = value
+        if sources {
+            if !manifestSourcePath(path: value) {
+                return .Err(ToolError(message: "source must be a relative file path without parent traversal: " + value, pos: itemPos))
+            }
+            key = manifestSourceKey(path: value)
+        } else {
+            if !manifestModuleName(name: value) {
+                return .Err(ToolError(message: "invalid dependency logical module name: " + value, pos: itemPos))
+            }
+        }
+        var index = 0
+        while index < keys.count {
+            if keys[index] == key {
+                return .Err(ToolError(message: "repeated array entry: " + value, pos: itemPos))
+            }
+            index = index + 1
+        }
+        &values.append(element: value)
+        &keys.append(element: key)
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count { break }
+        let delimiter = manifestCurrent(p: p)
+        if delimiter == b']' {
+            manifestAdvance(p: &p)
+            return .Ok(values)
+        }
+        if delimiter != b',' {
+            return .Err(ToolError(message: "expected ',' or ']' after array string", pos: p.pos))
+        }
+        manifestAdvance(p: &p)
+        manifestTrivia(p: &p)?
+        // A following ']' is the supported trailing-comma form. Any other
+        // value must start a string, so nested/mixed arrays are rejected.
+    }
+    return .Err(ToolError(message: "unterminated string array", pos: pos))
+}
+
+private func manifestPackageBody(p: inout ManifestCursor, pos: Int): Result<ManifestPackage, ToolError> {
+    var name = ""
+    var version = ""
+    var hasName = false
+    var hasVersion = false
+    while p.pos < p.input.count {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
+        let keyPos = p.pos
+        let key = manifestKey(p: &p)?
+        let valuePos = p.pos
+        if key == "name" {
+            if hasName {
+                return .Err(ToolError(message: "duplicate package.name", pos: keyPos))
+            }
+            name = manifestString(p: &p)?
+            if !validPortableName(name: name) {
+                return .Err(ToolError(message: "package.name must be a portable ASCII name of 1..64 bytes, not a reserved device name", pos: valuePos))
+            }
+            hasName = true
+        } else if key == "version" {
+            if hasVersion {
+                return .Err(ToolError(message: "duplicate package.version", pos: keyPos))
+            }
+            version = manifestString(p: &p)?
+            if !manifestVersion(version: version) {
+                return .Err(ToolError(message: "package.version must be MAJOR.MINOR.PATCH without leading zeroes", pos: valuePos))
+            }
+            hasVersion = true
+        } else {
+            return .Err(ToolError(message: "unknown package key: " + key, pos: keyPos))
+        }
+        manifestLineEnd(p: &p)?
+    }
+    if !hasName { return .Err(ToolError(message: "missing package.name", pos: pos)) }
+    if !hasVersion { return .Err(ToolError(message: "missing package.version", pos: pos)) }
+    return .Ok(ManifestPackage(name: name, version: version))
+}
+
+private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<ModuleSpec, ToolError> {
+    var name = ""
+    var sources: [String] = []
+    var dependencies: [String] = []
+    var hasName = false
+    var hasSources = false
+    var hasDependencies = false
+    while p.pos < p.input.count {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
+        let keyPos = p.pos
+        let key = manifestKey(p: &p)?
+        let valuePos = p.pos
+        if key == "name" {
+            if hasName { return .Err(ToolError(message: "duplicate modules.name", pos: keyPos)) }
+            name = manifestString(p: &p)?
+            if !manifestModuleName(name: name) {
+                return .Err(ToolError(message: "invalid logical module name: " + name, pos: valuePos))
+            }
+            hasName = true
+        } else if key == "sources" {
+            if hasSources { return .Err(ToolError(message: "duplicate modules.sources", pos: keyPos)) }
+            sources = manifestArray(p: &p, sources: true)?
+            if sources.count == 0 {
+                return .Err(ToolError(message: "modules.sources must not be empty", pos: valuePos))
+            }
+            hasSources = true
+        } else if key == "dependencies" {
+            if hasDependencies { return .Err(ToolError(message: "duplicate modules.dependencies", pos: keyPos)) }
+            dependencies = manifestArray(p: &p, sources: false)?
+            hasDependencies = true
+        } else {
+            return .Err(ToolError(message: "unknown modules key: " + key, pos: keyPos))
+        }
+        manifestLineEnd(p: &p)?
+    }
+    if !hasName { return .Err(ToolError(message: "missing modules.name", pos: pos)) }
+    if !hasSources { return .Err(ToolError(message: "missing modules.sources", pos: pos)) }
+    if !hasDependencies { return .Err(ToolError(message: "missing modules.dependencies", pos: pos)) }
+    return .Ok(ModuleSpec(name: name, sources: sources, dependencies: dependencies, pos: pos))
+}
+
+private func manifestTargetBody(p: inout ManifestCursor, pos: Int): Result<TargetSpec, ToolError> {
+    var name = ""
+    var kind = ""
+    var moduleName = ""
+    var hasName = false
+    var hasKind = false
+    var hasModule = false
+    while p.pos < p.input.count {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
+        let keyPos = p.pos
+        let key = manifestKey(p: &p)?
+        let valuePos = p.pos
+        if key == "name" {
+            if hasName { return .Err(ToolError(message: "duplicate targets.name", pos: keyPos)) }
+            name = manifestString(p: &p)?
+            if !validPortableName(name: name) {
+                return .Err(ToolError(message: "targets.name must be a portable ASCII name of 1..64 bytes, not a reserved device name", pos: valuePos))
+            }
+            hasName = true
+        } else if key == "kind" {
+            if hasKind { return .Err(ToolError(message: "duplicate targets.kind", pos: keyPos)) }
+            kind = manifestString(p: &p)?
+            if kind != "bin" && kind != "test" {
+                return .Err(ToolError(message: "targets.kind must be 'bin' or 'test'", pos: valuePos))
+            }
+            hasKind = true
+        } else if key == "module" {
+            if hasModule { return .Err(ToolError(message: "duplicate targets.module", pos: keyPos)) }
+            moduleName = manifestString(p: &p)?
+            if !manifestModuleName(name: moduleName) {
+                return .Err(ToolError(message: "invalid target logical module name: " + moduleName, pos: valuePos))
+            }
+            hasModule = true
+        } else {
+            return .Err(ToolError(message: "unknown targets key: " + key, pos: keyPos))
+        }
+        manifestLineEnd(p: &p)?
+    }
+    if !hasName { return .Err(ToolError(message: "missing targets.name", pos: pos)) }
+    if !hasKind { return .Err(ToolError(message: "missing targets.kind", pos: pos)) }
+    if !hasModule { return .Err(ToolError(message: "missing targets.module", pos: pos)) }
+    return .Ok(TargetSpec(name: name, kind: kind, module: moduleName, pos: pos))
+}
+
+private func manifestNameIndex(names: borrowing [String], name: String): Int {
+    var index = 0
+    while index < names.count {
+        if names[index] == name { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+private func manifestModuleEdges(spec: borrowing ModuleSpec, names: borrowing [String]): Result<[Int], ToolError> {
+    var edges: [Int] = []
+    var index = 0
+    while index < spec.dependencies.count {
+        let name = spec.dependencies[index]
+        let destination = manifestNameIndex(names: names, name: name)
+        if destination < 0 {
+            return .Err(ToolError(message: "module '" + spec.name + "' has unknown dependency '" + name + "'", pos: spec.pos))
+        }
+        &edges.append(element: destination)
+        index = index + 1
+    }
+    return .Ok(edges)
+}
+
+private func manifestGraph(modules: borrowing [ModuleSpec], targets: borrowing [TargetSpec]): Result<Void, ToolError> {
+    var names: [String] = []
+    var positions: [Int] = []
+    var index = 0
+    while index < modules.count {
+        let name = modules[index].name
+        let pos = modules[index].pos
+        &names.append(element: name)
+        &positions.append(element: pos)
+        index = index + 1
+    }
+    index = 0
+    while index < targets.count {
+        let target = targets[index]
+        if manifestNameIndex(names: names, name: target.module) < 0 {
+            return .Err(ToolError(message: "target '" + target.name + "' references unknown module '" + target.module + "'", pos: target.pos))
+        }
+        index = index + 1
+    }
+    var edges: [[Int]] = []
+    var colors: [Int] = []
+    var offsets: [Int] = []
+    var stack: [Int] = []
+    index = 0
+    while index < modules.count {
+        let destinations = manifestModuleEdges(spec: modules[index], names: names)?
+        &edges.append(element: destinations)
+        &colors.append(element: 0)
+        &offsets.append(element: 0)
+        &stack.append(element: 0)
+        index = index + 1
+    }
+    // Iterative DFS visits every declared module, not just target closures.
+    // Its depth is bounded by the module count; no recursive stack growth.
+    var root = 0
+    while root < names.count {
+        if colors[root] == 0 {
+            &stack[0] = root
+            &colors[root] = 1
+            var depth = 1
+            while depth > 0 {
+                let top = depth - 1
+                let node = stack[top]
+                let offset = offsets[node]
+                if offset >= edges[node].count {
+                    &colors[node] = 2
+                    depth = depth - 1
+                } else {
+                    let destination = edges[node][offset]
+                    let nextOffset = offset + 1
+                    &offsets[node] = nextOffset
+                    let color = colors[destination]
+                    if color == 1 {
+                        var begin = 0
+                        while begin < depth {
+                            if stack[begin] == destination { break }
+                            begin = begin + 1
+                        }
+                        var path = ""
+                        var cursor = begin
+                        while cursor < depth {
+                            if path.count > 0 { path = path + " -> " }
+                            let member = stack[cursor]
+                            path = path + names[member]
+                            cursor = cursor + 1
+                        }
+                        path = path + " -> " + names[destination]
+                        return .Err(ToolError(message: "module dependency cycle: " + path, pos: positions[node]))
+                    }
+                    if color == 0 {
+                        // A white destination is not already on the stack;
+                        // keep an explicit bound nevertheless before writing.
+                        if depth >= stack.count {
+                            return .Err(ToolError(message: "module graph exceeds bounded traversal depth", pos: positions[node]))
+                        }
+                        &stack[depth] = destination
+                        &colors[destination] = 1
+                        depth = depth + 1
+                    }
+                }
+            }
+        }
+        root = root + 1
+    }
+    return .Ok(())
+}
+
+func parseManifest(contents: String): Result<PackageManifest, ToolError> {
+    if contents.count > 65536 {
+        return .Err(ToolError(message: "manifest exceeds 65536 bytes", pos: 65536))
+    }
+    if !validUtf8(text: contents) {
+        return .Err(ToolError(message: "manifest contents must be valid UTF-8", pos: 0))
+    }
+    var p = ManifestCursor(input: contents, pos: 0)
+    var hasSchema = false
+    // TOML keys following a table belong to that table. Root schema keys
+    // cannot resume after any header, even after a blank line.
+    while p.pos < p.input.count {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
+        let keyPos = p.pos
+        let key = manifestKey(p: &p)?
+        if key != "schema-version" {
+            return .Err(ToolError(message: "unknown root key: " + key, pos: keyPos))
+        }
+        if hasSchema {
+            return .Err(ToolError(message: "duplicate schema-version", pos: keyPos))
+        }
+        manifestSchema(p: &p)?
+        manifestLineEnd(p: &p)?
+        hasSchema = true
+    }
+    if !hasSchema {
+        return .Err(ToolError(message: "missing root schema-version before tables", pos: p.pos))
+    }
+    var hasPackage = false
+    var packageName = ""
+    var packageVersion = ""
+    var modules: [ModuleSpec] = []
+    var targets: [TargetSpec] = []
+    // Name snapshots avoid repeatedly cloning source/dependency arrays when
+    // checking declarations or holding a borrow across append mutations.
+    var moduleNames: [String] = []
+    var targetNames: [String] = []
+    while p.pos < p.input.count {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count { break }
+        let table = manifestHeader(p: &p)?
+        if table.name == "package" && !table.array {
+            if hasPackage {
+                return .Err(ToolError(message: "duplicate [package] table", pos: table.pos))
+            }
+            let metadata = manifestPackageBody(p: &p, pos: table.pos)?
+            packageName = metadata.name
+            packageVersion = metadata.version
+            hasPackage = true
+        } else if table.name == "modules" && table.array {
+            if modules.count >= 256 {
+                return .Err(ToolError(message: "manifest exceeds 256 modules", pos: table.pos))
+            }
+            let spec = manifestModuleBody(p: &p, pos: table.pos)?
+            let name = spec.name
+            if manifestNameIndex(names: moduleNames, name: name) >= 0 {
+                return .Err(ToolError(message: "duplicate logical module name: " + name, pos: spec.pos))
+            }
+            &moduleNames.append(element: name)
+            &modules.append(element: spec)
+        } else if table.name == "targets" && table.array {
+            if targets.count >= 256 {
+                return .Err(ToolError(message: "manifest exceeds 256 targets", pos: table.pos))
+            }
+            let spec = manifestTargetBody(p: &p, pos: table.pos)?
+            let name = spec.name
+            var index = 0
+            while index < targetNames.count {
+                let previous = targetNames[index]
+                if previous == name || (hostWindows() && manifestAsciiEqual(first: previous, second: name)) {
+                    return .Err(ToolError(message: "duplicate or case-colliding target name: " + name, pos: spec.pos))
+                }
+                index = index + 1
+            }
+            &targetNames.append(element: name)
+            &targets.append(element: spec)
+        } else {
+            return .Err(ToolError(message: "unsupported table; only [package], [[modules]], and [[targets]] are allowed", pos: table.pos))
+        }
+    }
+    if !hasPackage { return .Err(ToolError(message: "missing [package] table", pos: p.pos)) }
+    if targets.count == 0 { return .Err(ToolError(message: "manifest requires at least one target", pos: p.pos)) }
+    manifestGraph(modules: modules, targets: targets)?
+    return .Ok(PackageManifest(name: packageName, version: packageVersion, modules: modules, targets: targets))
+}

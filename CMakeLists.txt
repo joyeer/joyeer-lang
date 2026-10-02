@@ -46,6 +46,13 @@ include(CTest)
 enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
+option(JOYEER_BUILD_JOYPM "Bootstrap the Joyeer-written joypm project tool" ON)
+
+if(JOYEER_BUILD_JOYPM AND CMAKE_CROSSCOMPILING)
+    message(FATAL_ERROR
+        "joypm bootstrapping must execute the newly built Joyeer compiler. "
+        "Cross-compiling builds must set JOYEER_BUILD_JOYPM=OFF.")
+endif()
 
 set(JOYEER_LLVM_ROOT "$ENV{LLVM_HOME}" CACHE PATH
     "Root of the LLVM/LLD 22.1.8 development SDK")
@@ -243,6 +250,7 @@ include_directories(
 )
 
 add_subdirectory(lib)
+add_subdirectory(src/tools)
 add_subdirectory(tests)
 if(JOYEER_BUILD_UNITTESTS)
     add_subdirectory(unittests)

@@ -1,0 +1,2 @@
+// A successful status alone is not proof that the expected artifact exists.
+func main(args: [String]): Int { return 0 }

@@ -59,14 +59,36 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
-| Built-ins | Primitive/string `print(value:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
-| Filesystem | UTF-8 paths, binary `readFileUtf8`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
+| Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
+| Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
 builtins. Their type arguments do not imply support for user-defined generic
 declarations.
+
+## Source-implemented local project tool
+
+The separate Joyeer-written `joypm` implements local `init/check/build/run/test`
+in source under [src/tools/joypm/](../../src/tools/joypm/), with strict manifest
+schema/Unicode/flag validation, explicit source modules and compiler paths,
+debug/release profiles, serial execution, and always-rebuilt fresh generations
+bounded to 128 claims per target/profile. It does not scan upward, search PATH,
+delete outputs, cache builds, fetch dependencies, or implement workspaces.
+Its early-development `0.1.0` version is independent of compiler `0.0.1`.
+
+CMake defaults `JOYEER_BUILD_JOYPM` to `ON`, bootstraps the tool as an `ALL`
+target, and registers nine gates, including `Joypm.ManifestLimits`, when
+`BUILD_TESTING` is enabled, independently of `JOYEER_BUILD_UNITTESTS`.
+The Windows x64 Debug build with unit tests enabled and local-project smoke
+run succeeded; **CTest has not run** for this change set. The loader uses
+`fileKind` to reject nonregular manifests, including final symlinks, then
+`readFilePrefix(path:maximumBytes:)` with 65537 to enforce the parser's
+65536-byte maximum without a whole-file read. This integration is compiled,
+not streaming or race-free confinement. Full native/platform verification,
+package installation, and self-build remain open; v0 is not released.
+See [joypm](joypm.md) for current contracts, parser limits, and validation status.
 
 ## Not implemented
 
@@ -87,8 +109,10 @@ declarations.
   aggregate printing, streaming file APIs, or a general standard library.
 - Source-language FFI, contracts or property annotations as executable
   language features, incremental compilation, or formal verification.
-- Project-manager commands such as `joyeer build`, `run`, `test`, `init`,
-  `toolchain`, or `doctor`.
+- Project-manager commands on the **compiler**, such as `joyeer build`, `run`,
+  `test`, or `init`; use the separate source-implemented `joypm`. Toolchain
+  installation, `doctor`, registries, local path packages, and workspaces
+  remain deferred.
 
 Lexical or specification coverage alone does not make a feature executable.
 New source-visible features must pass through every applicable frontend,
@@ -113,14 +137,27 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   [exact signatures and boundaries](../spec/18-host.md). Recursive cleanup,
   replacement/atomic publication, canonicalization, process output capture,
   timeouts, and asynchronous handles are not provided.
+- `writeStderr(contents: String): Result<Void, StderrError>` writes exact bytes
+  without appending a newline and flushes; `.WriteFailed(Int)` carries CRT
+  `errno`, not a Win32 status. Implementation and regressions compile in the
+  Windows x64 Debug build; the regressions have not executed. The bounded
+  `readFilePrefix(path: String, maximumBytes: Int)` returns
+  `Result<String, FileSystemError>` and is integrated for the 65537-byte
+  manifest read after regular-file classification. Its `Int` host descriptor
+  maps through name resolution/type checking to a scalar LLVM `i64` input;
+  boundary/error acceptance remains pending, and no streaming API is implied.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original
   bytes. The entry return status must be in `0..255`; other values produce
-  a runtime error rather than truncation. The compiler CLI and existing
-  Windows legacy `readFile` handling still have non-ASCII limitations. New
-  host operations require strict UTF-8 paths/arguments and use wide Windows
-  APIs; invalid bytes are errors, not replacement characters. Host operations
-  are not a filesystem sandbox.
+  a runtime error rather than truncation. The compiler's Windows `wmain`
+  UTF-8 conversion and native/UTF-8 linker-path preservation are integrated
+  and compiled. A Windows x64 joypm smoke run succeeded, but its scope does
+  not establish general Unicode support; the registered native regressions
+  and joypm Unicode gate have not run.
+  Existing Windows legacy `readFile` handling remains narrow and unchanged.
+  New host operations require strict UTF-8 paths/arguments and use wide
+  Windows APIs; invalid bytes are errors, not replacement characters. Host
+  operations are not a filesystem sandbox.
 - Debug emission includes source line tables, lexical variables/types/scopes,
   and PDB/DWARF/dSYM artifact handling. Optimized-value and aggregate-projection
   inspection remains incomplete.

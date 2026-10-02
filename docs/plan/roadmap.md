@@ -37,11 +37,20 @@
 - Add checked-in CI for supported Windows, macOS, and Linux configurations.
 - Exercise ELF and Mach-O behavior on their native platforms in addition to
   Windows release validation.
+- Run the added Windows compiler `wmain` UTF-8 and native/linker-path
+  regressions, including Unicode source/output/temporary paths. The fixes
+  compile and have scoped Windows x64 joypm smoke evidence, not full native
+  acceptance or general Unicode coverage; Unicode-aware diagnostic rendering
+  remains an independent task above.
 
 ### 4. Extend host facilities beyond the first portable interface
 
-- Address the remaining Windows compiler-CLI encoding boundary without
-  silently changing legacy `readFile(path:)` compatibility.
+- Execute the added regressions for integrated bounded
+  `readFilePrefix(path:maximumBytes:)` and scalar host inputs. Validate joypm's
+  65537-byte sentinel read and regular-file-only manifest classification,
+  including final-symlink/nonregular/device rejection and exact limits,
+  without changing legacy narrow `readFile(path:)` compatibility or implying
+  race-free confinement.
 - Specify streaming and richer filesystem metadata before exposing them.
 - Define anchored, non-link-following recursive cleanup and replacement or
   atomic-publication guarantees before adding destructive operations.
@@ -71,8 +80,9 @@ when defining workloads and acceptance thresholds.
   admitting their syntax as supported.
 - Keep `Optional`, `Result`, `Array`, and `Dict` on their compiler-known path
   until general generic declarations and monomorphization are specified.
-  If dictionary key enumeration is needed for manifest validation, define it as
-  an independent owned snapshot with unspecified traversal order.
+  If a future tool needs dictionary key enumeration, define it as an
+  independent owned snapshot with unspecified traversal order; the current
+  joypm schema parser does not require it.
 - Treat standard-library growth as an API, ownership, portability, and
   diagnostics task rather than exposing runtime helpers ad hoc.
 
@@ -106,15 +116,27 @@ when defining workloads and acceptance thresholds.
   behavior.
 - Do not promise automatic proof of arbitrary program properties.
 
-### 10. Deliver the first local project-manager workflow
+### 10. Validate the first local project-manager workflow
 
-- Follow the dependency-ordered
-  [project manager implementation plan](package-manager.md#7-dependency-ordered-milestones)
-  from the implemented named-module and portable-host foundation.
-- Start with a Joyeer-written `joypm`, strict manifest validation, explicit
-  source-module planning, and `init/check/build/run/test` for one local package.
-- Establish stderr diagnostics and explicit compiler discovery policy; close
-  the Windows compiler-CLI encoding gap before claiming Unicode project paths.
+- Run unfiltered CTest with tool and unit tests enabled. The Joyeer-written
+  [joypm implementation](../impl/joypm.md) passed a Windows x64-target Debug build
+  and local-project smoke run, but the nine registered gates, including
+  `Joypm.ManifestLimits`, have not executed; do not mark v0 release or full
+  native validation complete.
+- Continue using the [receiving-machine handoff](joypm-validation-handoff.md).
+  The owner reports an ARM64 originating machine, but recorded commands used
+  the x64 target. Validate ARM64 natively with matching MSVC/LLVM inputs and a
+  separate build tree; do not infer native coverage from x64 emulation.
+- Validate strict parser limits and bounded regular-file acquisition, exact
+  compiler plans, both profiles, fresh-generation/stale-artifact safety,
+  serial test summaries, argument forwarding, and package child cwd.
+- Execute Windows Unicode and stderr byte/error regressions, then native
+  Windows/Linux/macOS, Release-bootstrap, and package/Debug-installer gates,
+  including Debug PDB/dSYM byproducts and macOS fallback without `dsymutil`.
+  Add self-build acceptance; current CMake bootstrap only invokes the compiler
+  directly.
+- Track remaining cases in the
+  [validation and release plan](package-manager.md#8-validation-and-release-gates).
 - Add local path dependencies and workspaces after the single-package workflow.
   Keep remote resolution, caching, and anchored cleanup behind their own
   contracts and acceptance gates.

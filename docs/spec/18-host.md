@@ -1,7 +1,7 @@
 ## §18 Portable host operations
 
-This chapter defines the accepted first filesystem and synchronous-process
-contracts. See [the implemented surface](../impl/supported-features.md) for
+This chapter defines the accepted first filesystem, synchronous-process, and
+standard-error contracts. See [the implemented surface](../impl/supported-features.md) for
 implementation status. These compiler-known operations do not introduce
 source-language FFI or user-defined generic functions.
 
@@ -29,6 +29,7 @@ The signatures below describe compiler-provided functions:
 
 ```joyeer
 func readFileUtf8(path: String): Result<String, FileSystemError>
+func readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>
 func writeFileNew(path: String, contents: String): Result<Void, FileSystemError>
 func createDirectory(path: String): Result<Void, FileSystemError>
 func listDirectory(path: String): Result<[String], FileSystemError>
@@ -47,6 +48,20 @@ platform code (or the platform's invalid-input code for rejected input).
 
 - `readFileUtf8` reads a whole file and preserves its bytes. The `Utf8` suffix
   describes the path, not the file's contents.
+- `readFilePrefix` reads from the beginning until EOF or `maximumBytes` bytes
+  have been read, whichever occurs first. The result preserves arbitrary bytes,
+  including NUL and invalid UTF-8, and can end inside a UTF-8 sequence. A zero
+  limit still validates and successfully opens and closes the path before
+  returning an owned empty string. A negative limit returns
+  `.Err(.Other(code))` with `ERROR_INVALID_PARAMETER` on Windows or `EINVAL`
+  on POSIX, before path resolution; it does not add an error case or classify
+  the limit as `InvalidPath`. Read and close failures discard partial contents.
+  Content storage grows only up to the limit, with fixed empty-string/native
+  bookkeeping overhead and separate path conversion storage, never according
+  to the whole file's size. Reaching the limit is success and does not probe
+  another byte or report whether EOF was reached. For a 65,536-byte manifest
+  ceiling, request `maximumBytes: 65537` and reject a returned byte count above
+  65,536. This is a bounded first interface, not streaming or generic I/O.
 - `writeFileNew` creates a new file exclusively and writes the supplied bytes.
   An existing destination is not truncated or replaced. Exclusivity must be
   enforced by creation itself, not by an earlier existence check. Failure
@@ -156,3 +171,35 @@ than truncating it to fit its own entry result. This tool policy is detailed in
 the [package manager plan](../plan/package-manager.md#3-cli-design-and-status-conventions);
 it is not a restriction on language `ProcessStatus` or a claim that `joypm` is
 implemented.
+
+### 18.4 Standard error
+
+```joyeer
+enum StderrError {
+  WriteFailed(Int),
+}
+
+func writeStderr(contents: String): Result<Void, StderrError>
+```
+
+`contents` is borrowed and evaluated once. The operation writes exactly its
+bytes to the inherited standard-error stream, without appending a newline,
+validating UTF-8, replacing invalid bytes, or treating embedded NUL as a
+terminator. Windows CRT text-mode newline translation is disabled for this
+write; the previous stream mode is restored afterward. No console code page
+is changed. Terminal rendering is a host concern, not an encoding guarantee.
+
+The operation flushes standard error before returning success, even when
+`contents` is empty. Success is `.Ok(())`. Write and flush failures return
+`.Err(.WriteFailed(code))`, where `code` is the original native C-runtime
+`errno`, or `EIO` if the failed operation supplies no code. Windows stream-mode
+setup/restoration failures use the same error case. These are C-runtime codes,
+not Win32 `GetLastError` values. An error can follow a partial write; no rollback,
+atomic-message publication, or filesystem durability is promised. Native
+signal behavior still applies, including POSIX `SIGPIPE` on a closed pipe.
+
+`StderrError` is distinct from `IOError`, `FileSystemError`, and `ProcessError`.
+Postfix `?` propagates only the same error type; adapters must explicitly match
+and wrap errors. This operation does not change `print` or the compatibility
+`readFile` interface. Concurrent foreign code that changes the CRT stream mode
+or reopens standard error is outside this first interface's guarantees.

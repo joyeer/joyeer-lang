@@ -41,6 +41,19 @@ function Write-TestCache {
     [IO.File]::WriteAllLines((Join-Path $fakeBuild 'CMakeCache.txt'), [string[]]$lines)
 }
 
+function Get-DebugPayload {
+    param([string]$Directory)
+
+    $payload = @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib',
+        'joyeer.pdb', 'joyeer-backend.pdb', 'licenses\LICENSE')
+    $enabled = @(Get-Content -LiteralPath (Join-Path $Directory 'CMakeCache.txt') |
+        Where-Object { $_ -match '^JOYEER_BUILD_JOYPM:[^=]+=(1|ON|YES|TRUE|Y)$' }).Count -gt 0
+    if ($enabled) {
+        $payload += @('joypm.exe', 'joypm.pdb')
+    }
+    return $payload
+}
+
 try {
     $fakeBuild = Join-Path $testDir 'fake build'
     $rejectedInstall = Join-Path $testDir 'must not exist'
@@ -80,6 +93,30 @@ try {
         throw 'A rejected install created its destination.'
     }
 
+    $fakeBin = Join-Path $fakeBuild 'bin'
+    New-Item -ItemType Directory -Path $fakeBin | Out-Null
+    foreach ($name in @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib',
+        'joyeer.pdb', 'joyeer-backend.pdb')) {
+        [IO.File]::WriteAllText((Join-Path $fakeBin $name), 'nonempty preflight fixture')
+    }
+    $cache.JOYEER_BUILD_JOYPM = 'ON'
+    Write-TestCache $cache
+    Assert-Rejected {
+        & $installer -BuildDir $fakeBuild -InstallDir $rejectedInstall -SkipSkillInstall -SkipPathUpdate
+    } 'joypm.exe'
+    [IO.File]::WriteAllText((Join-Path $fakeBin 'joypm.exe'), 'nonempty preflight fixture')
+    Assert-Rejected {
+        & $installer -BuildDir $fakeBuild -InstallDir $rejectedInstall -SkipSkillInstall -SkipPathUpdate
+    } 'joypm.pdb'
+    $cache.JOYEER_BUILD_JOYPM = 'OFF'
+    Write-TestCache $cache
+    Assert-Rejected {
+        & $installer -BuildDir $fakeBuild -InstallDir $rejectedInstall -SkipSkillInstall -SkipPathUpdate
+    } 'Missing cmake_install.cmake'
+    if (Test-Path -LiteralPath $rejectedInstall) {
+        throw 'A rejected joypm preflight created its destination.'
+    }
+
     $installDir = Join-Path $testDir 'installed compiler'
     & {
         . $installer -BuildDir $buildPath -InstallDir $installDir -SkillDir $skillDir -SkipPathUpdate
@@ -102,7 +139,8 @@ try {
         if (Test-Path -LiteralPath $skippedSkillDir) {
             throw 'Skipping skill installation created a directory.'
         }
-        foreach ($name in @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib', 'joyeer.pdb', 'joyeer-backend.pdb')) {
+        foreach ($name in (Get-DebugPayload -Directory $nativeBuild)) {
+            if ($name -eq 'licenses\LICENSE') { continue }
             if ((Get-FileHash -LiteralPath (Join-Path $automaticInstall $name)).Hash -ne
                 (Get-FileHash -LiteralPath (Join-Path $nativeBuild ('bin\' + $name))).Hash) {
                 throw "Automatic installation did not use the native Debug build: $name"
@@ -139,8 +177,7 @@ try {
             throw 'An existing machine PATH entry must not be duplicated in user PATH.'
         }
     }
-    $payload = @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib',
-        'joyeer.pdb', 'joyeer-backend.pdb', 'licenses\LICENSE')
+    $payload = @(Get-DebugPayload -Directory $buildPath)
     $installed = @(Get-ChildItem -LiteralPath $installDir -Recurse -File | ForEach-Object {
         $_.FullName.Substring($installDir.Length + 1)
     })
@@ -273,12 +310,20 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $testDir 'hello.pdb') -PathType Leaf)) {
         throw 'The installed compiler did not produce debug symbols.'
     }
+    if ('joypm.exe' -in $payload) {
+        foreach ($option in @('--help', '--version')) {
+            $toolOutput = & (Join-Path $installDir 'joypm.exe') $option
+            if ($LASTEXITCODE -ne 0 -or ($toolOutput -join "`n") -notmatch 'joypm') {
+                throw "Installed joypm failed $option without a compiler argument."
+            }
+        }
+    }
     if ($env:PATH -cne $originalPath -or
         [Environment]::GetEnvironmentVariable('Path', 'User') -cne $originalUserPath -or
         [Environment]::GetEnvironmentVariable('Path', 'Machine') -cne $originalMachinePath) {
         throw 'The installer modified PATH.'
     }
-    Write-Output 'PASS: Native architecture selection, Debug and skill installation, forced updates, empty destinations, conflict protection, symbols, reinstallation, native execution, invalid builds, destination guards and PATH deduplication.'
+    Write-Output 'PASS: Native architecture selection, Debug and optional joypm installation, skill installation, forced updates, empty destinations, conflict protection, symbols, reinstallation, native execution, invalid builds, destination guards and PATH deduplication.'
 } finally {
     if (Test-Path -LiteralPath $testDir) {
         Remove-Item -LiteralPath $testDir -Recurse -Force

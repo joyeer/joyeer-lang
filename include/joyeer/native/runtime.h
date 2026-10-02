@@ -47,6 +47,11 @@ enum JoyeerIOErrorKind {
     JOYEER_IO_ERROR_OTHER = 4,
 };
 
+enum JoyeerStderrErrorKind {
+    JOYEER_STDERR_ERROR_NONE = 0,
+    JOYEER_STDERR_ERROR_WRITE_FAILED = 1,
+};
+
 JOYEER_NORETURN void joyeer_panic(const char* message);
 int64_t joyeer_runtime_active_allocations(void);
 
@@ -131,6 +136,16 @@ void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary);
 // Stable compiler ABI. These functions deliberately avoid passing or
 // returning C structs by value, whose ABI differs across targets.
 void joyeer_print_string_abi(const uint8_t* data, int64_t count);
+// Writes borrowed arbitrary bytes without a newline and flushes stderr,
+// including for an empty input. Returns 0 on success (errorCode = 0) or
+// 1 for WriteFailed (native CRT errno, or EIO if unavailable). Windows
+// temporarily uses binary CRT mode and restores the previous mode.
+// Null error storage, a negative/unrepresentable count, or null nonempty
+// data is ABI misuse and panics, like the other host write operations.
+int32_t joyeer_write_stderr_abi(
+    int64_t* errorCode,
+    const uint8_t* data,
+    int64_t count);
 void joyeer_string_concat_abi(
     JoyeerString* result,
     const uint8_t* leftData,

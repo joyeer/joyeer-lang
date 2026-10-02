@@ -1,0 +1,21 @@
+// CMake lists drop empty unquoted elements. This driver supplies the real argv
+// array directly so the acceptance test cannot accidentally omit that case.
+func main(args: [String]): Int {
+    if args.count != 6 { return 81 }
+    var last = "ASCII"
+    if args[5] == "unicode" { last = "雪🦀" }
+    let forwarded = [args[4], "--compiler", args[1], "--manifest-path", args[2],
+        "--", "", "with spaces", "quote\"slash\\", "$&*%literal;<>|",
+        "--not-an-option", last]
+    return match runProcess(
+        executable: args[0], arguments: forwarded, workingDirectory: args[3]) {
+        .Ok(status) => match status {
+            .Exited(code) => {
+                if code != 0 { return 82 }
+                return 0
+            },
+            .Signaled(_) => 83,
+        },
+        .Err(_) => 84,
+    }
+}

@@ -1,0 +1,83 @@
+cmake_minimum_required(VERSION 3.20)
+include("${CMAKE_CURRENT_LIST_DIR}/helpers.cmake")
+
+set(no_tests "${work}/no test targets")
+jp_copy_project(single "${no_tests}")
+jp_call(0 "${outside}" test --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${no_tests}/joyeer.toml")
+jp_contains("${jp_out}" "0 tests")
+jp_no_outputs("${no_tests}")
+jp_call(2 "${outside}" test --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${no_tests}/joyeer.toml" --target missing)
+jp_no_outputs("${no_tests}")
+
+function(write_test_project package)
+    file(MAKE_DIRECTORY "${package}")
+    foreach(fixture IN ITEMS pass fail invalid after)
+        file(COPY "${FIXTURE_DIR}/${fixture}.joyeer" DESTINATION "${package}")
+    endforeach()
+    # Declaration order differs from stable target-name execution order.
+    set(manifest "schema-version = 1\n[package]\nname = 'test-suite'\nversion = '0.1.0'\n")
+    foreach(fixture IN ITEMS after invalid fail pass)
+        string(APPEND manifest "[[modules]]\nname = 'suite.${fixture}'\nsources = ['${fixture}.joyeer']\ndependencies = []\n")
+    endforeach()
+    foreach(pair IN ITEMS "z-after:after" "c-build:invalid" "b-fail:fail" "a-pass:pass")
+        string(REPLACE ":" ";" fields "${pair}")
+        list(GET fields 0 name)
+        list(GET fields 1 module)
+        string(APPEND manifest "[[targets]]\nname = '${name}'\nkind = 'test'\nmodule = 'suite.${module}'\n")
+    endforeach()
+    file(WRITE "${package}/joyeer.toml" "${manifest}")
+endfunction()
+
+set(package "${work}/test suite")
+write_test_project("${package}")
+jp_call(1 "${outside}" test --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_out}" "pass fixture\n")
+jp_contains("${jp_out}" "fail fixture\n")
+jp_contains("${jp_out}" "after failure fixture\n")
+string(FIND "${jp_out}" "pass fixture\n" pass_at)
+string(FIND "${jp_out}" "fail fixture\n" fail_at)
+string(FIND "${jp_out}" "after failure fixture\n" after_at)
+if(NOT pass_at LESS fail_at OR NOT fail_at LESS after_at)
+    jp_fail("Test targets did not execute in name order or stopped after ordinary failure")
+endif()
+jp_contains("${jp_err}" "23")
+foreach(name IN ITEMS a-pass b-fail z-after)
+    jp_artifacts("${package}" debug "${name}" 1)
+endforeach()
+jp_artifacts("${package}" debug c-build 0)
+
+# Freeze the summary contract rather than accept a vague success/failure word.
+set(summary "4 tests: 2 passed, 1 build-fail, 1 run-fail")
+jp_contains("${jp_out}" "${summary}")
+jp_call(1 "${outside}" test --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_out}" "${summary}")
+foreach(name IN ITEMS a-pass b-fail z-after)
+    jp_artifacts("${package}" debug "${name}" 2)
+endforeach()
+jp_call(0 "${outside}" test --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${package}/joyeer.toml" --target a-pass --release)
+jp_contains("${jp_out}" "1 test: 1 passed, 0 build-fail, 0 run-fail")
+jp_absent("${jp_out}" "fail fixture")
+jp_absent("${jp_out}" "after failure fixture")
+jp_artifacts("${package}" release a-pass 1)
+jp_artifacts("${package}" release b-fail 0)
+
+# check validates every declared target, even though normal build selects bins.
+set(check_all "${work}/check all targets")
+write_test_project("${check_all}")
+jp_call(1 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${check_all}/joyeer.toml")
+jp_no_outputs("${check_all}")
+
+set(forward "${work}/forwarded test")
+jp_copy_project(single "${forward}")
+file(READ "${forward}/joyeer.toml" manifest)
+string(REPLACE "kind = \"bin\"" "kind = \"test\"" manifest "${manifest}")
+file(WRITE "${forward}/joyeer.toml" "${manifest}")
+jp_forward(test "${forward}" ascii)
+jp_contains("${jp_out}" "1 test: 1 passed, 0 build-fail, 0 run-fail")
+message(STATUS "joypm test counts/failure continuation/order/selection/forwarding acceptance passed")

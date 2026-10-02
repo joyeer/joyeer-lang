@@ -12,6 +12,11 @@ without an input produces usage/error output, not a successful version query.
 Use release metadata or source/build provenance as described in
 [supported features](supported-features.md).
 
+The separate joypm tool has its own help/version commands. Windows x64 Debug
+build/smoke validation succeeded, but full native acceptance is pending;
+the independent `joypm 0.1.0` version does not identify the compiler or
+establish a release.
+
 ## Commands
 
 These commands assume `source.joyeer` is in the current working directory.
@@ -126,6 +131,72 @@ Prefer `-O0 -gfull` when investigating source behavior. `--emit-llvm` writes
 pre-optimization text after frontend and Joyeer IR checks; it is not equivalent
 to native LLVM verification/linking or program execution.
 
+## Local projects with joypm
+
+`joypm` is a separate Joyeer-written local tool. CMake defaults
+`JOYEER_BUILD_JOYPM=ON` and bootstraps it as an `ALL` target using the build-tree
+compiler; `OFF` selects compiler-only. Debug bootstrap uses `-O0 -gfull` and
+Release uses `-O2 -g0`; macOS Debug uses `-g0` without `dsymutil`. Produced
+Debug PDB/dSYM sidecars are CMake byproducts. Nine registered tool gates,
+including `Joypm.ManifestLimits`, require
+`BUILD_TESTING` and the tool option, independently of `JOYEER_BUILD_UNITTESTS`.
+No preinstalled joypm or Python is needed. Current bootstrap/test compilation
+calls the compiler directly, not a joypm self-build.
+
+**Status:** the Windows x64 Debug build with unit tests enabled and local-project
+smoke run succeeded; bounded regular-file acquisition is integrated and
+compiled. CTest has not run: the nine gates, full native acceptance, other
+platforms, package installation, and self-build remain pending. This is not a
+released or release-complete v0, and one smoke workflow does not establish
+general Unicode support. The following documents CLI behavior, not full
+acceptance coverage.
+
+Select matching explicit binaries before running examples:
+
+```powershell
+$joypm = "C:\path with spaces\joypm.exe"
+$compiler = "C:\path with spaces\joyeer.exe"
+& $joypm --help
+& $joypm --version
+& $joypm init .\hello --name hello
+& $joypm check --compiler $compiler --manifest-path .\hello\joyeer.toml
+& $joypm build --compiler $compiler --manifest-path .\hello\joyeer.toml --release
+& $joypm run --compiler $compiler --manifest-path .\hello\joyeer.toml -- "two words" ""
+& $joypm test --compiler $compiler --manifest-path .\hello\joyeer.toml
+```
+
+These paths are illustrative, not installation defaults. Check each status
+before continuing. Linux/macOS use native paths without the `.exe` suffix.
+`init` needs a new or empty destination with an existing parent and creates
+one `bin`, not tests; `test` then prints `0 tests` unless targets are added.
+
+Project commands require `--compiler <explicit path>`, with no PATH or sibling
+search. `--manifest-path <file>` defaults to `joyeer.toml` in the invocation
+directory, never an upward search. `--release` and `--verbose` are project
+options; `--target <name>` is accepted only by `build/run/test`. `check` checks
+all declared targets; `build` builds bins; `run` needs exactly one bin; `test`
+selects explicit executable tests. Only `run/test` forward argv after `--`.
+Unknown/duplicate/incompatible flags and missing values are errors.
+
+Debug is `-O0 -gfull`; release is `-O2 -g0`. Targets always rebuild serially
+into exclusively claimed `build-1` through `build-128` under their package
+target/profile directory. Previous generations are never reused after failure
+or deleted; no cache, registry, workspace, or local path dependency exists.
+Compiler cwd is the caller's `.`; source/output paths are manifest-prefixed;
+program/test cwd is the manifest directory. There is no shell or output capture.
+Run only trusted projects: children inherit permissions, environment and streams.
+
+Status is 0 on success, 1 for manifest/build/host/nonzero-child failures, and 2
+for usage/selection errors; failed diagnostic writes return 1. Full child codes
+and signals stay in stderr diagnostics. Help/version/test summaries use stdout;
+progress/errors/verbose argv use stderr. The strict TOML profile limits input to
+65536 bytes, decoded strings to 4096 bytes, modules/targets to 256 each, and
+string arrays to 1024 entries. The integrated loader uses `fileKind` to accept
+only regular files, rejecting final symlinks and other nonregular manifests,
+then calls `readFilePrefix(path:maximumBytes:)` with 65537. This bounds the
+read without adding streaming; classification is not race-free confinement.
+Exact-boundary and host regression execution remain pending.
+
 ## Runtime and environment
 
 Keep the compiler, backend shared library, and native runtime archive from the
@@ -139,6 +210,15 @@ If native linking cannot find platform inputs, report the environment failure
 and consult that documentation. It is not evidence that the source is invalid.
 A packaged Windows compiler can locate installed platform libraries without a
 Developer Prompt.
+
+Compiler/backend/runtime/current license use install component `JoyeerRuntime`;
+optional joypm uses `PRODUCT` and is included by default when enabled, along
+with its PDB on Windows Debug installs. Package/Debug-installer validation and
+required third-party notice staging remain open. Windows compiler `wmain`
+UTF-8 conversion and native/linker-path fixes are compiled, with scoped Windows
+x64 smoke evidence; their full native regressions have not executed, and older
+binaries may not contain them. Unicode-aware diagnostic rendering and legacy
+narrow Windows `readFile` remain limitations.
 
 Relative `readFile(path:)` paths are relative to the **running program's working
 directory**, not automatically to its source file. The

@@ -188,6 +188,52 @@ The build is out-of-source only. Preset builds write the executable under
 `build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
 focused iteration.
 
+## joypm bootstrap and acceptance
+
+`JOYEER_BUILD_JOYPM=ON` is the default. The `joypm` `ALL` target invokes the
+newly built compiler with an explicit list of six sources from
+[src/tools/joypm/](../src/tools/joypm/) and a generated platform source. It
+depends on the compiler, backend, and native runtime and produces `joypm` next
+to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
+(and other non-Debug configurations). On macOS, Debug falls back to `-g0`
+when `dsymutil` is unavailable, so ordinary native output remains possible.
+Debug PDBs on Windows and dSYM bundles on macOS, when produced, are declared
+CMake `BYPRODUCTS`; Release does not claim Debug sidecars. Bootstrap needs no
+preinstalled `joypm` or Python. There is no self-build acceptance through
+joypm yet.
+
+For a compiler-only configuration, for example on x64:
+
+```powershell
+cmake --preset x64-debug -DJOYEER_BUILD_JOYPM=OFF
+cmake --build --preset x64-debug
+```
+
+The same option works with the other native presets. Cross-compiling
+configurations must disable joypm because the bootstrap runs the new compiler.
+`JOYEER_BUILD_UNITTESTS` independently controls the C++/GoogleTest suite.
+The nine gates in [tests/joypm/CMakeLists.txt](../tests/joypm/CMakeLists.txt),
+including `Joypm.ManifestLimits`,
+require `BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, not `JOYEER_BUILD_UNITTESTS`.
+When enabled, `JoypmAcceptanceTools` also builds native fixtures as an `ALL`
+target. The full acceptance configuration enables all three options and runs
+unfiltered CTest; turning off C++ tests does not remove joypm gates.
+
+**Validation status for the joypm change set:** the Windows x64-target Debug build
+with `JOYEER_BUILD_UNITTESTS=ON` and local-project smoke validation succeeded.
+Bounded regular-file manifest acquisition and scalar host-input integration
+are compiled. CTest has not run; the nine tool gates, full native acceptance,
+other platforms, package installation, and self-build remain pending. A build
+or smoke result does not establish a released or release-complete v0. See the
+[implementation reference](impl/joypm.md) and
+[remaining acceptance gates](plan/package-manager.md#8-validation-and-release-gates).
+The owner reports an ARM64 originating machine, but the recorded build used
+the x64 Developer environment, preset, and LLVM SDK. It is not native ARM64
+validation. Continue on a fresh receiving-machine build tree using the
+[handoff checklist](plan/joypm-validation-handoff.md); choose `arm64-*` with
+an ARM64 SDK for native ARM64, or `x64-*` with an x64 SDK for an x64 target.
+Shell/process architecture alone does not identify the native hardware.
+
 ## Release staging
 
 Build Release and stage a movable Windows package directory:
@@ -213,8 +259,18 @@ With that setting, the Joyeer package contains:
 joyeer.exe
 joyeer-backend.dll
 JoyeerNativeRuntime.lib
+joypm.exe                 # when JOYEER_BUILD_JOYPM=ON (default)
 licenses/
 ```
+
+Compiler, backend, runtime, and the current Joyeer license use install
+component `JoyeerRuntime`; optional `joypm` uses `PRODUCT`. An unfiltered
+install includes both enabled components. The Windows Debug joypm PDB is
+also installed by `PRODUCT`; Release has no joypm Debug-PDB install rule.
+An install limited to
+`JoyeerRuntime` does not install joypm; select `PRODUCT` as well when staging
+the tool. With `JOYEER_BUILD_JOYPM=OFF`, no joypm binary is built or installed.
+Keep GoogleTest and LLVM development tools/SDKs out of the product inventory.
 
 The current top-level install rule places only the repository's own `LICENSE`
 in `licenses/`. This is not yet a complete redistribution-license bundle:
@@ -244,11 +300,14 @@ cmake --install out/build/linux-release --prefix out/package/joyeer
 
 Replace `linux-release` with `macos-release` on macOS. The installed package
 keeps the `joyeer` executable, `joyeer-backend` shared library,
-`JoyeerNativeRuntime` archive, and licenses together. Linux uses an `$ORIGIN`
-runtime search path and macOS uses `@loader_path`; the compiler also resolves
+`JoyeerNativeRuntime` archive, optional `joypm`, and licenses together. Linux
+uses an `$ORIGIN` runtime search path and macOS uses `@loader_path`; the compiler also resolves
 the runtime archive relative to its own executable. Building Joyeer programs
 still requires the host libc/platform SDK startup objects and system
 libraries, but not an external LLVM, Clang, or LLD executable.
+The installed joypm still requires `--compiler <explicit path>`; it does not
+discover the compiler beside itself or search PATH. Package staging and use
+of the new tool remain unvalidated in this change set.
 
 ## Local Windows Debug installation
 
@@ -303,8 +362,8 @@ client or scope, for example for Claude Code:
 .\scripts\install-debug.ps1 -SkillDir "$HOME\.claude\skills\joyeer"
 ```
 
-Only the selected skill destination is used. Pass `-SkipSkillInstall` for a
-compiler-only installation. For isolated installations, override both
+Only the selected skill destination is used. Pass `-SkipSkillInstall` to
+install only the binaries, including joypm when enabled. For isolated installations, override both
 `-InstallDir` and `-SkillDir` (or skip the skill), as well as `-SkipPathUpdate`.
 If the skill already contains identical source files, it is left unchanged,
 including any additional user files. A new or empty destination accepts a full
@@ -327,8 +386,10 @@ see [agent setup](../skills/README.md).
 
 The script verifies that the build belongs to this checkout and selects Debug
 only, including in multi-configuration build trees. All runtime binaries and
-compiler/backend PDBs must already exist. Installation uses the `JoyeerRuntime`
-CMake component to exclude GoogleTest and SDK files, then copies the PDBs:
+compiler/backend PDBs must already exist. When the build cache enables
+`JOYEER_BUILD_JOYPM`, the script also requires a nonempty `joypm.exe` and
+`joypm.pdb`. Installation uses `JoyeerRuntime` and, when enabled, `PRODUCT`
+to exclude GoogleTest and SDK files, then copies the PDBs:
 
 ```text
 joyeer.exe
@@ -336,11 +397,18 @@ joyeer-backend.dll
 JoyeerNativeRuntime.lib
 joyeer.pdb
 joyeer-backend.pdb
+joypm.exe                 # when enabled
+joypm.pdb                 # when enabled
 licenses\LICENSE
 ```
 
+`-SkipSkillInstall` skips only the agent skill; it does not disable joypm.
+Use a build configured with `JOYEER_BUILD_JOYPM=OFF` for compiler-only
+installation. The optional tool/PDB installer changes and their tests are
+added but have not been executed for this change set.
+
 After rebuilding, rerun the same command to update the installation. Close
-running compiler processes or debugger sessions first to release file locks.
+running compiler/tool processes or debugger sessions first to release file locks.
 Unrelated files in the destination are not removed. This is a local Debug
 installation, not a distributable release; third-party license/notice auditing
 is still required for redistribution.
@@ -399,15 +467,16 @@ building a native executable.
   `Clang_DIR` for a nonstandard SDK root.
 - **Windows rejects the compiler:** reopen a Visual Studio Developer shell and
   verify `cl` and the Windows SDK before running CMake.
-- **An existing Windows source path is reported missing:** the current CLI
-  receives narrow `argv` strings. Characters outside the system ANSI code page
-  can be lost before filesystem access, even when the file exists. Use paths
-  representable in that code page until wide-character argument handling is
-  implemented; changing the source file's text encoding does not fix this.
-- **Native compilation crashes with a Unicode temporary directory:** a
-  separate path-construction bug narrows `TEMP`/`TMP`-derived paths before the
-  backend call. An ASCII temporary directory avoids that current defect; the
-  implementation must preserve native paths and report conversion failures.
+- **Windows Unicode source/output/temporary paths fail:** the compiler now
+  uses `wmain` and strict UTF-8 argument conversion, with native filesystem
+  paths and UTF-8 backend/linker strings. The observed Windows x64 joypm smoke
+  workflow succeeded, but the registered Unicode and temporary-path regression
+  gates have not run. Record binary provenance and the exact diagnostic rather
+  than assuming an older binary contains these fixes or that a smoke run proves
+  general Unicode coverage. General Unicode-aware
+  diagnostic rendering and legacy narrow `readFile(path:)` remain separate
+  limitations; changing source encoding or the global console code page is
+  not a substitute for validation.
 - **Packaged native linking cannot find platform libraries:** install the
   Desktop development with C++ workload and a Windows SDK.
 - **GoogleTest cannot be fetched:** restore Git/network access, provide it

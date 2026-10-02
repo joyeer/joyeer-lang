@@ -16,6 +16,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand parameter access | [Access effects](spec/04-memory.md#42-access-effects-on-parameters) |
 | Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
+| Use the early-development local project manager | [impl/joypm.md](impl/joypm.md) |
 | See active implementation priorities | [plan/roadmap.md](plan/roadmap.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Windows Debug compiler | [Debug installation](building.md#local-windows-debug-installation) |
@@ -50,7 +51,17 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
 | [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
+| [joypm.md](impl/joypm.md) | Joyeer-written local workflow, strict manifest, CMake bootstrap, x64-target evidence, and remaining acceptance gates |
 | [string.md](impl/string.md) | String representation and operations |
+
+The joypm Windows x64-target Debug build and local-project smoke run succeeded, and
+bounded regular-file manifest acquisition is integrated. The nine registered
+gates have not run under CTest for this change set. Full native acceptance,
+other platforms, package installation, and self-build remain open in its
+implementation reference and plan; v0 is not released or release-complete.
+The originating machine is reported as ARM64; x64-target smoke is not native
+ARM64 validation. Use the [handoff](plan/joypm-validation-handoff.md) to continue
+on another machine with a matching native toolchain and fresh build tree.
 
 ## Plans
 
@@ -60,7 +71,8 @@ work.
 | Document | Topic |
 |---|---|
 | [roadmap.md](plan/roadmap.md) | Active implementation priorities |
-| [package-manager.md](plan/package-manager.md) | Cargo-like project workflow, proposed manifest, implementation PRs, and acceptance gates for `joypm` |
+| [package-manager.md](plan/package-manager.md) | Remaining joypm v0 validation/release gates and future dependency, workspace, cache, and registry contracts |
+| [joypm-validation-handoff.md](plan/joypm-validation-handoff.md) | Receiving-machine setup, architecture correction, pending Debug/Release tests, and evidence checklist |
 
 ## Conventions
 

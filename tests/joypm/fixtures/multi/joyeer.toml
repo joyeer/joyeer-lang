@@ -1,0 +1,21 @@
+# Deliberately put the root before its dependency and its files out of order.
+schema-version = 1
+
+[package]
+name = 'multi'
+version = '1.2.3'
+
+[[modules]]
+name = 'sample.app'
+sources = ['main.joyeer', 'implementation files/helper.joyeer']
+dependencies = ['sample.core']
+
+[[modules]]
+name = 'sample.core'
+sources = ['core.joyeer']
+dependencies = []
+
+[[targets]]
+name = 'multi'
+kind = 'bin'
+module = 'sample.app'
