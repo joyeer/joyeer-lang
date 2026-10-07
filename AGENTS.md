@@ -54,12 +54,13 @@ ctest --test-dir build --output-on-failure
   unfiltered CTest. Label filters are for focused iteration only.
 - `JOYEER_BUILD_JOYPM` defaults to `ON`: CMake bootstraps the Joyeer-written
   `joypm` as an `ALL` target using the build-tree compiler. Set it to `OFF`
-  for a compiler-only build. Its nine acceptance gates require `BUILD_TESTING`
+  for a compiler-only build. Its acceptance gates require `BUILD_TESTING`
   and `JOYEER_BUILD_JOYPM`, independently of `JOYEER_BUILD_UNITTESTS`.
 - Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release; macOS Debug
   falls back to `-g0` when `dsymutil` is unavailable. Debug PDB/dSYM sidecars
   are CMake byproducts when produced; Windows Debug installs the joypm PDB
-  with component `PRODUCT`.
+  with component `PRODUCT`. CMake stages an explicit self-build project under
+  `out/build/<preset>/src/tools/joypm/project/`.
 - Re-run CMake configure after adding or removing registered fixtures or test
   targets.
 - C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
@@ -110,8 +111,9 @@ ctest --test-dir build --output-on-failure
   required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
   backend, runtime, and the current license use install component
   `JoyeerRuntime`; `joypm` uses `PRODUCT`. The Debug installer includes
-  `joypm` and its PDB when enabled. Third-party notice staging remains open;
-  see [docs/building.md](docs/building.md#release-staging).
+  `joypm` and its PDB when enabled. Pinned third-party licenses/notices are
+  staged with the runtime; custom SDK dependencies need their own audit.
+  See [docs/building.md](docs/building.md#release-staging).
 - Packaged native linking needs MSVC Build Tools and a Windows SDK, but not
   an LLVM installation. Clang executables are test/inspection tools, not
   product linkers.
@@ -132,6 +134,16 @@ ctest --test-dir build --output-on-failure
   `shell=True` or construct shell command strings.
 - Python is not a source-build requirement. Released Joyeer compiler binaries
   and programs must not require Python.
+
+## Learnings
+
+- Use [jp_write_bytes](tests/joypm/helpers.cmake) for byte-exact manifest
+  fixtures, not CMake `file(WRITE)` directly. Windows text-mode writes insert
+  CR before LF, changing CRLF and inclusive byte limits; the helper verifies
+  size and SHA-256 after a Joyeer binary write.
+- Parallel native test directories must include process identity and be
+  claimed exclusively. Cleanup must only remove directories the current
+  test successfully created, never another process's collided path.
 
 ## When in doubt
 

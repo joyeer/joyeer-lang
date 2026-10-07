@@ -66,6 +66,12 @@ checks the LLVM SDK's native architecture. This is native compilation, not an
 architecture-switching or cross-compilation API; the versioned C ABI is
 unchanged.
 
+Windows console executables embed a manifest with
+`requestedExecutionLevel="asInvoker"` and `uiAccess="false"`. This disables
+installer-name elevation heuristics for valid output names such as `setup`,
+`install`, or `update`; generated programs run with their caller's permissions,
+not through an elevation prompt. It is not a sandbox.
+
 On macOS, CMake resolves the active SDK path and version with `xcrun`. The
 backend passes them to the embedded Mach-O LLD driver together with the host
 architecture and `libSystem`. Debug builds run the system `dsymutil` only to
@@ -105,11 +111,11 @@ therefore do not require narrowing the CLI source/output paths.
 The compiler service uses UTF-8 for module/output path diagnostics. Native
 artifact and temporary-path construction preserves filesystem path objects;
 suffixes are appended without narrowing, and backend/linker path strings use
-UTF-8 at the C ABI boundary. These changes are integrated and compiled in the
-Windows x64 Debug build. The observed joypm project smoke workflow succeeded,
-but the registered Unicode and temporary-path/failure regressions have not run;
-this does not establish general Unicode-complete linking or recovery.
-Detailed smoke evidence belongs in [joypm](joypm.md#5-added-tests-versus-validation).
+UTF-8 at the C ABI boundary. Native Windows ARM64 Debug/Release regressions
+pass for wide CLI conversion, source/output/temporary paths, failure paths,
+and relocated product linking. This is not general Unicode-aware rendering
+or acceptance evidence for other architectures.
+Detailed evidence belongs in [joypm](joypm.md#5-validation-evidence).
 Diagnostic argument/path text is UTF-8, but OS-provided error messages and
 console rendering remain host-dependent.
 Legacy source-language `readFile` narrow CRT behavior is unchanged.

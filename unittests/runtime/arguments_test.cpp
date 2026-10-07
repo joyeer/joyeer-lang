@@ -14,6 +14,12 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
 
 std::string pathUtf8(const std::filesystem::path& path) {
@@ -50,10 +56,17 @@ protected:
     void SetUp() override {
         static std::atomic<uint64_t> next { 0 };
         const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+#if defined(_WIN32)
+        const auto processId = _getpid();
+#else
+        const auto processId = getpid();
+#endif
         directory = std::filesystem::temp_directory_path() /
             std::filesystem::u8path("joyeer-cli-\xf0\x9f\x98\x80 space-" +
-                std::to_string(nonce) + "-" + std::to_string(next.fetch_add(1)));
-        ASSERT_TRUE(std::filesystem::create_directory(directory));
+                std::to_string(processId) + "-" + std::to_string(nonce) + "-" +
+                std::to_string(next.fetch_add(1)));
+        ownsDirectory = std::filesystem::create_directory(directory);
+        ASSERT_TRUE(ownsDirectory);
         input = directory / std::filesystem::u8path("source-\xf0\x9f\x98\x80.joyeer");
         dependency = directory / std::filesystem::u8path("dependency-\xf0\x9f\x98\x80.joyeer");
         output = directory / std::filesystem::u8path("output-\xf0\x9f\x98\x80.ll");
@@ -66,14 +79,17 @@ protected:
     }
 
     void TearDown() override {
-        std::error_code ignored;
-        if (!directory.empty()) std::filesystem::remove_all(directory, ignored);
+        if (!ownsDirectory) return;
+        std::error_code error;
+        std::filesystem::remove_all(directory, error);
+        EXPECT_FALSE(error) << error.message();
     }
 
     std::filesystem::path directory;
     std::filesystem::path input;
     std::filesystem::path dependency;
     std::filesystem::path output;
+    bool ownsDirectory = false;
 };
 
 std::vector<std::string> nativeArguments(const std::string& optimization = {}) {

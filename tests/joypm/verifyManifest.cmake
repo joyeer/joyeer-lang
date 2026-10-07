@@ -116,7 +116,7 @@ function(accept_manifest name contents)
     set(package "${work}/${name}")
     set(cwd "${work}/caller ${name}")
     file(MAKE_DIRECTORY "${package}" "${cwd}")
-    file(WRITE "${package}/joyeer.toml" "${contents}")
+    jp_write_bytes("${package}/joyeer.toml" "${contents}")
     jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}"
         --manifest-path "${package}/joyeer.toml")
     jp_no_runtime_error()
@@ -155,14 +155,14 @@ string(REPLACE "sources = [\"main.joyeer\"]"
     [=[sources = ["\u006dain.joyeer",]]=] valid "${base}")
 string(REPLACE "version = \"0.1.0\"" "version = '0.1.0' # metadata" valid "${valid}")
 string(REPLACE "\n" "\r\n" valid "${valid}")
-file(WRITE "${package}/joyeer.toml" "# profile acceptance\r\n${valid}")
+jp_write_bytes("${package}/joyeer.toml" "# profile acceptance\r\n${valid}")
 set(jp_timeout 60)
 jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
     --manifest-path "${package}/joyeer.toml")
 string(REPLACE "sources = [\"main.joyeer\"]"
     [=[sources = ["\U0000006Dain.joyeer"]]=] valid "${base}")
 string(REGEX REPLACE "\n$" "" valid "${valid}")
-file(WRITE "${package}/joyeer.toml" "${valid}")
+jp_write_bytes("${package}/joyeer.toml" "${valid}")
 jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
     --manifest-path "${package}/joyeer.toml")
 jp_no_outputs("${package}")

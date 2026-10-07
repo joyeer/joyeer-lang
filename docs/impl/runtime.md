@@ -249,6 +249,12 @@ must not remove or replace an unrelated preexisting destination.
 `fileKind` examines the final link itself, `removeFile` unlinks the final
 entry, and `removeDirectory` handles only empty real directories. There is
 no recursive cleanup API or confinement guarantee.
+On Windows, ordinary-looking file attributes are not sufficient: DOS devices
+such as `NUL` can advertise them. Non-directory, non-reparse entries are
+classified through a metadata-only handle and its disk-file information.
+Character/pipe devices return `Other` without reading; query/open/close errors
+remain fallible host errors. Metadata inspection does not require data access,
+including for an exclusively opened ordinary file.
 
 Processes use an explicit executable path, an argument array, and a child
 working directory, without shell evaluation or PATH fallback. The runtime

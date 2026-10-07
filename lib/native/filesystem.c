@@ -325,10 +325,39 @@ int32_t joyeer_fs_file_kind_abi(
     DWORD attributes = GetFileAttributesW(path);
     int64_t code = attributes == INVALID_FILE_ATTRIBUTES ? fsLastError() : 0;
     if (code == 0) {
-        *result = (attributes & FILE_ATTRIBUTE_REPARSE_POINT)
-                ? JOYEER_FS_KIND_SYMLINK
-                : (attributes & FILE_ATTRIBUTE_DIRECTORY)
-                ? JOYEER_FS_KIND_DIRECTORY : JOYEER_FS_KIND_FILE;
+        if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+            *result = JOYEER_FS_KIND_SYMLINK;
+        } else if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+            *result = JOYEER_FS_KIND_DIRECTORY;
+        } else {
+            // DOS devices such as NUL can advertise ordinary file attributes.
+            // Query a metadata-only handle without reading or following links.
+            HANDLE file = CreateFileW(path, 0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    NULL, OPEN_EXISTING,
+                    FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, NULL);
+            if (file == INVALID_HANDLE_VALUE) {
+                code = fsLastError();
+            } else {
+                SetLastError(ERROR_SUCCESS);
+                DWORD type = GetFileType(file);
+                if (type == FILE_TYPE_UNKNOWN) {
+                    code = fsLastError();
+                } else if (type == FILE_TYPE_DISK) {
+                    BY_HANDLE_FILE_INFORMATION info;
+                    if (!GetFileInformationByHandle(file, &info)) {
+                        code = fsLastError();
+                    } else if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+                        *result = JOYEER_FS_KIND_SYMLINK;
+                    } else if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                        *result = JOYEER_FS_KIND_DIRECTORY;
+                    } else if (!(info.dwFileAttributes & FILE_ATTRIBUTE_DEVICE)) {
+                        *result = JOYEER_FS_KIND_FILE;
+                    }
+                }
+                if (!CloseHandle(file) && code == 0) code = fsLastError();
+            }
+        }
     }
 #else
     struct stat info;

@@ -156,6 +156,10 @@ target_link_libraries(LLVMBackendTests
         JoyeerCompiler
         JoyeerLLVMBackend
 )
+target_compile_definitions(LLVMBackendTests PRIVATE
+        JOYEER_TEST_RUNTIME_LIBRARY="$<TARGET_FILE:JoyeerNativeRuntime>"
+)
+add_dependencies(LLVMBackendTests JoyeerNativeRuntime)
 
 joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend

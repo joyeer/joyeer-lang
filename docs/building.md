@@ -199,8 +199,10 @@ to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
 when `dsymutil` is unavailable, so ordinary native output remains possible.
 Debug PDBs on Windows and dSYM bundles on macOS, when produced, are declared
 CMake `BYPRODUCTS`; Release does not claim Debug sidecars. Bootstrap needs no
-preinstalled `joypm` or Python. There is no self-build acceptance through
-joypm yet.
+preinstalled `joypm` or Python. Configure also creates the explicit self-build
+project under `out/build/<preset>/src/tools/joypm/project/`; the
+[self-build gate](../tests/joypm/verifySelfBuild.cmake) builds and executes both
+profiles and a second-stage tool through joypm itself.
 
 For a compiler-only configuration, for example on x64:
 
@@ -212,27 +214,23 @@ cmake --build --preset x64-debug
 The same option works with the other native presets. Cross-compiling
 configurations must disable joypm because the bootstrap runs the new compiler.
 `JOYEER_BUILD_UNITTESTS` independently controls the C++/GoogleTest suite.
-The nine gates in [tests/joypm/CMakeLists.txt](../tests/joypm/CMakeLists.txt),
-including `Joypm.ManifestLimits`,
+The gates in [tests/joypm/CMakeLists.txt](../tests/joypm/CMakeLists.txt),
+including limits, concurrency, host failures, self-build, and product installation,
 require `BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, not `JOYEER_BUILD_UNITTESTS`.
 When enabled, `JoypmAcceptanceTools` also builds native fixtures as an `ALL`
 target. The full acceptance configuration enables all three options and runs
 unfiltered CTest; turning off C++ tests does not remove joypm gates.
 
-**Validation status for the joypm change set:** the Windows x64-target Debug build
-with `JOYEER_BUILD_UNITTESTS=ON` and local-project smoke validation succeeded.
-Bounded regular-file manifest acquisition and scalar host-input integration
-are compiled. CTest has not run; the nine tool gates, full native acceptance,
-other platforms, package installation, and self-build remain pending. A build
-or smoke result does not establish a released or release-complete v0. See the
-[implementation reference](impl/joypm.md) and
-[remaining acceptance gates](plan/package-manager.md#8-validation-and-release-gates).
-The owner reports an ARM64 originating machine, but the recorded build used
-the x64 Developer environment, preset, and LLVM SDK. It is not native ARM64
-validation. Continue on a fresh receiving-machine build tree using the
-[handoff checklist](plan/joypm-validation-handoff.md); choose `arm64-*` with
-an ARM64 SDK for native ARM64, or `x64-*` with an x64 SDK for an x64 target.
-Shell/process architecture alone does not identify the native hardware.
+**Validation status:** native Windows ARM64 Debug and Release default `ALL`
+builds and unfiltered CTest pass 789/789 each, including all 14 Windows joypm
+gates. Isolated product relocation, compiler-only builds, and the Debug
+installer regressions also pass. Hardware, process, MSVC/LLVM architecture,
+and PE headers were independently recorded; the earlier x64 smoke result is
+not used as native ARM64 evidence. See the
+[implementation evidence](impl/joypm.md#5-validation-evidence) and
+[remaining platform gates](plan/package-manager.md#8-validation-and-release-gates).
+For another platform/architecture, use a matching Developer shell/SDK and fresh
+Debug/Release trees; registration or another target's pass is not acceptance.
 
 ## Release staging
 
@@ -272,12 +270,14 @@ An install limited to
 the tool. With `JOYEER_BUILD_JOYPM=OFF`, no joypm binary is built or installed.
 Keep GoogleTest and LLVM development tools/SDKs out of the product inventory.
 
-The current top-level install rule places only the repository's own `LICENSE`
-in `licenses/`. This is not yet a complete redistribution-license bundle:
-LLVM/LLD and, on Windows, LibXml2 license/notice material must also be staged
-as required by those dependencies. Audit the final manifest and notices before
-publishing a release; a successful native smoke run alone does not establish
-release readiness.
+The top-level install stages the repository's `LICENSE`, pinned upstream
+LLVM/LLD 22.1.8 licenses, LLVM support-library and BLAKE3 material, and a
+third-party notice index from [licenses/](../licenses/). Windows also installs
+the fetched LibXml2 2.14.5 copyright and supplemental dict/list notices;
+Linux includes the matching Clang license. The native ARM64 product gate
+verifies exact inventories and source-to-installed license hashes. Audit
+additional dependencies in custom SDKs before redistribution; the supplied
+bundle is not a universal audit of every possible LLVM build configuration.
 
 These files may be moved together to another directory or machine. LLVM,
 LLD, and LibXml2 are statically contained in the backend DLL. The DLL finds
@@ -307,7 +307,8 @@ still requires the host libc/platform SDK startup objects and system
 libraries, but not an external LLVM, Clang, or LLD executable.
 The installed joypm still requires `--compiler <explicit path>`; it does not
 discover the compiler beside itself or search PATH. Package staging and use
-of the new tool remain unvalidated in this change set.
+of the tool through a relocated package are validated on Windows ARM64;
+Linux/macOS still require native acceptance.
 
 ## Local Windows Debug installation
 
@@ -399,13 +400,14 @@ joyeer.pdb
 joyeer-backend.pdb
 joypm.exe                 # when enabled
 joypm.pdb                 # when enabled
-licenses\LICENSE
+licenses\                # Joyeer and pinned third-party licenses/notices
 ```
 
 `-SkipSkillInstall` skips only the agent skill; it does not disable joypm.
 Use a build configured with `JOYEER_BUILD_JOYPM=OFF` for compiler-only
-installation. The optional tool/PDB installer changes and their tests are
-added but have not been executed for this change set.
+installation. The optional tool/PDB installer and all its isolated regressions
+pass with the recorded native ARM64 Debug build, including the exact license
+inventory and an unchanged user/process PATH.
 
 After rebuilding, rerun the same command to update the installation. Close
 running compiler/tool processes or debugger sessions first to release file locks.
@@ -469,11 +471,11 @@ building a native executable.
   verify `cl` and the Windows SDK before running CMake.
 - **Windows Unicode source/output/temporary paths fail:** the compiler now
   uses `wmain` and strict UTF-8 argument conversion, with native filesystem
-  paths and UTF-8 backend/linker strings. The observed Windows x64 joypm smoke
-  workflow succeeded, but the registered Unicode and temporary-path regression
-  gates have not run. Record binary provenance and the exact diagnostic rather
-  than assuming an older binary contains these fixes or that a smoke run proves
-  general Unicode coverage. General Unicode-aware
+  paths and UTF-8 backend/linker strings. Their native Windows ARM64
+  Debug/Release regressions and relocated-package workflows pass. Record
+  binary provenance and the exact diagnostic rather than assuming an older
+  binary contains these fixes or that another native target is verified.
+  General Unicode-aware
   diagnostic rendering and legacy narrow `readFile(path:)` remain separate
   limitations; changing source encoding or the global console code page is
   not a substitute for validation.

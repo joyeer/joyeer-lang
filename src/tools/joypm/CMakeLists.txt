@@ -16,6 +16,15 @@ set(JOYEER_JOYPM_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/main.joyeer"
     "${CMAKE_CURRENT_BINARY_DIR}/platform.joyeer")
 
+set(JOYEER_JOYPM_PROJECT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/project")
+set(JOYEER_JOYPM_PROJECT_SOURCES "")
+foreach(source IN LISTS JOYEER_JOYPM_SOURCES)
+    get_filename_component(name "${source}" NAME)
+    configure_file("${source}" "${JOYEER_JOYPM_PROJECT_DIRECTORY}/${name}" COPYONLY)
+    string(APPEND JOYEER_JOYPM_PROJECT_SOURCES "    '${name}',\n")
+endforeach()
+configure_file(joyeer.toml.in "${JOYEER_JOYPM_PROJECT_DIRECTORY}/joyeer.toml" @ONLY)
+
 if(CMAKE_CONFIGURATION_TYPES)
     set(JOYEER_JOYPM_EXECUTABLE
         "${CMAKE_BINARY_DIR}/$<CONFIG>/bin/joypm${CMAKE_EXECUTABLE_SUFFIX}")
@@ -61,7 +70,7 @@ add_custom_command(
     VERBATIM)
 add_custom_target(joypm ALL
     DEPENDS "${JOYEER_JOYPM_EXECUTABLE}" ${JOYEER_JOYPM_SOURCES}
-    SOURCES ${JOYEER_JOYPM_SOURCES} platform.joyeer.in)
+    SOURCES ${JOYEER_JOYPM_SOURCES} platform.joyeer.in joyeer.toml.in)
 add_dependencies(joypm joyeer JoyeerNativeBackend JoyeerNativeRuntime)
 
 install(PROGRAMS "${JOYEER_JOYPM_EXECUTABLE}"
@@ -73,3 +82,4 @@ endif()
 
 set(JOYEER_JOYPM_SOURCES "${JOYEER_JOYPM_SOURCES}" PARENT_SCOPE)
 set(JOYEER_JOYPM_EXECUTABLE "${JOYEER_JOYPM_EXECUTABLE}" PARENT_SCOPE)
+set(JOYEER_JOYPM_PROJECT_DIRECTORY "${JOYEER_JOYPM_PROJECT_DIRECTORY}" PARENT_SCOPE)

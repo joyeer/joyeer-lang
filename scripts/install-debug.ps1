@@ -172,7 +172,11 @@ if ($installJoypm) {
         throw "CMake joypm installation failed with exit code $LASTEXITCODE."
     }
 }
-foreach ($name in $runtimeArtifacts + @('licenses\LICENSE')) {
+$licenseFiles = @('licenses\LICENSE', 'licenses\THIRD-PARTY-NOTICES.txt',
+    'licenses\LLVM-LICENSE.txt', 'licenses\LLD-LICENSE.txt',
+    'licenses\LLVM-SUPPORT-NOTICES.txt', 'licenses\BLAKE3-LICENSE.txt',
+    'licenses\LibXml2-Copyright.txt', 'licenses\LibXml2-SUPPLEMENTAL-NOTICES.txt')
+foreach ($name in $runtimeArtifacts + $licenseFiles) {
     $artifact = Join-Path $installPath $name
     if (-not (Test-Path -LiteralPath $artifact -PathType Leaf) -or
         (Get-Item -LiteralPath $artifact).Length -eq 0) {

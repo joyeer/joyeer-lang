@@ -1,15 +1,13 @@
 # joypm Local Project Manager
 
-> **Status:** early development, not a released or release-complete v0.
-> The Windows x64-target Debug build and local-project smoke workflow succeeded;
-> the originating machine is reported as ARM64, so this is not native ARM64
-> validation.
-> Bounded regular-file manifest acquisition and scalar host-input integration
-> are compiled. **CTest has not run for this change set**: the nine registered
-> acceptance gates, full native gate, other platforms, package installation,
-> and self-build remain pending. See the validation evidence below for the
-> scope of the observed x64-target results and the
-> [receiving-machine handoff](../plan/joypm-validation-handoff.md).
+> **Status:** the first local-workflow version, `0.1.0`, is implemented and
+> accepted on native Windows ARM64 in Debug and Release. Both default `ALL`
+> builds and unfiltered CTest runs pass **789/789**, including all 14 Windows
+> joypm gates. Self-build, concurrent generations, failure paths, relocated
+> product installs, Debug installation, and compiler-only builds are verified.
+> This is not a published release or acceptance evidence for Windows x64,
+> Linux, or macOS; see the scoped evidence below and the
+> [remaining platform/future-package plan](../plan/package-manager.md).
 
 `joypm` is a separate Joyeer-written executable. It selects explicit files
 and invokes `joyeer`; it does not add project commands to the compiler or
@@ -46,12 +44,33 @@ for a compiler-only build; cross-compiling configurations must disable it
 because bootstrap executes the newly built compiler. Python is not a
 source-build or released-tool requirement.
 
-There is **no joypm self-build acceptance yet**: bootstrap and the current
-test-tool compilation invoke the compiler directly. Install component
+CMake also stages a self-build project at
+`out/build/<preset>/src/tools/joypm/project/joyeer.toml`, generated from
+[joyeer.toml.in](../../src/tools/joypm/joyeer.toml.in). It copies the same
+explicit compilation set, including the generated platform source; it does
+not discover another source set. Configure dependencies refresh these copies
+when their originals change. `Joypm.SelfBuild` checks this project, builds
+Debug and Release tools, runs their complete workflows with declared test
+targets, and uses a self-built tool for another self-build.
+
+From the checkout after building, using an explicit compiler path:
+
+```powershell
+$preset = 'arm64-debug'
+$compiler = (Resolve-Path ".\out\build\$preset\bin\joyeer.exe").Path
+$joypm = (Resolve-Path ".\out\build\$preset\bin\joypm.exe").Path
+$manifest = ".\out\build\$preset\src\tools\joypm\project\joyeer.toml"
+& $joypm build --compiler $compiler --manifest-path $manifest
+if ($LASTEXITCODE -ne 0) { throw 'Debug self-build failed' }
+& $joypm build --compiler $compiler --manifest-path $manifest --release
+if ($LASTEXITCODE -ne 0) { throw 'Release self-build failed' }
+```
+
+Install component
 `JoyeerRuntime` contains compiler/backend/runtime/current license; `PRODUCT`
 contains optional `joypm` and its PDB for Windows Debug installations.
 See [building](../building.md#joypm-bootstrap-and-acceptance)
-for options, installation, and pending validation.
+for options, installation, and platform prerequisites.
 
 ## 2. Commands and options
 
@@ -126,7 +145,7 @@ when the CRT supplies no code). It writes exact bytes without adding a newline
 or validating text, then flushes. The Windows implementation uses binary
 mode and restores the previous mode rather than translating LF or changing
 the console code page. Failure may follow a partial write. Its source and
-compiler/runtime tests are added, not executed; exact host rules belong to
+compiler/runtime tests pass in the recorded native ARM64 gate; exact host rules belong to
 [portable host operations](../spec/18-host.md) and the [runtime](runtime.md).
 
 ## 3. Strict manifest profile
@@ -213,12 +232,14 @@ reading/allocating the entire file. The parser rejects a count above 65536
 and validates UTF-8/scalar content after acquisition. Name resolution and
 type checking map the host descriptor's `ValueKind::integer` to `Int`; LLVM
 passes `maximumBytes` as one `i64` scalar, not a data/count pair. This path is
-integrated and compiled in the Windows x64 build; it is not generic streaming.
+validated in the native Windows ARM64 Debug/Release gates; it is not generic streaming.
 
 Classification is not an atomic open or race-free confinement: ancestor
 links and a replacement between classification and reading remain host
-concerns. Exact-boundary and nonregular-input regressions still require
-execution before treating this as a validated safety guarantee. Legacy narrow
+concerns. Exact-boundary, final-link, and Windows device rejection regressions
+pass; the POSIX FIFO case still needs a native POSIX run. Windows metadata-only
+file classification rejects `NUL` without reading it, even though its
+attributes resemble a regular file. Legacy narrow
 `readFile(path:)` and the whole-file `readFileUtf8` contract remain unchanged.
 
 ## 4. Paths, plans, and execution
@@ -266,75 +287,83 @@ registry/version resolution, local path packages, workspaces, lockfiles,
 build scripts, plugins, parallelism, process capture/timeouts, `clean`, and
 automatic toolchain installation are not provided.
 
-## 5. Added tests versus validation
+## 5. Validation evidence
 
-### Observed Windows x64-target validation
+### Native Windows ARM64 acceptance, 2026-10-02
 
-The owner identifies the originating machine as Windows ARM64. The recorded
-commands used `vcvars64.bat`, `x64-debug`, and an x64 LLVM SDK. These observations
-therefore establish x64-target build/smoke evidence only, not native ARM64
-execution or native-x64 hardware provenance. An emulated shell's architecture
-string must not be used to infer the machine's native architecture.
+Source provenance is baseline `0ef8b6e365132dad9ee771efa4c68922fb32e4c3`
+plus the first-version completion changes. Hardware was independently
+identified as a Snapdragon X1E80100, architecture code 12, running Windows
+ARM64. PowerShell 7.6.6, the MSVC host/target tools, LLVM SDK, and product PE
+headers were all ARM64; this is not x64 emulation evidence.
 
-- The full x64 Debug default `ALL` build completed successfully in 121 steps
-    with `JOYEER_BUILD_UNITTESTS=ON`. The Joyeer-written joypm bootstrap and
-    logic/acceptance helper compilation succeeded; compiling helpers and unit
-    tests does not mean their tests were executed.
-- `joypm --help` and `joypm --version` succeeded; the latter reported
-    `joypm 0.1.0`.
-- A freshly initialized project under a pathname containing spaces and
-    `雪🦀` (including supplementary-plane Unicode) passed `init`, `check`,
-    Debug build, Release build, `run`, and `test`, all with exit status 0.
-    `run` printed the scaffold's Hello output; `test` reported `0 tests`.
-    This did not execute a declared test target.
-- A new Debug generation `build-2` confirmed rebuilding rather than reusing
-    the prior generation. The Release project build used the Debug-built
-    compiler/tool; it does not validate a Release compiler/tool bootstrap.
+The toolchain was MSVC 19.51.36257.0 (toolset 14.51.36231), Windows SDK
+10.0.26100.0, LLVM/LLD 22.1.8 at `C:\LLVM-22.1.8-arm64`, CMake
+4.3.1-msvc1, and Ninja 1.13.2. Fresh `arm64-debug` and `arm64-release`
+trees enabled `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, and
+`JOYEER_BUILD_UNITTESTS`, with `INSTALL_GTEST=OFF`.
 
-These are observations for a Windows x64 target only, not general Unicode support,
-temporary-path/failure-path coverage, or evidence for Windows ARM64, Linux,
-or macOS. **CTest has not run**; the full native acceptance gate remains
-pending, and joypm is not released or release-complete. Terminal glyph rendering
-was not validated independently of filesystem path preservation.
+| Gate | Recorded result |
+|---|---|
+| Debug default `ALL` and unfiltered CTest | Passed, 789/789 |
+| Release default `ALL` and unfiltered CTest | Passed, 789/789 |
+| Tool acceptance in each configuration | Passed, all 14 gates |
+| Debug installer regressions | Passed in isolated destinations; tool/PDB/notices, conflict protection, execution, and unchanged PATH |
+| Compiler-only Release `ALL` and both install components | Passed; no joypm binary built or installed |
+| Unfiltered Release product staging | Passed; exactly four product files and eight license/notice files, without SDK/test payload |
 
-### Registered but unexecuted coverage
+Full CTest logs are under
+`out/build/arm64-{debug,release}/ctest-joypm-completion.log`. The earlier
+x64 build/smoke handoff is superseded by these native results, not promoted
+to x64 full acceptance.
 
-[tests/joypm/CMakeLists.txt](../../tests/joypm/CMakeLists.txt) registers nine gates:
-`Joypm.Cli`, `Joypm.Init`, `Joypm.Manifest`, `Joypm.ManifestLimits`,
-`Joypm.Plans`, `Joypm.Workflow`, `Joypm.TestRunner`, `Joypm.Unicode`, and
-`Joypm.Logic`. They require
-`BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, independently of GoogleTest and
-`JOYEER_BUILD_UNITTESTS`. Native helper programs are compiled by CMake with
-the build-tree compiler. The gates cover CLI/schema/plans, profiles,
-generations/stale outputs, init/run/test behavior, and Unicode paths/argv;
-their presence is not proof of passing or complete boundary coverage.
+### Executed coverage
 
-[ManifestLimits](../../tests/joypm/verifyManifestLimits.cmake) adds direct
-parser acceptance/rejection at 65536/65537 original bytes, 4096/4097 decoded
-bytes (literal and Unicode-escape forms), 256/257 modules and targets, and
-1024/1025 array entries. Oversized CLI cases also check diagnostic byte
-offsets before planning or compiler invocation. Prefix host/compiler
-regressions cover the bounded-read and scalar-input contracts. These tests
-are added and compiled where applicable, but have not been executed.
+[tests/joypm/CMakeLists.txt](../../tests/joypm/CMakeLists.txt) registers
+`Cli`, `Init`, `Manifest`, `ManifestLimits`, `Plans`, `Workflow`,
+`TestRunner`, `Unicode`, `Logic`, `Concurrent`, `HostFailures`, `SelfBuild`,
+and `Installed`; Windows also registers `Bootstrap`. They require
+`BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, independently of GoogleTest.
 
-Windows compiler `wmain` UTF-8 argument conversion and native/UTF-8
-source/output/temp/linker-path preservation are integrated and compiled.
-The smoke result exercises the observed project pathname, but the registered
-Unicode gate and compiler/backend/runtime regressions still need execution;
-do not advertise Unicode-complete native support from that smoke run.
-Legacy narrow `readFile` and general Unicode-aware diagnostic rendering remain
-separate limitations.
+- [ManifestLimits](../../tests/joypm/verifyManifestLimits.cmake) verifies
+  65536/65537 original bytes, 4096/4097 decoded bytes, 256/257 modules and
+  targets, and 1024/1025 array entries, including original byte locations.
+  [The exact-byte helper](../../tests/joypm/helpers.cmake) reverses CMake's
+  Windows text-mode newline translation with a Joyeer writer and checks size
+  and SHA-256 before publishing fixture input.
+- [Concurrent](../../tests/joypm/verifyConcurrent.cmake) executes concurrent
+  builders, verifies eight distinct runnable generations, and preserves a
+  collided generation. This tests multiple independent tool invocations;
+  joypm itself remains serial.
+- [HostFailures](../../tests/joypm/verifyHostFailures.cmake) covers final
+  symlinks/devices, physical hard-link aliases, missing entries, native
+  `4045620583` compiler/child status, invalid/missing/nonregular artifacts,
+  suite-aborting host errors, output permissions, and a partial init that
+  retains the manifest without overwriting it on retry. A small test-only C11
+  helper supplies statuses outside Joyeer entry's `0..255` contract and
+  deterministic native permission failures. Package policy remains Joyeer.
+- [SelfBuild](../../tests/joypm/verifySelfBuild.cmake) exercises Debug/Release
+  tools built through joypm, declared executable tests, and an executed
+  second-stage self-build.
+- [Installed](../../tests/joypm/verifyInstalled.cmake) checks separate
+  `JoyeerRuntime`/`PRODUCT` inventories and license hashes, relocates the
+  combined package through a spaced supplementary-plane Unicode path, and
+  runs both project profiles using only the staged compiler/backend/runtime.
+- [Bootstrap](../../tests/joypm/verifyBootstrap.cmake) regenerates a missing
+  Windows Debug PDB or Release executable through the CMake rule. It runs
+  serially so other acceptance processes cannot hold the tool open.
 
-Run unfiltered CTest with both tool and unit-test options enabled on every
-claimed native platform/architecture. Packaging/installation, Release
-toolchain bootstrap, self-build, concurrency, failure injection, and
-exact-boundary acceptance
-are tracked in the [active plan](../plan/package-manager.md#8-validation-and-release-gates).
+Compiler/runtime regressions also pass for scalar prefix inputs, binary
+stderr and failure codes, allocation balance, wide compiler argv, Unicode
+source/output/temp paths, device classification, and embedded `asInvoker`
+manifests. Installer-like valid target names do not request elevation.
 
-### Continue on another machine
+### Remaining validation boundary
 
-Use the [validation handoff](../plan/joypm-validation-handoff.md) for native
-architecture/SDK selection, fresh Debug/Release configuration, unfiltered CTest,
-package checks, and the evidence to return. No originating-machine build cache
-or artifact is required. Record the receiving machine's native architecture
-separately from the MSVC/LLVM target and any emulated process architecture.
+Windows x64, Linux, and macOS native Debug/Release acceptance are not recorded
+for this completion. POSIX FIFO/signal/execute-permission cases and macOS
+dSYM/fallback behavior have conditional coverage but still need native runs.
+Run the same unfiltered gate on every platform/architecture before claiming
+its acceptance. Terminal glyph rendering, general Unicode-aware diagnostics,
+legacy narrow `readFile`, race-free confinement, and custom-SDK redistribution
+audits remain separate concerns; none is implied by these passing gates.

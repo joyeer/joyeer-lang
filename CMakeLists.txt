@@ -249,6 +249,21 @@ include_directories(
     ${JOYEER_INCLUDE_DIR}
 )
 
+set(JOYEER_PRODUCT_LICENSE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/licenses/THIRD-PARTY-NOTICES.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/licenses/LLVM-LICENSE.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/licenses/LLD-LICENSE.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/licenses/LLVM-SUPPORT-NOTICES.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/licenses/BLAKE3-LICENSE.txt")
+if(WIN32)
+    list(APPEND JOYEER_PRODUCT_LICENSE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/licenses/LibXml2-SUPPLEMENTAL-NOTICES.txt")
+elseif(UNIX AND NOT APPLE)
+    list(APPEND JOYEER_PRODUCT_LICENSE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/licenses/Clang-LICENSE.txt")
+endif()
+
 add_subdirectory(lib)
 add_subdirectory(src/tools)
 add_subdirectory(tests)
@@ -262,6 +277,9 @@ install(TARGETS joyeer JoyeerNativeBackend
     LIBRARY DESTINATION . COMPONENT JoyeerRuntime)
 install(TARGETS JoyeerNativeRuntime
     ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
-install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+install(FILES ${JOYEER_PRODUCT_LICENSE_FILES}
     DESTINATION licenses COMPONENT JoyeerRuntime)
+if(WIN32)
+    install(FILES "${JOYEER_LIBXML2_SOURCE_DIR}/Copyright"
+        DESTINATION licenses RENAME LibXml2-Copyright.txt COMPONENT JoyeerRuntime)
+endif()

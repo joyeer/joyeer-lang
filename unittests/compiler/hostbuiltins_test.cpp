@@ -313,7 +313,9 @@ TEST_F(HostBuiltinTest, LowersPrefixLimitAsOneScalarAfterPathBytes) {
                 std::string::npos);
         const auto call = emitted.text.find("call i32 @joyeer_fs_read_file_prefix_abi(");
         ASSERT_NE(call, std::string::npos);
-        const auto callText = emitted.text.substr(call, emitted.text.find('\n', call) - call);
+        const auto callEnd = emitted.text.find(')', call);
+        ASSERT_NE(callEnd, std::string::npos);
+        const auto callText = emitted.text.substr(call, callEnd - call + 1);
         EXPECT_NE(callText.find(", i64 65537)"), std::string::npos) << callText;
         EXPECT_EQ(std::count(callText.begin(), callText.end(), ','), 4);
         if (fullDebug) EXPECT_NE(emitted.text.find("!DILocation("), std::string::npos);

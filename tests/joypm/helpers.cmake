@@ -70,6 +70,29 @@ function(jp_no_runtime_error)
     jp_absent("${jp_out}${jp_err}" "allocation leak")
 endfunction()
 
+function(jp_write_bytes path contents)
+    string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef write_id)
+    set(input "${path}.cmake-${write_id}")
+    set(output "${path}.bytes-${write_id}")
+    file(WRITE "${input}" "${contents}")
+    execute_process(
+        COMMAND "${INPUT_WRITER}" "${input}" "${output}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE writer_out ERROR_VARIABLE writer_err
+        TIMEOUT 30)
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "Exact-byte input writer failed (${result}):\n${writer_out}\n${writer_err}")
+    endif()
+    string(LENGTH "${contents}" expected_size)
+    string(SHA256 expected_hash "${contents}")
+    file(SIZE "${output}" actual_size)
+    file(SHA256 "${output}" actual_hash)
+    if(NOT actual_size EQUAL expected_size OR NOT actual_hash STREQUAL expected_hash)
+        message(FATAL_ERROR "Manifest fixture bytes changed: ${path}; expected ${expected_size}, got ${actual_size}")
+    endif()
+    configure_file("${output}" "${path}" COPYONLY)
+    file(REMOVE "${input}" "${output}")
+endfunction()
+
 # Validate byte coordinates against the original input, without normalizing
 # its UTF-8, escapes, CRLFs, or caller-supplied manifest path. ARGN optionally
 # supplies an exact zero-based byte offset for targeted location regressions.
@@ -123,7 +146,7 @@ function(jp_reject_manifest name contents)
     # The lexical /./ spelling is deliberate: diagnostics preserve caller
     # coordinates, rather than reporting a canonicalized filesystem path.
     set(manifest "${package}/./joyeer.toml")
-    file(WRITE "${manifest}" "${contents}")
+    jp_write_bytes("${manifest}" "${contents}")
     jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}"
         --manifest-path "${manifest}")
     jp_manifest_diagnostic("${manifest}" "${contents}" ${ARGN})

@@ -1,0 +1,24 @@
+Joyeer third-party notices
+=========================
+
+The native backend embeds LLVM and LLD 22.1.8. Linux builds also embed the
+matching Clang Driver library. Windows builds embed LibXml2 2.14.5.
+These components are not modified by Joyeer.
+
+LLVM-LICENSE.txt and LLD-LICENSE.txt reproduce the respective upstream
+LICENSE.TXT files at the llvmorg-22.1.8 tag:
+https://github.com/llvm/llvm-project/tree/llvmorg-22.1.8
+
+LLVM-SUPPORT-NOTICES.txt contains additional notices for the bundled regular
+expression implementation, xxHash, Unicode conversions, and MD5.
+BLAKE3-LICENSE.txt reproduces llvm/lib/Support/BLAKE3/LICENSE at the same tag.
+Linux packages additionally include Clang-LICENSE.txt from clang/LICENSE.TXT.
+
+Windows packages include LibXml2-Copyright.txt from the pinned 2.14.5 source
+archive and LibXml2-SUPPLEMENTAL-NOTICES.txt for dict.c and list.c:
+https://download.gnome.org/sources/libxml2/2.14/libxml2-2.14.5.tar.xz
+
+GoogleTest, LLVM executables, development headers, and platform SDKs are not
+part of the product package. The host compiler and platform SDK are external
+prerequisites. Custom LLVM SDKs that embed additional dependencies need their
+corresponding redistribution notices as well.

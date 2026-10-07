@@ -57,12 +57,13 @@ optimization policy, and broader language surface remain incomplete.
 
 The source tree now includes the Joyeer-written `joypm` local project manager:
 `init`, `check`, `build`, `run`, and `test`, with a strict single-package
-manifest and explicit compiler path. CMake bootstrap integration and nine
-acceptance gates are added. A Windows x64 Debug build with unit tests enabled
-and a local-project smoke run succeeded. Bounded regular-file manifest
-acquisition is integrated. **CTest has not run for this change set**; the full
-native acceptance gate, other platforms, package installation, and self-build
-remain pending, so v0 is not released or release-complete. See
+manifest and explicit compiler path. The first local-workflow version,
+`0.1.0`, passes native Windows ARM64 Debug and Release default `ALL` builds
+and unfiltered CTest, **789/789 in each configuration**, including all 14
+Windows tool gates. Bounded acquisition, exact limits, failure paths,
+concurrent generations, self-build, and relocated installation are verified.
+This is not a published release or native acceptance evidence for other
+platforms/architectures. See
 [joypm](docs/impl/joypm.md) for the exact boundary and validation evidence.
 
 See
@@ -209,8 +210,9 @@ do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
 through Visual Studio Setup Configuration and the registry. `INSTALL_GTEST=OFF`
 prevents test-only headers and libraries from being added to the package.
-The current install rule stages only Joyeer's own license; third-party
-license/notice staging remains a release requirement. See
+The install rules also stage pinned LLVM/LLD, support-library, and platform
+dependency licenses/notices. Product-only inventories and relocated workflows
+are verified on Windows ARM64. See
 [building.md](docs/building.md#release-staging) for these packaging limitations,
 platform details, and troubleshooting.
 
@@ -314,13 +316,13 @@ Use `-gdwarf` or `-gcodeview` to select the format.
 ## Local projects with joypm
 
 `joypm --version` reports `joypm 0.1.0`, an independent early-development tool
-version; the compiler CMake project remains `0.0.1`. Windows x64 build/smoke
-validation does not replace the pending full native acceptance gate. After building,
+version; the compiler CMake project remains `0.0.1`. Native Windows ARM64
+Debug/Release acceptance is complete for this local-workflow scope. After building,
 run from this checkout with a new or empty `hello` directory and existing parent:
 
 ```powershell
-$compiler = (Resolve-Path .\out\build\x64-debug\bin\joyeer.exe).Path
-$joypm = (Resolve-Path .\out\build\x64-debug\bin\joypm.exe).Path
+$compiler = (Resolve-Path .\out\build\arm64-debug\bin\joyeer.exe).Path
+$joypm = (Resolve-Path .\out\build\arm64-debug\bin\joypm.exe).Path
 & $joypm init .\hello --name hello
 & $joypm check --compiler $compiler --manifest-path .\hello\joyeer.toml
 & $joypm build --compiler $compiler --manifest-path .\hello\joyeer.toml --release
@@ -339,7 +341,9 @@ uses `-O2 -g0`. Selected native targets always rebuild serially into fresh
 generations, with at most 128 claims per target/profile and no automatic
 deletion or cache. Use only trusted local projects: compiled programs and
 tests run with the user's permissions. Local path dependencies, workspaces,
-registries, and self-build acceptance are deferred. See the
+registries, caching, and cleanup are deferred. A generated project under
+`out/build/<preset>/src/tools/joypm/project/` supports building joypm through
+joypm itself. See the
 [manifest and workflow reference](docs/impl/joypm.md) and
 [remaining plan](docs/plan/package-manager.md).
 
@@ -366,11 +370,13 @@ ctest --preset x64-debug -L debug-info
 C++ unit tests use GoogleTest. End-to-end compiler and native fixtures live in
 stage-specific folders under [tests/](tests/) and are registered in
 [unittests/compiler/CMakeLists.txt](unittests/compiler/CMakeLists.txt).
-The nine joypm gates in [tests/joypm/CMakeLists.txt](tests/joypm/CMakeLists.txt),
-including `Joypm.ManifestLimits`,
+The joypm gates in [tests/joypm/CMakeLists.txt](tests/joypm/CMakeLists.txt),
+including exact limits, concurrent builds, native failures, self-build,
+installation, and Windows bootstrap regeneration,
 are registered when `BUILD_TESTING` and `JOYEER_BUILD_JOYPM` are enabled,
-independently of `JOYEER_BUILD_UNITTESTS`. Registration is not execution;
-they have not run for this change set.
+independently of `JOYEER_BUILD_UNITTESTS`. All 14 Windows gates passed with the
+full compiler/runtime suite in native ARM64 Debug and Release. Other native
+platforms need their own unfiltered acceptance runs.
 
 ## Project layout
 

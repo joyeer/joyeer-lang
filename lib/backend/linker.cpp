@@ -505,6 +505,8 @@ LinkResult Linker::link(
         "/NOLOGO",
         machine,
         "/SUBSYSTEM:CONSOLE",
+        "/MANIFEST:EMBED",
+        "/MANIFESTUAC:level='asInvoker' uiAccess='false'",
         "/OUT:" + outputPath,
         objectPath,
         "/WHOLEARCHIVE:" + runtimePath,

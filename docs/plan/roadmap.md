@@ -31,26 +31,21 @@
 
 ### 3. Close release and platform gaps
 
-- Stage required third-party licenses and notices.
-- Provide a product-only install manifest that excludes GoogleTest and other
-  development SDK content.
 - Add checked-in CI for supported Windows, macOS, and Linux configurations.
 - Exercise ELF and Mach-O behavior on their native platforms in addition to
   Windows release validation.
-- Run the added Windows compiler `wmain` UTF-8 and native/linker-path
-  regressions, including Unicode source/output/temporary paths. The fixes
-  compile and have scoped Windows x64 joypm smoke evidence, not full native
-  acceptance or general Unicode coverage; Unicode-aware diagnostic rendering
-  remains an independent task above.
+- Extend native Windows x64, ELF and Mach-O acceptance beyond the verified
+  Windows ARM64 Debug/Release gate. Pinned license/notice staging, product-only
+  inventories, and Windows Unicode source/output/temporary paths are validated
+  on ARM64; custom SDK dependency auditing and Unicode-aware diagnostic
+  rendering remain independent work.
 
 ### 4. Extend host facilities beyond the first portable interface
 
-- Execute the added regressions for integrated bounded
-  `readFilePrefix(path:maximumBytes:)` and scalar host inputs. Validate joypm's
-  65537-byte sentinel read and regular-file-only manifest classification,
-  including final-symlink/nonregular/device rejection and exact limits,
-  without changing legacy narrow `readFile(path:)` compatibility or implying
-  race-free confinement.
+- Extend the validated bounded-reader/scalar-input and strict-limit contracts
+  to native POSIX gates, including FIFO/device rejection. Preserve legacy
+  narrow `readFile(path:)` compatibility and the distinction between final-entry
+  classification and race-free confinement.
 - Specify streaming and richer filesystem metadata before exposing them.
 - Define anchored, non-link-following recursive cleanup and replacement or
   atomic-publication guarantees before adding destructive operations.
@@ -116,25 +111,15 @@ when defining workloads and acceptance thresholds.
   behavior.
 - Do not promise automatic proof of arbitrary program properties.
 
-### 10. Validate the first local project-manager workflow
+### 10. Extend the accepted local project-manager workflow
 
-- Run unfiltered CTest with tool and unit tests enabled. The Joyeer-written
-  [joypm implementation](../impl/joypm.md) passed a Windows x64-target Debug build
-  and local-project smoke run, but the nine registered gates, including
-  `Joypm.ManifestLimits`, have not executed; do not mark v0 release or full
-  native validation complete.
-- Continue using the [receiving-machine handoff](joypm-validation-handoff.md).
-  The owner reports an ARM64 originating machine, but recorded commands used
-  the x64 target. Validate ARM64 natively with matching MSVC/LLVM inputs and a
-  separate build tree; do not infer native coverage from x64 emulation.
-- Validate strict parser limits and bounded regular-file acquisition, exact
-  compiler plans, both profiles, fresh-generation/stale-artifact safety,
-  serial test summaries, argument forwarding, and package child cwd.
-- Execute Windows Unicode and stderr byte/error regressions, then native
-  Windows/Linux/macOS, Release-bootstrap, and package/Debug-installer gates,
-  including Debug PDB/dSYM byproducts and macOS fallback without `dsymutil`.
-  Add self-build acceptance; current CMake bootstrap only invokes the compiler
-  directly.
+- The first Joyeer-written [joypm](../impl/joypm.md) local workflow is accepted
+  on native Windows ARM64: Debug/Release `ALL` builds and unfiltered CTest
+  pass 789/789 each, including all 14 tool gates, self-build, concurrency,
+  native failure injection, product relocation, and bootstrap regeneration.
+- Run the same full gates on Windows x64, Linux, and macOS with matching
+  external SDKs and separate build trees. POSIX signals/FIFOs/execute
+  permissions and macOS dSYM/fallback behavior need native execution.
 - Track remaining cases in the
   [validation and release plan](package-manager.md#8-validation-and-release-gates).
 - Add local path dependencies and workspaces after the single-package workflow.

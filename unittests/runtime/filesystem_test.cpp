@@ -447,6 +447,42 @@ TEST_F(FileSystemTest, JoinsLexicallyAndRejectsInvalidText) {
 }
 
 #ifdef _WIN32
+TEST_F(FileSystemTest, ClassifiesDosDevicesAsOtherWithoutReadingThem) {
+    for (const auto& device : {std::string("NUL"), utf8(root_ / "NUL")}) {
+        SCOPED_TRACE(device);
+        const auto path = bytes(device);
+        int32_t kind = -1;
+        int64_t code = -1;
+        EXPECT_EQ(joyeer_fs_file_kind_abi(&kind, &code, path.data, path.count),
+                JOYEER_FS_ERROR_NONE);
+        EXPECT_EQ(kind, JOYEER_FS_KIND_OTHER);
+        EXPECT_EQ(code, 0);
+    }
+}
+
+TEST_F(FileSystemTest, ClassifiesExclusivelyOpenedFilesWithoutDataAccess) {
+    const auto file = track(root_ / "exclusive.bin");
+    {
+        std::ofstream output(file);
+        ASSERT_TRUE(output.is_open());
+        output << "preserved";
+    }
+    const HANDLE handle = CreateFileW(file.c_str(), GENERIC_READ | GENERIC_WRITE,
+            0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    struct CloseFile {
+        HANDLE handle;
+        ~CloseFile() { EXPECT_TRUE(CloseHandle(handle)); }
+    } close {handle};
+    const auto path = bytes(utf8(file));
+    int32_t kind = -1;
+    int64_t code = -1;
+    EXPECT_EQ(joyeer_fs_file_kind_abi(&kind, &code, path.data, path.count),
+            JOYEER_FS_ERROR_NONE);
+    EXPECT_EQ(kind, JOYEER_FS_KIND_FILE);
+    EXPECT_EQ(code, 0);
+}
+
 TEST_F(FileSystemTest, PreservesBareDriveCurrentDirectory) {
     const auto drive = bytes(utf8(root_.root_name()));
     if (drive.count != 2 || drive.owned[1] != ':') {

@@ -79,15 +79,17 @@ delete outputs, cache builds, fetch dependencies, or implement workspaces.
 Its early-development `0.1.0` version is independent of compiler `0.0.1`.
 
 CMake defaults `JOYEER_BUILD_JOYPM` to `ON`, bootstraps the tool as an `ALL`
-target, and registers nine gates, including `Joypm.ManifestLimits`, when
+target, and registers 13 portable gates plus Windows bootstrap acceptance when
 `BUILD_TESTING` is enabled, independently of `JOYEER_BUILD_UNITTESTS`.
-The Windows x64 Debug build with unit tests enabled and local-project smoke
-run succeeded; **CTest has not run** for this change set. The loader uses
+The native Windows ARM64 Debug and Release default builds and unfiltered
+CTest pass 789/789 each, including all 14 tool gates. The loader uses
 `fileKind` to reject nonregular manifests, including final symlinks, then
 `readFilePrefix(path:maximumBytes:)` with 65537 to enforce the parser's
-65536-byte maximum without a whole-file read. This integration is compiled,
-not streaming or race-free confinement. Full native/platform verification,
-package installation, and self-build remain open; v0 is not released.
+65536-byte maximum without a whole-file read. Exact limits, device/link
+rejection, self-build, failure paths, concurrent generations, product
+installation and relocation are verified on that native target. This is
+not streaming or race-free confinement. Other native platforms and release
+publication remain open.
 See [joypm](joypm.md) for current contracts, parser limits, and validation status.
 
 ## Not implemented
@@ -139,21 +141,22 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   timeouts, and asynchronous handles are not provided.
 - `writeStderr(contents: String): Result<Void, StderrError>` writes exact bytes
   without appending a newline and flushes; `.WriteFailed(Int)` carries CRT
-  `errno`, not a Win32 status. Implementation and regressions compile in the
-  Windows x64 Debug build; the regressions have not executed. The bounded
+  `errno`, not a Win32 status. Its regressions pass in native Windows ARM64
+  Debug and Release. The bounded
   `readFilePrefix(path: String, maximumBytes: Int)` returns
   `Result<String, FileSystemError>` and is integrated for the 65537-byte
   manifest read after regular-file classification. Its `Int` host descriptor
   maps through name resolution/type checking to a scalar LLVM `i64` input;
-  boundary/error acceptance remains pending, and no streaming API is implied.
+  exact boundary/error and allocation-balance tests pass on that target,
+  and no streaming API is implied.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original
   bytes. The entry return status must be in `0..255`; other values produce
   a runtime error rather than truncation. The compiler's Windows `wmain`
   UTF-8 conversion and native/UTF-8 linker-path preservation are integrated
-  and compiled. A Windows x64 joypm smoke run succeeded, but its scope does
-  not establish general Unicode support; the registered native regressions
-  and joypm Unicode gate have not run.
+  and pass their native Windows ARM64 Debug/Release regressions, including the
+  joypm Unicode gate. This is not general Unicode-aware diagnostic rendering
+  or evidence for other native targets.
   Existing Windows legacy `readFile` handling remains narrow and unchanged.
   New host operations require strict UTF-8 paths/arguments and use wide
   Windows APIs; invalid bytes are errors, not replacement characters. Host

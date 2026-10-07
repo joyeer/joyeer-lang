@@ -57,7 +57,7 @@ set(reordered "schema-version = 1\n[package]\nname = 'multi'\nversion = '1.2.3'\
 string(APPEND reordered "[[modules]]\nname = 'sample.core'\nsources = ['core.joyeer']\ndependencies = []\n")
 string(APPEND reordered "[[modules]]\nname = 'sample.app'\nsources = ['implementation files/helper.joyeer', 'main.joyeer']\ndependencies = ['sample.core']\n")
 string(APPEND reordered "[[targets]]\nname = 'multi'\nkind = 'bin'\nmodule = 'sample.app'\n")
-file(WRITE "${package}/joyeer.toml" "${reordered}")
+jp_write_bytes("${package}/joyeer.toml" "${reordered}")
 set(reorder_cwd "${work}/reordered caller")
 file(MAKE_DIRECTORY "${reorder_cwd}")
 jp_call(1 "${reorder_cwd}" check --compiler "${COMPILER_SPY}"
@@ -85,10 +85,10 @@ string(APPEND manifest "[[modules]]\nname = 'graph.right'\nsources = ['right.joy
 string(APPEND manifest "[[modules]]\nname = 'graph.leaf'\nsources = ['z-leaf.joyeer', 'a-leaf.joyeer']\ndependencies = []\n")
 string(APPEND manifest "[[modules]]\nname = 'graph.left'\nsources = ['left.joyeer']\ndependencies = ['graph.leaf']\n")
 string(APPEND manifest "[[targets]]\nname = 'diamond'\nkind = 'bin'\nmodule = 'graph.root'\n")
-file(WRITE "${diamond}/joyeer.toml" "${manifest}")
+jp_write_bytes("${diamond}/joyeer.toml" "${manifest}")
 set(cwd "${work}/diamond caller")
 file(MAKE_DIRECTORY "${cwd}")
-jp_call(1 "${cwd}" check --target diamond --compiler "${COMPILER_SPY}"
+jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}"
     --manifest-path "${diamond}/joyeer.toml")
 jp_no_runtime_error()
 if(NOT EXISTS "${cwd}/compiler-record.txt")
@@ -115,10 +115,10 @@ jp_no_outputs("${diamond}")
 string(REPLACE "name = 'graph.unselected'\nsources = ['unselected.joyeer']\ndependencies = []"
     "name = 'graph.unselected'\nsources = ['unselected.joyeer']\ndependencies = ['graph.unselected']"
     cyclic "${manifest}")
-file(WRITE "${diamond}/joyeer.toml" "${cyclic}")
+jp_write_bytes("${diamond}/joyeer.toml" "${cyclic}")
 set(cwd "${work}/unselected cycle caller")
 file(MAKE_DIRECTORY "${cwd}")
-jp_call(1 "${cwd}" check --target diamond --compiler "${COMPILER_SPY}"
+jp_call(1 "${cwd}" build --target diamond --compiler "${COMPILER_SPY}"
     --manifest-path "${diamond}/joyeer.toml")
 string(FIND "${cyclic}" "name = 'graph.unselected'" name_pos)
 string(SUBSTRING "${cyclic}" 0 "${name_pos}" before_name)

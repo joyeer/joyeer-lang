@@ -9,7 +9,7 @@ function(limit_call name contents expected_output)
     set(package "${work}/logic ${name}")
     set(cwd "${work}/logic caller ${name}")
     file(MAKE_DIRECTORY "${package}" "${cwd}")
-    file(WRITE "${package}/joyeer.toml" "${contents}")
+    jp_write_bytes("${package}/joyeer.toml" "${contents}")
     execute_process(
         COMMAND "${LOGIC_EXECUTABLE}" "${package}/joyeer.toml" ${ARGN}
         WORKING_DIRECTORY "${cwd}"

@@ -1,4 +1,5 @@
 #include "joyeer/backend/llvm.h"
+#include "joyeer/backend/linker.h"
 #include "joyeer/compiler/irlowering.h"
 #include "joyeer/compiler/lexparser.h"
 #include "joyeer/compiler/nameresolution.h"
@@ -10,12 +11,21 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <unordered_set>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -61,6 +71,62 @@ protected:
     SourceFile::Ptr source;
     joyeer::llvmbackend::Result result;
 };
+
+#ifdef _WIN32
+TEST_F(LLVMBackendTest, EmbedsAsInvokerManifestForInstallerLikeOutputNames) {
+    ASSERT_NO_FATAL_FAILURE(emit("func main() {}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    ASSERT_TRUE(result.hasEntryPoint);
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("joyeer-uac-" + std::to_string(GetCurrentProcessId()) + "-" +
+         std::to_string(GetTickCount64()));
+    ASSERT_TRUE(std::filesystem::create_directory(directory));
+    struct Cleanup {
+        std::filesystem::path directory;
+        ~Cleanup() {
+            for (const auto* name : {"setup.exe", "update.exe"}) {
+                std::error_code error;
+                std::filesystem::remove(directory / name, error);
+                EXPECT_FALSE(error) << error.message();
+            }
+            std::error_code error;
+            std::filesystem::remove(directory, error);
+            EXPECT_FALSE(error) << error.message();
+        }
+    } cleanup {directory};
+    for (const auto* name : {"setup.exe", "update.exe"}) {
+        SCOPED_TRACE(name);
+        joyeer::native::LinkOptions options;
+        options.runtimeLibrary = std::filesystem::u8path(JOYEER_TEST_RUNTIME_LIBRARY);
+        options.outputFile = directory / name;
+        const auto linked = joyeer::native::Linker().link(result.text, result.hasEntryPoint, options);
+        ASSERT_TRUE(linked.succeeded()) << joyeer::native::dump(linked.diagnostics);
+        const HMODULE image = LoadLibraryExW(options.outputFile.c_str(), nullptr,
+            LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+        ASSERT_NE(image, nullptr) << GetLastError();
+        struct FreeImage {
+            HMODULE image;
+            ~FreeImage() { EXPECT_TRUE(FreeLibrary(image)); }
+        } freeImage {image};
+        const HRSRC resource = FindResourceW(image, MAKEINTRESOURCEW(1), MAKEINTRESOURCEW(24));
+        ASSERT_NE(resource, nullptr) << GetLastError();
+        const DWORD size = SizeofResource(image, resource);
+        ASSERT_GT(size, 0u);
+        const HGLOBAL loaded = LoadResource(image, resource);
+        ASSERT_NE(loaded, nullptr) << GetLastError();
+        const auto* data = static_cast<const char*>(LockResource(loaded));
+        ASSERT_NE(data, nullptr);
+        const std::string xml(data, size);
+        const auto start = xml.find("<requestedExecutionLevel");
+        ASSERT_NE(start, std::string::npos) << xml;
+        const auto end = xml.find('>', start);
+        ASSERT_NE(end, std::string::npos) << xml;
+        const auto tag = xml.substr(start, end - start + 1);
+        EXPECT_TRUE(std::regex_search(tag, std::regex(R"(\blevel\s*=\s*["']asInvoker["'])"))) << tag;
+        EXPECT_TRUE(std::regex_search(tag, std::regex(R"(\buiAccess\s*=\s*["']false["'])"))) << tag;
+    }
+}
+#endif
 
 TEST_F(LLVMBackendTest, SourceLocationTransportDoesNotChangeLLVMWithoutDebugEmission) {
     const std::string text = R"JOYEER(func run() {

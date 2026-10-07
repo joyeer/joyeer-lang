@@ -1,15 +1,14 @@
 # Joyeer Project and Package Manager Plan
 
-> **Status:** the Windows x64-target Debug build and local-project smoke run
-> succeeded, but full native validation/release acceptance is pending. The
-> originating machine is reported as ARM64; the x64-target result is not
-> ARM64 native acceptance.
-> CTest has not run; all nine registered gates remain unexecuted. Bounded
-> regular-file acquisition and scalar host inputs are integrated and compiled.
-> Current CLI, manifest, execution behavior, and detailed validation evidence
-> belong in [joypm implementation](../impl/joypm.md); this plan
-> tracks remaining gates and future contracts, not completed implementation PRs.
-> Continue execution using the [validation handoff](joypm-validation-handoff.md).
+> **Status:** the first single-package local-workflow version, `0.1.0`, is
+> implemented and accepted on native Windows ARM64. Debug and Release default
+> `ALL` builds and unfiltered CTest pass 789/789 each, including all 14 Windows
+> tool gates. Self-build, concurrency, failure paths, product/Debug installation,
+> and compiler-only builds are verified. This is not a published release or
+> evidence for other native platforms/architectures.
+> Current CLI, manifest, execution contracts, and evidence belong in
+> [joypm](../impl/joypm.md); this plan tracks remaining native rollout and
+> future package contracts, not completed implementation PRs.
 
 ## 1. Goal and Scope
 
@@ -17,12 +16,12 @@ Deliver a Cargo-like **local project workflow first**, then grow it into a
 package manager. Do not make registry infrastructure, separate binary
 libraries, or compiler incrementality prerequisites for a useful first release.
 
-The source-implemented **v0 scope** covers one package, explicit source modules,
+The accepted first **v0 scope** covers one package, explicit source modules,
 executable and executable-test targets, debug/release profiles, and
 `init`, `check`, `build`, `run`, and `test`. It always rebuilds selected targets.
 Local path dependencies and workspaces follow as separate releases. Tool
 version `0.1.0` is early development and independent of compiler `0.0.1`;
-neither a version string nor added fixtures establish release completion.
+neither a version string nor added fixtures alone establish release acceptance.
 
 ### Frozen local-workflow decisions
 
@@ -66,15 +65,16 @@ Sources: [implemented surface](../impl/supported-features.md),
 
 - **Diagnostics:** the focused `writeStderr(contents: String)` addition returns
   `Result<Void, StderrError>` with `.WriteFailed(Int)` CRT `errno` and exact
-  bytes plus flush. It is compiled; its regressions have not run. General streaming and
+  bytes plus flush. Native ARM64 regressions pass. General streaming and
   Unicode-aware diagnostic rendering remain separate contracts.
 - **Bounded acquisition validation:** the loader now uses
   `readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>`
   with 65537 to reject input above the parser's 65536-byte maximum, after
   `fileKind` accepts only `.File` and rejects final symlinks and other
   nonregular inputs. Host-descriptor `Int` name/type resolution and scalar
-  LLVM emission are integrated and compiled. Execute the added exact-boundary
-  tests and host regressions, and audit nonregular/device/FIFO coverage.
+  LLVM emission and exact-boundary/error regressions pass on native Windows
+  ARM64, including final links and devices. Execute the POSIX FIFO/device
+  cases on their native platforms.
   Classification is not race-free confinement, and this is not streaming.
 - **Tool discovery:** program arguments exclude the executable name; current
   host operations do not expose executable location, current-directory lookup,
@@ -83,10 +83,9 @@ Sources: [implemented surface](../impl/supported-features.md),
   supplies it.
   Installed sibling discovery is a later host/API task, not string guessing.
 - **Windows encoding:** compiler `wmain` UTF-8 conversion and native/linker-
-  path fixes are integrated and compiled, with scoped Windows x64 smoke
-  evidence in the implementation reference. Run the added native regressions
-  and joypm Unicode gate before broader support claims; one project pathname
-  does not establish general Unicode or temporary-path coverage. Legacy narrow
+  path regressions, including temporary paths and product relocation, pass in
+  native ARM64 Debug/Release. Other native targets need their own gates;
+  this does not establish Unicode-aware diagnostic rendering. Legacy narrow
   `readFile` is unchanged.
 - **Identity and cleanup:** lexical paths are not physical identities.
   Canonicalization, anchored recursive deletion, atomic publication, and
@@ -104,7 +103,7 @@ order and sort explicitly where determinism matters.
 The source-owned [commands and options](../impl/joypm.md#2-commands-and-options)
 define the strict CLI, selections, forwarding, profiles, streams, and exact
 0/1/2 status policy. Those implementation tasks are no longer proposed PRs;
-their acceptance remains pending. Preserve the explicit compiler path, no
+their native ARM64 acceptance is complete. Preserve the explicit compiler path, no
 upward manifest search/PATH lookup/shell, debug `-O0 -gfull`, release `-O2 -g0`,
 and no arbitrary compiler-flag passthrough when extending the tool. `check`
 does not establish native linkability or all executable-entry diagnostics.
@@ -115,7 +114,8 @@ The [strict manifest profile](../impl/joypm.md#3-strict-manifest-profile) owns
 the schema/example, required fields, scalar/UTF-8 escapes, portable names,
 version metadata, DAG checks, and inclusive limits: 65536 input bytes, 4096
 decoded bytes/string, 256 modules, 256 targets, and 1024 strings/array.
-Exact-boundary and bounded-acquisition validation are still release gates.
+Exact-boundary and bounded-acquisition gates pass on native ARM64; other
+native platforms still require execution.
 
 Keep package, target, and logical module identities distinct. Source paths
 resolve relative to the owning manifest. Compiler physical-source validation
@@ -137,8 +137,9 @@ incrementality is implied.
 Current [execution policy](../impl/joypm.md#4-paths-plans-and-execution) owns
 create-new initialization, 128 exclusive generation claims per target/profile,
 artifact validation, stale-output rejection, serial tests and summaries. These
-are implemented and compiled, with scoped smoke evidence, not a passed full
-native gate or general safety claim.
+pass the full native ARM64 gate, including concurrency, partial init,
+native statuses, and stale-output rejection. This is not a general confinement
+or universal platform safety claim.
 
 Preserve the trusted-local-project threat model: programs/tests execute with
 the user's permissions and no sandbox. Lexical path checks and ordinary
@@ -150,8 +151,8 @@ their own host contracts first.
 
 ## 6. Implementation Layout and Bootstrap
 
-The six sources and generated platform template are under
-[src/tools/joypm/](../../src/tools/joypm/); durable fixtures and the nine gates
+The six sources and generated platform/manifest templates are under
+[src/tools/joypm/](../../src/tools/joypm/); durable fixtures and the acceptance gates
 are under [tests/joypm/](../../tests/joypm/). Source responsibilities and the
 explicit CMake compilation set are documented in
 [bootstrap](../impl/joypm.md#1-source-layout-and-bootstrap).
@@ -159,18 +160,21 @@ explicit CMake compilation set are documented in
 `JOYEER_BUILD_JOYPM=ON` defaults to a compiler-driven `ALL` bootstrap; `OFF`
 is compiler-only. Debug uses `-O0 -gfull` (macOS uses `-g0` without
 `dsymutil`), and Release uses `-O2 -g0`; produced Debug PDB/dSYM sidecars are
-CMake byproducts. The nine gates require `BUILD_TESTING` and the tool option,
-independently of `JOYEER_BUILD_UNITTESTS`. Bootstrap/test compilation currently
-only calls the compiler directly: **joypm self-build remains an acceptance
-task**. Windows x64 Debug bootstrap/helper compilation succeeded; Release
-toolchain bootstrap and other native platforms still need validation.
+CMake byproducts. The gates require `BUILD_TESTING` and the tool option,
+independently of `JOYEER_BUILD_UNITTESTS`. Configure stages a project from
+the same explicit source set for actual joypm self-build; Debug/Release tools
+and an executed second-stage build pass. Native ARM64 default bootstrap and
+Windows Debug-PDB/Release-executable regeneration are verified. Other native
+platforms still need validation.
 No preinstalled joypm or Python is required.
 
 Install inventory is updated in [building](../building.md#release-staging):
 compiler/backend/runtime/current license use `JoyeerRuntime`; optional joypm
 uses `PRODUCT`, including its Windows Debug PDB. The Windows Debug installer
 includes tool/PDB when enabled.
-Native package/installer validation and third-party notices remain open. Never
+Native ARM64 product/installer inventories, relocated workflows, and pinned
+third-party notice staging are verified. Audit extra dependencies in custom
+SDKs and execute installation gates on other native platforms. Never
 bundle test SDKs or LLVM tools or install external compilers/SDKs through joypm.
 If release automation needs scripts, use the repository's cross-platform
 standard-library Python policy without making Python a source-build/tool
@@ -182,13 +186,13 @@ The language/host foundation is owned by the
 [implemented surface](../impl/supported-features.md),
 [compiler input contract](../impl/backend.md#2-cli), and
 [host specification](../spec/18-host.md), not a completed milestone plan.
-Acceptance evidence, not source presence or elapsed time, determines release
-completion. P0-P3 implementation tasks have moved to
-[joypm](../impl/joypm.md); full native acceptance is still pending.
+Acceptance evidence, not source presence or elapsed time, determines platform
+readiness. P0-P3 local-workflow implementation and native ARM64 acceptance
+are complete in [joypm](../impl/joypm.md); the next package phases remain
+separate contracts.
 
 | Phase | Current status / prerequisites | Remaining deliverables and exit criteria |
 |---|---|---|
-| P0-P3: Local v0 | Bounded acquisition/scalar inputs integrated; Windows x64 Debug build and local-project smoke succeeded; nine gates registered but CTest not run | Execute full CTest, strict-limit and failure-path coverage, native platform/architecture and Release-bootstrap validation, package/installer checks, and self-build acceptance |
 | P4: Local path packages | Deferred; validated v0 plus physical package-identity contract | Recursive loading/source exports/package DAG; deduplicate diamonds and reject cycles/conflicting logical identities without remote access |
 | P5: Workspaces | Deferred; P4 | Root/member schema, explicit selection/`--workspace`, shared plans and member-qualified outputs without target collisions |
 | P6: Rebuild avoidance and artifact lifecycle | Deferred; P5 plus hashing/identity/publication/cleanup contracts | Whole-target fingerprints, concurrent publication/cache checks and anchored `clean`; changed inputs invalidate, corrupt entries miss, deletion cannot follow links outside owned outputs |
@@ -197,27 +201,19 @@ completion. P0-P3 implementation tasks have moved to
 P6 and P7 are separate later workstreams; a registry need not wait for compiler
 incrementality, and workspace support need not fetch remote packages.
 
-### Remaining v0 acceptance work
+### Remaining native rollout work
 
-1. Execute the added 65536/65537-byte, decoded-string, and collection
-  exact-boundary tests and bounded-reader/scalar-input regressions. Audit
-  regular-file-only rejection coverage, including final symlinks and devices/FIFOs.
-  Do not alter legacy `readFile` compatibility or imply race-free confinement.
-2. Run unfiltered CTest with `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, and
-  `JOYEER_BUILD_UNITTESTS` enabled, including the nine tool gates and
-  host/compiler regressions. The successful Windows x64 Debug build does not
-  replace this gate; validate Release toolchain bootstrap separately.
-3. Execute the landed Windows UTF-8 CLI/source/output/temp/linker-path and
-   stderr regressions, then native Windows/Linux/macOS architecture gates.
-  Preserve the distinction between compiled fixes, the observed Windows x64
-  smoke run, and full native support evidence.
-4. Close missing acceptance coverage for concurrency, aliases/link failures,
-   full child/signal statuses, host failures, parser limits and partial init.
-5. Validate optional package inventory/components and Debug tool/PDB install;
-   stage required third-party notices and add joypm self-build acceptance.
+- Execute fresh native Windows x64, Linux, and macOS Debug/Release default
+  builds and unfiltered CTest with tool and unit-test options enabled. Keep
+  hardware/process/SDK target identities distinct from emulation.
+- Run the conditional POSIX FIFO/signal/execute-permission and macOS
+  dSYM/fallback cases on their own platforms; validate relocated product
+  components there. Preserve legacy `readFile` compatibility and the explicit
+  non-confinement boundary.
+- Add repeatable native CI/release staging and audit custom SDK dependency
+  notices before publishing a broader platform release.
 
-No source implementation task above is a claim of passed validation or v0
-release completion. Completed implementation checklists should not be restored.
+Do not restore completed local-workflow implementation checklists.
 
 ### Later-phase design gates
 
@@ -241,24 +237,18 @@ release completion. Completed implementation checklists should not be restored.
 
 ## 8. Validation and Release Gates
 
-**Current evidence:** the Windows x64 Debug build with unit tests enabled and
-local-project smoke run succeeded; detailed observations belong in
-[joypm](../impl/joypm.md#5-added-tests-versus-validation). Nine tests are
-registered, but CTest has not run for this change set. Their names are
-`Joypm.Cli`, `Joypm.Init`, `Joypm.Manifest`, `Joypm.ManifestLimits`,
-`Joypm.Plans`, `Joypm.Workflow`, `Joypm.TestRunner`, `Joypm.Unicode`, and
-`Joypm.Logic`. Exact-boundary parser and oversized CLI diagnostics are added
-in `Joypm.ManifestLimits` but remain unexecuted.
-The owner reports an ARM64 originating machine; all recorded commands targeted
-x64. Record host, process, and compiler/LLVM target architecture separately on
-the receiving machine and do not count this smoke as native ARM64 coverage.
-The [handoff](joypm-validation-handoff.md) gives the architecture-specific
-setup, Debug/Release gate commands, and result-reporting checklist.
-The table lists required acceptance, not a declaration that every listed case
-already has a fixture or passes. Audit missing coverage and add it before
-closing the gate. Bounded-acquisition acceptance, self-build, concurrency/failure
-injection, full native platform runs, Release bootstrap, and package installation
-are specifically still open.
+**Current evidence:** native Windows ARM64 Debug and Release default `ALL`
+builds and unfiltered CTest pass 789/789 each. All 14 Windows joypm gates,
+exact limits, self-build, concurrent generations, native failure injection,
+product relocation, Debug installer regressions, and compiler-only builds
+pass; details and provenance belong in
+[joypm](../impl/joypm.md#5-validation-evidence). Follow
+[building](../building.md#configure-build-and-test) for matching external SDKs
+and full gates on another native platform.
+
+The table remains the acceptance contract. Windows ARM64 results do not cover
+POSIX-only cases, macOS debug sidecars/fallback, or other native architectures.
+Those executions, native CI, and release publication remain open.
 
 | Layer | Required cases |
 |---|---|
@@ -269,7 +259,7 @@ are specifically still open.
 | Artifacts | Concurrent generation claims; collision-retry exhaustion; output creation failure; missing expected executable; failed rebuild with an old executable present |
 | Init/run | Nonempty destination; create-new collision; partial write failure; empty/spaced/Unicode/metacharacter arguments; package child cwd; nonzero and full native child status |
 | Tests | No test targets; all-pass; compile failure; runtime failure; deterministic summary; selection/forwarding; signal termination where supported |
-| Platform/release | Native Windows, Linux, macOS runs; spaces/Unicode source/output/temp/argv; stderr exact bytes/CRT errors; optional PRODUCT tool and Windows Debug PDB install; third-party notices; packaged compiler/backend/runtime lookup; external SDK prerequisites; Debug/Release bootstrap without preinstalled `joypm`; macOS Debug fallback without dsymutil and produced PDB/dSYM byproducts; later joypm self-build |
+| Platform/release | Native Windows, Linux, macOS runs; spaces/Unicode source/output/temp/argv; stderr exact bytes/CRT errors; optional PRODUCT tool and Windows Debug PDB install; third-party notices; packaged compiler/backend/runtime lookup; external SDK prerequisites; Debug/Release bootstrap without preinstalled `joypm`; macOS Debug fallback without dsymutil and produced PDB/dSYM byproducts; joypm self-build and second-stage execution |
 
 Use Joyeer executable tests for pure tool logic and fixture projects for
 end-to-end behavior; CMake/CTest can capture outputs and enforce test timeouts
@@ -280,13 +270,13 @@ rather than executing arbitrary shell commands in tests.
 During development, run the narrow affected tests. Reconfigure CMake when
 registering new targets/fixtures. For each release gate, build with
 `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, and `JOYEER_BUILD_UNITTESTS` enabled and
-run unfiltered CTest on each claimed platform/architecture. The nine tool
+run unfiltered CTest on each claimed platform/architecture. The tool
 gates are independent of the unit-test option, but a tool-only run does not
 replace the full gate. A Windows-only pass is not evidence of POSIX behavior.
 
-**v0 is not yet release-complete. It is complete only when** a fresh local
-project can be initialized, checked, built in both profiles, run with preserved
-arguments, and tested; failures
-have actionable diagnostics and the specified statuses; no stale executable
-runs after failure; and documentation distinguishes shipped behavior from
-every deferred feature above.
+**The first local-workflow implementation and native Windows ARM64 acceptance
+are complete:** fresh projects initialize, check, build in both profiles, run
+with preserved arguments, and execute declared tests. Failures have actionable
+diagnostics and the specified statuses; no stale executable runs after
+failure. Other native platforms still need their gates before broader release
+claims, and all later package features above remain deferred.
