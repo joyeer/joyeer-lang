@@ -310,7 +310,13 @@ trees enabled `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, and
 | Tool acceptance in each configuration | Passed, all 14 gates |
 | Debug installer regressions | Passed in isolated destinations; tool/PDB/notices, conflict protection, execution, and unchanged PATH |
 | Compiler-only Release `ALL` and both install components | Passed; no joypm binary built or installed |
-| Unfiltered Release product staging | Passed; exactly four product files and eight license/notice files, without SDK/test payload |
+| Unfiltered Release product staging before notice-bundle removal | Passed; exactly four product files and eight license/notice files, without SDK/test payload |
+
+The checked-in third-party notice copies and their install rules were removed
+on 2026-10-07 for local development. Current local installs contain only
+Joyeer's own license; the eight-file notice inventory above is historical,
+not the current install contract. Third-party license/notice assembly must
+be completed before redistributing toolchain binaries.
 
 Full CTest logs are under
 `out/build/arm64-{debug,release}/ctest-joypm-completion.log`. The earlier
@@ -346,7 +352,7 @@ and `Installed`; Windows also registers `Bootstrap`. They require
   tools built through joypm, declared executable tests, and an executed
   second-stage self-build.
 - [Installed](../../tests/joypm/verifyInstalled.cmake) checks separate
-  `JoyeerRuntime`/`PRODUCT` inventories and license hashes, relocates the
+  `JoyeerRuntime`/`PRODUCT` inventories and the Joyeer license hash, relocates the
   combined package through a spaced supplementary-plane Unicode path, and
   runs both project profiles using only the staged compiler/backend/runtime.
 - [Bootstrap](../../tests/joypm/verifyBootstrap.cmake) regenerates a missing

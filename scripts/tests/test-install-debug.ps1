@@ -41,29 +41,11 @@ function Write-TestCache {
     [IO.File]::WriteAllLines((Join-Path $fakeBuild 'CMakeCache.txt'), [string[]]$lines)
 }
 
-function Get-DebugLicenseSources {
-    param([string]$Directory)
-
-    $sources = @{'licenses\LICENSE' = (Join-Path $sourceDir 'LICENSE')}
-    foreach ($name in @('THIRD-PARTY-NOTICES.txt', 'LLVM-LICENSE.txt',
-        'LLD-LICENSE.txt', 'LLVM-SUPPORT-NOTICES.txt', 'BLAKE3-LICENSE.txt',
-        'LibXml2-SUPPLEMENTAL-NOTICES.txt')) {
-        $sources["licenses\$name"] = Join-Path $sourceDir "licenses\$name"
-    }
-    $xmlSource = @(Get-Content -LiteralPath (Join-Path $Directory 'CMakeCache.txt') |
-        Where-Object { $_ -match '^libxml2_SOURCE_DIR:[^=]+=' })
-    if ($xmlSource.Count -ne 1) {
-        throw 'Missing pinned LibXml2 source directory in the build cache.'
-    }
-    $sources['licenses\LibXml2-Copyright.txt'] = Join-Path ($xmlSource[0] -replace '^[^=]+=', '') 'Copyright'
-    return $sources
-}
-
 function Get-DebugPayload {
     param([string]$Directory)
 
     $payload = @('joyeer.exe', 'joyeer-backend.dll', 'JoyeerNativeRuntime.lib',
-        'joyeer.pdb', 'joyeer-backend.pdb') + @((Get-DebugLicenseSources -Directory $Directory).Keys)
+        'joyeer.pdb', 'joyeer-backend.pdb', 'licenses\LICENSE')
     $enabled = @(Get-Content -LiteralPath (Join-Path $Directory 'CMakeCache.txt') |
         Where-Object { $_ -match '^JOYEER_BUILD_JOYPM:[^=]+=(1|ON|YES|TRUE|Y)$' }).Count -gt 0
     if ($enabled) {
@@ -158,7 +140,7 @@ try {
             throw 'Skipping skill installation created a directory.'
         }
         foreach ($name in (Get-DebugPayload -Directory $nativeBuild)) {
-            if ($name.StartsWith('licenses\', [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if ($name -eq 'licenses\LICENSE') { continue }
             if ((Get-FileHash -LiteralPath (Join-Path $automaticInstall $name)).Hash -ne
                 (Get-FileHash -LiteralPath (Join-Path $nativeBuild ('bin\' + $name))).Hash) {
                 throw "Automatic installation did not use the native Debug build: $name"
@@ -306,11 +288,10 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $binaryDir 'joyeer.exe'))) {
         $binaryDir = Join-Path $buildPath 'Debug\bin'
     }
-    $licenseSources = Get-DebugLicenseSources -Directory $buildPath
     foreach ($name in $payload) {
         $original = Join-Path $binaryDir $name
-        if ($licenseSources.ContainsKey($name)) {
-            $original = $licenseSources[$name]
+        if ($name -eq 'licenses\LICENSE') {
+            $original = Join-Path $sourceDir 'LICENSE'
         }
         if ((Get-FileHash -LiteralPath $original).Hash -ne
             (Get-FileHash -LiteralPath (Join-Path $installDir $name)).Hash) {

@@ -234,7 +234,11 @@ Debug/Release trees; registration or another target's pass is not acceptance.
 
 ## Release staging
 
-Build Release and stage a movable Windows package directory:
+Third-party license/notice assembly is deferred. Complete it before
+redistributing toolchain binaries; the current install is a local-development
+payload, not a complete redistribution bundle.
+
+Build Release and stage a movable Windows directory for local validation:
 
 ```powershell
 cmake --preset x64-release -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON -DINSTALL_GTEST=OFF
@@ -258,7 +262,7 @@ joyeer.exe
 joyeer-backend.dll
 JoyeerNativeRuntime.lib
 joypm.exe                 # when JOYEER_BUILD_JOYPM=ON (default)
-licenses/
+licenses/LICENSE         # Joyeer's own license; third-party notices deferred
 ```
 
 Compiler, backend, runtime, and the current Joyeer license use install
@@ -270,14 +274,13 @@ An install limited to
 the tool. With `JOYEER_BUILD_JOYPM=OFF`, no joypm binary is built or installed.
 Keep GoogleTest and LLVM development tools/SDKs out of the product inventory.
 
-The top-level install stages the repository's `LICENSE`, pinned upstream
-LLVM/LLD 22.1.8 licenses, LLVM support-library and BLAKE3 material, and a
-third-party notice index from [licenses/](../licenses/). Windows also installs
-the fetched LibXml2 2.14.5 copyright and supplemental dict/list notices;
-Linux includes the matching Clang license. The native ARM64 product gate
-verifies exact inventories and source-to-installed license hashes. Audit
-additional dependencies in custom SDKs before redistribution; the supplied
-bundle is not a universal audit of every possible LLVM build configuration.
+The top-level install stages only the repository's own [LICENSE](../LICENSE).
+The checked-in third-party notice copies were removed for local development;
+there is no source-tree license bundle or automatic third-party notice
+acquisition. Before redistribution, assemble the applicable LLVM/LLD,
+support-library, Windows LibXml2, Linux Clang, and other SDK dependency
+license/notice material. The native ARM64 local-install gate verifies exact
+inventories and the Joyeer license hash, not third-party license compliance.
 
 These files may be moved together to another directory or machine. LLVM,
 LLD, and LibXml2 are statically contained in the backend DLL. The DLL finds
@@ -400,7 +403,7 @@ joyeer.pdb
 joyeer-backend.pdb
 joypm.exe                 # when enabled
 joypm.pdb                 # when enabled
-licenses\                # Joyeer and pinned third-party licenses/notices
+licenses\LICENSE          # Joyeer's own license
 ```
 
 `-SkipSkillInstall` skips only the agent skill; it does not disable joypm.

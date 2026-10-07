@@ -111,8 +111,9 @@ ctest --test-dir build --output-on-failure
   required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
   backend, runtime, and the current license use install component
   `JoyeerRuntime`; `joypm` uses `PRODUCT`. The Debug installer includes
-  `joypm` and its PDB when enabled. Pinned third-party licenses/notices are
-  staged with the runtime; custom SDK dependencies need their own audit.
+  `joypm` and its PDB when enabled. Current local installs stage only Joyeer's
+  own license. Third-party license/notice assembly is deferred and must be
+  completed before redistributing toolchain binaries.
   See [docs/building.md](docs/building.md#release-staging).
 - Packaged native linking needs MSVC Build Tools and a Windows SDK, but not
   an LLVM installation. Clang executables are test/inspection tools, not

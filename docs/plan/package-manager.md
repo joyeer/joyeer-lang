@@ -172,9 +172,10 @@ Install inventory is updated in [building](../building.md#release-staging):
 compiler/backend/runtime/current license use `JoyeerRuntime`; optional joypm
 uses `PRODUCT`, including its Windows Debug PDB. The Windows Debug installer
 includes tool/PDB when enabled.
-Native ARM64 product/installer inventories, relocated workflows, and pinned
-third-party notice staging are verified. Audit extra dependencies in custom
-SDKs and execute installation gates on other native platforms. Never
+Native ARM64 local-install inventories and relocated workflows are verified.
+Current installs contain only Joyeer's own license; third-party notice
+assembly is deferred and required before binary redistribution. Audit SDK
+dependencies and execute installation gates on other native platforms. Never
 bundle test SDKs or LLVM tools or install external compilers/SDKs through joypm.
 If release automation needs scripts, use the repository's cross-platform
 standard-library Python policy without making Python a source-build/tool
@@ -210,8 +211,9 @@ incrementality, and workspace support need not fetch remote packages.
   dSYM/fallback cases on their own platforms; validate relocated product
   components there. Preserve legacy `readFile` compatibility and the explicit
   non-confinement boundary.
-- Add repeatable native CI/release staging and audit custom SDK dependency
-  notices before publishing a broader platform release.
+- Assemble required third-party licenses/notices before binary redistribution.
+  Add repeatable native CI/release staging and audit SDK dependencies before
+  publishing a broader platform release.
 
 Do not restore completed local-workflow implementation checklists.
 

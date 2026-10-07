@@ -210,9 +210,10 @@ do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
 through Visual Studio Setup Configuration and the registry. `INSTALL_GTEST=OFF`
 prevents test-only headers and libraries from being added to the package.
-The install rules also stage pinned LLVM/LLD, support-library, and platform
-dependency licenses/notices. Product-only inventories and relocated workflows
-are verified on Windows ARM64. See
+Current local installs stage only Joyeer's own license. Third-party licenses
+and notices must be assembled before redistributing toolchain binaries.
+Product-only inventories and relocated workflows are verified on Windows
+ARM64, but those checks do not establish redistribution readiness. See
 [building.md](docs/building.md#release-staging) for these packaging limitations,
 platform details, and troubleshooting.
 

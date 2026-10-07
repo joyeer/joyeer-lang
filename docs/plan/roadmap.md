@@ -31,13 +31,15 @@
 
 ### 3. Close release and platform gaps
 
+- Assemble required third-party licenses/notices before binary redistribution;
+  current local installs contain only Joyeer's own license.
 - Add checked-in CI for supported Windows, macOS, and Linux configurations.
 - Exercise ELF and Mach-O behavior on their native platforms in addition to
   Windows release validation.
 - Extend native Windows x64, ELF and Mach-O acceptance beyond the verified
-  Windows ARM64 Debug/Release gate. Pinned license/notice staging, product-only
-  inventories, and Windows Unicode source/output/temporary paths are validated
-  on ARM64; custom SDK dependency auditing and Unicode-aware diagnostic
+  Windows ARM64 Debug/Release gate. Product-only inventories and Windows
+  Unicode source/output/temporary paths are validated on ARM64;
+  SDK dependency auditing and Unicode-aware diagnostic
   rendering remain independent work.
 
 ### 4. Extend host facilities beyond the first portable interface
