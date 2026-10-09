@@ -331,6 +331,11 @@ to x64 full acceptance.
 and `Installed`; Windows also registers `Bootstrap`. They require
 `BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, independently of GoogleTest.
 
+The [shared acceptance helpers](../../tests/joypm/helpers.cmake) capture
+subprocess stdout and stderr explicitly as UTF-8, avoiding policy-dependent
+Windows console-code-page decoding. This preserves Unicode output comparisons
+without changing child output bytes, fixture file bytes, or console code pages.
+
 - [ManifestLimits](../../tests/joypm/verifyManifestLimits.cmake) verifies
   65536/65537 original bytes, 4096/4097 decoded bytes, 256/257 modules and
   targets, and 1024/1025 array entries, including original byte locations.

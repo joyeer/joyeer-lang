@@ -64,6 +64,7 @@ execute_process(
         RESULT_VARIABLE compiler_result
         OUTPUT_VARIABLE compiler_output
         ERROR_VARIABLE compiler_error
+        ENCODING UTF-8
 )
 if(NOT compiler_result EQUAL 0)
     fail_native_validation(
@@ -186,6 +187,7 @@ if(DEFINED PROGRAM_ARGUMENT_2)
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
+        ENCODING UTF-8
     )
 elseif(DEFINED PROGRAM_ARGUMENT_1)
     execute_process(
@@ -194,6 +196,7 @@ elseif(DEFINED PROGRAM_ARGUMENT_1)
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
+        ENCODING UTF-8
     )
 else()
     execute_process(
@@ -202,6 +205,7 @@ else()
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
+        ENCODING UTF-8
     )
 endif()
 cleanup_native_artifacts()

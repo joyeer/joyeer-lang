@@ -323,6 +323,11 @@ cover both `main` forms, empty and spaced arguments, Unicode arguments,
 POSIX raw bytes, normal and out-of-range statuses, and missing, duplicate,
 or invalid signatures. Windows-only entry tests reject unpaired high and low
 UTF-16 surrogates and verify supplementary Unicode conversion and cleanup.
+The [native executable test helper](../../scripts/cmake/verifyNativeExecutable.cmake)
+captures Joyeer compiler and program output with explicit UTF-8 encoding.
+On Windows this avoids CMake's policy-dependent `AUTO` decoding through the
+console code page; it does not change the program's output bytes or the
+console code page.
 File-input tests cover binary data and missing files.
 Stderr unit coverage in the existing runtime test target checks empty writes,
 binary bytes including NUL/invalid UTF-8/newlines, no appended newline, Windows

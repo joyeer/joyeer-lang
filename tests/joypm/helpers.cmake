@@ -31,6 +31,7 @@ function(jp_call expected cwd)
         COMMAND "${JOYPM_EXECUTABLE}" ${ARGN}
         WORKING_DIRECTORY "${cwd}"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+        ENCODING UTF-8
         TIMEOUT "${jp_timeout}")
     string(REPLACE "\r\n" "\n" output "${output}")
     string(REPLACE "\r\n" "\n" error "${error}")
@@ -78,6 +79,7 @@ function(jp_write_bytes path contents)
     execute_process(
         COMMAND "${INPUT_WRITER}" "${input}" "${output}"
         RESULT_VARIABLE result OUTPUT_VARIABLE writer_out ERROR_VARIABLE writer_err
+        ENCODING UTF-8
         TIMEOUT 30)
     if(NOT result STREQUAL "0")
         message(FATAL_ERROR "Exact-byte input writer failed (${result}):\n${writer_out}\n${writer_err}")
@@ -192,6 +194,7 @@ function(jp_forward command package mode)
             "${command}" "${mode}"
         WORKING_DIRECTORY "${outside}"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+        ENCODING UTF-8
         TIMEOUT 60)
     string(REPLACE "\r\n" "\n" output "${output}")
     if(NOT result STREQUAL "0")
