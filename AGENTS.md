@@ -152,6 +152,5 @@ ctest --test-dir build --output-on-failure
   [the preamble](docs/spec/00-preamble.md)
 - Implemented language surface:
   [docs/impl/supported-features.md](docs/impl/supported-features.md)
-- Active implementation priorities: [docs/plan/roadmap.md](docs/plan/roadmap.md)
 - Backend ABI/debug behavior: [docs/impl/backend.md](docs/impl/backend.md)
 - Program startup and runtime: [docs/impl/runtime.md](docs/impl/runtime.md)

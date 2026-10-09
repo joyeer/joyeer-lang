@@ -17,7 +17,6 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
-| See active implementation priorities | [plan/roadmap.md](plan/roadmap.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Windows Debug compiler | [Debug installation](building.md#local-windows-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
@@ -69,7 +68,6 @@ work.
 
 | Document | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Active implementation priorities |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
 ## Conventions

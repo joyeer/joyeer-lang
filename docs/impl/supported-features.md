@@ -181,6 +181,4 @@ correctness gaps:
 Update this document when implementation support changes. The portable
 [Joyeer coding skill](../../skills/joyeer/references/supported-features.md)
 must carry the same compatibility boundary while remaining self-contained for
-installed distributions. Track unfinished priorities in the
-[implementation roadmap](../plan/roadmap.md), not in completed milestone
-documents.
+installed distributions.
