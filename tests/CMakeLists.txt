@@ -34,3 +34,7 @@ endif()
 if(BUILD_TESTING AND JOYEER_BUILD_JOYPM)
     add_subdirectory(joypm)
 endif()
+
+if(JOYEER_BUILD_UNITTESTS)
+    add_subdirectory(unittests)
+endif()

@@ -235,7 +235,7 @@ set(JOYEER_BIN_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin")
 set(JOYEER_LIB_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib")
 
 set(JOYEER_TESTS_DIR "${JOYEER_SOURCE_DIR}/tests")
-set(JOYEER_UNITTESTS_DIR "${JOYEER_SOURCE_DIR}/unittests")
+set(JOYEER_UNITTESTS_DIR "${JOYEER_TESTS_DIR}/unittests")
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
@@ -252,9 +252,6 @@ include_directories(
 add_subdirectory(lib)
 add_subdirectory(src/tools)
 add_subdirectory(tests)
-if(JOYEER_BUILD_UNITTESTS)
-    add_subdirectory(unittests)
-endif()
 
 include(GNUInstallDirs)
 install(TARGETS joyeer JoyeerNativeBackend

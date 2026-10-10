@@ -63,8 +63,8 @@ ctest --test-dir build --output-on-failure
   `out/build/<preset>/src/tools/joypm/project/`.
 - Re-run CMake configure after adding or removing registered fixtures or test
   targets.
-- C++ unit tests live under [unittests/](unittests/). Durable Joyeer sources
-  live under stage-specific directories in [tests/](tests/).
+- C++ unit tests live under [tests/unittests/](tests/unittests/). Durable
+  Joyeer sources live under stage-specific directories in [tests/](tests/).
 
 ## Source layout
 

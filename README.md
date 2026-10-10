@@ -373,9 +373,10 @@ ctest --preset x64-debug -L native
 ctest --preset x64-debug -L debug-info
 ```
 
-C++ unit tests use GoogleTest. End-to-end compiler and native fixtures live in
-stage-specific folders under [tests/](tests/) and are registered in
-[unittests/compiler/CMakeLists.txt](unittests/compiler/CMakeLists.txt).
+C++ unit tests use GoogleTest and live in [tests/unittests/](tests/unittests/).
+End-to-end compiler and native fixtures live in stage-specific folders under
+[tests/](tests/) and are registered in
+[tests/unittests/compiler/CMakeLists.txt](tests/unittests/compiler/CMakeLists.txt).
 The joypm gates in [tests/joypm/CMakeLists.txt](tests/joypm/CMakeLists.txt),
 including exact limits, concurrent builds, native failures, self-build,
 installation, and Windows bootstrap regeneration,
@@ -391,8 +392,8 @@ platforms need their own unfiltered acceptance runs.
 | [include/joyeer/](include/joyeer/) | Public compiler, IR, backend, CLI, diagnostic, and native runtime headers |
 | [lib/](lib/) | C++ compiler/backend and C11 native runtime implementations |
 | [src/tools/joypm/](src/tools/joypm/) | Joyeer-written local project manager and CMake bootstrap |
-| [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
-| [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
+| [tests/](tests/) | Unit tests, acceptance tests, and durable lexer/parser/semantic/native source fixtures |
+| [tests/unittests/](tests/unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [scripts/](scripts/) | CMake integration-test helpers |
 | [docs/](docs/) | Specification and design explanations, implementation notes, and plans |
 
