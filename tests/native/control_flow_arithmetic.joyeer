@@ -1,0 +1,157 @@
+enum Event {
+    Text(String),
+    Empty,
+}
+
+func quotient(a: Int, b: Int): Int { return a / b }
+func residue(a: Int, b: Int): Int { return a % b }
+
+func probe(calls: inout Int, value: Bool): Bool {
+    &calls = calls + 1
+    return value
+}
+
+func owned(value: consuming String): Bool { return value.count > 0 }
+
+func stop(): Never { return stop() }
+func neverOr(flag: Bool): Bool { return flag || stop() }
+func neverAnd(flag: Bool): Bool { return flag && stop() }
+func neverNot(flag: Bool): Bool {
+    return if flag { !stop() } else { true }
+}
+
+func logical(flag: Bool, input: Bool?): Bool? {
+    return flag || input?
+}
+
+func pending(prefix: String, value: Int): Int {
+    return prefix.count + value
+}
+
+func condition(calls: inout Int): Bool {
+    let temporary = ["condition" + "!"]
+    &calls = calls + 1
+    return calls <= 5 && temporary.count == 1
+}
+
+func main(args: [String]): Int {
+    if !true { return 1 }
+    if !!false { return 2 }
+    if !false == false { return 3 }
+    var calls = 0
+    if true || probe(calls: &calls, value: false) {
+        if calls != 0 { return 4 }
+    } else { return 5 }
+    if false || probe(calls: &calls, value: true) {
+        if calls != 1 { return 6 }
+    } else { return 7 }
+    if false || probe(calls: &calls, value: false) { return 8 }
+    if calls != 2 { return 9 }
+    if probe(calls: &calls, value: false) || probe(calls: &calls, value: true) {
+        if calls != 4 { return 36 }
+    } else { return 37 }
+    if probe(calls: &calls, value: true) || probe(calls: &calls, value: false) {
+        if calls != 5 { return 38 }
+    } else { return 39 }
+    if true || false && false {} else { return 10 }
+    let empty: [Int] = []
+    if true || empty[0] == 0 {} else { return 11 }
+    if true || 1 / 0 == 0 {} else { return 12 }
+    if true || 1 % 0 == 0 {} else { return 13 }
+    let saved = "saved" + "!"
+    let skipped = true || owned(value: consume saved)
+    if skipped == false { return 14 }
+    match logical(flag: true, input: nil) {
+        .Some(true) => (),
+        _ => { return 15 },
+    }
+    match logical(flag: false, input: nil) {
+        .None => (),
+        _ => { return 16 },
+    }
+
+    let dividends = [7, -7, 7, -7, 0]
+    let divisors = [3, 3, -3, -3, 1]
+    let quotients = [2, -2, -2, 2, 0]
+    let residues = [1, -1, 1, -1, 0]
+    var index = 0
+    while index < dividends.count {
+        let a = dividends[index]
+        let b = divisors[index]
+        if quotient(a: a, b: b) != quotients[index] { return 17 }
+        if residue(a: a, b: b) != residues[index] { return 18 }
+        if a != quotient(a: a, b: b) * b + residue(a: a, b: b) { return 19 }
+        index = index + 1
+    }
+    let minimum = 0 - 9223372036854775807 - 1
+    let maximum = 9223372036854775807
+    if quotient(a: minimum, b: 1) != minimum { return 20 }
+    if residue(a: minimum, b: 1) != 0 { return 21 }
+    if quotient(a: minimum, b: minimum) != 1 { return 22 }
+    if residue(a: minimum, b: minimum) != 0 { return 23 }
+    if quotient(a: maximum, b: -1) != 0 - maximum { return 24 }
+    if residue(a: maximum, b: -1) != 0 { return 25 }
+    if 20 / 3 * 2 + 5 % 3 != 14 { return 26 }
+
+    let outer = ["outer" + "!"]
+    calls = 0
+    var total = 0
+    while condition(calls: &calls) {
+        let local = ["body" + "!": ["payload" + "!"]]
+        if calls < 3 { continue }
+        total = total + local.count
+        if calls == 4 { break }
+    }
+    if calls != 4 || total != 2 || outer[0] != "outer!" { return 27 }
+    var rounds = 0
+    var visits = 0
+    while rounds < 100 {
+        rounds = rounds + 1
+        let event: Event = .Text("iteration" + "!")
+        var inner = 0
+        while inner < 4 {
+            let temporary = ["inner" + "!"]
+            inner = inner + 1
+            if inner == 1 { continue }
+            if temporary.count != 1 { return 28 }
+            visits = visits + 1
+            break
+        }
+        match event {
+            .Text(text) => {
+                if text != "iteration!" { return 29 }
+                if rounds < 100 { continue }
+                break
+            },
+            .Empty => { return 30 },
+        }
+    }
+    if rounds != 100 || visits != 100 { return 31 }
+
+    index = 0
+    while index < 3 {
+        index = index + 1
+        let ignored = pending(prefix: "pending" + "!", value: if index < 3 {
+            continue
+        } else {
+            break
+        })
+    }
+    if index != 3 { return 32 }
+    calls = 0
+    while if calls < 3 {
+        calls = calls + 1
+        continue
+    } else {
+        break
+    } {
+        return 33
+    }
+    if calls != 3 { return 34 }
+    if outer[0] != "outer!" { return 35 }
+    if neverOr(flag: true) == false { return 40 }
+    if neverAnd(flag: false) { return 41 }
+    if neverNot(flag: false) == false { return 42 }
+    print(value: "control flow arithmetic ok")
+    return 0
+}

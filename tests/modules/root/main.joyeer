@@ -1,0 +1,6 @@
+import project.config
+
+func main() {
+    let item: project.config.Record = project.config.Record(value: helper())
+    print(value: project.config.read(item: item))
+}

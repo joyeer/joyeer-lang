@@ -1,0 +1,236 @@
+cmake_minimum_required(VERSION 3.20)
+include("${CMAKE_CURRENT_LIST_DIR}/helpers.cmake")
+
+function(host_project name action)
+    set(package "${work}/project ${name}")
+    set(cwd "${work}/caller ${name}")
+    jp_copy_project(single "${package}")
+    file(MAKE_DIRECTORY "${cwd}")
+    file(WRITE "${cwd}/host-action.txt" "${action}")
+    set(package "${package}" PARENT_SCOPE)
+    set(cwd "${cwd}" PARENT_SCOPE)
+endfunction()
+
+if(WIN32)
+    set(wide_status 4045620583)
+    set(installer_program "${work}/setup${EXECUTABLE_SUFFIX}")
+    execute_process(COMMAND "${JOYEER_EXECUTABLE}" -O0 -g0 -o "${installer_program}"
+        -- "${FIXTURE_DIR}/../../native/as-invoker.joyeer"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 60)
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "As-invoker fixture did not compile (${result}):\n${output}\n${error}")
+    endif()
+    execute_process(COMMAND "${installer_program}"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 5)
+    string(REPLACE "\r\n" "\n" output "${output}")
+    if(NOT result STREQUAL "0" OR NOT output STREQUAL "as-invoker ok\n" OR NOT error STREQUAL "")
+        message(FATAL_ERROR "Installer-like output required elevation (${result}):\n${output}\n${error}")
+    endif()
+else()
+    set(wide_status 255)
+endif()
+set(device_program "${work}/device-kind${EXECUTABLE_SUFFIX}")
+execute_process(COMMAND "${JOYEER_EXECUTABLE}" -O0 -g0 -o "${device_program}"
+    -- "${FIXTURE_DIR}/../../native/file-kind-device.joyeer"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 60)
+if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Device classification fixture did not compile (${result}):\n${output}\n${error}")
+endif()
+if(WIN32)
+    set(device NUL)
+else()
+    set(device /dev/null)
+endif()
+execute_process(COMMAND "${device_program}" "${device}"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 5)
+string(REPLACE "\r\n" "\n" output "${output}")
+if(NOT result STREQUAL "0" OR NOT output STREQUAL "device kind ok\n" OR NOT error STREQUAL "")
+    message(FATAL_ERROR "Device classification failed (${result}):\n${output}\n${error}")
+endif()
+
+host_project(wide-compiler compiler-wide)
+jp_call(1 "${cwd}" check --compiler "${HOST_FIXTURE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_err}" "compiler exited with status ${wide_status}")
+jp_no_outputs("${package}")
+
+host_project(wide-child artifact-copy)
+jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
+    --manifest-path "${package}/joyeer.toml" -- exit-wide)
+jp_contains("${jp_err}" "child exited with status ${wide_status}")
+jp_artifacts("${package}" debug sample 1)
+
+host_project(directory-artifact artifact-directory)
+jp_call(1 "${cwd}" build --compiler "${HOST_FIXTURE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_err}" "expected executable is a directory")
+
+host_project(unlaunchable-artifact artifact-empty)
+jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_err}" "cannot run")
+
+file(CREATE_LINK "${HOST_FIXTURE}" "${work}/symbolic probe" SYMBOLIC RESULT symbolic_result)
+if(symbolic_result STREQUAL "0")
+    host_project(link-artifact artifact-link)
+    jp_call(1 "${cwd}" build --compiler "${HOST_FIXTURE}"
+        --manifest-path "${package}/joyeer.toml")
+    jp_contains("${jp_err}" "expected executable is a link")
+else()
+    message(STATUS "Symbolic-link acceptance unavailable on this filesystem: ${symbolic_result}")
+endif()
+
+host_project(hard-linked-source artifact-copy)
+file(CREATE_LINK "${package}/main.joyeer" "${package}/alias.joyeer" RESULT hard_result)
+if(NOT hard_result STREQUAL "0")
+    message(FATAL_ERROR "Cannot create the required physical-source alias: ${hard_result}")
+endif()
+file(READ "${package}/joyeer.toml" manifest)
+string(REPLACE "sources = [\"main.joyeer\"]"
+    "sources = ['main.joyeer', 'alias.joyeer']" manifest "${manifest}")
+jp_write_bytes("${package}/joyeer.toml" "${manifest}")
+jp_call(1 "${cwd}" check --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_out}${jp_err}" "module.duplicate-source")
+jp_no_outputs("${package}")
+
+host_project(link-failure artifact-copy)
+jp_write_bytes("${package}/main.joyeer" "func value(): Int { return 42 }\n")
+jp_call(0 "${cwd}" check --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_no_outputs("${package}")
+jp_call(1 "${cwd}" build --compiler "${JOYEER_EXECUTABLE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_out}${jp_err}" "linker.missing-entry-point")
+jp_artifacts("${package}" debug sample 0)
+
+# These errors abort the suite instead of counting as ordinary test failures.
+host_project(aborted-suite artifact-empty)
+file(READ "${package}/joyeer.toml" suite)
+string(REPLACE "kind = \"bin\"" "kind = \"test\"" suite "${suite}")
+string(REPLACE "name = \"sample\"\nkind" "name = \"a-first\"\nkind" suite "${suite}")
+string(APPEND suite "\n[[targets]]\nname = 'z-after'\nkind = 'test'\nmodule = 'sample.app'\n")
+jp_write_bytes("${package}/joyeer.toml" "${suite}")
+jp_call(1 "${cwd}" test --compiler "${HOST_FIXTURE}"
+    --manifest-path "${package}/joyeer.toml")
+jp_contains("${jp_err}" "cannot run")
+jp_absent("${jp_out}" "tests:")
+if(EXISTS "${package}/target/debug/z-after")
+    jp_fail("Launch failure did not abort the remaining tests")
+endif()
+
+host_project(missing-suite-compiler artifact-copy)
+jp_write_bytes("${package}/joyeer.toml" "${suite}")
+jp_call(1 "${cwd}" test --compiler "${work}/missing compiler${EXECUTABLE_SUFFIX}"
+    --manifest-path "${package}/joyeer.toml")
+jp_absent("${jp_out}" "tests:")
+if(EXISTS "${package}/target/debug/z-after")
+    jp_fail("Compiler launch failure did not abort the remaining tests")
+endif()
+
+set(cwd "${work}/nonregular caller")
+file(MAKE_DIRECTORY "${cwd}" "${work}/directory manifest")
+set(jp_timeout 5)
+jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}"
+    --manifest-path "${work}/directory manifest")
+jp_contains("${jp_err}" "manifest must be an ordinary regular file")
+if(symbolic_result STREQUAL "0")
+    set(link_manifest "${work}/linked joyeer.toml")
+    file(CREATE_LINK "${FIXTURE_DIR}/single/joyeer.toml" "${link_manifest}"
+        SYMBOLIC RESULT result)
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "Manifest link creation failed after the capability probe: ${result}")
+    endif()
+    jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}" --manifest-path "${link_manifest}")
+    jp_contains("${jp_err}" "manifest must be an ordinary regular file")
+endif()
+if(WIN32)
+    jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}" --manifest-path NUL)
+    jp_contains("${jp_err}" "manifest must be an ordinary regular file")
+else()
+    set(fifo "${work}/fifo joyeer.toml")
+    execute_process(COMMAND "${HOST_FIXTURE}" fifo "${fifo}" RESULT_VARIABLE result)
+    if(NOT result STREQUAL "0")
+        message(FATAL_ERROR "Cannot create FIFO manifest fixture: ${result}")
+    endif()
+    jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}" --manifest-path "${fifo}")
+    jp_contains("${jp_err}" "manifest must be an ordinary regular file")
+endif()
+if(EXISTS "${cwd}/compiler-record.txt")
+    jp_fail("A nonregular manifest reached the compiler")
+endif()
+set(jp_timeout 60)
+
+if(WIN32)
+    foreach(case IN ITEMS partial-init output-permission)
+        set(destination "${work}/${case}")
+        file(MAKE_DIRECTORY "${destination}")
+        execute_process(COMMAND "${HOST_FIXTURE}" block-subdirectories "${destination}"
+            RESULT_VARIABLE blocked)
+        if(NOT blocked STREQUAL "0")
+            message(FATAL_ERROR "Cannot inject directory permission failure: ${blocked}")
+        endif()
+        if(case STREQUAL "partial-init")
+            execute_process(COMMAND "${JOYPM_EXECUTABLE}" init "${destination}" --name partial
+                WORKING_DIRECTORY "${outside}"
+                RESULT_VARIABLE status OUTPUT_VARIABLE jp_out ERROR_VARIABLE jp_err TIMEOUT 15)
+        else()
+            jp_copy_project(single "${destination}")
+            execute_process(COMMAND "${JOYPM_EXECUTABLE}" build --compiler "${COMPILER_SPY}"
+                --manifest-path "${destination}/joyeer.toml"
+                WORKING_DIRECTORY "${outside}"
+                RESULT_VARIABLE status OUTPUT_VARIABLE jp_out ERROR_VARIABLE jp_err TIMEOUT 15)
+        endif()
+        execute_process(COMMAND "${HOST_FIXTURE}" allow-subdirectories "${destination}"
+            RESULT_VARIABLE restored)
+        if(NOT restored STREQUAL "0")
+            message(FATAL_ERROR "Cannot restore fixture directory permissions: ${restored}")
+        endif()
+        if(NOT status STREQUAL "1")
+            jp_fail("Permission failure returned ${status}, expected 1")
+        endif()
+        if(case STREQUAL "partial-init")
+            jp_contains("${jp_err}" "partial initialization")
+            jp_contains("${jp_err}" "created files were retained")
+            if(NOT EXISTS "${destination}/joyeer.toml" OR
+                    EXISTS "${destination}/src" OR EXISTS "${destination}/.gitignore")
+                jp_fail("Partial initialization did not retain exactly its first manifest write")
+            endif()
+            file(SHA256 "${destination}/joyeer.toml" before)
+            jp_call(1 "${outside}" init "${destination}" --name replacement)
+            file(SHA256 "${destination}/joyeer.toml" after)
+            if(NOT before STREQUAL after)
+                jp_fail("Retry overwrote the retained partial manifest")
+            endif()
+        else()
+            jp_contains("${jp_err}" "cannot create directory")
+            jp_no_outputs("${destination}")
+        endif()
+    endforeach()
+else()
+    host_project(non-executable-artifact artifact-not-executable)
+    jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
+        --manifest-path "${package}/joyeer.toml")
+    jp_contains("${jp_err}" "process permission denied")
+
+    host_project(signaled-suite artifact-copy)
+    jp_write_bytes("${package}/joyeer.toml" "${suite}")
+    jp_call(1 "${cwd}" test --compiler "${HOST_FIXTURE}"
+        --manifest-path "${package}/joyeer.toml" -- signal)
+    jp_contains("${jp_err}" "child terminated by signal 15")
+    jp_contains("${jp_out}" "2 tests: 0 passed, 0 build-fail, 2 run-fail")
+    jp_artifacts("${package}" debug a-first 1)
+    jp_artifacts("${package}" debug z-after 1)
+
+    host_project(signaled-compiler compiler-signal)
+    jp_write_bytes("${package}/joyeer.toml" "${suite}")
+    jp_call(1 "${cwd}" test --compiler "${HOST_FIXTURE}"
+        --manifest-path "${package}/joyeer.toml")
+    jp_contains("${jp_err}" "terminated by signal 15")
+    jp_absent("${jp_out}" "tests:")
+    if(EXISTS "${package}/target/debug/z-after")
+        jp_fail("A signaled compiler did not abort the remaining tests")
+    endif()
+endif()
+jp_no_runtime_error()
+message(STATUS "joypm native statuses, host/artifact failures, physical aliases and nonregular manifests passed")

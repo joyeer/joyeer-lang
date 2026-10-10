@@ -1,0 +1,163 @@
+struct CliOptions {
+    let command: String
+    let compiler: String
+    let manifestPath: String
+    let release: Bool
+    let verbose: Bool
+    let target: String
+    let directory: String
+    let name: String
+    let childArgs: [String]
+}
+
+private func cliValue(args: borrowing [String], index: Int, option: String): Result<String, ToolError> {
+    if index < 0 || index >= args.count {
+        return .Err(ToolError(message: "missing value for " + option, pos: -1))
+    }
+    let value = args[index]
+    if value.count == 0 || value[0] == b'-' {
+        return .Err(ToolError(message: "missing nonempty value for " + option +
+            "; prefix a path beginning with '-' with './'", pos: -1))
+    }
+    if !validHostText(text: value) {
+        return .Err(ToolError(message: "value for " + option +
+            " must be UTF-8 without NUL", pos: -1))
+    }
+    return .Ok(value)
+}
+
+func parseCli(args: [String]): Result<CliOptions, ToolError> {
+    if args.count == 0 {
+        return .Err(ToolError(message: "expected a command; use joypm --help", pos: -1))
+    }
+    let command = args[0]
+    if command == "--help" || command == "--version" {
+        if args.count != 1 {
+            return .Err(ToolError(message: command + " must be used alone", pos: -1))
+        }
+        return .Ok(CliOptions(command: command, compiler: "", manifestPath: "joyeer.toml",
+            release: false, verbose: false, target: "", directory: "", name: "", childArgs: []))
+    }
+    let project = command == "check" || command == "build" ||
+        command == "run" || command == "test"
+    if !project && command != "init" {
+        return .Err(ToolError(message: "unknown command: " + command + "; use joypm --help", pos: -1))
+    }
+    var compiler = ""
+    var manifestPath = "joyeer.toml"
+    var hasManifest = false
+    var release = false
+    var verbose = false
+    var target = ""
+    var directory = ""
+    var name = ""
+    var childArgs: [String] = []
+    var index = 1
+    while index < args.count {
+        let argument = args[index]
+        if argument == "--" {
+            if command != "run" && command != "test" {
+                return .Err(ToolError(message: "child arguments after '--' are only valid for run and test", pos: -1))
+            }
+            index = index + 1
+            while index < args.count {
+                let childArgument = args[index]
+                &childArgs.append(element: childArgument)
+                index = index + 1
+            }
+            break
+        } else if argument == "--compiler" {
+            if !project {
+                return .Err(ToolError(message: "--compiler is not valid for init", pos: -1))
+            }
+            if compiler.count != 0 {
+                return .Err(ToolError(message: "duplicate --compiler", pos: -1))
+            }
+            compiler = cliValue(args: args, index: index + 1, option: argument)?
+            index = index + 2
+        } else if argument == "--manifest-path" {
+            if !project {
+                return .Err(ToolError(message: "--manifest-path is not valid for init", pos: -1))
+            }
+            if hasManifest {
+                return .Err(ToolError(message: "duplicate --manifest-path", pos: -1))
+            }
+            manifestPath = cliValue(args: args, index: index + 1, option: argument)?
+            hasManifest = true
+            index = index + 2
+        } else if argument == "--release" {
+            if !project {
+                return .Err(ToolError(message: "--release is not valid for init", pos: -1))
+            }
+            if release { return .Err(ToolError(message: "duplicate --release", pos: -1)) }
+            release = true
+            index = index + 1
+        } else if argument == "--verbose" {
+            if !project {
+                return .Err(ToolError(message: "--verbose is not valid for init", pos: -1))
+            }
+            if verbose { return .Err(ToolError(message: "duplicate --verbose", pos: -1)) }
+            verbose = true
+            index = index + 1
+        } else if argument == "--target" {
+            if command != "build" && command != "run" && command != "test" {
+                return .Err(ToolError(message: "--target is only valid for build, run, and test", pos: -1))
+            }
+            if target.count != 0 { return .Err(ToolError(message: "duplicate --target", pos: -1)) }
+            target = cliValue(args: args, index: index + 1, option: argument)?
+            if !validPortableName(name: target) {
+                return .Err(ToolError(message: "--target requires a portable target name", pos: -1))
+            }
+            index = index + 2
+        } else if argument == "--name" {
+            if command != "init" {
+                return .Err(ToolError(message: "--name is only valid for init", pos: -1))
+            }
+            if name.count != 0 { return .Err(ToolError(message: "duplicate --name", pos: -1)) }
+            name = cliValue(args: args, index: index + 1, option: argument)?
+            if !validPortableName(name: name) {
+                return .Err(ToolError(message: "--name requires a portable ASCII name of 1..64 bytes, not a reserved device name", pos: -1))
+            }
+            index = index + 2
+        } else {
+            if argument.count == 0 || argument[0] == b'-' {
+                return .Err(ToolError(message: "unknown option or empty argument: " + argument, pos: -1))
+            }
+            if command != "init" || directory.count != 0 {
+                return .Err(ToolError(message: "unexpected positional argument: " + argument, pos: -1))
+            }
+            if !validHostText(text: argument) {
+                return .Err(ToolError(message: "init directory must be UTF-8 without NUL", pos: -1))
+            }
+            directory = argument
+            index = index + 1
+        }
+    }
+    if project && compiler.count == 0 {
+        return .Err(ToolError(message: command + " requires --compiler <explicit executable path>", pos: -1))
+    }
+    if command == "init" && (directory.count == 0 || name.count == 0) {
+        return .Err(ToolError(message: "init requires <directory> and --name <name>", pos: -1))
+    }
+    return .Ok(CliOptions(command: command, compiler: compiler, manifestPath: manifestPath,
+        release: release, verbose: verbose, target: target, directory: directory,
+        name: name, childArgs: childArgs))
+}
+
+func printHelp() {
+    print(value: "joypm 0.1.0 - local Joyeer project manager\n" +
+        "Usage:\n" +
+        "  joypm --help\n" +
+        "  joypm --version\n" +
+        "  joypm init <directory> --name <name>\n" +
+        "  joypm check --compiler <path> [project options]\n" +
+        "  joypm build --compiler <path> [project options] [--target <name>]\n" +
+        "  joypm run --compiler <path> [project options] [--target <name>] [-- <args>...]\n" +
+        "  joypm test --compiler <path> [project options] [--target <name>] [-- <args>...]\n" +
+        "Project options: --manifest-path <file> (default joyeer.toml), --release, --verbose\n" +
+        "Compiler paths are explicit; there is no PATH search or shell evaluation.\n" +
+        "Debug: -O0 -gfull. Release: -O2 -g0. Selected targets always rebuild.\n" +
+        "Fresh build-1 through build-128 directories are claimed exclusively; no automatic cleanup.\n" +
+        "Manifest limits: 65536 bytes, 4096 bytes/string, 256 modules/targets, 1024 entries/array.\n" +
+        "Status: 0 success, 1 manifest/build/host failure, 2 usage/selection error.")
+}

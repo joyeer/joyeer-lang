@@ -1,0 +1,8 @@
+func change(values: inout [String: String]): String {
+    &values["name"] = "changed"
+    return "name"
+}
+
+func lookup(values: inout [String: String]): String? {
+    return values.get(key: change(values: &values))
+}

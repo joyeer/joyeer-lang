@@ -1,0 +1,24 @@
+func main(args: [String]): Int {
+    print(value: "fixture executed")
+    let marker = match readFileUtf8(path: "cwd-marker.txt") {
+        .Ok(contents) => contents,
+        .Err(_) => { return 91 },
+    }
+    print(value: marker)
+    if args.count == 1 && args[0] == "fail" { return 23 }
+    if args.count != 0 {
+        if args.count != 6 { return 92 }
+        if args[0] != "" { return 93 }
+        if args[1] != "with spaces" { return 94 }
+        if args[2] != "quote\"slash\\" { return 95 }
+        if args[3] != "$&*%literal;<>|" { return 96 }
+        if args[4] != "--not-an-option" { return 97 }
+        if args[5] != "ASCII" && args[5] != "雪🦀" { return 98 }
+    }
+    var index = 0
+    while index < args.count {
+        print(value: "<" + args[index] + ">")
+        index = index + 1
+    }
+    return 0
+}

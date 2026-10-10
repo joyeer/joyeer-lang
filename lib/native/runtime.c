@@ -8,6 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #if defined(_MSC_VER)
 #include <intrin.h>
 #endif
@@ -133,6 +138,18 @@ int64_t joyeer_checked_mul_int(int64_t left, int64_t right) {
     return left * right;
 }
 
+int64_t joyeer_checked_div_int(int64_t left, int64_t right) {
+    if (right == 0) joyeer_panic("integer division by zero");
+    if (left == INT64_MIN && right == -1) joyeer_panic("integer division overflow");
+    return left / right;
+}
+
+int64_t joyeer_checked_rem_int(int64_t left, int64_t right) {
+    if (right == 0) joyeer_panic("integer remainder by zero");
+    if (left == INT64_MIN && right == -1) joyeer_panic("integer remainder overflow");
+    return left % right;
+}
+
 void joyeer_print_int(int64_t value) {
     printf("%" PRId64 "\n", value);
 }
@@ -151,6 +168,100 @@ void joyeer_print_string(JoyeerString value) {
     }
     if (value.count != 0) fwrite(value.data, 1, (size_t)value.count, stdout);
     fputc('\n', stdout);
+}
+
+#if defined(_WIN32)
+static void __cdecl ignoreStderrInvalidParameter(
+        const wchar_t* expression,
+        const wchar_t* function,
+        const wchar_t* file,
+        unsigned int line,
+        uintptr_t reserved) {
+    (void)expression;
+    (void)function;
+    (void)file;
+    (void)line;
+    (void)reserved;
+}
+
+// Only descriptor validation and mode changes override the calling thread's
+// handler. Restore it before returning, without changing the global handler.
+static bool stderrDescriptorIsValid(int descriptor) {
+    const _invalid_parameter_handler previousHandler =
+            _set_thread_local_invalid_parameter_handler(ignoreStderrInvalidParameter);
+    errno = 0;
+    const intptr_t handle = _get_osfhandle(descriptor);
+    const bool valid = handle != (intptr_t)-1 && handle != (intptr_t)-2;
+    const int code = errno;
+    _set_thread_local_invalid_parameter_handler(previousHandler);
+    // A detached standard stream can report -2 without setting errno.
+    errno = valid ? code : (code == 0 ? EBADF : code);
+    return valid;
+}
+
+static int setStderrMode(int descriptor, int mode) {
+    const _invalid_parameter_handler previousHandler =
+            _set_thread_local_invalid_parameter_handler(ignoreStderrInvalidParameter);
+    errno = 0;
+    const int previousMode = _setmode(descriptor, mode);
+    const int code = errno;
+    _set_thread_local_invalid_parameter_handler(previousHandler);
+    errno = code;
+    return previousMode;
+}
+#endif
+
+int32_t joyeer_write_stderr_abi(
+        int64_t* errorCode,
+        const uint8_t* data,
+        int64_t count) {
+    if (errorCode == NULL) joyeer_panic("stderr error output is null");
+    *errorCode = 0;
+    if (count < 0 || (count != 0 && data == NULL) ||
+        (uint64_t)count > SIZE_MAX) {
+        joyeer_panic("invalid stderr contents");
+    }
+
+#if defined(_WIN32)
+    // An empty flush can succeed with a closed descriptor. Validate before
+    // flushing, since pending output could reach an invalid UCRT descriptor.
+    const int descriptor = _fileno(stderr);
+    if (!stderrDescriptorIsValid(descriptor)) {
+        *errorCode = errno;
+        return JOYEER_STDERR_ERROR_WRITE_FAILED;
+    }
+    // Do not reinterpret any previously buffered text when switching modes.
+    errno = 0;
+    if (fflush(stderr) != 0) {
+        *errorCode = errno == 0 ? EIO : errno;
+        return JOYEER_STDERR_ERROR_WRITE_FAILED;
+    }
+    const int previousMode = setStderrMode(descriptor, _O_BINARY);
+    if (previousMode == -1) {
+        *errorCode = errno == 0 ? EIO : errno;
+        return JOYEER_STDERR_ERROR_WRITE_FAILED;
+    }
+#endif
+
+    int code = 0;
+    if (count != 0) {
+        errno = 0;
+        const size_t written = fwrite(data, 1, (size_t)count, stderr);
+        if (written != (size_t)count || ferror(stderr)) {
+            code = errno == 0 ? EIO : errno;
+        }
+    }
+    // Always flush, even after a short write, preserving the first failure.
+    errno = 0;
+    if (fflush(stderr) != 0 && code == 0) code = errno == 0 ? EIO : errno;
+
+#if defined(_WIN32)
+    if (setStderrMode(descriptor, previousMode) == -1 && code == 0) {
+        code = errno == 0 ? EIO : errno;
+    }
+#endif
+    *errorCode = code;
+    return code == 0 ? JOYEER_STDERR_ERROR_NONE : JOYEER_STDERR_ERROR_WRITE_FAILED;
 }
 
 JoyeerString joyeer_string_concat(JoyeerString left, JoyeerString right) {
@@ -704,23 +815,34 @@ void joyeer_dictionary_set_owned_abi(
     ++dictionary->count;
 }
 
-void* joyeer_dictionary_at(
-        JoyeerDictionary dictionary,
+static void* dictionaryFind(
+        void* data,
+        int64_t count,
         const void* key,
         int64_t keySize,
         int32_t keyKind) {
-    if (dictionary.data == NULL || key == NULL) joyeer_panic("invalid dictionary lookup");
-    const DictionaryHeader* header = ((const DictionaryHeader*)dictionary.data) - 1;
+    if (data == NULL || key == NULL) joyeer_panic("invalid dictionary lookup");
+    const DictionaryHeader* header = ((const DictionaryHeader*)data) - 1;
     if (keySize != header->keySize || keyKind != header->keyKind) {
         joyeer_panic("dictionary key type mismatch");
     }
-    for (int64_t index = 0; index < dictionary.count; ++index) {
-        uint8_t* entry = (uint8_t*)dictionary.data +
+    for (int64_t index = 0; index < count; ++index) {
+        uint8_t* entry = (uint8_t*)data +
                 checkedByteCount(index, header->entrySize);
         if (dictionaryKeyEqual(entry, key, keySize, keyKind)) {
             return entry + header->valueOffset;
         }
     }
+    return NULL;
+}
+
+void* joyeer_dictionary_at(
+        JoyeerDictionary dictionary,
+        const void* key,
+        int64_t keySize,
+        int32_t keyKind) {
+    void* value = dictionaryFind(dictionary.data, dictionary.count, key, keySize, keyKind);
+    if (value != NULL) return value;
     joyeer_panic("dictionary key not found");
 }
 
@@ -829,4 +951,13 @@ void* joyeer_dictionary_at_abi(
             key,
             keySize,
             keyKind);
+}
+
+void* joyeer_dictionary_find_abi(
+        void* data,
+        int64_t count,
+        const void* key,
+        int64_t keySize,
+        int32_t keyKind) {
+    return dictionaryFind(data, count, key, keySize, keyKind);
 }

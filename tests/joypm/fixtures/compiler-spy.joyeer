@@ -1,0 +1,16 @@
+// A controlled compiler substitute: record argv in the caller's cwd, then fail.
+// Each invocation gets its own cwd because the log is created exclusively.
+func main(args: [String]): Int {
+    var record = ""
+    var index = 0
+    while index < args.count {
+        record = record + "<" + args[index] + ">\n"
+        index = index + 1
+    }
+    let written = match writeFileNew(path: "compiler-record.txt", contents: record) {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    if !written { return 38 }
+    return 37
+}

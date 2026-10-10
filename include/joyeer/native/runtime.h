@@ -47,12 +47,19 @@ enum JoyeerIOErrorKind {
     JOYEER_IO_ERROR_OTHER = 4,
 };
 
+enum JoyeerStderrErrorKind {
+    JOYEER_STDERR_ERROR_NONE = 0,
+    JOYEER_STDERR_ERROR_WRITE_FAILED = 1,
+};
+
 JOYEER_NORETURN void joyeer_panic(const char* message);
 int64_t joyeer_runtime_active_allocations(void);
 
 int64_t joyeer_checked_add_int(int64_t left, int64_t right);
 int64_t joyeer_checked_sub_int(int64_t left, int64_t right);
 int64_t joyeer_checked_mul_int(int64_t left, int64_t right);
+int64_t joyeer_checked_div_int(int64_t left, int64_t right);
+int64_t joyeer_checked_rem_int(int64_t left, int64_t right);
 
 void joyeer_print_int(int64_t value);
 void joyeer_print_bool(bool value);
@@ -129,6 +136,16 @@ void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary);
 // Stable compiler ABI. These functions deliberately avoid passing or
 // returning C structs by value, whose ABI differs across targets.
 void joyeer_print_string_abi(const uint8_t* data, int64_t count);
+// Writes borrowed arbitrary bytes without a newline and flushes stderr,
+// including for an empty input. Returns 0 on success (errorCode = 0) or
+// 1 for WriteFailed (native CRT errno, or EIO if unavailable). Windows
+// temporarily uses binary CRT mode and restores the previous mode.
+// Null error storage, a negative/unrepresentable count, or null nonempty
+// data is ABI misuse and panics, like the other host write operations.
+int32_t joyeer_write_stderr_abi(
+    int64_t* errorCode,
+    const uint8_t* data,
+    int64_t count);
 void joyeer_string_concat_abi(
     JoyeerString* result,
     const uint8_t* leftData,
@@ -175,6 +192,14 @@ void joyeer_dictionary_create_abi(
     int64_t valueOffset,
     int32_t keyKind);
 void* joyeer_dictionary_at_abi(
+    void* data,
+    int64_t count,
+    const void* key,
+    int64_t keySize,
+    int32_t keyKind);
+// Returns borrowed value storage, or null for a missing key. A present
+// zero-sized value still returns non-null; invalid lookups still panic.
+void* joyeer_dictionary_find_abi(
     void* data,
     int64_t count,
     const void* key,

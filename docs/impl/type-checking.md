@@ -78,14 +78,22 @@ The current checker validates:
 - explicit `byteToInt(value: UInt8) -> Int` and
   `byteToString(value: UInt8) -> String` built-in calls;
 - optional value promotion and `Never` as the bottom type;
-- implemented arithmetic, string concatenation, comparison, and `&&` operators;
+- checked `Int` arithmetic including `/` and `%`, string concatenation,
+  comparison, and Boolean `!`, `&&`, and `||` operators;
 - `if`/`while` conditions, `if` branch unification, and return values;
+- unlabeled `break` / `continue` in the current function's nearest loop,
+  including nested condition blocks; invalid contexts report
+  `type-checking.invalid-loop-control`. Exit statements have no value, but a
+  block path ending in an exit is diverging for branch unification;
 - exact function, struct-initializer, enum-case, and `print(value:)` calls;
 - inferred and declared member access;
 - `String[Int] -> UInt8`, `Array<T>[Int] -> T`, and
   `Dict<K,V>[K] -> V` typing;
 - `count` on strings, arrays, and dictionaries;
 - contextual user enum, `Optional`, and `Result` construction;
+- postfix `?` on `Result<T, E>` only within `Result<U, E>`, requiring identical
+  concrete `E`, and on `Optional<T>` only within `Optional<U>`; no implicit
+  error conversion or mixing of the two families;
 - enum pattern payload binding and match-arm result unification;
 - exhaustive user enum, `Optional`, `Result`, and `Bool` matches; other
   domains require a catch-all arm;
@@ -103,7 +111,16 @@ The current checker validates:
 - concrete `Array<T>.append(element: T)` argument typing plus mandatory `&`
   on a mutable receiver;
 - mutable dictionary subscript insertion/update with concrete `K`/`V` checks
-  and mandatory `&` on the subscript projection.
+  and mandatory `&` on the subscript projection;
+- borrowing `Dict<K,V>.get(key: K)` returning exactly `Optional<V>`, without
+  optional flattening or receiver/key access markers. The receiver remains
+  borrowed throughout key evaluation;
+- exact typing and borrowing parameter matching for portable host builtins
+  (`readFileUtf8`, `writeFileNew`, `createDirectory`, `listDirectory`,
+  `fileKind`, `removeFile`, `removeDirectory`, `joinPath`, and `runProcess`)
+  returning concrete `Result` types;
+- imported module symbol resolution and visibility enforcement (`public`,
+  `internal`, `private`) across file and module boundaries.
 
   Call-site exclusivity compares typed access paths. Multiple borrowing
   arguments may overlap. Any inout, consuming, or initializing argument must be
@@ -131,8 +148,13 @@ The current checker validates:
   pathological matrix conservatively requires a catch-all arm.
 
 Ordinary call labels, ordering, required/default argument presence, and
-lexical declaration binding remain name-resolution responsibilities. The type
-checker consumes those validated targets and checks concrete argument types.
+lexical declaration binding are checked during name resolution when the call
+target is known. If a target is deferred until its receiver type is available,
+the type checker runs the shared call-argument validator before checking
+concrete argument types and access effects. Invalid deferred calls report
+`type-checking.invalid-call-arguments` with the original argument or call span.
+For example, `values[0].get(value: "x")` is rejected just like a directly
+resolved dictionary call with the wrong label; only `key:` is accepted.
 
 ---
 

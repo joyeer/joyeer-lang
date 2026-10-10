@@ -1,4 +1,6 @@
 #include "joyeer/compiler/typechecking.h"
+#include "joyeer/compiler/hostbuiltins.h"
+#include "joyeer/compiler/nameresolution.h"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +40,11 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerConcreteBuiltin("String", TypeKind::string, stringTypeId);
     registerConcreteBuiltin("UInt8", TypeKind::uint8, uint8TypeId);
     registerConcreteBuiltin("IOError", TypeKind::enumeration, ioErrorTypeId);
+    for (const auto& descriptor : hostbuiltins::enumerations) {
+        TypeId registeredType = invalidTypeId;
+        registerConcreteBuiltin(
+                std::string(descriptor.name), TypeKind::enumeration, registeredType);
+    }
 
     registerGenericBuiltin("Array", TypeKind::array, 1);
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
@@ -332,6 +339,7 @@ private:
     TypeCheckedModel::Ptr model;
     std::vector<TypeCheckingDiagnostic> diagnostics;
     std::optional<TypeId> currentReturnType;
+    size_t loopDepth = 0;
     std::unordered_set<semantic::NodeId> handledDeferredReferences;
 
     void report(
@@ -399,6 +407,46 @@ private:
                 model->semanticModelValue->preludeScope());
         assert(prelude != nullptr);
 
+        const auto hostEnumeration = [this](std::string_view name) {
+            const auto symbol = model->typeContext.builtinSymbol(std::string(name));
+            assert(symbol.has_value());
+            const auto type = model->typeContext.typeForSymbol(*symbol);
+            assert(type.has_value());
+            return *type;
+        };
+        const auto hostType = [this, &hostEnumeration](hostbuiltins::ValueKind kind) {
+            switch (kind) {
+                case hostbuiltins::ValueKind::string:
+                    return model->typeContext.stringType();
+                case hostbuiltins::ValueKind::strings:
+                    return model->typeContext.arrayType(model->typeContext.stringType());
+                case hostbuiltins::ValueKind::integer:
+                    return model->typeContext.intType();
+                case hostbuiltins::ValueKind::unit:
+                    return model->typeContext.voidType();
+                case hostbuiltins::ValueKind::fileKind:
+                    return hostEnumeration("FileKind");
+                case hostbuiltins::ValueKind::processStatus:
+                    return hostEnumeration("ProcessStatus");
+            }
+            assert(false && "unrecognized host value kind");
+            return model->typeContext.errorType();
+        };
+        for (const auto& descriptor : hostbuiltins::functions) {
+            const auto found = prelude->values.find(std::string(descriptor.name));
+            assert(found != prelude->values.end());
+            std::vector<TypeId> parameters;
+            for (const auto& parameter : descriptor.parameters) {
+                parameters.push_back(hostType(parameter.kind));
+            }
+            const auto result = model->typeContext.resultType(
+                    hostType(descriptor.result), hostEnumeration(descriptor.error));
+            model->symbolTypes[found->second] = result;
+            model->callables[found->second] = TypedCallableSignature {
+                semantic::CallableKind::function, true, std::move(parameters), result,
+            };
+        }
+
         const auto print = prelude->values.find("print");
         if (print != prelude->values.end()) {
             model->symbolTypes[print->second] = model->typeContext.voidType();
@@ -441,6 +489,16 @@ private:
 
         for (const auto& symbol : model->semanticModelValue->symbols()) {
             if (symbol.kind != semantic::SymbolKind::builtinMember) continue;
+            if (symbol.name == "get" && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    { model->typeContext.anyType() },
+                    model->typeContext.anyType(),
+                };
+                continue;
+            }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
                 const auto result = model->typeContext.arrayType(
                         model->typeContext.uint8Type());
@@ -711,11 +769,14 @@ private:
                     ? model->callable(*functionSymbol)
                     : nullptr;
                 const auto previousReturnType = currentReturnType;
+                const auto previousLoopDepth = loopDepth;
+                loopDepth = 0;
                 currentReturnType = signature == nullptr
                     ? model->typeContext.errorType()
                     : signature->result;
                 checkBlock(function->body);
                 currentReturnType = previousReturnType;
+                loopDepth = previousLoopDepth;
                 break;
                 }
             case syntax::Kind::structDecl: {
@@ -742,7 +803,8 @@ private:
         if (block == nullptr) return model->typeContext.errorType();
         TypeId result = model->typeContext.voidType();
         for (const auto& item : block->items) {
-            result = checkNode(item);
+            const auto itemType = checkNode(item);
+            if (result != model->typeContext.neverType()) result = itemType;
         }
         recordNodeType(block, result);
         return result;
@@ -756,6 +818,7 @@ private:
         }
         if (node->kind == syntax::Kind::whileStmt) {
             const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
+            ++loopDepth;
             const auto condition = checkExpression(statement->condition).value_or(
                     model->typeContext.errorType());
             requireAssignable(
@@ -763,8 +826,22 @@ private:
                     model->typeContext.boolType(),
                     statement->condition->span);
             checkBlock(statement->body);
+            --loopDepth;
             recordNodeType(node, model->typeContext.voidType());
             return model->typeContext.voidType();
+        }
+        if (node->kind == syntax::Kind::breakStmt ||
+            node->kind == syntax::Kind::continueStmt) {
+            if (loopDepth == 0) {
+                report(
+                        TypeCheckingDiagnosticId::invalidLoopControl,
+                        node->span,
+                        node->kind == syntax::Kind::breakStmt
+                                ? "'break' requires an enclosing loop in the current function"
+                                : "'continue' requires an enclosing loop in the current function");
+            }
+            recordNodeType(node, model->typeContext.neverType());
+            return model->typeContext.neverType();
         }
         if (isExpressionKind(node->kind)) {
             return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node)).value_or(
@@ -782,6 +859,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -845,6 +923,11 @@ private:
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
                         expected,
                         true).value_or(model->typeContext.errorType());
+                break;
+            case syntax::Kind::propagateExpr:
+                result = checkPropagation(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression),
+                        expected);
                 break;
             case syntax::Kind::assignmentExpr: {
                 const auto assignment =
@@ -968,6 +1051,63 @@ private:
         }
     }
 
+    TypeId checkPropagation(
+            const syntax::PropagateExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        std::optional<TypeId> operandExpected;
+        if (expected.has_value() &&
+            *expected != model->typeContext.errorType() &&
+            *expected != model->typeContext.anyType() &&
+            currentReturnType.has_value()) {
+            const auto* returnType = model->typeContext.type(*currentReturnType);
+            if (returnType != nullptr && returnType->kind == TypeKind::result) {
+                const auto errorType = returnType->arguments[1];
+                operandExpected = model->typeContext.resultType(*expected, errorType);
+            } else if (returnType != nullptr && returnType->kind == TypeKind::optional) {
+                operandExpected = model->typeContext.optionalType(*expected);
+            }
+        }
+        const auto operand = checkExpression(expression->operand, operandExpected).value_or(
+                model->typeContext.errorType());
+        if (operand == model->typeContext.errorType()) return operand;
+
+        const auto* operandType = model->typeContext.type(operand);
+        if (operandType == nullptr ||
+            (operandType->kind != TypeKind::result &&
+             operandType->kind != TypeKind::optional)) {
+            report(
+                    TypeCheckingDiagnosticId::invalidPropagationOperand,
+                    expression->span,
+                    "postfix '?' requires a Result or Optional operand");
+            return model->typeContext.errorType();
+        }
+
+        const auto* returnType = currentReturnType.has_value()
+                ? model->typeContext.type(*currentReturnType)
+                : nullptr;
+        if (returnType == nullptr || returnType->kind != operandType->kind) {
+            report(
+                    TypeCheckingDiagnosticId::invalidPropagationContext,
+                    expression->span,
+                    operandType->kind == TypeKind::result
+                            ? "postfix '?' on Result requires a Result-returning function"
+                            : "postfix '?' on Optional requires an Optional-returning function");
+            return model->typeContext.errorType();
+        }
+        if (operandType->kind == TypeKind::result &&
+            operandType->arguments[1] != returnType->arguments[1]) {
+            report(
+                    TypeCheckingDiagnosticId::mismatchedPropagationError,
+                    expression->span,
+                    "postfix '?' requires the same error type: operand has '" +
+                            model->typeContext.displayName(operandType->arguments[1]) +
+                            "' but function returns '" +
+                            model->typeContext.displayName(returnType->arguments[1]) + "'");
+            return model->typeContext.errorType();
+        }
+        return operandType->arguments[0];
+    }
+
     TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
         const auto operand = checkExpression(expression->operand).value_or(
                 model->typeContext.errorType());
@@ -975,6 +1115,10 @@ private:
         if (expression->op != nullptr && expression->op->kind == minus &&
             operand == model->typeContext.intType()) {
             return operand;
+        }
+        if (expression->op != nullptr && expression->op->kind == bang &&
+            model->typeContext.isAssignable(operand, model->typeContext.boolType())) {
+            return model->typeContext.boolType();
         }
         reportInvalidOperator(expression->op, { operand }, expression->span);
         return model->typeContext.errorType();
@@ -998,6 +1142,8 @@ private:
                 break;
             case minus:
             case multiply:
+            case divide:
+            case percentage:
                 if (left == model->typeContext.intType() && left == right) return left;
                 break;
             case less:
@@ -1018,7 +1164,11 @@ private:
                 }
                 break;
             case andAnd:
-                if (left == model->typeContext.boolType() && left == right) return left;
+            case orOr:
+                if (model->typeContext.isAssignable(left, model->typeContext.boolType()) &&
+                    model->typeContext.isAssignable(right, model->typeContext.boolType())) {
+                    return model->typeContext.boolType();
+                }
                 break;
             default:
                 break;
@@ -1067,6 +1217,9 @@ private:
     }
 
     TypeId checkMember(const syntax::MemberExprSyntax::Ptr& expression) {
+        if (model->semanticModelValue->isModuleQualified(expression)) {
+            return referencedValueType(expression);
+        }
         const auto base = checkExpression(expression->base).value_or(
                 model->typeContext.errorType());
         auto member = model->referencedSymbol(expression);
@@ -1076,7 +1229,12 @@ private:
                     expression->member == nullptr
                             ? std::string()
                             : expression->member->rawValue);
-            if (member.has_value()) recordResolvedReference(expression, *member);
+            if (member.has_value()) {
+                if (!requireAccessible(*member, expression->span)) {
+                    return model->typeContext.errorType();
+                }
+                recordResolvedReference(expression, *member);
+            }
         }
         if (!member.has_value()) {
             if (base != model->typeContext.errorType()) {
@@ -1112,6 +1270,14 @@ private:
         return found->second;
     }
 
+    bool requireAccessible(semantic::SymbolId target, SourceSpan use) {
+        if (model->semanticModelValue->isAccessible(target, use)) return true;
+        report(TypeCheckingDiagnosticId::inaccessibleDeclaration, use,
+               "declaration '" + model->semanticModelValue->symbol(target)->name +
+               "' is not accessible from this file");
+        return false;
+    }
+
     struct AccessPath {
         semantic::SymbolId root = semantic::invalidSymbolId;
         std::vector<std::optional<semantic::SymbolId>> projections;
@@ -1141,7 +1307,19 @@ private:
                     target = callee;
                 }
             }
-            if (target.has_value()) recordResolvedCallTarget(expression, *target);
+            if (target.has_value()) {
+                if (!requireAccessible(*target, expression->span)) {
+                    return model->typeContext.errorType();
+                }
+                recordResolvedCallTarget(expression, *target);
+                for (auto& diagnostic : semantic::validateCallArguments(
+                        *expression, *model->semanticModelValue->symbol(*target))) {
+                    report(
+                            TypeCheckingDiagnosticId::invalidCallArguments,
+                            diagnostic.span,
+                            std::move(diagnostic.message));
+                }
+            }
         }
 
         const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
@@ -1175,8 +1353,10 @@ private:
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);
 
-        std::optional<TypeId> arrayElementType;
-        if (semanticTarget != nullptr && semanticTarget->name == "append" &&
+        std::optional<TypeId> receiverArgumentType;
+        std::optional<TypeId> receiverResultType;
+        if (semanticTarget != nullptr &&
+            semanticTarget->kind == semantic::SymbolKind::builtinMember &&
             expression->callee->kind == syntax::Kind::memberExpr) {
             const auto member =
                     std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
@@ -1184,9 +1364,15 @@ private:
             const auto* baseType = base.has_value()
                     ? model->typeContext.type(*base)
                     : nullptr;
-            if (baseType != nullptr && baseType->kind == TypeKind::array &&
+            if (semanticTarget->name == "append" &&
+                baseType != nullptr && baseType->kind == TypeKind::array &&
                 baseType->arguments.size() == 1) {
-                arrayElementType = baseType->arguments[0];
+                receiverArgumentType = baseType->arguments[0];
+            } else if (semanticTarget->name == "get" &&
+                       baseType != nullptr && baseType->kind == TypeKind::dictionary &&
+                       baseType->arguments.size() == 2) {
+                receiverArgumentType = baseType->arguments[0];
+                receiverResultType = model->typeContext.optionalType(baseType->arguments[1]);
             }
         }
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
@@ -1194,9 +1380,9 @@ private:
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
-            const auto expected = arrayElementType.has_value() &&
+            const auto expected = receiverArgumentType.has_value() &&
                                   parameterIndex == std::optional<size_t>(0)
-                    ? arrayElementType
+                    ? receiverArgumentType
                     : signature != nullptr && parameterIndex.has_value() &&
                       *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
@@ -1226,7 +1412,8 @@ private:
                             "' of type '" + model->typeContext.displayName(calleeType) +
                             "' is not callable");
         }
-        return signature == nullptr ? model->typeContext.errorType() : signature->result;
+        return receiverResultType.value_or(
+                signature == nullptr ? model->typeContext.errorType() : signature->result);
     }
 
     void collectCallReceiverAccess(
@@ -1388,6 +1575,11 @@ private:
             case syntax::Kind::accessExpr:
                 collectEvaluationAccesses(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        accesses);
+                break;
+            case syntax::Kind::propagateExpr:
+                collectEvaluationAccesses(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand,
                         accesses);
                 break;
             case syntax::Kind::binaryExpr: {
@@ -1882,6 +2074,9 @@ private:
             return model->typeContext.errorType();
         }
 
+        if (!requireAccessible(*caseSymbol, expression->span)) {
+            return model->typeContext.errorType();
+        }
         recordResolvedReference(expression, *caseSymbol);
         recordResolvedCallTarget(expression, *caseSymbol);
         validateContextualCaseArguments(*expression, *caseSymbol, *signature);
@@ -2113,6 +2308,7 @@ private:
             return {};
         }
 
+        if (!requireAccessible(*caseSymbol, pattern->span)) return {};
         recordResolvedReference(pattern, *caseSymbol);
         return PatternCoverage {
             false,
@@ -2388,8 +2584,16 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.missing-contextual-type";
         case TypeCheckingDiagnosticId::invalidOperatorOperands:
             return "type-checking.invalid-operator-operands";
+        case TypeCheckingDiagnosticId::invalidPropagationOperand:
+            return "type-checking.invalid-propagation-operand";
+        case TypeCheckingDiagnosticId::invalidPropagationContext:
+            return "type-checking.invalid-propagation-context";
+        case TypeCheckingDiagnosticId::mismatchedPropagationError:
+            return "type-checking.mismatched-propagation-error";
         case TypeCheckingDiagnosticId::unknownMember:
             return "type-checking.unknown-member";
+        case TypeCheckingDiagnosticId::inaccessibleDeclaration:
+            return "type-checking.inaccessible-declaration";
         case TypeCheckingDiagnosticId::notSubscriptable:
             return "type-checking.not-subscriptable";
         case TypeCheckingDiagnosticId::unknownEnumCase:
@@ -2412,6 +2616,10 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.overlapping-access";
         case TypeCheckingDiagnosticId::notCallable:
             return "type-checking.not-callable";
+        case TypeCheckingDiagnosticId::invalidCallArguments:
+            return "type-checking.invalid-call-arguments";
+        case TypeCheckingDiagnosticId::invalidLoopControl:
+            return "type-checking.invalid-loop-control";
         case TypeCheckingDiagnosticId::unresolvedReference:
             return "type-checking.unresolved-reference";
     }

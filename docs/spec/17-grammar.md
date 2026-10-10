@@ -65,12 +65,15 @@ statement         ::= binding ';'?
                    |  expression ';'?
                    |  if_stmt | while_stmt | for_stmt
                    |  return_stmt
+                   |  break_stmt | continue_stmt
                    |  block
 
 if_stmt           ::= 'if' expression block ( 'else' if_stmt | 'else' block )?
 while_stmt        ::= 'while' expression block
 for_stmt          ::= 'for' [ '&' ] pattern 'in' expression block
 return_stmt       ::= return_expr
+break_stmt        ::= 'break'
+continue_stmt     ::= 'continue'
 
 expression        ::= return_expr
                    |  prefix_expr ( binary_op prefix_expr )*

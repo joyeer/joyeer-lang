@@ -38,6 +38,7 @@ future work rather than becoming requirements through explanatory text.
 | 15 | Reserved for Future | [spec/15-reserved.md](spec/15-reserved.md) |
 | 16 | Worked Examples | [spec/16-examples.md](spec/16-examples.md) |
 | 17 | Grammar Appendix (EBNF) | [spec/17-grammar.md](spec/17-grammar.md) |
+| 18 | Portable Host Operations | [spec/18-host.md](spec/18-host.md) |
 
 > Reading order for newcomers: §0 → §4 (the memory model is what makes Joyeer
 > different) → §3 → the rest as needed. §17 is the consolidated grammar.

@@ -1,4 +1,5 @@
 #include "joyeer/compiler/nameresolution.h"
+#include "joyeer/compiler/hostbuiltins.h"
 
 #include <algorithm>
 #include <cassert>
@@ -27,7 +28,149 @@ bool isEnumCaseSymbol(SymbolKind kind) {
     return kind == SymbolKind::builtinEnumCase || kind == SymbolKind::enumCase;
 }
 
+void validateArgumentLabel(
+        const std::optional<std::string>& expected,
+        const Token::Ptr& actual,
+        SourceSpan span,
+        std::vector<NameResolutionDiagnostic>& diagnostics) {
+    if (!expected.has_value() && actual == nullptr) return;
+    if (expected.has_value() && actual != nullptr && *expected == actual->rawValue) return;
+
+    if (expected.has_value() && actual == nullptr) {
+        diagnostics.push_back({
+            NameResolutionDiagnosticId::missingArgumentLabel,
+            span,
+            "argument requires label '" + *expected + ":'",
+        });
+    } else if (!expected.has_value()) {
+        diagnostics.push_back({
+            NameResolutionDiagnosticId::unexpectedArgumentLabel,
+            actual->span,
+            "this enum payload position is unlabeled",
+        });
+    } else {
+        diagnostics.push_back({
+            NameResolutionDiagnosticId::unexpectedArgumentLabel,
+            actual->span,
+            "expected argument label '" + *expected + ":', but got '" +
+                    actual->rawValue + ":'",
+        });
+    }
+}
+
 } // namespace
+
+std::vector<NameResolutionDiagnostic> validateCallArguments(
+        const syntax::CallExprSyntax& call,
+        const Symbol& target) {
+    assert(target.callable.has_value());
+    const auto& callable = *target.callable;
+    std::vector<NameResolutionDiagnostic> diagnostics;
+    const auto report = [&](NameResolutionDiagnosticId id, SourceSpan span, std::string message) {
+        diagnostics.push_back({ id, span, std::move(message) });
+    };
+    const auto reportArgumentCount = [&] {
+        const auto expectedCount = callable.parameters.size();
+        const auto requiredCount = static_cast<size_t>(std::count_if(
+                callable.parameters.begin(),
+                callable.parameters.end(),
+                [](const CallableParameter& parameter) { return parameter.required; }));
+        const auto expectation = requiredCount == expectedCount
+                ? std::to_string(expectedCount)
+                : std::to_string(requiredCount) + " to " + std::to_string(expectedCount);
+        report(
+                NameResolutionDiagnosticId::argumentCountMismatch,
+                call.span,
+                "call target '" + target.name + "' expects " + expectation +
+                        " argument(s), but got " + std::to_string(call.arguments.size()));
+    };
+    if (!callable.acceptsArgumentClause) {
+        report(
+                NameResolutionDiagnosticId::unexpectedArgumentClause,
+                call.span,
+                "'" + target.name + "' has no payload and must be used without parentheses");
+        return diagnostics;
+    }
+
+    if (callable.kind == CallableKind::enumCase) {
+        if (call.arguments.size() != callable.parameters.size()) {
+            reportArgumentCount();
+        }
+        const auto count = std::min(call.arguments.size(), callable.parameters.size());
+        for (size_t index = 0; index < count; ++index) {
+            validateArgumentLabel(
+                    callable.parameters[index].label,
+                    call.arguments[index]->label,
+                    call.arguments[index]->span,
+                    diagnostics);
+        }
+        return diagnostics;
+    }
+
+    std::vector<bool> matched(callable.parameters.size(), false);
+    size_t previousIndex = 0;
+    bool hasPrevious = false;
+    for (const auto& argument : call.arguments) {
+        if (argument->label == nullptr) {
+            const auto expected = hasPrevious ? previousIndex + 1 : 0;
+            const auto expectedLabel = expected < callable.parameters.size()
+                    ? callable.parameters[expected].label
+                    : std::optional<std::string>();
+            report(
+                    NameResolutionDiagnosticId::missingArgumentLabel,
+                    argument->span,
+                    expectedLabel.has_value()
+                            ? "argument requires label '" + *expectedLabel + ":'"
+                            : std::string("ordinary calls require an argument label"));
+            continue;
+        }
+
+        const auto label = argument->label->rawValue;
+        const auto found = std::find_if(
+                callable.parameters.begin(),
+                callable.parameters.end(),
+                [&label](const CallableParameter& parameter) {
+                    return parameter.label.has_value() && *parameter.label == label;
+                });
+        if (found == callable.parameters.end()) {
+            report(
+                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
+                    argument->label->span,
+                    "call target '" + target.name +
+                            "' has no parameter labeled '" + label + ":'");
+            continue;
+        }
+
+        const auto index = static_cast<size_t>(
+                std::distance(callable.parameters.begin(), found));
+        if (matched[index]) {
+            report(
+                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
+                    argument->label->span,
+                    "argument label '" + label + ":' is supplied more than once");
+            continue;
+        }
+        if (hasPrevious && index < previousIndex) {
+            report(
+                    NameResolutionDiagnosticId::argumentOutOfOrder,
+                    argument->label->span,
+                    "argument '" + label + ":' is out of declaration order");
+        }
+        matched[index] = true;
+        previousIndex = index;
+        hasPrevious = true;
+    }
+
+    bool hasMissingRequired = false;
+    for (size_t index = 0; index < callable.parameters.size(); ++index) {
+        if (callable.parameters[index].required && !matched[index]) {
+            hasMissingRequired = true;
+            break;
+        }
+    }
+    if (hasMissingRequired) reportArgumentCount();
+    return diagnostics;
+}
 
 class NameResolutionBuilder {
 public:
@@ -45,11 +188,17 @@ public:
                 nodeId(root));
         setContainingScope(root, model->fileScope_);
         model->introducedScopes_[nodeId(root)] = model->fileScope_;
+        model->sourceModules_[root->span.sourceId] = 0;
+        for (const auto& import : root->imports) {
+            report(NameResolutionDiagnosticId::unknownImport, import.span,
+                   "imports require named compilation units and explicit dependency source files");
+        }
 
         collectTopLevelDeclarations(root);
         for (const auto& item : root->items) {
             resolveTopLevelSignature(item);
         }
+        validateExposedTypes();
         for (const auto& item : root->items) {
             resolveTopLevelBody(item);
         }
@@ -57,9 +206,98 @@ public:
         return NameResolutionResult { model, std::move(diagnostics) };
     }
 
+    NameResolutionResult build(const std::vector<ModuleInput>& modules) {
+        auto root = std::make_shared<syntax::SourceFileSyntax>(
+                SourceSpan {}, std::vector<syntax::NodePtr> {});
+        for (const auto& module : modules) {
+            for (const auto& file : module.files) {
+                root->items.insert(root->items.end(), file->items.begin(), file->items.end());
+            }
+        }
+        model = SemanticModel::Ptr(new SemanticModel(root));
+        indexNode(root);
+        buildPrelude();
+        std::vector<ScopeId> moduleScopes;
+        for (const auto& module : modules) {
+            const auto id = createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
+            moduleScopes.push_back(id);
+            namedModules.emplace(module.name, id);
+        }
+        struct FileContext {
+            syntax::SourceFileSyntax::Ptr file;
+            ScopeId scope;
+            uint32_t module;
+        };
+        std::vector<FileContext> files;
+        for (size_t index = 0; index < modules.size(); ++index) {
+            activeModule = static_cast<uint32_t>(index);
+            for (const auto& file : modules[index].files) {
+                indexNode(file);
+                model->sourceModules_[file->span.sourceId] = activeModule;
+                model->fileScope_ = createScope(
+                        ScopeKind::file, moduleScopes[index], nodeId(file));
+                model->introducedScopes_[nodeId(file)] = model->fileScope_;
+                setContainingScope(file, model->fileScope_);
+                files.push_back({file, model->fileScope_, activeModule});
+                collectTopLevelDeclarations(file);
+                for (const auto& item : file->items) {
+                    const auto id = declaredSymbolId(item);
+                    if (!id.has_value()) continue;
+                    auto& declaration = symbol(*id);
+                    if (declaration.visibility == syntax::Visibility::private_) continue;
+                    auto& moduleScope = scope(moduleScopes[index]);
+                    if (moduleScope.values.contains(declaration.name) ||
+                        moduleScope.types.contains(declaration.name)) {
+                        report(NameResolutionDiagnosticId::duplicateDeclaration, declaration.span,
+                               "duplicate module declaration of '" + declaration.name + "'");
+                        declaration.isInvalid = true;
+                    } else {
+                        auto& names = declaration.nameSpace == SymbolNamespace::type
+                                ? moduleScope.types : moduleScope.values;
+                        names.emplace(declaration.name, *id);
+                    }
+                }
+            }
+        }
+        for (const auto& file : files) {
+            auto& imports = fileImports[file.scope];
+            for (const auto& import : file.file->imports) {
+                const auto target = namedModules.find(import.name);
+                if (target == namedModules.end()) {
+                    report(NameResolutionDiagnosticId::unknownImport, import.span,
+                           "unknown module '" + import.name + "'");
+                    continue;
+                }
+                const auto prefix = import.name.substr(0, import.name.find('.'));
+                const auto& local = scope(file.scope);
+                if (local.values.contains(prefix) || local.types.contains(prefix)) {
+                    report(NameResolutionDiagnosticId::importCollision, import.span,
+                           "import '" + import.name + "' collides with declaration '" + prefix + "'");
+                }
+                imports.emplace(import.name, target->second);
+            }
+        }
+        for (const auto& file : files) {
+            activeModule = file.module;
+            model->fileScope_ = file.scope;
+            for (const auto& item : file.file->items) resolveTopLevelSignature(item);
+        }
+        validateExposedTypes();
+        for (const auto& file : files) {
+            activeModule = file.module;
+            model->fileScope_ = file.scope;
+            for (const auto& item : file.file->items) resolveTopLevelBody(item);
+        }
+        if (!files.empty()) model->fileScope_ = files.front().scope;
+        return {model, std::move(diagnostics)};
+    }
+
 private:
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
+    uint32_t activeModule = 0;
+    std::unordered_map<std::string, ScopeId> namedModules;
+    std::unordered_map<ScopeId, std::unordered_map<std::string, ScopeId>> fileImports;
 
     NodeId nodeId(const syntax::NodePtr& node) const {
         assert(node != nullptr);
@@ -176,6 +414,9 @@ private:
             case Kind::accessExpr:
                 indexNode(std::static_pointer_cast<syntax::AccessExprSyntax>(node)->operand);
                 break;
+            case Kind::propagateExpr:
+                indexNode(std::static_pointer_cast<syntax::PropagateExprSyntax>(node)->operand);
+                break;
             case Kind::binaryExpr: {
                 const auto value = std::static_pointer_cast<syntax::BinaryExprSyntax>(node);
                 indexNode(value->left);
@@ -280,6 +521,8 @@ private:
             case Kind::wildcardPattern:
             case Kind::literalPattern:
             case Kind::bindingPattern:
+            case Kind::breakStmt:
+            case Kind::continueStmt:
                 break;
         }
     }
@@ -313,6 +556,11 @@ private:
             declaration,
             containingSymbol,
         };
+        value.moduleId = activeModule;
+        value.isRootModule = activeModule == 0;
+        if (declaration.has_value()) {
+            value.visibility = model->node(*declaration)->visibility;
+        }
 
         if (insertIntoScope) {
             auto& owner = scope(ownerScope);
@@ -390,6 +638,22 @@ private:
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(arrayType, SymbolKind::builtinMember, "count", intType);
         declareBuiltinMember(dictionaryType, SymbolKind::builtinMember, "count", intType);
+        declareBuiltinMember(
+                dictionaryType,
+                SymbolKind::builtinMember,
+                "get",
+                optionalType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    { CallableParameter {
+                        std::string("key"),
+                        true,
+                        std::nullopt,
+                        std::nullopt,
+                        std::nullopt,
+                    } },
+                });
         CallableSignature utf8Signature { CallableKind::function, true, {} };
         declareBuiltinMember(
             stringType,
@@ -469,6 +733,15 @@ private:
                     ioErrorCase);
         }
 
+        for (const auto& descriptor : hostbuiltins::enumerations) {
+            const auto type = declareBuiltinType(std::string(descriptor.name));
+            for (const auto name : descriptor.cases) {
+                declareBuiltinMember(
+                        type, SymbolKind::builtinEnumCase, std::string(name), type,
+                        descriptor.integerPayload ? ioErrorCase : noPayload);
+            }
+        }
+
         CallableSignature printSignature {
             CallableKind::function,
             true,
@@ -530,6 +803,23 @@ private:
                 {});
         symbol(byteToString).declaredType = stringType;
         symbol(byteToString).callable = std::move(byteConversionSignature);
+
+        for (const auto& descriptor : hostbuiltins::functions) {
+            CallableSignature signature { CallableKind::function, true, {} };
+            for (const auto& parameter : descriptor.parameters) {
+                signature.parameters.push_back(CallableParameter {
+                    std::string(parameter.name), true, std::nullopt, std::nullopt,
+                    parameter.kind == hostbuiltins::ValueKind::strings
+                            ? arrayType : parameter.kind == hostbuiltins::ValueKind::integer
+                            ? intType : stringType,
+                });
+            }
+            const auto function = declareSymbol(
+                    model->preludeScope_, SymbolNamespace::value,
+                    SymbolKind::builtinFunction, std::string(descriptor.name), {});
+            symbol(function).declaredType = resultType;
+            symbol(function).callable = std::move(signature);
+        }
     }
 
     void collectTopLevelDeclarations(const syntax::SourceFileSyntax::Ptr& root) {
@@ -641,6 +931,10 @@ private:
                 type);
         symbol(initializer).declaredType = type;
         symbol(initializer).callable = std::move(initializerSignature);
+        for (const auto& field : declaration->fields) {
+            symbol(initializer).visibility = std::min(
+                    symbol(initializer).visibility, field->visibility);
+        }
         symbol(type).synthesizedInitializer = initializer;
         model->declarationSymbols_[nodeId(declaration)] = type;
     }
@@ -688,7 +982,122 @@ private:
                     type);
             symbol(caseSymbol).declaredType = type;
             symbol(caseSymbol).callable = std::move(signature);
+            symbol(caseSymbol).visibility = symbol(type).visibility;
         }
+    }
+
+    void validateExposedType(const syntax::TypePtr& type, const Symbol& declaration) {
+        if (type == nullptr) return;
+        const auto referenced = referencedSymbol(type);
+        if (referenced.has_value() &&
+            symbol(*referenced).visibility < declaration.visibility) {
+            report(NameResolutionDiagnosticId::inaccessibleExposedType, type->span,
+                   "declaration '" + declaration.name + "' exposes less accessible type '" +
+                   symbol(*referenced).name + "'");
+        }
+        switch (type->kind) {
+            case syntax::Kind::nominalType:
+                for (const auto& argument :
+                     std::static_pointer_cast<syntax::NominalTypeSyntax>(type)->arguments) {
+                    validateExposedType(argument, declaration);
+                }
+                break;
+            case syntax::Kind::arrayType:
+                validateExposedType(
+                        std::static_pointer_cast<syntax::ArrayTypeSyntax>(type)->element,
+                        declaration);
+                break;
+            case syntax::Kind::dictionaryType: {
+                const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
+                validateExposedType(dictionary->key, declaration);
+                validateExposedType(dictionary->value, declaration);
+                break;
+            }
+            case syntax::Kind::optionalType:
+                validateExposedType(
+                        std::static_pointer_cast<syntax::OptionalTypeSyntax>(type)->wrapped,
+                        declaration);
+                break;
+            default: break;
+        }
+    }
+
+    void validateExposedTypes() {
+        for (const auto& declaration : model->symbols_) {
+            if (!declaration.declaration.has_value() ||
+                declaration.visibility == syntax::Visibility::private_) continue;
+            const auto& node = model->node(*declaration.declaration);
+            if (declaration.kind == SymbolKind::function) {
+                const auto function = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+                validateExposedType(function->returnType, declaration);
+                for (const auto& parameter : function->parameters) {
+                    validateExposedType(parameter->type, declaration);
+                }
+            } else if (declaration.kind == SymbolKind::structureField) {
+                auto exposed = declaration;
+                if (declaration.containingSymbol.has_value()) {
+                    exposed.visibility = std::min(exposed.visibility,
+                            symbol(*declaration.containingSymbol).visibility);
+                }
+                validateExposedType(
+                        std::static_pointer_cast<syntax::StructFieldDeclSyntax>(node)->type,
+                        exposed);
+            } else if (declaration.kind == SymbolKind::enumCase) {
+                for (const auto& payload :
+                     std::static_pointer_cast<syntax::EnumCaseDeclSyntax>(node)->associatedTypes) {
+                    validateExposedType(payload->type, declaration);
+                }
+            } else if (declaration.kind == SymbolKind::binding &&
+                       scope(declaration.ownerScope).kind == ScopeKind::file) {
+                validateExposedType(
+                        std::static_pointer_cast<syntax::BindingDeclSyntax>(node)->annotation,
+                        declaration);
+            }
+        }
+    }
+
+    bool requireAccessible(SymbolId target, SourceSpan use) {
+        if (model->isAccessible(target, use)) return true;
+        report(NameResolutionDiagnosticId::inaccessibleDeclaration, use,
+               "declaration '" + symbol(target).name + "' is not accessible from this file");
+        return false;
+    }
+
+    std::optional<SymbolId> lookupQualified(
+            ScopeId currentScope, const std::string& name, bool typeOnly) const {
+        const auto separator = name.rfind('.');
+        if (separator == std::string::npos) return std::nullopt;
+        auto current = std::optional<ScopeId>(currentScope);
+        while (current.has_value()) {
+            const auto imports = fileImports.find(*current);
+            if (imports != fileImports.end()) {
+                const auto module = imports->second.find(name.substr(0, separator));
+                if (module == imports->second.end()) return std::nullopt;
+                const auto& exports = scope(module->second);
+                const auto member = name.substr(separator + 1);
+                const auto type = exports.types.find(member);
+                if (type != exports.types.end()) return type->second;
+                if (!typeOnly) {
+                    const auto value = exports.values.find(member);
+                    if (value != exports.values.end()) return value->second;
+                }
+                return std::nullopt;
+            }
+            current = scope(*current).parent;
+        }
+        return std::nullopt;
+    }
+
+    std::string qualifiedName(const syntax::ExprPtr& expression) const {
+        if (expression->kind == syntax::Kind::nameExpr) {
+            return tokenText(std::static_pointer_cast<syntax::NameExprSyntax>(expression)->name);
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            const auto base = qualifiedName(member->base);
+            if (!base.empty()) return base + "." + tokenText(member->member);
+        }
+        return {};
     }
 
     void resolveTopLevelSignature(const syntax::NodePtr& node) {
@@ -881,6 +1290,7 @@ private:
                             "cannot find type '" + tokenText(nominal->name) + "' in scope");
                     return std::nullopt;
                 }
+                if (!requireAccessible(*resolved, type->span)) return std::nullopt;
                 model->referenceSymbols_[nodeId(type)] = *resolved;
                 return resolved;
             }
@@ -937,6 +1347,9 @@ private:
         setContainingScope(node, currentScope);
 
         switch (node->kind) {
+            case syntax::Kind::breakStmt:
+            case syntax::Kind::continueStmt:
+                break;
             case syntax::Kind::whileStmt: {
                 const auto statement = std::static_pointer_cast<syntax::WhileStmtSyntax>(node);
                 resolveExpression(statement->condition, currentScope);
@@ -968,6 +1381,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -1011,6 +1425,11 @@ private:
             case syntax::Kind::accessExpr:
                 resolveExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        currentScope);
+                break;
+            case syntax::Kind::propagateExpr:
+                resolveExpression(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand,
                         currentScope);
                 break;
             case syntax::Kind::binaryExpr: {
@@ -1093,6 +1512,14 @@ private:
     }
 
     void resolveMember(const syntax::MemberExprSyntax::Ptr& expression, ScopeId currentScope) {
+        const auto qualified = lookupQualified(currentScope, qualifiedName(expression), false);
+        if (qualified.has_value()) {
+            if (requireAccessible(*qualified, expression->span)) {
+                model->referenceSymbols_[nodeId(expression)] = *qualified;
+                model->moduleQualified_[nodeId(expression)] = true;
+            }
+            return;
+        }
         resolveExpression(expression->base, currentScope);
         const auto baseType = expressionType(expression->base);
         const auto name = tokenText(expression->member);
@@ -1122,7 +1549,9 @@ private:
                     "type '" + type.name + "' has no member named '" + name + "'");
             return;
         }
-        model->referenceSymbols_[nodeId(expression)] = *member;
+        if (requireAccessible(*member, expression->span)) {
+            model->referenceSymbols_[nodeId(expression)] = *member;
+        }
     }
 
     void resolveCall(const syntax::CallExprSyntax::Ptr& expression, ScopeId currentScope) {
@@ -1165,8 +1594,11 @@ private:
             return;
         }
 
+        if (!requireAccessible(target, expression->span)) return;
         model->callTargets_[nodeId(expression)] = target;
-        validateCallArguments(expression, target);
+        for (auto& diagnostic : validateCallArguments(*expression, symbol(target))) {
+            diagnostics.push_back(std::move(diagnostic));
+        }
     }
 
     void resolveContextualCase(
@@ -1242,7 +1674,7 @@ private:
                         NameResolutionDiagnosticId::undefinedType,
                         pattern->qualifier->span,
                         "cannot find type '" + tokenText(pattern->qualifier) + "' in scope");
-            } else {
+            } else if (requireAccessible(*qualifier, pattern->span)) {
                 model->qualifierSymbols_[nodeId(pattern)] = *qualifier;
                 caseSymbol = lookupMember(*qualifier, tokenText(pattern->name));
                 if (!caseSymbol.has_value() || !isEnumCaseSymbol(symbol(*caseSymbol).kind)) {
@@ -1252,7 +1684,7 @@ private:
                             "enum '" + symbol(*qualifier).name + "' has no case named '" +
                                     tokenText(pattern->name) + "'");
                     caseSymbol.reset();
-                } else {
+                } else if (requireAccessible(*caseSymbol, pattern->span)) {
                     model->referenceSymbols_[nodeId(pattern)] = *caseSymbol;
                     validatePatternArguments(pattern, *caseSymbol);
                 }
@@ -1274,98 +1706,6 @@ private:
                 if (index < parameters.size()) payloadType = parameters[index].type;
             }
             resolvePattern(argument->pattern, currentScope, payloadType);
-        }
-    }
-
-    void validateCallArguments(
-            const syntax::CallExprSyntax::Ptr& call,
-            SymbolId target) {
-        const auto& callable = *symbol(target).callable;
-        if (!callable.acceptsArgumentClause) {
-            report(
-                    NameResolutionDiagnosticId::unexpectedArgumentClause,
-                    call->span,
-                    "'" + symbol(target).name + "' has no payload and must be used without parentheses");
-            return;
-        }
-
-        if (callable.kind == CallableKind::enumCase) {
-            if (call->arguments.size() != callable.parameters.size()) {
-                reportArgumentCount(call->span, symbol(target), call->arguments.size());
-            }
-            const auto count = std::min(call->arguments.size(), callable.parameters.size());
-            for (size_t index = 0; index < count; ++index) {
-                validateLabel(
-                        callable.parameters[index].label,
-                        call->arguments[index]->label,
-                        call->arguments[index]->span);
-            }
-            return;
-        }
-
-        std::vector<bool> matched(callable.parameters.size(), false);
-        size_t previousIndex = 0;
-        bool hasPrevious = false;
-        for (const auto& argument : call->arguments) {
-            if (argument->label == nullptr) {
-                const auto expected = hasPrevious ? previousIndex + 1 : 0;
-                const auto expectedLabel = expected < callable.parameters.size()
-                        ? callable.parameters[expected].label
-                        : std::optional<std::string>();
-                report(
-                        NameResolutionDiagnosticId::missingArgumentLabel,
-                        argument->span,
-                        expectedLabel.has_value()
-                                ? "argument requires label '" + *expectedLabel + ":'"
-                                : std::string("ordinary calls require an argument label"));
-                continue;
-            }
-
-            const auto label = argument->label->rawValue;
-            const auto found = std::find_if(
-                    callable.parameters.begin(),
-                    callable.parameters.end(),
-                    [&label](const CallableParameter& parameter) {
-                        return parameter.label.has_value() && *parameter.label == label;
-                    });
-            if (found == callable.parameters.end()) {
-                report(
-                        NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                        argument->label->span,
-                        "call target '" + symbol(target).name +
-                                "' has no parameter labeled '" + label + ":'");
-                continue;
-            }
-
-            const auto index = static_cast<size_t>(
-                    std::distance(callable.parameters.begin(), found));
-            if (matched[index]) {
-                report(
-                        NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                        argument->label->span,
-                        "argument label '" + label + ":' is supplied more than once");
-                continue;
-            }
-            if (hasPrevious && index < previousIndex) {
-                report(
-                        NameResolutionDiagnosticId::argumentOutOfOrder,
-                        argument->label->span,
-                        "argument '" + label + ":' is out of declaration order");
-            }
-            matched[index] = true;
-            previousIndex = index;
-            hasPrevious = true;
-        }
-
-        bool hasMissingRequired = false;
-        for (size_t index = 0; index < callable.parameters.size(); ++index) {
-            if (callable.parameters[index].required && !matched[index]) {
-                hasMissingRequired = true;
-                break;
-            }
-        }
-        if (hasMissingRequired) {
-            reportArgumentCount(call->span, symbol(target), call->arguments.size());
         }
     }
 
@@ -1392,54 +1732,12 @@ private:
         }
         const auto count = std::min(pattern->arguments.size(), callable.parameters.size());
         for (size_t index = 0; index < count; ++index) {
-            validateLabel(
+            validateArgumentLabel(
                     callable.parameters[index].label,
                     pattern->arguments[index]->label,
-                    pattern->arguments[index]->span);
+                    pattern->arguments[index]->span,
+                    diagnostics);
         }
-    }
-
-    void validateLabel(
-            const std::optional<std::string>& expected,
-            const Token::Ptr& actual,
-            SourceSpan span) {
-        if (!expected.has_value() && actual == nullptr) return;
-        if (expected.has_value() && actual != nullptr && *expected == actual->rawValue) return;
-
-        if (expected.has_value() && actual == nullptr) {
-            report(
-                    NameResolutionDiagnosticId::missingArgumentLabel,
-                    span,
-                    "argument requires label '" + *expected + ":'");
-        } else if (!expected.has_value()) {
-            report(
-                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                    actual->span,
-                    "this enum payload position is unlabeled");
-        } else {
-            report(
-                    NameResolutionDiagnosticId::unexpectedArgumentLabel,
-                    actual->span,
-                    "expected argument label '" + *expected + ":', but got '" +
-                            actual->rawValue + ":'");
-        }
-    }
-
-    void reportArgumentCount(SourceSpan span, const Symbol& target, size_t actualCount) {
-        const auto expectedCount = target.callable->parameters.size();
-        const auto requiredCount = static_cast<size_t>(std::count_if(
-            target.callable->parameters.begin(),
-            target.callable->parameters.end(),
-            [](const CallableParameter& parameter) { return parameter.required; }));
-        const auto expectation = requiredCount == expectedCount
-            ? std::to_string(expectedCount)
-            : std::to_string(requiredCount) + " to " + std::to_string(expectedCount);
-        report(
-                NameResolutionDiagnosticId::argumentCountMismatch,
-                span,
-            "call target '" + target.name + "' expects " + expectation +
-                " argument(s), but got " +
-                        std::to_string(actualCount));
     }
 
     std::optional<SymbolId> referencedSymbol(const syntax::NodePtr& node) const {
@@ -1559,6 +1857,9 @@ private:
     std::optional<SymbolId> lookupType(
             ScopeId currentScope,
             const std::string& name) const {
+        if (name.find('.') != std::string::npos) {
+            return lookupQualified(currentScope, name, true);
+        }
         auto current = std::optional<ScopeId>(currentScope);
         while (current.has_value()) {
             const auto& currentScopeValue = scope(*current);
@@ -1608,6 +1909,10 @@ NameResolutionResult NameResolver::resolve(
     return builder.build(root);
 }
 
+NameResolutionResult NameResolver::resolve(const std::vector<ModuleInput>& modules) const {
+    return NameResolutionBuilder().build(modules);
+}
+
 const char* diagnosticName(NameResolutionDiagnosticId id) {
     switch (id) {
         case NameResolutionDiagnosticId::duplicateDeclaration:
@@ -1632,6 +1937,14 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.unexpected-argument-label";
         case NameResolutionDiagnosticId::argumentOutOfOrder:
             return "name-resolution.argument-out-of-order";
+        case NameResolutionDiagnosticId::inaccessibleDeclaration:
+            return "name-resolution.inaccessible-declaration";
+        case NameResolutionDiagnosticId::inaccessibleExposedType:
+            return "name-resolution.inaccessible-exposed-type";
+        case NameResolutionDiagnosticId::importCollision:
+            return "name-resolution.import-collision";
+        case NameResolutionDiagnosticId::unknownImport:
+            return "name-resolution.unknown-import";
     }
     return "name-resolution.unknown";
 }

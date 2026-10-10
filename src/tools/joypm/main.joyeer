@@ -1,0 +1,72 @@
+private func projectCommand(options: borrowing CliOptions): Int {
+    let regular = match fileKind(path: options.manifestPath) {
+        .Ok(kind) => match kind {
+            .File => true,
+            .Directory => false,
+            .Symlink => false,
+            .Other => false,
+        },
+        .Err(error) => {
+            return failureStatus(error: ToolError(message: "cannot inspect manifest '" + options.manifestPath +
+                "': " + fileSystemMessage(error: error), pos: -1),
+                manifestPath: "", contents: "", status: 1)
+        },
+    }
+    if !regular {
+        return failureStatus(error: ToolError(message: "manifest must be an ordinary regular file: " +
+            options.manifestPath, pos: -1), manifestPath: "", contents: "", status: 1)
+    }
+    // Classification is not a race-free confinement guarantee. The bounded
+    // read caps acquisition even if another ordinary file replaces this one.
+    let contents = match readFilePrefix(path: options.manifestPath, maximumBytes: 65537) {
+        .Ok(text) => text,
+        .Err(error) => {
+            return failureStatus(error: ToolError(message: "cannot read manifest '" + options.manifestPath +
+                "': " + fileSystemMessage(error: error), pos: -1),
+                manifestPath: "", contents: "", status: 1)
+        },
+    }
+    // The extra sentinel byte lets the parser reject oversized inputs without
+    // allocating or reading the rest. UTF-8 validation occurs in the parser.
+    let manifest = match parseManifest(contents: contents) {
+        .Ok(parsedManifest) => parsedManifest,
+        .Err(error) => {
+            return failureStatus(error: error, manifestPath: options.manifestPath, contents: contents, status: 1)
+        },
+    }
+    let selected = match selectTargets(manifest: manifest, options: options) {
+        .Ok(targets) => targets,
+        .Err(error) => {
+            return failureStatus(error: error, manifestPath: options.manifestPath, contents: contents, status: 2)
+        },
+    }
+    let base = pathDirectory(path: options.manifestPath)
+    return match executeProject(manifest: manifest, options: options, selected: selected, base: base) {
+        .Ok(status) => status,
+        .Err(error) => failureStatus(error: error, manifestPath: options.manifestPath, contents: contents, status: 1),
+    }
+}
+
+func main(args: [String]): Int {
+    let options = match parseCli(args: args) {
+        .Ok(parsed) => parsed,
+        .Err(error) => {
+            return failureStatus(error: error, manifestPath: "", contents: "", status: 2)
+        },
+    }
+    if options.command == "--help" {
+        printHelp()
+        return 0
+    }
+    if options.command == "--version" {
+        print(value: "joypm 0.1.0")
+        return 0
+    }
+    if options.command == "init" {
+        return match initializeProject(options: options) {
+            .Ok(status) => status,
+            .Err(error) => failureStatus(error: error, manifestPath: "", contents: "", status: 1),
+        }
+    }
+    return projectCommand(options: options)
+}

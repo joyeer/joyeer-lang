@@ -7,7 +7,7 @@
 - Whitespace separates tokens. Horizontal whitespace is otherwise
     insignificant; a line break may terminate a statement when its optional
     semicolon is omitted (§6).
-- Indentation is **not** semantically significant (unlike Python).
+- Indentation is **not** semantically significant.
 
 ### 1.2 Comments
 
@@ -36,13 +36,13 @@ an identifier.
 | Category | Keywords |
 |----------|----------|
 | Bindings | `let`, `var` |
-| Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `yield` |
+| Control flow | `if`, `else`, `while`, `for`, `in`, `match`, `return`, `break`, `continue`, `yield` |
 | Declarations | `func`, `struct`, `enum`, `extension`, `subscript`, `init`, `deinit`, `import`, `as`, `indirect` |
 | Access conventions | `inout`, `borrowing`, `consuming`, `initializing`, `consume`, `mutating` |
 | Visibility | `public`, `internal`, `private` |
 | Types & literals | `true`, `false`, `nil`, `self`, `Self` |
 | Match guard | `where` |
-| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `break`, `continue`, `is`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
+| Reserved ⏳ | `async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`, `is`, `class`, `protocol`, `trait`, `macro`, `invariant`, `result`, `unsafe`, `package`, `Any` |
 
 `match` does not require a separate "Pattern" lexer feature. The lexer emits
 ordinary identifier/literal/punctuation tokens plus `match`, `where`,
@@ -53,9 +53,9 @@ performs binding and exhaustiveness checks (§7).
 > `struct` for aggregates. The other reserved words are also rejected in
 > v0.1 (§15).
 
-> `as` is a contextual keyword: in v0.1 it is used **only** for `import`
-> aliasing (§3.8). Its type-cast meaning (`x as T`) and the `is` type-test
-> operator are deferred to v0.2 (§15).
+> `as` is reserved for future import aliases and type casts (`x as T`).
+> Neither use is accepted by the implemented module/import grammar (§12).
+> The `is` type-test operator is also deferred (§15).
 
 ### 1.5 Literals
 
@@ -105,7 +105,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Bitwise | `&` `\|` `^` `~` `<<` `>>` |
 | Assignment | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` |
 | Range | `..<` `...` |
-| Postfix | `?` (optional chain / Result-propagation) `!` (force-unwrap) |
+| Postfix | `?` (Result / Optional propagation) `!` (force-unwrap) |
 | Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
 
@@ -116,7 +116,7 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 String interpolation is reserved for a future version, not part of v0.1.
 
-When added, the syntax will be Swift-style `"\(expr)"`, where the expression
+When added, the syntax will be `"\(expr)"`, where the expression
 inside `\(...)` is any `expression` whose result is one of the built-in
 printable types (the integer and floating types, `Bool`, `Char`, `UInt8`,
 `String`):

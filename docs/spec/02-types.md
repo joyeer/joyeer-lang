@@ -176,6 +176,35 @@ User-defined generics will use `<T>`. They, along with constraints,
 associated types, and monomorphization, are reserved for a future version
 (§15).
 
+#### 2.6.1 Safe dictionary lookup
+
+The builtin `Dict<K, V>.get(key:)` takes a key of type `K` and returns
+`Optional<V>`. It borrows both the receiver and key, evaluates the receiver
+before the key exactly once each, and does not require `&` or `consume`.
+Ordinary access exclusivity and initialization rules still apply.
+
+A present key produces `.Some` containing an independently owned copy of the
+stored value. A missing key produces `.None` without trapping or copying a
+value. Lookup does not change the dictionary. Later dictionary mutation or
+destruction cannot invalidate the returned value.
+
+```joyeer
+func lookup(values: [String: Int], key: String): Int? {
+    return values.get(key: key)
+}
+```
+
+No optional layer is flattened. For a dictionary whose value type is `Int?`,
+the return type is `Optional<Int?>`: `.None` means the key is missing,
+`.Some(.None)` means a present key stores absence, and `.Some(.Some(42))`
+means it stores `42`. `Void` values likewise distinguish `.Some(())` from
+`.None`. The result supports ordinary matching and postfix `?` propagation.
+
+Strict `dictionary[key]` access retains its missing-key trap. This operation
+does not introduce user-defined generic methods or key enumeration. The current
+lookup is linear; owned heap-backed values may require recursive copying and
+allocation. The receiver dictionary itself is not copied by `get`.
+
 ### 2.8 Type inference
 
 Local bindings infer their type from the initializer when not annotated:

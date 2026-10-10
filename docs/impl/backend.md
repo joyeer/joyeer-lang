@@ -33,6 +33,16 @@ The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
 `lib/backend/llvm.cpp`. It emits text so verified Joyeer IR remains separated
 from LLVM's C++ model by an inspectable format.
 
+For module compilation, one verified Joyeer IR module contains the reachable
+graph of named explicit source-file sets. This whole-graph code-generation
+container does not merge logical modules or their visibility boundaries, and
+does not imply separately linkable library artifacts or a library ABI.
+LLVM function linkage uses `joyeer_fn_<FunctionId>`;
+aggregate types and ownership helpers likewise use numeric type IDs rather
+than source names. Equal names in different modules or file-private scopes
+therefore do not collide, and source declarations are not renamed to enforce
+entry-point rules.
+
 The native linker lives in `include/joyeer/backend/linker.h` and
 `lib/backend/linker.cpp`. It calls the versioned C ABI in
 `include/joyeer/backend/native_backend.h` on every platform. The
@@ -56,6 +66,12 @@ checks the LLVM SDK's native architecture. This is native compilation, not an
 architecture-switching or cross-compilation API; the versioned C ABI is
 unchanged.
 
+Windows console executables embed a manifest with
+`requestedExecutionLevel="asInvoker"` and `uiAccess="false"`. This disables
+installer-name elevation heuristics for valid output names such as `setup`,
+`install`, or `update`; generated programs run with their caller's permissions,
+not through an elevation prompt. It is not a sandbox.
+
 On macOS, CMake resolves the active SDK path and version with `xcrun`. The
 backend passes them to the embedded Mach-O LLD driver together with the host
 architecture and `libSystem`. Debug builds run the system `dsymutil` only to
@@ -71,6 +87,38 @@ versions and platform prerequisites are documented in
 ---
 
 ## 2. CLI
+
+### Argument encoding and filesystem boundary
+
+On Windows the compiler uses `wmain`, not narrow `main`. Its CLI constructor
+converts each UTF-16 argument once to UTF-8 with `WideCharToMultiByte(CP_UTF8,
+WC_ERR_INVALID_CHARS)`, using a sizing pass followed by the conversion. This
+preserves empty arguments, spaces, and supplementary Unicode. Invalid surrogate
+sequences are rejected before option parsing, without replacement characters.
+The existing `source-file.read-failed`, `driver.output-file-error`, and
+`module.read-source` diagnostic IDs identify invalid source/general, output,
+and dependency-source arguments respectively. No console code page is changed.
+
+The shared narrow parser treats executable, positional input, output, and
+`--module-source name=file` paths as UTF-8 via `std::filesystem::u8path`, not the
+Windows active code page. CLI missing/duplicate-source diagnostics encode
+their paths with `u8string`. Logical module names retain their ASCII syntax.
+Native path objects are passed unchanged through `CompileOptions`; `SourceFile`
+opens them with the filesystem-path stream overload and already uses UTF-8
+for source/debug identities. Successful validation and textual-IR output
+therefore do not require narrowing the CLI source/output paths.
+
+The compiler service uses UTF-8 for module/output path diagnostics. Native
+artifact and temporary-path construction preserves filesystem path objects;
+suffixes are appended without narrowing, and backend/linker path strings use
+UTF-8 at the C ABI boundary. Native Windows ARM64 Debug/Release regressions
+pass for wide CLI conversion, source/output/temporary paths, failure paths,
+and relocated product linking. This is not general Unicode-aware rendering
+or acceptance evidence for other architectures.
+Detailed evidence belongs in [joypm](joypm.md#5-validation-evidence).
+Diagnostic argument/path text is UTF-8, but OS-provided error messages and
+console rendering remain host-dependent.
+Legacy source-language `readFile` narrow CRT behavior is unchanged.
 
 Validation only:
 
@@ -91,8 +139,72 @@ Build a native executable:
 joyeer -o output.exe source.joyeer
 ```
 
-A native executable requires one `func main()` returning `Void` or
+Compile a named root source set and explicitly supply its dependency files
+(example paths):
+
+```pwsh
+joyeer --module-name acme.app root1.joyeer nested\root2.joyeer --module-source acme.config=path\config.joyeer --module-source acme.config=other\parser.joyeer -o app.exe
+```
+
+`--module-name <logical.name>` selects named compilation mode and names the
+root unit. It requires a valid, nonempty module name and at least one
+positional source file. `--module-source <logical.name>=<source-file>` requires
+named mode and supplies one dependency file. Repeating it with the same name
+**adds files to one dependency module**; it does not declare duplicate modules.
+A dependency name must also be valid and nonempty and cannot use the root
+module's name. Names use the existing ASCII dotted-name syntax. Each complete
+name is a logical identity, not a directory path or parent/submodule relationship.
+
+Without `--module-name`, the legacy `joyeer input.joyeer` form accepts exactly
+one source file and no dependencies. Multiple positional files or any
+`--module-source` without a root name are errors. The old `--module-root` and
+`--module` directory options have been removed as an intentional breaking
+early-development interface change. They produce migration errors: replace
+the root directory with `--module-name` plus explicit positional source files,
+and each dependency directory with one `--module-source name=file` per file.
+They are not aliases for the new options.
+
+CLI source paths resolve against the process working directory, including
+dependency paths, not against the first source file or another module.
+In the service API, `CompileOptions.moduleName` names the root unit,
+`CompileOptions.sourceFiles` lists its explicit source files, and
+`CompileOptions.modules` contains dependency `ModuleSources { name, files }`
+records. The former `ModuleMapping` and `moduleRoot` API are removed, not
+directory-discovery alternatives. Relative source files resolve against
+`options.workingDirectory`, falling back to the process working directory when
+it is empty. Source paths are canonicalized and sorted for deterministic
+ordering. All supplied root and dependency sets must be nonempty, and every
+path must exist and name a regular file. Duplicate source identities within
+one module or across any supplied modules are errors, including aliases
+through symlinks or hard links. Validation covers **all supplied sets** before
+compilation of reachable dependencies, including unused dependency inputs.
+Source files do not require a `.joyeer` extension, and their paths may contain
+spaces; there is no extension-based filtering. Quote a CLI path containing spaces, or
+the complete dependency argument, for example
+`--module-source "acme.config=path with spaces\config.joyeer"`. Process APIs
+should pass each path or `name=file` value as one argument without shell quotes.
+
+Files in one module may be nested or unrelated on disk, and different modules
+may select distinct files in the same directory. The compiler does not scan
+directories, recursively or otherwise, add sibling files, read manifests, or
+fetch dependencies. A build or package tool owns source-root and include/exclude
+policy and supplies the selected file paths.
+
+Files retain separate syntax trees, spans, and debug identities. The compiler
+resolves file-local imports through the exact supplied names and compiles only
+the reachable graph, rejecting unknown imports and cycles with diagnostics.
+Unused dependency sets are validated but not parsed. Output must not alias any
+supplied source, including unused dependency inputs; on Windows this also
+applies to the native output's sibling PDB cleanup path. Use `--emit-llvm`
+instead of `-o` for textual IR, or omit both for validation and lowering only.
+
+A native executable requires one root-module `func main()` returning `Void` or
 `func main(args: [String]): Int` with a borrowing `args` parameter. The emitter
+does not select a dependency module's `main` as the executable entry point. It
+rejects multiple root-module `main` candidates, including distinct file-private
+declarations, with an entry diagnostic instead of selecting the first.
+Dependency functions named `main` are ordinary functions and need not have an
+entry-compatible signature. The emitter
 provides C-callable `joyeer_main_uses_arguments` and `joyeer_main` trampolines;
 the latter receives a pointer to runtime-owned argument storage and returns
 an `int64_t` status (zero for the parameterless form). No collection is passed
@@ -110,7 +222,15 @@ deterministic and inspectable.
 
 Checked `Int` add/subtract/multiply lower to LLVM's signed
 `*.with.overflow.i64` intrinsics, with a branch to the existing panic routine
-on overflow. Array reads and mutable projections lower to null/negative/
+on overflow. Checked `Int` divide/remainder first branch to panic for a zero
+divisor, then for the pair `INT64_MIN` and `-1`, before executing LLVM `sdiv`
+or `srem`. Division truncates toward zero; a nonzero remainder has the
+dividend's sign. Both operations trap on the overflow pair, including
+remainder, so neither can evaluate undefined arithmetic or produce LLVM
+poison on these inputs. The panic messages match the checked C runtime
+entry points.
+
+Array reads and mutable projections lower to null/negative/
 upper-bound checks followed by a typed `getelementptr`, rather than a
 per-access runtime call. The IR verifier checks the array element/result type;
 construction and growth validate the allocation size using that same element
@@ -124,6 +244,10 @@ only checks proven redundant, not replace trapping arithmetic with unchecked
 source operation's debug location. Array ownership, operand evaluation order,
 append/growth, and destruction remain unchanged.
 
+Postfix `?` uses the existing enum-tag branch, payload extraction, and return
+instructions from Joyeer IR. The backend guards payload reads by the tag;
+no separate runtime propagation operation is required.
+
 Debug information defaults to off (`-g0`). `-g` and `-gline-tables-only`
 enable line tables in the host format; `-gfull` adds lexical scopes, source
 variables, and physical type metadata. `-gdwarf` selects DWARF 4, and
@@ -132,6 +256,16 @@ options compose in command-line order; for example `-gdwarf -g0 -g` produces
 DWARF line tables. Debug and optimization are orthogonal: `-O0` marks the
 compile unit unoptimized, while `-O1`…`-O3` carry optimized debug flags without
 changing the emitted pre-optimization instructions.
+
+The graph's `Module::sourceFiles` table supplies one `DIFile` per real input
+file. The compile unit uses the first root source; each source function,
+lexical block, variable, and declared aggregate type selects its own file
+from `SourceSpan::sourceId`. Line and column lookup uses that file's line-start
+table and unshifted byte offsets. If an instruction location names a different
+file from its enclosing scope, a `DILexicalBlockFile` preserves the scope's
+function while selecting the location's file. This applies to both line-table
+and full-debug emission, in DWARF and CodeView formats. The legacy single-file
+`sourceInfo` form remains supported as source ID zero.
 
 Native artifacts follow the host format. Windows CodeView keeps a sibling PDB
 with the executable and embeds a CodeView debug-directory reference. Windows
@@ -144,10 +278,11 @@ them. Paths cross the DLL as UTF-8 C strings and LLD receives an argument
 array, so user paths are not subject to shell expansion.
 
 UTF-8 at the backend boundary does not imply end-to-end Windows Unicode path
-support. Narrow `argv` can lose characters, and native temporary-path
-construction currently narrows a `std::filesystem::path` through `.string()`.
-A temporary directory containing characters outside the active code page can
-therefore crash compilation even with ASCII source and output arguments.
+support for every path or failure mode. The wide compiler entry and native
+artifact/temporary-path preservation are integrated and compiled, with scoped
+Windows x64 joypm smoke evidence. Registered source/output/temporary-path and
+backend regressions still need execution; the smoke workflow is not full
+Unicode, native-platform, or release acceptance.
 
 ### C ABI lifetimes and failure contract
 
@@ -202,6 +337,17 @@ The C11 [runtime](runtime.md) owns process startup, checked
 arithmetic and bounds helpers, value storage, collections, file input, and
 allocation-balance checking. It is a static archive linked into generated
 programs, not a dependency on LLVM/LLD.
+
+Descriptor-driven host calls include
+`writeStderr(contents: String): Result<Void, StderrError>`, where
+`StderrError` has `WriteFailed(Int)`. The emitter declares/calls
+`i32 @joyeer_write_stderr_abi(ptr, ptr, i64)` with the error-code out-pointer
+first and borrowed contents data/count afterward. ABI status `0` constructs
+`Ok(())`; status `1` constructs `Err(.WriteFailed(code))`. Error tags are mapped
+by enum case name, and invalid runtime tags trap. Unit successes use the
+existing zero-sized representation, not a runtime result out-pointer. See the
+[standard-error boundary](runtime.md#standard-error-boundary) for byte/flush
+semantics and CRT error reporting.
 
 ---
 
@@ -277,6 +423,14 @@ ctest --test-dir build -L optimization --output-on-failure
 ctest --test-dir build -L debug-info --output-on-failure
 ```
 
+The existing host compiler unit file checks stderr's concrete signature,
+error payload/matches, type/error-conversion rejections, and flat ABI emission
+with full debug locations. The CLI unit file checks UTF-8 and Windows wide
+input/output/dependency paths containing supplementary Unicode and spaces,
+UTF-8 path diagnostics, empty wide arguments, and unpaired surrogate rejection
+with existing diagnostic IDs. These CLI tests inspect parsing/path ownership;
+they do not assert that native linking is Unicode-complete.
+
 The Clang executable is an optional test tool, not a product linker. The
 independent textual-IR oracle and many native-executable regression tests are
 registered only when `JOYEER_CLANG_EXECUTABLE` is found at configuration time.
@@ -293,6 +447,13 @@ ABI/version without exposing C++ types. Native artifact tests additionally
 validate no-debug output, Windows PDB source and line records, embedded
 Windows/ELF DWARF sections, platform artifact retention, safe metacharacter
 paths, and refusal to overwrite output/PDB directories.
+
+`NativeExecutableCompilationUnitsO0`, `NativeExecutableCompilationUnitsO1`,
+`NativeExecutableCompilationUnitsO2`, and `NativeExecutableCompilationUnitsO3`
+exercise the explicit source-set graph at each optimization level.
+`NativeExecutableCompilationUnitsDebug` covers the same compilation-unit
+boundary with debug information. The fixtures include nested source paths and
+a directory containing spaces while retaining per-file debug identities.
 
 Optimization tests verify the default and all accepted CLI levels, then
 compile at `-O2` and prove checked integer overflow and array bounds still

@@ -1,0 +1,57 @@
+func main(args: [String]): Int {
+    if args.count == 0 { return 73 }
+    if args[0] == "child" {
+        if args.count != 5 { return 11 }
+        if args[1] != "" { return 12 }
+        if args[2] != "with spaces" { return 13 }
+        if args[3] != "quote\"slash\\" { return 14 }
+        if args[4] != "$&*%literal" { return 15 }
+        print(value: "child ok")
+        return 7
+    }
+    if args.count != 2 { return 1 }
+    let child = runProcess(
+        executable: args[0],
+        arguments: ["child", "", "with " + "spaces", "quote\"slash\\", "$&*%literal"],
+        workingDirectory: args[1])
+    let first = match child {
+        .Ok(status) => match status {
+            .Exited(code) => code == 7,
+            .Signaled(_) => false,
+        },
+        .Err(_) => false,
+    }
+    if !first { return 2 }
+    let noArguments: [String] = []
+    let second = match runProcess(
+        executable: args[0], arguments: noArguments, workingDirectory: args[1]) {
+        .Ok(status) => match status {
+            .Exited(code) => code == 73,
+            .Signaled(_) => false,
+        },
+        .Err(_) => false,
+    }
+    if !second { return 3 }
+    let missing = match runProcess(
+        executable: args[0] + ".missing",
+        arguments: [],
+        workingDirectory: args[1]) {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .NotFound(_) => true,
+            _ => false,
+        },
+    }
+    if !missing { return 4 }
+    let invalid = match runProcess(
+        executable: "", arguments: [], workingDirectory: args[1]) {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .InvalidInput(_) => true,
+            _ => false,
+        },
+    }
+    if !invalid { return 5 }
+    print(value: "process ok")
+    return 0
+}

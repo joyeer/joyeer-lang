@@ -1,0 +1,10 @@
+func initialize(out: initializing Int): Bool {
+    &out = 1
+    return true
+}
+
+func run(flag: Bool) {
+    var value: Int
+    let ready = flag || initialize(out: &value)
+    print(value: value)
+}

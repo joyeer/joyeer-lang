@@ -1,0 +1,18 @@
+func load(path: String): Result<String, IOError> {
+    let contents = readFile(path: path)?
+    return .Ok(contents)
+}
+
+func main() {
+    match load(path: "read_file_input.txt") {
+        .Ok(contents) => print(value: contents),
+        .Err(_) => print(value: "unexpected"),
+    }
+    match load(path: "missing-propagation-file.txt") {
+        .Ok(_) => print(value: "unexpected"),
+        .Err(error) => match error {
+            .NotFound(_) => print(value: "missing"),
+            _ => print(value: "unexpected"),
+        },
+    }
+}

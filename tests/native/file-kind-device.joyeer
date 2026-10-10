@@ -1,0 +1,35 @@
+func fileErrorCode(error: FileSystemError): Int {
+    return match error {
+        .InvalidPath(code) => code,
+        .NotFound(code) => code,
+        .PermissionDenied(code) => code,
+        .AlreadyExists(code) => code,
+        .NotDirectory(code) => code,
+        .IsDirectory(code) => code,
+        .Other(code) => code,
+    }
+}
+
+func main(args: [String]): Int {
+    if args.count != 1 {
+        print(value: "expected one device path")
+        return 2
+    }
+    return match fileKind(path: args[0]) {
+        .Ok(kind) => match kind {
+            .Other => {
+                print(value: "device kind ok")
+                return 0
+            },
+            _ => {
+                print(value: "device was classified as an ordinary file, directory or link")
+                return 1
+            },
+        },
+        .Err(error) => {
+            print(value: "fileKind failed for " + args[0])
+            print(value: fileErrorCode(error: error))
+            return 1
+        },
+    }
+}

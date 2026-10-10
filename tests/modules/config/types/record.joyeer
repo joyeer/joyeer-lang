@@ -1,0 +1,5 @@
+public struct Record {
+    public let value: Int
+}
+
+public func read(item: Record): Int { item.value }

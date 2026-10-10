@@ -1,0 +1,2 @@
+func hostWindows(): Bool { return @JOYEER_JOYPM_HOST_WINDOWS@ }
+func executableSuffix(): String { return "@CMAKE_EXECUTABLE_SUFFIX@" }

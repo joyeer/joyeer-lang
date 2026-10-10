@@ -1,8 +1,8 @@
 # Joyeer
 
-Joyeer is an **AI-era systems programming language** with Swift-inspired
+Joyeer is an **AI-era systems programming language** with explicit, concise
 syntax. It is designed for a workflow where AI writes most code and humans
-review and assist, with the long-term goal of replacing C++ for new code.
+review and assist, with the long-term goal of supporting production systems.
 
 > **Status:** early development. The language and toolchain are not released
 > and may change without compatibility guarantees.
@@ -14,7 +14,7 @@ review and assist, with the long-term goal of replacing C++ for new code.
 - **No garbage collector:** value semantics, stack allocation, and RAII are
   the default model.
 - **Zero-cost abstractions:** unused features should not impose runtime cost.
-- **Swift-like syntax:** familiar, readable, and concise.
+- **Readable syntax:** explicit declarations and concise expressions.
 - **`struct`-first:** aggregates are value types; `class` is not part of the
   implemented language surface.
 
@@ -39,28 +39,36 @@ LLVM parsing/verification runs in the native backend when `-o` builds an
 executable. On Windows, LLVM and LLD run inside the bundled
 `joyeer-backend.dll`; no LLVM executable is launched at runtime.
 
-An integer-focused Joyeer-written JSON parser fixture exercises the compiled
-pipeline. It is an integration workload, not a complete JSON conformance or
-performance benchmark; see its
-[known limits](docs/plan/roadmap.md#1-strengthen-correctness-coverage).
-Implemented features include integers, booleans, bytes, strings, `let`/`var`, checked
-arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
+Implemented features include integers, booleans, bytes, strings, `let`/`var`,
+checked arithmetic, `if`/`else`, `while`, typed functions, all four parameter access
 conventions, structs, payload enums, exhaustive `match`, arrays, dictionaries,
-`Optional`, `Result`, file input, deterministic ownership cleanup, projection
-consumption, exclusivity checking, and structured diagnostics.
+`Optional`, `Result`, postfix `?` propagation, named compilation units with explicit
+qualified imports and visibility, portable filesystem operations, synchronous
+subprocesses, deterministic ownership cleanup, projection consumption,
+exclusivity checking, and structured diagnostics.
 
 Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,
 optimization policy, and broader language surface remain incomplete.
 
+The source tree now includes the Joyeer-written `joypm` local project manager:
+`init`, `check`, `build`, `run`, and `test`, with a strict single-package
+manifest and explicit compiler path. The first local-workflow version,
+`0.1.0`, passes native Windows ARM64 Debug and Release default `ALL` builds
+and unfiltered CTest, **789/789 in each configuration**, including all 14
+Windows tool gates. Bounded acquisition, exact limits, failure paths,
+concurrent generations, self-build, and relocated installation are verified.
+This is not a published release or native acceptance evidence for other
+platforms/architectures. See
+[joypm](docs/impl/joypm.md) for the exact boundary and validation evidence.
+
 See
 [docs/impl/supported-features.md](docs/impl/supported-features.md) for the
-current implementation boundary and
-[docs/plan/roadmap.md](docs/plan/roadmap.md) for active priorities.
+current implementation boundary.
 
 ## Example
 
-```swift
+```joyeer
 func add(left: Int, right: Int): Int {
     return left + right
 }
@@ -186,45 +194,65 @@ Pass the SDK root explicitly if `LLVM_HOME` is unavailable:
 cmake --preset x64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON
 ```
 
-The staged Windows package contains `joyeer.exe`,
-`joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, and licenses. Users of
-that package do not install LLVM or Clang. Creating Windows native executables
+The staged Windows package contains `joyeer.exe`, `joyeer-backend.dll`,
+`JoyeerNativeRuntime.lib`, optional `joypm.exe`, and licenses.
+`JOYEER_BUILD_JOYPM=ON` is the default: CMake builds `joypm` with the new
+compiler as part of `ALL`; `OFF` selects a compiler-only build. Bootstrap
+uses `-O0 -gfull` in Debug and `-O2 -g0` in Release; macOS Debug uses `-g0`
+if `dsymutil` is unavailable. It requires neither a preinstalled `joypm` nor
+Python. Users of that package
+do not install LLVM or Clang. Creating Windows native executables
 still requires MSVC Build Tools and a Windows SDK; the backend locates them
 through Visual Studio Setup Configuration and the registry. `INSTALL_GTEST=OFF`
 prevents test-only headers and libraries from being added to the package.
-The current install rule stages only Joyeer's own license; third-party
-license/notice staging remains a release requirement. See
+Current local installs stage only Joyeer's own license. Third-party licenses
+and notices must be assembled before redistributing toolchain binaries.
+Product-only inventories and relocated workflows are verified on Windows
+ARM64, but those checks do not establish redistribution readiness. See
 [building.md](docs/building.md#release-staging) for these packaging limitations,
 platform details, and troubleshooting.
 
 Linux and macOS use the same install layout with platform suffixes: the
 `joyeer` executable, `joyeer-backend` shared library, native runtime archive,
-and licenses are installed together. The executable resolves the backend and
-runtime relative to its own location.
+optional `joypm`, and licenses are installed together. The compiler resolves
+the backend and runtime relative to its own location; `joypm` still requires
+`--compiler <path>` and does not discover its sibling or search PATH.
 
-For a local Windows Debug installation from an existing build:
+For a local Debug installation from an existing build on Windows, macOS, or
+Linux, use the Python 3.9+ standard-library installer (CMake must be on PATH).
+On Windows:
 
 ```powershell
-.\scripts\install-debug.ps1
+python .\scripts\install-debug.py
 ```
 
-The script selects `out/build/arm64-debug` on ARM64 Windows or
-`out/build/x64-debug` on x64 Windows, relative to this checkout rather than the
-current working directory. That Debug build must already exist; use
-`-BuildDir` to override the selection.
+On macOS and Linux:
 
-This installs the compiler, backend, runtime, and PDBs to
-`$HOME\.joyeer\bin` and adds that directory to the user and current PowerShell
-PATH without duplicating existing entries. Use `-SkipPathUpdate` to leave PATH
-unchanged. The complete Joyeer skill is also installed to
-`$HOME\.agents\skills\joyeer` for VS Code Copilot, Copilot CLI, and Codex.
-Use `-SkillDir` to select another destination or `-SkipSkillInstall` to install
-only the compiler. Empty skill directories are accepted, and identical files
-are left unchanged. Use `-Force` after reviewing and backing up local skill
-edits to overwrite differing files and restore missing ones. Extra files and
-other skills are not deleted. Reload your agent session after installation. See
-[Debug installation](docs/building.md#local-windows-debug-installation) for
-custom destinations and verification.
+```bash
+python3 scripts/install-debug.py
+```
+
+The script selects the native Debug preset relative to this checkout:
+`arm64-debug` or `x64-debug` on Windows, `macos-debug` on macOS, and
+`linux-debug` on Linux. That build must already exist; use `--build-dir` to
+override the selection. It does not configure, build, or download tools.
+
+This installs the compiler, backend, runtime, available platform Debug
+symbols, and (when enabled) `joypm` to `~/.joyeer/bin`. PATH setup updates the
+Windows user environment or the supported Unix shell's configuration without
+duplicating entries. Open a new shell or restart the terminal host/IDE to use
+the updated PATH; Python cannot change its parent shell. Use
+`--skip-path-update` to leave PATH and shell configuration unchanged.
+
+The complete Joyeer skill is also installed to `~/.agents/skills/joyeer`.
+Use `--skill-dir` to select another destination or `--skip-skill-install` to
+install only the binaries. Empty skill directories are accepted, and identical
+files are left unchanged. Use `--force` after reviewing and backing up local
+skill edits to overwrite differing files and restore missing ones. Extra files
+and other skills are not deleted. Reload your agent session after installation.
+Python is required only for this optional installer, not for building or using
+Joyeer. See [Debug installation](docs/building.md#local-debug-installation)
+for custom destinations, shell support, and verification.
 
 ## CLI
 
@@ -237,6 +265,41 @@ Validate and lower a source file:
 ```pwsh
 .\out\build\x64-debug\bin\joyeer.exe .\tests\native\hello.joyeer
 ```
+
+Alternatively, compile a named root unit with explicit root and dependency
+source files:
+
+```pwsh
+.\out\build\x64-debug\bin\joyeer.exe --module-name project.app `
+    .\tests\modules\root\main.joyeer ".\tests\modules\root\implementation files\helper.joyeer" `
+    --module-source project.config=.\tests\modules\config\entry.joyeer `
+    --module-source project.config=.\tests\modules\config\types\record.joyeer `
+    -o .\out\modules.exe
+.\out\modules.exe
+```
+
+The module fixture prints `42`. Repeated `--module-source project.config=...`
+arguments add files to the **same** dependency unit. The complete logical name
+is its identity, not a folder path or an implicit parent/submodule tree. Module
+files may span nested or unrelated directories, and separate modules may use
+distinct files in one directory. Every source path is relative to the process
+working directory unless absolute.
+Quote paths containing spaces as shown above. Explicit source files need not
+have a `.joyeer` extension; there is no implicit filename filtering.
+
+Named mode requires a valid nonempty root name and at least one positional
+source. Multiple root files or dependencies require `--module-name`; a
+dependency cannot reuse the root name. All supplied source sets are validated,
+canonicalized, sorted, and checked for duplicate physical files before
+reachable dependencies are compiled. The compiler never discovers files,
+adds siblings, reads manifests, or fetches dependencies; build tools own
+source selection.
+
+The legacy `joyeer input.joyeer` form remains supported. The old `--module-root`
+and `--module` directory flags are removed and report migration errors: supply
+the root name and every selected file explicitly. See the
+[compiler interface](docs/impl/backend.md#2-cli) for validation details and
+[Modules](docs/spec/12-modules.md) for file-local imports and visibility.
 
 Emit textual LLVM IR:
 
@@ -255,6 +318,40 @@ Optimization defaults to `-O2`; `-O0` through `-O3` are supported. Debug
 information is off by default. `-g` and `-gline-tables-only` emit line tables,
 while `-gfull` also emits source variables, lexical scopes, and physical types.
 Use `-gdwarf` or `-gcodeview` to select the format.
+
+## Local projects with joypm
+
+`joypm --version` reports `joypm 0.1.0`, an independent early-development tool
+version; the compiler CMake project remains `0.0.1`. Native Windows ARM64
+Debug/Release acceptance is complete for this local-workflow scope. After building,
+run from this checkout with a new or empty `hello` directory and existing parent:
+
+```powershell
+$compiler = (Resolve-Path .\out\build\arm64-debug\bin\joyeer.exe).Path
+$joypm = (Resolve-Path .\out\build\arm64-debug\bin\joypm.exe).Path
+& $joypm init .\hello --name hello
+& $joypm check --compiler $compiler --manifest-path .\hello\joyeer.toml
+& $joypm build --compiler $compiler --manifest-path .\hello\joyeer.toml --release
+& $joypm run --compiler $compiler --manifest-path .\hello\joyeer.toml -- "an argument"
+& $joypm test --compiler $compiler --manifest-path .\hello\joyeer.toml
+```
+
+Check each command's exit status before continuing. Use the platform's matching
+preset and executable suffix on Linux/macOS. `init` creates one `bin` target;
+`test` reports `0 tests` until executable `test` targets are declared.
+
+The default manifest is `joyeer.toml` in the invocation directory, with no
+upward scanning. Commands that use the compiler require an explicit path;
+there is no PATH lookup or shell execution. Debug uses `-O0 -gfull`, release
+uses `-O2 -g0`. Selected native targets always rebuild serially into fresh
+generations, with at most 128 claims per target/profile and no automatic
+deletion or cache. Use only trusted local projects: compiled programs and
+tests run with the user's permissions. Local path dependencies, workspaces,
+registries, caching, and cleanup are deferred. A generated project under
+`out/build/<preset>/src/tools/joypm/project/` supports building joypm through
+joypm itself. See the
+[manifest and workflow reference](docs/impl/joypm.md) and
+[remaining plan](docs/plan/package-manager.md).
 
 ## Test
 
@@ -276,9 +373,17 @@ ctest --preset x64-debug -L native
 ctest --preset x64-debug -L debug-info
 ```
 
-C++ unit tests use GoogleTest. End-to-end compiler and native fixtures live in
-stage-specific folders under [tests/](tests/) and are registered in
-[unittests/compiler/CMakeLists.txt](unittests/compiler/CMakeLists.txt).
+C++ unit tests use GoogleTest and live in [tests/unittests/](tests/unittests/).
+End-to-end compiler and native fixtures live in stage-specific folders under
+[tests/](tests/) and are registered in
+[tests/unittests/compiler/CMakeLists.txt](tests/unittests/compiler/CMakeLists.txt).
+The joypm gates in [tests/joypm/CMakeLists.txt](tests/joypm/CMakeLists.txt),
+including exact limits, concurrent builds, native failures, self-build,
+installation, and Windows bootstrap regeneration,
+are registered when `BUILD_TESTING` and `JOYEER_BUILD_JOYPM` are enabled,
+independently of `JOYEER_BUILD_UNITTESTS`. All 14 Windows gates passed with the
+full compiler/runtime suite in native ARM64 Debug and Release. Other native
+platforms need their own unfiltered acceptance runs.
 
 ## Project layout
 
@@ -286,14 +391,11 @@ stage-specific folders under [tests/](tests/) and are registered in
 |---|---|
 | [include/joyeer/](include/joyeer/) | Public compiler, IR, backend, CLI, diagnostic, and native runtime headers |
 | [lib/](lib/) | C++ compiler/backend and C11 native runtime implementations |
-| [unittests/](unittests/) | GoogleTest unit tests and CMake integration-test registration |
-| [tests/](tests/) | Durable lexer/parser/semantic/native source fixtures |
+| [src/tools/joypm/](src/tools/joypm/) | Joyeer-written local project manager and CMake bootstrap |
+| [tests/](tests/) | Unit tests, acceptance tests, and durable lexer/parser/semantic/native source fixtures |
+| [tests/unittests/](tests/unittests/) | GoogleTest unit tests and CMake integration-test registration |
 | [scripts/](scripts/) | CMake integration-test helpers |
 | [docs/](docs/) | Specification and design explanations, implementation notes, and plans |
-
-Useful examples include the
-[native JSON parser](tests/native/json_parser.joyeer) and the
-[parser acceptance fixture](tests/parser/ok/json_mvp.joyeer).
 
 ## Documentation
 
@@ -303,10 +405,10 @@ Useful examples include the
   cost goals
 - [docs/impl/supported-features.md](docs/impl/supported-features.md): current
   implementation boundary
-- [docs/plan/roadmap.md](docs/plan/roadmap.md): active implementation
-  priorities
 - [docs/impl/backend.md](docs/impl/backend.md): LLVM backend and linking
 - [docs/impl/runtime.md](docs/impl/runtime.md): process entry and C runtime
+- [docs/impl/joypm.md](docs/impl/joypm.md): local project workflow, manifest,
+  bootstrap, Windows x64 validation evidence, and pending acceptance gates
 
 Build, test, and contribution conventions are in [AGENTS.md](AGENTS.md).
 

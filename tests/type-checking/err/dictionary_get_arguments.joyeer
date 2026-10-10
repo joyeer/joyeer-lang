@@ -1,0 +1,19 @@
+func missing(values: [Int: [String: Int]]): Int? {
+    return values[0].get()
+}
+
+func unlabeled(values: [Int: [String: Int]]): Int? {
+    return values[0].get("x")
+}
+
+func wrongLabel(values: [Int: [String: Int]]): Int? {
+    return values[0].get(value: "x")
+}
+
+func duplicate(values: [Int: [String: Int]]): Int? {
+    return values[0].get(key: "x", key: "y")
+}
+
+func extra(values: [Int: [String: Int]]): Int? {
+    return values[0].get(key: "x", extra: 1)
+}

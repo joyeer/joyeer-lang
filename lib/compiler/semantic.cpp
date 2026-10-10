@@ -115,9 +115,26 @@ const std::vector<DeferredReference>& SemanticModel::deferredReferences() const 
     return deferredReferences_;
 }
 
+bool SemanticModel::isAccessible(SymbolId id, SourceSpan use) const {
+    const auto* value = symbol(id);
+    if (value == nullptr) return false;
+    if (value->visibility == syntax::Visibility::public_) return true;
+    if (value->visibility == syntax::Visibility::private_) {
+        return value->span.sourceId == use.sourceId;
+    }
+    const auto module = sourceModules_.find(use.sourceId);
+    return module != sourceModules_.end() && module->second == value->moduleId;
+}
+
+bool SemanticModel::isModuleQualified(const syntax::NodePtr& node) const {
+    const auto id = nodeId(node);
+    return id.has_value() && moduleQualified_.contains(*id);
+}
+
 const char* scopeKindName(ScopeKind kind) {
     switch (kind) {
         case ScopeKind::prelude: return "prelude";
+        case ScopeKind::module: return "module";
         case ScopeKind::file: return "file";
         case ScopeKind::function: return "function";
         case ScopeKind::block: return "block";

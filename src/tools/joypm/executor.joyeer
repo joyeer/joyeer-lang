@@ -1,0 +1,307 @@
+struct BuildResult {
+    let targetName: String
+    let executable: String
+    let workingDirectory: String
+}
+
+// Only an ordinary compiler completion failure is recoverable by the test
+// runner. Filesystem, stderr, launch, wait and missing-artifact errors propagate.
+enum BuildOutcome {
+    Built(BuildResult),
+    CompileFailed(ProcessStatus),
+}
+
+private func requireDirectory(path: String): Result<Void, ToolError> {
+    return match fileKind(path: path) {
+        .Ok(kind) => match kind {
+            .Directory => .Ok(()),
+            .File => .Err(ToolError(message: "expected a directory, found a file: " + path, pos: -1)),
+            .Symlink => .Err(ToolError(message: "expected an ordinary directory, found a link: " + path, pos: -1)),
+            .Other => .Err(ToolError(message: "expected an ordinary directory: " + path, pos: -1)),
+        },
+        .Err(error) => .Err(ToolError(message: "cannot inspect directory '" + path +
+            "': " + fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+private func ensureDirectory(path: String): Result<Void, ToolError> {
+    return match createDirectory(path: path) {
+        .Ok(_) => .Ok(()),
+        .Err(error) => match error {
+            .AlreadyExists(_) => requireDirectory(path: path),
+            .InvalidPath(code) => .Err(ToolError(message: "cannot create directory '" + path +
+                "': " + fileSystemMessage(error: .InvalidPath(code)), pos: -1)),
+            .NotFound(code) => .Err(ToolError(message: "cannot create directory '" + path +
+                "': " + fileSystemMessage(error: .NotFound(code)), pos: -1)),
+            .PermissionDenied(code) => .Err(ToolError(message: "cannot create directory '" + path +
+                "': " + fileSystemMessage(error: .PermissionDenied(code)), pos: -1)),
+            .NotDirectory(code) => .Err(ToolError(message: "cannot create directory '" + path +
+                "': " + fileSystemMessage(error: .NotDirectory(code)), pos: -1)),
+            .IsDirectory(code) => .Err(ToolError(message: "cannot create directory '" + path +
+                "': " + fileSystemMessage(error: .IsDirectory(code)), pos: -1)),
+            .Other(code) => .Err(ToolError(message: "cannot create directory '" + path +
+                "': " + fileSystemMessage(error: .Other(code)), pos: -1)),
+        },
+    }
+}
+
+private func generationError(plan: borrowing BuildPlan, directory: String, error: FileSystemError): ToolError {
+    return ToolError(message: "target '" + plan.targetName + "': cannot claim fresh build directory '" +
+        directory + "': " + fileSystemMessage(error: error), pos: -1)
+}
+
+private func allocateArtifact(plan: borrowing BuildPlan): Result<String, ToolError> {
+    // Create exactly these three missing parents, one component at a time.
+    // Existing final links are not accepted as output directories. Ancestor
+    // resolution and races still follow the host; this is not confinement.
+    let profileDirectory = pathDirectory(path: plan.artifactParent)
+    let targetDirectory = pathDirectory(path: profileDirectory)
+    ensureDirectory(path: targetDirectory)?
+    ensureDirectory(path: profileDirectory)?
+    ensureDirectory(path: plan.artifactParent)?
+    var id = 1
+    while id <= 128 {
+        let directory = toolJoin(base: plan.artifactParent, path: "build-" + decimal(value: id))?
+        let claimed = match createDirectory(path: directory) {
+            .Ok(_) => true,
+            .Err(error) => match error {
+                .AlreadyExists(_) => false,
+                .InvalidPath(code) => { return .Err(generationError(plan: plan, directory: directory, error: .InvalidPath(code))) },
+                .NotFound(code) => { return .Err(generationError(plan: plan, directory: directory, error: .NotFound(code))) },
+                .PermissionDenied(code) => { return .Err(generationError(plan: plan, directory: directory, error: .PermissionDenied(code))) },
+                .NotDirectory(code) => { return .Err(generationError(plan: plan, directory: directory, error: .NotDirectory(code))) },
+                .IsDirectory(code) => { return .Err(generationError(plan: plan, directory: directory, error: .IsDirectory(code))) },
+                .Other(code) => { return .Err(generationError(plan: plan, directory: directory, error: .Other(code))) },
+            },
+        }
+        if claimed {
+            return toolJoin(base: directory, path: plan.targetName + executableSuffix())
+        }
+        id = id + 1
+    }
+    return .Err(ToolError(message: "target '" + plan.targetName + "': all 128 fresh build directory claims collided under '" +
+        plan.artifactParent + "'; existing generations were left untouched", pos: -1))
+}
+
+private func requireArtifact(plan: borrowing BuildPlan, executable: String): Result<Void, ToolError> {
+    return match fileKind(path: executable) {
+        .Ok(kind) => match kind {
+            .File => .Ok(()),
+            .Directory => .Err(ToolError(message: "target '" + plan.targetName +
+                "': compiler succeeded but expected executable is a directory: " + executable, pos: -1)),
+            .Symlink => .Err(ToolError(message: "target '" + plan.targetName +
+                "': compiler succeeded but expected executable is a link: " + executable, pos: -1)),
+            .Other => .Err(ToolError(message: "target '" + plan.targetName +
+                "': compiler succeeded but expected executable is not a regular file: " + executable, pos: -1)),
+        },
+        .Err(error) => .Err(ToolError(message: "target '" + plan.targetName +
+            "': compiler succeeded but expected executable is unavailable at '" + executable +
+            "': " + fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+private func displayInvocation(target: String, invocation: borrowing CompilerInvocation): Result<Void, ToolError> {
+    toolStderr(contents: "joypm: compiler argv for target '" + target + "' (cwd " +
+        displayArgument(argument: invocation.workingDirectory) + ")\n")?
+    toolStderr(contents: displayArgument(argument: invocation.executable) + "\n")?
+    var index = 0
+    while index < invocation.arguments.count {
+        toolStderr(contents: displayArgument(argument: invocation.arguments[index]) + "\n")?
+        index = index + 1
+    }
+    return .Ok(())
+}
+
+private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptions): Result<BuildOutcome, ToolError> {
+    var output = ""
+    if plan.native { output = allocateArtifact(plan: plan)? }
+    let invocation = compilerInvocation(plan: plan, compiler: options.compiler, output: output)?
+    var action = "checking"
+    if plan.native { action = "building" }
+    var incomplete = ""
+    if plan.native { incomplete = "; incomplete generation left at '" + pathDirectory(path: output) + "'" }
+    toolStderr(contents: "joypm: " + action + " target '" + plan.targetName + "' (" + plan.profile + ")\n")?
+    if options.verbose { displayInvocation(target: plan.targetName, invocation: invocation)? }
+    let status = match runProcess(executable: invocation.executable,
+        arguments: invocation.arguments, workingDirectory: invocation.workingDirectory) {
+        .Ok(completion) => completion,
+        .Err(error) => {
+            return .Err(ToolError(message: "target '" + plan.targetName + "': compiler '" +
+                invocation.executable + "': " + processMessage(error: error) + incomplete, pos: -1))
+        },
+    }
+    let successful = match status {
+        .Exited(code) => code == 0,
+        .Signaled(signal) => {
+            // Compiler signal termination is a tool failure, not a source
+            // rejection. Unlike a signaled test program, abort the test suite.
+            return .Err(ToolError(message: "target '" + plan.targetName + "': compiler '" +
+                invocation.executable + "' terminated by signal " + decimal(value: signal) + incomplete, pos: -1))
+        },
+    }
+    if !successful {
+        toolStderr(contents: "joypm: target '" + plan.targetName + "': compiler " +
+            completionMessage(status: status) + incomplete + "\n")?
+        return .Ok(.CompileFailed(status))
+    }
+    if plan.native {
+        requireArtifact(plan: plan, executable: output)?
+        toolStderr(contents: "joypm: built target '" + plan.targetName + "' at '" + output +
+            "' (generation retained; no automatic cleanup)\n")?
+    }
+    return .Ok(.Built(BuildResult(targetName: plan.targetName, executable: output,
+        workingDirectory: plan.packageDirectory)))
+}
+
+private func executeChild(build: borrowing BuildResult, options: borrowing CliOptions): Result<Bool, ToolError> {
+    if build.executable.count == 0 {
+        return .Err(ToolError(message: "internal missing current executable for target '" + build.targetName + "'", pos: -1))
+    }
+    toolStderr(contents: "joypm: running target '" + build.targetName + "' (cwd '" + build.workingDirectory + "')\n")?
+    let status = match runProcess(executable: build.executable, arguments: options.childArgs,
+        workingDirectory: build.workingDirectory) {
+        .Ok(completion) => completion,
+        .Err(error) => {
+            return .Err(ToolError(message: "target '" + build.targetName + "': cannot run '" +
+                build.executable + "': " + processMessage(error: error), pos: -1))
+        },
+    }
+    let successful = match status {
+        .Exited(code) => code == 0,
+        .Signaled(_) => false,
+    }
+    if !successful {
+        toolStderr(contents: "joypm: target '" + build.targetName + "': child " +
+            completionMessage(status: status) + "\n")?
+    }
+    return .Ok(successful)
+}
+
+private func executeTests(plans: borrowing [BuildPlan], options: borrowing CliOptions): Result<Int, ToolError> {
+    if plans.count == 0 {
+        print(value: "0 tests")
+        return .Ok(0)
+    }
+    var passed = 0
+    var buildFailed = 0
+    var runFailed = 0
+    var index = 0
+    while index < plans.count {
+        let outcome = executeBuild(plan: plans[index], options: options)?
+        match outcome {
+            .CompileFailed(_) => { buildFailed = buildFailed + 1 },
+            .Built(build) => {
+                let success = executeChild(build: build, options: options)?
+                if success { passed = passed + 1 }
+                else { runFailed = runFailed + 1 }
+            },
+        }
+        index = index + 1
+    }
+    var noun = " tests: "
+    if plans.count == 1 { noun = " test: " }
+    print(value: decimal(value: plans.count) + noun + decimal(value: passed) + " passed, " +
+        decimal(value: buildFailed) + " build-fail, " + decimal(value: runFailed) + " run-fail")
+    if buildFailed != 0 || runFailed != 0 { return .Ok(1) }
+    return .Ok(0)
+}
+
+func executeProject(manifest: borrowing PackageManifest, options: borrowing CliOptions,
+    selected: borrowing [Int], base: String): Result<Int, ToolError> {
+    // Finish planning all selections before performing any filesystem effects.
+    var plans: [BuildPlan] = []
+    var index = 0
+    while index < selected.count {
+        let plan = planTarget(manifest: manifest, options: options, targetIndex: selected[index], base: base)?
+        &plans.append(element: plan)
+        index = index + 1
+    }
+    if options.command == "test" { return executeTests(plans: plans, options: options) }
+    var failed = false
+    index = 0
+    while index < plans.count {
+        let outcome = executeBuild(plan: plans[index], options: options)?
+        match outcome {
+            .CompileFailed(_) => { failed = true },
+            .Built(build) => {
+                if options.command == "run" {
+                    let successful = executeChild(build: build, options: options)?
+                    if !successful { return .Ok(1) }
+                }
+            },
+        }
+        index = index + 1
+    }
+    if failed { return .Ok(1) }
+    return .Ok(0)
+}
+
+private func initWrite(path: String, contents: String): Result<Void, ToolError> {
+    return match writeFileNew(path: path, contents: contents) {
+        .Ok(_) => .Ok(()),
+        .Err(error) => .Err(ToolError(message: "cannot exclusively create '" + path + "': " +
+            fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+private func initFiles(directory: String, name: String): Result<Void, ToolError> {
+    let sourceDirectory = toolJoin(base: directory, path: "src")?
+    let manifest = toolJoin(base: directory, path: "joyeer.toml")?
+    let source = toolJoin(base: sourceDirectory, path: "main.joyeer")?
+    let ignore = toolJoin(base: directory, path: ".gitignore")?
+    // Package names can contain '-', logical module names cannot. A fixed
+    // package-local logical identity avoids an undocumented name conversion.
+    let contents = "schema-version = 1\n\n[package]\nname = '" + name +
+        "'\nversion = '0.1.0'\n\n[[modules]]\nname = 'app.main'\n" +
+        "sources = ['src/main.joyeer']\ndependencies = []\n\n[[targets]]\nname = '" +
+        name + "'\nkind = 'bin'\nmodule = 'app.main'\n"
+    initWrite(path: manifest, contents: contents)?
+    match createDirectory(path: sourceDirectory) {
+        .Ok(_) => {},
+        .Err(error) => {
+            return .Err(ToolError(message: "cannot exclusively create source directory '" + sourceDirectory +
+                "': " + fileSystemMessage(error: error), pos: -1))
+        },
+    }
+    initWrite(path: source, contents: "func main() {\n    print(value: \"Hello, Joyeer!\")\n}\n")?
+    initWrite(path: ignore, contents: "/target/\n")?
+    return .Ok(())
+}
+
+func initializeProject(options: borrowing CliOptions): Result<Int, ToolError> {
+    let directory = trimDirectoryPath(path: options.directory)
+    let parent = pathDirectory(path: directory)
+    // Do not create ancestors. A missing parent is a failure, not mkdir -p.
+    requireDirectory(path: parent)?
+    match createDirectory(path: directory) {
+        .Ok(_) => {},
+        .Err(error) => match error {
+            .AlreadyExists(_) => { requireDirectory(path: directory)? },
+            .InvalidPath(code) => { return .Err(ToolError(message: "cannot initialize '" + directory + "': " + fileSystemMessage(error: .InvalidPath(code)), pos: -1)) },
+            .NotFound(code) => { return .Err(ToolError(message: "cannot initialize '" + directory + "': " + fileSystemMessage(error: .NotFound(code)), pos: -1)) },
+            .PermissionDenied(code) => { return .Err(ToolError(message: "cannot initialize '" + directory + "': " + fileSystemMessage(error: .PermissionDenied(code)), pos: -1)) },
+            .NotDirectory(code) => { return .Err(ToolError(message: "cannot initialize '" + directory + "': " + fileSystemMessage(error: .NotDirectory(code)), pos: -1)) },
+            .IsDirectory(code) => { return .Err(ToolError(message: "cannot initialize '" + directory + "': " + fileSystemMessage(error: .IsDirectory(code)), pos: -1)) },
+            .Other(code) => { return .Err(ToolError(message: "cannot initialize '" + directory + "': " + fileSystemMessage(error: .Other(code)), pos: -1)) },
+        },
+    }
+    let names = match listDirectory(path: directory) {
+        .Ok(entries) => entries,
+        .Err(error) => {
+            return .Err(ToolError(message: "cannot inspect initialization destination '" + directory +
+                "': " + fileSystemMessage(error: error) + "; destination left untouched", pos: -1))
+        },
+    }
+    if names.count != 0 {
+        return .Err(ToolError(message: "init requires an empty directory; existing contents left untouched: " + directory, pos: -1))
+    }
+    match initFiles(directory: directory, name: options.name) {
+        .Ok(_) => {},
+        .Err(error) => {
+            return .Err(ToolError(message: "partial initialization of '" + directory + "': " +
+                error.message + "; created files were retained, with no recursive rollback", pos: -1))
+        },
+    }
+    toolStderr(contents: "joypm: initialized package '" + options.name + "' in '" + directory + "'\n")?
+    return .Ok(0)
+}

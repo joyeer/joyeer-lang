@@ -3,6 +3,7 @@
         "*.joyeer": "plaintext"
     },
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "cmake.useCMakePresets": "always",
     "workbench.editorAssociations": {
         "*.md": "vscode.markdown.preview.editor"
     },

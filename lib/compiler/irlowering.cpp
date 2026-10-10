@@ -1,4 +1,5 @@
 #include "joyeer/compiler/irlowering.h"
+#include "joyeer/compiler/hostbuiltins.h"
 
 #include <algorithm>
 #include <cassert>
@@ -37,12 +38,14 @@ public:
     Result build(
             const typing::TypeCheckedModel::Ptr& checkedModel,
             std::string sourceName,
-            std::optional<ir::SourceInfo> sourceInfo) {
+            std::optional<ir::SourceInfo> sourceInfo,
+            std::vector<ir::SourceInfo> sources) {
         assert(checkedModel != nullptr);
         model = checkedModel;
         module = std::make_shared<ir::Module>();
         module->sourceName = std::move(sourceName);
         module->sourceInfo = std::move(sourceInfo);
+        module->sourceFiles = std::move(sources);
 
         snapshotTypes();
         collectAggregateDefinitions();
@@ -83,6 +86,13 @@ private:
         std::vector<Cleanup> cleanups;
     };
 
+    struct LoopContext {
+        ir::BlockId header;
+        ir::BlockId exit;
+        size_t scopeDepth;
+        bool hasBreak = false;
+    };
+
     typing::TypeCheckedModel::Ptr model;
     std::shared_ptr<ir::Module> module;
     std::vector<Diagnostic> diagnostics;
@@ -93,6 +103,7 @@ private:
     std::unordered_map<ir::ValueId, ValueOwnership> ownership;
     std::unordered_set<ir::ValueId> liveOwnedTemporaries;
     std::vector<ScopeFrame> scopes;
+    std::vector<LoopContext> loops;
     ir::FunctionId currentFunctionId = ir::invalidFunctionId;
     ir::BlockId currentBlockId = ir::invalidBlockId;
     ir::ValueId nextValue = 0;
@@ -105,7 +116,7 @@ private:
     std::optional<ir::DebugScopeId> ensureDebugScope(
             semantic::ScopeId semanticScopeId,
             ir::FunctionId functionId) {
-        if (!module->sourceInfo.has_value()) return std::nullopt;
+        if (module->sourceFile(0) == nullptr) return std::nullopt;
         const auto existing = debugScopes.find(semanticScopeId);
         if (existing != debugScopes.end()) return existing->second;
 
@@ -160,7 +171,7 @@ private:
             semantic::SymbolId symbolId,
             ir::FunctionId functionId,
             std::optional<uint32_t> parameterIndex = std::nullopt) {
-        if (!module->sourceInfo.has_value()) return std::nullopt;
+        if (module->sourceFile(0) == nullptr) return std::nullopt;
         const auto existing = debugVariables.find(symbolId);
         if (existing != debugVariables.end()) return existing->second;
 
@@ -368,6 +379,10 @@ private:
                 type->symbol,
                 type->arguments,
             });
+            const auto* symbol = model->semanticModel()->symbol(type->symbol);
+            if (symbol != nullptr && symbol->declaration.has_value()) {
+                module->types.back().declarationSpan = symbol->span;
+            }
         }
     }
 
@@ -510,6 +525,7 @@ private:
         collectPrint();
         collectReadFile();
         collectByteConversions();
+        collectHostFunctions();
         const auto& semanticModel = *model->semanticModel();
         const auto& root = semanticModel.root();
         if (root == nullptr) return;
@@ -579,6 +595,37 @@ private:
         module->functions.push_back(std::move(function));
     }
 
+    void collectHostFunctions() {
+        const auto& semanticModel = *model->semanticModel();
+        const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
+        assert(prelude != nullptr);
+        for (const auto& descriptor : hostbuiltins::functions) {
+            const auto found = prelude->values.find(std::string(descriptor.name));
+            assert(found != prelude->values.end());
+            const auto* signature = model->callable(found->second);
+            assert(signature != nullptr &&
+                   signature->parameters.size() == descriptor.parameters.size());
+            ir::Function function;
+            function.id = static_cast<ir::FunctionId>(module->functions.size());
+            function.symbol = found->second;
+            function.name = descriptor.name;
+            for (size_t index = 0; index < signature->parameters.size(); ++index) {
+                function.parameters.push_back(ir::Parameter {
+                    ir::Value {
+                        static_cast<ir::ValueId>(index), signature->parameters[index],
+                        ir::ValueCategory::value,
+                    },
+                    std::nullopt, std::string(descriptor.parameters[index].name), false, {},
+                });
+            }
+            function.resultType = signature->result;
+            function.returnsValue = true;
+            function.isExternal = true;
+            functions.emplace(found->second, function.id);
+            module->functions.push_back(std::move(function));
+        }
+    }
+
     void collectByteConversions() {
         const auto& semanticModel = *model->semanticModel();
         const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
@@ -629,7 +676,8 @@ private:
         function.symbol = symbol;
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
-        if (module->sourceInfo.has_value()) {
+        function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
+        if (module->sourceFile(0) != nullptr) {
             function.debugScope = debugScopeForNode(declaration, function.id);
             function.debugLocation = ir::DebugLocation {
                 declaration->span,
@@ -816,6 +864,10 @@ private:
                 lowerWhile(std::static_pointer_cast<syntax::WhileStmtSyntax>(item));
                 result.reset();
                 unitResult = true;
+            } else if (item->kind == syntax::Kind::breakStmt ||
+                       item->kind == syntax::Kind::continueStmt) {
+                lowerLoopControl(item);
+                result.reset();
             } else if (isExpressionKind(item->kind)) {
                 result = lowerExpression(std::static_pointer_cast<syntax::ExprSyntax>(item));
                 unitResult = false;
@@ -927,6 +979,9 @@ private:
             case syntax::Kind::accessExpr:
                 return lowerExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::propagateExpr:
+                return lowerPropagation(
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression));
             case syntax::Kind::binaryExpr:
                 return lowerBinary(std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
             case syntax::Kind::assignmentExpr:
@@ -1038,8 +1093,22 @@ private:
 
     std::optional<ir::Value> lowerPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
         const auto operand = lowerExpression(expression->operand);
+        if (currentBlockTerminated()) return std::nullopt;
         const auto type = model->typeOf(expression);
         if (!operand.has_value() || !type.has_value()) return std::nullopt;
+        if (expression->op != nullptr && expression->op->kind == bang) {
+            auto constant = makeInstruction(ir::Opcode::booleanConstant, expression->op->span);
+            constant.integerValue = 0;
+            constant.result = makeValue(*type, ir::ValueCategory::value);
+            const auto falseValue = *constant.result;
+            emit(std::move(constant));
+            return emitValue(
+                    ir::Opcode::equal,
+                    *type,
+                    ir::ValueCategory::value,
+                    { operand->id, falseValue.id },
+                    expression->span);
+        }
         if (expression->op == nullptr || expression->op->kind != minus) {
             report(
                     DiagnosticId::unsupportedSyntax,
@@ -1061,8 +1130,9 @@ private:
     }
 
     std::optional<ir::Value> lowerBinary(const syntax::BinaryExprSyntax::Ptr& expression) {
-        if (expression->op != nullptr && expression->op->kind == andAnd) {
-            return lowerLogicalAnd(expression);
+        if (expression->op != nullptr &&
+            (expression->op->kind == andAnd || expression->op->kind == orOr)) {
+            return lowerLogical(expression);
         }
         auto left = lowerExpression(expression->left);
         if (!left.has_value()) return std::nullopt;
@@ -1090,8 +1160,9 @@ private:
                 expression->span);
     }
 
-    std::optional<ir::Value> lowerLogicalAnd(
+    std::optional<ir::Value> lowerLogical(
             const syntax::BinaryExprSyntax::Ptr& expression) {
+        const auto isAnd = expression->op->kind == andAnd;
         pushScope();
         const auto left = lowerExpression(expression->left);
         if (currentBlockTerminated()) {
@@ -1110,9 +1181,13 @@ private:
                 std::nullopt,
                 true);
         emitRawStore(*left, resultAddress, expression->left->span, std::nullopt, true);
-        const auto rightBlock = createBlock("and.rhs");
-        const auto mergeBlock = createBlock("and.merge");
-        emitConditionalBranch(*left, rightBlock, mergeBlock, expression->left->span);
+        const auto rightBlock = createBlock(isAnd ? "and.rhs" : "or.rhs");
+        const auto mergeBlock = createBlock(isAnd ? "and.merge" : "or.merge");
+        emitConditionalBranch(
+                *left,
+                isAnd ? rightBlock : mergeBlock,
+                isAnd ? mergeBlock : rightBlock,
+                expression->left->span);
 
         switchToBlock(rightBlock);
         pushScope();
@@ -1128,7 +1203,7 @@ private:
             report(
                     DiagnosticId::missingType,
                     expression->right->span,
-                    "logical-and right operand did not lower a Boolean value");
+                    "logical right operand did not lower a Boolean value");
             emit(makeInstruction(ir::Opcode::unreachable, expression->right->span, true));
         }
 
@@ -1146,6 +1221,8 @@ private:
             case plus: return ir::Opcode::add;
             case minus: return ir::Opcode::subtract;
             case multiply: return ir::Opcode::multiply;
+            case divide: return ir::Opcode::divide;
+            case percentage: return ir::Opcode::remainder;
             case less: return ir::Opcode::less;
             case lessEqual: return ir::Opcode::lessEqual;
             case greater: return ir::Opcode::greater;
@@ -1534,6 +1611,153 @@ private:
         return emitEnumConstruction(type, caseSymbol, payloads, span);
     }
 
+    ir::Value emitExtractPayload(
+            typing::TypeId payloadType,
+            ir::ValueId operandId,
+            semantic::SymbolId caseSymbol,
+            int64_t payloadIndex,
+            SourceSpan span) {
+        auto instruction = makeInstruction(ir::Opcode::extractPayload, span);
+        instruction.result = makeValue(payloadType, ir::ValueCategory::value);
+        instruction.operands = { operandId };
+        instruction.symbol = caseSymbol;
+        instruction.integerValue = payloadIndex;
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        return result;
+    }
+
+    std::optional<ir::Value> lowerPropagation(
+            const syntax::PropagateExprSyntax::Ptr& expression) {
+        auto operand = lowerExpression(expression->operand);
+        const auto resultType = model->typeOf(expression);
+        if (!operand.has_value() || !resultType.has_value()) return std::nullopt;
+        const auto* operandType = model->types().type(operand->type);
+        const bool isResult = operandType != nullptr &&
+                operandType->kind == typing::TypeKind::result;
+        const auto successCase = findEnumCase(
+                operand->type, isResult ? "Ok" : "Some");
+        const auto failureCase = findEnumCase(
+                operand->type, isResult ? "Err" : "None");
+        const auto returnedFailureCase = findEnumCase(
+                currentFunction().resultType, isResult ? "Err" : "None");
+        if (operandType == nullptr || !successCase.has_value() ||
+            !failureCase.has_value() || !returnedFailureCase.has_value()) {
+            report(
+                    DiagnosticId::missingSymbol,
+                    expression->span,
+                    "propagation requires matching concrete enum cases");
+            return std::nullopt;
+        }
+
+        operand = acquireOwned(*operand, expression->span);
+        if (!operand.has_value()) return std::nullopt;
+        const bool neverSuccess = *resultType == model->types().neverType();
+        const bool neverFailure = isResult &&
+                operandType->arguments[1] == model->types().neverType();
+        const bool hasPayload = *resultType != model->types().voidType() && !neverSuccess;
+        const auto resultAddress = hasPayload
+                ? std::optional<ir::Value>(emitValue(
+                        ir::Opcode::stackAllocate,
+                        *resultType,
+                        ir::ValueCategory::address,
+                        {},
+                        expression->span))
+                : std::nullopt;
+        const auto successBlock = createBlock("propagate.success");
+        const auto failureBlock = createBlock("propagate.failure");
+        const auto mergeBlock = neverSuccess
+                ? std::nullopt
+                : std::optional<ir::BlockId>(createBlock("propagate.merge"));
+        auto dispatch = makeInstruction(ir::Opcode::switchPattern, expression->span);
+        dispatch.operands = { operand->id };
+        for (const auto [caseSymbol, target] :
+             { std::pair { *successCase, successBlock },
+               std::pair { *failureCase, failureBlock } }) {
+            const auto* definition = enumCaseDefinition(operand->type, caseSymbol);
+            if (definition == nullptr) {
+                report(
+                        DiagnosticId::missingSymbol,
+                        expression->span,
+                        "propagation case has no concrete definition");
+                return std::nullopt;
+            }
+            ir::Pattern pattern;
+            pattern.kind = ir::PatternKind::enumCase;
+            pattern.type = operand->type;
+            pattern.symbol = caseSymbol;
+            for (const auto payloadType : definition->payloadTypes) {
+                ir::Pattern wildcard;
+                wildcard.kind = ir::PatternKind::wildcard;
+                wildcard.type = payloadType;
+                pattern.payloads.push_back(std::move(wildcard));
+            }
+            dispatch.switchCases.push_back(ir::SwitchCase { pattern, target });
+        }
+        emit(std::move(dispatch));
+
+        switchToBlock(failureBlock);
+        if (neverFailure) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+        } else {
+            std::vector<ir::Value> failurePayloads;
+            if (isResult) {
+                const auto error = emitExtractPayload(
+                        operandType->arguments[1],
+                        operand->id,
+                        *failureCase,
+                        0,
+                        expression->span);
+                if (requiresDestroy(error.type)) recordValue(error, ValueOwnership::owned);
+                failurePayloads.push_back(error);
+            }
+            const auto failure = emitEnumConstruction(
+                    currentFunction().resultType,
+                    *returnedFailureCase,
+                    failurePayloads,
+                    expression->span);
+            if (!failure.has_value()) return std::nullopt;
+            emitReturnValue(*failure, expression->span, expression->span);
+        }
+
+        switchToBlock(successBlock);
+        if (neverSuccess) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span));
+            return std::nullopt;
+        }
+        const auto success = emitExtractPayload(
+                *resultType,
+                operand->id,
+                *successCase,
+                0,
+                expression->span);
+        if (requiresDestroy(success.type)) recordValue(success, ValueOwnership::owned);
+        if (resultAddress.has_value()) {
+            const auto owned = acquireOwned(success, expression->span);
+            if (!owned.has_value()) return std::nullopt;
+            emitRawStore(*owned, *resultAddress, expression->span);
+        }
+        emitBranch(*mergeBlock, expression->span);
+
+        switchToBlock(*mergeBlock);
+        if (!resultAddress.has_value()) return emitUnit(expression->span);
+        if (requiresDestroy(*resultType)) {
+            registerOwnedStorage(*resultAddress);
+            return emitValue(
+                    ir::Opcode::take,
+                    *resultType,
+                    ir::ValueCategory::value,
+                    { resultAddress->id },
+                    expression->span);
+        }
+        return emitValue(
+                ir::Opcode::load,
+                *resultType,
+                ir::ValueCategory::value,
+                { resultAddress->id },
+                expression->span);
+    }
+
     std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
         const auto scrutinee = lowerExpression(expression->scrutinee);
         const auto resultType = model->typeOf(expression);
@@ -1732,17 +1956,18 @@ private:
         if (!caseSymbol.has_value()) return;
         for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
             const auto& payloadPattern = enumPattern->arguments[index]->pattern;
+            if (payloadPattern->kind != syntax::Kind::bindingPattern &&
+                payloadPattern->kind != syntax::Kind::enumCasePattern) {
+                continue;
+            }
             const auto payloadType = model->typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
-            auto instruction = makeInstruction(
-                    ir::Opcode::extractPayload,
+            const auto payload = emitExtractPayload(
+                    *payloadType,
+                    value.id,
+                    *caseSymbol,
+                    static_cast<int64_t>(index),
                     payloadPattern->span);
-            instruction.result = makeValue(*payloadType, ir::ValueCategory::value);
-            instruction.operands = { value.id };
-            instruction.symbol = *caseSymbol;
-            instruction.integerValue = static_cast<int64_t>(index);
-            const auto payload = *instruction.result;
-            emit(std::move(instruction));
             bindPattern(payloadPattern, payload);
         }
     }
@@ -1826,10 +2051,26 @@ private:
                 expression->span);
     }
 
+    void lowerLoopControl(const syntax::NodePtr& statement) {
+        if (loops.empty()) {
+            report(DiagnosticId::unsupportedSyntax, statement->span,
+                    "loop control requires an enclosing loop");
+            return;
+        }
+        auto& loop = loops.back();
+        for (size_t depth = scopes.size(); depth > loop.scopeDepth; --depth) {
+            emitScopeCleanup(scopes[depth - 1], statement->span, false);
+        }
+        const auto isBreak = statement->kind == syntax::Kind::breakStmt;
+        if (isBreak) loop.hasBreak = true;
+        emitBranch(isBreak ? loop.exit : loop.header, statement->span);
+    }
+
     void lowerWhile(const syntax::WhileStmtSyntax::Ptr& statement) {
         const auto headerBlock = createBlock("while.header");
         const auto bodyBlock = createBlock("while.body");
         const auto exitBlock = createBlock("while.exit");
+        loops.push_back({ headerBlock, exitBlock, scopes.size() });
         emitBranch(headerBlock, statement->span);
 
         switchToBlock(headerBlock);
@@ -1840,7 +2081,10 @@ private:
             switchToBlock(bodyBlock);
             emit(makeInstruction(ir::Opcode::unreachable, statement->body->span, true));
             switchToBlock(exitBlock);
-            emit(makeInstruction(ir::Opcode::unreachable, statement->span, true));
+            if (!loops.back().hasBreak) {
+                emit(makeInstruction(ir::Opcode::unreachable, statement->span, true));
+            }
+            loops.pop_back();
             return;
         }
         if (condition.has_value()) {
@@ -1870,6 +2114,7 @@ private:
         }
 
         switchToBlock(exitBlock);
+        loops.pop_back();
     }
 
     std::optional<ir::Value> lowerCall(const syntax::CallExprSyntax::Ptr& expression) {
@@ -1899,6 +2144,11 @@ private:
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "append") {
             return lowerArrayAppend(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "get") {
+            return lowerDictionaryGet(expression);
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
@@ -1968,6 +2218,10 @@ private:
         }
         const auto result = instruction.result;
         emit(std::move(instruction));
+        if (type == model->types().neverType()) {
+            emit(makeInstruction(ir::Opcode::unreachable, expression->span, true));
+            return std::nullopt;
+        }
         if (result.has_value()) {
             recordValue(
                 *result,
@@ -1976,6 +2230,50 @@ private:
                     : ValueOwnership::trivial);
         }
         if (type == model->types().voidType()) return emitUnit(expression->span);
+        return result;
+    }
+
+    std::optional<ir::Value> lowerDictionaryGet(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            expression->arguments.size() != 1) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Dict.get requires one key argument");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto dictionary = lowerExpression(member->base);
+        const auto* dictionaryType = dictionary.has_value()
+                ? model->types().type(dictionary->type)
+                : nullptr;
+        if (!dictionary.has_value() || dictionaryType == nullptr ||
+            dictionaryType->kind != typing::TypeKind::dictionary ||
+            dictionaryType->arguments.size() != 2) {
+            report(
+                    DiagnosticId::missingType,
+                    expression->span,
+                    "Dict.get receiver has no concrete key/value types");
+            return std::nullopt;
+        }
+        auto key = lowerExpression(expression->arguments[0]->value);
+        const auto resultType = model->typeOf(expression);
+        if (!key.has_value() || !resultType.has_value()) return std::nullopt;
+        key = coerce(
+                *key,
+                dictionaryType->arguments[0],
+                expression->arguments[0]->value->span);
+        if (!key.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::dictionaryGet, expression->span);
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        instruction.operands = { dictionary->id, key->id };
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
         return result;
     }
 
@@ -2145,17 +2443,22 @@ private:
         if (!value.has_value()) return;
         value = coerce(*value, currentFunction().resultType, expression->value->span);
         if (!value.has_value()) return;
-        if (requiresDestroy(value->type)) {
-            value = acquireOwned(*value, expression->value->span);
-            if (!value.has_value()) return;
+        emitReturnValue(*value, expression->span, expression->value->span);
+    }
+
+    void emitReturnValue(ir::Value value, SourceSpan span, SourceSpan valueSpan) {
+        if (requiresDestroy(value.type)) {
+            const auto owned = acquireOwned(value, valueSpan);
+            if (!owned.has_value()) return;
+            value = *owned;
         }
-        emitAllScopeCleanupForReturn(expression->span);
+        emitAllScopeCleanupForReturn(span);
         if (currentFunction().resultType == model->types().voidType()) {
-            emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
+            emit(makeInstruction(ir::Opcode::returnVoid, span));
             return;
         }
-        auto instruction = makeInstruction(ir::Opcode::returnValue, expression->span);
-        instruction.operands = { value->id };
+        auto instruction = makeInstruction(ir::Opcode::returnValue, span);
+        instruction.operands = { value.id };
         emit(std::move(instruction));
     }
 
@@ -2273,7 +2576,7 @@ private:
             bool implicitCode = false) const {
         auto instruction = ir::Instruction { opcode };
         instruction.span = span;
-        if (module->sourceInfo.has_value()) {
+        if (module->sourceFile(0) != nullptr) {
             instruction.debugLocation = ir::DebugLocation {
                 span,
                 implicitCode,
@@ -2327,6 +2630,7 @@ private:
             case syntax::Kind::parenthesizedExpr:
             case syntax::Kind::prefixExpr:
             case syntax::Kind::accessExpr:
+            case syntax::Kind::propagateExpr:
             case syntax::Kind::binaryExpr:
             case syntax::Kind::assignmentExpr:
             case syntax::Kind::memberExpr:
@@ -2351,8 +2655,10 @@ private:
 Result Lowerer::lower(
         const typing::TypeCheckedModel::Ptr& model,
         std::string sourceName,
-        std::optional<ir::SourceInfo> sourceInfo) const {
-    return Builder().build(model, std::move(sourceName), std::move(sourceInfo));
+        std::optional<ir::SourceInfo> sourceInfo,
+        std::vector<ir::SourceInfo> sources) const {
+    return Builder().build(
+            model, std::move(sourceName), std::move(sourceInfo), std::move(sources));
 }
 
 const char* diagnosticName(DiagnosticId id) {

@@ -24,6 +24,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::add:
         case Opcode::subtract:
         case Opcode::multiply:
+        case Opcode::divide:
+        case Opcode::remainder:
         case Opcode::less:
         case Opcode::lessEqual:
         case Opcode::greater:
@@ -34,6 +36,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
+        case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
         case Opcode::extractField:
         case Opcode::constructEnum:
@@ -198,8 +201,7 @@ VerificationResult Verifier::verify(const Module& module) const {
         });
     };
 
-    if (module.sourceInfo.has_value()) {
-        const auto& source = *module.sourceInfo;
+    auto verifySourceInfo = [&report](const SourceInfo& source) {
         if (source.byteLength > std::numeric_limits<uint32_t>::max()) {
             report(
                     VerificationErrorId::invalidSourceLocation,
@@ -244,6 +246,11 @@ VerificationResult Verifier::verify(const Module& module) const {
                 break;
             }
         }
+    };
+    if (!module.sourceFiles.empty()) {
+        for (const auto& source : module.sourceFiles) verifySourceInfo(source);
+    } else if (module.sourceInfo.has_value()) {
+        verifySourceInfo(*module.sourceInfo);
     } else {
         const auto hasDebugLocations = !module.debugScopes.empty() ||
                 !module.debugVariables.empty() || std::any_of(
@@ -283,13 +290,23 @@ VerificationResult Verifier::verify(const Module& module) const {
             std::optional<BlockId> block,
             std::optional<size_t> instruction,
             const std::string& owner) {
-        if (!module.sourceInfo.has_value()) {
+        if (module.sourceFile(0) == nullptr) {
             return;
         }
-        const auto& source = *module.sourceInfo;
+        const auto* source = module.sourceFile(location.span.sourceId);
+        if (source == nullptr) {
+            report(
+                    VerificationErrorId::invalidSourceLocation,
+                    function,
+                    block,
+                    instruction,
+                    owner + " debug span references unknown source file " +
+                            std::to_string(location.span.sourceId));
+            return;
+        }
         const auto end = static_cast<uint64_t>(location.span.offset) +
                 static_cast<uint64_t>(location.span.length);
-        if (location.span.offset > source.byteLength || end > source.byteLength) {
+        if (location.span.offset > source->byteLength || end > source->byteLength) {
             report(
                     VerificationErrorId::invalidSourceLocation,
                     function,
@@ -301,6 +318,14 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     std::unordered_map<TypeId, const TypeName*> types;
     for (const auto& type : module.types) {
+        if (type.declarationSpan.has_value()) {
+            verifyDebugLocation(
+                    DebugLocation { *type.declarationSpan },
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "type '" + type.name + "'");
+        }
         if (!types.emplace(type.id, &type).second) {
             report(
                     VerificationErrorId::duplicateId,
@@ -1302,6 +1327,25 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     "destroy requires addressable nontrivial storage");
                         }
                         break;
+                    case Opcode::divide:
+                    case Opcode::remainder:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value()) {
+                            const auto* type = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            if (operands[0]->category != ValueCategory::value ||
+                                operands[1]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                operands[0]->type != operands[1]->type ||
+                                instruction.result->type != operands[0]->type ||
+                                type == nullptr || type->kind != typing::TypeKind::integer) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "division and remainder require Int values and an Int result");
+                            }
+                        }
+                        break;
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
@@ -1508,6 +1552,37 @@ VerificationResult Verifier::verify(const Module& module) const {
                                         block.id,
                                         location,
                                         "dictionary set requires a dictionary address and matching key/value");
+                            }
+                        }
+                        break;
+                    case Opcode::dictionaryGet:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value()) {
+                            const auto* dictionaryType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            const auto* resultType = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type)
+                                    : nullptr;
+                            const auto matches =
+                                    operands[0]->category == ValueCategory::value &&
+                                    operands[1]->category == ValueCategory::value &&
+                                    instruction.result->category == ValueCategory::value &&
+                                    dictionaryType != nullptr &&
+                                    dictionaryType->kind == typing::TypeKind::dictionary &&
+                                    dictionaryType->arguments.size() == 2 &&
+                                    dictionaryType->arguments[0] == operands[1]->type &&
+                                    resultType != nullptr &&
+                                    resultType->kind == typing::TypeKind::optional &&
+                                    resultType->arguments.size() == 1 &&
+                                    resultType->arguments[0] == dictionaryType->arguments[1];
+                            if (!matches) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "dictionary get requires a dictionary value and matching key, producing Optional<V>");
                             }
                         }
                         break;
@@ -1853,6 +1928,8 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::add: return "add";
         case Opcode::subtract: return "sub";
         case Opcode::multiply: return "mul";
+        case Opcode::divide: return "div";
+        case Opcode::remainder: return "rem";
         case Opcode::less: return "lt";
         case Opcode::lessEqual: return "le";
         case Opcode::greater: return "gt";
@@ -1866,6 +1943,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::arrayAppend: return "array_append";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
+        case Opcode::dictionaryGet: return "dictionary_get";
         case Opcode::fieldAddress: return "field_addr";
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
@@ -1949,6 +2027,11 @@ std::string dump(const Module& module) {
 
     std::ostringstream out;
     out << "module \"" << escape(module.sourceName) << "\" {\n";
+    for (size_t index = 0; index < module.sourceFiles.size(); ++index) {
+        const auto& source = module.sourceFiles[index];
+        out << "  source #" << index << " \"" << escape(source.fileName)
+            << "\" directory=\"" << escape(source.directory) << "\"\n";
+    }
     for (const auto* type : sortedTypes) {
         out << "  type !" << type->id << " = \"" << escape(type->name) << "\"\n";
     }
@@ -1995,7 +2078,9 @@ std::string dump(const Module& module) {
         if (scope->semanticScope.has_value()) {
             out << " semantic-scope#" << *scope->semanticScope;
         }
-        out << " @" << scope->span.offset << ':' << scope->span.length << '\n';
+        out << " @" << scope->span.offset << ':' << scope->span.length;
+        if (scope->span.sourceId != 0) out << " source#" << scope->span.sourceId;
+        out << '\n';
     }
     for (const auto* variable : sortedDebugVariables) {
         out << "  debug_var #" << variable->id << ' ';
@@ -2012,7 +2097,9 @@ std::string dump(const Module& module) {
         }
         if (variable->isMutable) out << " var";
         if (variable->symbol.has_value()) out << " symbol#" << *variable->symbol;
-        out << " @" << variable->span.offset << ':' << variable->span.length << '\n';
+        out << " @" << variable->span.offset << ':' << variable->span.length;
+        if (variable->span.sourceId != 0) out << " source#" << variable->span.sourceId;
+        out << '\n';
     }
     if ((!sortedStructures.empty() || !sortedEnumerations.empty()) &&
         (!sortedDebugScopes.empty() || !sortedDebugVariables.empty() ||
@@ -2044,6 +2131,7 @@ std::string dump(const Module& module) {
             continue;
         }
         if (function.debugScope.has_value()) out << " debug_scope#" << *function.debugScope;
+        if (!function.isRootModule) out << " dependency";
         out << " {\n";
         for (const auto& binding : function.entryDebugVariableBindings) {
             out << "    debug_bind #" << binding.variable << " -> "
@@ -2092,9 +2180,12 @@ std::string dump(const Module& module) {
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
+                    case Opcode::dictionaryGet:
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
+                    case Opcode::divide:
+                    case Opcode::remainder:
                     case Opcode::less:
                     case Opcode::lessEqual:
                     case Opcode::greater:
@@ -2174,7 +2265,11 @@ std::string dump(const Module& module) {
                     instruction.debugLocation->scope.has_value()) {
                     out << " scope#" << *instruction.debugLocation->scope;
                 }
-                out << " @" << instruction.span.offset << ':' << instruction.span.length << '\n';
+                out << " @" << instruction.span.offset << ':' << instruction.span.length;
+                if (instruction.span.sourceId != 0) {
+                    out << " source#" << instruction.span.sourceId;
+                }
+                out << '\n';
                 for (const auto& binding : instruction.debugVariableBindings) {
                     out << "        debug_bind #" << binding.variable << " -> "
                         << valueName(binding.address) << '\n';

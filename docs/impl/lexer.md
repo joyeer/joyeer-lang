@@ -19,12 +19,18 @@ The lexer decides token boundaries, literal decoding, trivia, and source
 spans. Pattern structure, precedence, name binding, and types belong to later
 stages.
 
+Each explicitly supplied source file is lexed independently, even when
+several files belong to one named compilation unit. The lexer does not
+discover sibling files or derive a namespace from a directory. Dots in an
+import name remain ordinary tokens; the complete logical module identity is
+resolved later.
+
 ## Token model
 
 Each token carries:
 
 - an explicit `TokenKind`;
-- `SourceSpan { offset, length }` in UTF-8 bytes;
+- `SourceSpan { offset, length, sourceId }`, with file-local UTF-8 byte offsets;
 - zero-based line and byte-column values;
 - `startsLine`, derived from skipped newline trivia;
 - `rawValue`, plus `intValue` for integer and byte literals.
@@ -42,20 +48,27 @@ create an infinite loop.
 
 The lexer recognizes terminals needed by the current parser:
 
-- identifiers, wildcard `_`, and current/deferred keywords;
+- identifiers, wildcard `_`, and current/deferred keywords, including supported
+  `break`, `continue`, `import`, `public`, `internal`, and `private` terminals;
 - decimal `Int` literals with `int64_t` overflow diagnostics;
 - strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, and
   `\\`;
 - strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
   literals additionally support `\'`, which is not a supported string escape;
 - delimiters, labels, member access, `=>`, `?`, and `&`;
-- assignment, supported arithmetic/comparison operators, and `&&`;
+- assignment, arithmetic/comparison operators including `/` and `%`, logical
+  `&&` and `||`, and `!` for prefix negation;
 - line comments and nested block comments.
 
 The longest valid terminal wins. Unsupported compound, shift, range,
 coalescing, optional-chain, interpolation, float/base-prefixed numeric, and
 other deferred forms are consumed as coherent invalid tokens where possible,
 then reported with stable `lexer.*` IDs.
+
+The lexer emits `!` without deciding whether it is prefix or postfix. The
+parser accepts prefix negation and rejects postfix force unwrap. `break` and
+`continue` are no longer deferred words; labeled jumps and `for-in` remain
+outside the implemented grammar.
 
 ## Invalid input and recovery
 

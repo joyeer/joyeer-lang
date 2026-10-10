@@ -1,0 +1,4 @@
+func wrong(value: Result<Int, String>): Result<Int, String?> {
+    let answer = value?
+    return .Ok(answer)
+}

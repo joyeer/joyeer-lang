@@ -1,0 +1,228 @@
+struct PlannedModule {
+    let name: String
+    let sources: [String]
+}
+
+struct BuildPlan {
+    let targetName: String
+    let rootModule: String
+    let modules: [PlannedModule]
+    let profile: String
+    let native: Bool
+    let packageDirectory: String
+    let artifactParent: String
+}
+
+struct CompilerInvocation {
+    let executable: String
+    let arguments: [String]
+    let workingDirectory: String
+}
+
+private func plannerModuleIndex(modules: borrowing [ModuleSpec], name: String): Int {
+    var index = 0
+    while index < modules.count {
+        if modules[index].name == name { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+private func sortTargetIndexes(targets: borrowing [TargetSpec], indexes: inout [Int]) {
+    var index = 1
+    while index < indexes.count {
+        let current = indexes[index]
+        let name = targets[current].name
+        var destination = index
+        while destination > 0 {
+            let previous = indexes[destination - 1]
+            if !(name < targets[previous].name) { break }
+            &indexes[destination] = previous
+            destination = destination - 1
+        }
+        &indexes[destination] = current
+        index = index + 1
+    }
+}
+
+func selectTargets(manifest: borrowing PackageManifest, options: borrowing CliOptions): Result<[Int], ToolError> {
+    var selected: [Int] = []
+    var index = 0
+    var found = false
+    while index < manifest.targets.count {
+        let name = manifest.targets[index].name
+        let kind = manifest.targets[index].kind
+        let requested = options.target.count == 0 || name == options.target
+        if requested {
+            if options.target.count != 0 { found = true }
+            let eligible = options.command == "check" ||
+                (options.command == "test" && kind == "test") ||
+                ((options.command == "build" || options.command == "run") && kind == "bin")
+            if eligible {
+                &selected.append(element: index)
+            } else if options.target.count != 0 {
+                return .Err(ToolError(message: "target '" + name + "' has kind '" + kind +
+                    "', which cannot be selected for " + options.command, pos: -1))
+            }
+        }
+        index = index + 1
+    }
+    if options.target.count != 0 && !found {
+        return .Err(ToolError(message: "unknown target '" + options.target + "' for " + options.command, pos: -1))
+    }
+    if options.command == "run" && selected.count != 1 {
+        return .Err(ToolError(message: "run requires exactly one bin target; select one with --target <name>", pos: -1))
+    }
+    sortTargetIndexes(targets: manifest.targets, indexes: &selected)
+    return .Ok(selected)
+}
+
+private func sortModuleIndexes(modules: borrowing [ModuleSpec], indexes: inout [Int]) {
+    var index = 1
+    while index < indexes.count {
+        let current = indexes[index]
+        let name = modules[current].name
+        var destination = index
+        while destination > 0 {
+            let previous = indexes[destination - 1]
+            if !(name < modules[previous].name) { break }
+            &indexes[destination] = previous
+            destination = destination - 1
+        }
+        &indexes[destination] = current
+        index = index + 1
+    }
+}
+
+private func moduleClosure(manifest: borrowing PackageManifest, root: String): Result<[Int], ToolError> {
+    let rootIndex = plannerModuleIndex(modules: manifest.modules, name: root)
+    if rootIndex < 0 {
+        return .Err(ToolError(message: "cannot plan unknown root module '" + root + "'", pos: -1))
+    }
+    var seen: [Bool] = []
+    var index = 0
+    while index < manifest.modules.count {
+        &seen.append(element: false)
+        index = index + 1
+    }
+    &seen[rootIndex] = true
+    var queue: [Int] = [rootIndex]
+    var cursor = 0
+    // The manifest parser validates the entire declared DAG. Mark on enqueue
+    // so diamonds visit once and the work list never exceeds the module count.
+    while cursor < queue.count {
+        let node = queue[cursor]
+        var edge = 0
+        while edge < manifest.modules[node].dependencies.count {
+            let name = manifest.modules[node].dependencies[edge]
+            let dependency = plannerModuleIndex(modules: manifest.modules, name: name)
+            if dependency < 0 {
+                return .Err(ToolError(message: "unknown dependency '" + name + "' while planning '" + root + "'",
+                    pos: manifest.modules[node].pos))
+            }
+            if !seen[dependency] {
+                &seen[dependency] = true
+                &queue.append(element: dependency)
+            }
+            edge = edge + 1
+        }
+        cursor = cursor + 1
+    }
+    sortModuleIndexes(modules: manifest.modules, indexes: &queue)
+    return .Ok(queue)
+}
+
+private func planSources(sources: borrowing [String], base: String): Result<[String], ToolError> {
+    let ordered = sortedStrings(values: sources)
+    var paths: [String] = []
+    var index = 0
+    while index < ordered.count {
+        let path = toolJoin(base: base, path: ordered[index])?
+        &paths.append(element: path)
+        index = index + 1
+    }
+    return .Ok(paths)
+}
+
+func planTarget(manifest: borrowing PackageManifest, options: borrowing CliOptions,
+    targetIndex: Int, base: String): Result<BuildPlan, ToolError> {
+    if targetIndex < 0 || targetIndex >= manifest.targets.count {
+        return .Err(ToolError(message: "internal invalid target index", pos: -1))
+    }
+    let name = manifest.targets[targetIndex].name
+    let root = manifest.targets[targetIndex].module
+    let closure = moduleClosure(manifest: manifest, root: root)?
+    var modules: [PlannedModule] = []
+    var index = 0
+    while index < closure.count {
+        let node = closure[index]
+        let moduleName = manifest.modules[node].name
+        let paths = planSources(sources: manifest.modules[node].sources, base: base)?
+        &modules.append(element: PlannedModule(name: moduleName, sources: paths))
+        index = index + 1
+    }
+    var profile = "debug"
+    if options.release { profile = "release" }
+    let native = options.command != "check"
+    var artifactParent = ""
+    if native {
+        let targetDirectory = toolJoin(base: base, path: "target")?
+        let profileDirectory = toolJoin(base: targetDirectory, path: profile)?
+        artifactParent = toolJoin(base: profileDirectory, path: name)?
+    }
+    return .Ok(BuildPlan(targetName: name, rootModule: root, modules: modules,
+        profile: profile, native: native, packageDirectory: base, artifactParent: artifactParent))
+}
+
+private func appendDependencyArguments(module: borrowing PlannedModule, arguments: inout [String]) {
+    var index = 0
+    while index < module.sources.count {
+        let source = module.name + "=" + module.sources[index]
+        &arguments.append(element: "--module-source")
+        &arguments.append(element: source)
+        index = index + 1
+    }
+}
+
+private func appendRootArguments(sources: borrowing [String], arguments: inout [String]) {
+    var index = 0
+    while index < sources.count {
+        let source = sources[index]
+        &arguments.append(element: source)
+        index = index + 1
+    }
+}
+
+func compilerInvocation(plan: borrowing BuildPlan, compiler: String, output: String): Result<CompilerInvocation, ToolError> {
+    if (plan.native && output.count == 0) || (!plan.native && output.count != 0) {
+        return .Err(ToolError(message: "internal invalid output for target '" + plan.targetName + "'", pos: -1))
+    }
+    var arguments: [String] = ["--module-name", plan.rootModule]
+    var rootIndex = -1
+    var index = 0
+    while index < plan.modules.count {
+        if plan.modules[index].name == plan.rootModule {
+            rootIndex = index
+        } else {
+            appendDependencyArguments(module: plan.modules[index], arguments: &arguments)
+        }
+        index = index + 1
+    }
+    if rootIndex < 0 {
+        return .Err(ToolError(message: "internal missing planned root for target '" + plan.targetName + "'", pos: -1))
+    }
+    if plan.profile == "release" {
+        &arguments.append(element: "-O2")
+        &arguments.append(element: "-g0")
+    } else {
+        &arguments.append(element: "-O0")
+        &arguments.append(element: "-gfull")
+    }
+    if plan.native {
+        &arguments.append(element: "-o")
+        &arguments.append(element: output)
+    }
+    &arguments.append(element: "--")
+    appendRootArguments(sources: plan.modules[rootIndex].sources, arguments: &arguments)
+    return .Ok(CompilerInvocation(executable: compiler, arguments: arguments, workingDirectory: "."))
+}

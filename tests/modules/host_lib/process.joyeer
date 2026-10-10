@@ -1,0 +1,4 @@
+public func childStatus(executable: String, directory: String): Result<ProcessStatus, ProcessError> {
+    let arguments: [String] = []
+    return runProcess(executable: executable, arguments: arguments, workingDirectory: directory)
+}

@@ -13,6 +13,8 @@ The parser converts the explicit token stream produced by the
 [lexer](lexer.md) into a syntax-only AST. Its current surface includes:
 
 - typed `func` declarations and mandatory call-site labels;
+- file-leading dotted module imports (without aliases or wildcards);
+- `public`, `internal`, and `private` top-level declarations and stored fields;
 - `let` / `var` bindings;
 - field-only `struct` declarations and memberwise construction;
 - payload-carrying `enum` declarations and construction;
@@ -23,6 +25,7 @@ The parser converts the explicit token stream produced by the
 - byte, integer, string, Boolean, and `nil` literals;
 - member access, calls, subscripts, arrays, dictionaries, `if`, `while`, and
   `return`;
+- unlabeled `break` and `continue` block statements;
 - implemented operator precedence and associativity;
 - recoverable syntax diagnostics with stable spans.
 
@@ -31,17 +34,26 @@ Dedicated syntax nodes distinguish them from parenthesized expressions.
 `Result<Void, E>` success is written `.Ok(())`; an empty enum payload clause
 is still rejected. This does not add general tuples.
 
+Qualified nominal types and enum patterns retain the full dotted spelling.
+Imports are stored separately on `SourceFileSyntax` and are not executable
+items. Every combined or recovery span retains its token's `sourceId` and
+file-local offset; parsing never joins token streams from different files.
+The compiler parses each file in an explicit compilation unit independently.
+Directories do not affect grammar, module membership, or import names. The
+parser records a complete dot-qualified import name; name resolution matches
+it to a supplied module rather than traversing folders or implicit submodules.
+
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, `for-in`, imports, extensions, explicit `init` / `deinit`, methods,
-  subscript declarations, visibility, or user-defined generics;
+- `class`, `for-in`, extensions, explicit `init` / `deinit`, methods,
+  subscript declarations, or user-defined generics;
 - `mutating`, `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
-- `/`, `%`, `||`, `!`, `??`, `?.`, propagation/force-unwrap postfix forms,
-  compound assignment, ranges, shifts, or bitwise expressions;
+- postfix force unwrap `!`, `??`, `?.`, compound assignment, ranges, shifts,
+  bitwise expressions, or labeled loop control;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
   so the parser produces a spanned AST rather than pretending to be lossless.
@@ -85,6 +97,7 @@ The parser decides only facts visible in the token stream:
 | Do `if` branches and `match` arms have compatible types? | type checking |
 | Is a `match` exhaustive and are payload patterns valid? | pattern type checking + exhaustiveness |
 | Is a `return` valid in the current function and of the correct type? | control-flow + type checking |
+| Does `break` or `continue` occur within a loop? | type checking |
 
 Enum payloads make invocation syntax context-sensitive: ordinary functions and
 struct initializers require labels, while an enum payload may contain
@@ -104,7 +117,10 @@ comma unless a rule says otherwise.
 ### 4.1 Source file and declarations
 
 ```ebnf
-source_file        ::= top_level_item* EOF
+source_file        ::= import_decl* top_level_item* EOF
+
+import_decl        ::= 'import' import_path
+import_path        ::= identifier ( '.' identifier )*
 
 top_level_item     ::= binding_decl
                      | func_decl
@@ -185,8 +201,8 @@ permitted built-in. The type checker currently accepts only built-in generic
 containers (`Array`, `Dict`, `Optional`, and `Result`); user-defined generics
 remain out of scope.
 
-`?` is a type suffix in this phase. It is not parsed as expression propagation
-or optional chaining.
+`?` is a type suffix here. After an expression it is parsed separately as
+postfix failure propagation; `?.` optional chaining remains unsupported.
 
 The lexer treats `>>` as one deferred shift token, so adjacent angle closers
 in nested generic types are not yet supported without separation. This is an
@@ -199,11 +215,21 @@ type arguments.
 block              ::= '{' block_item* '}'
 block_item         ::= binding_decl
                      | while_stmt
+                     | break_stmt
+                     | continue_stmt
                      | expression
 
 while_stmt         ::= 'while' expression block
+break_stmt         ::= 'break'
+continue_stmt      ::= 'continue'
 return_expr        ::= 'return' [ expression ]
 ```
+
+`break` and `continue` are leaf statements, not expressions. They accept no
+label or value; a trailing same-line token receives the ordinary item-boundary
+diagnostic. The parser accepts them in any block and leaves loop-context
+validation to type checking. They are not allowed in expression positions or
+as top-level items.
 
 `if`, `match`, and `return` are expressions. A standalone expression is also a
 block item. The last expression in a block is its value; a later type-checking
@@ -228,13 +254,14 @@ highest to lowest:
 
 | Binding power | Forms | Associativity |
 |---|---|---|
-| 8 | member `.`, call `(...)`, subscript `[...]` | left |
-| 7 | prefix `-`, access marker `&` | right |
-| 6 | `*` | left |
-| 5 | `+`, `-` | left |
-| 4 | `<`, `<=`, `>`, `>=` | non-associative |
-| 3 | `==`, `!=` | non-associative |
-| 2 | `&&` | left |
+| 9 | member `.`, call `(...)`, subscript `[...]`, postfix `?` | left |
+| 8 | prefix `!`, prefix `-`, access marker `&` | right |
+| 7 | `*`, `/`, `%` | left |
+| 6 | `+`, `-` | left |
+| 5 | `<`, `<=`, `>`, `>=` | non-associative |
+| 4 | `==`, `!=` | non-associative |
+| 3 | `&&` | left |
+| 2 | `\|\|` | left |
 | 1 | `=` | right |
 
 Equivalent structural grammar:
@@ -242,7 +269,8 @@ Equivalent structural grammar:
 ```ebnf
 expression         ::= return_expr
                      | assignment_expr
-assignment_expr    ::= logical_and_expr [ '=' assignment_expr ]
+assignment_expr    ::= logical_or_expr [ '=' assignment_expr ]
+logical_or_expr    ::= logical_and_expr ( '||' logical_and_expr )*
 logical_and_expr   ::= equality_expr ( '&&' equality_expr )*
 equality_expr      ::= comparison_expr [ ( '==' | '!=' ) comparison_expr ]
 comparison_expr    ::= additive_expr
@@ -250,20 +278,23 @@ comparison_expr    ::= additive_expr
 additive_expr      ::= multiplicative_expr
                        ( ( '+' | '-' ) multiplicative_expr )*
 multiplicative_expr
-                   ::= prefix_expr ( '*' prefix_expr )*
-prefix_expr        ::= '-' prefix_expr
+                   ::= prefix_expr ( ( '*' | '/' | '%' ) prefix_expr )*
+prefix_expr        ::= ( '-' | '!' ) prefix_expr
                      | '&' postfix_expr
                      | postfix_expr
 postfix_expr       ::= primary_expr postfix_suffix*
 postfix_suffix     ::= '.' identifier
                      | argument_clause
                      | '[' expression ']'
+                     | '?'
 ```
 
 Consequences that must be visible in AST snapshots:
 
 ```text
 1 + 2 * 3       => 1 + (2 * 3)
+24 / 3 % 5     => (24 / 3) % 5
+!a || b && c   => (!a) || (b && c)
 a - b - c       => (a - b) - c
 a = b = value   => a = (b = value)
 a < b < c       => syntax error: comparison operators do not chain
@@ -317,6 +348,7 @@ Postfix suffixes compose without special cases:
 p.input[p.pos]
 Parser(input: source, pos: 0)
 JsonValue.Bool(true)
+readFile(path: path)?
 ```
 
 The parser records calls uniformly:
@@ -325,6 +357,8 @@ The parser records calls uniformly:
 - `Parser(input: source, pos: 0)` has labeled initializer arguments;
 - `.Bool(true)` has one positional enum-payload argument;
 - `.Unexpected(c, at: pos)` mixes a positional and labeled payload argument.
+- `expr?` wraps one operand in a spanned propagation node; later stages
+  check its `Result`/`Optional` type and early-return rules.
 
 The resolver/type checker applies the declaration-specific restrictions from
 §3.2.1 and §3.4; the parser does not infer them from capitalization.
@@ -427,7 +461,7 @@ Minimum node families:
 | File | `SourceFileSyntax`, ordered top-level items, aggregate source span |
 | Declarations | `BindingDecl` (`let`/`var` retained), `FunctionDecl`, `ParameterDecl`, `StructDecl`, `StructFieldDecl`, `EnumDecl`, `EnumCaseDecl`, `AssociatedTypeSyntax` |
 | Types | nominal, built-in generic argument list, array, dictionary, optional |
-| Blocks/control | `BlockExpr`, `WhileStmt`, `IfExpr`, `ReturnExpr`, `MatchExpr`, `MatchArm` |
+| Blocks/control | `BlockExpr`, `WhileStmt`, `BreakStmt`, `ContinueStmt`, `IfExpr`, `ReturnExpr`, `MatchExpr`, `MatchArm` |
 | Expressions | name, literal, prefix, access marker, binary, assignment, member, call, argument, subscript, array, dictionary, contextual case |
 | Patterns | wildcard, literal, binding, enum case, labeled payload argument |
 | Recovery | error declaration/type/expression/pattern nodes retaining skipped token span |
@@ -442,6 +476,10 @@ Important shape rules:
 - `EnumCaseDecl` keeps labels per associated payload position.
 - `BlockExpr` keeps ordered items. Its final expression is identified without
   moving it into a semantic/type node.
+- `BreakStmtSyntax` and `ContinueStmtSyntax` derive directly from `Node`, retain
+  only their keyword span, and have no children. Name resolution indexes each
+  leaf and records its containing block scope without introducing a symbol or
+  enforcing loop-context rules.
 - Syntax nodes contain no mutable semantic fields such as `typeSlot` or
   `symtable`. Later stages use maps keyed by node ID or build a separate
   resolved/typed representation.
@@ -571,7 +609,7 @@ normalized syntax AST or diagnostic stream. They never execute the program.
 | Calls/cases | labeled function/initializer calls, marker-free borrowing, `&` inout/initializing, `consume` arguments, positional/labeled enum payloads, contextual and qualified cases |
 | Precedence | every neighboring precedence pair, left/right/non-associativity |
 | Assignment | name, member, subscript, `&` target, right-associative chain |
-| Control | standalone/value `if`, else-if, `while`, empty/value blocks, early return |
+| Control | standalone/value `if`, else-if, `while`, unlabeled `break`/`continue`, empty/value blocks, early return |
 | Match | literal/wildcard/unit/binding/case/nested-case patterns, expression/block/return arms |
 | Locations | exact node spans across LF, CR, CRLF, comments, and UTF-8 strings |
 

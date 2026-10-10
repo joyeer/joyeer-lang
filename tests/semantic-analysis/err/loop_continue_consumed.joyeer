@@ -1,0 +1,9 @@
+func take(value: consuming String) {}
+
+func run(flag: Bool) {
+    let value = "owned" + "!"
+    while flag {
+        take(value: consume value)
+        continue
+    }
+}

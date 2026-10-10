@@ -1,0 +1,69 @@
+func errorCode(error: FileSystemError): Int {
+    return match error {
+        .InvalidPath(code) => code,
+        .NotFound(code) => code,
+        .PermissionDenied(code) => code,
+        .AlreadyExists(code) => code,
+        .NotDirectory(code) => code,
+        .IsDirectory(code) => code,
+        .Other(code) => code,
+    }
+}
+
+func exercise(base: String): Result<Bool, FileSystemError> {
+    let directory = joinPath(base: base, path: "owned-files")?
+    createDirectory(path: directory)?
+    let path = joinPath(base: directory, path: "file with spaces")?
+    let contents = "first line\nsecond line"
+    writeFileNew(path: path, contents: contents)?
+    let original = readFileUtf8(path: path)?
+    let protected = match writeFileNew(path: path, contents: "replacement") {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .AlreadyExists(_) => true,
+            _ => false,
+        },
+    }
+    let preserved = readFileUtf8(path: path)?
+    let isFile = match fileKind(path: path)? {
+        .File => true,
+        _ => false,
+    }
+    let isDirectory = match fileKind(path: directory)? {
+        .Directory => true,
+        _ => false,
+    }
+    let names = listDirectory(path: directory)?
+    let listed = names.count == 1 && names[0] == "file with spaces"
+    let nonemptyRejected = match removeDirectory(path: directory) {
+        .Ok(_) => false,
+        .Err(_) => true,
+    }
+    removeFile(path: path)?
+    removeDirectory(path: directory)?
+    let absent = match readFileUtf8(path: path) {
+        .Ok(_) => false,
+        .Err(error) => match error {
+            .NotFound(_) => true,
+            _ => false,
+        },
+    }
+    return .Ok(original == contents && preserved == contents &&
+        protected && isFile && isDirectory && listed && nonemptyRejected && absent)
+}
+
+func main(args: [String]): Int {
+    if args.count != 1 { return 1 }
+    return match exercise(base: args[0]) {
+        .Ok(success) => {
+            if !success { return 2 }
+            print(value: "filesystem ok")
+            return 0
+        },
+        .Err(error) => {
+            print(value: "filesystem failed")
+            print(value: errorCode(error: error))
+            return 3
+        },
+    }
+}

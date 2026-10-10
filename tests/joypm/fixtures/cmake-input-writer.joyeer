@@ -1,0 +1,64 @@
+// CMake file(WRITE) inserts CR before every LF on Windows, even in CRLF.
+// Reverse that translation before an exact-byte, exclusive runtime write.
+private func originalInput(contents: String): String {
+    if !hostWindows() || contents.count == 0 { return contents }
+    var pieces: [String] = []
+    var index = 0
+    while index < contents.count {
+        var piece = ""
+        var length = 0
+        while index < contents.count && length < 64 {
+            if contents[index] == b'\r' && contents.count - index > 1 {
+                if contents[index + 1] == b'\n' { index = index + 1 }
+            }
+            piece = piece + byteToString(value: contents[index])
+            index = index + 1
+            length = length + 1
+        }
+        &pieces.append(element: piece)
+    }
+    var active = pieces.count
+    while active > 1 {
+        var source = 0
+        var destination = 0
+        while source < active {
+            let first = pieces[source]
+            var combined = first
+            if active - source > 1 {
+                let second = pieces[source + 1]
+                combined = first + second
+                source = source + 2
+            } else {
+                source = source + 1
+            }
+            &pieces[destination] = combined
+            destination = destination + 1
+        }
+        active = destination
+    }
+    return pieces[0]
+}
+
+private func writeInput(args: [String]): Result<Void, ToolError> {
+    if args.count != 2 {
+        return .Err(ToolError(message: "input writer requires source and destination paths", pos: -1))
+    }
+    let contents = match readFileUtf8(path: args[0]) {
+        .Ok(text) => text,
+        .Err(error) => {
+            return .Err(ToolError(message: "cannot read CMake input: " + fileSystemMessage(error: error), pos: -1))
+        },
+    }
+    let original = originalInput(contents: contents)
+    return match writeFileNew(path: args[1], contents: original) {
+        .Ok(_) => .Ok(()),
+        .Err(error) => .Err(ToolError(message: "cannot write exact input: " + fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+func main(args: [String]): Int {
+    return match writeInput(args: args) {
+        .Ok(_) => 0,
+        .Err(error) => failureStatus(error: error, manifestPath: "", contents: "", status: 1),
+    }
+}

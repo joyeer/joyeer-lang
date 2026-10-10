@@ -8,24 +8,64 @@ The linked examples are complete programs, not pseudocode.
 - Prefer `let name = expression` for immutable locals and `var name = expression`
   for mutable locals. Explicit annotations use `let name: Int = expression`.
 - Functions use `func add(left: Int, right: Int): Int { ... }`; call them with
-  `add(left: 20, right: 22)`. Do not use Swift's `->` or Rust's `fn`.
-- A function without a result annotation returns `Void`. Use `func main()` as
-  the native entry point, with all executable work inside functions.
+  `add(left: 20, right: 22)`. The declaration keyword is `func`; result types
+  follow `:`, not `->`.
+- A function without a result annotation returns `Void`. Native entry
+  points are `func main()` and `func main(args: [String]): Int`; arguments
+  exclude the executable name and `Int` exits must be in `0..255`.
 - Use braces for `if`, `else`, and `while`; parentheses around conditions are
   unnecessary. Prefer explicit `return` for clarity.
-- Local mutation uses `number = number + 1`. Use a loop condition or `return`
-  rather than unsupported `break`/`continue`.
+- Local mutation uses `number = number + 1`. Unlabeled `break` exits the nearest
+  loop; `continue` re-evaluates its condition. Both clean exited scopes.
 - Use short-circuit `&&` to guard subsequent reads, such as checking an index
-  before indexing. Use nested conditionals instead of unsupported `||`.
+  before indexing. Short-circuit `||` evaluates the right operand only when
+  the left is false; prefix `!` negates a Boolean.
 
 See [hello.joyeer](../examples/hello.joyeer) for named calls and a `while` loop.
+
+## Modules and imports
+
+A module is a named explicit set of source files compiled as one unit.
+Directories do not define modules or namespaces. One unit can span nested or
+unrelated directories; distinct units can select different files from the
+same directory. A complete dot-qualified name such as `acme.config` is an
+opaque logical identity, not a parent/submodule tree.
+
+List root files after `--module-name acme.app` and add dependency files with
+`--module-source acme.config=file.joyeer`. Repeating that dependency name adds
+files to the same unit. The compiler does not discover files or add siblings;
+source-root and include/exclude policy belongs to a build/package tool.
+See [CLI usage](cli.md#named-compilation-units) for validation and migration rules.
+
+Imports precede declarations and apply only to their own file:
+
+```joyeer
+import acme.config
+
+func main() {
+    acme.config.describe()
+}
+```
+
+This requires an explicitly supplied module named exactly `acme.config` with a
+`public func describe()`. It does not import `acme` or inject `describe` as an
+unqualified name. `internal` is the default and is visible across the module's
+files; `private` is file-local; only `public` declarations cross imports.
+Declarations are collected before bodies, so source-file order does not
+control visibility. Dependency cycles, unresolved imports, and inaccessible
+names or exposed types are errors. Aliases, wildcards, and re-exports are not
+supported.
+
+Only the root compilation unit supplies the executable entry. Dependency
+functions named `main` remain ordinary functions. Whole-graph code generation
+preserves separate module identities, file-local spans, and debug scopes.
 
 ## Scalars, strings, and bytes
 
 `Int` is signed 64-bit, `Bool` has `true` and `false`, and a byte literal such as
 `b'A'` has type `UInt8`. Use `byteToInt(value: byte)` or
 `byteToString(value: byte)` for the implemented explicit byte conversions.
-Do not assume arbitrary numeric conversions or C-style casts exist.
+Do not assume arbitrary numeric conversions or cast syntax exist.
 
 Strings support `+`, comparisons, `.count`, indexing, and `.utf8()`. Count and
 index are byte-based. `.utf8()` returns an independent owned `[UInt8]`; changing
@@ -34,6 +74,16 @@ that array does not change the string. The implemented escape set includes
 
 `print(value:)` accepts supported primitive/string values, not arbitrary
 aggregates. Print fields or explicitly matched payloads instead.
+
+For fallible stderr output, the added source signature is
+`writeStderr(contents: String): Result<Void, StderrError>`, with
+`.WriteFailed(Int)` carrying CRT `errno`. It writes exact bytes without adding
+a newline or decoding text, then flushes; failure may be partial. Windows
+uses binary mode and restores the old mode, not a console code-page change.
+Handle it with `match` at an `Int` entry point or propagate only within the
+same error type. The implementation/compiler/runtime regressions compile in
+the Windows x64 Debug build, but the regressions have not executed; this is
+not a general streaming API.
 
 ## Structs, enums, and matching
 
@@ -80,12 +130,18 @@ See [ownership-and-errors.joyeer](../examples/ownership-and-errors.joyeer).
   or `&values.append(element: value)`. Check bounds before indexing.
 - Dictionaries: `[String: Int]` (or `Dict<String, Int>`), `["answer": 42]`,
   and typed empty `[:]`. Insert/update with `&lookup["answer"] = 42`.
-  Read a known-present key with `lookup["answer"]`. Do not assume Rust-like
-  `get`, `insert`, iteration, or Optional-valued lookup.
+  Read a known-present key with `lookup["answer"]`, or use
+  `lookup.get(key: "answer")` for an independently owned `Optional<Int>`.
+  A missing key returns `.None`; a hit returns `.Some(value)`. Lookup borrows
+  the dictionary/key, needs no `&`, and preserves nested optional layers.
+  Do not assume `insert`, iteration, or borrowed-reference lookup APIs.
 - Optional: `Optional<Int>` (or `Int?`), `.Some(value)` and `.None`.
-  Inspect with `match value { .Some(number) => ..., .None => ... }`.
+  Inspect with `match value { .Some(number) => ..., .None => ... }`, or use
+  `value?` inside a function returning another `Optional`.
 - Result: `Result<Int, String>`, `.Ok(value)` and `.Err(error)`.
-  Match both cases; do not introduce `try`, `catch`, or propagation operators.
+  Use `value?` inside a function returning `Result<U, String>` with exactly the
+  same error type; otherwise handle both cases with `match`. Do not introduce
+  `try`, `catch`, `??`, or implicit error conversion.
 
 These are compiler-supported built-ins, not evidence for user-defined
 generics. See [collections.joyeer](../examples/collections.joyeer) and
@@ -94,9 +150,93 @@ generics. See [collections.joyeer](../examples/collections.joyeer) and
 ## File input
 
 `readFile(path: "input.txt")` returns `Result<String, IOError>`. Match `.Ok`
-to use the bytes and `.Err` to explicitly report or propagate failure.
+to use the bytes and `.Err` to report failure, or write
+`readFile(path: path)?` inside a function returning `Result<U, IOError>`.
+An `Int` entry point must match its final error and select an exit status.
 For example, `.NotFound(code)` is an IOError payload case; do not invent
 unverified error cases or a universal `.message` property.
 
 See [read-file.joyeer](../examples/read-file.joyeer). It counts LF bytes, not
 Unicode characters or an assumed universal definition of text lines.
+
+## Portable filesystem and processes
+
+These built-ins borrow their arguments; successful strings and arrays are
+independently owned:
+
+```joyeer
+func readFileUtf8(path: String): Result<String, FileSystemError>
+func readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>
+func writeFileNew(path: String, contents: String): Result<Void, FileSystemError>
+func createDirectory(path: String): Result<Void, FileSystemError>
+func listDirectory(path: String): Result<[String], FileSystemError>
+func fileKind(path: String): Result<FileKind, FileSystemError>
+func removeFile(path: String): Result<Void, FileSystemError>
+func removeDirectory(path: String): Result<Void, FileSystemError>
+func joinPath(base: String, path: String): Result<String, FileSystemError>
+func runProcess(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError>
+```
+
+These lines document signatures; do not redeclare the built-ins in a program.
+Paths must be nonempty valid UTF-8 without NUL and use host path syntax.
+Windows uses wide-character APIs. `readFileUtf8` preserves arbitrary content
+bytes: its name describes path encoding, not text decoding.
+
+`readFilePrefix` reads at most `maximumBytes` bytes and returns owned arbitrary
+bytes, which can end inside a UTF-8 sequence. Zero still opens/closes the path;
+negative limits return `.Other` with a platform invalid-parameter code. Its
+`Int` host descriptor is integrated through name resolution/type checking and
+scalar LLVM lowering, and compiled in the Windows x64 Debug build; boundary
+and error regressions have not run. Check provenance before targeting older
+binaries. This is synchronous bounded input, not generic streaming.
+
+joypm first uses `fileKind` to accept only `.File`, rejecting final symlinks,
+devices/FIFOs, and other nonregular manifests, then reads at most 65537 bytes
+to detect input exceeding 65536. Classification is not race-free confinement.
+Returned bytes still require strict manifest UTF-8/scalar validation. Legacy
+narrow `readFile(path:)` and its `IOError` contract remain unchanged.
+
+`writeFileNew` fails rather than overwriting an existing destination.
+`createDirectory` creates one directory, not missing parents.
+`listDirectory` returns unsorted entry names without `.` or `..`;
+`fileKind` returns `.File`, `.Directory`, `.Symlink`, or `.Other` without
+following the final link. `removeFile` removes a file or the link itself;
+`removeDirectory` removes only an empty real directory. `joinPath` is lexical,
+not canonicalization or proof that a path stays inside a directory. There is
+no recursive deletion or replacement API.
+
+`FileSystemError` cases are `.InvalidPath(code)`, `.NotFound(code)`,
+`.PermissionDenied(code)`, `.AlreadyExists(code)`, `.NotDirectory(code)`,
+`.IsDirectory(code)`, and `.Other(code)`. Existing `IOError` is unchanged and
+requires explicit error wrapping rather than implicit propagation conversion.
+
+`runProcess` takes an explicit executable path and arguments excluding its
+name. It waits, inherits environment and standard streams, changes only the
+child's working directory, and performs neither PATH lookup nor shell
+evaluation. Empty individual arguments are valid; executable and directory
+paths cannot be empty. Relative executable paths resolve against the parent.
+Windows quoting supports Microsoft C-runtime argument parsing.
+
+Success contains `.Exited(code)` or `.Signaled(signal)`; a nonzero exit is
+still a successful launch/completion result. Preserve the full child status
+and map it explicitly into the CLI entry's `0..255` range.
+`ProcessError` cases are `.InvalidInput(code)`, `.NotFound(code)`,
+`.PermissionDenied(code)`, `.LaunchFailed(code)`, and `.WaitFailed(code)`.
+There are no implicit shell scripts, capture, timeout, or async APIs.
+
+## Project configuration is not language syntax
+
+The separate source-implemented joypm consumes a strict TOML profile with
+explicit modules/files and `bin`/`test` targets; it does not add Joyeer imports,
+test attributes, compiler subcommands, or user-defined generics. Manifest
+basic strings support `\uXXXX`/`\UXXXXXXXX` scalar escapes, unlike current
+Joyeer source strings. Manifest limits are 65536 input bytes, 4096 decoded
+bytes/string, 256 modules/targets each, and 1024 entries/string array.
+
+See [local project CLI](cli.md#local-projects-with-joypm) for explicit compiler
+paths, profiles, serial rebuilds, and trust limits. Windows x64 Debug bootstrap
+and local-project smoke validation succeeded; bounded acquisition and Windows
+UTF-8 compiler/linker-path fixes are integrated and compiled. CTest has not run:
+the nine gates, full native acceptance, other platforms, package installation,
+and self-build remain pending. Do not infer general Unicode support or a
+completed release from the scoped smoke result or implementation examples.

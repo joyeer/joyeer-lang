@@ -1,0 +1,293 @@
+// Shared byte-oriented helpers. All files are compiled in joypm.app.
+struct ToolError {
+    let message: String
+    let pos: Int
+}
+
+// Clamp the endpoints rather than allowing malformed input to trap. Manifest
+// callers supply validated byte offsets; this also works on arbitrary bytes.
+func textSlice(text: String, start: Int, end: Int): String {
+    var cursor = start
+    if cursor < 0 { cursor = 0 }
+    var limit = end
+    if limit > text.count { limit = text.count }
+    if cursor >= limit { return "" }
+    // Small bounded pieces, then pairwise concatenation. A hostile 64 KiB
+    // bare key must not require quadratic whole-prefix string rebuilding.
+    var pieces: [String] = []
+    while cursor < limit {
+        var piece = ""
+        var length = 0
+        while cursor < limit && length < 64 {
+            piece = piece + byteToString(value: text[cursor])
+            cursor = cursor + 1
+            length = length + 1
+        }
+        &pieces.append(element: piece)
+    }
+    var active = pieces.count
+    while active > 1 {
+        var source = 0
+        var destination = 0
+        while source < active {
+            let first = pieces[source]
+            var combined = first
+            if active - source > 1 {
+                let second = pieces[source + 1]
+                combined = first + second
+                source = source + 2
+            } else {
+                source = source + 1
+            }
+            // Snapshot both operands before writing an overlapping subscript.
+            &pieces[destination] = combined
+            destination = destination + 1
+        }
+        active = destination
+    }
+    // The nonempty range above creates at least one piece.
+    return pieces[0]
+}
+
+func decimal(value: Int): String {
+    if value == 0 { return "0" }
+    // Keep the magnitude negative: negating minimum Int would overflow.
+    var magnitude = value
+    if magnitude > 0 { magnitude = 0 - magnitude }
+    let digits = "0123456789"
+    var formatted = ""
+    while magnitude != 0 {
+        let digit = 0 - (magnitude % 10)
+        formatted = byteToString(value: digits[digit]) + formatted
+        magnitude = magnitude / 10
+    }
+    if value < 0 { return "-" + formatted }
+    return formatted
+}
+
+func validUtf8(text: String): Bool {
+    var index = 0
+    while index < text.count {
+        let first = byteToInt(value: text[index])
+        if first < 128 {
+            index = index + 1
+        } else {
+            var length = 0
+            var secondMin = 128
+            var secondMax = 191
+            if first >= 194 && first <= 223 {
+                length = 2
+            } else if first >= 224 && first <= 239 {
+                length = 3
+                if first == 224 { secondMin = 160 }
+                if first == 237 { secondMax = 159 }
+            } else if first >= 240 && first <= 244 {
+                length = 4
+                if first == 240 { secondMin = 144 }
+                if first == 244 { secondMax = 143 }
+            } else {
+                return false
+            }
+            // Subtraction avoids an overflowing index + length check.
+            if text.count - index < length { return false }
+            let second = byteToInt(value: text[index + 1])
+            if second < secondMin || second > secondMax { return false }
+            var offset = 2
+            while offset < length {
+                let byte = byteToInt(value: text[index + offset])
+                if byte < 128 || byte > 191 { return false }
+                offset = offset + 1
+            }
+            index = index + length
+        }
+    }
+    return true
+}
+
+func validHostText(text: String): Bool {
+    if !validUtf8(text: text) { return false }
+    var index = 0
+    while index < text.count {
+        if text[index] == b'\0' { return false }
+        index = index + 1
+    }
+    return true
+}
+
+func hostSeparator(byte: UInt8): Bool {
+    return byte == b'/' || (hostWindows() && byte == b'\\')
+}
+
+private func hostDrivePrefix(path: String): Bool {
+    if !hostWindows() || path.count < 2 { return false }
+    let first = path[0]
+    return ((first >= b'a' && first <= b'z') ||
+        (first >= b'A' && first <= b'Z')) && path[1] == b':'
+}
+
+// Lexical only: preserve caller coordinates, roots and drive-relative paths.
+// This is neither canonicalization nor a filesystem confinement check.
+func pathDirectory(path: String): String {
+    var last = -1
+    var index = 0
+    while index < path.count {
+        if hostSeparator(byte: path[index]) { last = index }
+        index = index + 1
+    }
+    if last >= 0 {
+        if hostWindows() && last > 0 && path[last - 1] == b':' {
+            // Preserve both C:\ and extended \\?\C:\ drive roots.
+            return textSlice(text: path, start: 0, end: last + 1)
+        }
+        var rootPrefix = true
+        index = 0
+        while index < last {
+            if !hostSeparator(byte: path[index]) { rootPrefix = false }
+            index = index + 1
+        }
+        if rootPrefix { return textSlice(text: path, start: 0, end: last + 1) }
+        return textSlice(text: path, start: 0, end: last)
+    }
+    if hostDrivePrefix(path: path) {
+        return textSlice(text: path, start: 0, end: 2)
+    }
+    return "."
+}
+
+func trimDirectoryPath(path: String): String {
+    var minimum = 1
+    if hostDrivePrefix(path: path) && path.count >= 3 {
+        if hostSeparator(byte: path[2]) { minimum = 3 }
+    }
+    var end = path.count
+    while end > minimum {
+        if !hostSeparator(byte: path[end - 1]) { break }
+        end = end - 1
+    }
+    return textSlice(text: path, start: 0, end: end)
+}
+
+func fileSystemMessage(error: FileSystemError): String {
+    return match error {
+        .InvalidPath(code) => "invalid path (platform code " + decimal(value: code) + ")",
+        .NotFound(code) => "not found (platform code " + decimal(value: code) + ")",
+        .PermissionDenied(code) => "permission denied (platform code " + decimal(value: code) + ")",
+        .AlreadyExists(code) => "already exists (platform code " + decimal(value: code) + ")",
+        .NotDirectory(code) => "not a directory (platform code " + decimal(value: code) + ")",
+        .IsDirectory(code) => "is a directory (platform code " + decimal(value: code) + ")",
+        .Other(code) => "filesystem failure (platform code " + decimal(value: code) + ")",
+    }
+}
+
+func processMessage(error: ProcessError): String {
+    return match error {
+        .InvalidInput(code) => "invalid process input (platform code " + decimal(value: code) + ")",
+        .NotFound(code) => "executable or working directory not found (platform code " + decimal(value: code) + ")",
+        .PermissionDenied(code) => "process permission denied (platform code " + decimal(value: code) + ")",
+        .LaunchFailed(code) => "process launch failed (platform code " + decimal(value: code) + ")",
+        .WaitFailed(code) => "process wait failed (platform code " + decimal(value: code) + ")",
+    }
+}
+
+func completionMessage(status: ProcessStatus): String {
+    return match status {
+        .Exited(code) => "exited with status " + decimal(value: code),
+        .Signaled(signal) => "terminated by signal " + decimal(value: signal),
+    }
+}
+
+func toolJoin(base: String, path: String): Result<String, ToolError> {
+    return match joinPath(base: base, path: path) {
+        .Ok(joined) => .Ok(joined),
+        .Err(error) => .Err(ToolError(message: "cannot join '" + base +
+            "' and '" + path + "': " + fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+func toolStderr(contents: String): Result<Void, ToolError> {
+    return match writeStderr(contents: contents) {
+        .Ok(_) => .Ok(()),
+        .Err(error) => match error {
+            .WriteFailed(code) => .Err(ToolError(message: "stderr write or flush failed (CRT code " +
+                decimal(value: code) + ")", pos: -1)),
+        },
+    }
+}
+
+// Source positions and columns are byte-based, like the manifest parser.
+// CRLF counts as one newline; a position at EOF is also renderable.
+func diagnosticText(error: ToolError, manifestPath: String, contents: String): String {
+    if error.pos < 0 || manifestPath.count == 0 {
+        return "joypm: " + error.message + "\n"
+    }
+    var limit = error.pos
+    if limit > contents.count { limit = contents.count }
+    var line = 1
+    var column = 1
+    var index = 0
+    while index < limit {
+        if contents[index] == b'\n' {
+            line = line + 1
+            column = 1
+        } else {
+            column = column + 1
+        }
+        index = index + 1
+    }
+    return manifestPath + ":" + decimal(value: line) + ":" +
+        decimal(value: column) + ": " + error.message + "\n"
+}
+
+func toolDiagnostic(error: ToolError, manifestPath: String, contents: String): Result<Void, ToolError> {
+    let text = diagnosticText(error: error, manifestPath: manifestPath, contents: contents)
+    return toolStderr(contents: text)
+}
+
+// Never turn a failed diagnostic write into success, including usage errors.
+func failureStatus(error: ToolError, manifestPath: String, contents: String, status: Int): Int {
+    return match toolDiagnostic(error: error, manifestPath: manifestPath, contents: contents) {
+        .Ok(_) => status,
+        .Err(_) => 1,
+    }
+}
+
+func sortedStrings(values: borrowing [String]): [String] {
+    var sorted = values
+    var index = 1
+    while index < sorted.count {
+        let current = sorted[index]
+        var destination = index
+        while destination > 0 {
+            let previous = sorted[destination - 1]
+            if !(current < previous) { break }
+            &sorted[destination] = previous
+            destination = destination - 1
+        }
+        &sorted[destination] = current
+        index = index + 1
+    }
+    return sorted
+}
+
+// Human-readable, one argument per line; never reused as a shell command.
+func displayArgument(argument: String): String {
+    let hex = "0123456789abcdef"
+    var displayed = "<"
+    var index = 0
+    while index < argument.count {
+        let byte = argument[index]
+        let value = byteToInt(value: byte)
+        if byte == b'\\' { displayed = displayed + "\\\\" }
+        else if byte == b'\n' { displayed = displayed + "\\n" }
+        else if byte == b'\r' { displayed = displayed + "\\r" }
+        else if byte == b'\t' { displayed = displayed + "\\t" }
+        else if value < 32 || value == 127 {
+            displayed = displayed + "\\x" + byteToString(value: hex[value / 16]) +
+                byteToString(value: hex[value % 16])
+        } else {
+            displayed = displayed + byteToString(value: byte)
+        }
+        index = index + 1
+    }
+    return displayed + ">"
+}

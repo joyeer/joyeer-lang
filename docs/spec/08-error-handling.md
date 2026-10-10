@@ -1,9 +1,9 @@
 ## §8 Error Handling
 
-**Implementation status:** the current compiler supports `Result`, `Optional`, explicit
-`match`, and the typed `readFile` errors below. Postfix `?`, `??`, and several
-library helpers used in examples are broader design, not implemented
-features. See
+**Implementation status:** the current compiler supports `Result`, `Optional`,
+explicit `match`, postfix `?`, and the typed `readFile` errors below. `??` and
+several library helpers used in examples are broader, unimplemented design.
+See
 [the implemented language surface](../impl/supported-features.md).
 
 ### 8.1 No exceptions
@@ -31,7 +31,7 @@ func parseInt(s: String): Result<Int, ParseError> {
 
 #### 8.2.1 Typed I/O errors
 
-The prelude defines a stable error enum for file operations:
+The prelude defines a stable error enum for legacy file input:
 
 ```joyeer
 enum IOError {
@@ -48,6 +48,10 @@ The case identifies a portable category. Its `Int` payload preserves the
 nonzero platform error code for diagnostics; programs must branch on the case,
 not on a particular numeric value. Embedded NUL paths are `InvalidPath`.
 Unclassified open, read, size, or close failures are `Other`.
+
+The richer portable filesystem interface uses `FileSystemError` and
+synchronous process execution uses `ProcessError` (see §18). These error
+enums are distinct types; `?` does not implicitly convert between them.
 
 #### 8.2.2 Fallible operations without success data
 
@@ -70,14 +74,32 @@ and destroyed under the ordinary value rules. Replacing an error with success
 must still destroy the old error. The enclosing result retains its case
 discriminant and storage needed by `E`; it is not itself a zero-sized value.
 
-The current implementation supports explicit `match` for these results.
-Postfix `?` remains separate, unimplemented work.
+Both explicit `match` and postfix `?` work with these results.
 
 ### 8.3 `?` propagation
 
-Postfix `?` on `Result<T,E>` (and `Optional<T>`) propagates the failure.
-For `Result`, it is equivalent to `match x { .Ok(v) => v,
-.Err(e) => return .Err(e) }`.
+Postfix `?` evaluates its operand exactly once. `Result<T, E>?` produces
+`T` from `.Ok` and returns `.Err(E)` from the enclosing function on failure;
+`Optional<T>?` produces `T` from `.Some` and returns `.None` on failure.
+Only one layer is unwrapped. Pending temporaries and live local values are
+cleaned on the early-return path without destroying the propagated error.
+
+The enclosing function must return `Result<U, E>` with the **same concrete
+error type** for a `Result<T, E>` operand, or `Optional<U>` for an
+`Optional<T>` operand. There is no implicit conversion between the two
+container families or between error types.
+
+The following example uses the implemented surface:
+
+```joyeer
+func load(path: String): Result<String, IOError> {
+  let contents = readFile(path: path)?
+  return .Ok(contents)
+}
+```
+
+The broader example below also uses `split` and tuples, which are not yet
+implemented:
 
 ```joyeer
 func parsePair(s: String): Result<(Int, Int), ParseError> {
@@ -88,16 +110,14 @@ func parsePair(s: String): Result<(Int, Int), ParseError> {
 }
 ```
 
-The `?` operator is only valid in functions whose return type is
-`Result<_, E>` or `Optional<_>` and whose `E` is compatible with the
-propagated error.
+An entry point returning `Int` cannot use `?`; it must explicitly handle its
+final `Result` or `Optional` and choose a process exit status.
 
 ### 8.4 No `try` / `catch`
 
 Reserved keywords ⏳. If error-handling syntax for `Result` chains becomes
 ergonomically heavy, a `try-block` may be added in v0.3. The broader design
-uses `?` plus `match`; the current executable subset uses explicit `match`
-without propagation syntax.
+uses `?` plus `match`; `try`/`catch` are not part of the executable subset.
 
 ### 8.5 `??` coalescing
 

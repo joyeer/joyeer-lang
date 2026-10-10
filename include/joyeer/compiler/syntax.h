@@ -10,6 +10,12 @@
 
 namespace joyeer::syntax {
 
+enum class Visibility {
+    private_,
+    internal,
+    public_,
+};
+
 enum class AccessEffect {
     borrowing,
     inout,
@@ -44,6 +50,7 @@ enum class Kind {
     parenthesizedExpr,
     prefixExpr,
     accessExpr,
+    propagateExpr,
     binaryExpr,
     assignmentExpr,
     memberExpr,
@@ -56,6 +63,8 @@ enum class Kind {
     contextualCaseExpr,
     blockExpr,
     whileStmt,
+    breakStmt,
+    continueStmt,
     ifExpr,
     returnExpr,
     matchExpr,
@@ -75,6 +84,8 @@ struct Node {
 
     Kind kind;
     SourceSpan span;
+    Visibility visibility = Visibility::internal;
+    bool explicitVisibility = false;
 
     virtual ~Node() = default;
 
@@ -120,10 +131,16 @@ protected:
 
 using PatternPtr = PatternSyntax::Ptr;
 
+struct ImportSyntax {
+    std::string name;
+    SourceSpan span;
+};
+
 struct SourceFileSyntax final : Node {
     using Ptr = std::shared_ptr<SourceFileSyntax>;
 
     std::vector<NodePtr> items;
+    std::vector<ImportSyntax> imports;
 
     SourceFileSyntax(SourceSpan span, std::vector<NodePtr> items):
             Node(Kind::sourceFile, span), items(std::move(items)) {}
@@ -412,6 +429,15 @@ struct AccessExprSyntax final : ExprSyntax {
             operand(std::move(operand)) {}
 };
 
+struct PropagateExprSyntax final : ExprSyntax {
+    using Ptr = std::shared_ptr<PropagateExprSyntax>;
+
+    ExprPtr operand;
+
+    PropagateExprSyntax(SourceSpan span, ExprPtr operand):
+            ExprSyntax(Kind::propagateExpr, span), operand(std::move(operand)) {}
+};
+
 struct BinaryExprSyntax final : ExprSyntax {
     using Ptr = std::shared_ptr<BinaryExprSyntax>;
 
@@ -561,6 +587,18 @@ struct WhileStmtSyntax final : Node {
             Node(Kind::whileStmt, span),
             condition(std::move(condition)),
             body(std::move(body)) {}
+};
+
+struct BreakStmtSyntax final : Node {
+    using Ptr = std::shared_ptr<BreakStmtSyntax>;
+
+    explicit BreakStmtSyntax(SourceSpan span): Node(Kind::breakStmt, span) {}
+};
+
+struct ContinueStmtSyntax final : Node {
+    using Ptr = std::shared_ptr<ContinueStmtSyntax>;
+
+    explicit ContinueStmtSyntax(SourceSpan span): Node(Kind::continueStmt, span) {}
 };
 
 struct IfExprSyntax final : ExprSyntax {
