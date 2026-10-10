@@ -313,113 +313,171 @@ discover the compiler beside itself or search PATH. Package staging and use
 of the tool through a relocated package are validated on Windows ARM64;
 Linux/macOS still require native acceptance.
 
-## Local Windows Debug installation
+## Local Debug installation
 
-[scripts/install-debug.ps1](../scripts/install-debug.ps1) installs an **existing
-Debug build** for local development and testing. It requires Windows PowerShell
-5.1 or PowerShell 7 and CMake on PATH, but not Python. It does not configure or
-build Joyeer, download tools, or create a ZIP. It also installs the matching
-Joyeer agent skill from this checkout by default.
+[scripts/install-debug.py](../scripts/install-debug.py) installs an **existing
+native Debug build** on Windows, macOS, and Linux for local development and
+testing. This optional tool requires Python 3.9+ and CMake on PATH. It uses only
+the Python standard library; it does not configure or build Joyeer, download
+tools, or create a release package. It also installs the matching Joyeer agent
+skill from this checkout by default. Source builds, the installed compiler,
+and compiled Joyeer programs do not require Python.
 
-Configure and build in a matching Developer shell first. For ARM64:
+Configure and build first using the prerequisites above. On Windows ARM64,
+build in a matching Developer shell:
 
 ```powershell
 cmake --preset arm64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8-arm64
 cmake --build --preset arm64-debug
-.\scripts\install-debug.ps1
+python .\scripts\install-debug.py
 ```
 
-For x64, build `x64-debug` with the x64 LLVM SDK. With no `-BuildDir`, the installer
-selects `out/build/arm64-debug` on ARM64 Windows or `out/build/x64-debug` on x64
-Windows, relative to this checkout. It reads the Windows system architecture,
-not the shell process or Developer shell target, so an emulated shell does not
-change the default. The matching Debug build must already exist; the script
-does not configure, build, or fall back to another architecture. Use `-BuildDir`
-to select a different existing Debug build explicitly. If the system
-architecture cannot be identified, specify `-BuildDir` instead of relying on
-potentially emulated process-architecture environment variables.
+For Windows x64, build `x64-debug` with the x64 LLVM SDK. Installation itself
+can run from an ordinary terminal after the build.
 
-Installation can run from ordinary PowerShell after the build. The default destination is
-`$HOME\.joyeer\bin` (`~/.joyeer/bin`), which needs no administrator rights.
-Use `-InstallDir` for a dedicated alternative destination or to keep separate
+On macOS:
+
+```bash
+cmake --preset macos-debug
+cmake --build --preset macos-debug
+python3 scripts/install-debug.py
+```
+
+On Linux:
+
+```bash
+cmake --preset linux-debug -DJOYEER_LLVM_ROOT=/opt/llvm
+cmake --build --preset linux-debug
+python3 scripts/install-debug.py
+```
+
+Without `--build-dir`, the installer selects a preset build relative to this
+checkout, not the current working directory:
+
+| Native host | Default build directory |
+|---|---|
+| Windows ARM64 | `out/build/arm64-debug` |
+| Windows x64 | `out/build/x64-debug` |
+| macOS | `out/build/macos-debug` |
+| Linux | `out/build/linux-debug` |
+
+Windows selection reads the system architecture, not the Python process or
+Developer shell target, so emulation does not change the default. If the system
+architecture cannot be identified, specify `--build-dir`. The selected build
+must already exist; there is no fallback to another architecture or a Release
+build. macOS and Linux presets use the native architecture of their build tree.
+
+The default destination is `~/.joyeer/bin`
+(`$HOME\.joyeer\bin` in PowerShell), which needs no administrator rights.
+Use `--install-dir` for a dedicated alternative destination or to keep separate
 architecture installations:
 
 ```powershell
-.\scripts\install-debug.ps1 -BuildDir .\out\build\arm64-debug -InstallDir C:\DevTools\Joyeer-debug-arm64
+python .\scripts\install-debug.py --build-dir .\out\build\arm64-debug --install-dir C:\DevTools\Joyeer-debug-arm64
 ```
 
-After successful installation, the script adds the install directory to the
-user PATH unless the user or system PATH already contains it. It also updates
-the current PowerShell PATH, so `joyeer` is immediately available. Comparison
-ignores case and trailing directory separators and expands environment
-variables; existing PATH entries and their order are preserved. System PATH
-is never modified. Restart other open terminals or IDEs to inherit user PATH
-changes. Pass `-SkipPathUpdate` to leave both persistent and current PATH
-unchanged, for example for temporary installations.
-
-The complete `skills/joyeer` directory, including references and examples, is
-copied to `$HOME\.agents\skills\joyeer` for VS Code Copilot, Copilot CLI, and
-Codex. Use `-SkillDir` to specify the full destination directory for another
-client or scope, for example for Claude Code:
-
-```powershell
-.\scripts\install-debug.ps1 -SkillDir "$HOME\.claude\skills\joyeer"
+```bash
+python3 scripts/install-debug.py --build-dir out/build/linux-debug --install-dir "$HOME/.local/joyeer-debug/bin"
 ```
 
-Only the selected skill destination is used. Pass `-SkipSkillInstall` to
-install only the binaries, including joypm when enabled. For isolated installations, override both
-`-InstallDir` and `-SkillDir` (or skip the skill), as well as `-SkipPathUpdate`.
-If the skill already contains identical source files, it is left unchanged,
-including any additional user files. A new or empty destination accepts a full
-installation. In a nonempty destination, missing or differing files cause an
-error before compiler installation or PATH updates unless `-Force` is supplied.
-After reviewing and backing up any local skill edits, update with:
+### PATH setup
 
-```powershell
-.\scripts\install-debug.ps1 -Force
+After successful installation, Windows adds the install directory to the user
+PATH unless the user or system PATH already contains it. Comparison ignores
+case and trailing separators and expands environment variables. Existing
+entries and their order are preserved; system PATH is never modified.
+
+On macOS and Linux, the installer appends an idempotent PATH block to the
+configuration for the user's shell (`SHELL`, or the account's login shell when
+`SHELL` is unset):
+
+| Shell | Configuration |
+|---|---|
+| Bash on Linux | `~/.bashrc` |
+| Bash on macOS | First existing `~/.bash_profile`, `~/.bash_login`, or `~/.profile`; otherwise `~/.bash_profile` |
+| Zsh | `$ZDOTDIR/.zshrc`, or `~/.zshrc` when `ZDOTDIR` is unset |
+| Fish | `$XDG_CONFIG_HOME/fish/conf.d/joyeer.fish`, or `~/.config/fish/conf.d/joyeer.fish` |
+| Sh, Dash, Ksh | `~/.profile` |
+
+Existing configuration bytes are preserved. The block appends the directory
+only when it is absent from PATH, including when the profile is loaded more
+than once. Unsupported shells require `--skip-path-update` and manual PATH
+configuration; they are rejected before installation otherwise.
+
+Python cannot update its parent shell's environment. Open a new shell or
+reload the reported profile on macOS/Linux; restart the terminal host or IDE
+on Windows. Until then, use the installed executable's full path. Pass
+`--skip-path-update` to leave persistent PATH, shell profiles, and the current
+process PATH unchanged, for example for temporary installations.
+
+### Agent skill
+
+The complete [skills/joyeer](../skills/joyeer/) directory, including references
+and examples, is copied to `~/.agents/skills/joyeer` for VS Code Copilot,
+Copilot CLI, and Codex. Use `--skill-dir` to specify the full destination for
+another client or scope, for example for Claude Code:
+
+```bash
+python3 scripts/install-debug.py --skill-dir "~/.claude/skills/joyeer"
 ```
 
-`-Force` applies only to skill files: it overwrites differing files and restores
-missing ones using the current checkout. Identical files, extra files
-(including files removed from the source in a newer revision), and other skills
-are left unchanged. It does not clear the destination or bypass Debug build
-validation. File/directory type conflicts are rejected even with `-Force`;
-resolve those conflicts manually. `-SkipSkillInstall` takes precedence over
-`-Force`. Reload the agent session after installation and confirm discovery;
-see [agent setup](../skills/README.md).
+Only the selected skill destination is used. Pass `--skip-skill-install` to
+install only the binaries, including joypm when enabled. For isolated
+installations, override both `--install-dir` and `--skill-dir` (or skip the
+skill), and use `--skip-path-update`.
+
+Identical source files are left unchanged, including any additional user files.
+A new or empty destination accepts a full installation. In a nonempty
+destination, missing or differing files cause an error before compiler
+installation or PATH updates unless `--force` is supplied. After reviewing
+and backing up local skill edits, update with:
+
+```bash
+python3 scripts/install-debug.py --force
+```
+
+Use `python .\scripts\install-debug.py --force` on Windows. `--force` applies
+only to skill files: it overwrites differing files and restores missing ones
+using this checkout. Identical files, extra files (including files removed
+from the source in a newer revision), and other skills are left unchanged.
+It does not clear the destination or bypass Debug build validation.
+File/directory conflicts are rejected even with `--force`; resolve them
+manually. `--skip-skill-install` takes precedence over `--force`. Reload the
+agent session and confirm discovery; see [agent setup](../skills/README.md).
+
+### Installed artifacts
 
 The script verifies that the build belongs to this checkout and selects Debug
-only, including in multi-configuration build trees. All runtime binaries and
-compiler/backend PDBs must already exist. When the build cache enables
-`JOYEER_BUILD_JOYPM`, the script also requires a nonempty `joypm.exe` and
-`joypm.pdb`. Installation uses `JoyeerRuntime` and, when enabled, `PRODUCT`
-to exclude GoogleTest and SDK files, then copies the PDBs:
+only, including in multi-configuration build trees. Installation uses CMake's
+`JoyeerRuntime` and, when enabled, `PRODUCT` components to exclude GoogleTest
+and SDK files and preserve platform runtime search paths. Runtime products and
+Debug symbols must exist before installation.
 
-```text
-joyeer.exe
-joyeer-backend.dll
-JoyeerNativeRuntime.lib
-joyeer.pdb
-joyeer-backend.pdb
-joypm.exe                 # when enabled
-joypm.pdb                 # when enabled
-licenses\LICENSE          # Joyeer's own license
-```
+| Platform | Runtime products |
+|---|---|
+| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, optional `joypm.exe` |
+| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerNativeRuntime.a`, optional `joypm` |
+| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerNativeRuntime.a`, optional `joypm` |
 
-`-SkipSkillInstall` skips only the agent skill; it does not disable joypm.
-Use a build configured with `JOYEER_BUILD_JOYPM=OFF` for compiler-only
-installation. The optional tool/PDB installer and all its isolated regressions
-pass with the recorded native ARM64 Debug build, including the exact license
-inventory and an unchanged user/process PATH.
+All platforms install these files together directly in the selected directory,
+along with Joyeer's own `licenses/LICENSE`. Windows also requires and copies
+`joyeer.pdb`, `joyeer-backend.pdb`, and `joypm.pdb` when the tool is enabled.
+Linux Debug information stays embedded in the installed binaries. On macOS,
+existing compiler/backend dSYM bundles are copied when present; the joypm
+dSYM is required when the configured `dsymutil` is available. A build using
+the documented macOS `-g0` bootstrap fallback does not require that bundle.
+
+`--skip-skill-install` skips only the agent skill; it does not disable joypm.
+Use `JOYEER_BUILD_JOYPM=OFF` for compiler-only installation.
 
 After rebuilding, rerun the same command to update the installation. Close
-running compiler/tool processes or debugger sessions first to release file locks.
-Unrelated files in the destination are not removed. This is a local Debug
+running compiler/tool processes or debugger sessions first to release file
+locks. Unrelated destination files are not removed. This is a local Debug
 installation, not a distributable release; third-party license/notice auditing
 is still required for redistribution.
 
 Use the installed compiler directly from the repository root (adjust the path
-when using `-InstallDir`):
+when using `--install-dir`). On Windows:
 
 ```powershell
 & "$HOME\.joyeer\bin\joyeer.exe" -O0 -gfull -gcodeview -o .\out\hello.exe .\tests\native\hello.joyeer
@@ -428,19 +486,17 @@ if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
 if ($LASTEXITCODE -ne 0) { throw "Program failed" }
 ```
 
-MSVC Build Tools and a matching Windows SDK are still required for native
-compilation, but LLVM is not needed to use the installed compiler. Compiler
-PDBs support debugging Joyeer itself; `-gfull -gcodeview` generates a separate
-PDB for the compiled Joyeer program.
+On Linux:
 
-Focused installer tests use an isolated temporary directory and an existing
-Debug build; they do not modify your user installation, agent skills, or PATH. They also test
-automatic selection, which requires the native architecture's default Debug
-build to be present:
-
-```powershell
-.\scripts\tests\test-install-debug.ps1 -BuildDir .\out\build\arm64-debug
+```bash
+"$HOME/.joyeer/bin/joyeer" -O0 -gfull -o out/hello tests/native/hello.joyeer
+./out/hello
 ```
+
+The same command works on macOS when `dsymutil` is available; use `-g0`
+otherwise. Native compilation still requires MSVC Build Tools and a Windows
+SDK on Windows, or the host libc/platform SDK linker inputs on Linux/macOS.
+An external LLVM installation is not needed to use the installed compiler.
 
 ## Non-Windows tool discovery
 

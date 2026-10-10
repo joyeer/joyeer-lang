@@ -18,7 +18,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
 | Build from source | [building.md](building.md) |
-| Install a local Windows Debug compiler | [Debug installation](building.md#local-windows-debug-installation) |
+| Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
 
 ## Specification

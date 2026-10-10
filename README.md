@@ -218,31 +218,41 @@ optional `joypm`, and licenses are installed together. The compiler resolves
 the backend and runtime relative to its own location; `joypm` still requires
 `--compiler <path>` and does not discover its sibling or search PATH.
 
-For a local Windows Debug installation from an existing build:
+For a local Debug installation from an existing build on Windows, macOS, or
+Linux, use the Python 3.9+ standard-library installer (CMake must be on PATH).
+On Windows:
 
 ```powershell
-.\scripts\install-debug.ps1
+python .\scripts\install-debug.py
 ```
 
-The script selects `out/build/arm64-debug` on ARM64 Windows or
-`out/build/x64-debug` on x64 Windows, relative to this checkout rather than the
-current working directory. That Debug build must already exist; use
-`-BuildDir` to override the selection.
+On macOS and Linux:
 
-This installs the compiler, backend, runtime, their PDBs, and (when enabled)
-`joypm.exe` and its PDB to
-`$HOME\.joyeer\bin` and adds that directory to the user and current PowerShell
-PATH without duplicating existing entries. Use `-SkipPathUpdate` to leave PATH
-unchanged. The complete Joyeer skill is also installed to
-`$HOME\.agents\skills\joyeer` for VS Code Copilot, Copilot CLI, and Codex.
-Use `-SkillDir` to select another destination or `-SkipSkillInstall` to install
-only the binaries, including joypm when enabled. Empty skill directories are
-accepted, and identical files
-are left unchanged. Use `-Force` after reviewing and backing up local skill
-edits to overwrite differing files and restore missing ones. Extra files and
-other skills are not deleted. Reload your agent session after installation. See
-[Debug installation](docs/building.md#local-windows-debug-installation) for
-custom destinations and verification.
+```bash
+python3 scripts/install-debug.py
+```
+
+The script selects the native Debug preset relative to this checkout:
+`arm64-debug` or `x64-debug` on Windows, `macos-debug` on macOS, and
+`linux-debug` on Linux. That build must already exist; use `--build-dir` to
+override the selection. It does not configure, build, or download tools.
+
+This installs the compiler, backend, runtime, available platform Debug
+symbols, and (when enabled) `joypm` to `~/.joyeer/bin`. PATH setup updates the
+Windows user environment or the supported Unix shell's configuration without
+duplicating entries. Open a new shell or restart the terminal host/IDE to use
+the updated PATH; Python cannot change its parent shell. Use
+`--skip-path-update` to leave PATH and shell configuration unchanged.
+
+The complete Joyeer skill is also installed to `~/.agents/skills/joyeer`.
+Use `--skill-dir` to select another destination or `--skip-skill-install` to
+install only the binaries. Empty skill directories are accepted, and identical
+files are left unchanged. Use `--force` after reviewing and backing up local
+skill edits to overwrite differing files and restore missing ones. Extra files
+and other skills are not deleted. Reload your agent session after installation.
+Python is required only for this optional installer, not for building or using
+Joyeer. See [Debug installation](docs/building.md#local-debug-installation)
+for custom destinations, shell support, and verification.
 
 ## CLI
 

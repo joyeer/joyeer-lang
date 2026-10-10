@@ -11,25 +11,35 @@ This is not a compiler-contributor skill. The repository's
 
 ## Install for a local agent
 
-On Windows, the [Debug installer](../scripts/install-debug.ps1) installs the
-compiler and this complete skill together by default:
+On Windows, macOS, and Linux, the
+[Debug installer](../scripts/install-debug.py) installs an existing Debug
+compiler and this complete skill together by default. This optional installer
+requires Python 3.9+ and CMake; the skill itself has no Python dependency.
+On Windows:
 
 ```powershell
-.\scripts\install-debug.ps1
+python .\scripts\install-debug.py
 ```
 
-The skill goes to `$HOME\.agents\skills\joyeer`. Use `-SkillDir` to choose a
-different full destination, for example `-SkillDir "$HOME\.claude\skills\joyeer"`
-for Claude Code, or `-SkipSkillInstall` to install only the compiler. Only one
+On macOS and Linux:
+
+```bash
+python3 scripts/install-debug.py
+```
+
+The skill goes to `~/.agents/skills/joyeer`. Use `--skill-dir` to choose a
+different full destination, for example
+`--skill-dir "~/.claude/skills/joyeer"` for Claude Code, or
+`--skip-skill-install` to install only the binaries. Only one
 skill destination is installed per run. Identical installed files are kept;
 new and empty destinations accept a full installation. Missing or differing
 files in a nonempty destination cause an error before compiler installation.
 After reviewing and backing up local skill edits, use
-`.\scripts\install-debug.ps1 -Force` to overwrite differing files and restore
+`--force` to overwrite differing files and restore
 missing files from the current checkout. Additional files (including obsolete
 files no longer in the source) and other skills are not deleted. File/directory
-type conflicts still require manual resolution, and `-SkipSkillInstall` takes
-precedence over `-Force`.
+type conflicts still require manual resolution, and `--skip-skill-install`
+takes precedence over `--force`.
 
 For manual installation, copy the **whole `joyeer` directory**, including references and examples, into
 one of the locations below. These are defaults for current skill-capable
@@ -92,8 +102,8 @@ Official client documentation:
 - Update the compatibility baseline when the compiler changes. Publish the
   skill with its matching release/revision rather than linking to moving
   development documentation.
-- The [local Debug installer](../docs/building.md#local-windows-debug-installation)
-  deploys the skill alongside compiler installation unless `-SkipSkillInstall`
+- The [local Debug installer](../docs/building.md#local-debug-installation)
+  deploys the skill alongside compiler installation unless `--skip-skill-install`
   is supplied. The skill is still not part of the CMake runtime-install payload.
 - Review existing destinations before upgrading. Preserve user edits and other
   skills; an uninstaller must remove only files it owns and must not delete an

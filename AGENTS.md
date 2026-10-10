@@ -125,12 +125,11 @@ ctest --test-dir build --output-on-failure
 - CMake may acquire pinned project dependencies such as GoogleTest and the
   static LibXml2 needed by the official Windows LLD libraries. LLVM and
   platform toolchains remain developer-managed external prerequisites.
-- Write checked-in packaging and release automation in cross-platform Python
-  3.9+ using the standard library when scripting is necessary.
+- Write checked-in installation, packaging, and release automation in
+  cross-platform Python 3.9+ using the standard library when scripting is
+  necessary.
 - Do not maintain parallel `.sh` and `.ps1` implementations. Command examples
   may use the host shell, but reusable workflow logic belongs in Python.
-  Exception: `scripts/install-debug.ps1` and its tests use PowerShell for
-  Windows-only local Debug installation, not release packaging.
 - Launch tools with argument arrays and `subprocess.run`; do not use
   `shell=True` or construct shell command strings.
 - Python is not a source-build requirement. Released Joyeer compiler binaries
