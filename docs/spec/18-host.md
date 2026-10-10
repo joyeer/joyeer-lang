@@ -164,13 +164,12 @@ asynchronous handles, and shell-script interpretation are deferred.
 
 #### Project-manager status policy
 
-The planned `joypm run` maps successful child completion to its own status
+`joypm run` maps successful child completion to its own status
 zero, unsuccessful completion or launch/wait failure to one, and invalid CLI
 usage to two. It reports the original child status or platform error rather
 than truncating it to fit its own entry result. This tool policy is detailed in
-the [package manager plan](../plan/package-manager.md#3-cli-design-and-status-conventions);
-it is not a restriction on language `ProcessStatus` or a claim that `joypm` is
-implemented.
+[joypm status and diagnostics](../impl/joypm.md#status-and-diagnostics);
+it is not a restriction on the language's `ProcessStatus` contract.
 
 ### 18.4 Standard error
 

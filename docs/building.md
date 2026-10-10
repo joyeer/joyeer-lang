@@ -228,7 +228,7 @@ installer regressions also pass. Hardware, process, MSVC/LLVM architecture,
 and PE headers were independently recorded; the earlier x64 smoke result is
 not used as native ARM64 evidence. See the
 [implementation evidence](impl/joypm.md#5-validation-evidence) and
-[remaining platform gates](plan/package-manager.md#8-validation-and-release-gates).
+[remaining platform gates](plan/package-manager.md#3-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh
 Debug/Release trees; registration or another target's pass is not acceptance.
 
