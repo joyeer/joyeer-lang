@@ -1,0 +1,4 @@
+func main() {
+    let values = [7, 0]
+    print(value: values[0] % values[1])
+}

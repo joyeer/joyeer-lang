@@ -1,5 +1,15 @@
-if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED INPUT_FILE OR NOT DEFINED OUTPUT_FILE OR NOT DEFINED EXPECTED_OUTPUT)
-    message(FATAL_ERROR "JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, and EXPECTED_OUTPUT are required")
+if(NOT DEFINED JOYEER_EXECUTABLE OR NOT DEFINED OUTPUT_FILE OR NOT DEFINED EXPECTED_OUTPUT OR
+   (NOT DEFINED INPUT_FILE AND NOT DEFINED INPUT_FILES))
+    message(FATAL_ERROR "JOYEER_EXECUTABLE, INPUT_FILE or INPUT_FILES, OUTPUT_FILE, and EXPECTED_OUTPUT are required")
+endif()
+if(DEFINED INPUT_FILE AND DEFINED INPUT_FILES)
+    message(FATAL_ERROR "INPUT_FILE and INPUT_FILES are mutually exclusive")
+endif()
+if(DEFINED INPUT_FILES AND (NOT INPUT_FILES OR NOT MODULE_NAME))
+    message(FATAL_ERROR "INPUT_FILES requires a nonempty source list and MODULE_NAME")
+endif()
+if(DEFINED MODULE_NAME AND NOT DEFINED INPUT_FILES)
+    message(FATAL_ERROR "MODULE_NAME requires INPUT_FILES")
 endif()
 
 get_filename_component(output_directory "${OUTPUT_FILE}" DIRECTORY)
@@ -42,13 +52,19 @@ set(compiler_command "${JOYEER_EXECUTABLE}")
 if(DEFINED COMPILER_ARGS)
     list(APPEND compiler_command ${COMPILER_ARGS})
 endif()
-list(APPEND compiler_command -o "${OUTPUT_FILE}" "${INPUT_FILE}")
+list(APPEND compiler_command -o "${OUTPUT_FILE}")
+if(DEFINED INPUT_FILES)
+    list(APPEND compiler_command --module-name "${MODULE_NAME}" -- ${INPUT_FILES})
+else()
+    list(APPEND compiler_command -- "${INPUT_FILE}")
+endif()
 
 execute_process(
         COMMAND ${compiler_command}
         RESULT_VARIABLE compiler_result
         OUTPUT_VARIABLE compiler_output
         ERROR_VARIABLE compiler_error
+        ENCODING UTF-8
 )
 if(NOT compiler_result EQUAL 0)
     fail_native_validation(
@@ -171,6 +187,7 @@ if(DEFINED PROGRAM_ARGUMENT_2)
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
+        ENCODING UTF-8
     )
 elseif(DEFINED PROGRAM_ARGUMENT_1)
     execute_process(
@@ -179,6 +196,7 @@ elseif(DEFINED PROGRAM_ARGUMENT_1)
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
+        ENCODING UTF-8
     )
 else()
     execute_process(
@@ -187,6 +205,7 @@ else()
         RESULT_VARIABLE program_result
         OUTPUT_VARIABLE program_output
         ERROR_VARIABLE program_error
+        ENCODING UTF-8
     )
 endif()
 cleanup_native_artifacts()

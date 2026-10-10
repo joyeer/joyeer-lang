@@ -16,16 +16,17 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand parameter access | [Access effects](spec/04-memory.md#42-access-effects-on-parameters) |
 | Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
-| See active implementation priorities | [plan/roadmap.md](plan/roadmap.md) |
+| Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
 | Build from source | [building.md](building.md) |
-| Install a local Windows Debug compiler | [Debug installation](building.md#local-windows-debug-installation) |
+| Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
 
 ## Specification
 
 The files under [spec/](spec/) contain the normative chapters:
 lexical structure, types, declarations, memory, expressions, statements,
-patterns, errors, contracts, modules, naming, examples, and grammar.
+patterns, errors, contracts, modules, naming, examples, grammar, and portable
+host operations.
 [spec.md](spec.md) is their index and change log, not an assembled copy of
 the chapter text.
 
@@ -48,8 +49,17 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
-| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, and file input |
+| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
+| [joypm.md](impl/joypm.md) | Joyeer-written local workflow, strict manifest, bootstrap/self-build, and native ARM64 acceptance evidence |
 | [string.md](impl/string.md) | String representation and operations |
+
+The first joypm local-workflow version passes native Windows ARM64 Debug and
+Release default builds and unfiltered CTest (789/789 each, including all 14
+tool gates). Exact limits, failures, concurrent generations, self-build, and
+relocated product/Debug installation are verified. The implementation
+reference owns the evidence; the plan tracks other native platforms and
+future dependencies/workspaces/registries. No published release or universal
+platform acceptance is implied.
 
 ## Plans
 
@@ -58,8 +68,7 @@ work.
 
 | Document | Topic |
 |---|---|
-| [roadmap.md](plan/roadmap.md) | Active implementation priorities |
-| [joypm-m0.md](plan/joypm-m0.md) | Draft language and host contracts for a project manager written in Joyeer |
+| [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
 ## Conventions
 

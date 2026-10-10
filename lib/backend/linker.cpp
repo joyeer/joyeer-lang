@@ -175,8 +175,8 @@ ProcessResult runProcess(
     std::string_view toolName) {
     std::vector<std::string> storage;
     storage.reserve(arguments.size() + 1);
-    storage.push_back(executable.string());
-    for (const auto& argument : arguments) storage.push_back(argument.string());
+    storage.push_back(utf8Path(executable));
+    for (const auto& argument : arguments) storage.push_back(utf8Path(argument));
     std::vector<char*> rawArguments;
     rawArguments.reserve(storage.size() + 1);
     for (auto& argument : storage) rawArguments.push_back(argument.data());
@@ -250,7 +250,7 @@ LinkResult Linker::link(
         report(
                 LinkDiagnosticId::missingTool,
                 "Joyeer native runtime was not found at '" +
-                        options.runtimeLibrary.string() + "'");
+                        utf8Path(options.runtimeLibrary) + "'");
         return result;
     }
 #if defined(__APPLE__)
@@ -260,7 +260,7 @@ LinkResult Linker::link(
         filesystemError) {
         report(
                 LinkDiagnosticId::missingTool,
-                "macOS SDK was not found at '" + options.sdkRoot.string() + "'");
+                "macOS SDK was not found at '" + utf8Path(options.sdkRoot) + "'");
         return result;
     }
     if (options.sdkVersion.empty()) {
@@ -278,7 +278,7 @@ LinkResult Linker::link(
          filesystemError)) {
         report(
                 LinkDiagnosticId::missingTool,
-                "dsymutil was not found at '" + options.debugSymbolTool.string() + "'");
+                "dsymutil was not found at '" + utf8Path(options.debugSymbolTool) + "'");
         return result;
     }
 #endif
@@ -304,12 +304,13 @@ LinkResult Linker::link(
         report(
                 LinkDiagnosticId::fileError,
                 "native output directory does not exist or is not a directory: '" +
-                        parent.string() + "'");
+                        utf8Path(parent) + "'");
         return result;
     }
 
     const auto pdbFile = pdbPathFor(options.outputFile);
-    const auto dsymDirectory = std::filesystem::path(options.outputFile.string() + ".dSYM");
+    auto dsymDirectory = options.outputFile;
+    dsymDirectory += ".dSYM";
     const std::vector<std::filesystem::path> protectedFiles {
         options.runtimeLibrary,
         options.debugSymbolTool,
@@ -383,7 +384,7 @@ LinkResult Linker::link(
         if (error && error != std::errc::no_such_file_or_directory) {
             report(
                     LinkDiagnosticId::fileError,
-                    "cannot inspect " + std::string(description) + " '" + path.string() +
+                    "cannot inspect " + std::string(description) + " '" + utf8Path(path) +
                             "': " + error.message());
             return false;
         }
@@ -392,14 +393,14 @@ LinkResult Linker::link(
             report(
                     LinkDiagnosticId::fileError,
                     "refusing to overwrite directory at " + std::string(description) +
-                            " path '" + path.string() + "'");
+                            " path '" + utf8Path(path) + "'");
             return false;
         }
         if (!std::filesystem::remove(path, error) || error) {
             report(
                     LinkDiagnosticId::fileError,
                     "cannot remove stale " + std::string(description) + " '" +
-                            path.string() + "': " + error.message());
+                            utf8Path(path) + "': " + error.message());
             return false;
         }
         return true;
@@ -416,7 +417,7 @@ LinkResult Linker::link(
         if (filesystemError && filesystemError != std::errc::no_such_file_or_directory) {
             report(
                     LinkDiagnosticId::fileError,
-                    "cannot inspect dSYM output '" + dsymDirectory.string() + "': " +
+                    "cannot inspect dSYM output '" + utf8Path(dsymDirectory) + "': " +
                             filesystemError.message());
             return result;
         }
@@ -425,14 +426,14 @@ LinkResult Linker::link(
                 report(
                         LinkDiagnosticId::fileError,
                         "refusing to overwrite non-directory dSYM path '" +
-                                dsymDirectory.string() + "'");
+                        utf8Path(dsymDirectory) + "'");
                 return result;
             }
             std::filesystem::remove_all(dsymDirectory, filesystemError);
             if (filesystemError) {
                 report(
                         LinkDiagnosticId::fileError,
-                        "cannot remove stale dSYM bundle '" + dsymDirectory.string() +
+                        "cannot remove stale dSYM bundle '" + utf8Path(dsymDirectory) +
                                 "': " + filesystemError.message());
                 return result;
             }
@@ -453,11 +454,13 @@ LinkResult Linker::link(
     }
     const auto base = temporaryDirectory /
             ("joyeer-native-" + std::to_string(nonce));
+    auto objectFile = base;
 #if defined(_WIN32)
-    const auto objectFile = std::filesystem::path(base.string() + ".obj");
+    objectFile += ".obj";
 #else
-    const auto objectFile = std::filesystem::path(base.string() + ".o");
+    objectFile += ".o";
 #endif
+    // LLVM and LLD consume UTF-8 paths through the backend C ABI, including on Windows.
     const auto objectPath = utf8Path(objectFile);
     const auto outputPath = utf8Path(options.outputFile);
     const auto runtimePath = utf8Path(options.runtimeLibrary);
@@ -502,6 +505,8 @@ LinkResult Linker::link(
         "/NOLOGO",
         machine,
         "/SUBSYSTEM:CONSOLE",
+        "/MANIFEST:EMBED",
+        "/MANIFESTUAC:level='asInvoker' uiAccess='false'",
         "/OUT:" + outputPath,
         objectPath,
         "/WHOLEARCHIVE:" + runtimePath,
@@ -622,7 +627,7 @@ LinkResult Linker::link(
             report(
                     LinkDiagnosticId::toolFailure,
                     "native linker did not produce the expected CodeView PDB '" +
-                            pdbFile.string() + "'");
+                        utf8Path(pdbFile) + "'");
             return result;
         }
         result.debugArtifact = pdbFile;
@@ -631,7 +636,8 @@ LinkResult Linker::link(
     }
 #elif defined(__APPLE__)
     if (options.debugInfo.emitLineTables) {
-        const auto logFile = std::filesystem::path(base.string() + ".log");
+        auto logFile = base;
+        logFile += ".log";
         const std::vector<std::filesystem::path> dsymutilArguments {
             options.outputFile,
             "-o",
@@ -655,7 +661,7 @@ LinkResult Linker::link(
             report(
                     LinkDiagnosticId::toolFailure,
                     "dsymutil failed to create the expected dSYM bundle '" +
-                            dsymDirectory.string() + "'" +
+                        utf8Path(dsymDirectory) + "'" +
                             (process.launchError.empty()
                                     ? std::string()
                                     : ":\n" + process.launchError) +

@@ -134,7 +134,11 @@ enum class TypeCheckingDiagnosticId {
     typeMismatch,
     missingContextualType,
     invalidOperatorOperands,
+    invalidPropagationOperand,
+    invalidPropagationContext,
+    mismatchedPropagationError,
     unknownMember,
+    inaccessibleDeclaration,
     notSubscriptable,
     unknownEnumCase,
     enumCaseArgumentMismatch,
@@ -146,6 +150,8 @@ enum class TypeCheckingDiagnosticId {
     invalidInitializingArgument,
     overlappingAccess,
     notCallable,
+    invalidCallArguments,
+    invalidLoopControl,
     unresolvedReference,
 };
 

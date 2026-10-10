@@ -44,6 +44,8 @@ enum TokenKind {
     kwInit,
     kwSelf,
     kwReturn,
+    kwBreak,
+    kwContinue,
     kwFileImport,
     kwMatch,
     kwInout,
@@ -51,6 +53,9 @@ enum TokenKind {
     kwConsuming,
     kwInitializing,
     kwConsume,
+    kwPublic,
+    kwInternal,
+    kwPrivate,
 
     leftCurly,
     rightCurly,
@@ -88,6 +93,7 @@ enum TokenKind {
 struct SourceSpan {
         uint32_t offset = 0;
         uint32_t length = 0;
+        uint32_t sourceId = 0;
 };
 
 struct Token {
@@ -136,6 +142,8 @@ struct Keywords {
     static const std::string INIT;
     static const std::string SELF;
     static const std::string RETURN;
+    static const std::string BREAK;
+    static const std::string CONTINUE;
     static const std::string FILEIMPORT;
     static const std::string MATCH;
     static const std::string INOUT;

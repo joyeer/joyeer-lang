@@ -1,0 +1,279 @@
+func load(flag: Bool, counter: inout Int): Result<String, String> {
+    &counter = counter + 1
+    if flag {
+        return .Ok("ready" + "!")
+    }
+    return .Err("failed" + "!")
+}
+
+func forward(flag: Bool, counter: inout Int): Result<Void, String> {
+    let local = "local" + "!"
+    print(value: local)
+    let value = load(flag: flag, counter: &counter)?
+    print(value: value)
+    return .Ok(())
+}
+
+func pending(flag: Bool, counter: inout Int): Result<[String], String> {
+    let values = ["first" + "!", load(flag: flag, counter: &counter)?]
+    return .Ok(values)
+}
+
+func maybe(flag: Bool): String? {
+    if flag {
+        return "present" + "!"
+    }
+    return nil
+}
+
+func optional(flag: Bool): String? {
+    let local = "held" + "!"
+    print(value: local)
+    let value = maybe(flag: flag)?
+    return value
+}
+
+func maybeUnit(flag: Bool): Void? {
+    if flag {
+        return ()
+    }
+    return nil
+}
+
+func forwardOptionalUnit(flag: Bool): Void? {
+    let done: Void = maybeUnit(flag: flag)?
+    match done { () => () }
+    return ()
+}
+
+func complete(flag: Bool): Result<Void, String> {
+    if flag {
+        return .Ok(())
+    }
+    return .Err("unit" + "!")
+}
+
+func forwardUnit(flag: Bool): Result<Int, String> {
+    let done: Void = complete(flag: flag)?
+    match done { () => () }
+    return .Ok(7)
+}
+
+func arrayError(flag: Bool): Result<Int, [String]> {
+    if flag {
+        return .Ok(9)
+    }
+    return .Err(["array" + "!"])
+}
+
+func forwardArrayError(flag: Bool): Result<Void, [String]> {
+    let local = "scope" + "!"
+    let value = arrayError(flag: flag)?
+    print(value: local)
+    print(value: value)
+    return .Ok(())
+}
+
+func nested(value: Int): Result<Result<Int, String>, String> {
+    if value == 0 {
+        return .Err("outer")
+    }
+    if value == 1 {
+        return .Ok(.Err("inner"))
+    }
+    return .Ok(.Ok(42))
+}
+
+func forwardNested(value: Int): Result<Int, String> {
+    return nested(value: value)?
+}
+
+func forwardTwice(value: Int): Result<Int, String> {
+    let number: Int = (nested(value: value)?)?
+    return .Ok(number)
+}
+
+func borrowed(value: Result<Result<String, String>, String>): Result<String, String> {
+    return value?
+}
+
+func length(value: Result<String, String>): Result<Int, String> {
+    return .Ok((value?).count)
+}
+
+func alwaysFail(): Result<Never, String> {
+    return .Err("never success")
+}
+
+func forwardNever(): Result<Int, String> {
+    alwaysFail()?
+}
+
+func alwaysSucceed(): Result<Int, Never> {
+    return .Ok(9)
+}
+
+func forwardInfallible(): Result<Int, Never> {
+    let value = alwaysSucceed()?
+    return .Ok(value)
+}
+
+func alwaysNone(): Never? {
+    return nil
+}
+
+func forwardNone(): Int? {
+    alwaysNone()?
+}
+
+func checkBool(fail: Bool, counter: inout Int): Result<Bool, String> {
+    &counter = counter + 1
+    if fail {
+        return .Err("guard failed")
+    }
+    return .Ok(true)
+}
+
+func guarded(flag: Bool, fail: Bool, counter: inout Int): Result<Bool, String> {
+    return .Ok(flag && checkBool(fail: fail, counter: &counter)?)
+}
+
+func main() {
+    var counter = 0
+    match forward(flag: true, counter: &counter) {
+        .Ok(()) => print(value: "ok"),
+        .Err(error) => print(value: error),
+    }
+    print(value: counter)
+    match forward(flag: false, counter: &counter) {
+        .Ok(()) => print(value: "unexpected"),
+        .Err(error) => print(value: error),
+    }
+    print(value: counter)
+    match pending(flag: false, counter: &counter) {
+        .Ok(_) => print(value: "unexpected"),
+        .Err(error) => print(value: error),
+    }
+    print(value: counter)
+    match pending(flag: true, counter: &counter) {
+        .Ok(values) => {
+            print(value: values[0])
+            print(value: values[1])
+        },
+        .Err(error) => print(value: error),
+    }
+    print(value: counter)
+    match optional(flag: true) {
+        .Some(value) => print(value: value),
+        .None => print(value: "missing"),
+    }
+    match optional(flag: false) {
+        .Some(value) => print(value: value),
+        .None => print(value: "missing"),
+    }
+    match forwardOptionalUnit(flag: true) {
+        .Some(()) => print(value: "unit some"),
+        .None => print(value: "unit none"),
+    }
+    match forwardOptionalUnit(flag: false) {
+        .Some(()) => print(value: "unit some"),
+        .None => print(value: "unit none"),
+    }
+    match forwardUnit(flag: true) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardUnit(flag: false) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardArrayError(flag: true) {
+        .Ok(()) => print(value: "array ok"),
+        .Err(values) => print(value: values[0]),
+    }
+    match forwardArrayError(flag: false) {
+        .Ok(()) => print(value: "unexpected"),
+        .Err(values) => print(value: values[0]),
+    }
+    forValue()
+}
+
+func forValue() {
+    match forwardNested(value: 0) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardNested(value: 1) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardNested(value: 2) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardTwice(value: 0) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardTwice(value: 1) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardTwice(value: 2) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    let original: Result<Result<String, String>, String> = .Ok(.Ok("kept" + "!"))
+    match borrowed(value: original) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match original {
+        .Ok(inner) => match inner {
+            .Ok(value) => print(value: value),
+            .Err(error) => print(value: error),
+        },
+        .Err(error) => print(value: error),
+    }
+    let originalError: Result<Result<String, String>, String> = .Err("borrowed error" + "!")
+    match borrowed(value: originalError) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match originalError {
+        .Ok(_) => print(value: "unexpected"),
+        .Err(error) => print(value: error),
+    }
+    match length(value: .Ok("abc")) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardNever() {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    match forwardInfallible() {
+        .Ok(value) => print(value: value),
+        .Err(_) => print(value: "unexpected"),
+    }
+    match forwardNone() {
+        .Some(value) => print(value: value),
+        .None => print(value: "never none"),
+    }
+    var checks = 0
+    match guarded(flag: false, fail: false, counter: &checks) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    print(value: checks)
+    match guarded(flag: true, fail: false, counter: &checks) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    print(value: checks)
+    match guarded(flag: true, fail: true, counter: &checks) {
+        .Ok(value) => print(value: value),
+        .Err(error) => print(value: error),
+    }
+    print(value: checks)
+}

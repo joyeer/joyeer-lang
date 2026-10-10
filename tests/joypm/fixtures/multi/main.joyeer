@@ -1,0 +1,7 @@
+import sample.core
+
+func main(args: [String]): Int {
+    print(value: "multi executed")
+    print(value: sample.core.value() + helper())
+    return 0
+}

@@ -1,0 +1,2 @@
+// Deliberately invalid: explicit compilation units must not discover this sibling.
+this file must not be compiled

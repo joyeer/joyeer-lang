@@ -79,7 +79,7 @@ std::filesystem::path executableDirectory() {
 }
 
 std::filesystem::path nativeRuntimePath() {
-    const std::filesystem::path configuredPath = JOYEER_NATIVE_RUNTIME_PATH;
+    const auto configuredPath = std::filesystem::u8path(JOYEER_NATIVE_RUNTIME_PATH);
     if (configuredPath.is_relative()) {
         const auto directory = executableDirectory();
         if (!directory.empty()) return directory / configuredPath;
@@ -99,6 +99,9 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->outputMode,
                 arguments->optimizationLevel,
                 arguments->debugInfo,
+                arguments->moduleName,
+                arguments->sourceFiles,
+                arguments->modules,
             });
 }
 
@@ -121,14 +124,14 @@ int Driver::run() {
                     source->llvmHasEntryPoint,
                     joyeer::native::LinkOptions {
                         nativeRuntimePath(),
-                        JOYEER_SDK_ROOT_PATH,
+                        std::filesystem::u8path(JOYEER_SDK_ROOT_PATH),
                         JOYEER_SDK_VERSION,
                         JOYEER_MACOS_DEPLOYMENT_TARGET,
-                        JOYEER_DSYMUTIL_EXECUTABLE_PATH,
+                        std::filesystem::u8path(JOYEER_DSYMUTIL_EXECUTABLE_PATH),
                         arguments->outputFile,
                         arguments->optimizationLevel,
                         arguments->debugInfo,
-                        arguments->inputfile,
+                        source->getAbstractPath(),
                     });
             for (const auto& diagnostic : linking.diagnostics) {
                         diagnostics->reportDiagnostic(

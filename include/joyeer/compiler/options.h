@@ -2,6 +2,9 @@
 #define __joyeer_compiler_options_h__
 
 #include <filesystem>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace joyeer {
 
@@ -37,12 +40,37 @@ enum class OutputMode {
     executable,
 };
 
+struct ModuleSources {
+    std::string name;
+    std::vector<std::filesystem::path> files;
+};
+
+[[nodiscard]] inline bool isModuleName(std::string_view name) {
+    bool start = true;
+    for (const char character : name) {
+        if (character == '.') {
+            if (start) return false;
+            start = true;
+            continue;
+        }
+        const bool letter = (character >= 'a' && character <= 'z') ||
+                            (character >= 'A' && character <= 'Z') ||
+                            character == '_';
+        if (!letter && (start || character < '0' || character > '9')) return false;
+        start = false;
+    }
+    return !start;
+}
+
 struct CompileOptions {
     std::filesystem::path workingDirectory;
     std::filesystem::path outputFile;
     OutputMode outputMode = OutputMode::validate;
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;
     DebugInfoOptions debugInfo;
+    std::string moduleName;
+    std::vector<std::filesystem::path> sourceFiles;
+    std::vector<ModuleSources> modules;
 };
 
 } // namespace joyeer

@@ -3,10 +3,44 @@
 #include <algorithm>
 #include <cwctype>
 #include <iostream>
+#include <system_error>
+#include <utility>
+
+#if defined(_WIN32)
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 using joyeer::OutputMode;
 
 namespace {
+
+std::string pathUtf8(const std::filesystem::path& path) {
+    const auto encoded = path.u8string();
+    return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+}
+
+bool parseUtf8Path(
+        Diagnostics* diagnostics,
+        const std::string& text,
+        std::filesystem::path& result,
+        const char* diagnosticCode) {
+    if (text.find('\0') != std::string::npos) {
+        diagnostics->reportDiagnostic(
+                ErrorLevel::failure, diagnosticCode, "path must not contain NUL bytes");
+        return false;
+    }
+    try {
+        result = std::filesystem::u8path(text);
+        return true;
+    } catch (const std::system_error&) {
+        // Do not echo invalid encoding into an otherwise UTF-8 diagnostic.
+        diagnostics->reportDiagnostic(
+                ErrorLevel::failure, diagnosticCode, "path cannot be decoded as UTF-8");
+        return false;
+    }
+}
 
 std::filesystem::path absoluteNormalized(const std::filesystem::path& path) {
     std::error_code error;
@@ -90,10 +124,62 @@ CommandLineArguments::CommandLineArguments(
     parse(arguments);
 }
 
+#if defined(_WIN32)
+CommandLineArguments::CommandLineArguments(
+        Diagnostics* diagnostics,
+        int argc,
+        wchar_t** argv):
+        diagnostics(diagnostics) {
+    std::vector<std::string> arguments;
+    if (argc > 0 && argv != nullptr) {
+        arguments.reserve(static_cast<size_t>(argc));
+        for (int index = 0; index < argc; ++index) {
+            const char* code = "source-file.read-failed";
+            if (!arguments.empty()) {
+                if (arguments.back() == "-o" || arguments.back() == "--emit-llvm") {
+                    code = "driver.output-file-error";
+                } else if (arguments.back() == "--module-source") {
+                    code = "module.read-source";
+                }
+            }
+            const int count = argv[index] == nullptr ? 0 : WideCharToMultiByte(
+                    CP_UTF8, WC_ERR_INVALID_CHARS, argv[index], -1,
+                    nullptr, 0, nullptr, nullptr);
+            if (count == 0) {
+                diagnostics->reportDiagnostic(
+                        ErrorLevel::failure, code,
+                        "invalid Windows command line argument encoding at argument " +
+                        std::to_string(index));
+                return;
+            }
+            std::string text(static_cast<size_t>(count), '\0');
+            if (WideCharToMultiByte(
+                    CP_UTF8, WC_ERR_INVALID_CHARS, argv[index], -1,
+                    text.data(), count, nullptr, nullptr) != count) {
+                diagnostics->reportDiagnostic(
+                        ErrorLevel::failure, code,
+                        "cannot convert Windows command line argument " + std::to_string(index));
+                return;
+            }
+            text.pop_back(); // Exclude the terminator; preserve an empty argument.
+            arguments.push_back(std::move(text));
+        }
+    }
+    parse(arguments);
+}
+#endif
+
 void CommandLineArguments::parse(std::vector<std::string>& arguments) {
+    if (arguments.empty()) {
+        diagnostics->reportError(ErrorLevel::failure, "missing compiler arguments");
+        return;
+    }
     auto iterator = arguments.begin();
-    executableLocation = *iterator;
+    if (!parseUtf8Path(diagnostics, *iterator, executableLocation, "source-file.read-failed")) {
+        return;
+    }
     bool parseOptions = true;
+    bool moduleNameProvided = false;
 
     iterator++;
     for (; iterator != arguments.end(); ++iterator) {
@@ -132,6 +218,56 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     ErrorLevel::failure,
                     "unsupported debug option '%s'; expected -g0, -g, -gline-tables-only, -gfull, -gdwarf, or -gcodeview",
                     iterator->c_str());
+        } else if (parseOptions && (*iterator == "--module-root" || *iterator == "--module")) {
+            diagnostics->reportError(
+                    ErrorLevel::failure,
+                    "%s directory inputs are no longer supported; use --module-name with explicit source files and --module-source name=file",
+                    iterator->c_str());
+            if (iterator + 1 != arguments.end() && !(iterator + 1)->starts_with('-')) ++iterator;
+        } else if (parseOptions && (*iterator == "--module-name" || *iterator == "--module-source")) {
+            const auto option = *iterator;
+            ++iterator;
+            if (iterator == arguments.end()) {
+                diagnostics->reportError(ErrorLevel::failure, "%s requires a value", option.c_str());
+                break;
+            }
+            if (iterator->empty() || iterator->starts_with('-')) {
+                diagnostics->reportError(ErrorLevel::failure, "%s requires a value", option.c_str());
+                if (!iterator->empty()) --iterator;
+                continue;
+            }
+            if (option == "--module-name") {
+                if (moduleNameProvided) {
+                    diagnostics->reportError(ErrorLevel::failure, "--module-name may only be specified once");
+                } else if (!joyeer::isModuleName(*iterator)) {
+                    diagnostics->reportError(ErrorLevel::failure, "invalid logical module name '%s'", iterator->c_str());
+                } else {
+                    moduleName = *iterator;
+                }
+                moduleNameProvided = true;
+            } else {
+                const auto separator = iterator->find('=');
+                const auto name = iterator->substr(0, separator);
+                if (separator == std::string::npos || separator + 1 == iterator->size() ||
+                    !joyeer::isModuleName(name)) {
+                    diagnostics->reportError(
+                            ErrorLevel::failure,
+                            "--module-source requires a logical.dotted.name=file mapping");
+                } else {
+                    std::filesystem::path decoded;
+                    if (!parseUtf8Path(
+                            diagnostics, iterator->substr(separator + 1), decoded,
+                            "module.read-source")) continue;
+                    const auto file = absoluteNormalized(decoded);
+                    const auto found = std::find_if(modules.begin(), modules.end(),
+                            [&](const auto& module) { return module.name == name; });
+                    if (found == modules.end()) {
+                        modules.push_back({name, {file}});
+                    } else {
+                        found->files.push_back(file);
+                    }
+                }
+            }
         } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o")) {
             const auto option = *iterator;
             ++iterator;
@@ -154,25 +290,76 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             outputMode = option == "--emit-llvm"
                     ? OutputMode::llvmIR
                     : OutputMode::executable;
-            outputFile = std::filesystem::path(*iterator);
+            if (iterator->empty()) {
+                diagnostics->reportDiagnostic(
+                        ErrorLevel::failure, "driver.output-file-error",
+                        option + " requires a nonempty output path");
+            } else {
+                parseUtf8Path(diagnostics, *iterator, outputFile, "driver.output-file-error");
+            }
         } else if (parseOptions && iterator->starts_with('-')) {
             diagnostics->reportError(
                     ErrorLevel::failure,
                     "unknown option '%s'",
-                    iterator->c_str());
-        } else if (!inputfile.empty()) {
-            diagnostics->reportError(
-                    ErrorLevel::failure,
-                    "multiple input files are not supported: '%s'",
                     iterator->c_str());
         } else {
             parseInputFile(*iterator);
         }
     }
 
-    if ((inputfile.empty() && !diagnostics->hasFailure()) ||
-        (!inputfile.empty() && !std::filesystem::exists(inputfile))) {
+    if (moduleName.empty()) {
+        if (!modules.empty()) {
+            diagnostics->reportError(ErrorLevel::failure, "--module-source requires --module-name");
+        }
+        if (sourceFiles.size() > 1) {
+            diagnostics->reportError(ErrorLevel::failure, "multiple input files require --module-name");
+        }
+        if (!sourceFiles.empty()) {
+            inputfile = sourceFiles.front();
+            workingDirectory = inputfile.parent_path();
+        }
+    } else {
+        std::error_code error;
+        workingDirectory = std::filesystem::current_path(error);
+        if (error) {
+            diagnostics->reportError(
+                    ErrorLevel::failure, "cannot determine compiler working directory: %s",
+                    error.message().c_str());
+        }
+        if (sourceFiles.empty()) {
+            diagnostics->reportError(ErrorLevel::failure, "--module-name requires at least one source file");
+        }
+    }
+    if (sourceFiles.empty() && moduleName.empty() && !diagnostics->hasFailure()) {
         diagnostics->reportError(ErrorLevel::failure, Diagnostics::errorNoSuchFileOrDirectory);
+    }
+    auto inputs = sourceFiles;
+    for (const auto& module : modules) {
+        if (module.name == moduleName) {
+            diagnostics->reportError(
+                    ErrorLevel::failure, "dependency module '%s' conflicts with the root module", module.name.c_str());
+        }
+        inputs.insert(inputs.end(), module.files.begin(), module.files.end());
+    }
+    for (size_t index = 0; index < inputs.size(); ++index) {
+        std::error_code error;
+        if (!moduleName.empty() && !std::filesystem::is_regular_file(inputs[index], error)) {
+            diagnostics->reportDiagnostic(
+                    ErrorLevel::failure, "module.read-source",
+                    "module input must be a regular source file: '" + pathUtf8(inputs[index]) + "'" +
+                    (error ? ": " + error.message() : ""));
+        } else if (moduleName.empty() && !std::filesystem::exists(inputs[index], error)) {
+            diagnostics->reportDiagnostic(
+                    ErrorLevel::failure, "source-file.read-failed",
+                    std::string(Diagnostics::errorNoSuchFileOrDirectory) + " '" +
+                    pathUtf8(inputs[index]) + "'" + (error ? ": " + error.message() : ""));
+        }
+        if (std::any_of(inputs.begin(), inputs.begin() + index,
+                [&](const auto& earlier) { return pathsAlias(earlier, inputs[index]); })) {
+            diagnostics->reportDiagnostic(
+                    ErrorLevel::failure, "module.duplicate-source",
+                    "duplicate source file: '" + pathUtf8(inputs[index]) + "'");
+        }
     }
 
 #if !defined(_WIN32)
@@ -183,11 +370,21 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     }
 #endif
 
-    if (!inputfile.empty() && outputMode != OutputMode::validate &&
-        pathsAlias(inputfile, outputFile)) {
-        diagnostics->reportError(
-                ErrorLevel::failure,
-                "output path must not overwrite the input file");
+    if (outputMode != OutputMode::validate) {
+        for (const auto& input : inputs) {
+            if (pathsAlias(input, outputFile)) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "output path must not overwrite the input file");
+            }
+#if defined(_WIN32)
+            if (outputMode == OutputMode::executable && pathsAlias(input, pdbPathFor(outputFile))) {
+                diagnostics->reportError(
+                        ErrorLevel::failure,
+                        "sibling PDB cleanup path must not overwrite the input file");
+            }
+#endif
+        }
     }
 #if defined(_WIN32)
     if (outputMode != OutputMode::validate &&
@@ -196,21 +393,19 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                 ErrorLevel::failure,
                 "output paths must not use Windows alternate data streams");
     }
-    if (!inputfile.empty() && outputMode == OutputMode::executable &&
-        pathsAlias(inputfile, pdbPathFor(outputFile))) {
-        diagnostics->reportError(
-                ErrorLevel::failure,
-                "sibling PDB cleanup path must not overwrite the input file");
-    }
 #endif
 
-    if (!inputfile.empty()) accepted = true;
+    if (moduleName.empty()) sourceFiles.clear();
+    accepted = (!inputfile.empty() || !sourceFiles.empty()) && !diagnostics->hasFailure();
 }
 
 void CommandLineArguments::printUsage() {
+    std::cout << "Module usage: joyeer --module-name <name> <source>... [--module-source <name=file>]... [output options]" << std::endl;
     std::cout << "Usage: joyeer [-O0|-O1|-O2|-O3] [-g0|-g|-gline-tables-only|-gfull|-gdwarf|-gcodeview] [--emit-llvm <file>|-o <file>] <inputfile>" << std::endl;
     std::cout << "  --emit-llvm <file>  write textual LLVM IR" << std::endl;
     std::cout << "  -o <file>           write a native executable" << std::endl;
+    std::cout << "  --module-name <name> name the root compilation unit of explicit source files" << std::endl;
+    std::cout << "  --module-source <name=file> add a file to a dependency module (repeatable)" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
     std::cout << "  -g|-gline-tables-only emit source line tables using the platform format" << std::endl;
@@ -220,9 +415,12 @@ void CommandLineArguments::printUsage() {
 }
 
 void CommandLineArguments::parseInputFile(const std::string& inputpath) {
-    inputfile = std::filesystem::path(inputpath);
-    if (inputfile.is_relative()) {
-        inputfile = std::filesystem::absolute(inputfile).lexically_normal();
+    if (inputpath.empty()) {
+        diagnostics->reportError(ErrorLevel::failure, "source file path must not be empty");
+        return;
     }
-    workingDirectory = inputfile.parent_path();
+    std::filesystem::path decoded;
+    if (parseUtf8Path(diagnostics, inputpath, decoded, "source-file.read-failed")) {
+        sourceFiles.push_back(absoluteNormalized(decoded));
+    }
 }

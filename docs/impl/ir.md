@@ -18,6 +18,17 @@ A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
 `--emit-llvm` and `-o`; see the [compiler backend](backend.md).
 
+Named compilation lowers the entire reachable graph into one IR module.
+Each source-language module is an explicit source-file set with its own
+logical identity and visibility boundaries; sharing an `ir::Module` for code
+generation does not merge those units. Directories do not define IR or
+source-language modules. The semantic model's aggregate root contains
+declarations from every reachable graph file; it does not concatenate source
+text or relocate byte offsets.
+`Lowerer::lower(model, sourceName, sourceInfo, sources)` accepts the graph's
+source table as its fourth argument. The table order must match the
+`SourceSpan::sourceId` values assigned by the frontend.
+
 ---
 
 ## 2. Representation
@@ -30,9 +41,17 @@ The module owns:
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
   source-spanned instructions;
-- an optional immutable source map (file name, directory, byte length, and
-  UTF-8 byte offsets for line starts) plus function/instruction debug
+- an optional immutable source-file table (file name, directory, byte length,
+  and UTF-8 byte offsets for line starts) plus function/instruction debug
   locations.
+
+Functions, types, fields, and enum cases retain graph-wide numeric identities.
+Source names are display names, not lookup or linkage keys, so distinct
+module declarations and file-private declarations may have identical names.
+Qualified calls, constructors, and enum cases lower from their resolved
+symbols without evaluating module-name prefixes. `Function::isRootModule`
+records whether a function can be considered for executable entry selection;
+dependency declarations named `main` keep their source name.
 
 Debug locations are optional so hand-built/backend-only modules remain valid
 without source metadata and byte offset zero remains distinguishable from no
@@ -41,9 +60,13 @@ source anchor but are marked implicit, allowing a backend to avoid misleading
 source-level stepping stops.
 
 Source-map offsets index the exact binary-preserved `SourceFile::content`
-buffer. File name and directory are stored as UTF-8 strings; spans and line
-starts remain 32-bit, so the verifier rejects larger source maps before a
-backend can observe truncated coordinates.
+buffer for the selected file. `Module::sourceFiles` is indexed directly by
+`SourceSpan::sourceId`. A nonempty table is authoritative; when it is empty,
+the legacy optional `Module::sourceInfo` supplies only source ID zero.
+Function, instruction, lexical-scope, variable, and type-declaration spans
+retain their source IDs and file-local offsets. File name and directory are
+stored as UTF-8 strings; spans and line starts remain 32-bit, so the verifier
+rejects larger source maps before a backend can observe truncated coordinates.
 
 The IR also snapshots source lexical scopes, parameters, local/pattern
 variables, and the exact event where each variable gains stable address
@@ -80,13 +103,17 @@ The current instruction set covers:
 - stack allocation, zero initialization, load, and store;
 - explicit `copy`, `take`, and `destroy` ownership operations;
 - implemented arithmetic, comparison, and logical operations;
-- direct source and external calls;
+- checked `div` / `rem` with exactly two `Int` value operands and an `Int`
+  value result;
+- direct source and external calls, including external host builtins;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction and payload extraction;
 - mutating `array_append` with an addressable receiver and transferred element;
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
+- `dictionary_get` with borrowed dictionary/key values and an owned
+  `Optional<V>` result, verified against the concrete `K` and `V`;
 - `String`/collection count and value/address subscript operations, plus owned
   `String.utf8()` byte-array extraction;
 - high-level recursive pattern switching.
@@ -105,9 +132,28 @@ does not create a second return or a false fallthrough value.
 
 `if` expressions merge values through a typed temporary slot. `while` emits a
 header, body, exit, and back edge. A `Never` branch terminates without adding a
-false fallthrough edge. `&&` emits a conditional right-hand block and a Boolean
-merge slot; its right operand and temporaries are evaluated only on the
-true-left path.
+false fallthrough edge. `break` branches to the nearest loop exit and `continue`
+to its header. Both emit cleanup only for scopes deeper than the loop's saved
+scope depth, including pending expression temporaries and match bindings.
+The jump keeps its explicit source location; generated cleanup is implicit.
+
+`&&` and `||` emit conditional right-hand blocks and Boolean merge slots.
+Their right operands and temporaries are evaluated only on the true-left and
+false-left paths respectively. Prefix `!` lowers to Boolean equality with
+`false`, without adding an eager logical operation. Calls returning `Never`
+terminate their IR block with `unreachable`, including when nested under
+negation or on either side of a short-circuit expression.
+
+Postfix `?` evaluates its `Result`/`Optional` operand once, then lowers to an
+enum-tag switch with success, failure, and continuation blocks. The success
+payload moves into the expression result; the failure block constructs the
+enclosing function's `.Err` or `.None` and uses the existing return cleanup
+path. An owned operand is transferred rather than cloned; a borrowed one
+receives the independent owned copy required by value semantics. Typed
+payload extraction follows the tag branch, and `Void` payloads carry no
+bytes. A `Never` payload has no value to extract, so its impossible branch
+terminates as unreachable. No new runtime operation or special IR opcode is
+required.
 
 Optional promotion must be explicit in IR: an accepted conversion from `T` to
 `T?` needs `Optional.Some(T)` at its value boundary, while `nil` needs
@@ -156,6 +202,13 @@ update keeps the existing key, destroys the incoming duplicate key and old
 value, then transfers the replacement value. Dictionary construction applies
 the same last-value-wins policy and counts only unique keys.
 
+`dictionary_get` evaluates the receiver and key once, in source order, without
+copying the receiver. Native emission performs one lookup and clones only the
+present value into `.Some`; absence produces `.None` without a payload copy.
+The result is already owned, so lowering transfers it without another clone.
+Nested optional and unit payloads retain their exact types. Receiver and key
+temporaries remain live through lookup and are cleaned on every exit path.
+
 ---
 
 ## 4. Pattern representation
@@ -190,8 +243,8 @@ plus case symbol, including distinct builtin container instantiations.
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - malformed recursive patterns;
-- malformed source maps, out-of-bounds debug spans, or locations without a
-  module source map;
+- malformed source maps, unknown source IDs, debug spans outside their own
+  file's byte bounds, or locations without module source information;
 - detached/cyclic/cross-function lexical scopes, invalid parameter indices,
   untyped variables, or source locations using the wrong scope;
 - missing/duplicate debug-variable bindings, non-address or wrong-typed
@@ -252,7 +305,7 @@ Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
 
 | Area | Implementation |
 |---|---|
-| Conditional evaluation | `&&` branches before right-hand evaluation, including side effects, bounds checks, and early returns. |
+| Conditional evaluation | `&&` and `||` branch before right-hand evaluation, including side effects, bounds checks, early returns, and loop exits. |
 | Pattern payloads | Tag branches guard payload interpretation, including nested enum/String patterns. |
 | Pattern binding ownership | Nontrivial bindings own copies independent of the scrutinee and are destroyed on normal exit and early return. |
 | Binary operand capture | Nontrivial left operands remain alive across right-hand side effects and are cleaned on divergence. |

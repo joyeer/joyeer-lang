@@ -15,7 +15,17 @@ uint32_t spanEnd(SourceSpan span) {
 
 SourceSpan coveringSpan(SourceSpan first, SourceSpan last) {
     const uint32_t end = std::max(spanEnd(first), spanEnd(last));
-    return SourceSpan { first.offset, end - first.offset };
+    return SourceSpan { first.offset, end - first.offset, first.sourceId };
+}
+
+bool isVisibility(TokenKind kind) {
+    return kind == kwPublic || kind == kwInternal || kind == kwPrivate;
+}
+
+syntax::Visibility visibilityFor(TokenKind kind) {
+    if (kind == kwPublic) return syntax::Visibility::public_;
+    if (kind == kwPrivate) return syntax::Visibility::private_;
+    return syntax::Visibility::internal;
 }
 
 std::string quotedToken(const Token::Ptr& token) {
@@ -111,7 +121,7 @@ TokenCursor::TokenCursor(const std::vector<Token::Ptr>& tokens): tokens(tokens) 
     fallbackEof = std::make_shared<Token>(
             endOfFile,
             "",
-            SourceSpan {offset, 0},
+            SourceSpan {offset, 0, tokens.empty() ? 0 : tokens.back()->span.sourceId},
             line,
             column,
             true);
@@ -179,9 +189,26 @@ Parser::Parser(const std::vector<Token::Ptr>& tokens): cursor(tokens) {
 ParseResult Parser::parse() {
     const size_t start = cursor.position();
     std::vector<syntax::NodePtr> items;
+    std::vector<syntax::ImportSyntax> imports;
 
     while (!cursor.atEnd()) {
         const size_t before = cursor.position();
+        if (cursor.eat(kwImport) != nullptr) {
+            if (!items.empty()) {
+                report(DiagnosticId::unexpectedToken, spanFrom(before),
+                       "imports must precede declarations");
+            }
+            auto name = expect(identifier, "a module name");
+            std::string qualified = name == nullptr ? "" : name->rawValue;
+            while (cursor.eat(dot) != nullptr) {
+                auto component = expect(identifier, "a module name component");
+                if (component == nullptr) break;
+                qualified += "." + component->rawValue;
+            }
+            imports.push_back({std::move(qualified), spanFrom(before)});
+            enforceItemBoundary(true);
+            continue;
+        }
         auto item = parseTopLevelItem();
         if (item != nullptr) {
             items.push_back(std::move(item));
@@ -200,10 +227,25 @@ ParseResult Parser::parse() {
         span = insertionSpan();
     }
     auto root = std::make_shared<syntax::SourceFileSyntax>(span, std::move(items));
+    root->imports = std::move(imports);
     return ParseResult { std::move(root), std::move(diagnostics) };
 }
 
 syntax::NodePtr Parser::parseTopLevelItem() {
+    if (isVisibility(cursor.peek()->kind)) {
+        const auto modifier = cursor.advance();
+        auto declaration = parseTopLevelItem();
+        if (declaration != nullptr) {
+            if (declaration->explicitVisibility) {
+                report(DiagnosticId::unexpectedToken, modifier->span,
+                       "a declaration may have only one visibility modifier");
+            }
+            declaration->visibility = visibilityFor(modifier->kind);
+            declaration->explicitVisibility = true;
+            declaration->span = coveringSpan(modifier->span, declaration->span);
+        }
+        return declaration;
+    }
     if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
         const auto token = cursor.advance();
         return std::make_shared<syntax::ErrorDeclSyntax>(tokenSpan(token));
@@ -352,8 +394,15 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
             break;
         }
         const size_t before = cursor.position();
+        Token::Ptr modifier;
+        if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
         if (cursor.at(kwLet) || cursor.at(kwVar)) {
             fields.push_back(parseStructField());
+            if (modifier != nullptr) {
+                fields.back()->visibility = visibilityFor(modifier->kind);
+                fields.back()->explicitVisibility = true;
+                fields.back()->span = coveringSpan(modifier->span, fields.back()->span);
+            }
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
             cursor.advance();
         } else {
@@ -534,6 +583,15 @@ syntax::TypePtr Parser::parseTypePrimary() {
     }
     if (cursor.at(identifier)) {
         auto name = cursor.advance();
+        if (cursor.at(dot)) {
+            name = std::make_shared<Token>(*name);
+            while (cursor.eat(dot) != nullptr) {
+                auto component = expect(identifier, "a qualified type name");
+                if (component == nullptr) break;
+                name->rawValue += "." + component->rawValue;
+                name->span = coveringSpan(name->span, component->span);
+            }
+        }
         std::vector<syntax::TypePtr> arguments;
         if (cursor.eat(less) != nullptr) {
             DelimiterScope delimiter(activeClosers, greater);
@@ -619,6 +677,12 @@ syntax::NodePtr Parser::parseBlockItem() {
     if (cursor.at(kwWhile)) {
         return parseWhileStmt();
     }
+    if (const auto token = cursor.eat(kwBreak)) {
+        return std::make_shared<syntax::BreakStmtSyntax>(tokenSpan(token));
+    }
+    if (const auto token = cursor.eat(kwContinue)) {
+        return std::make_shared<syntax::ContinueStmtSyntax>(tokenSpan(token));
+    }
     if (isExpressionStart(cursor.peek())) {
         return parseExpression();
     }
@@ -700,11 +764,12 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
 
 syntax::ExprPtr Parser::parsePrefixExpr() {
     const size_t start = cursor.position();
-    if (cursor.at(minus)) {
+    if (cursor.at(minus) || cursor.at(bang)) {
         auto op = cursor.advance();
         auto operand = parsePrefixExpr();
         if (operand == nullptr) {
-            reportExpected(DiagnosticId::expectedExpression, "an operand after '-'");
+            reportExpected(DiagnosticId::expectedExpression,
+                           "an operand after " + quotedToken(op));
             operand = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         }
         return std::make_shared<syntax::PrefixExprSyntax>(
@@ -762,6 +827,12 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
                     coveringSpan(expression->span, tokenSpan(close)),
                     std::move(expression),
                     std::move(index));
+            continue;
+        }
+        if (auto questionToken = cursor.eat(question)) {
+            expression = std::make_shared<syntax::PropagateExprSyntax>(
+                    coveringSpan(expression->span, tokenSpan(questionToken)),
+                    std::move(expression));
             continue;
         }
         break;
@@ -1063,6 +1134,12 @@ syntax::EnumCasePatternSyntax::Ptr Parser::parseEnumCasePattern() {
     }
     expect(dot, "'.' in an enum case pattern");
     auto name = expect(identifier, "an enum case name");
+    while (qualifier != nullptr && name != nullptr && cursor.eat(dot) != nullptr) {
+        qualifier = std::make_shared<Token>(*qualifier);
+        qualifier->rawValue += "." + name->rawValue;
+        qualifier->span = coveringSpan(qualifier->span, name->span);
+        name = expect(identifier, "an enum case name");
+    }
 
     const bool hasPayloadClause = cursor.eat(leftParen) != nullptr;
     std::vector<syntax::PatternArgumentSyntax::Ptr> arguments;
@@ -1149,20 +1226,22 @@ bool Parser::isExpressionStart(const Token::Ptr& token) const {
             token->kind == leftParen || token->kind == leftSquare ||
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
-            token->kind == minus || token->kind == ampersand);
+            token->kind == minus || token->kind == bang ||
+            token->kind == ampersand);
 }
 
 bool Parser::isTopLevelStart(const Token::Ptr& token) const {
     if (token == nullptr) return false;
     return token->kind == kwLet || token->kind == kwVar ||
            token->kind == kwFunc || token->kind == kwStruct ||
-           token->kind == kwEnum;
+           token->kind == kwEnum || token->kind == kwImport || isVisibility(token->kind);
 }
 
 bool Parser::isBlockItemStart(const Token::Ptr& token) const {
     return token != nullptr &&
            (token->kind == kwLet || token->kind == kwVar ||
-            token->kind == kwWhile || isExpressionStart(token));
+            token->kind == kwWhile || token->kind == kwBreak ||
+            token->kind == kwContinue || isExpressionStart(token));
 }
 
 bool Parser::isAssignmentTarget(const syntax::ExprPtr& expression) const {
@@ -1188,16 +1267,19 @@ bool Parser::shouldParseReturnValue() const {
 Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
     switch (kind) {
         case equal: return {1, true, false, true};
-        case andAnd: return {2, false, false, false};
+        case orOr: return {2, false, false, false};
+        case andAnd: return {3, false, false, false};
         case equalEqual:
-        case notEqual: return {3, false, true, false};
+        case notEqual: return {4, false, true, false};
         case less:
         case lessEqual:
         case greater:
-        case greaterEqual: return {4, false, true, false};
+        case greaterEqual: return {5, false, true, false};
         case plus:
-        case minus: return {5, false, false, false};
-        case multiply: return {6, false, false, false};
+        case minus: return {6, false, false, false};
+        case multiply:
+        case divide:
+        case percentage: return {7, false, false, false};
         default: return {0, false, false, false};
     }
 }
@@ -1358,16 +1440,17 @@ void Parser::synchronizeMatchArm() {
 
 SourceSpan Parser::spanFrom(size_t start) const {
     if (cursor.position() <= start) {
-        return SourceSpan { cursor.tokenAt(start)->span.offset, 0 };
+        return SourceSpan { cursor.tokenAt(start)->span.offset, 0,
+                            cursor.tokenAt(start)->span.sourceId };
     }
     const auto first = cursor.tokenAt(start);
     const auto last = cursor.previous();
     const uint32_t end = spanEnd(last->span);
-    return SourceSpan { first->span.offset, end - first->span.offset };
+    return SourceSpan { first->span.offset, end - first->span.offset, first->span.sourceId };
 }
 
 SourceSpan Parser::insertionSpan() const {
-    return SourceSpan { cursor.peek()->span.offset, 0 };
+    return SourceSpan { cursor.peek()->span.offset, 0, cursor.peek()->span.sourceId };
 }
 
 SourceSpan Parser::tokenSpan(const Token::Ptr& token) const {

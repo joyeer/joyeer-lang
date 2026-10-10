@@ -46,6 +46,13 @@ include(CTest)
 enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
+option(JOYEER_BUILD_JOYPM "Bootstrap the Joyeer-written joypm project tool" ON)
+
+if(JOYEER_BUILD_JOYPM AND CMAKE_CROSSCOMPILING)
+    message(FATAL_ERROR
+        "joypm bootstrapping must execute the newly built Joyeer compiler. "
+        "Cross-compiling builds must set JOYEER_BUILD_JOYPM=OFF.")
+endif()
 
 set(JOYEER_LLVM_ROOT "$ENV{LLVM_HOME}" CACHE PATH
     "Root of the LLVM/LLD 22.1.8 development SDK")
@@ -228,7 +235,7 @@ set(JOYEER_BIN_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin")
 set(JOYEER_LIB_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib")
 
 set(JOYEER_TESTS_DIR "${JOYEER_SOURCE_DIR}/tests")
-set(JOYEER_UNITTESTS_DIR "${JOYEER_SOURCE_DIR}/unittests")
+set(JOYEER_UNITTESTS_DIR "${JOYEER_TESTS_DIR}/unittests")
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
@@ -243,10 +250,8 @@ include_directories(
 )
 
 add_subdirectory(lib)
+add_subdirectory(src/tools)
 add_subdirectory(tests)
-if(JOYEER_BUILD_UNITTESTS)
-    add_subdirectory(unittests)
-endif()
 
 include(GNUInstallDirs)
 install(TARGETS joyeer JoyeerNativeBackend
@@ -254,6 +259,5 @@ install(TARGETS joyeer JoyeerNativeBackend
     LIBRARY DESTINATION . COMPONENT JoyeerRuntime)
 install(TARGETS JoyeerNativeRuntime
     ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
-install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION licenses COMPONENT JoyeerRuntime)

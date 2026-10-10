@@ -1,0 +1,29 @@
+import host.services
+
+func main(args: [String]): Int {
+    if args.count == 0 { return 19 }
+    if args.count != 2 { return 1 }
+    let path = match joinPath(base: args[1], path: "from-module") {
+        .Ok(value) => value,
+        .Err(_) => { return 2 },
+    }
+    let contents = match host.services.storeAndRead(path: path) {
+        .Ok(value) => value,
+        .Err(_) => { return 3 },
+    }
+    let removed = match removeFile(path: path) {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    if !removed || contents != "module contents" { return 4 }
+    let completed = match host.services.childStatus(executable: args[0], directory: args[1]) {
+        .Ok(status) => match status {
+            .Exited(code) => code == 19,
+            .Signaled(_) => false,
+        },
+        .Err(_) => false,
+    }
+    if !completed { return 5 }
+    print(value: "module host ok")
+    return 0
+}

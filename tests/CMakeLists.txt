@@ -30,3 +30,11 @@ if(BUILD_TESTING)
     joyeer_add_skill_example(ReadFileMissing read-file
         "read failed\n" "${joyeer_skill_output}/missing-input")
 endif()
+
+if(BUILD_TESTING AND JOYEER_BUILD_JOYPM)
+    add_subdirectory(joypm)
+endif()
+
+if(JOYEER_BUILD_UNITTESTS)
+    add_subdirectory(unittests)
+endif()

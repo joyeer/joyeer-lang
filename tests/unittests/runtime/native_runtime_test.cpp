@@ -1,0 +1,1032 @@
+#include "joyeer/native/runtime.h"
+
+#include <gtest/gtest.h>
+
+#include <array>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <string>
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+namespace {
+
+int cloneCount = 0;
+int destroyCount = 0;
+
+JoyeerString view(const std::string& value) {
+    return JoyeerString {
+        reinterpret_cast<const uint8_t*>(value.data()),
+        static_cast<int64_t>(value.size()),
+    };
+}
+
+JoyeerString owned(const std::string& value) {
+    JoyeerString result {};
+    const auto source = view(value);
+    joyeer_string_clone_abi(&result, source.data, source.count);
+    return result;
+}
+
+void cloneString(void* destination, const void* source) {
+    ++cloneCount;
+    const auto* value = static_cast<const JoyeerString*>(source);
+    joyeer_string_clone_abi(
+            static_cast<JoyeerString*>(destination),
+            value->data,
+            value->count);
+}
+
+void destroyString(void* value) {
+    ++destroyCount;
+    joyeer_string_destroy_abi(static_cast<JoyeerString*>(value));
+}
+
+// Used only inside death-test subprocesses, so buffering and descriptor
+// changes cannot corrupt the test runner's stderr (or its Windows CRT mode).
+bool prepareFailingStderr(char* buffer, size_t count, bool buffered = true) {
+#if defined(_WIN32)
+#if defined(_MSC_VER)
+    FILE* reopened = nullptr;
+    if (freopen_s(&reopened, "NUL", "wb", stderr) != 0) return false;
+#else
+    if (std::freopen("NUL", "wb", stderr) == nullptr) return false;
+#endif
+    const int input = _open("NUL", _O_RDONLY | _O_BINARY);
+#else
+    if (std::freopen("/dev/null", "wb", stderr) == nullptr) return false;
+    const int input = open("/dev/null", O_RDONLY);
+#endif
+    if (input < 0) return false;
+        const bool configured = std::setvbuf(
+            stderr, buffered ? buffer : nullptr, buffered ? _IOFBF : _IONBF, count) == 0;
+#if defined(_WIN32)
+    const bool redirected = _dup2(input, _fileno(stderr)) == 0;
+    _close(input);
+#else
+    const bool redirected = dup2(input, fileno(stderr)) >= 0;
+    close(input);
+#endif
+    return configured && redirected;
+}
+
+int failingStderrErrno() {
+    errno = 0;
+    int code = std::fputc('x', stderr) == EOF ? (errno == 0 ? EIO : errno) : 0;
+    errno = 0;
+    if (std::fflush(stderr) != 0 && code == 0) code = errno == 0 ? EIO : errno;
+    std::clearerr(stderr);
+    return code;
+}
+
+#if defined(_WIN32)
+thread_local int stderrInvalidParameterCalls = 0;
+
+void __cdecl recordStderrInvalidParameter(
+        const wchar_t*,
+        const wchar_t*,
+        const wchar_t*,
+        unsigned int,
+        uintptr_t) {
+    ++stderrInvalidParameterCalls;
+}
+#endif
+
+TEST(NativeRuntimeTest, WritesExactBinaryStderrWithoutAppendingNewline) {
+    const std::array<uint8_t, 9> bytes { 'J', 0, '\n', '\r', 0xff, 0xc0, 0xaf, 'y', 'r' };
+    const auto allocations = joyeer_runtime_active_allocations();
+    testing::internal::CaptureStderr();
+    int64_t errorCode = -1;
+    const auto status = joyeer_write_stderr_abi(&errorCode, bytes.data(), bytes.size());
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_EQ(captured, std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+}
+
+TEST(NativeRuntimeTest, AcceptsNullEmptyStderrAndResetsErrorStorage) {
+    testing::internal::CaptureStderr();
+    int64_t errorCode = 123;
+    const auto status = joyeer_write_stderr_abi(&errorCode, nullptr, 0);
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_TRUE(captured.empty());
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+#if defined(_WIN32)
+TEST(NativeRuntimeTest, RestoresWindowsStderrTextModeAfterExactWrite) {
+    testing::internal::CaptureStderr();
+    const int previous = _setmode(_fileno(stderr), _O_TEXT);
+    int64_t errorCode = -1;
+    const uint8_t newline = '\n';
+    const auto status = joyeer_write_stderr_abi(&errorCode, &newline, 1);
+    const int restored = _setmode(_fileno(stderr), previous);
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_NE(previous, -1);
+    EXPECT_EQ(restored, _O_TEXT);
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_EQ(captured, "\n"); // Not Windows text mode's CRLF.
+}
+
+TEST(NativeRuntimeTest, RestoresWindowsInvalidParameterHandlerAfterStderrWrite) {
+    testing::internal::CaptureStderr();
+    const auto previousHandler =
+            _set_thread_local_invalid_parameter_handler(recordStderrInvalidParameter);
+    stderrInvalidParameterCalls = 0;
+    const auto allocations = joyeer_runtime_active_allocations();
+    int64_t errorCode = -1;
+    const uint8_t byte = 'x';
+    const auto status = joyeer_write_stderr_abi(&errorCode, &byte, 1);
+    const auto restoredHandler =
+            _set_thread_local_invalid_parameter_handler(previousHandler);
+    const auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(restoredHandler, recordStderrInvalidParameter);
+    EXPECT_EQ(stderrInvalidParameterCalls, 0);
+    EXPECT_EQ(status, JOYEER_STDERR_ERROR_NONE);
+    EXPECT_EQ(errorCode, 0);
+    EXPECT_EQ(captured, "x");
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+}
+#endif
+
+TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrWriteFailure) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer), false)) std::_Exit(120);
+        const int expected = failingStderrErrno();
+        int64_t code = 0;
+        const uint8_t byte = 'x';
+        const auto status = joyeer_write_stderr_abi(&code, &byte, 1);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == expected ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+
+TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrFlushFailure) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer))) std::_Exit(120);
+        const int expected = failingStderrErrno();
+        int64_t code = 0;
+        const uint8_t byte = 'x';
+        const auto status = joyeer_write_stderr_abi(&code, &byte, 1);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == expected ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+
+#if defined(_WIN32)
+TEST(NativeRuntimeDeathTest, ReturnsBadDescriptorForClosedWindowsStderrWithoutLeaking) {
+    const std::array<_invalid_parameter_handler, 2> handlers {
+        nullptr, recordStderrInvalidParameter,
+    };
+    for (const auto handler : handlers) {
+        SCOPED_TRACE(handler == nullptr ? "default handler" : "thread-local handler");
+        for (const int64_t count : { 0, 1 }) {
+            SCOPED_TRACE(count);
+            EXPECT_EXIT({
+                if (std::fflush(stderr) != 0) std::_Exit(120);
+                const int descriptor = _fileno(stderr);
+                const int saved = _dup(descriptor);
+                if (saved < 0) std::_Exit(121);
+                if (_close(descriptor) != 0) {
+                    _close(saved);
+                    std::_Exit(122);
+                }
+                // Keep FILE alive and restore the subprocess's captured stderr
+                // before exiting, so diagnostics retain their original stream.
+                const auto previousHandler =
+                        _set_thread_local_invalid_parameter_handler(handler);
+                stderrInvalidParameterCalls = 0;
+                const auto allocations = joyeer_runtime_active_allocations();
+                int64_t code = 123;
+                const uint8_t byte = 'x';
+                const auto status = joyeer_write_stderr_abi(
+                        &code, count == 0 ? nullptr : &byte, count);
+                const bool noLeak = joyeer_runtime_active_allocations() == allocations;
+                const auto restoredHandler =
+                        _set_thread_local_invalid_parameter_handler(previousHandler);
+                const int restored = _dup2(saved, descriptor);
+                const int closed = _close(saved);
+                std::clearerr(stderr);
+                std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == EBADF &&
+                        noLeak && restoredHandler == handler && stderrInvalidParameterCalls == 0 &&
+                        restored == 0 && closed == 0 ? 0 : 123);
+            }, testing::ExitedWithCode(0), "");
+        }
+    }
+}
+
+TEST(NativeRuntimeDeathTest, RestoresWindowsStderrModeAfterFailedWrite) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer), false)) std::_Exit(120);
+        if (_setmode(_fileno(stderr), _O_TEXT) == -1) std::_Exit(121);
+        int64_t code = 0;
+        const uint8_t byte = 'x';
+        const auto status = joyeer_write_stderr_abi(&code, &byte, 1);
+        const int restored = _setmode(_fileno(stderr), _O_BINARY);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code != 0 &&
+                restored == _O_TEXT ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+#endif
+
+TEST(NativeRuntimeDeathTest, FlushesPendingStderrEvenForEmptyContents) {
+    EXPECT_EXIT({
+        char buffer[4096];
+        if (!prepareFailingStderr(buffer, sizeof(buffer))) std::_Exit(120);
+        const int expected = failingStderrErrno();
+        if (std::fputc('x', stderr) == EOF) std::_Exit(121);
+        int64_t code = 0;
+        const auto status = joyeer_write_stderr_abi(&code, nullptr, 0);
+        std::_Exit(status == JOYEER_STDERR_ERROR_WRITE_FAILED && code == expected ? 0 : 122);
+    }, testing::ExitedWithCode(0), "");
+}
+
+TEST(NativeRuntimeDeathTest, TrapsInvalidStderrAbiStorageAndContents) {
+    int64_t code = 0;
+    EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(nullptr, nullptr, 0)),
+                 "stderr error output is null");
+    EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(&code, nullptr, -1)),
+                 "invalid stderr contents");
+    EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(&code, nullptr, 1)),
+                 "invalid stderr contents");
+}
+
+TEST(NativeRuntimeTest, PerformsCheckedIntegerArithmetic) {
+    EXPECT_EQ(joyeer_checked_add_int(40, 2), 42);
+    EXPECT_EQ(joyeer_checked_sub_int(40, 2), 38);
+    EXPECT_EQ(joyeer_checked_mul_int(-6, 7), -42);
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerOverflow) {
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_checked_add_int(
+                    std::numeric_limits<int64_t>::max(),
+                    1)),
+            "integer addition overflow");
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_checked_mul_int(
+                    std::numeric_limits<int64_t>::min(),
+                    -1)),
+            "integer multiplication overflow");
+}
+
+TEST(NativeRuntimeTest, DividesAndTakesRemaindersWithSignedIntegerSemantics) {
+    const auto minimum = std::numeric_limits<int64_t>::min();
+    const auto maximum = std::numeric_limits<int64_t>::max();
+    const int64_t cases[][4] = {
+        { 7, 3, 2, 1 },
+        { -7, 3, -2, -1 },
+        { 7, -3, -2, 1 },
+        { -7, -3, 2, -1 },
+        { -6, 3, -2, 0 },
+        { -6, -3, 2, 0 },
+        { 0, 1, 0, 0 },
+        { 0, -1, 0, 0 },
+        { 0, minimum, 0, 0 },
+        { minimum, 1, minimum, 0 },
+        { minimum, 2, minimum / 2, 0 },
+        { minimum, 3, -3074457345618258602LL, -2 },
+        { minimum, -3, 3074457345618258602LL, -2 },
+        { minimum, minimum, 1, 0 },
+        { minimum, maximum, -1, -1 },
+        { maximum, minimum, 0, maximum },
+        { maximum, 1, maximum, 0 },
+        { maximum, -1, -maximum, 0 },
+        { maximum, 2, maximum / 2, 1 },
+        { 1, minimum, 0, 1 },
+        { -1, minimum, 0, -1 },
+    };
+    for (const auto& values : cases) {
+        SCOPED_TRACE(testing::Message() << values[0] << ", " << values[1]);
+        EXPECT_EQ(joyeer_checked_div_int(values[0], values[1]), values[2]);
+        EXPECT_EQ(joyeer_checked_rem_int(values[0], values[1]), values[3]);
+    }
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionByZero) {
+    for (const auto dividend : { int64_t { 0 }, std::numeric_limits<int64_t>::min(),
+                                std::numeric_limits<int64_t>::max() }) {
+        SCOPED_TRACE(dividend);
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_checked_div_int(dividend, 0)),
+                "integer division by zero");
+    }
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerRemainderByZero) {
+    for (const auto dividend : { int64_t { 0 }, std::numeric_limits<int64_t>::min(),
+                                std::numeric_limits<int64_t>::max() }) {
+        SCOPED_TRACE(dividend);
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_checked_rem_int(dividend, 0)),
+                "integer remainder by zero");
+    }
+}
+
+TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionAndRemainderOverflow) {
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_checked_div_int(
+                    std::numeric_limits<int64_t>::min(), -1)),
+            "integer division overflow");
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_checked_rem_int(
+                    std::numeric_limits<int64_t>::min(), -1)),
+            "integer remainder overflow");
+}
+
+TEST(NativeRuntimeTest, ConcatenatesComparesAndIndexesStrings) {
+    const std::string left = "Joy";
+    const std::string right = "eer";
+    auto joined = joyeer_string_concat(view(left), view(right));
+
+    ASSERT_EQ(joined.count, 6);
+    EXPECT_EQ(std::memcmp(joined.data, "Joyeer", 6), 0);
+    EXPECT_TRUE(joyeer_string_equal(joined, view(std::string("Joyeer"))));
+    EXPECT_LT(joyeer_string_compare(view(left), view(right)), 0);
+    EXPECT_EQ(joyeer_string_byte_at(joined, 3), static_cast<uint8_t>('e'));
+
+    joyeer_string_destroy(&joined);
+    EXPECT_EQ(joined.data, nullptr);
+    EXPECT_EQ(joined.count, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
+    const std::string sourceText = "owned";
+    JoyeerString first {};
+    joyeer_string_clone_abi(&first, view(sourceText).data, sourceText.size());
+    JoyeerString second {};
+    joyeer_string_clone_abi(&second, first.data, first.count);
+
+    ASSERT_NE(first.data, second.data);
+    ASSERT_EQ(first.count, second.count);
+    EXPECT_EQ(std::memcmp(first.data, second.data, first.count), 0);
+    static_cast<uint8_t*>(const_cast<uint8_t*>(second.data))[0] = 'O';
+    EXPECT_EQ(first.data[0], static_cast<uint8_t>('o'));
+    EXPECT_EQ(second.data[0], static_cast<uint8_t>('O'));
+
+    joyeer_string_destroy_abi(&second);
+    joyeer_string_destroy_abi(&first);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, ConvertsBytesToOwnedSingleByteStrings) {
+    JoyeerString text {};
+    joyeer_byte_to_string_abi(&text, static_cast<uint8_t>('J'));
+
+    ASSERT_EQ(text.count, 1);
+    EXPECT_EQ(text.data[0], static_cast<uint8_t>('J'));
+    joyeer_string_destroy_abi(&text);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
+    EXPECT_DEATH(
+            static_cast<void>(joyeer_string_byte_at(view(std::string("x")), 1)),
+            "string index out of bounds");
+}
+
+        TEST(NativeRuntimeTest, ReadsFilesAsOwnedBinaryStrings) {
+            const auto path = std::filesystem::temp_directory_path() /
+                "joyeer-native-runtime-read-file.bin";
+            const std::array<uint8_t, 7> expected { 'J', 'o', 'y', 0, 'e', 'e', 'r' };
+            {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            ASSERT_TRUE(output.is_open());
+            output.write(
+                reinterpret_cast<const char*>(expected.data()),
+                static_cast<std::streamsize>(expected.size()));
+            ASSERT_TRUE(output.good());
+            }
+
+            const auto pathText = path.string();
+            JoyeerString contents {};
+            int64_t errorCode = -1;
+            const auto errorKind = joyeer_read_file_abi(
+                &contents,
+                &errorCode,
+                reinterpret_cast<const uint8_t*>(pathText.data()),
+                static_cast<int64_t>(pathText.size()));
+
+            EXPECT_EQ(errorKind, JOYEER_IO_ERROR_NONE);
+            EXPECT_EQ(errorCode, 0);
+            ASSERT_EQ(contents.count, static_cast<int64_t>(expected.size()));
+            EXPECT_EQ(std::memcmp(contents.data, expected.data(), expected.size()), 0);
+            joyeer_string_destroy_abi(&contents);
+            std::filesystem::remove(path);
+            EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+        }
+
+        TEST(NativeRuntimeTest, ReturnsAnErrorForMissingFilesWithoutLeaking) {
+            const auto path = std::filesystem::temp_directory_path() /
+                "joyeer-native-runtime-definitely-missing.txt";
+            std::filesystem::remove(path);
+            const auto pathText = path.string();
+            JoyeerString contents {};
+            int64_t errorCode = 0;
+            const auto errorKind = joyeer_read_file_abi(
+                &contents,
+                &errorCode,
+                reinterpret_cast<const uint8_t*>(pathText.data()),
+                static_cast<int64_t>(pathText.size()));
+
+            EXPECT_EQ(errorKind, JOYEER_IO_ERROR_NOT_FOUND);
+            EXPECT_NE(errorCode, 0);
+            EXPECT_EQ(contents.data, nullptr);
+            EXPECT_EQ(contents.count, 0);
+            EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+        }
+
+        TEST(NativeRuntimeTest, ClassifiesEmbeddedNullPathsAsInvalid) {
+            const std::array<uint8_t, 3> path { 'a', 0, 'b' };
+            JoyeerString contents {};
+            int64_t errorCode = 0;
+
+            const auto errorKind = joyeer_read_file_abi(
+                    &contents,
+                    &errorCode,
+                    path.data(),
+                    static_cast<int64_t>(path.size()));
+
+            EXPECT_EQ(errorKind, JOYEER_IO_ERROR_INVALID_PATH);
+            EXPECT_NE(errorCode, 0);
+            EXPECT_EQ(contents.data, nullptr);
+            EXPECT_EQ(contents.count, 0);
+            EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+        }
+
+TEST(NativeRuntimeTest, CopiesIndexesAndMutatesArrays) {
+    const std::array<int64_t, 3> source { 10, 20, 30 };
+    auto array = joyeer_array_create(
+            source.data(),
+            static_cast<int64_t>(source.size()),
+            static_cast<int64_t>(sizeof(int64_t)));
+
+    ASSERT_EQ(array.count, 3);
+    auto* middle = static_cast<int64_t*>(joyeer_array_at(array, 1));
+    EXPECT_EQ(*middle, 20);
+    *middle = 42;
+    EXPECT_EQ(*static_cast<int64_t*>(joyeer_array_at(array, 1)), 42);
+
+    joyeer_array_destroy(&array);
+    EXPECT_EQ(array.data, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, AppendsTrivialElementsAndGrowsCapacity) {
+    JoyeerArray array {};
+    joyeer_array_create_owned_abi(
+            &array,
+            nullptr,
+            0,
+            sizeof(int64_t),
+            nullptr,
+            nullptr);
+
+    for (int64_t value = 0; value < 17; ++value) {
+        const int64_t appended = value * 3;
+        joyeer_array_append_owned_abi(&array, &appended);
+    }
+
+    ASSERT_EQ(array.count, 17);
+    EXPECT_GE(array.capacity, array.count);
+    for (int64_t index = 0; index < array.count; ++index) {
+        EXPECT_EQ(*static_cast<int64_t*>(joyeer_array_at(array, index)), index * 3);
+    }
+    joyeer_array_destroy_abi(&array);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, TakesAndRecursivelyDestroysAppendedOwnedElements) {
+    cloneCount = 0;
+    destroyCount = 0;
+    JoyeerArray array {};
+    joyeer_array_create_owned_abi(
+            &array,
+            nullptr,
+            0,
+            sizeof(JoyeerString),
+            cloneString,
+            destroyString);
+    const auto first = owned(std::string("first"));
+    const auto second = owned(std::string("second"));
+
+    joyeer_array_append_owned_abi(&array, &first);
+    joyeer_array_append_owned_abi(&array, &second);
+
+    ASSERT_EQ(array.count, 2);
+    EXPECT_EQ(cloneCount, 0);
+    const auto* firstStored = static_cast<const JoyeerString*>(joyeer_array_at(array, 0));
+    const auto* secondStored = static_cast<const JoyeerString*>(joyeer_array_at(array, 1));
+    EXPECT_TRUE(joyeer_string_equal(*firstStored, view(std::string("first"))));
+    EXPECT_TRUE(joyeer_string_equal(*secondStored, view(std::string("second"))));
+    joyeer_array_destroy_abi(&array);
+    EXPECT_EQ(destroyCount, 2);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
+    cloneCount = 0;
+    destroyCount = 0;
+    std::array<JoyeerString, 2> source {
+        owned(std::string("left")),
+        owned(std::string("right")),
+    };
+    JoyeerArray first {};
+    joyeer_array_create_owned_abi(
+            &first,
+            source.data(),
+            source.size(),
+            sizeof(JoyeerString),
+            cloneString,
+            destroyString);
+    JoyeerArray second {};
+    joyeer_array_clone_abi(&second, first.data, first.count);
+
+    ASSERT_EQ(cloneCount, 2);
+    auto* firstElement = static_cast<JoyeerString*>(joyeer_array_at(first, 0));
+    auto* secondElement = static_cast<JoyeerString*>(joyeer_array_at(second, 0));
+    ASSERT_NE(firstElement->data, secondElement->data);
+    static_cast<uint8_t*>(const_cast<uint8_t*>(secondElement->data))[0] = 'L';
+    EXPECT_EQ(firstElement->data[0], static_cast<uint8_t>('l'));
+
+    joyeer_array_destroy_abi(&second);
+    joyeer_array_destroy_abi(&first);
+    EXPECT_EQ(destroyCount, 4);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeDeathTest, TrapsArrayBoundsFailures) {
+    const int64_t source = 1;
+    auto array = joyeer_array_create(&source, 1, sizeof(source));
+    EXPECT_DEATH(static_cast<void>(joyeer_array_at(array, -1)), "array index out of bounds");
+    joyeer_array_destroy(&array);
+}
+
+struct IntEntry {
+    int64_t key;
+    int64_t value;
+};
+
+TEST(NativeRuntimeTest, LooksUpDictionaryValuesByPrimitiveKey) {
+    const std::array<IntEntry, 2> entries { IntEntry { 1, 10 }, IntEntry { 2, 20 } };
+    auto dictionary = joyeer_dictionary_create(
+            entries.data(),
+            entries.size(),
+            sizeof(int64_t),
+            sizeof(int64_t),
+            sizeof(IntEntry),
+            offsetof(IntEntry, value),
+            JOYEER_DICTIONARY_KEY_INT);
+
+    const int64_t key = 2;
+    auto* value = static_cast<int64_t*>(joyeer_dictionary_at(
+            dictionary,
+            &key,
+            sizeof(key),
+            JOYEER_DICTIONARY_KEY_INT));
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(*value, 20);
+    *value = 99;
+    EXPECT_EQ(entries[1].value, 20);
+
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(dictionary.data, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+struct StringEntry {
+    JoyeerString key;
+    int64_t value;
+};
+
+struct OwnedStringEntry {
+    JoyeerString key;
+    JoyeerString value;
+};
+
+template <typename Key>
+void expectDictionaryFind(
+        const Key& storedKey,
+        const Key& hitKey,
+        const Key& missingKey,
+        int32_t keyKind) {
+    struct Entry {
+        Key key;
+        int64_t value;
+    };
+    const Entry entry { storedKey, 42 };
+    auto dictionary = joyeer_dictionary_create(
+            &entry, 1, sizeof(Key), sizeof(int64_t),
+            sizeof(Entry), offsetof(Entry, value), keyKind);
+    const auto allocations = joyeer_runtime_active_allocations();
+    const auto* found = static_cast<const int64_t*>(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &hitKey, sizeof(Key), keyKind));
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(*found, 42);
+    EXPECT_EQ(found, joyeer_dictionary_at_abi(
+            dictionary.data, dictionary.count, &hitKey, sizeof(Key), keyKind));
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &missingKey, sizeof(Key), keyKind), nullptr);
+    EXPECT_EQ(dictionary.count, 1);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+    joyeer_dictionary_destroy(&dictionary);
+
+    auto empty = joyeer_dictionary_create(
+            nullptr, 0, sizeof(Key), sizeof(int64_t),
+            sizeof(Entry), offsetof(Entry, value), keyKind);
+    const auto emptyAllocations = joyeer_runtime_active_allocations();
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            empty.data, empty.count, &hitKey, sizeof(Key), keyKind), nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), emptyAllocations);
+    joyeer_dictionary_destroy(&empty);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyIntegerDictionaryEntries) {
+    expectDictionaryFind<int64_t>(2, 2, 3, JOYEER_DICTIONARY_KEY_INT);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyBooleanDictionaryEntries) {
+    expectDictionaryFind<bool>(false, false, true, JOYEER_DICTIONARY_KEY_BOOL);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyByteDictionaryEntries) {
+    expectDictionaryFind<uint8_t>(255, 255, 0, JOYEER_DICTIONARY_KEY_BYTE);
+}
+
+TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyStringDictionaryEntriesByContent) {
+    const std::string stored("key\0suffix", 10);
+    const std::string hit(stored);
+    const std::string missing("key");
+    ASSERT_NE(stored.data(), hit.data());
+    expectDictionaryFind(view(stored), view(hit), view(missing), JOYEER_DICTIONARY_KEY_STRING);
+}
+
+TEST(NativeRuntimeTest, FindsZeroSizedDictionaryValuesWithNonNullPresence) {
+    const std::array<int64_t, 2> keys { 1, 2 };
+    auto dictionary = joyeer_dictionary_create(
+            keys.data(), keys.size(), sizeof(int64_t), 0,
+            sizeof(int64_t), sizeof(int64_t), JOYEER_DICTIONARY_KEY_INT);
+    const int64_t hit = 2;
+    const int64_t missing = 3;
+    auto* found = joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &hit, sizeof(hit), JOYEER_DICTIONARY_KEY_INT);
+    EXPECT_NE(found, nullptr);
+    EXPECT_EQ(found, static_cast<uint8_t*>(dictionary.data) + sizeof(keys));
+    EXPECT_EQ(found, joyeer_dictionary_at(
+            dictionary, &hit, sizeof(hit), JOYEER_DICTIONARY_KEY_INT));
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &missing, sizeof(missing),
+            JOYEER_DICTIONARY_KEY_INT), nullptr);
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, FindsBorrowedStorageWithoutCloningOrConsumingDictionaryEntries) {
+    cloneCount = 0;
+    destroyCount = 0;
+    const std::array<OwnedStringEntry, 2> entries {
+        OwnedStringEntry { owned("key"), owned("value") },
+        OwnedStringEntry { owned("other"), owned("unchanged") },
+    };
+    JoyeerDictionary dictionary {};
+    joyeer_dictionary_create_owned_abi(
+            &dictionary, entries.data(), entries.size(),
+            sizeof(JoyeerString), sizeof(JoyeerString),
+            sizeof(OwnedStringEntry), offsetof(OwnedStringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING, cloneString, destroyString,
+            cloneString, destroyString);
+    auto key = owned("key");
+    const auto originalData = dictionary.data;
+    const auto allocations = joyeer_runtime_active_allocations();
+    const auto* found = static_cast<const JoyeerString*>(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &key, sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->data, entries[0].value.data);
+    EXPECT_EQ(found, joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &key, sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    const std::string missingText = "missing";
+    const auto missing = view(missingText);
+    EXPECT_EQ(joyeer_dictionary_find_abi(
+            dictionary.data, dictionary.count, &missing, sizeof(missing),
+            JOYEER_DICTIONARY_KEY_STRING), nullptr);
+    EXPECT_EQ(cloneCount, 0);
+    EXPECT_EQ(destroyCount, 0);
+    EXPECT_EQ(dictionary.data, originalData);
+    EXPECT_EQ(dictionary.count, 2);
+    EXPECT_TRUE(joyeer_string_equal(key, entries[0].key));
+    EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
+
+    JoyeerString result {};
+    cloneString(&result, found);
+    EXPECT_EQ(cloneCount, 1);
+    EXPECT_NE(result.data, found->data);
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_TRUE(joyeer_string_equal(result, view(std::string("value"))));
+    EXPECT_EQ(destroyCount, 4);
+    destroyString(&result);
+    joyeer_string_destroy(&key);
+    EXPECT_EQ(destroyCount, 5);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeDeathTest, StrictDictionaryLookupStillTrapsForMissingAndEmptyEntries) {
+    const IntEntry entry { 1, 42 };
+    const int64_t missing = 2;
+    for (const int64_t count : { 0, 1 }) {
+        auto dictionary = joyeer_dictionary_create(
+                &entry, count, sizeof(int64_t), sizeof(int64_t),
+                sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+        EXPECT_EQ(joyeer_dictionary_find_abi(
+                dictionary.data, dictionary.count, &missing, sizeof(missing),
+                JOYEER_DICTIONARY_KEY_INT), nullptr);
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_dictionary_at(
+                        dictionary, &missing, sizeof(missing), JOYEER_DICTIONARY_KEY_INT)),
+                "dictionary key not found");
+        EXPECT_DEATH(
+                static_cast<void>(joyeer_dictionary_at_abi(
+                        dictionary.data, dictionary.count, &missing, sizeof(missing),
+                        JOYEER_DICTIONARY_KEY_INT)),
+                "dictionary key not found");
+        joyeer_dictionary_destroy(&dictionary);
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeDeathTest, DictionaryFindPreservesInvalidLookupDiagnostics) {
+    const int64_t key = 1;
+    auto dictionary = joyeer_dictionary_create(
+            nullptr, 0, sizeof(int64_t), sizeof(int64_t),
+            sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    for (const auto lookup : { joyeer_dictionary_find_abi, joyeer_dictionary_at_abi }) {
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        nullptr, 0, &key, sizeof(key), JOYEER_DICTIONARY_KEY_INT)),
+                "invalid dictionary lookup");
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        dictionary.data, 0, nullptr, sizeof(key), JOYEER_DICTIONARY_KEY_INT)),
+                "invalid dictionary lookup");
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        dictionary.data, 0, &key, sizeof(bool), JOYEER_DICTIONARY_KEY_INT)),
+                "dictionary key type mismatch");
+        EXPECT_DEATH(
+                static_cast<void>(lookup(
+                        dictionary.data, 0, &key, sizeof(key), JOYEER_DICTIONARY_KEY_BOOL)),
+                "dictionary key type mismatch");
+    }
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, DictionaryConstructionMatchesInsertionForDuplicateKeys) {
+    const std::array<IntEntry, 5> entries {
+    IntEntry { 1, 10 }, IntEntry { 2, 30 }, IntEntry { 1, 20 },
+    IntEntry { 3, 40 }, IntEntry { 2, 50 },
+    };
+    auto constructed = joyeer_dictionary_create(
+        entries.data(), entries.size(), sizeof(int64_t), sizeof(int64_t),
+        sizeof(IntEntry), offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    auto inserted = joyeer_dictionary_create(
+        nullptr, 0, sizeof(int64_t), sizeof(int64_t), sizeof(IntEntry),
+        offsetof(IntEntry, value), JOYEER_DICTIONARY_KEY_INT);
+    for (const auto& entry : entries) {
+    auto key = entry.key;
+    joyeer_dictionary_set_owned_abi(&inserted, &key, &entry.value);
+    }
+    EXPECT_EQ(constructed.count, 3);
+    EXPECT_EQ(constructed.count, inserted.count);
+    EXPECT_GE(constructed.capacity, constructed.count);
+    for (const auto& expected : { IntEntry { 1, 20 }, IntEntry { 2, 50 }, IntEntry { 3, 40 } }) {
+    const auto* constructedValue = static_cast<const int64_t*>(joyeer_dictionary_at(
+        constructed, &expected.key, sizeof(expected.key), JOYEER_DICTIONARY_KEY_INT));
+    const auto* insertedValue = static_cast<const int64_t*>(joyeer_dictionary_at(
+        inserted, &expected.key, sizeof(expected.key), JOYEER_DICTIONARY_KEY_INT));
+    EXPECT_EQ(*constructedValue, expected.value);
+    EXPECT_EQ(*constructedValue, *insertedValue);
+    }
+    EXPECT_EQ(entries[0].value, 10);
+    joyeer_dictionary_destroy(&constructed);
+    joyeer_dictionary_destroy(&inserted);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, DestroysDuplicateOwnedDictionaryEntriesExactlyOnce) {
+    cloneCount = 0;
+    destroyCount = 0;
+    const std::array<OwnedStringEntry, 4> entries {
+    OwnedStringEntry { owned("key"), owned("first") },
+    OwnedStringEntry { owned("key"), owned("second") },
+        OwnedStringEntry { owned("other"), owned("kept") },
+    OwnedStringEntry { owned("key"), owned("final") },
+    };
+    ASSERT_NE(entries[0].key.data, entries[1].key.data);
+    JoyeerDictionary dictionary {};
+    joyeer_dictionary_create_owned_abi(
+        &dictionary, entries.data(), entries.size(), sizeof(JoyeerString), sizeof(JoyeerString),
+        sizeof(OwnedStringEntry), offsetof(OwnedStringEntry, value), JOYEER_DICTIONARY_KEY_STRING,
+        cloneString, destroyString, cloneString, destroyString);
+    EXPECT_EQ(dictionary.count, 2);
+    EXPECT_EQ(cloneCount, 0);
+    EXPECT_EQ(destroyCount, 4);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 5);
+
+    JoyeerDictionary clone {};
+    joyeer_dictionary_clone_abi(&clone, dictionary.data, dictionary.count);
+    EXPECT_EQ(clone.count, 2);
+    EXPECT_EQ(cloneCount, 4);
+    const std::string keyText = "key";
+    const auto key = view(keyText);
+    const auto* value = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+        dictionary, &key, sizeof(key), JOYEER_DICTIONARY_KEY_STRING));
+    const auto* cloneValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+        clone, &key, sizeof(key), JOYEER_DICTIONARY_KEY_STRING));
+    EXPECT_TRUE(joyeer_string_equal(*value, view(std::string("final"))));
+    EXPECT_NE(value->data, cloneValue->data);
+
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(destroyCount, 8);
+    EXPECT_TRUE(joyeer_string_equal(*cloneValue, view(std::string("final"))));
+    const std::string otherText = "other";
+    const auto otherKey = view(otherText);
+    const auto* otherValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+        clone, &otherKey, sizeof(otherKey), JOYEER_DICTIONARY_KEY_STRING));
+    EXPECT_TRUE(joyeer_string_equal(*otherValue, view(std::string("kept"))));
+    joyeer_dictionary_destroy(&clone);
+    EXPECT_EQ(destroyCount, 12);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
+    const std::string name = "answer";
+    const StringEntry entry { view(name), 42 };
+    auto dictionary = joyeer_dictionary_create(
+            &entry,
+            1,
+            sizeof(JoyeerString),
+            sizeof(int64_t),
+            sizeof(StringEntry),
+            offsetof(StringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING);
+
+    const auto key = view(name);
+    const auto* value = static_cast<const int64_t*>(joyeer_dictionary_at(
+            dictionary,
+            &key,
+            sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    ASSERT_NE(value, nullptr);
+    EXPECT_EQ(*value, 42);
+    joyeer_dictionary_destroy(&dictionary);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+    TEST(NativeRuntimeTest, InsertsUpdatesAndGrowsDictionaryEntries) {
+        JoyeerDictionary dictionary {};
+        joyeer_dictionary_create_owned_abi(
+            &dictionary,
+            nullptr,
+            0,
+            sizeof(int64_t),
+            sizeof(int64_t),
+            sizeof(IntEntry),
+            offsetof(IntEntry, value),
+            JOYEER_DICTIONARY_KEY_INT,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr);
+
+        for (int64_t key = 0; key < 17; ++key) {
+        const int64_t value = key * 10;
+        joyeer_dictionary_set_owned_abi(&dictionary, &key, &value);
+        }
+        int64_t updatedKey = 5;
+        const int64_t updatedValue = 999;
+        joyeer_dictionary_set_owned_abi(&dictionary, &updatedKey, &updatedValue);
+
+        EXPECT_EQ(dictionary.count, 17);
+        EXPECT_GE(dictionary.capacity, dictionary.count);
+        EXPECT_EQ(
+            *static_cast<const int64_t*>(joyeer_dictionary_at(
+                dictionary,
+                &updatedKey,
+                sizeof(updatedKey),
+                JOYEER_DICTIONARY_KEY_INT)),
+            updatedValue);
+        joyeer_dictionary_destroy_abi(&dictionary);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+    }
+
+    TEST(NativeRuntimeTest, TakesAndDestroysOwnedDictionaryInsertionsAndUpdates) {
+        cloneCount = 0;
+        destroyCount = 0;
+        JoyeerDictionary dictionary {};
+        joyeer_dictionary_create_owned_abi(
+            &dictionary,
+            nullptr,
+            0,
+            sizeof(JoyeerString),
+            sizeof(JoyeerString),
+            sizeof(OwnedStringEntry),
+            offsetof(OwnedStringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING,
+            cloneString,
+            destroyString,
+            cloneString,
+            destroyString);
+        auto firstKey = owned(std::string("key"));
+        auto firstValue = owned(std::string("first"));
+        joyeer_dictionary_set_owned_abi(&dictionary, &firstKey, &firstValue);
+        auto replacementKey = owned(std::string("key"));
+        auto replacementValue = owned(std::string("second"));
+        joyeer_dictionary_set_owned_abi(
+            &dictionary,
+            &replacementKey,
+            &replacementValue);
+
+        EXPECT_EQ(dictionary.count, 1);
+        EXPECT_EQ(cloneCount, 0);
+        EXPECT_EQ(destroyCount, 2);
+        const std::string lookupText = "key";
+        const auto lookupKey = view(lookupText);
+        const auto* stored = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+            dictionary,
+            &lookupKey,
+            sizeof(lookupKey),
+            JOYEER_DICTIONARY_KEY_STRING));
+        EXPECT_TRUE(joyeer_string_equal(*stored, view(std::string("second"))));
+
+        joyeer_dictionary_destroy_abi(&dictionary);
+        EXPECT_EQ(destroyCount, 4);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+    }
+
+TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
+    cloneCount = 0;
+    destroyCount = 0;
+    const OwnedStringEntry entry {
+        owned(std::string("key")),
+        owned(std::string("value")),
+    };
+    JoyeerDictionary first {};
+    joyeer_dictionary_create_owned_abi(
+            &first,
+            &entry,
+            1,
+            sizeof(JoyeerString),
+            sizeof(JoyeerString),
+            sizeof(OwnedStringEntry),
+            offsetof(OwnedStringEntry, value),
+            JOYEER_DICTIONARY_KEY_STRING,
+            cloneString,
+            destroyString,
+            cloneString,
+            destroyString);
+    JoyeerDictionary second {};
+    joyeer_dictionary_clone_abi(&second, first.data, first.count);
+
+    ASSERT_EQ(cloneCount, 2);
+    const std::string lookupKey = "key";
+    const auto key = view(lookupKey);
+    const auto* firstValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+            first,
+            &key,
+            sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    const auto* secondValue = static_cast<const JoyeerString*>(joyeer_dictionary_at(
+            second,
+            &key,
+            sizeof(key),
+            JOYEER_DICTIONARY_KEY_STRING));
+    ASSERT_NE(firstValue->data, secondValue->data);
+
+    joyeer_dictionary_destroy_abi(&second);
+    joyeer_dictionary_destroy_abi(&first);
+    EXPECT_EQ(destroyCount, 4);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+} // namespace

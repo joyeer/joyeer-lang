@@ -52,6 +52,7 @@ typedef struct JoyeerNativeBackendObjectOptions {
     uint32_t structSize;
     const char* llvmIR;
     size_t llvmIRSize;
+    /* NUL-terminated UTF-8 filesystem path, including on Windows. */
     const char* outputPath;
     JoyeerNativeBackendOptimizationLevel optimizationLevel;
 } JoyeerNativeBackendObjectOptions;
@@ -59,6 +60,7 @@ typedef struct JoyeerNativeBackendObjectOptions {
 typedef struct JoyeerNativeBackendLinkOptions {
     uint32_t abiVersion;
     uint32_t structSize;
+    /* NUL-terminated UTF-8 argv entries; pass each argument separately, unquoted. */
     const char* const* arguments;
     size_t argumentCount;
 } JoyeerNativeBackendLinkOptions;

@@ -40,7 +40,8 @@ public:
     [[nodiscard]] Result lower(
             const typing::TypeCheckedModel::Ptr& model,
             std::string sourceName = {},
-            std::optional<ir::SourceInfo> sourceInfo = std::nullopt) const;
+            std::optional<ir::SourceInfo> sourceInfo = std::nullopt,
+            std::vector<ir::SourceInfo> sources = {}) const;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

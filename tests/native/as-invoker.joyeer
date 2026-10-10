@@ -1,0 +1,3 @@
+func main() {
+    print(value: "as-invoker ok")
+}

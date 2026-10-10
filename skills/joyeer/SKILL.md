@@ -5,9 +5,9 @@ description: Write, compile, run, and debug Joyeer programs. Use when a task inv
 
 # Joyeer programming
 
-Use the Joyeer compiler as the feedback loop. Do not infer language support
-from resemblance to Swift, Rust, Go, or C++. This skill describes the current
-single-file native implementation, not every feature in the draft specification.
+Use the Joyeer compiler as the feedback loop. Follow the documented supported
+surface rather than inferring additional features. This skill describes the
+current native implementation, not every feature in the draft specification.
 
 ## Before writing code
 
@@ -28,22 +28,27 @@ single-file native implementation, not every feature in the draft specification.
 ## Write the program
 
 - Prefer `let`; use `var` for mutation. Put executable work in functions and
-  use a parameterless `func main()` for native programs.
+  use `func main()` or `func main(args: [String]): Int` for native programs.
 - Write explicit parameter and result types. Use named calls such as
   `print(value: result)`; function result types follow `:`, not `->`.
 - Respect borrowing, `inout`, consuming, and initializing access.
   Do not remove required `&` or `consume` markers merely to hide a diagnostic.
-- Use exhaustive `match` for enums, `Optional`, and `Result`. Handle failure
-  explicitly rather than replacing it with an apparent success.
-- Keep compilation to one source file. Do not invent imports, external
-  packages, standard-library methods, or project-manager commands.
+- Use exhaustive `match` for enums and when handling errors at a CLI boundary.
+  Inside compatible `Result`/`Optional` functions, postfix `?` propagates
+  failure with cleanup; never replace failure with an apparent success.
+- Use legacy single-file compilation or named explicit source-file sets as
+  described in the CLI reference. List every root and dependency file; folders
+  do not define modules, and the compiler does not discover files or add
+  siblings. Imports are file-local and qualified; do not invent package
+  fetching, aliases, standard-library methods, or project-manager commands.
 - Consult the [tested examples](examples/README.md) for concrete spellings.
   Adapt them to the task; do not treat them as a complete standard library.
 
 ## Compile, run, and repair
 
 1. Validate the source with `joyeer source.joyeer`. This checks and lowers the
-   program but does not execute it.
+   program but does not execute it. For multiple files or dependencies, use
+   `--module-name` and explicit files as described in the CLI reference.
 2. Build with `joyeer -o output.exe source.joyeer` on Windows, or choose a
    suitable native output name on the host. Use a dedicated output directory;
    never overwrite the source or unrelated files.

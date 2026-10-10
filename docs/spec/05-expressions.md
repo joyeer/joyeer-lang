@@ -23,7 +23,8 @@ precedence; associativity is shown.
 | 14 | `??` (nil / `.Err` coalescing) | right |
 | 15 | assignment (`=`  `+=` …) | right |
 
-(Postfix `?` and `!` are optional-chain / force-unwrap, see §5.4.)
+(Postfix `?` propagates `Result`/`Optional` failure; postfix `!` forces an
+unwrap. Optional chaining is the separate `?.` form; see §5.4 and §8.3.)
 
 ### 5.2 Arithmetic, comparison, logical, bitwise
 
@@ -35,10 +36,24 @@ to v0.2).
 
 Comparisons are non-chaining: `1 < x < 10` is a syntax error.
 
+Signed `Int` division (`/`) truncates toward zero. The remainder (`%`) is
+zero or has the sign of the dividend; when defined, `a == (a / b) * b + a % b`.
+Both operators trap when the divisor is zero. Both also trap for the minimum
+`Int` and divisor `-1`, including remainder even though its mathematical
+result would be zero. These checks apply in every optimization mode.
+
+Prefix `!` takes a `Bool` and returns its negation. Logical `&&` and `||`
+take Boolean operands and produce `Bool`.
+
 Logical `&&` evaluates its left operand first and evaluates the right operand
 only when the left is `true`. The skipped operand produces no side effects,
 traps, ownership transfers, or early returns. The result is `false` when the
 left operand is `false`, independently of optimization level.
+
+Logical `||` evaluates its left operand first and evaluates the right operand
+only when the left is `false`. Its result is `true` when the left is `true`;
+the same skipped-side-effect and cleanup rules apply. `&&` binds more tightly
+than `||`. Prefix negation is not postfix force unwrap, which remains deferred.
 
 ### 5.3 Assignment
 
