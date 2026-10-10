@@ -12,10 +12,10 @@ without an input produces usage/error output, not a successful version query.
 Use release metadata or source/build provenance as described in
 [supported features](supported-features.md).
 
-The separate joypm tool has its own help/version commands. Windows x64 Debug
-build/smoke validation succeeded, but full native acceptance is pending;
-the independent `joypm 0.1.0` version does not identify the compiler or
-establish a release.
+The separate joypm tool has its own help/version commands. `joypm 0.1.0`
+implements single-module manifests and explicit workspaces, with native
+ARM64 acceptance. Its version does not identify the compiler or establish
+a published release; check the selected binary's provenance.
 
 ## Commands
 
@@ -133,23 +133,37 @@ to native LLVM verification/linking or program execution.
 
 ## Local projects with joypm
 
-`joypm` is a separate Joyeer-written local tool. CMake defaults
-`JOYEER_BUILD_JOYPM=ON` and bootstraps it as an `ALL` target using the build-tree
-compiler; `OFF` selects compiler-only. Debug bootstrap uses `-O0 -gfull` and
-Release uses `-O2 -g0`; macOS Debug uses `-g0` without `dsymutil`. Produced
-Debug PDB/dSYM sidecars are CMake byproducts. Nine registered tool gates,
-including `Joypm.ManifestLimits`, require
-`BUILD_TESTING` and the tool option, independently of `JOYEER_BUILD_UNITTESTS`.
-No preinstalled joypm or Python is needed. Current bootstrap/test compilation
-calls the compiler directly, not a joypm self-build.
+`joypm 0.1.0` is a separate Joyeer-written module/workspace manager.
+CMake bootstraps the default `ALL` tool without preinstalled joypm or Python.
+Native Windows ARM64 Debug build/unfiltered CTest pass 790/790, including
+15 tool gates. Debug/optimized self-build and relocated workflows pass;
+a fresh full Release CTest and other native platforms remain open.
 
-**Status:** the Windows x64 Debug build with unit tests enabled and local-project
-smoke run succeeded; bounded regular-file acquisition is integrated and
-compiled. CTest has not run: the nine gates, full native acceptance, other
-platforms, package installation, and self-build remain pending. This is not a
-released or release-complete v0, and one smoke workflow does not establish
-general Unicode support. The following documents CLI behavior, not full
-acceptance coverage.
+Each `joyeer.toml` uses schema 1 and exactly one `[module]`:
+
+```toml
+schema-version = 1
+[module]
+name = "example.core"
+kind = "source"
+sources = ["src/core.joyeer"]
+dependencies = []
+```
+
+Kinds are `source`, `bin`, and `test`; bin/test modules also require a
+portable `output` basename. Source modules do not declare output artifacts.
+Tests are separate module manifests. A workspace uses schema 1:
+
+```toml
+schema-version = 1
+[workspace]
+members = [".", "core", "tests"]
+```
+
+Every member directory has its own `joyeer.toml`. Sources are relative to
+their owning manifest, dependencies are exact member module names, and
+membership alone does not grant imports. Legacy multi-module project schemas
+and `--target` reject with migration help.
 
 Select matching explicit binaries before running examples:
 
@@ -168,34 +182,39 @@ $compiler = "C:\path with spaces\joyeer.exe"
 These paths are illustrative, not installation defaults. Check each status
 before continuing. Linux/macOS use native paths without the `.exe` suffix.
 `init` needs a new or empty destination with an existing parent and creates
-one `bin`, not tests; `test` then prints `0 tests` unless targets are added.
+one `bin` module, not tests. `--kind source|test` chooses another kind;
+`--output` overrides the default final-name-component artifact basename.
+Without test modules, `test` prints `0 tests`.
 
 Project commands require `--compiler <explicit path>`, with no PATH or sibling
 search. `--manifest-path <file>` defaults to `joyeer.toml` in the invocation
-directory, never an upward search. `--release` and `--verbose` are project
-options; `--target <name>` is accepted only by `build/run/test`. `check` checks
-all declared targets; `build` builds bins; `run` needs exactly one bin; `test`
-selects explicit executable tests. Only `run/test` forward argv after `--`.
+directory, never an upward search. Alternatively, `--workspace <file>` loads
+explicit members; it is mutually exclusive with `--manifest-path`.
+`--module <logical-name>` selects a member for check/build/run/test.
+`check` checks all kinds; `build` builds bins; `run` needs exactly one bin;
+`test` selects test modules. `--release` and `--verbose` are project options.
+Only `run/test` forward argv after `--`.
 Unknown/duplicate/incompatible flags and missing values are errors.
 
-Debug is `-O0 -gfull`; release is `-O2 -g0`. Targets always rebuild serially
-into exclusively claimed `build-1` through `build-128` under their package
-target/profile directory. Previous generations are never reused after failure
-or deleted; no cache, registry, workspace, or local path dependency exists.
-Compiler cwd is the caller's `.`; source/output paths are manifest-prefixed;
-program/test cwd is the manifest directory. There is no shell or output capture.
+Debug is `-O0 -gfull`; release is `-O2 -g0`. Modules rebuild serially into
+`target/<profile>/<logical-module>/build-1` through `build-128`, claimed
+exclusively. Previous generations are never reused after failure or deleted.
+No cache, registry, external local dependency, or nested workspace exists.
+Compiler cwd is caller `.`; sources are owning-manifest-prefixed.
+Program/test cwd is the workspace directory or standalone module directory.
+There is no shell or output capture.
 Run only trusted projects: children inherit permissions, environment and streams.
 
 Status is 0 on success, 1 for manifest/build/host/nonzero-child failures, and 2
 for usage/selection errors; failed diagnostic writes return 1. Full child codes
 and signals stay in stderr diagnostics. Help/version/test summaries use stdout;
 progress/errors/verbose argv use stderr. The strict TOML profile limits input to
-65536 bytes, decoded strings to 4096 bytes, modules/targets to 256 each, and
-string arrays to 1024 entries. The integrated loader uses `fileKind` to accept
+65536 bytes/document, decoded strings to 4096 bytes, workspace members to 256,
+and module arrays to 1024 entries. The loader uses `fileKind` to accept
 only regular files, rejecting final symlinks and other nonregular manifests,
 then calls `readFilePrefix(path:maximumBytes:)` with 65537. This bounds the
 read without adding streaming; classification is not race-free confinement.
-Exact-boundary and host regression execution remain pending.
+Exact-boundary and host regressions pass on the recorded native target.
 
 ## Runtime and environment
 

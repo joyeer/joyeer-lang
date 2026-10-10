@@ -11,6 +11,7 @@ set(JOYEER_JOYPM_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/common.joyeer"
     "${CMAKE_CURRENT_SOURCE_DIR}/cli.joyeer"
     "${CMAKE_CURRENT_SOURCE_DIR}/manifest.joyeer"
+    "${CMAKE_CURRENT_SOURCE_DIR}/project.joyeer"
     "${CMAKE_CURRENT_SOURCE_DIR}/planner.joyeer"
     "${CMAKE_CURRENT_SOURCE_DIR}/executor.joyeer"
     "${CMAKE_CURRENT_SOURCE_DIR}/main.joyeer"

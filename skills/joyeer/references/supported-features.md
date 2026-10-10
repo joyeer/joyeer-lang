@@ -10,14 +10,13 @@ package metadata. A version string alone may not distinguish early-development
 builds. If provenance is unknown, say so and validate a minimal program before
 relying on these instructions.
 
-The separate source-implemented `joypm --version` reports `joypm 0.1.0`;
-this is an independent early-development tool version, not a compiler version
-or release-completion claim. The Windows x64 Debug build with unit tests
-enabled and local-project smoke run succeeded. Bounded regular-file manifest
-acquisition is integrated and compiled. CTest has not run for this change set;
-the nine registered gates, full native acceptance, other platforms, package
-installation, and self-build remain pending. Keep those limits with an installed
-copy; joypm is not released or release-complete.
+The separate `joypm --version` reports `joypm 0.1.0`, independently of the
+compiler version. Its single-module/workspace organization passes native
+Windows ARM64 Debug default build and unfiltered CTest (790/790, including
+15 tool gates), plus Debug/optimized self-build and relocated workflows.
+A fresh full Release CTest, other native platforms, and publication remain
+open. Versions and schemas remain at their initial values during unreleased
+development; an older binary with the same version may lack these interfaces.
 
 Keep this directory with the matching release or revision. The upstream
 `docs/spec.md` defines the language design;
@@ -69,22 +68,24 @@ or cleanup facilities; the separate joypm owns local manifest policy.
 
 ## Local project-manager source boundary
 
-`joypm` has `init/check/build/run/test`, strict schema/Unicode/flag validation,
-explicit compiler and source paths, debug/release profiles, serial execution,
-and always-rebuilt native outputs. Manifest limits are 65536 bytes, 4096 decoded
-bytes/string, 256 modules, 256 targets, and 1024 strings/array. The bounded
-loader uses `fileKind` to accept only regular-file manifests, rejecting final
-symlinks and other nonregular inputs, then reads a 65537-byte prefix so the
-parser can reject inputs above 65536. This is integrated and compiled, not
-streaming or race-free confinement. Exact-boundary and host regressions are
-added but unexecuted.
+`joypm` has `init/check/build/run/test`, strict TOML/Unicode/flag validation,
+explicit compiler paths, and always-rebuilt serial native outputs.
+Schema-1 `joyeer.toml` defines one source/bin/test module; schema-1
+`workspace.toml` explicitly lists 1..256 member directories. Sources and
+dependencies belong to each module. Legacy project files and `--target`
+report migration errors. There is no independent source-library binary ABI.
 
-Project commands require `--compiler <path>` and accept `--manifest-path <file>`
-(default `joyeer.toml` in the invocation directory), without upward scanning
-or PATH/sibling discovery. Outputs use at most 128 exclusive generation claims
-per target/profile. There is no deletion, cache, registry, local path package,
-workspace, or self-build acceptance yet. Use trusted local projects only;
-programs/tests run with user permissions. See [CLI usage](cli.md#local-projects-with-joypm).
+Project commands use `--manifest-path <file>` (default current-directory
+joyeer.toml) or `--workspace <file>`, with optional exact `--module` selection.
+No upward scanning or PATH/sibling discovery occurs. Each document is bounded
+to 65536 bytes with a sentinel read after regular-file classification;
+strings are limited to 4096 bytes and module arrays to 1024 entries.
+Native outputs use 128 exclusive generation claims per module/profile,
+under module-qualified directories. Exact bounds, dependencies, collisions,
+failures, and self-build pass on ARM64. These are not streaming/confinement
+guarantees. External local modules, registries, nested workspaces, cache and
+clean remain deferred. Use trusted projects: children run with user permissions.
+See [CLI usage](cli.md#local-projects-with-joypm).
 
 ## Do not generate these as supported features
 

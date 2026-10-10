@@ -51,13 +51,14 @@ Debug support includes line tables, lexical scopes, source variables, physical
 types, and native PDB/DWARF/dSYM artifact handling. The standard library,
 optimization policy, and broader language surface remain incomplete.
 
-The source tree now includes the Joyeer-written `joypm` local project manager:
-`init`, `check`, `build`, `run`, and `test`, with a strict single-package
-manifest and explicit compiler path. The first local-workflow version,
-`0.1.0`, passes native Windows ARM64 Debug and Release default `ALL` builds
-and unfiltered CTest, **789/789 in each configuration**, including all 14
-Windows tool gates. Bounded acquisition, exact limits, failure paths,
-concurrent generations, self-build, and relocated installation are verified.
+The source tree includes the Joyeer-written `joypm 0.1.0` module/workspace
+manager: one schema-1 `joyeer.toml` per module and an explicit `workspace.toml`
+for multiple members. `init/check/build/run/test`, per-module source paths,
+exact module selection, and explicit compiler paths are implemented.
+Native Windows ARM64 Debug default build and unfiltered CTest pass
+**790/790**, including 15 tool gates. Bounded acquisition, exact limits,
+failure paths, concurrent generations, Debug/optimized self-build, and
+relocated installation are verified. A fresh full Release gate remains open.
 This is not a published release or native acceptance evidence for other
 platforms/architectures. See
 [joypm](docs/impl/joypm.md) for the exact boundary and validation evidence.
@@ -323,7 +324,7 @@ Use `-gdwarf` or `-gcodeview` to select the format.
 
 `joypm --version` reports `joypm 0.1.0`, an independent early-development tool
 version; the compiler CMake project remains `0.0.1`. Native Windows ARM64
-Debug/Release acceptance is complete for this local-workflow scope. After building,
+module/workspace gates and Debug/optimized self-build pass. After building,
 run from this checkout with a new or empty `hello` directory and existing parent:
 
 ```powershell
@@ -337,17 +338,21 @@ $joypm = (Resolve-Path .\out\build\arm64-debug\bin\joypm.exe).Path
 ```
 
 Check each command's exit status before continuing. Use the platform's matching
-preset and executable suffix on Linux/macOS. `init` creates one `bin` target;
-`test` reports `0 tests` until executable `test` targets are declared.
+preset and executable suffix on Linux/macOS. `init` creates one `bin` module;
+`--kind source|test` selects another kind. Test modules have their own manifests.
 
 The default manifest is `joyeer.toml` in the invocation directory, with no
 upward scanning. Commands that use the compiler require an explicit path;
 there is no PATH lookup or shell execution. Debug uses `-O0 -gfull`, release
-uses `-O2 -g0`. Selected native targets always rebuild serially into fresh
-generations, with at most 128 claims per target/profile and no automatic
+uses `-O2 -g0`. Selected native modules always rebuild serially into fresh
+generations, with at most 128 claims per module/profile and no automatic
 deletion or cache. Use only trusted local projects: compiled programs and
-tests run with the user's permissions. Local path dependencies, workspaces,
-registries, caching, and cleanup are deferred. A generated project under
+tests run with the user's permissions. For multiple modules, use
+`--workspace <workspace.toml>` and optionally `--module <logical-name>`.
+Workspace members each own a `joyeer.toml`; source paths are relative to those
+manifests. Legacy multi-module files and `--target` report migration errors.
+External local dependencies, registries, caching, and cleanup are deferred.
+A generated project under
 `out/build/<preset>/src/tools/joypm/project/` supports building joypm through
 joypm itself. See the
 [manifest and workflow reference](docs/impl/joypm.md) and
@@ -381,8 +386,9 @@ The joypm gates in [tests/joypm/CMakeLists.txt](tests/joypm/CMakeLists.txt),
 including exact limits, concurrent builds, native failures, self-build,
 installation, and Windows bootstrap regeneration,
 are registered when `BUILD_TESTING` and `JOYEER_BUILD_JOYPM` are enabled,
-independently of `JOYEER_BUILD_UNITTESTS`. All 14 Windows gates passed with the
-full compiler/runtime suite in native ARM64 Debug and Release. Other native
+independently of `JOYEER_BUILD_UNITTESTS`. All 15 Windows gates passed with the
+full compiler/runtime suite in native ARM64 Debug; optimized self-builds also
+pass. A fresh full Release run and other native
 platforms need their own unfiltered acceptance runs.
 
 ## Project layout

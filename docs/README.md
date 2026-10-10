@@ -53,12 +53,13 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [joypm.md](impl/joypm.md) | Joyeer-written local workflow, strict manifest, bootstrap/self-build, and native ARM64 acceptance evidence |
 | [string.md](impl/string.md) | String representation and operations |
 
-The first joypm local-workflow version passes native Windows ARM64 Debug and
-Release default builds and unfiltered CTest (789/789 each, including all 14
-tool gates). Exact limits, failures, concurrent generations, self-build, and
+The joypm 0.1.0 module/workspace workflow passes native Windows ARM64 Debug
+default build and unfiltered CTest (790/790, including all 15 tool gates).
+Exact limits, failures, concurrent generations, Debug/optimized self-build, and
 relocated product/Debug installation are verified. The implementation
 reference owns the evidence; the plan tracks other native platforms and
-future dependencies/workspaces/registries. No published release or universal
+future external dependencies/registries and a fresh full Release gate.
+No published release or universal
 platform acceptance is implied.
 
 ## Plans

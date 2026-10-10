@@ -192,7 +192,8 @@ binaries. This is synchronous bounded input, not generic streaming.
 
 joypm first uses `fileKind` to accept only `.File`, rejecting final symlinks,
 devices/FIFOs, and other nonregular manifests, then reads at most 65537 bytes
-to detect input exceeding 65536. Classification is not race-free confinement.
+per module/workspace document to detect input exceeding 65536.
+Classification is not race-free confinement.
 Returned bytes still require strict manifest UTF-8/scalar validation. Legacy
 narrow `readFile(path:)` and its `IOError` contract remain unchanged.
 

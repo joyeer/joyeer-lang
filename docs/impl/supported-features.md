@@ -70,26 +70,26 @@ declarations.
 
 ## Source-implemented local project tool
 
-The separate Joyeer-written `joypm` implements local `init/check/build/run/test`
-in source under [src/tools/joypm/](../../src/tools/joypm/), with strict manifest
-schema/Unicode/flag validation, explicit source modules and compiler paths,
-debug/release profiles, serial execution, and always-rebuilt fresh generations
-bounded to 128 claims per target/profile. It does not scan upward, search PATH,
-delete outputs, cache builds, fetch dependencies, or implement workspaces.
-Its early-development `0.1.0` version is independent of compiler `0.0.1`.
+The separate Joyeer-written `joypm 0.1.0` implements `init/check/build/run/test`
+under [src/tools/joypm/](../../src/tools/joypm/). Each schema-1 `joyeer.toml`
+defines exactly one source/bin/test module; schema-1 `workspace.toml` lists
+explicit member directories. Per-module source paths and dependencies,
+`--workspace`, and exact `--module` selection are implemented. Legacy project
+schemas and `--target` return migration errors. Compiler module semantics
+are unchanged; no library ABI is implied.
 
-CMake defaults `JOYEER_BUILD_JOYPM` to `ON`, bootstraps the tool as an `ALL`
-target, and registers 13 portable gates plus Windows bootstrap acceptance when
-`BUILD_TESTING` is enabled, independently of `JOYEER_BUILD_UNITTESTS`.
-The native Windows ARM64 Debug and Release default builds and unfiltered
-CTest pass 789/789 each, including all 14 tool gates. The loader uses
-`fileKind` to reject nonregular manifests, including final symlinks, then
-`readFilePrefix(path:maximumBytes:)` with 65537 to enforce the parser's
-65536-byte maximum without a whole-file read. Exact limits, device/link
-rejection, self-build, failure paths, concurrent generations, product
-installation and relocation are verified on that native target. This is
-not streaming or race-free confinement. Other native platforms and release
-publication remain open.
+CMake bootstraps the default `ALL` tool and registers 14 portable gates plus
+Windows bootstrap acceptance, independently of `JOYEER_BUILD_UNITTESTS`.
+Native ARM64 Debug default build and unfiltered CTest pass 790/790, including
+all 15 joypm gates; Debug/optimized self-build and migrated Moss workflows
+pass. The prior-layout full Release 789/789 is historical, not fresh acceptance
+of the new layout despite the unchanged 0.1.0 version. Every document is
+bounded to 65536 bytes with a sentinel
+read after regular-file classification. Outputs use module-qualified fresh
+generations with 128 claims per module/profile. The tool does not scan
+upward, search PATH, delete/cache outputs, fetch external dependencies, or
+nested workspaces. These are not streaming or confinement guarantees.
+Other native platforms and publication remain open.
 See [joypm](joypm.md) for current contracts, parser limits, and validation status.
 
 ## Not implemented

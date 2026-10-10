@@ -1,28 +1,16 @@
 // All joypm sources belong to the compiler-supplied joypm.app module.
 // This is a schema-directed TOML 1.0 profile, not a general TOML parser.
-// Limits: 65536 input bytes, 4096 decoded bytes per string, 256 modules,
-// 256 targets, and 1024 strings per array. Arrays cannot be nested.
+// Limits: 65536 bytes/document, 4096 bytes/string, 256 workspace members,
+// and 1024 strings per module array. Arrays cannot be nested.
 // Locations are zero-based byte offsets in the original manifest.
 
 struct ModuleSpec {
     let name: String
+    let kind: String
+    let output: String
     let sources: [String]
     let dependencies: [String]
     let pos: Int
-}
-
-struct TargetSpec {
-    let name: String
-    let kind: String
-    let module: String
-    let pos: Int
-}
-
-struct PackageManifest {
-    let name: String
-    let version: String
-    let modules: [ModuleSpec]
-    let targets: [TargetSpec]
 }
 
 // Keep only the input and cursor here. Borrowing this cursor does not clone
@@ -36,11 +24,6 @@ private struct ManifestTable {
     let name: String
     let array: Bool
     let pos: Int
-}
-
-private struct ManifestPackage {
-    let name: String
-    let version: String
 }
 
 private func manifestLetter(byte: UInt8): Bool {
@@ -105,7 +88,7 @@ func validPortableName(name: String): Bool {
 
 // Match joyeer::isModuleName, not the portable output-component grammar.
 // Logical identities remain case-sensitive, including on Windows.
-private func manifestModuleName(name: String): Bool {
+func validModuleName(name: String): Bool {
     if name.count == 0 { return false }
     var componentStart = true
     var index = 0
@@ -124,30 +107,6 @@ private func manifestModuleName(name: String): Bool {
         index = index + 1
     }
     return !componentStart
-}
-
-private func manifestVersion(version: String): Bool {
-    // Components are metadata, not machine integers: no overflow-prone
-    // accumulation and no arbitrary Int-sized upper bound on a component.
-    var index = 0
-    var component = 0
-    while component < 3 {
-        if index >= version.count { return false }
-        let start = index
-        while index < version.count {
-            if !manifestDigit(byte: version[index]) { break }
-            index = index + 1
-        }
-        if index == start { return false }
-        if index - start > 1 && version[start] == b'0' { return false }
-        component = component + 1
-        if component < 3 {
-            if index >= version.count { return false }
-            if version[index] != b'.' { return false }
-            index = index + 1
-        }
-    }
-    return index == version.count
 }
 
 private func manifestSeparator(byte: UInt8): Bool {
@@ -205,7 +164,16 @@ private func manifestSourcePath(path: String): Bool {
     return true
 }
 
-private func manifestSourceKey(path: String): String {
+func validArtifactModuleName(name: String): Bool {
+    return validModuleName(name: name) && manifestSourcePath(path: name)
+}
+
+func artifactModuleNamesEqual(first: String, second: String): Bool {
+    if hostWindows() { return manifestAsciiEqual(first: first, second: second) }
+    return first == second
+}
+
+func manifestSourceKey(path: String): String {
     // A lexical duplicate key only. Physical aliases and Unicode filesystem
     // case folding remain the compiler's authoritative input checks.
     let lower = "abcdefghijklmnopqrstuvwxyz"
@@ -353,7 +321,7 @@ private func manifestKey(p: inout ManifestCursor): Result<String, ToolError> {
 private func manifestHeader(p: inout ManifestCursor): Result<ManifestTable, ToolError> {
     let pos = p.pos
     if p.pos >= p.input.count || manifestCurrent(p: p) != b'[' {
-        return .Err(ToolError(message: "expected [package], [[modules]], or [[targets]]", pos: pos))
+        return .Err(ToolError(message: "expected [module] or [workspace]", pos: pos))
     }
     manifestAdvance(p: &p)
     var array = false
@@ -391,11 +359,8 @@ private func manifestHex(byte: UInt8): Int {
     return -1
 }
 
-private func manifestSchemaOne(token: String): Bool {
-    // Accept TOML integer representations of the value 1, including +1 and
-    // base-prefixed integers with legal underscores. Never accumulate a
-    // value above 1, so oversized/hostile integers cannot overflow.
-    if token == "1" || token == "+1" { return true }
+private func manifestSchemaValue(token: String, expected: Int): Bool {
+    if token == decimal(value: expected) || token == "+" + decimal(value: expected) { return true }
     if token.count < 3 { return false }
     if token[0] != b'0' { return false }
     var base = 0
@@ -414,17 +379,17 @@ private func manifestSchemaOne(token: String): Bool {
         } else {
             let digit = manifestHex(byte: byte)
             if digit < 0 || digit >= base { return false }
-            if value > 0 { return false }
-            value = digit
-            if value > 1 { return false }
+            if value > expected / base { return false }
+            value = value * base + digit
+            if value > expected { return false }
             previousDigit = true
         }
         index = index + 1
     }
-    return previousDigit && value == 1
+    return previousDigit && value == expected
 }
 
-private func manifestSchema(p: inout ManifestCursor): Result<Void, ToolError> {
+private func manifestSchema(p: inout ManifestCursor, expected: Int): Result<Void, ToolError> {
     let pos = p.pos
     while p.pos < p.input.count {
         let byte = manifestCurrent(p: p)
@@ -434,8 +399,9 @@ private func manifestSchema(p: inout ManifestCursor): Result<Void, ToolError> {
         manifestAdvance(p: &p)
     }
     let token = textSlice(text: p.input, start: pos, end: p.pos)
-    if !manifestSchemaOne(token: token) {
-        return .Err(ToolError(message: "schema-version must be the TOML integer 1", pos: pos))
+    if !manifestSchemaValue(token: token, expected: expected) {
+        return .Err(ToolError(message: "schema-version must be the TOML integer " +
+            decimal(value: expected), pos: pos))
     }
     return .Ok(())
 }
@@ -591,7 +557,7 @@ private func manifestString(p: inout ManifestCursor): Result<String, ToolError> 
     return .Err(ToolError(message: "unterminated single-line string", pos: pos))
 }
 
-private func manifestArray(p: inout ManifestCursor, sources: Bool): Result<[String], ToolError> {
+private func manifestArray(p: inout ManifestCursor, category: String): Result<[String], ToolError> {
     let pos = p.pos
     if p.pos >= p.input.count || manifestCurrent(p: p) != b'[' {
         return .Err(ToolError(message: "expected array of strings", pos: pos))
@@ -606,18 +572,26 @@ private func manifestArray(p: inout ManifestCursor, sources: Bool): Result<[Stri
             return .Ok(values)
         }
         let itemPos = p.pos
+        if category == "members" && values.count >= 256 {
+            return .Err(ToolError(message: "workspace exceeds 256 members", pos: itemPos))
+        }
         if values.count >= 1024 {
             return .Err(ToolError(message: "array exceeds 1024 entries", pos: itemPos))
         }
         let value = manifestString(p: &p)?
         var key = value
-        if sources {
+        if category == "sources" {
             if !manifestSourcePath(path: value) {
                 return .Err(ToolError(message: "source must be a relative file path without parent traversal: " + value, pos: itemPos))
             }
             key = manifestSourceKey(path: value)
+        } else if category == "members" {
+            if value != "." && !manifestSourcePath(path: value) {
+                return .Err(ToolError(message: "workspace member must be a relative directory without parent traversal: " + value, pos: itemPos))
+            }
+            key = manifestSourceKey(path: value)
         } else {
-            if !manifestModuleName(name: value) {
+            if !validModuleName(name: value) {
                 return .Err(ToolError(message: "invalid dependency logical module name: " + value, pos: itemPos))
             }
         }
@@ -648,50 +622,15 @@ private func manifestArray(p: inout ManifestCursor, sources: Bool): Result<[Stri
     return .Err(ToolError(message: "unterminated string array", pos: pos))
 }
 
-private func manifestPackageBody(p: inout ManifestCursor, pos: Int): Result<ManifestPackage, ToolError> {
-    var name = ""
-    var version = ""
-    var hasName = false
-    var hasVersion = false
-    while p.pos < p.input.count {
-        manifestTrivia(p: &p)?
-        if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
-        let keyPos = p.pos
-        let key = manifestKey(p: &p)?
-        let valuePos = p.pos
-        if key == "name" {
-            if hasName {
-                return .Err(ToolError(message: "duplicate package.name", pos: keyPos))
-            }
-            name = manifestString(p: &p)?
-            if !validPortableName(name: name) {
-                return .Err(ToolError(message: "package.name must be a portable ASCII name of 1..64 bytes, not a reserved device name", pos: valuePos))
-            }
-            hasName = true
-        } else if key == "version" {
-            if hasVersion {
-                return .Err(ToolError(message: "duplicate package.version", pos: keyPos))
-            }
-            version = manifestString(p: &p)?
-            if !manifestVersion(version: version) {
-                return .Err(ToolError(message: "package.version must be MAJOR.MINOR.PATCH without leading zeroes", pos: valuePos))
-            }
-            hasVersion = true
-        } else {
-            return .Err(ToolError(message: "unknown package key: " + key, pos: keyPos))
-        }
-        manifestLineEnd(p: &p)?
-    }
-    if !hasName { return .Err(ToolError(message: "missing package.name", pos: pos)) }
-    if !hasVersion { return .Err(ToolError(message: "missing package.version", pos: pos)) }
-    return .Ok(ManifestPackage(name: name, version: version))
-}
-
 private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<ModuleSpec, ToolError> {
     var name = ""
+    var kind = ""
+    var output = ""
     var sources: [String] = []
     var dependencies: [String] = []
     var hasName = false
+    var hasKind = false
+    var hasOutput = false
     var hasSources = false
     var hasDependencies = false
     while p.pos < p.input.count {
@@ -701,198 +640,94 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
         let key = manifestKey(p: &p)?
         let valuePos = p.pos
         if key == "name" {
-            if hasName { return .Err(ToolError(message: "duplicate modules.name", pos: keyPos)) }
+            if hasName { return .Err(ToolError(message: "duplicate module.name", pos: keyPos)) }
             name = manifestString(p: &p)?
-            if !manifestModuleName(name: name) {
+            if !validModuleName(name: name) {
                 return .Err(ToolError(message: "invalid logical module name: " + name, pos: valuePos))
             }
             hasName = true
+        } else if key == "kind" {
+            if hasKind { return .Err(ToolError(message: "duplicate module.kind", pos: keyPos)) }
+            kind = manifestString(p: &p)?
+            if kind != "source" && kind != "bin" && kind != "test" {
+                return .Err(ToolError(message: "module.kind must be source, bin, or test", pos: valuePos))
+            }
+            hasKind = true
+        } else if key == "output" {
+            if hasOutput { return .Err(ToolError(message: "duplicate module.output", pos: keyPos)) }
+            output = manifestString(p: &p)?
+            if !validPortableName(name: output) {
+                return .Err(ToolError(message: "module.output must be a portable ASCII name of 1..64 bytes, not a reserved device name", pos: valuePos))
+            }
+            hasOutput = true
         } else if key == "sources" {
-            if hasSources { return .Err(ToolError(message: "duplicate modules.sources", pos: keyPos)) }
-            sources = manifestArray(p: &p, sources: true)?
+            if hasSources { return .Err(ToolError(message: "duplicate module.sources", pos: keyPos)) }
+            sources = manifestArray(p: &p, category: "sources")?
             if sources.count == 0 {
-                return .Err(ToolError(message: "modules.sources must not be empty", pos: valuePos))
+                return .Err(ToolError(message: "module.sources must not be empty", pos: valuePos))
             }
             hasSources = true
         } else if key == "dependencies" {
-            if hasDependencies { return .Err(ToolError(message: "duplicate modules.dependencies", pos: keyPos)) }
-            dependencies = manifestArray(p: &p, sources: false)?
+            if hasDependencies { return .Err(ToolError(message: "duplicate module.dependencies", pos: keyPos)) }
+            dependencies = manifestArray(p: &p, category: "dependencies")?
             hasDependencies = true
         } else {
-            return .Err(ToolError(message: "unknown modules key: " + key, pos: keyPos))
+            return .Err(ToolError(message: "unknown module key: " + key, pos: keyPos))
         }
         manifestLineEnd(p: &p)?
     }
-    if !hasName { return .Err(ToolError(message: "missing modules.name", pos: pos)) }
-    if !hasSources { return .Err(ToolError(message: "missing modules.sources", pos: pos)) }
-    if !hasDependencies { return .Err(ToolError(message: "missing modules.dependencies", pos: pos)) }
-    return .Ok(ModuleSpec(name: name, sources: sources, dependencies: dependencies, pos: pos))
+    if !hasName { return .Err(ToolError(message: "missing module.name", pos: pos)) }
+    if !hasKind { return .Err(ToolError(message: "missing module.kind", pos: pos)) }
+    if !hasSources { return .Err(ToolError(message: "missing module.sources", pos: pos)) }
+    if !hasDependencies { return .Err(ToolError(message: "missing module.dependencies", pos: pos)) }
+    if kind == "source" && hasOutput {
+        return .Err(ToolError(message: "source modules do not declare an output artifact", pos: pos))
+    }
+    if kind != "source" && !hasOutput {
+        return .Err(ToolError(message: "bin/test modules require module.output", pos: pos))
+    }
+    if kind != "source" && !validArtifactModuleName(name: name) {
+        return .Err(ToolError(message: "bin/test module name must also be a valid artifact-directory component", pos: pos))
+    }
+    return .Ok(ModuleSpec(name: name, kind: kind, output: output,
+        sources: sources, dependencies: dependencies, pos: pos))
 }
 
-private func manifestTargetBody(p: inout ManifestCursor, pos: Int): Result<TargetSpec, ToolError> {
-    var name = ""
-    var kind = ""
-    var moduleName = ""
-    var hasName = false
-    var hasKind = false
-    var hasModule = false
+private func manifestWorkspaceBody(p: inout ManifestCursor, pos: Int): Result<[String], ToolError> {
+    var members: [String] = []
+    var hasMembers = false
     while p.pos < p.input.count {
         manifestTrivia(p: &p)?
         if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
         let keyPos = p.pos
         let key = manifestKey(p: &p)?
-        let valuePos = p.pos
-        if key == "name" {
-            if hasName { return .Err(ToolError(message: "duplicate targets.name", pos: keyPos)) }
-            name = manifestString(p: &p)?
-            if !validPortableName(name: name) {
-                return .Err(ToolError(message: "targets.name must be a portable ASCII name of 1..64 bytes, not a reserved device name", pos: valuePos))
+        if key == "members" {
+            if hasMembers { return .Err(ToolError(message: "duplicate workspace.members", pos: keyPos)) }
+            members = manifestArray(p: &p, category: "members")?
+            if members.count == 0 {
+                return .Err(ToolError(message: "workspace.members must not be empty", pos: keyPos))
             }
-            hasName = true
-        } else if key == "kind" {
-            if hasKind { return .Err(ToolError(message: "duplicate targets.kind", pos: keyPos)) }
-            kind = manifestString(p: &p)?
-            if kind != "bin" && kind != "test" {
-                return .Err(ToolError(message: "targets.kind must be 'bin' or 'test'", pos: valuePos))
-            }
-            hasKind = true
-        } else if key == "module" {
-            if hasModule { return .Err(ToolError(message: "duplicate targets.module", pos: keyPos)) }
-            moduleName = manifestString(p: &p)?
-            if !manifestModuleName(name: moduleName) {
-                return .Err(ToolError(message: "invalid target logical module name: " + moduleName, pos: valuePos))
-            }
-            hasModule = true
+            hasMembers = true
         } else {
-            return .Err(ToolError(message: "unknown targets key: " + key, pos: keyPos))
+            return .Err(ToolError(message: "unknown workspace key: " + key, pos: keyPos))
         }
         manifestLineEnd(p: &p)?
     }
-    if !hasName { return .Err(ToolError(message: "missing targets.name", pos: pos)) }
-    if !hasKind { return .Err(ToolError(message: "missing targets.kind", pos: pos)) }
-    if !hasModule { return .Err(ToolError(message: "missing targets.module", pos: pos)) }
-    return .Ok(TargetSpec(name: name, kind: kind, module: moduleName, pos: pos))
+    if !hasMembers { return .Err(ToolError(message: "missing workspace.members", pos: pos)) }
+    return .Ok(members)
 }
 
-private func manifestNameIndex(names: borrowing [String], name: String): Int {
-    var index = 0
-    while index < names.count {
-        if names[index] == name { return index }
-        index = index + 1
-    }
-    return -1
-}
-
-private func manifestModuleEdges(spec: borrowing ModuleSpec, names: borrowing [String]): Result<[Int], ToolError> {
-    var edges: [Int] = []
-    var index = 0
-    while index < spec.dependencies.count {
-        let name = spec.dependencies[index]
-        let destination = manifestNameIndex(names: names, name: name)
-        if destination < 0 {
-            return .Err(ToolError(message: "module '" + spec.name + "' has unknown dependency '" + name + "'", pos: spec.pos))
-        }
-        &edges.append(element: destination)
-        index = index + 1
-    }
-    return .Ok(edges)
-}
-
-private func manifestGraph(modules: borrowing [ModuleSpec], targets: borrowing [TargetSpec]): Result<Void, ToolError> {
-    var names: [String] = []
-    var positions: [Int] = []
-    var index = 0
-    while index < modules.count {
-        let name = modules[index].name
-        let pos = modules[index].pos
-        &names.append(element: name)
-        &positions.append(element: pos)
-        index = index + 1
-    }
-    index = 0
-    while index < targets.count {
-        let target = targets[index]
-        if manifestNameIndex(names: names, name: target.module) < 0 {
-            return .Err(ToolError(message: "target '" + target.name + "' references unknown module '" + target.module + "'", pos: target.pos))
-        }
-        index = index + 1
-    }
-    var edges: [[Int]] = []
-    var colors: [Int] = []
-    var offsets: [Int] = []
-    var stack: [Int] = []
-    index = 0
-    while index < modules.count {
-        let destinations = manifestModuleEdges(spec: modules[index], names: names)?
-        &edges.append(element: destinations)
-        &colors.append(element: 0)
-        &offsets.append(element: 0)
-        &stack.append(element: 0)
-        index = index + 1
-    }
-    // Iterative DFS visits every declared module, not just target closures.
-    // Its depth is bounded by the module count; no recursive stack growth.
-    var root = 0
-    while root < names.count {
-        if colors[root] == 0 {
-            &stack[0] = root
-            &colors[root] = 1
-            var depth = 1
-            while depth > 0 {
-                let top = depth - 1
-                let node = stack[top]
-                let offset = offsets[node]
-                if offset >= edges[node].count {
-                    &colors[node] = 2
-                    depth = depth - 1
-                } else {
-                    let destination = edges[node][offset]
-                    let nextOffset = offset + 1
-                    &offsets[node] = nextOffset
-                    let color = colors[destination]
-                    if color == 1 {
-                        var begin = 0
-                        while begin < depth {
-                            if stack[begin] == destination { break }
-                            begin = begin + 1
-                        }
-                        var path = ""
-                        var cursor = begin
-                        while cursor < depth {
-                            if path.count > 0 { path = path + " -> " }
-                            let member = stack[cursor]
-                            path = path + names[member]
-                            cursor = cursor + 1
-                        }
-                        path = path + " -> " + names[destination]
-                        return .Err(ToolError(message: "module dependency cycle: " + path, pos: positions[node]))
-                    }
-                    if color == 0 {
-                        // A white destination is not already on the stack;
-                        // keep an explicit bound nevertheless before writing.
-                        if depth >= stack.count {
-                            return .Err(ToolError(message: "module graph exceeds bounded traversal depth", pos: positions[node]))
-                        }
-                        &stack[depth] = destination
-                        &colors[destination] = 1
-                        depth = depth + 1
-                    }
-                }
-            }
-        }
-        root = root + 1
-    }
-    return .Ok(())
-}
-
-func parseManifest(contents: String): Result<PackageManifest, ToolError> {
+private func manifestInput(contents: String): Result<Void, ToolError> {
     if contents.count > 65536 {
         return .Err(ToolError(message: "manifest exceeds 65536 bytes", pos: 65536))
     }
     if !validUtf8(text: contents) {
         return .Err(ToolError(message: "manifest contents must be valid UTF-8", pos: 0))
     }
-    var p = ManifestCursor(input: contents, pos: 0)
+    return .Ok(())
+}
+
+private func manifestPrefix(p: inout ManifestCursor, expected: Int): Result<Void, ToolError> {
     var hasSchema = false
     // TOML keys following a table belong to that table. Root schema keys
     // cannot resume after any header, even after a blank line.
@@ -907,67 +742,46 @@ func parseManifest(contents: String): Result<PackageManifest, ToolError> {
         if hasSchema {
             return .Err(ToolError(message: "duplicate schema-version", pos: keyPos))
         }
-        manifestSchema(p: &p)?
+        manifestSchema(p: &p, expected: expected)?
         manifestLineEnd(p: &p)?
         hasSchema = true
     }
     if !hasSchema {
         return .Err(ToolError(message: "missing root schema-version before tables", pos: p.pos))
     }
-    var hasPackage = false
-    var packageName = ""
-    var packageVersion = ""
-    var modules: [ModuleSpec] = []
-    var targets: [TargetSpec] = []
-    // Name snapshots avoid repeatedly cloning source/dependency arrays when
-    // checking declarations or holding a borrow across append mutations.
-    var moduleNames: [String] = []
-    var targetNames: [String] = []
-    while p.pos < p.input.count {
-        manifestTrivia(p: &p)?
-        if p.pos >= p.input.count { break }
-        let table = manifestHeader(p: &p)?
-        if table.name == "package" && !table.array {
-            if hasPackage {
-                return .Err(ToolError(message: "duplicate [package] table", pos: table.pos))
-            }
-            let metadata = manifestPackageBody(p: &p, pos: table.pos)?
-            packageName = metadata.name
-            packageVersion = metadata.version
-            hasPackage = true
-        } else if table.name == "modules" && table.array {
-            if modules.count >= 256 {
-                return .Err(ToolError(message: "manifest exceeds 256 modules", pos: table.pos))
-            }
-            let spec = manifestModuleBody(p: &p, pos: table.pos)?
-            let name = spec.name
-            if manifestNameIndex(names: moduleNames, name: name) >= 0 {
-                return .Err(ToolError(message: "duplicate logical module name: " + name, pos: spec.pos))
-            }
-            &moduleNames.append(element: name)
-            &modules.append(element: spec)
-        } else if table.name == "targets" && table.array {
-            if targets.count >= 256 {
-                return .Err(ToolError(message: "manifest exceeds 256 targets", pos: table.pos))
-            }
-            let spec = manifestTargetBody(p: &p, pos: table.pos)?
-            let name = spec.name
-            var index = 0
-            while index < targetNames.count {
-                let previous = targetNames[index]
-                if previous == name || (hostWindows() && manifestAsciiEqual(first: previous, second: name)) {
-                    return .Err(ToolError(message: "duplicate or case-colliding target name: " + name, pos: spec.pos))
-                }
-                index = index + 1
-            }
-            &targetNames.append(element: name)
-            &targets.append(element: spec)
-        } else {
-            return .Err(ToolError(message: "unsupported table; only [package], [[modules]], and [[targets]] are allowed", pos: table.pos))
-        }
+    return .Ok(())
+}
+
+func parseManifest(contents: String): Result<ModuleSpec, ToolError> {
+    manifestInput(contents: contents)?
+    var p = ManifestCursor(input: contents, pos: 0)
+    manifestPrefix(p: &p, expected: 1)?
+    if p.pos >= contents.count { return .Err(ToolError(message: "missing [module] table", pos: p.pos)) }
+    let table = manifestHeader(p: &p)?
+    if table.name != "module" || table.array {
+        return .Err(ToolError(message: "one joyeer.toml defines one [module]; migrate earlier [package]/[[modules]]/[[targets]] projects to workspace.toml", pos: table.pos))
     }
-    if !hasPackage { return .Err(ToolError(message: "missing [package] table", pos: p.pos)) }
-    if targets.count == 0 { return .Err(ToolError(message: "manifest requires at least one target", pos: p.pos)) }
-    manifestGraph(modules: modules, targets: targets)?
-    return .Ok(PackageManifest(name: packageName, version: packageVersion, modules: modules, targets: targets))
+    let spec = manifestModuleBody(p: &p, pos: table.pos)?
+    manifestTrivia(p: &p)?
+    if p.pos != contents.count {
+        return .Err(ToolError(message: "only one [module] table is allowed; use workspace.toml for multiple modules", pos: p.pos))
+    }
+    return .Ok(spec)
+}
+
+func parseWorkspace(contents: String): Result<[String], ToolError> {
+    manifestInput(contents: contents)?
+    var p = ManifestCursor(input: contents, pos: 0)
+    manifestPrefix(p: &p, expected: 1)?
+    if p.pos >= contents.count { return .Err(ToolError(message: "missing [workspace] table", pos: p.pos)) }
+    let table = manifestHeader(p: &p)?
+    if table.name != "workspace" || table.array {
+        return .Err(ToolError(message: "workspace.toml permits only [workspace]", pos: table.pos))
+    }
+    let members = manifestWorkspaceBody(p: &p, pos: table.pos)?
+    manifestTrivia(p: &p)?
+    if p.pos != contents.count {
+        return .Err(ToolError(message: "only one [workspace] table is allowed; nested workspaces are unsupported", pos: p.pos))
+    }
+    return .Ok(members)
 }
