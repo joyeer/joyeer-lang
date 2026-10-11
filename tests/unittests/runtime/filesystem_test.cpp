@@ -1,4 +1,4 @@
-#include "joyeer/native/filesystem.h"
+#include "runtime/filesystem.h"
 
 #include <gtest/gtest.h>
 
@@ -18,7 +18,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -618,12 +620,19 @@ TEST_F(FileSystemTest, ClassifiesNonRegularEntryAsOther) {
 
 TEST_F(FileSystemTest, RejectsNonUtf8DirectoryEntriesWithoutLeakingPartialResults) {
     const auto good = track(root_ / "valid");
-    const auto bad = track(root_ / std::filesystem::path(std::string("bad\xff", 4)));
     {
-        std::ofstream first(good), second(bad);
+        std::ofstream first(good);
         ASSERT_TRUE(first.is_open());
-        ASSERT_TRUE(second.is_open());
     }
+    const auto bad = root_ / std::filesystem::path(std::string("bad\xff", 4));
+    const int descriptor = open(bad.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    const int creationError = descriptor < 0 ? errno : 0;
+    if (descriptor < 0 && (creationError == EILSEQ || creationError == EINVAL)) {
+        GTEST_SKIP() << "Filesystem rejects non-UTF-8 filenames";
+    }
+    ASSERT_GE(descriptor, 0) << std::strerror(creationError);
+    track(bad);
+    ASSERT_EQ(close(descriptor), 0);
     const auto path = bytes(utf8(root_));
     JoyeerArray names {};
     int64_t code = 0;

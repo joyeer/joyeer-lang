@@ -228,8 +228,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 get_filename_component(JOYEER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} REALPATH)
 
-set(JOYEER_INCLUDE_DIR "${JOYEER_SOURCE_DIR}/include")
-set(JOYEER_LIB_DIR "${JOYEER_SOURCE_DIR}/lib")
+set(JOYEER_SRC_DIR "${JOYEER_SOURCE_DIR}/src")
 
 set(JOYEER_BIN_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin")
 set(JOYEER_LIB_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib")
@@ -241,16 +240,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 
-include(addJoyeer)
-
-# include headers
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
-include_directories(
-    ${JOYEER_INCLUDE_DIR}
-)
-
-add_subdirectory(lib)
-add_subdirectory(src/tools)
+add_subdirectory(src)
 add_subdirectory(tests)
 
 include(GNUInstallDirs)

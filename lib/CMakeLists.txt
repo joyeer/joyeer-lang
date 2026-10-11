@@ -1,6 +1,0 @@
-add_subdirectory(native)
-add_subdirectory(ir)
-add_subdirectory(backend)
-add_subdirectory(diagnostic)
-add_subdirectory(compiler)
-add_subdirectory(main)

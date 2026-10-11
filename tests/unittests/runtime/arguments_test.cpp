@@ -1,5 +1,5 @@
-#include "joyeer/compiler/options.h"
-#include "joyeer/main/arguments.h"
+#include "compiler/driver/options.h"
+#include "compiler/driver/arguments.h"
 
 #include <gtest/gtest.h>
 

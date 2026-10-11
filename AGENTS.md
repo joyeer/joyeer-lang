@@ -68,17 +68,28 @@ ctest --test-dir build --output-on-failure
 
 ## Source layout
 
-| Area | Headers | Sources |
-|---|---|---|
-| CLI / driver | [include/joyeer/main/arguments.h](include/joyeer/main/arguments.h), [lib/main/driver.h](lib/main/driver.h) | [lib/main/](lib/main/) |
-| Lexer / parser / syntax AST | [include/joyeer/compiler/lexparser.h](include/joyeer/compiler/lexparser.h), [include/joyeer/compiler/parser.h](include/joyeer/compiler/parser.h), [include/joyeer/compiler/syntax.h](include/joyeer/compiler/syntax.h) | matching files in [lib/compiler/](lib/compiler/) |
-| Name resolution / semantic model | [include/joyeer/compiler/nameresolution.h](include/joyeer/compiler/nameresolution.h), [include/joyeer/compiler/semantic.h](include/joyeer/compiler/semantic.h) | matching files in [lib/compiler/](lib/compiler/) |
-| Type / control-flow analysis | [include/joyeer/compiler/typechecking.h](include/joyeer/compiler/typechecking.h), [include/joyeer/compiler/semanticanalysis.h](include/joyeer/compiler/semanticanalysis.h) | matching files in [lib/compiler/](lib/compiler/) |
-| Joyeer IR / lowering | [include/joyeer/ir/ir.h](include/joyeer/ir/ir.h), [include/joyeer/compiler/irlowering.h](include/joyeer/compiler/irlowering.h) | [lib/ir/](lib/ir/), [lib/compiler/irlowering.cpp](lib/compiler/irlowering.cpp) |
-| LLVM/native backend | [include/joyeer/backend/](include/joyeer/backend/) | [lib/backend/](lib/backend/) |
-| Native runtime | [include/joyeer/native/runtime.h](include/joyeer/native/runtime.h) | [lib/native/](lib/native/) |
-| Diagnostics | [include/joyeer/diagnostic/diagnostic.h](include/joyeer/diagnostic/diagnostic.h) | [lib/diagnostic/diagnostic.cpp](lib/diagnostic/diagnostic.cpp) |
-| Local project manager | No C++ API | [src/tools/joypm/](src/tools/joypm/); behavior and validation boundary in [docs/impl/joypm.md](docs/impl/joypm.md) |
+Headers and implementations live together under `src/`; they are internal
+interfaces, not an installed C++ SDK. Same-directory includes use the filename;
+cross-directory includes use the path relative to `src/`.
+
+| Area | Sources |
+|---|---|
+| Program entry | [src/compiler/main.cpp](src/compiler/main.cpp) |
+| CLI / compilation service / driver | [src/compiler/driver/](src/compiler/driver/) |
+| Lexer / parser / AST / name, type, and flow analysis | [src/compiler/frontend/](src/compiler/frontend/) |
+| Joyeer IR / verifier / typed AST lowering | [src/compiler/ir/](src/compiler/ir/) |
+| Diagnostics | [src/compiler/diagnostics/](src/compiler/diagnostics/) |
+| Compiler-side backend adapter / link orchestration | [src/compiler/codegen/](src/compiler/codegen/) |
+| LLVM objects / optimization / embedded LLD / C ABI | [src/backend/](src/backend/) |
+| C11 program runtime | [src/runtime/](src/runtime/) |
+| Local project manager | [src/tools/joypm/](src/tools/joypm/); behavior and validation in [docs/impl/joypm.md](docs/impl/joypm.md) |
+
+`JoyeerCompilerCore` is one non-installed CMake `OBJECT` target reused by
+`joyeer` and the compiler unit tests. Directories are responsibility groups,
+not separate libraries. Keep `JoyeerNativeBackend` shared and
+`JoyeerNativeRuntime` static: LLVM and Windows `/MT` objects stay in the backend,
+and generated programs link only the runtime. Compile the same IR verifier
+source privately in the backend rather than reusing compiler-core objects.
 
 ## Joyeer source conventions
 
