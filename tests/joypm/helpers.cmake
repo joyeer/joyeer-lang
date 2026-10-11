@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-foreach(required IN ITEMS JOYPM_EXECUTABLE JOYEER_EXECUTABLE FIXTURE_DIR TEST_ROOT)
+foreach(required IN ITEMS JOYPM_EXECUTABLE JOYEER_EXECUTABLE FIXTURE_DIR TEST_ROOT HOST_FIXTURE)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "${required} is required")
     endif()
@@ -15,7 +15,14 @@ endif()
 # Keep each invocation independent, even after a failed previous CTest run.
 # Never remove a project generation or an existing test directory.
 string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef run_id)
-set(work "${TEST_ROOT}/run ${run_id}")
+file(MAKE_DIRECTORY "${TEST_ROOT}")
+execute_process(COMMAND "${HOST_FIXTURE}" claim-run "${TEST_ROOT}" "${run_id}"
+    RESULT_VARIABLE claim_status OUTPUT_VARIABLE run_name ERROR_VARIABLE claim_error
+    OUTPUT_STRIP_TRAILING_WHITESPACE TIMEOUT 15)
+if(NOT claim_status STREQUAL "0" OR NOT run_name MATCHES "^run-[0-9]+-[0-9a-f]+$")
+    message(FATAL_ERROR "Cannot exclusively claim a process-identified test run: ${claim_error}")
+endif()
+set(work "${TEST_ROOT}/${run_name}")
 file(MAKE_DIRECTORY "${work}" "${work}/invocation outside package")
 set(outside "${work}/invocation outside package")
 
@@ -56,6 +63,12 @@ function(jp_contains text needle)
     if(at LESS 0)
         jp_fail("Missing expected text '${needle}'")
     endif()
+endfunction()
+
+function(jp_contains_path text path)
+    string(REPLACE "\\" "/" normalized_text "${text}")
+    string(REPLACE "\\" "/" normalized_path "${path}")
+    jp_contains("${normalized_text}" "${normalized_path}")
 endfunction()
 
 function(jp_absent text needle)
@@ -164,6 +177,28 @@ function(jp_no_outputs package)
     endif()
 endfunction()
 
+function(jp_write_module directory name kind output sources dependencies)
+    file(MAKE_DIRECTORY "${directory}")
+    set(text "schema-version = 1\n[module]\nname = '${name}'\nkind = '${kind}'\n")
+    if(NOT kind STREQUAL "source")
+        string(APPEND text "output = '${output}'\n")
+    endif()
+    string(APPEND text "sources = [${sources}]\ndependencies = [${dependencies}]\n")
+    jp_write_bytes("${directory}/joyeer.toml" "${text}")
+endfunction()
+
+function(jp_write_workspace directory members)
+    jp_write_bytes("${directory}/workspace.toml"
+        "schema-version = 1\n[workspace]\nmembers = [${members}]\n")
+endfunction()
+
+function(jp_add_test_member directory name output source)
+    file(MAKE_DIRECTORY "${directory}/test-member")
+    configure_file("${source}" "${directory}/test-member/main.joyeer" COPYONLY)
+    jp_write_module("${directory}/test-member" "${name}" test "${output}" "'main.joyeer'" "")
+    jp_write_workspace("${directory}" "'.', 'test-member'")
+endfunction()
+
 function(jp_copy_project fixture destination)
     file(MAKE_DIRECTORY "${destination}")
     file(COPY "${FIXTURE_DIR}/${fixture}/" DESTINATION "${destination}")
@@ -173,7 +208,7 @@ endfunction()
 function(jp_artifacts package profile target expected)
     # Output inspection only; compilation inputs are always explicit lists.
     file(GLOB artifacts LIST_DIRECTORIES false
-        "${package}/target/${profile}/${target}/build-*/${target}${EXECUTABLE_SUFFIX}")
+        "${package}/target/${profile}/*/build-*/${target}${EXECUTABLE_SUFFIX}")
     list(LENGTH artifacts count)
     if(NOT count EQUAL expected)
         jp_fail("Expected ${expected} ${profile}/${target} artifacts, found ${count}: ${artifacts}")

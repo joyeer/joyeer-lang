@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "sample.core"
+kind = "source"
+sources = ["core.joyeer"]
+dependencies = []

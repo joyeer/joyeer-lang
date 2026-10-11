@@ -1,5 +1,5 @@
 struct BuildResult {
-    let targetName: String
+    let moduleName: String
     let executable: String
     let workingDirectory: String
 }
@@ -46,7 +46,7 @@ private func ensureDirectory(path: String): Result<Void, ToolError> {
 }
 
 private func generationError(plan: borrowing BuildPlan, directory: String, error: FileSystemError): ToolError {
-    return ToolError(message: "target '" + plan.targetName + "': cannot claim fresh build directory '" +
+    return ToolError(message: "module '" + plan.moduleName + "': cannot claim fresh build directory '" +
         directory + "': " + fileSystemMessage(error: error), pos: -1)
 }
 
@@ -75,11 +75,11 @@ private func allocateArtifact(plan: borrowing BuildPlan): Result<String, ToolErr
             },
         }
         if claimed {
-            return toolJoin(base: directory, path: plan.targetName + executableSuffix())
+            return toolJoin(base: directory, path: plan.outputName + executableSuffix())
         }
         id = id + 1
     }
-    return .Err(ToolError(message: "target '" + plan.targetName + "': all 128 fresh build directory claims collided under '" +
+    return .Err(ToolError(message: "module '" + plan.moduleName + "': all 128 fresh build directory claims collided under '" +
         plan.artifactParent + "'; existing generations were left untouched", pos: -1))
 }
 
@@ -87,21 +87,21 @@ private func requireArtifact(plan: borrowing BuildPlan, executable: String): Res
     return match fileKind(path: executable) {
         .Ok(kind) => match kind {
             .File => .Ok(()),
-            .Directory => .Err(ToolError(message: "target '" + plan.targetName +
+            .Directory => .Err(ToolError(message: "module '" + plan.moduleName +
                 "': compiler succeeded but expected executable is a directory: " + executable, pos: -1)),
-            .Symlink => .Err(ToolError(message: "target '" + plan.targetName +
+            .Symlink => .Err(ToolError(message: "module '" + plan.moduleName +
                 "': compiler succeeded but expected executable is a link: " + executable, pos: -1)),
-            .Other => .Err(ToolError(message: "target '" + plan.targetName +
+            .Other => .Err(ToolError(message: "module '" + plan.moduleName +
                 "': compiler succeeded but expected executable is not a regular file: " + executable, pos: -1)),
         },
-        .Err(error) => .Err(ToolError(message: "target '" + plan.targetName +
+        .Err(error) => .Err(ToolError(message: "module '" + plan.moduleName +
             "': compiler succeeded but expected executable is unavailable at '" + executable +
             "': " + fileSystemMessage(error: error), pos: -1)),
     }
 }
 
-private func displayInvocation(target: String, invocation: borrowing CompilerInvocation): Result<Void, ToolError> {
-    toolStderr(contents: "joypm: compiler argv for target '" + target + "' (cwd " +
+private func displayInvocation(module: String, invocation: borrowing CompilerInvocation): Result<Void, ToolError> {
+    toolStderr(contents: "joypm: compiler argv for module '" + module + "' (cwd " +
         displayArgument(argument: invocation.workingDirectory) + ")\n")?
     toolStderr(contents: displayArgument(argument: invocation.executable) + "\n")?
     var index = 0
@@ -120,13 +120,13 @@ private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptio
     if plan.native { action = "building" }
     var incomplete = ""
     if plan.native { incomplete = "; incomplete generation left at '" + pathDirectory(path: output) + "'" }
-    toolStderr(contents: "joypm: " + action + " target '" + plan.targetName + "' (" + plan.profile + ")\n")?
-    if options.verbose { displayInvocation(target: plan.targetName, invocation: invocation)? }
+    toolStderr(contents: "joypm: " + action + " module '" + plan.moduleName + "' (" + plan.profile + ")\n")?
+    if options.verbose { displayInvocation(module: plan.moduleName, invocation: invocation)? }
     let status = match runProcess(executable: invocation.executable,
         arguments: invocation.arguments, workingDirectory: invocation.workingDirectory) {
         .Ok(completion) => completion,
         .Err(error) => {
-            return .Err(ToolError(message: "target '" + plan.targetName + "': compiler '" +
+            return .Err(ToolError(message: "module '" + plan.moduleName + "': compiler '" +
                 invocation.executable + "': " + processMessage(error: error) + incomplete, pos: -1))
         },
     }
@@ -135,34 +135,34 @@ private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptio
         .Signaled(signal) => {
             // Compiler signal termination is a tool failure, not a source
             // rejection. Unlike a signaled test program, abort the test suite.
-            return .Err(ToolError(message: "target '" + plan.targetName + "': compiler '" +
+            return .Err(ToolError(message: "module '" + plan.moduleName + "': compiler '" +
                 invocation.executable + "' terminated by signal " + decimal(value: signal) + incomplete, pos: -1))
         },
     }
     if !successful {
-        toolStderr(contents: "joypm: target '" + plan.targetName + "': compiler " +
+        toolStderr(contents: "joypm: module '" + plan.moduleName + "': compiler " +
             completionMessage(status: status) + incomplete + "\n")?
         return .Ok(.CompileFailed(status))
     }
     if plan.native {
         requireArtifact(plan: plan, executable: output)?
-        toolStderr(contents: "joypm: built target '" + plan.targetName + "' at '" + output +
+        toolStderr(contents: "joypm: built module '" + plan.moduleName + "' at '" + output +
             "' (generation retained; no automatic cleanup)\n")?
     }
-    return .Ok(.Built(BuildResult(targetName: plan.targetName, executable: output,
-        workingDirectory: plan.packageDirectory)))
+    return .Ok(.Built(BuildResult(moduleName: plan.moduleName, executable: output,
+        workingDirectory: plan.workingDirectory)))
 }
 
 private func executeChild(build: borrowing BuildResult, options: borrowing CliOptions): Result<Bool, ToolError> {
     if build.executable.count == 0 {
-        return .Err(ToolError(message: "internal missing current executable for target '" + build.targetName + "'", pos: -1))
+        return .Err(ToolError(message: "internal missing current executable for module '" + build.moduleName + "'", pos: -1))
     }
-    toolStderr(contents: "joypm: running target '" + build.targetName + "' (cwd '" + build.workingDirectory + "')\n")?
+    toolStderr(contents: "joypm: running module '" + build.moduleName + "' (cwd '" + build.workingDirectory + "')\n")?
     let status = match runProcess(executable: build.executable, arguments: options.childArgs,
         workingDirectory: build.workingDirectory) {
         .Ok(completion) => completion,
         .Err(error) => {
-            return .Err(ToolError(message: "target '" + build.targetName + "': cannot run '" +
+            return .Err(ToolError(message: "module '" + build.moduleName + "': cannot run '" +
                 build.executable + "': " + processMessage(error: error), pos: -1))
         },
     }
@@ -171,7 +171,7 @@ private func executeChild(build: borrowing BuildResult, options: borrowing CliOp
         .Signaled(_) => false,
     }
     if !successful {
-        toolStderr(contents: "joypm: target '" + build.targetName + "': child " +
+        toolStderr(contents: "joypm: module '" + build.moduleName + "': child " +
             completionMessage(status: status) + "\n")?
     }
     return .Ok(successful)
@@ -206,13 +206,13 @@ private func executeTests(plans: borrowing [BuildPlan], options: borrowing CliOp
     return .Ok(0)
 }
 
-func executeProject(manifest: borrowing PackageManifest, options: borrowing CliOptions,
-    selected: borrowing [Int], base: String): Result<Int, ToolError> {
+func executeProject(project: borrowing Project, options: borrowing CliOptions,
+    selected: borrowing [Int]): Result<Int, ToolError> {
     // Finish planning all selections before performing any filesystem effects.
     var plans: [BuildPlan] = []
     var index = 0
     while index < selected.count {
-        let plan = planTarget(manifest: manifest, options: options, targetIndex: selected[index], base: base)?
+        let plan = planModule(project: project, options: options, moduleIndex: selected[index])?
         &plans.append(element: plan)
         index = index + 1
     }
@@ -244,17 +244,17 @@ private func initWrite(path: String, contents: String): Result<Void, ToolError> 
     }
 }
 
-private func initFiles(directory: String, name: String): Result<Void, ToolError> {
+private func initFiles(directory: String, options: borrowing CliOptions): Result<Void, ToolError> {
     let sourceDirectory = toolJoin(base: directory, path: "src")?
     let manifest = toolJoin(base: directory, path: "joyeer.toml")?
-    let source = toolJoin(base: sourceDirectory, path: "main.joyeer")?
+    var sourceName = "main.joyeer"
+    if options.kind == "source" { sourceName = "lib.joyeer" }
+    let source = toolJoin(base: sourceDirectory, path: sourceName)?
     let ignore = toolJoin(base: directory, path: ".gitignore")?
-    // Package names can contain '-', logical module names cannot. A fixed
-    // package-local logical identity avoids an undocumented name conversion.
-    let contents = "schema-version = 1\n\n[package]\nname = '" + name +
-        "'\nversion = '0.1.0'\n\n[[modules]]\nname = 'app.main'\n" +
-        "sources = ['src/main.joyeer']\ndependencies = []\n\n[[targets]]\nname = '" +
-        name + "'\nkind = 'bin'\nmodule = 'app.main'\n"
+    var contents = "schema-version = 1\n\n[module]\nname = '" + options.name +
+        "'\nkind = '" + options.kind + "'\n"
+    if options.kind != "source" { contents = contents + "output = '" + options.output + "'\n" }
+    contents = contents + "sources = ['src/" + sourceName + "']\ndependencies = []\n"
     initWrite(path: manifest, contents: contents)?
     match createDirectory(path: sourceDirectory) {
         .Ok(_) => {},
@@ -263,7 +263,9 @@ private func initFiles(directory: String, name: String): Result<Void, ToolError>
                 "': " + fileSystemMessage(error: error), pos: -1))
         },
     }
-    initWrite(path: source, contents: "func main() {\n    print(value: \"Hello, Joyeer!\")\n}\n")?
+    var entry = "func main()"
+    if options.kind == "source" { entry = "public func describe()" }
+    initWrite(path: source, contents: entry + " {\n    print(value: \"Hello, Joyeer!\")\n}\n")?
     initWrite(path: ignore, contents: "/target/\n")?
     return .Ok(())
 }
@@ -295,13 +297,13 @@ func initializeProject(options: borrowing CliOptions): Result<Int, ToolError> {
     if names.count != 0 {
         return .Err(ToolError(message: "init requires an empty directory; existing contents left untouched: " + directory, pos: -1))
     }
-    match initFiles(directory: directory, name: options.name) {
+    match initFiles(directory: directory, options: options) {
         .Ok(_) => {},
         .Err(error) => {
             return .Err(ToolError(message: "partial initialization of '" + directory + "': " +
                 error.message + "; created files were retained, with no recursive rollback", pos: -1))
         },
     }
-    toolStderr(contents: "joypm: initialized package '" + options.name + "' in '" + directory + "'\n")?
+    toolStderr(contents: "joypm: initialized module '" + options.name + "' in '" + directory + "'\n")?
     return .Ok(0)
 }

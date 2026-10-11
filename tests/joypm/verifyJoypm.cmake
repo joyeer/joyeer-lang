@@ -10,7 +10,7 @@ jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
     --manifest-path "../single project/joyeer.toml")
 jp_no_outputs("${package}")
 jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${multi}/joyeer.toml")
+    --workspace "${multi}/workspace.toml")
 jp_no_outputs("${multi}")
 
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
@@ -47,7 +47,7 @@ if(EXISTS "${release_dir}/sample.pdb" OR EXISTS "${release}.dSYM")
 endif()
 
 jp_call(0 "${outside}" run --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${multi}/joyeer.toml")
+    --workspace "${multi}/workspace.toml")
 jp_contains("${jp_out}" "multi executed\n42\n")
 jp_artifacts("${multi}" debug multi 1)
 jp_forward(run "${package}" ascii)
@@ -73,7 +73,7 @@ if(NOT first_hash STREQUAL final_hash)
     jp_fail("Failed rebuild changed an old executable")
 endif()
 jp_call(1 "${outside}" check --compiler "${work}/missing compiler${EXECUTABLE_SUFFIX}"
-    --manifest-path "${multi}/joyeer.toml")
+    --workspace "${multi}/workspace.toml")
 
 # A compiler substitute that exits successfully without an artifact must not
 # cause joypm to launch a prior generation or claim a successful build.
@@ -90,59 +90,60 @@ endif()
 # Explicit selection and ambiguity are CLI errors, not failed builds.
 set(selection "${work}/selection")
 jp_copy_project(single "${selection}")
-file(READ "${selection}/joyeer.toml" manifest)
-file(APPEND "${selection}/joyeer.toml"
-    "\n[[targets]]\nname = 'other'\nkind = 'bin'\nmodule = 'sample.app'\n")
+file(MAKE_DIRECTORY "${selection}/other")
+configure_file("${selection}/main.joyeer" "${selection}/other/main.joyeer" COPYONLY)
+jp_write_module("${selection}/other" sample.other bin other "'main.joyeer'" "")
+jp_write_workspace("${selection}" "'.', 'other'")
 jp_call(2 "${outside}" run --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${selection}/joyeer.toml")
+    --workspace "${selection}/workspace.toml")
 jp_no_outputs("${selection}")
 jp_call(2 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${selection}/joyeer.toml" --target missing)
+    --workspace "${selection}/workspace.toml" --module missing)
 jp_no_outputs("${selection}")
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${selection}/joyeer.toml" --target other)
+    --workspace "${selection}/workspace.toml" --module sample.other)
 jp_artifacts("${selection}" debug other 1)
 jp_artifacts("${selection}" debug sample 0)
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${selection}/joyeer.toml")
+    --workspace "${selection}/workspace.toml")
 jp_artifacts("${selection}" debug other 2)
 jp_artifacts("${selection}" debug sample 1)
 jp_call(0 "${outside}" run --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${selection}/joyeer.toml" --target other)
+    --workspace "${selection}/workspace.toml" --module sample.other)
 jp_contains("${jp_out}" "fixture executed\npackage cwd\n")
 jp_artifacts("${selection}" debug other 3)
 
 # Bounded generation allocation: do not reuse, remove or populate a collision.
 set(collision "${work}/collision retry")
 jp_copy_project(single "${collision}")
-file(MAKE_DIRECTORY "${collision}/target/debug/sample/build-1")
-file(WRITE "${collision}/target/debug/sample/build-1/sentinel" "preserved")
+file(MAKE_DIRECTORY "${collision}/target/debug/sample.app/build-1")
+file(WRITE "${collision}/target/debug/sample.app/build-1/sentinel" "preserved")
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
     --manifest-path "${collision}/joyeer.toml")
 jp_artifacts("${collision}" debug sample 1)
-if(EXISTS "${collision}/target/debug/sample/build-1/sample${EXECUTABLE_SUFFIX}")
+if(EXISTS "${collision}/target/debug/sample.app/build-1/sample${EXECUTABLE_SUFFIX}")
     jp_fail("Collision generation was populated")
 endif()
-file(READ "${collision}/target/debug/sample/build-1/sentinel" sentinel)
+file(READ "${collision}/target/debug/sample.app/build-1/sentinel" sentinel)
 if(NOT sentinel STREQUAL "preserved")
     jp_fail("Collision generation was altered")
 endif()
 set(exhausted "${work}/collision exhaustion")
 jp_copy_project(single "${exhausted}")
 foreach(id RANGE 1 128)
-    file(MAKE_DIRECTORY "${exhausted}/target/debug/sample/build-${id}")
-    file(WRITE "${exhausted}/target/debug/sample/build-${id}/sentinel" "${id}")
+    file(MAKE_DIRECTORY "${exhausted}/target/debug/sample.app/build-${id}")
+    file(WRITE "${exhausted}/target/debug/sample.app/build-${id}/sentinel" "${id}")
 endforeach()
 set(exhaustion_cwd "${work}/exhaustion caller")
 file(MAKE_DIRECTORY "${exhaustion_cwd}")
 jp_call(1 "${exhaustion_cwd}" build --compiler "${COMPILER_SPY}"
     --manifest-path "${exhausted}/joyeer.toml")
 if(EXISTS "${exhaustion_cwd}/compiler-record.txt" OR
-   EXISTS "${exhausted}/target/debug/sample/build-129")
+   EXISTS "${exhausted}/target/debug/sample.app/build-129")
     jp_fail("Exhausted 128 generation attempts still invoked the compiler or allocated output")
 endif()
 foreach(id RANGE 1 128)
-    file(READ "${exhausted}/target/debug/sample/build-${id}/sentinel" sentinel)
+    file(READ "${exhausted}/target/debug/sample.app/build-${id}/sentinel" sentinel)
     if(NOT sentinel STREQUAL "${id}")
         jp_fail("Exhaustion altered an existing generation")
     endif()

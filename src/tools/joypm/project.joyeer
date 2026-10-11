@@ -1,0 +1,232 @@
+struct ProjectModule {
+    let spec: ModuleSpec
+    let directory: String
+    let path: String
+    let dependencyIndexes: [Int]
+}
+
+struct Project {
+    let modules: [ProjectModule]
+    let directory: String
+}
+
+struct ProjectError {
+    let error: ToolError
+    let path: String
+    let contents: String
+}
+
+// Original text is needed only until cross-manifest validation finishes.
+private struct LoadedModule {
+    let spec: ModuleSpec
+    let directory: String
+    let path: String
+    let contents: String
+}
+
+private struct GraphError {
+    let moduleIndex: Int
+    let message: String
+}
+
+private func readManifest(path: String): Result<String, ToolError> {
+    let regular = match fileKind(path: path) {
+        .Ok(kind) => match kind {
+            .File => true,
+            .Directory => false,
+            .Symlink => false,
+            .Other => false,
+        },
+        .Err(error) => {
+            return .Err(ToolError(message: "cannot inspect manifest '" + path +
+                "': " + fileSystemMessage(error: error), pos: -1))
+        },
+    }
+    if !regular {
+        return .Err(ToolError(message: "manifest must be an ordinary regular file: " + path, pos: -1))
+    }
+    // Classification and reading are separate host operations, not confinement.
+    return match readFilePrefix(path: path, maximumBytes: 65537) {
+        .Ok(contents) => .Ok(contents),
+        .Err(error) => .Err(ToolError(message: "cannot read manifest '" + path +
+            "': " + fileSystemMessage(error: error), pos: -1)),
+    }
+}
+
+private func projectDocument(path: String): Result<String, ProjectError> {
+    return match readManifest(path: path) {
+        .Ok(contents) => .Ok(contents),
+        .Err(error) => .Err(ProjectError(error: error, path: path, contents: "")),
+    }
+}
+
+private func projectModule(path: String, directory: String): Result<LoadedModule, ProjectError> {
+    let contents = projectDocument(path: path)?
+    return match parseManifest(contents: contents) {
+        .Ok(spec) => .Ok(LoadedModule(spec: spec, directory: directory,
+            path: path, contents: contents)),
+        .Err(error) => .Err(ProjectError(error: error, path: path, contents: contents)),
+    }
+}
+
+private func projectJoin(base: String, path: String): Result<String, ProjectError> {
+    return match toolJoin(base: base, path: path) {
+        .Ok(joined) => .Ok(joined),
+        .Err(error) => .Err(ProjectError(error: error, path: "", contents: "")),
+    }
+}
+
+private func projectModuleIndex(modules: borrowing [LoadedModule], name: String): Int {
+    var index = 0
+    while index < modules.count {
+        if modules[index].spec.name == name { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+private func projectModuleEdges(spec: borrowing ModuleSpec, modules: borrowing [LoadedModule],
+    owner: Int): Result<[Int], GraphError> {
+    var edges: [Int] = []
+    var index = 0
+    while index < spec.dependencies.count {
+        let name = spec.dependencies[index]
+        let destination = projectModuleIndex(modules: modules, name: name)
+        if destination < 0 {
+            return .Err(GraphError(moduleIndex: owner, message: "module '" + spec.name +
+                "' has unknown dependency '" + name + "' in the loaded project"))
+        }
+        &edges.append(element: destination)
+        index = index + 1
+    }
+    return .Ok(edges)
+}
+
+private func projectGraph(modules: borrowing [LoadedModule]): Result<[[Int]], GraphError> {
+    var index = 0
+    while index < modules.count {
+        let name = modules[index].spec.name
+        if projectModuleIndex(modules: modules, name: name) != index {
+            return .Err(GraphError(moduleIndex: index, message: "duplicate logical module name: " + name))
+        }
+        if modules[index].spec.kind != "source" {
+            var previous = 0
+            while previous < index {
+                if modules[previous].spec.kind != "source" &&
+                    artifactModuleNamesEqual(first: modules[previous].spec.name, second: name) {
+                    return .Err(GraphError(moduleIndex: index, message: "case-colliding output module name: " + name))
+                }
+                previous = previous + 1
+            }
+        }
+        index = index + 1
+    }
+    var edges: [[Int]] = []
+    var colors: [Int] = []
+    var offsets: [Int] = []
+    var stack: [Int] = []
+    index = 0
+    while index < modules.count {
+        let destinations = projectModuleEdges(spec: modules[index].spec, modules: modules, owner: index)?
+        &edges.append(element: destinations)
+        &colors.append(element: 0)
+        &offsets.append(element: 0)
+        &stack.append(element: 0)
+        index = index + 1
+    }
+    // Visit the entire graph iteratively, not just selected dependency closures.
+    var root = 0
+    while root < modules.count {
+        if colors[root] == 0 {
+            &stack[0] = root
+            &colors[root] = 1
+            var depth = 1
+            while depth > 0 {
+                let top = depth - 1
+                let node = stack[top]
+                let offset = offsets[node]
+                if offset >= edges[node].count {
+                    &colors[node] = 2
+                    depth = depth - 1
+                } else {
+                    let destination = edges[node][offset]
+                    let nextOffset = offset + 1
+                    &offsets[node] = nextOffset
+                    let color = colors[destination]
+                    if color == 1 {
+                        var begin = 0
+                        while begin < depth {
+                            if stack[begin] == destination { break }
+                            begin = begin + 1
+                        }
+                        var path = ""
+                        var cursor = begin
+                        while cursor < depth {
+                            if path.count > 0 { path = path + " -> " }
+                            let member = stack[cursor]
+                            path = path + modules[member].spec.name
+                            cursor = cursor + 1
+                        }
+                        path = path + " -> " + modules[destination].spec.name
+                        return .Err(GraphError(moduleIndex: node, message: "module dependency cycle: " + path))
+                    }
+                    if color == 0 {
+                        if depth >= stack.count {
+                            return .Err(GraphError(moduleIndex: node,
+                                message: "module graph exceeds bounded traversal depth"))
+                        }
+                        &stack[depth] = destination
+                        &colors[destination] = 1
+                        depth = depth + 1
+                    }
+                }
+            }
+        }
+        root = root + 1
+    }
+    return .Ok(edges)
+}
+
+func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
+    var loaded: [LoadedModule] = []
+    var directory = pathDirectory(path: options.manifestPath)
+    if options.workspacePath.count == 0 {
+        let module = projectModule(path: options.manifestPath, directory: directory)?
+        &loaded.append(element: module)
+    } else {
+        let text = projectDocument(path: options.workspacePath)?
+        let members = match parseWorkspace(contents: text) {
+            .Ok(entries) => entries,
+            .Err(error) => {
+                return .Err(ProjectError(error: error, path: options.workspacePath, contents: text))
+            },
+        }
+        directory = pathDirectory(path: options.workspacePath)
+        let ordered = sortedStrings(values: members)
+        var index = 0
+        while index < ordered.count {
+            let memberDirectory = projectJoin(base: directory, path: ordered[index])?
+            let path = projectJoin(base: memberDirectory, path: "joyeer.toml")?
+            let module = projectModule(path: path, directory: memberDirectory)?
+            &loaded.append(element: module)
+            index = index + 1
+        }
+    }
+    let edges = match projectGraph(modules: loaded) {
+        .Ok(dependencies) => dependencies,
+        .Err(error) => {
+            let owner = error.moduleIndex
+            return .Err(ProjectError(error: ToolError(message: error.message, pos: loaded[owner].spec.pos),
+                path: loaded[owner].path, contents: loaded[owner].contents))
+        },
+    }
+    var modules: [ProjectModule] = []
+    var index = 0
+    while index < loaded.count {
+        &modules.append(element: ProjectModule(spec: loaded[index].spec,
+            directory: loaded[index].directory, path: loaded[index].path,
+            dependencyIndexes: edges[index]))
+        index = index + 1
+    }
+    return .Ok(Project(modules: modules, directory: directory))
+}

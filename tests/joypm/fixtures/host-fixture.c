@@ -29,6 +29,46 @@ static int failure(const char* message) {
     return 125;
 }
 
+static int claimRun(const HostChar* parent, const HostChar* token) {
+#ifdef _WIN32
+    if (wcslen(token) != 16) return failure("invalid run token length");
+#else
+    if (strlen(token) != 16) return failure("invalid run token length");
+#endif
+    char suffix[17] = {0};
+    for (size_t index = 0; index < 16; ++index) {
+        const HostChar byte = token[index];
+        if (!((byte >= HOST_TEXT('0') && byte <= HOST_TEXT('9')) ||
+                (byte >= HOST_TEXT('a') && byte <= HOST_TEXT('f'))))
+            return failure("invalid run token");
+        suffix[index] = (char)byte;
+    }
+#ifdef _WIN32
+    const unsigned long pid = GetCurrentProcessId();
+    const size_t length = wcslen(parent);
+    wchar_t tail[64];
+    if (swprintf(tail, 64, L"\\run-%lu-%hs", pid, suffix) < 0)
+        return failure("cannot format run directory");
+    wchar_t* path = calloc(length + 65, sizeof(wchar_t));
+    if (!path) return failure("cannot allocate run path");
+    memcpy(path, parent, length * sizeof(wchar_t));
+    wcscpy(path + length, tail);
+    const int status = _wmkdir(path);
+#else
+    const unsigned long pid = (unsigned long)getpid();
+    const size_t length = strlen(parent);
+    char* path = calloc(length + 65, 1);
+    if (!path) return failure("cannot allocate run path");
+    memcpy(path, parent, length);
+    snprintf(path + length, 65, "/run-%lu-%s", pid, suffix);
+    const int status = mkdir(path, 0700);
+#endif
+    free(path);
+    if (status != 0) return failure("cannot exclusively claim run directory");
+    printf("run-%lu-%s\n", pid, suffix);
+    return 0;
+}
+
 static int wideStatus(void) {
 #ifdef _WIN32
     return (int)0xF1234567U;
@@ -150,6 +190,8 @@ int hostMain(int argc, HostChar** argv) {
     if (hostCompare(argv[1], HOST_TEXT("--module-name")) == 0) return compile(argc, argv);
     if (hostCompare(argv[1], HOST_TEXT("exit-wide")) == 0) return wideStatus();
     if (hostCompare(argv[1], HOST_TEXT("signal")) == 0) return terminated();
+    if (argc == 4 && hostCompare(argv[1], HOST_TEXT("claim-run")) == 0)
+        return claimRun(argv[2], argv[3]);
     if (argc != 3) return failure("action requires a path");
 #ifdef _WIN32
     if (hostCompare(argv[1], HOST_TEXT("block-subdirectories")) == 0)

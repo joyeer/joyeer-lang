@@ -1,0 +1,25 @@
+public struct Record {
+    public let value: Int
+    public let text: String
+}
+
+public enum Choice {
+    Value(Int),
+    Empty,
+}
+
+public enum Failure {
+    Missing,
+}
+
+public func read(item: Record): Int {
+    return item.value
+}
+
+public func make(): Record {
+    return Record(value: 42, text: "created")
+}
+
+public func shared(): Int {
+    return 40
+}

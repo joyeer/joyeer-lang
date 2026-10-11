@@ -3,7 +3,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/helpers.cmake")
 set(package "${work}/concurrent project")
 jp_copy_project(single "${package}")
 
-set(retained "${package}/target/debug/sample/build-1")
+set(retained "${package}/target/debug/sample.app/build-1")
 file(MAKE_DIRECTORY "${retained}")
 file(WRITE "${retained}/sentinel" "preserved generation")
 
@@ -34,7 +34,7 @@ if(NOT sentinel STREQUAL "preserved generation" OR
         EXISTS "${retained}/sample${EXECUTABLE_SUFFIX}")
     jp_fail("Concurrent builders populated or changed a collided generation")
 endif()
-file(GLOB generations LIST_DIRECTORIES true "${package}/target/debug/sample/build-*")
+file(GLOB generations LIST_DIRECTORIES true "${package}/target/debug/sample.app/build-*")
 list(LENGTH generations count)
 if(NOT count EQUAL 9)
     jp_fail("Concurrent allocation left unexpected or incomplete generations: ${generations}")

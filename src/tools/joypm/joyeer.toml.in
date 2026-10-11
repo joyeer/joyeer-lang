@@ -1,17 +1,10 @@
 schema-version = 1
 
-[package]
-name = 'joypm'
-version = '0.1.0'
-
-[[modules]]
+[module]
 name = 'joypm.app'
+kind = 'bin'
+output = 'joypm'
 sources = [
 @JOYEER_JOYPM_PROJECT_SOURCES@
 ]
 dependencies = []
-
-[[targets]]
-name = 'joypm'
-kind = 'bin'
-module = 'joypm.app'

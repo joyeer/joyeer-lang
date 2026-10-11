@@ -358,6 +358,19 @@ if(JOYEER_CLANG_EXECUTABLE)
         set_tests_properties(NativeExecutableCompilationUnitsO${level} PROPERTIES
                 LABELS "modules;native;llvm-backend"
         )
+        add_test(NAME NativeExecutableUnqualifiedImportsO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DMODULE_NAME=project.app
+                        "-DINPUT_FILES=${JOYEER_TESTS_DIR}/modules/unqualified/main.joyeer"
+                        "-DCOMPILER_ARGS=-O${level};--module-source;project.model=${JOYEER_TESTS_DIR}/modules/unqualified/model.joyeer;--module-source;project.other=${JOYEER_TESTS_DIR}/modules/unqualified/other.joyeer"
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-unqualified-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        -DEXPECTED_OUTPUT=42\n42\n42\n42\nowned\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableUnqualifiedImportsO${level} PROPERTIES
+                LABELS "modules;native;llvm-backend;ownership"
+        )
     endforeach()
 
     if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE)

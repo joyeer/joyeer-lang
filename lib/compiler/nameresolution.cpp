@@ -293,6 +293,11 @@ public:
     }
 
 private:
+    struct NameLookupResult {
+        std::optional<SymbolId> symbol;
+        std::vector<std::string> ambiguousCandidates;
+    };
+
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
     uint32_t activeModule = 0;
@@ -1063,6 +1068,28 @@ private:
         return false;
     }
 
+    void reportLookupFailure(
+            const NameLookupResult& lookup,
+            const std::string& name,
+            SourceSpan use,
+            bool typeOnly) {
+        if (!lookup.ambiguousCandidates.empty()) {
+            std::ostringstream message;
+            message << "ambiguous imported " << (typeOnly ? "type" : "name")
+                    << " '" << name << "'; use a module-qualified name: ";
+            for (size_t index = 0; index < lookup.ambiguousCandidates.size(); ++index) {
+                if (index != 0) message << ", ";
+                message << "'" << lookup.ambiguousCandidates[index] << "'";
+            }
+            report(NameResolutionDiagnosticId::ambiguousImport, use, message.str());
+            return;
+        }
+        report(typeOnly ? NameResolutionDiagnosticId::undefinedType
+                        : NameResolutionDiagnosticId::undefinedName,
+               use, "cannot find " + std::string(typeOnly ? "type " : "") +
+                       "'" + name + "' in scope");
+    }
+
     std::optional<SymbolId> lookupQualified(
             ScopeId currentScope, const std::string& name, bool typeOnly) const {
         const auto separator = name.rfind('.');
@@ -1220,7 +1247,7 @@ private:
 
         auto returnType = resolveType(declaration->returnType, functionScope);
         if (!returnType.has_value()) {
-            returnType = lookupType(model->preludeScope_, "Void");
+            returnType = lookupType(model->preludeScope_, "Void").symbol;
         }
         symbol(*functionSymbol).declaredType = returnType;
     }
@@ -1282,17 +1309,15 @@ private:
                 for (const auto& argument : nominal->arguments) {
                     resolveType(argument, currentScope);
                 }
-                const auto resolved = lookupType(currentScope, tokenText(nominal->name));
-                if (!resolved.has_value()) {
-                    report(
-                            NameResolutionDiagnosticId::undefinedType,
-                            tokenSpan(nominal->name, nominal->span),
-                            "cannot find type '" + tokenText(nominal->name) + "' in scope");
+                const auto lookup = lookupType(currentScope, tokenText(nominal->name));
+                if (!lookup.symbol.has_value()) {
+                    reportLookupFailure(lookup, tokenText(nominal->name),
+                            tokenSpan(nominal->name, nominal->span), true);
                     return std::nullopt;
                 }
-                if (!requireAccessible(*resolved, type->span)) return std::nullopt;
-                model->referenceSymbols_[nodeId(type)] = *resolved;
-                return resolved;
+                if (!requireAccessible(*lookup.symbol, type->span)) return std::nullopt;
+                model->referenceSymbols_[nodeId(type)] = *lookup.symbol;
+                return lookup.symbol;
             }
             case syntax::Kind::arrayType: {
                 const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(type);
@@ -1319,7 +1344,7 @@ private:
             const syntax::TypePtr& node,
             ScopeId currentScope,
             const std::string& name) {
-        const auto resolved = lookupType(currentScope, name);
+        const auto resolved = lookupType(currentScope, name).symbol;
         assert(resolved.has_value());
         model->referenceSymbols_[nodeId(node)] = *resolved;
         return resolved;
@@ -1500,15 +1525,15 @@ private:
 
     void resolveName(const syntax::NameExprSyntax::Ptr& expression, ScopeId currentScope) {
         const auto name = tokenText(expression->name);
-        const auto resolved = lookupValueOrType(currentScope, name);
-        if (!resolved.has_value()) {
-            report(
-                    NameResolutionDiagnosticId::undefinedName,
-                    tokenSpan(expression->name, expression->span),
-                    "cannot find '" + name + "' in scope");
+        const auto lookup = lookupUnqualified(currentScope, name, false);
+        if (!lookup.symbol.has_value()) {
+            reportLookupFailure(lookup, name,
+                    tokenSpan(expression->name, expression->span), false);
             return;
         }
-        model->referenceSymbols_[nodeId(expression)] = *resolved;
+        if (requireAccessible(*lookup.symbol, expression->span)) {
+            model->referenceSymbols_[nodeId(expression)] = *lookup.symbol;
+        }
     }
 
     void resolveMember(const syntax::MemberExprSyntax::Ptr& expression, ScopeId currentScope) {
@@ -1668,12 +1693,11 @@ private:
             ScopeId currentScope) {
         std::optional<SymbolId> caseSymbol;
         if (pattern->qualifier != nullptr) {
-            const auto qualifier = lookupType(currentScope, tokenText(pattern->qualifier));
+            const auto lookup = lookupType(currentScope, tokenText(pattern->qualifier));
+            const auto qualifier = lookup.symbol;
             if (!qualifier.has_value()) {
-                report(
-                        NameResolutionDiagnosticId::undefinedType,
-                        pattern->qualifier->span,
-                        "cannot find type '" + tokenText(pattern->qualifier) + "' in scope");
+                reportLookupFailure(lookup, tokenText(pattern->qualifier),
+                        pattern->qualifier->span, true);
             } else if (requireAccessible(*qualifier, pattern->span)) {
                 model->qualifierSymbols_[nodeId(pattern)] = *qualifier;
                 caseSymbol = lookupMember(*qualifier, tokenText(pattern->name));
@@ -1799,14 +1823,14 @@ private:
                 return symbol(found->second).declaredType;
             }
             case syntax::Kind::unitExpr:
-                return lookupType(model->preludeScope_, "Void");
+                return lookupType(model->preludeScope_, "Void").symbol;
             case syntax::Kind::literalExpr: {
                 const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression);
                 switch (literal->literal->kind) {
-                    case decimalLiteral: return lookupType(model->fileScope_, "Int");
-                    case stringLiteral: return lookupType(model->fileScope_, "String");
-                    case byteLiteral: return lookupType(model->fileScope_, "UInt8");
-                    case booleanLiteral: return lookupType(model->fileScope_, "Bool");
+                    case decimalLiteral: return lookupType(model->fileScope_, "Int").symbol;
+                    case stringLiteral: return lookupType(model->fileScope_, "String").symbol;
+                    case byteLiteral: return lookupType(model->fileScope_, "UInt8").symbol;
+                    case booleanLiteral: return lookupType(model->fileScope_, "Bool").symbol;
                     default: return std::nullopt;
                 }
             }
@@ -1823,14 +1847,14 @@ private:
                 return expressionType(
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression)->value);
             case syntax::Kind::arrayExpr:
-                return lookupType(model->fileScope_, "Array");
+                return lookupType(model->fileScope_, "Array").symbol;
             case syntax::Kind::dictionaryExpr:
-                return lookupType(model->fileScope_, "Dict");
+                return lookupType(model->fileScope_, "Dict").symbol;
             case syntax::Kind::subscriptExpr: {
                 const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(expression);
                 const auto base = expressionType(subscript->base);
                 if (base.has_value() && symbol(*base).name == "String") {
-                    return lookupType(model->fileScope_, "UInt8");
+                    return lookupType(model->fileScope_, "UInt8").symbol;
                 }
                 return std::nullopt;
             }
@@ -1839,35 +1863,61 @@ private:
         }
     }
 
-    std::optional<SymbolId> lookupValueOrType(
-            ScopeId currentScope,
-            const std::string& name) const {
-        auto current = std::optional<ScopeId>(currentScope);
-        while (current.has_value()) {
-            const auto& currentScopeValue = scope(*current);
-            const auto value = currentScopeValue.values.find(name);
-            if (value != currentScopeValue.values.end()) return value->second;
-            const auto type = currentScopeValue.types.find(name);
-            if (type != currentScopeValue.types.end()) return type->second;
-            current = currentScopeValue.parent;
+    std::optional<SymbolId> lookupInScope(
+            const Scope& current,
+            const std::string& name,
+            bool typeOnly) const {
+        if (!typeOnly) {
+            const auto value = current.values.find(name);
+            if (value != current.values.end()) return value->second;
         }
+        const auto type = current.types.find(name);
+        if (type != current.types.end()) return type->second;
         return std::nullopt;
     }
 
-    std::optional<SymbolId> lookupType(
+    NameLookupResult lookupUnqualified(
+            ScopeId currentScope,
+            const std::string& name,
+            bool typeOnly) const {
+        auto current = std::optional<ScopeId>(currentScope);
+        std::optional<ScopeId> fileScope;
+        while (current.has_value()) {
+            const auto& lexicalScope = scope(*current);
+            const auto found = lookupInScope(lexicalScope, name, typeOnly);
+            if (found.has_value()) return {found, {}};
+            if (lexicalScope.kind == ScopeKind::file) fileScope = current;
+            current = lexicalScope.parent;
+        }
+        // Imports are a file-local fallback after existing lexical/prelude lookup.
+        if (!fileScope.has_value()) return {};
+        const auto imports = fileImports.find(*fileScope);
+        if (imports == fileImports.end()) return {};
+        std::optional<SymbolId> candidate;
+        std::vector<std::string> names;
+        for (const auto& [moduleName, moduleScope] : imports->second) {
+            const auto found = lookupInScope(scope(moduleScope), name, typeOnly);
+            if (!found.has_value() ||
+                symbol(*found).visibility != syntax::Visibility::public_) {
+                continue;
+            }
+            candidate = found;
+            names.push_back(moduleName + "." + name);
+        }
+        if (names.size() > 1) {
+            std::sort(names.begin(), names.end());
+            return {std::nullopt, std::move(names)};
+        }
+        return {candidate, {}};
+    }
+
+    NameLookupResult lookupType(
             ScopeId currentScope,
             const std::string& name) const {
         if (name.find('.') != std::string::npos) {
-            return lookupQualified(currentScope, name, true);
+            return {lookupQualified(currentScope, name, true), {}};
         }
-        auto current = std::optional<ScopeId>(currentScope);
-        while (current.has_value()) {
-            const auto& currentScopeValue = scope(*current);
-            const auto type = currentScopeValue.types.find(name);
-            if (type != currentScopeValue.types.end()) return type->second;
-            current = currentScopeValue.parent;
-        }
-        return std::nullopt;
+        return lookupUnqualified(currentScope, name, true);
     }
 
     std::optional<SymbolId> lookupMember(
@@ -1945,6 +1995,8 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.import-collision";
         case NameResolutionDiagnosticId::unknownImport:
             return "name-resolution.unknown-import";
+        case NameResolutionDiagnosticId::ambiguousImport:
+            return "name-resolution.ambiguous-import";
     }
     return "name-resolution.unknown";
 }
