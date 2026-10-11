@@ -12,6 +12,38 @@
 
 static int diagnosticSeen = 0;
 
+static void collectIRDiagnostic(
+    void* context, const JoyeerNativeBackendIRDiagnostic* diagnostic) {
+    (void)context;
+    if (diagnostic != NULL && diagnostic->message != NULL && diagnostic->messageSize != 0) {
+    diagnosticSeen = 1;
+    }
+}
+
+static int checkModuleInputs(void) {
+    JoyeerNativeBackendModule* module = NULL;
+    diagnosticSeen = 0;
+    if (joyeer_native_backend_build_module(NULL, &module, collectIRDiagnostic, NULL) !=
+        JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || module != NULL || !diagnosticSeen) return 10;
+    static const char truncated[] = {0, 0, 0, 0, 0, 0, 0, 0};
+    JoyeerNativeBackendModuleOptions options = {
+    JOYEER_NATIVE_BACKEND_ABI_VERSION, sizeof(JoyeerNativeBackendModuleOptions),
+    1, truncated, sizeof(truncated), JOYEER_NATIVE_BACKEND_O0, 0, 0, 0,
+    };
+    diagnosticSeen = 0;
+    if (joyeer_native_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=
+        JOYEER_NATIVE_BACKEND_INVALID_IR || module != NULL || !diagnosticSeen) return 11;
+    options.irVersion = 0;
+    diagnosticSeen = 0;
+    if (joyeer_native_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=
+        JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || module != NULL || !diagnosticSeen) return 12;
+    if (joyeer_native_backend_module_has_entry(NULL) != 0 ||
+        joyeer_native_backend_print_module(NULL, NULL, NULL) !=
+        JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT) return 13;
+    joyeer_native_backend_destroy_module(NULL);
+    return 0;
+}
+
 static void collectDiagnostic(
         void* context,
         JoyeerNativeBackendStatus status,
@@ -203,6 +235,8 @@ int main(void) {
     if (linkStatus != JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
         return 5;
     }
+    const int moduleStatus = checkModuleInputs();
+    if (moduleStatus != 0) return moduleStatus;
 #if defined(_WIN32)
     return checkUnicodePaths();
 #else

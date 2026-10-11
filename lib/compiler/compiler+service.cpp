@@ -440,9 +440,11 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
                 options.debugInfo.format,
                 options.optimizationLevel,
                 options.debugInfo.emitVariables,
+                options.outputMode != joyeer::OutputMode::executable,
             });
     sourcefile->llvmIR = llvm.text;
     sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
+    sourcefile->llvmModule = llvm.module;
     for (const auto& diagnostic : llvm.diagnostics) {
         reportSpannedDiagnostic(
                 diagnostics,

@@ -5,8 +5,11 @@
 #include "joyeer/ir/ir.h"
 
 #include <optional>
+#include <memory>
 #include <string>
 #include <vector>
+
+struct JoyeerNativeBackendModule;
 
 namespace joyeer::llvmbackend {
 
@@ -17,6 +20,8 @@ struct EmitOptions {
     DebugInfoFormat debugInfoFormat = DebugInfoFormat::dwarf;
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;
     bool emitVariables = false;
+    // Inspection callers keep text by default; native builds need only a handle.
+    bool emitText = true;
 };
 
 enum class DiagnosticId {
@@ -39,14 +44,17 @@ struct Result {
     std::string text;
     std::vector<Diagnostic> diagnostics;
     bool hasEntryPoint = false;
+    // Shared compiler-side ownership invokes the backend's C destructor.
+    // The handle exposes no LLVM objects or cross-library C++ allocation.
+    std::shared_ptr<JoyeerNativeBackendModule> module;
 
     [[nodiscard]] bool succeeded() const {
         return diagnostics.empty();
     }
 };
 
-// Emits portable textual LLVM IR. The platform backend parses, verifies,
-// optimizes, and compiles this text behind the versioned Joyeer C ABI.
+// Builds verified LLVM objects behind the versioned Joyeer C ABI. Result::text
+// is LLVM's portable serialization; native code generation uses Result::module.
 class Emitter {
 public:
     [[nodiscard]] Result emit(

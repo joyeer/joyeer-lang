@@ -7,6 +7,16 @@ target_link_libraries(JoyeerLLVMBackend PUBLIC JoyeerIR)
 
 add_joyeer_library(JoyeerNativeBackend SHARED
         native_backend.cpp
+        native_module.cpp
+        native_types.cpp
+        native_ownership.cpp
+        native_functions.cpp
+        native_collections.cpp
+        native_host.cpp
+        native_debug.cpp
+        # Compile the shared IR verifier privately with the backend's CRT and
+        # visibility; linking the frontend archive would mix /MD with /MT.
+        ../ir/ir.cpp
 )
 
 separate_arguments(JOYEER_LLVM_DEFINITIONS NATIVE_COMMAND
@@ -53,6 +63,8 @@ target_link_libraries(JoyeerNativeBackend PRIVATE
 )
 set_target_properties(JoyeerNativeBackend PROPERTIES
         OUTPUT_NAME joyeer-backend
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN YES
 )
 if(WIN32)
         set_target_properties(JoyeerNativeBackend PROPERTIES

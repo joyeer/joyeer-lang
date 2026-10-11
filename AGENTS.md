@@ -21,7 +21,7 @@ CMake + Ninja. The supported pipeline is:
 
 ```text
 source -> lexer -> parser -> name resolution -> type checking
-       -> semantic analysis -> verified Joyeer IR -> textual LLVM IR
+      -> semantic analysis -> verified Joyeer IR -> LLVM IR objects
   -> LLVM code generation + LLD + JoyeerNativeRuntime -> native executable
 ```
 

@@ -132,6 +132,7 @@ int Driver::run() {
                         arguments->optimizationLevel,
                         arguments->debugInfo,
                         source->getAbstractPath(),
+                        source->llvmModule,
                     });
             for (const auto& diagnostic : linking.diagnostics) {
                         diagnostics->reportDiagnostic(

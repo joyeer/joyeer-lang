@@ -21,6 +21,8 @@ namespace joyeer::ir {
 struct Module;
 }
 
+struct JoyeerNativeBackendModule;
+
 // SourceFile contains all information of source file in disk
 class SourceFile {
 public:
@@ -87,10 +89,12 @@ public:
     // checking and structural verification.
     std::shared_ptr<joyeer::ir::Module> joyeerIR;
 
-    // Textual LLVM IR emitted from verified Joyeer IR. Empty when LLVM
+    // Textual LLVM IR printed from verified LLVM objects. Empty when LLVM
     // lowering did not run or failed.
     std::string llvmIR;
     bool llvmHasEntryPoint = false;
+    // Backend-owned LLVM module, retained until native generation completes.
+    std::shared_ptr<JoyeerNativeBackendModule> llvmModule;
     
 protected:
     // the path relative to the working directory

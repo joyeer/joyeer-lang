@@ -1,4 +1,5 @@
 #include "joyeer/backend/native_backend.h"
+#include "native_module.h"
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 #include "clang/Basic/Diagnostic.h"
@@ -28,6 +29,7 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #if defined(_WIN32)
 #include "llvm/WindowsDriver/MSVCPaths.h"
 #endif
@@ -130,10 +132,13 @@ JoyeerNativeBackendStatus emitObject(
 
     llvm::LLVMContext context;
     llvm::SMDiagnostic parseDiagnostic;
-    auto module = llvm::parseAssemblyString(
-            llvm::StringRef(options.llvmIR, options.llvmIRSize),
-            parseDiagnostic,
-            context);
+        // Preserve the portable module for inspection or repeated code generation.
+        // Target-specific layout and optimization mutate only this backend clone.
+        auto module = options.module != nullptr
+            ? llvm::CloneModule(*options.module->storage.module)
+            : llvm::parseAssemblyString(
+                llvm::StringRef(options.llvmIR, options.llvmIRSize),
+                parseDiagnostic, context);
     if (module == nullptr) {
         const auto message = sourceDiagnostic(parseDiagnostic);
         report(
@@ -521,8 +526,8 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_emit_object(
         void* diagnosticContext) {
     if (options == nullptr ||
         !validHeader(options->abiVersion, options->structSize, sizeof(*options)) ||
-        options->llvmIR == nullptr || options->outputPath == nullptr ||
-        options->llvmIRSize == 0 || options->outputPath[0] == '\0') {
+        (options->module == nullptr && (options->llvmIR == nullptr || options->llvmIRSize == 0)) ||
+        options->outputPath == nullptr || options->outputPath[0] == '\0') {
         report(
                 diagnosticCallback,
                 diagnosticContext,

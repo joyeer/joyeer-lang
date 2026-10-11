@@ -471,6 +471,7 @@ LinkResult Linker::link(
         llvmIR.size(),
         objectPath.c_str(),
         backendOptimizationLevel(options.optimizationLevel),
+        options.module.get(),
     };
     BackendDiagnostic backendDiagnostic;
     const auto objectStatus = joyeer_native_backend_emit_object(

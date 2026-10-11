@@ -4,9 +4,12 @@
 #include "joyeer/compiler/options.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+struct JoyeerNativeBackendModule;
 
 namespace joyeer::native {
 
@@ -32,6 +35,9 @@ struct LinkOptions {
     OptimizationLevel optimizationLevel = OptimizationLevel::O2;
     DebugInfoOptions debugInfo;
     std::filesystem::path sourceFile;
+    // Native compilation consumes objects directly; text remains a fallback
+    // for standalone linker tests and explicit LLVM inspection workflows.
+    std::shared_ptr<JoyeerNativeBackendModule> module;
 };
 
 struct LinkResult {
