@@ -2,7 +2,7 @@
 
 > **Status:** `joypm 0.1.0` implements one source module per `joyeer.toml` and
 > explicit multi-module `workspace.toml` files. Native Windows ARM64 Debug
-> default build and unfiltered CTest pass 790/790, including all 15 joypm
+> default build and unfiltered CTest pass 809/809, including all 15 joypm
 > gates. Debug/optimized self-builds, workspace workflows, concurrent
 > generations, failures, and relocated installs are verified. Other native
 > platforms, a new full Release build, and publication remain open.
@@ -250,6 +250,12 @@ Debug PDB/dSYM byproducts, platform fallback, and install components are
 unchanged; see [building](../building.md#joypm-bootstrap-and-acceptance).
 
 ## 5. Validation evidence
+
+A follow-up native Windows ARM64 Debug default build and unfiltered CTest on
+2026-10-11 passed **809/809**, including all 15 joypm gates, after adding
+public short-name imports to the compiler. All nine unchanged Moss modules
+passed workspace checks with that compiler. The original module/workspace
+acceptance evidence below remains dated to its own run.
 
 On native Windows ARM64 on 2026-10-10:
 

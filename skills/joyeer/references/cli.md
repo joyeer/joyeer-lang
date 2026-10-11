@@ -92,8 +92,13 @@ dependency value, for example
 pass each path or `name=file` value as one argument without shell quotes.
 
 Source files can write `import acme.config` before declarations and call public
-names through `acme.config.name(...)`. Imports are file-local and do not make
-names available unqualified or import modules sharing a name prefix.
+names using either `name(...)` or `acme.config.name(...)`. Public imported
+types and constructors likewise support `Record` and `Record(...)`, and enum
+cases/patterns support `Choice.First`. Existing lexical, module, and prelude
+names take precedence. If multiple imports provide the same short name, its
+use is an ambiguity error; qualify it with the module name. Imports are
+file-local, do not re-export dependency names, and do not import modules
+sharing a name prefix.
 Default `internal` declarations are visible throughout their module;
 `private` declarations are file-local, and `public` declarations can cross
 imports. Only the root module supplies the executable entry. Dependency

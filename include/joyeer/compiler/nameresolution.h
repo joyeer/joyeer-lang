@@ -24,6 +24,7 @@ enum class NameResolutionDiagnosticId {
     inaccessibleExposedType,
     importCollision,
     unknownImport,
+    ambiguousImport,
 };
 
 struct ModuleInput {

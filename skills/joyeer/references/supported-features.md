@@ -33,7 +33,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Area | Current surface |
 |---|---|
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` |
-| Modules | Named source-file sets; file-local qualified imports; `private` / `internal` / `public`; dependency-cycle and exposed-type checking; per-file source/debug locations |
+| Modules | Named source-file sets; file-local public short names and qualified imports; use-site ambiguity checks; `private` / `internal` / `public`; dependency-cycle and exposed-type checking; per-file source/debug locations |
 | Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, Boolean `!`, short-circuit `&&` / `||`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
@@ -58,6 +58,11 @@ files. The compiler never discovers files, adds siblings, reads manifests, or
 fetches packages; build tools select files. All supplied sets are validated
 before compiling reachable dependencies, with deterministic canonical path
 ordering and physical-file duplicate rejection.
+
+Public imported types, constructors, and functions support short names after
+ordinary `import`. Existing lexical/module/prelude names take precedence;
+ambiguous imported short-name uses reject and require module qualification.
+Imports remain file-local and do not re-export their dependencies.
 
 Legacy one-file compilation remains supported. Multiple root files or
 dependencies require a valid nonempty root name; dependency names cannot equal

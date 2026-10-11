@@ -43,13 +43,18 @@ Imports precede declarations and apply only to their own file:
 import acme.config
 
 func main() {
-    acme.config.describe()
+    describe()
 }
 ```
 
 This requires an explicitly supplied module named exactly `acme.config` with a
-`public func describe()`. It does not import `acme` or inject `describe` as an
-unqualified name. `internal` is the default and is visible across the module's
+`public func describe()`. Public imported declarations support short names:
+`Record`, `Record(...)`, `describe()`, and enum cases/patterns such as
+`Choice.First`. Fully qualified forms remain valid. Existing lexical, module,
+and prelude names win over imported names; multiple public import candidates
+make a short-name use ambiguous, so use the full module name to distinguish
+them. Imports do not re-export dependency names or import `acme` implicitly.
+`internal` is the default and is visible across the module's
 files; `private` is file-local; only `public` declarations cross imports.
 Declarations are collected before bodies, so source-file order does not
 control visibility. Dependency cycles, unresolved imports, and inaccessible

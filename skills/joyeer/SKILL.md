@@ -39,7 +39,8 @@ current native implementation, not every feature in the draft specification.
 - Use legacy single-file compilation or named explicit source-file sets as
   described in the CLI reference. List every root and dependency file; folders
   do not define modules, and the compiler does not discover files or add
-  siblings. Imports are file-local and qualified; do not invent package
+  siblings. Imports are file-local; public short names work when unambiguous,
+  and full module qualification disambiguates collisions. Do not invent package
   fetching, aliases, standard-library methods, or project-manager commands.
 - Consult the [tested examples](examples/README.md) for concrete spellings.
   Adapt them to the task; do not treat them as a complete standard library.

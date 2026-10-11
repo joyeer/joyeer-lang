@@ -49,7 +49,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Area | Current surface |
 |---|---|
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
-| Modules | Named source-file sets, file-local qualified imports, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
+| Modules | Named source-file sets, file-local public short names and qualified imports, use-site ambiguity checks, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
 | Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
 | Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer `+`, `-`, `*`, `/`, `%`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
@@ -80,7 +80,7 @@ are unchanged; no library ABI is implied.
 
 CMake bootstraps the default `ALL` tool and registers 14 portable gates plus
 Windows bootstrap acceptance, independently of `JOYEER_BUILD_UNITTESTS`.
-Native ARM64 Debug default build and unfiltered CTest pass 790/790, including
+Native ARM64 Debug default build and unfiltered CTest pass 809/809, including
 all 15 joypm gates; Debug/optimized self-build and migrated Moss workflows
 pass. The prior-layout full Release 789/789 is historical, not fresh acceptance
 of the new layout despite the unchanged 0.1.0 version. Every document is

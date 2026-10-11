@@ -54,7 +54,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [string.md](impl/string.md) | String representation and operations |
 
 The joypm 0.1.0 module/workspace workflow passes native Windows ARM64 Debug
-default build and unfiltered CTest (790/790, including all 15 tool gates).
+default build and unfiltered CTest (809/809, including all 15 tool gates).
 Exact limits, failures, concurrent generations, Debug/optimized self-build, and
 relocated product/Debug installation are verified. The implementation
 reference owns the evidence; the plan tracks other native platforms and

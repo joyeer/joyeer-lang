@@ -118,6 +118,39 @@ TEST_F(ModuleServiceTest, ModuleNamesDoNotImplyParentModulesOrDirectories) {
     EXPECT_EQ(compiler.getLastCompiledSourceFile()->joyeerIR->sourceFiles.size(), 2u);
 }
 
+TEST_F(ModuleServiceTest, CompilesPublicShortNamesWithoutMergingModuleIdentities) {
+    root("main.joyeer",
+         "import project.model\nfunc main() {\n"
+         "let item: Record = Record(value: answer())\nprint(value: item.value)\n}\n");
+    dependency("project.model", "model.joyeer",
+               "public struct Record {\npublic let value: Int\n}\n"
+               "public func answer(): Int { return 42 }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+    const auto& compiled = compiler.getLastCompiledSourceFile();
+    ASSERT_NE(compiled->joyeerIR, nullptr);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*compiled->joyeerIR).succeeded());
+    EXPECT_EQ(compiled->joyeerIR->sourceFiles.size(), 2u);
+    EXPECT_TRUE(compiled->llvmHasEntryPoint);
+}
+
+TEST_F(ModuleServiceTest, ReportsShortNameAmbiguityAtTheImportingUse) {
+    root("root/main.joyeer",
+         "import alpha\nimport beta\nfunc main() { answer() }\n");
+    dependency("alpha", "alpha.joyeer", "public func answer(): Int { return 1 }\n");
+    dependency("beta", "beta.joyeer", "public func answer(): Int { return 2 }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    ASSERT_TRUE(hasCode("name-resolution.ambiguous-import")) << errors();
+    ASSERT_EQ(diagnostics.errors.size(), 1u) << errors();
+    const auto& error = diagnostics.errors.front();
+    EXPECT_EQ(std::filesystem::path(error.path), std::filesystem::path("root/main.joyeer"));
+    EXPECT_EQ(error.lineAt, 2);
+    EXPECT_EQ(error.sourceLine, "func main() { answer() }");
+    EXPECT_NE(error.message.find("'alpha.answer', 'beta.answer'"), std::string::npos);
+}
+
 TEST_F(ModuleServiceTest, CompilesReachableGraphWithoutParsingUnusedSources) {
     root("root/main.joyeer", "import project.config\nfunc main() { print(value: project.config.answer()) }\n");
     dependency("project.config", "config/config.joyeer",
