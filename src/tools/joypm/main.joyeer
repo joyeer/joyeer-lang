@@ -1,49 +1,20 @@
 private func projectCommand(options: borrowing CliOptions): Int {
-    let regular = match fileKind(path: options.manifestPath) {
-        .Ok(kind) => match kind {
-            .File => true,
-            .Directory => false,
-            .Symlink => false,
-            .Other => false,
-        },
+    let project = match loadProject(options: options) {
+        .Ok(loaded) => loaded,
         .Err(error) => {
-            return failureStatus(error: ToolError(message: "cannot inspect manifest '" + options.manifestPath +
-                "': " + fileSystemMessage(error: error), pos: -1),
-                manifestPath: "", contents: "", status: 1)
+            return failureStatus(error: error.error, manifestPath: error.path,
+                contents: error.contents, status: 1)
         },
     }
-    if !regular {
-        return failureStatus(error: ToolError(message: "manifest must be an ordinary regular file: " +
-            options.manifestPath, pos: -1), manifestPath: "", contents: "", status: 1)
-    }
-    // Classification is not a race-free confinement guarantee. The bounded
-    // read caps acquisition even if another ordinary file replaces this one.
-    let contents = match readFilePrefix(path: options.manifestPath, maximumBytes: 65537) {
-        .Ok(text) => text,
+    let selected = match selectModules(project: project, options: options) {
+        .Ok(modules) => modules,
         .Err(error) => {
-            return failureStatus(error: ToolError(message: "cannot read manifest '" + options.manifestPath +
-                "': " + fileSystemMessage(error: error), pos: -1),
-                manifestPath: "", contents: "", status: 1)
+            return failureStatus(error: error, manifestPath: "", contents: "", status: 2)
         },
     }
-    // The extra sentinel byte lets the parser reject oversized inputs without
-    // allocating or reading the rest. UTF-8 validation occurs in the parser.
-    let manifest = match parseManifest(contents: contents) {
-        .Ok(parsedManifest) => parsedManifest,
-        .Err(error) => {
-            return failureStatus(error: error, manifestPath: options.manifestPath, contents: contents, status: 1)
-        },
-    }
-    let selected = match selectTargets(manifest: manifest, options: options) {
-        .Ok(targets) => targets,
-        .Err(error) => {
-            return failureStatus(error: error, manifestPath: options.manifestPath, contents: contents, status: 2)
-        },
-    }
-    let base = pathDirectory(path: options.manifestPath)
-    return match executeProject(manifest: manifest, options: options, selected: selected, base: base) {
+    return match executeProject(project: project, options: options, selected: selected) {
         .Ok(status) => status,
-        .Err(error) => failureStatus(error: error, manifestPath: options.manifestPath, contents: contents, status: 1),
+        .Err(error) => failureStatus(error: error, manifestPath: "", contents: "", status: 1),
     }
 }
 

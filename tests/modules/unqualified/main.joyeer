@@ -1,0 +1,31 @@
+import project.model
+import project.other
+
+func optionalValue(item: Record?): Int {
+    return match item {
+        .Some(value) => read(item: value),
+        .None => 0,
+    }
+}
+
+func requiredValue(outcome: Result<Record, Failure>): Int {
+    return match outcome {
+        .Ok(value) => read(item: value),
+        .Err(error) => 0,
+    }
+}
+
+func main() {
+    let item: Record = Record(value: 40, text: "owned")
+    let records: [Record] = [item]
+    let indexed: [String: Record] = ["item": item]
+    let choice: Choice = Choice.Value(2)
+    match choice {
+        Choice.Value(amount) => print(value: read(item: records[0]) + amount),
+        Choice.Empty => print(value: 0),
+    }
+    print(value: optionalValue(item: .Some(make())))
+    print(value: requiredValue(outcome: .Ok(indexed["item"])) + extra())
+    print(value: project.model.shared() + project.other.shared())
+    print(value: item.text)
+}

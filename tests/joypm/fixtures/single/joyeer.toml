@@ -1,15 +1,8 @@
 schema-version = 1
 
-[package]
-name = "sample"
-version = "0.1.0"
-
-[[modules]]
+[module]
 name = "sample.app"
+kind = "bin"
+output = "sample"
 sources = ["main.joyeer"]
 dependencies = []
-
-[[targets]]
-name = "sample"
-kind = "bin"
-module = "sample.app"

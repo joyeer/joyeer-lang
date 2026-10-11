@@ -1,7 +1,7 @@
 ## §12 Modules & Imports
 
 **Implementation status:** named explicit compilation units, dependency source sets,
-qualified file-local imports, and visibility are implemented. Import aliases,
+file-local imports with public short names and qualified lookup, and visibility are implemented. Import aliases,
 wildcards, re-exports, package fetching, and separate binary modules are not.
 
 ### 12.1 Module unit
@@ -82,18 +82,40 @@ are not a way to declare multiple entries.
 import project.config
 
 func main() {
-    project.config.describe()
+    describe()
 }
 ```
 
 Imports appear before all declarations and apply only to the importing file.
-An import makes a module's public names available through its complete logical
-name, not as unqualified names. The example requires an explicit source set for
-`project.config` and a public function `describe` in that module. Qualified
-types and enum cases use the same prefix, for example
-`project.config.Record` and `project.config.Mode.Release`.
+An import makes that module's public declarations available by short name
+and through its complete logical name. The example requires an explicit source
+set for `project.config` and a public function `describe` in that module.
+Imported public types, structure constructors, and functions can be written
+as `Record`, `Record(...)`, and `describe()`. Enum cases and patterns can use
+`Mode.Release`; cases themselves are not imported as bare `Release` names.
+Fully qualified forms such as `project.config.Record`,
+`project.config.describe()`, and `project.config.Mode.Release` remain valid.
 Importing `project.config` does not import `project` or any other name sharing
 its prefix; each dependency is identified by its exact complete name.
+
+Short-name lookup first searches existing lexical scopes, the current module,
+and the compiler prelude. An existing declaration in the relevant namespace
+therefore shadows imported declarations. Only when that search has no match
+does lookup consider public declarations from the current file's imports.
+Type syntax considers only types; expression lookup considers both values
+and types, including constructors.
+
+If multiple imported modules provide a matching public declaration, using its
+short name is an ambiguity error. There is no first-import-wins rule or
+argument-based overload selection between modules. Use the full module name
+to disambiguate. An unused collision is not an error; importing the same
+module again does not add another candidate. Internal and private declarations
+do not participate in imported short-name lookup.
+
+Imports do not re-export their dependency's declarations or make short names
+visible in another file of the same module. Each importing file declares its
+own imports. Symbol identity, visibility, and source locations are unchanged
+by using a short name.
 
 An import's first name component must not collide with a top-level declaration
 in its importing file. A declaration in another file does not create that

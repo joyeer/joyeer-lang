@@ -8,9 +8,8 @@
 
 | Phase | Current status / prerequisites | Remaining deliverables and exit criteria |
 |---|---|---|
-| P4: Local path packages | Deferred; local workflow plus physical package-identity contract | Recursive loading/source exports/package DAG; deduplicate diamonds and reject cycles/conflicting logical identities without remote access |
-| P5: Workspaces | Deferred; P4 | Root/member schema, explicit selection/`--workspace`, shared plans and member-qualified outputs without target collisions |
-| P6: Rebuild avoidance and artifact lifecycle | Deferred; P5 plus hashing/identity/publication/cleanup contracts | Whole-target fingerprints, concurrent publication/cache checks and anchored `clean`; changed inputs invalidate, corrupt entries miss, deletion cannot follow links outside owned outputs |
+| P4: External local modules | Deferred; current explicit workspaces plus physical filesystem identity | Path dependencies outside workspace members, bounded recursive loading and deduplication; reject cycles/conflicting logical identities without remote access |
+| P6: Rebuild avoidance and artifact lifecycle | Deferred; current module/workspace workflow plus hashing/identity/publication/cleanup contracts | Whole-module fingerprints, concurrent publication/cache checks and anchored `clean`; changed inputs invalidate, corrupt entries miss, deletion cannot follow links outside owned outputs |
 | P7: Remote package ecosystem | Deferred; P4 plus verified acquisition/publication contracts | Git/registry resolution, lockfiles/offline/frozen modes, integrity/publishing policy; pin/verify inputs and diagnose interrupted fetches/conflicts |
 
 P6 and P7 are separate later workstreams; a registry need not wait for compiler
@@ -18,14 +17,12 @@ incrementality, and workspace support need not fetch remote packages.
 
 ## 2. Design and Host/API Gates
 
-- **P4:** define package identity from canonical filesystem identity, not a
+- **P4:** define external module identity from canonical filesystem identity, not a
   display name or lexical path. Require a globally unambiguous logical module
   name across the compilation closure; no implicit module renaming or
   side-by-side versions of the same module in the initial implementation.
-  Define exported source modules and resolve each source relative to its owning
-  manifest. Local paths are mutable inputs, not reproducibly locked content.
-- **P5:** define ownership of member manifests, workspace selection defaults,
-  and output namespace before adding shared configuration inheritance.
+  Source paths remain relative to each owning single-module manifest.
+  Local paths are mutable inputs, not reproducibly locked content.
 - **P6:** distinguish a whole-target cache from compiler incremental
   compilation. Fingerprints need source bytes, manifests/resolution graph,
   compiler/backend/runtime and host SDK identity, profile/options, and target

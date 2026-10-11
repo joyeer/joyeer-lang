@@ -1,0 +1,7 @@
+public func extra(): Int {
+    return 2
+}
+
+public func shared(): Int {
+    return 2
+}

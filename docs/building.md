@@ -191,7 +191,7 @@ focused iteration.
 ## joypm bootstrap and acceptance
 
 `JOYEER_BUILD_JOYPM=ON` is the default. The `joypm` `ALL` target invokes the
-newly built compiler with an explicit list of six sources from
+newly built compiler with an explicit list of seven sources from
 [src/tools/joypm/](../src/tools/joypm/) and a generated platform source. It
 depends on the compiler, backend, and native runtime and produces `joypm` next
 to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
@@ -215,18 +215,19 @@ The same option works with the other native presets. Cross-compiling
 configurations must disable joypm because the bootstrap runs the new compiler.
 `JOYEER_BUILD_UNITTESTS` independently controls the C++/GoogleTest suite.
 The gates in [tests/joypm/CMakeLists.txt](../tests/joypm/CMakeLists.txt),
-including limits, concurrency, host failures, self-build, and product installation,
+including module/workspace rules, limits, concurrency, host failures, self-build, and product installation,
 require `BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, not `JOYEER_BUILD_UNITTESTS`.
 When enabled, `JoypmAcceptanceTools` also builds native fixtures as an `ALL`
 target. The full acceptance configuration enables all three options and runs
 unfiltered CTest; turning off C++ tests does not remove joypm gates.
 
-**Validation status:** native Windows ARM64 Debug and Release default `ALL`
-builds and unfiltered CTest pass 789/789 each, including all 14 Windows joypm
-gates. Isolated product relocation, compiler-only builds, and the Debug
-installer regressions also pass. Hardware, process, MSVC/LLVM architecture,
-and PE headers were independently recorded; the earlier x64 smoke result is
-not used as native ARM64 evidence. See the
+**Validation status:** native Windows ARM64 Debug default `ALL` and unfiltered
+CTest pass 790/790, including all 15 joypm gates for the module/workspace
+organization. Debug/optimized self-build and relocated product workflows
+pass. The previous 0.1.0 full Release 789/789 is historical; a fresh full
+Release gate for the new layout is open despite the retained 0.1.0 version.
+Hardware, process, MSVC/LLVM architecture,
+and PE headers were independently recorded. See the
 [implementation evidence](impl/joypm.md#5-validation-evidence) and
 [remaining platform gates](plan/package-manager.md#3-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh

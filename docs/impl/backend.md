@@ -193,6 +193,10 @@ policy and supplies the selected file paths.
 Files retain separate syntax trees, spans, and debug identities. The compiler
 resolves file-local imports through the exact supplied names and compiles only
 the reachable graph, rejecting unknown imports and cycles with diagnostics.
+Public imported declarations support short names as well as full module
+qualification. Short-name lookup retains lexical/prelude precedence and
+diagnoses ambiguous imported names at the use; it does not merge modules or
+re-export imports. See [module rules](../spec/12-modules.md#123-imports).
 Unused dependency sets are validated but not parsed. Output must not alias any
 supplied source, including unused dependency inputs; on Windows this also
 applies to the native output's sibling PDB cleanup path. Use `--emit-llvm`

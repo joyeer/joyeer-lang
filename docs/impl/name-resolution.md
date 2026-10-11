@@ -125,6 +125,17 @@ directory layout nor an implicit `project` module participates in lookup.
 `SemanticModel::isModuleQualified` distinguishes these paths from runtime
 field access; namespace prefixes are never evaluated as values.
 
+Short-name lookup reuses the existing lexical search, including the module
+and prelude, then falls back to the importing file's public declarations.
+It does not insert imported symbols into lexical or module scopes.
+Types, constructors, functions, and type-qualified enum cases/patterns bind
+to the same symbols as their fully qualified forms. Type lookup filters out
+values; expression lookup includes both namespaces. Non-public declarations
+and transitive imports are excluded. Multiple matching imported declarations
+produce a use-site ambiguity diagnostic with sorted module-qualified
+candidates; import order does not choose a winner. Unused collisions are
+allowed, and repeated imports of one module are one lookup candidate.
+
 Symbols retain module identity, root-module membership, and visibility.
 `SemanticModel::isAccessible` is shared by resolution and deferred type-directed
 member/case/call resolution. Exported signatures and container element types
@@ -175,10 +186,13 @@ mutability, exhaustiveness, layout, and lowering remain outside this pass.
 
 ## 6. Diagnostics and validation
 
-Stable diagnostics cover import collisions, inaccessible names/exposed types,
+Stable diagnostics cover import collisions, ambiguous imported names/types,
+inaccessible names/exposed types,
 duplicate declarations, undefined values/types,
 unknown members/cases, non-callable targets, payload-clause misuse, argument
 count, labels, and order. CLI rendering preserves the syntax-node source span.
+`name-resolution.ambiguous-import` points to the short-name use and lists the
+qualified alternatives, including for type annotations and enum patterns.
 
 Direct validation:
 
@@ -190,6 +204,18 @@ The test target covers forward references, nested shadowing, type/member
 resolution, synthesized initializers, enum cases, labels, match-arm bindings,
 deferred contextual cases, diagnostics, and parser/native fixtures. A CLI
 negative test verifies that the default compiler reports resolver failures.
+Module tests cover file-local public short names, shadowing, deterministic
+ambiguity, namespaces, non-re-exports, and constructor/member visibility.
+The durable [short-import fixtures](../../tests/modules/unqualified/) also
+compile and run through native lowering at `-O0` through `-O3`, preserving
+owned values and qualified disambiguation.
+
+On native Windows ARM64 Debug on 2026-10-11, the default build and unfiltered
+CTest passed **809/809**, including the new short-name module/native tests,
+the existing qualified-import regressions, and all 15 joypm gates. All nine
+unchanged Moss workspace modules also passed frontend checks with this
+compiler. Full Release and other native-platform acceptance were not rerun
+for this change.
 
 ## 7. Known resolution gaps
 
