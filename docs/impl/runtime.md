@@ -1,9 +1,9 @@
 # Runtime Implementation
 
-The C11 runtime is declared in `include/joyeer/native/runtime.h`, with portable
-host ABIs in `include/joyeer/native/filesystem.h` and
-`include/joyeer/native/process.h`. Its implementation lives under
-`lib/native/`, including shared strict UTF-8 host conversion. The
+The C11 runtime is declared in `src/runtime/runtime.h`, with portable
+host ABIs in `src/runtime/filesystem.h` and
+`src/runtime/process.h`. Its implementation lives under
+`src/runtime/`, including shared strict UTF-8 host conversion. The
 `JoyeerNativeRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.

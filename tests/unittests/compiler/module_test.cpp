@@ -1,9 +1,9 @@
-#include "joyeer/compiler/lexparser.h"
-#include "joyeer/compiler/nameresolution.h"
-#include "joyeer/compiler/parser.h"
-#include "joyeer/compiler/semanticanalysis.h"
-#include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/typechecking.h"
+#include "compiler/frontend/lexparser.h"
+#include "compiler/frontend/nameresolution.h"
+#include "compiler/frontend/parser.h"
+#include "compiler/frontend/semanticanalysis.h"
+#include "compiler/frontend/sourcefile.h"
+#include "compiler/frontend/typechecking.h"
 
 #include <gtest/gtest.h>
 

@@ -9,7 +9,7 @@
 ## 1. Model
 
 `Diagnostics` remains the shared carrier in
-`include/joyeer/diagnostic/diagnostic.h`. An `ErrorMessage` may now contain:
+`src/compiler/diagnostics/diagnostic.h`. An `ErrorMessage` may now contain:
 
 - `ErrorLevel` (`failure` or nonfatal `report`);
 - a stable stage-qualified code;

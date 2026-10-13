@@ -8,7 +8,7 @@ add_executable(CompilerDiagnosticTests
 
 target_link_libraries(CompilerDiagnosticTests
         GTest::gtest_main
-        JoyeerDiagnostic
+        JoyeerCompilerCore
 )
 
 joyeer_discover_tests(CompilerDiagnosticTests
@@ -17,8 +17,7 @@ joyeer_discover_tests(CompilerDiagnosticTests
 
 target_link_libraries(CompilerLexerTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
+        JoyeerCompilerCore
 )
 
 joyeer_discover_tests(CompilerLexerTests
@@ -31,8 +30,7 @@ add_executable(CompilerParserTests
 
 target_link_libraries(CompilerParserTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
+        JoyeerCompilerCore
 )
 
 target_compile_definitions(CompilerParserTests PRIVATE
@@ -50,8 +48,7 @@ add_executable(CompilerNameResolutionTests
 
 target_link_libraries(CompilerNameResolutionTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
+        JoyeerCompilerCore
 )
 
 target_compile_definitions(CompilerNameResolutionTests PRIVATE
@@ -65,7 +62,7 @@ joyeer_discover_tests(CompilerNameResolutionTests
 add_executable(CompilerModuleServiceTests moduleservice.cpp)
 target_link_libraries(CompilerModuleServiceTests PRIVATE
         GTest::gtest_main
-        JoyeerCompiler
+        JoyeerCompilerCore
 )
 joyeer_discover_tests(CompilerModuleServiceTests
         PROPERTIES LABELS modules
@@ -74,8 +71,7 @@ joyeer_discover_tests(CompilerModuleServiceTests
 add_executable(CompilerModuleArgumentsTests modulearguments_test.cpp)
 target_link_libraries(CompilerModuleArgumentsTests PRIVATE
         GTest::gtest_main
-        JoyeerCLI
-        JoyeerDiagnostic
+        JoyeerCompilerCore
 )
 joyeer_discover_tests(CompilerModuleArgumentsTests
         PROPERTIES LABELS modules
@@ -87,8 +83,7 @@ add_executable(CompilerTypeCheckingTests
 
 target_link_libraries(CompilerTypeCheckingTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
+        JoyeerCompilerCore
 )
 
 target_compile_definitions(CompilerTypeCheckingTests PRIVATE
@@ -105,8 +100,7 @@ add_executable(CompilerSemanticAnalysisTests
 
 target_link_libraries(CompilerSemanticAnalysisTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
+        JoyeerCompilerCore
 )
 
 joyeer_discover_tests(CompilerSemanticAnalysisTests
@@ -119,7 +113,7 @@ add_executable(IRModelTests
 
 target_link_libraries(IRModelTests
         GTest::gtest_main
-        JoyeerIR
+        JoyeerCompilerCore
 )
 
 joyeer_discover_tests(IRModelTests
@@ -132,9 +126,7 @@ add_executable(IRLoweringTests
 
 target_link_libraries(IRLoweringTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
-        JoyeerIR
+        JoyeerCompilerCore
 )
 
 target_compile_definitions(IRLoweringTests PRIVATE
@@ -152,9 +144,7 @@ add_executable(LLVMBackendTests
 
 target_link_libraries(LLVMBackendTests
         GTest::gtest_main
-        JoyeerDiagnostic
-        JoyeerCompiler
-        JoyeerLLVMBackend
+        JoyeerCompilerCore
 )
 target_compile_definitions(LLVMBackendTests PRIVATE
         JOYEER_TEST_RUNTIME_LIBRARY="$<TARGET_FILE:JoyeerNativeRuntime>"
@@ -203,7 +193,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             HINTS "${JOYEER_LLVM_BIN_DIR}" /usr/bin
     )
     target_link_libraries(LLVMFixtureGenerator
-            JoyeerLLVMBackend
+            JoyeerCompilerCore
     )
 
     add_test(NAME LLVMBackendClangValidation

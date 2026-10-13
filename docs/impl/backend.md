@@ -1,7 +1,7 @@
 # Compiler Backend Implementation
 
-> **Status:** The supported language surface emits textual LLVM IR;
-> the platform backend library validates it, generates machine code, and links
+> **Status:** The supported language surface builds LLVM IR objects inside
+> the platform backend library, which verifies them, generates machine code, and links
 > native executables with in-process LLVM/LLD on Windows, macOS, and Linux.
 > The current implementation covers the native acceptance workload and
 > regression cases for conditional evaluation, ownership flow, guarded
@@ -24,14 +24,96 @@ source
   -> type checking
   -> control-flow semantic analysis
   -> verified Joyeer IR
-  -> textual LLVM IR
-  -> platform native backend object generation + link
+  -> versioned C ABI carrying Joyeer IR bytes
+  -> LLVM context / module / types / instructions / debug metadata
+  -> LLVM optimization and .o / .obj generation
+  -> LLD + JoyeerNativeRuntime
   -> native executable
 ```
 
-The LLVM emitter lives in `include/joyeer/backend/llvm.h` and
-`lib/backend/llvm.cpp`. It emits text so verified Joyeer IR remains separated
-from LLVM's C++ model by an inspectable format.
+The compiler-side emitter lives in `src/compiler/codegen/llvm.h` and
+`src/compiler/codegen/llvm.cpp`. It verifies Joyeer IR, encodes it into a private byte
+format, and calls the backend's versioned C ABI. This is an in-memory call,
+not a source file or a persistent object format. The backend decodes its own
+Joyeer model and uses LLVM `IRBuilder` and `DIBuilder` to construct objects;
+it does not construct or parse LLVM assembly in the normal compilation path.
+
+The backend returns an opaque module handle. LLVM owns the types, constants,
+functions, basic blocks, instructions, and metadata in that module's context.
+The compiler owns only a `shared_ptr` control block whose deleter calls the
+backend's C destructor. No LLVM C++ type, STL allocation, or exception crosses
+the ABI. The context outlives its module; the lowering session and decoded
+Joyeer model are discarded once construction finishes. Operations on the same
+handle are serial; independent handles have independent contexts.
+
+For inspection, `--emit-llvm` calls LLVM's module printer. Native executable
+builds skip that serialization and retain the module handle through object
+generation. The linker receives a COFF, Mach-O, or ELF object and the runtime
+archive, never Joyeer source or an LLVM `.ll` source file. Object generation
+clones the portable module before setting a native target/data layout and
+optimizing it, so inspection and repeated generation do not change the original.
+
+### Lowering responsibilities
+
+Implementation files are grouped by ownership under `src/compiler/codegen/`
+and `src/backend/`:
+
+| File | Responsibility |
+|---|---|
+| [llvm.cpp](../../src/compiler/codegen/llvm.cpp) | Compiler-side verification, byte transport, diagnostic copying, and opaque-handle ownership |
+| [ir_wire.h](../../src/backend/ir_wire.h) | Shared field visitors and bounded decoding of private Joyeer IR bytes |
+| [native_module.cpp](../../src/backend/native_module.cpp) | C ABI construction, printing, destruction, and exception translation |
+| [native_module.h](../../src/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
+| [native_ir.h](../../src/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
+| [native_types.cpp](../../src/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
+| [native_ownership.cpp](../../src/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership |
+| [native_functions.cpp](../../src/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
+| [native_collections.cpp](../../src/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
+| [native_host.cpp](../../src/backend/native_host.cpp) | External builtins, flat C arguments, Result construction, and ABI tag mapping |
+| [native_debug.cpp](../../src/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
+| [native_backend.cpp](../../src/backend/native_backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
+| [linker.cpp](../../src/compiler/codegen/linker.cpp) | Artifact paths, runtime/SDK inputs, native linking, and debug sidecars |
+
+Start with `Emitter::emit`, follow `joyeer_native_backend_build_module` into
+`Builder::build`, and then read `emitFunction` / `emitInstruction`. Ownership,
+collection, host, and debug helpers are separate implementation units of the
+same session, not alternate execution pipelines. Functions are declared before
+their bodies so forward calls and recursion work. Blocks are emitted in CFG
+reverse postorder to establish dominating SSA values independent of storage
+order. All stack allocations live in a one-time prologue; initialization and
+debug declarations remain at their original execution sites.
+
+During unreleased development, the backend ABI version remains 1 even when
+interfaces change. This is not a backward-compatibility promise between
+development revisions: rebuild and deploy the compiler and backend together
+from the same revision. The interface includes module construction, printing,
+destruction, and the object options' module handle. The private IR wire version
+also remains 1. Numeric fields use 64-bit little-endian encoding; strings are
+length-prefixed arbitrary bytes.
+Inputs and callback messages are borrowed only during a call. Callbacks must
+not throw, and clients must never delete or interpret the opaque handle.
+
+### Source and build boundaries
+
+Headers and implementation files are colocated under `src/`; there is no
+separate public-header tree or installed C++ SDK. `src/compiler/` contains the
+driver, frontend, diagnostics, Joyeer IR, and backend-call adapters. These build
+as one private `JoyeerCompilerCore` object target, reused by `joyeer` and the
+stage-specific C++ unit tests. Only `main.cpp` belongs exclusively to the
+compiler executable. Include paths are target-scoped: same-directory headers
+use their filename, and cross-directory headers use paths relative to `src/`.
+
+`src/backend/` remains the shared `JoyeerNativeBackend` C ABI library. Its LLVM
+dependencies, exception handling, allocation, and Windows `/MT` compilation
+are separate from the compiler core. The verifier in `src/compiler/ir/ir.cpp`
+is compiled privately into this target with its own CRT and hidden visibility;
+it is the same implementation, not a second verifier or a reused frontend
+object file. `src/runtime/` builds the C11 `JoyeerNativeRuntime` static archive
+linked into generated programs. Existing artifact names and install components
+remain unchanged, and the private object target is not installed.
+
+The layout permits a future Joyeer-written frontend/driver to use the same C
+backend boundary. It does not itself implement self-hosting or a Joyeer C FFI.
 
 For module compilation, one verified Joyeer IR module contains the reachable
 graph of named explicit source-file sets. This whole-graph code-generation
@@ -43,15 +125,19 @@ than source names. Equal names in different modules or file-private scopes
 therefore do not collide, and source declarations are not renamed to enforce
 entry-point rules.
 
-The native linker lives in `include/joyeer/backend/linker.h` and
-`lib/backend/linker.cpp`. It calls the versioned C ABI in
-`include/joyeer/backend/native_backend.h` on every platform. The
-native-backend library parses and verifies textual IR, runs the selected LLVM
+The native linker lives in `src/compiler/codegen/linker.h` and
+`src/compiler/codegen/linker.cpp`. It calls the versioned C ABI in
+`src/backend/native_backend.h` on every platform. The
+native-backend library verifies the constructed module, runs the selected LLVM
 optimization pipeline, emits a COFF, Mach-O, or ELF object, and invokes the
 corresponding LLD driver in-process. A mutex serializes LLD because its library
 entry point has global process state. LLVM/LLD remain private backend
 dependencies; the compiler never launches Clang or an LLD executable for
 native output.
+
+The C object-emission API still accepts textual LLVM IR when no module handle
+is supplied, for standalone tests and explicit IR tooling. Only this fallback
+uses LLVM's assembly parser; it is not the compiler's native build path.
 
 The DLL discovers MSVC, the Universal CRT, and Windows SDK library directories
 through LLVM's Visual Studio Setup Configuration and registry helpers. It then
@@ -64,7 +150,7 @@ argument. Object emission rejects an LLVM default target that disagrees with
 the backend architecture. CMake selects the matching DIA SDK library and
 checks the LLVM SDK's native architecture. This is native compilation, not an
 architecture-switching or cross-compilation API; the versioned C ABI is
-unchanged.
+still restricted to native compilation.
 
 Windows console executables embed a manifest with
 `requestedExecutionLevel="asInvoker"` and `uiAccess="false"`. This disables
@@ -371,7 +457,7 @@ verification guarantees:
   aligned payload buffer;
 - all platforms use LLVM's per-module default optimization pipelines;
   no Joyeer-specific pass pipeline or LTO policy is configured;
-- the textual emitter can generate source/function/instruction line tables or
+- the object builder can generate source/function/instruction line tables or
   full lexical-scope/variable/type metadata with DWARF 4 or CodeView module
   flags; compiler-generated cleanup/plumbing is suppressed from line rows;
 - aggregate debug metadata currently supplies names and sizes with empty
@@ -399,7 +485,7 @@ they are separate from the reproduced Unicode-path issue:
 - Linux ELF argument/Clang Driver preparation occurs outside the exception
   guard used by the later linking call. The whole exported operation needs
   exception translation.
-- The current IR parser path expects an accessible trailing NUL even though
+- The fallback textual-IR parser expects an accessible trailing NUL even though
   the C options describe a pointer/length pair. The internal `std::string`
   caller satisfies this; arbitrary C buffers need a defensive terminated
   copy inside the backend rather than an undocumented extra-byte requirement.
@@ -408,11 +494,14 @@ they are separate from the reproduced Unicode-path issue:
 - Some unrecoverable LLD paths terminate the process; callbacks and fatal
   failures must not be described as universally recoverable status returns.
 
-The existing C ABI smoke test covers version/platform queries and invalid
-zero-initialized options. Successful object emission, malformed IR, output
-failures, structure-size boundaries, and callback contracts need dedicated
-coverage. Disk exhaustion and Linux exception paths were not exercised by
-the Windows review.
+The C ABI smoke test covers version/platform queries, invalid zero-initialized
+options, invalid wire versions, truncated Joyeer IR bytes, and null module
+operations. An object-builder regression verifies generation directly from a
+module with text disabled and invalid assembly supplied, at O0 through O3;
+printing after each generation must still match the original portable module.
+Output failures, structure-size boundaries, and broader callback contracts
+still need dedicated coverage. Disk exhaustion and Linux exception paths were
+not exercised by the Windows review.
 
 ---
 

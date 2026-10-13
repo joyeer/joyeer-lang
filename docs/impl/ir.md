@@ -10,9 +10,9 @@
 ## 1. Boundary
 
 Joyeer IR is the compiler's backend-neutral representation. The public model
-is in `include/joyeer/ir/ir.h`; typed AST lowering is in
-`include/joyeer/compiler/irlowering.h` and
-`lib/compiler/irlowering.cpp`.
+is in `src/compiler/ir/ir.h`; typed AST lowering is in
+`src/compiler/ir/irlowering.h` and
+`src/compiler/ir/irlowering.cpp`.
 
 A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for

@@ -12,8 +12,8 @@ The type checker consumes the syntax tree and all bindings produced by name
 resolution. Semantic analysis follows type checking; Joyeer IR lowering runs
 only after that analysis succeeds.
 
-The public API lives in `include/joyeer/compiler/typechecking.h`; the
-implementation is in `lib/compiler/typechecking.cpp`. A successful result is
+The internal API lives in `src/compiler/frontend/typechecking.h`; the
+implementation is in `src/compiler/frontend/typechecking.cpp`. A successful result is
 owned by `SourceFile::typeCheckedModel`.
 
 ---

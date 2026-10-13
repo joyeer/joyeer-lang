@@ -5,7 +5,7 @@ add_executable(NativeRuntimeTests
 )
 
 target_include_directories(NativeRuntimeTests PRIVATE
-        ${JOYEER_SOURCE_DIR}/lib/native
+        ${JOYEER_SOURCE_DIR}/src/runtime
 )
 
 target_link_libraries(NativeRuntimeTests
@@ -48,7 +48,7 @@ joyeer_discover_tests(NativeProcessTests
 if(WIN32)
     add_executable(NativeEntryEncodingTests
             entry_encoding_test.cpp
-            ${JOYEER_SOURCE_DIR}/lib/native/entry.c
+            ${JOYEER_SOURCE_DIR}/src/runtime/entry.c
     )
     set_target_properties(NativeEntryEncodingTests PROPERTIES
             C_STANDARD 11
@@ -122,8 +122,7 @@ add_executable(RuntimeOptionsTests
 
 target_link_libraries(RuntimeOptionsTests
         GTest::gtest_main
-        JoyeerCLI
-        JoyeerDiagnostic
+        JoyeerCompilerCore
 )
 
 joyeer_discover_tests(RuntimeOptionsTests

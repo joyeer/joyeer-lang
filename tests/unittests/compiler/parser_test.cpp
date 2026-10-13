@@ -1,7 +1,7 @@
-#include "joyeer/compiler/lexparser.h"
-#include "joyeer/compiler/parser.h"
-#include "joyeer/compiler/sourcefile.h"
-#include "joyeer/diagnostic/diagnostic.h"
+#include "compiler/frontend/lexparser.h"
+#include "compiler/frontend/parser.h"
+#include "compiler/frontend/sourcefile.h"
+#include "compiler/diagnostics/diagnostic.h"
 
 #include <gtest/gtest.h>
 

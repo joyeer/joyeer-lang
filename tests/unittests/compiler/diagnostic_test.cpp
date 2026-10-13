@@ -1,4 +1,4 @@
-#include "joyeer/diagnostic/diagnostic.h"
+#include "compiler/diagnostics/diagnostic.h"
 
 #include <gtest/gtest.h>
 

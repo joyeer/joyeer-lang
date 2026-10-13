@@ -1,4 +1,4 @@
-#include "joyeer/ir/ir.h"
+#include "compiler/ir/ir.h"
 
 #include <gtest/gtest.h>
 
