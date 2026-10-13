@@ -1,5 +1,5 @@
-#include "joyeer/compiler/compiler+service.h"
-#include "joyeer/ir/ir.h"
+#include "compiler/driver/compiler+service.h"
+#include "compiler/ir/ir.h"
 
 #include <gtest/gtest.h>
 

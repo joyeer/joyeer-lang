@@ -1,16 +1,18 @@
-#include "joyeer/backend/llvm.h"
-#include "joyeer/backend/linker.h"
-#include "joyeer/compiler/irlowering.h"
-#include "joyeer/compiler/lexparser.h"
-#include "joyeer/compiler/nameresolution.h"
-#include "joyeer/compiler/parser.h"
-#include "joyeer/compiler/sourcefile.h"
-#include "joyeer/compiler/typechecking.h"
-#include "joyeer/diagnostic/diagnostic.h"
+#include "compiler/codegen/llvm.h"
+#include "compiler/codegen/linker.h"
+#include "backend/native_backend.h"
+#include "compiler/ir/irlowering.h"
+#include "compiler/frontend/lexparser.h"
+#include "compiler/frontend/nameresolution.h"
+#include "compiler/frontend/parser.h"
+#include "compiler/frontend/sourcefile.h"
+#include "compiler/frontend/typechecking.h"
+#include "compiler/diagnostics/diagnostic.h"
 #include "module_lowering_fixture.h"
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -25,9 +27,29 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace {
+
+std::optional<std::string> blockLabel(std::string_view line) {
+    if (line.empty() || line.front() == ' ') return std::nullopt;
+    const auto colon = line.find(':');
+    if (colon == std::string_view::npos) return std::nullopt;
+    return std::string(line.substr(0, colon + 1));
+}
+
+void expectPanicAttributes(const std::string& text) {
+    std::smatch declaration;
+    ASSERT_TRUE(std::regex_search(text, declaration,
+            std::regex(R"(declare void @joyeer_panic\(ptr\) #(\d+))"))) << text;
+    const auto start = text.find("attributes #" + declaration[1].str() + " = {");
+    ASSERT_NE(start, std::string::npos);
+    const auto attributes = text.substr(start, text.find('\n', start) - start);
+    EXPECT_NE(attributes.find("cold"), std::string::npos);
+    EXPECT_NE(attributes.find("noreturn"), std::string::npos);
+}
 
 class LLVMBackendTest : public testing::Test {
 protected:
@@ -71,6 +93,100 @@ protected:
     SourceFile::Ptr source;
     joyeer::llvmbackend::Result result;
 };
+
+TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
+    joyeer::llvmbackend::EmitOptions options;
+    options.emitText = false;
+    ASSERT_NO_FATAL_FAILURE(emit("func main() { print(value: 42) }\n", false, options));
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    ASSERT_NE(result.module, nullptr);
+    EXPECT_TRUE(result.text.empty());
+    EXPECT_TRUE(result.hasEntryPoint);
+    auto module = result.module;
+    result = {};
+
+    struct Printed {
+        std::string text;
+        bool failed = false;
+    };
+    const auto collect = [](void* context, const char* text, size_t size) noexcept {
+        auto& printed = *static_cast<Printed*>(context);
+        try {
+            printed.text.assign(text, size);
+        } catch (...) {
+            printed.failed = true;
+        }
+    };
+    Printed before;
+    ASSERT_EQ(joyeer_native_backend_print_module(module.get(), collect, &before),
+            JOYEER_NATIVE_BACKEND_SUCCESS);
+    ASSERT_FALSE(before.failed);
+    ASSERT_FALSE(before.text.empty());
+    EXPECT_EQ(before.text.find("target triple"), std::string::npos);
+
+#ifdef _WIN32
+    const auto process = GetCurrentProcessId();
+#else
+    const auto process = getpid();
+#endif
+    const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto directory = std::filesystem::temp_directory_path() /
+            ("joyeer-memory-module-" + std::to_string(process) + "-" + std::to_string(nonce));
+    ASSERT_TRUE(std::filesystem::create_directory(directory));
+    struct Cleanup {
+        std::filesystem::path directory;
+        ~Cleanup() {
+            std::error_code error;
+            std::filesystem::remove_all(directory, error);
+            EXPECT_FALSE(error) << error.message();
+        }
+    } cleanup {directory};
+    for (const auto level : {JOYEER_NATIVE_BACKEND_O0, JOYEER_NATIVE_BACKEND_O1,
+                            JOYEER_NATIVE_BACKEND_O2, JOYEER_NATIVE_BACKEND_O3}) {
+        SCOPED_TRACE(level);
+        const auto object = directory / ("object-" + std::to_string(level) + ".o");
+        const auto encoded = object.u8string();
+        const std::string path(encoded.begin(), encoded.end());
+        const JoyeerNativeBackendObjectOptions objectOptions {
+            JOYEER_NATIVE_BACKEND_ABI_VERSION, sizeof(JoyeerNativeBackendObjectOptions),
+            "not LLVM assembly", 17, path.c_str(), static_cast<uint32_t>(level), module.get(),
+        };
+        ASSERT_EQ(joyeer_native_backend_emit_object(&objectOptions, nullptr, nullptr),
+                JOYEER_NATIVE_BACKEND_SUCCESS);
+        EXPECT_GT(std::filesystem::file_size(object), 0u);
+        Printed after;
+        ASSERT_EQ(joyeer_native_backend_print_module(module.get(), collect, &after),
+                JOYEER_NATIVE_BACKEND_SUCCESS);
+        ASSERT_FALSE(after.failed);
+        EXPECT_EQ(after.text, before.text);
+    }
+}
+
+TEST(LLVMModuleConstructionTest, DoesNotRequireBasicBlocksInDefinitionOrder) {
+    joyeer::ir::Module module;
+    module.sourceName = "reordered-blocks.joyeer";
+    module.types = {{0, "Int", joyeer::typing::TypeKind::integer}};
+    joyeer::ir::Function function;
+    function.id = 0;
+    function.name = "answer";
+    function.resultType = 0;
+    function.returnsValue = true;
+    function.entry = 0;
+    joyeer::ir::BasicBlock entry {0, "entry"};
+    entry.instructions = {
+        {joyeer::ir::Opcode::integerConstant,
+         joyeer::ir::Value{0, 0, joyeer::ir::ValueCategory::value}, {}, {}, {}, {}, 42},
+        {joyeer::ir::Opcode::branch, {}, {}, {1}},
+    };
+    joyeer::ir::BasicBlock exit {1, "exit"};
+    exit.instructions = {{joyeer::ir::Opcode::returnValue, {}, {0}}};
+    function.blocks = {exit, entry};
+    module.functions.push_back(std::move(function));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(module).succeeded());
+    const auto result = joyeer::llvmbackend::Emitter().emit(module);
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_NE(result.text.find("ret i64 42"), std::string::npos);
+}
 
 #ifdef _WIN32
 TEST_F(LLVMBackendTest, EmbedsAsInvokerManifestForInstallerLikeOutputNames) {
@@ -280,7 +396,7 @@ TEST_F(LLVMBackendTest, PassesBorrowedStringArgumentsAndReturnsFullStatus) {
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_TRUE(result.hasEntryPoint);
     EXPECT_NE(result.text.find("  ret i32 1\n"), std::string::npos);
-    EXPECT_NE(result.text.find("  %arguments = load %joyeer.array, ptr %args\n"), std::string::npos);
+    EXPECT_NE(result.text.find("  %arguments = load %joyeer.array, ptr %args"), std::string::npos);
     EXPECT_NE(result.text.find("  %status = call i64 @joyeer_fn_"), std::string::npos);
     EXPECT_NE(result.text.find("(%joyeer.array %arguments)\n"), std::string::npos);
     EXPECT_NE(result.text.find("  ret i64 %status\n"), std::string::npos);
@@ -453,7 +569,8 @@ TEST_F(LLVMBackendTest, FallsBackToUnknownForOversizedColumns) {
             });
 
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-    EXPECT_NE(result.text.find("!DILocation(line: 2, column: 0"), std::string::npos);
+        EXPECT_TRUE(std::regex_search(result.text,
+            std::regex(R"(!DILocation\(line: 2,( column: 0,)? scope:)")));
 }
 
 TEST_F(LLVMBackendTest, AnnotatesEveryInstructionExpandedFromAHighLevelOperation) {
@@ -587,8 +704,7 @@ return sum * difference + left
         }
         EXPECT_EQ(result.text.find("@joyeer_checked_"), std::string::npos);
         EXPECT_EQ(result.text.find("add nsw"), std::string::npos);
-        EXPECT_NE(result.text.find("declare void @joyeer_panic(ptr) cold noreturn"),
-                  std::string::npos);
+        expectPanicAttributes(result.text);
         for (const auto* message : { "integer addition overflow\\00",
                                      "integer subtraction overflow\\00",
                                      "integer multiplication overflow\\00" }) {
@@ -694,8 +810,7 @@ TEST(LLVMArithmeticBackendTest, GuardsDivisionAndRemainderAtEveryOptimizationLev
                 ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
                 EXPECT_EQ(result.text.find("@joyeer_checked_"), std::string::npos);
                 EXPECT_EQ(result.text.find("sdiv exact"), std::string::npos);
-                EXPECT_NE(result.text.find("declare void @joyeer_panic(ptr) cold noreturn"),
-                          std::string::npos);
+                expectPanicAttributes(result.text);
                 for (const auto* failure : { " by zero", " overflow" }) {
                     EXPECT_NE(result.text.find("integer " + operation + failure + "\\00"),
                               std::string::npos);
@@ -1068,7 +1183,7 @@ TEST_F(LLVMBackendTest, DictionaryGetClonesOnlyTheFoundOwnedPayloadExactlyOnce) 
         std::string storedValueAddress;
         size_t clones = 0;
         while (std::getline(lines, line)) {
-            if (!line.empty() && line.back() == ':') label = line;
+            if (const auto parsedLabel = blockLabel(line)) label = *parsedLabel;
             if (line.find("call ptr @joyeer_dictionary_find_abi") != std::string::npos) {
                 const auto addressStart = line.find('%');
                 storedValueAddress = line.substr(
@@ -1131,7 +1246,7 @@ return values.get(key: 1)
     size_t structurePayloadCopies = 0;
     size_t scalarPayloadCopies = 0;
     while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == ':') label = line;
+        if (const auto parsedLabel = blockLabel(line)) label = *parsedLabel;
         if (!label.starts_with("dictionary.get.some.")) continue;
         if (line.find(" = load %joyeer.enum.") != std::string::npos) ++enumPayloadCopies;
         if (line.find(" = load %joyeer.struct.") != std::string::npos) ++structurePayloadCopies;
@@ -1293,7 +1408,7 @@ return match value {
     std::string line;
     std::string label;
     while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == ':') label = line;
+        if (const auto parsedLabel = blockLabel(line)) label = *parsedLabel;
         if (line.find("br i1 ") != std::string::npos &&
             line.find("label %pattern.payload.") != std::string::npos) {
             ++payloadBranches;
@@ -1330,7 +1445,7 @@ index = index + values.count
     size_t allocations = 0;
     size_t debugDeclarations = 0;
     while (std::getline(lines, line)) {
-        if (!line.empty() && line.back() == ':') label = line;
+        if (const auto parsedLabel = blockLabel(line)) label = *parsedLabel;
         if (line.find(" = alloca ") != std::string::npos) {
             ++allocations;
             EXPECT_EQ(label, "entry:") << line;

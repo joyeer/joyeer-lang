@@ -1,4 +1,4 @@
-#include "joyeer/native/process.h"
+#include "runtime/process.h"
 
 #include <gtest/gtest.h>
 
@@ -242,7 +242,20 @@ TEST(ProcessTest, PassesExactArgumentsEnvironmentStreamsAndChildDirectory) {
     std::vector<std::string> expected { utf8Path(childDirectory), "present",
                                         streamMask() };
     expected.insert(expected.end(), payload.begin(), payload.end());
-    EXPECT_EQ(readRecords(output), expected);
+    const auto records = readRecords(output);
+    ASSERT_EQ(records.size(), expected.size());
+    // getcwd may resolve aliases such as macOS /var -> /private/var.
+    const std::filesystem::path actualDirectory {
+        std::u8string(records[0].begin(), records[0].end())
+    };
+    std::error_code directoryError;
+    EXPECT_TRUE(std::filesystem::equivalent(
+            actualDirectory, childDirectory, directoryError))
+            << directoryError.message();
+    EXPECT_FALSE(directoryError);
+    for (size_t index = 1; index < records.size(); ++index) {
+        EXPECT_EQ(records[index], expected[index]) << "record " << index;
+    }
 }
 
 TEST(ProcessTest, ResolvesRelativeExecutableBeforeChangingChildDirectory) {
@@ -257,9 +270,17 @@ TEST(ProcessTest, ResolvesRelativeExecutableBeforeChangingChildDirectory) {
     ASSERT_EQ(result.error, JOYEER_PROCESS_ERROR_NONE) << result.nativeError;
     EXPECT_EQ(result.status, 0);
     EXPECT_EQ(std::filesystem::current_path(), cwd);
-    ASSERT_EQ(readRecords(output).size(), 4);
-    EXPECT_EQ(readRecords(output)[0], utf8Path(temp.path));
-    EXPECT_EQ(readRecords(output)[3], "relative");
+    const auto records = readRecords(output);
+    ASSERT_EQ(records.size(), 4u);
+    const std::filesystem::path actualDirectory {
+        std::u8string(records[0].begin(), records[0].end())
+    };
+    std::error_code directoryError;
+    EXPECT_TRUE(std::filesystem::equivalent(
+            actualDirectory, temp.path, directoryError))
+            << directoryError.message();
+    EXPECT_FALSE(directoryError);
+    EXPECT_EQ(records[3], "relative");
 }
 
 TEST(ProcessTest, ReportsLaunchFailuresWithoutInterpretingShellOrSearchingPath) {

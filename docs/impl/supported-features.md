@@ -14,7 +14,7 @@ is a named source set, not a directory: files can span nested or unrelated
 directories, and distinct modules can use distinct files from one directory.
 It runs the source graph through lexing,
 parsing, name resolution, type checking, semantic analysis, verified Joyeer
-IR, and textual LLVM IR emission. Native executable output additionally
+IR, and LLVM object construction with optional textual IR export. Native executable output additionally
 generates machine code and links it with `JoyeerNativeRuntime`.
 
 Named mode uses `--module-name <name>` with positional root files and repeatable
@@ -40,7 +40,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Type checking | Canonical types, calls, access conventions, patterns, and exclusivity | [Type checking](type-checking.md) |
 | Semantic analysis | All-paths return, reachability, initialization, and unused-binding analysis | [Semantic analysis](semantic-analysis.md) |
 | Joyeer IR | Verified CFG, aggregates, ownership operations, and source/debug scopes | [IR](ir.md) |
-| Backend | Textual LLVM IR plus in-process LLVM code generation and LLD linking | [Backend](backend.md) |
+| Backend | LLVM IR objects, textual export, and in-process LLVM code generation and LLD linking | [Backend](backend.md) |
 | Runtime | Strings, owned byte arrays, collections, typed file input, checked arithmetic, and allocation balance | [Runtime](runtime.md) |
 | Diagnostics | Stable stage IDs, source excerpts, fix-its, help, and secondary notes | [Diagnostics](diagnostics.md) |
 

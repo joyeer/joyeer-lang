@@ -30,8 +30,8 @@ name-use NodeId -> declaration SymbolId
 Additional relations record declaration symbols, containing/introduced
 scopes, qualified-name symbols, resolved call targets, and references that
 must wait for type information. The public model is in
-`include/joyeer/compiler/semantic.h`; the resolver API is in
-`include/joyeer/compiler/nameresolution.h`.
+`src/compiler/frontend/semantic.h`; the resolver API is in
+`src/compiler/frontend/nameresolution.h`.
 
 ---
 
