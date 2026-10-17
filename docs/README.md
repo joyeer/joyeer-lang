@@ -17,6 +17,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
+| Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
@@ -69,6 +70,8 @@ work.
 
 | Document | Topic |
 |---|---|
+| [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
+| [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, joypm management, and installed-library resolution gates |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
 ## Conventions

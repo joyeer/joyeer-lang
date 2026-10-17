@@ -48,6 +48,13 @@ dependency source; it has no standalone library artifact or stable binary
 ABI and must not declare `output`. Test programs are separate modules with
 their own manifests and entries, not extra units hidden inside one manifest.
 
+The [library plan](../plan/library.md) applies this source-module model to
+the proposed `Foundation`, `System`, `Collections`, and `Testing` modules.
+Local library development can use the existing workspace workflow; automatic
+installed-library resolution remains planned. Compiler/runtime construction
+and the first joypm bootstrap remain CMake responsibilities, not new joypm
+module kinds.
+
 A workspace owns only its explicit member directories:
 
 ```toml
