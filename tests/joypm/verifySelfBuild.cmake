@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 include("${CMAKE_CURRENT_LIST_DIR}/helpers.cmake")
-if(NOT EXISTS "${SELF_BUILD_PROJECT}/joyeer.toml")
+if(NOT EXISTS "${SELF_BUILD_PROJECT}/project.toml")
     message(FATAL_ERROR "Configure the joypm self-build project before running acceptance")
 endif()
 set(package "${work}/self build project")
 file(MAKE_DIRECTORY "${package}")
 file(COPY "${SELF_BUILD_PROJECT}/" DESTINATION "${package}" PATTERN "target" EXCLUDE)
 jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_no_outputs("${package}")
 set(bootstrap "${JOYPM_EXECUTABLE}")
 
@@ -18,7 +18,7 @@ foreach(profile IN ITEMS debug release)
     endif()
     set(JOYPM_EXECUTABLE "${bootstrap}")
     jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-        --manifest-path "${package}/joyeer.toml" ${options})
+        --manifest-path "${package}/project.toml" ${options})
     jp_artifacts("${package}" "${profile}" joypm 1)
     list(GET jp_artifact_list 0 self_built)
     if(WIN32 AND profile STREQUAL "debug")
@@ -57,7 +57,7 @@ endforeach()
 
 # The Release-built tool must itself plan and execute another self-build.
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml" --release --module joypm.app)
+    --manifest-path "${package}/project.toml" --release --module joypm.app)
 jp_artifacts("${package}" release joypm 2)
 set(JOYPM_EXECUTABLE "${package}/target/release/joypm.app/build-2/joypm${EXECUTABLE_SUFFIX}")
 jp_call(0 "${outside}" --version)

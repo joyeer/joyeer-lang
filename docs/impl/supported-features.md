@@ -71,7 +71,7 @@ declarations.
 ## Source-implemented local project tool
 
 The separate Joyeer-written `joypm 0.1.0` implements `init/check/build/run/test`
-under [src/tools/joypm/](../../src/tools/joypm/). Each schema-1 `joyeer.toml`
+under [src/tools/joypm/](../../src/tools/joypm/). Each schema-1 `project.toml`
 defines exactly one source/bin/test module; schema-1 `workspace.toml` lists
 explicit member directories. Per-module source paths and dependencies,
 `--workspace`, and exact `--module` selection are implemented. Legacy project

@@ -759,7 +759,7 @@ func parseManifest(contents: String): Result<ModuleSpec, ToolError> {
     if p.pos >= contents.count { return .Err(ToolError(message: "missing [module] table", pos: p.pos)) }
     let table = manifestHeader(p: &p)?
     if table.name != "module" || table.array {
-        return .Err(ToolError(message: "one joyeer.toml defines one [module]; migrate earlier [package]/[[modules]]/[[targets]] projects to workspace.toml", pos: table.pos))
+        return .Err(ToolError(message: "one project.toml defines one [module]; migrate earlier [package]/[[modules]]/[[targets]] projects to workspace.toml", pos: table.pos))
     }
     let spec = manifestModuleBody(p: &p, pos: table.pos)?
     manifestTrivia(p: &p)?
