@@ -12,13 +12,13 @@ file(WRITE "${retained}/sentinel" "preserved generation")
 foreach(round RANGE 1 2)
     execute_process(
         COMMAND "${JOYPM_EXECUTABLE}" build --compiler "${JOYEER_EXECUTABLE}"
-            --manifest-path "${package}/joyeer.toml"
+            --manifest-path "${package}/project.toml"
         COMMAND "${JOYPM_EXECUTABLE}" build --compiler "${JOYEER_EXECUTABLE}"
-            --manifest-path "${package}/joyeer.toml"
+            --manifest-path "${package}/project.toml"
         COMMAND "${JOYPM_EXECUTABLE}" build --compiler "${JOYEER_EXECUTABLE}"
-            --manifest-path "${package}/joyeer.toml"
+            --manifest-path "${package}/project.toml"
         COMMAND "${JOYPM_EXECUTABLE}" build --compiler "${JOYEER_EXECUTABLE}"
-            --manifest-path "${package}/joyeer.toml"
+            --manifest-path "${package}/project.toml"
         WORKING_DIRECTORY "${outside}"
         RESULTS_VARIABLE results OUTPUT_VARIABLE jp_out ERROR_VARIABLE jp_err
         TIMEOUT 60)

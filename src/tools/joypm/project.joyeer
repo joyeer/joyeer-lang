@@ -206,7 +206,7 @@ func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
         var index = 0
         while index < ordered.count {
             let memberDirectory = projectJoin(base: directory, path: ordered[index])?
-            let path = projectJoin(base: memberDirectory, path: "joyeer.toml")?
+            let path = projectJoin(base: memberDirectory, path: "project.toml")?
             let module = projectModule(path: path, directory: memberDirectory)?
             &loaded.append(element: module)
             index = index + 1

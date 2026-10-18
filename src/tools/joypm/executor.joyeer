@@ -246,7 +246,7 @@ private func initWrite(path: String, contents: String): Result<Void, ToolError> 
 
 private func initFiles(directory: String, options: borrowing CliOptions): Result<Void, ToolError> {
     let sourceDirectory = toolJoin(base: directory, path: "src")?
-    let manifest = toolJoin(base: directory, path: "joyeer.toml")?
+    let manifest = toolJoin(base: directory, path: "project.toml")?
     var sourceName = "main.joyeer"
     if options.kind == "source" { sourceName = "lib.joyeer" }
     let source = toolJoin(base: sourceDirectory, path: sourceName)?

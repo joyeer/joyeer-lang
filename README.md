@@ -93,7 +93,7 @@ Use `hello` instead of `hello.exe` on macOS and Linux. See the
 
 ## Local projects with joypm
 
-Use `joypm` to create, check, build, run, and test projects. Each `joyeer.toml`
+Use `joypm` to create, check, build, run, and test projects. Each `project.toml`
 defines one module and owns its sources and dependencies.
 
 PowerShell example, using a new `hello-project` directory:

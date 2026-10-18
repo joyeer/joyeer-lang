@@ -4,8 +4,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/helpers.cmake")
 function(limit_call name contents expected_output)
     set(directory "${work}/logic ${name}")
     file(MAKE_DIRECTORY "${directory}")
-    jp_write_bytes("${directory}/joyeer.toml" "${contents}")
-    execute_process(COMMAND "${LOGIC_EXECUTABLE}" "${directory}/joyeer.toml" ${ARGN}
+    jp_write_bytes("${directory}/project.toml" "${contents}")
+    execute_process(COMMAND "${LOGIC_EXECUTABLE}" "${directory}/project.toml" ${ARGN}
         RESULT_VARIABLE status OUTPUT_VARIABLE jp_out ERROR_VARIABLE jp_err TIMEOUT 30)
     string(REPLACE "\r\n" "\n" jp_out "${jp_out}")
     jp_no_runtime_error()
