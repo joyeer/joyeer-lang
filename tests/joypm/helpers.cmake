@@ -160,7 +160,7 @@ function(jp_reject_manifest name contents)
     file(MAKE_DIRECTORY "${package}" "${cwd}")
     # The lexical /./ spelling is deliberate: diagnostics preserve caller
     # coordinates, rather than reporting a canonicalized filesystem path.
-    set(manifest "${package}/./joyeer.toml")
+    set(manifest "${package}/./project.toml")
     jp_write_bytes("${manifest}" "${contents}")
     jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}"
         --manifest-path "${manifest}")
@@ -184,7 +184,7 @@ function(jp_write_module directory name kind output sources dependencies)
         string(APPEND text "output = '${output}'\n")
     endif()
     string(APPEND text "sources = [${sources}]\ndependencies = [${dependencies}]\n")
-    jp_write_bytes("${directory}/joyeer.toml" "${text}")
+    jp_write_bytes("${directory}/project.toml" "${text}")
 endfunction()
 
 function(jp_write_workspace directory members)
@@ -225,7 +225,7 @@ endfunction()
 function(jp_forward command package mode)
     execute_process(
         COMMAND "${FORWARDING_DRIVER}" "${JOYPM_EXECUTABLE}"
-            "${JOYEER_EXECUTABLE}" "${package}/joyeer.toml" "${outside}"
+            "${JOYEER_EXECUTABLE}" "${package}/project.toml" "${outside}"
             "${command}" "${mode}"
         WORKING_DIRECTORY "${outside}"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error

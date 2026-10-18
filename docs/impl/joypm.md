@@ -1,6 +1,6 @@
 # joypm Module and Workspace Manager
 
-> **Status:** `joypm 0.1.0` implements one source module per `joyeer.toml` and
+> **Status:** `joypm 0.1.0` implements one source module per `project.toml` and
 > explicit multi-module `workspace.toml` files. Native Windows ARM64 Debug
 > default build and unfiltered CTest pass 809/809, including all 15 joypm
 > gates. Debug/optimized self-builds, workspace workflows, concurrent
@@ -16,7 +16,7 @@ the numeric version alone is not sufficient build provenance.
 
 ## 1. Canonical organization
 
-Each `joyeer.toml` describes exactly one named source compilation unit.
+Each `project.toml` describes exactly one named source compilation unit.
 It owns its sources, direct declared dependencies, kind, and optional
 executable basename. There is no package/target-to-module mapping layer.
 
@@ -57,7 +57,7 @@ schema-version = 1
 members = [".", "core", "tests"]
 ```
 
-Each member has a `joyeer.toml`. `"."` includes a root module; directory
+Each member has a `project.toml`. `"."` includes a root module; directory
 nesting does not imply logical submodules or automatic membership.
 The workspace has no own sources, module name, or merged dependency list.
 There is no nested-workspace traversal or upward discovery.
@@ -96,7 +96,7 @@ relative to each member's manifest. No implicit module renaming occurs.
 Project commands accept:
 
 - `--manifest-path <file>`: one module; defaults to current-directory
-  `joyeer.toml`.
+  `project.toml`.
 - **Or** `--workspace <file>`: an explicit workspace manifest.
 - `--module <logical-name>`: select one member by exact name, not output
   basename. This option also works with `check`.
@@ -131,8 +131,8 @@ option. Compiler inputs still use `--module-name` and `--module-source`.
 $compiler = (Resolve-Path '.\out\build\arm64-debug\bin\joyeer.exe').Path
 $joypm = (Resolve-Path '.\out\build\arm64-debug\bin\joypm.exe').Path
 & $joypm init .\hello --name hello.app --output hello
-& $joypm check --compiler $compiler --manifest-path .\hello\joyeer.toml
-& $joypm run --compiler $compiler --manifest-path .\hello\joyeer.toml
+& $joypm check --compiler $compiler --manifest-path .\hello\project.toml
+& $joypm run --compiler $compiler --manifest-path .\hello\project.toml
 
 & $joypm check --compiler $compiler --workspace C:\Source\Moss\workspace.toml
 & $joypm run --compiler $compiler --workspace C:\Source\Moss\workspace.toml `
@@ -245,7 +245,7 @@ planner, executor, and entry. The explicit
 [CMake bootstrap](../../src/tools/joypm/CMakeLists.txt) remains an `ALL` target,
 enabled by default, without a preinstalled joypm or Python requirement.
 Configure stages the same files and a schema-1 single-module
-[self-build manifest](../../src/tools/joypm/joyeer.toml.in).
+[self-build manifest](../../src/tools/joypm/project.toml.in).
 Debug PDB/dSYM byproducts, platform fallback, and install components are
 unchanged; see [building](../building.md#joypm-bootstrap-and-acceptance).
 

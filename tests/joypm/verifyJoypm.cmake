@@ -7,14 +7,14 @@ jp_copy_project(multi "${multi}")
 
 # Exercise caller-relative manifest/source coordinates, not just absolute paths.
 jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "../single project/joyeer.toml")
+    --manifest-path "../single project/project.toml")
 jp_no_outputs("${package}")
 jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}"
     --workspace "${multi}/workspace.toml")
 jp_no_outputs("${multi}")
 
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "../single project/joyeer.toml" --verbose)
+    --manifest-path "../single project/project.toml" --verbose)
 jp_contains("${jp_err}" "-O0")
 jp_contains("${jp_err}" "-gfull")
 jp_artifacts("${package}" debug sample 1)
@@ -29,14 +29,14 @@ if(NOT status STREQUAL "0" OR
 endif()
 
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_artifacts("${package}" debug sample 2)
 file(SHA256 "${first}" second_hash)
 if(NOT first_hash STREQUAL second_hash)
     jp_fail("A later generation overwrote an earlier successful artifact")
 endif()
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml" --release --verbose)
+    --manifest-path "${package}/project.toml" --release --verbose)
 jp_contains("${jp_err}" "-O2")
 jp_contains("${jp_err}" "-g0")
 jp_artifacts("${package}" release sample 1)
@@ -53,7 +53,7 @@ jp_artifacts("${multi}" debug multi 1)
 jp_forward(run "${package}" ascii)
 jp_artifacts("${package}" debug sample 3)
 jp_call(1 "${outside}" run --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml" -- fail)
+    --manifest-path "${package}/project.toml" -- fail)
 jp_contains("${jp_out}" "fixture executed\npackage cwd\n")
 jp_contains("${jp_err}" "23")
 jp_artifacts("${package}" debug sample 4)
@@ -62,7 +62,7 @@ jp_artifacts("${package}" debug sample 4)
 # successful prior generations present. Both compilation and launch errors are 1.
 configure_file("${FIXTURE_DIR}/invalid.joyeer" "${package}/main.joyeer" COPYONLY)
 jp_call(1 "${outside}" run --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_absent("${jp_out}" "fixture executed")
 if(jp_err STREQUAL "")
     jp_fail("Failed rebuild must report a diagnostic")
@@ -80,7 +80,7 @@ jp_call(1 "${outside}" check --compiler "${work}/missing compiler${EXECUTABLE_SU
 set(no_output "${work}/successful compiler without artifact")
 jp_copy_project(single "${no_output}")
 jp_call(1 "${outside}" run --compiler "${COMPILER_NO_OUTPUT}"
-    --manifest-path "${no_output}/joyeer.toml")
+    --manifest-path "${no_output}/project.toml")
 jp_absent("${jp_out}" "fixture executed")
 jp_artifacts("${no_output}" debug sample 0)
 if(jp_err STREQUAL "")
@@ -119,7 +119,7 @@ jp_copy_project(single "${collision}")
 file(MAKE_DIRECTORY "${collision}/target/debug/sample.app/build-1")
 file(WRITE "${collision}/target/debug/sample.app/build-1/sentinel" "preserved")
 jp_call(0 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${collision}/joyeer.toml")
+    --manifest-path "${collision}/project.toml")
 jp_artifacts("${collision}" debug sample 1)
 if(EXISTS "${collision}/target/debug/sample.app/build-1/sample${EXECUTABLE_SUFFIX}")
     jp_fail("Collision generation was populated")
@@ -137,7 +137,7 @@ endforeach()
 set(exhaustion_cwd "${work}/exhaustion caller")
 file(MAKE_DIRECTORY "${exhaustion_cwd}")
 jp_call(1 "${exhaustion_cwd}" build --compiler "${COMPILER_SPY}"
-    --manifest-path "${exhausted}/joyeer.toml")
+    --manifest-path "${exhausted}/project.toml")
 if(EXISTS "${exhaustion_cwd}/compiler-record.txt" OR
    EXISTS "${exhausted}/target/debug/sample.app/build-129")
     jp_fail("Exhausted 128 generation attempts still invoked the compiler or allocated output")
@@ -153,7 +153,7 @@ set(blocked "${work}/blocked target directory")
 jp_copy_project(single "${blocked}")
 file(WRITE "${blocked}/target" "ordinary file")
 jp_call(1 "${outside}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${blocked}/joyeer.toml")
+    --manifest-path "${blocked}/project.toml")
 file(READ "${blocked}/target" sentinel)
 if(NOT sentinel STREQUAL "ordinary file")
     jp_fail("Build replaced a conflicting parent file")

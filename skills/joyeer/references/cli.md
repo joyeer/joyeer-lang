@@ -144,7 +144,7 @@ Native Windows ARM64 Debug build/unfiltered CTest pass 790/790, including
 15 tool gates. Debug/optimized self-build and relocated workflows pass;
 a fresh full Release CTest and other native platforms remain open.
 
-Each `joyeer.toml` uses schema 1 and exactly one `[module]`:
+Each `project.toml` uses schema 1 and exactly one `[module]`:
 
 ```toml
 schema-version = 1
@@ -165,7 +165,7 @@ schema-version = 1
 members = [".", "core", "tests"]
 ```
 
-Every member directory has its own `joyeer.toml`. Sources are relative to
+Every member directory has its own `project.toml`. Sources are relative to
 their owning manifest, dependencies are exact member module names, and
 membership alone does not grant imports. Legacy multi-module project schemas
 and `--target` reject with migration help.
@@ -178,10 +178,10 @@ $compiler = "C:\path with spaces\joyeer.exe"
 & $joypm --help
 & $joypm --version
 & $joypm init .\hello --name hello
-& $joypm check --compiler $compiler --manifest-path .\hello\joyeer.toml
-& $joypm build --compiler $compiler --manifest-path .\hello\joyeer.toml --release
-& $joypm run --compiler $compiler --manifest-path .\hello\joyeer.toml -- "two words" ""
-& $joypm test --compiler $compiler --manifest-path .\hello\joyeer.toml
+& $joypm check --compiler $compiler --manifest-path .\hello\project.toml
+& $joypm build --compiler $compiler --manifest-path .\hello\project.toml --release
+& $joypm run --compiler $compiler --manifest-path .\hello\project.toml -- "two words" ""
+& $joypm test --compiler $compiler --manifest-path .\hello\project.toml
 ```
 
 These paths are illustrative, not installation defaults. Check each status
@@ -192,7 +192,7 @@ one `bin` module, not tests. `--kind source|test` chooses another kind;
 Without test modules, `test` prints `0 tests`.
 
 Project commands require `--compiler <explicit path>`, with no PATH or sibling
-search. `--manifest-path <file>` defaults to `joyeer.toml` in the invocation
+search. `--manifest-path <file>` defaults to `project.toml` in the invocation
 directory, never an upward search. Alternatively, `--workspace <file>` loads
 explicit members; it is mutually exclusive with `--manifest-path`.
 `--module <logical-name>` selects a member for check/build/run/test.

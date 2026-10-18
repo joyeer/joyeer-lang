@@ -75,13 +75,13 @@ or cleanup facilities; the separate joypm owns local manifest policy.
 
 `joypm` has `init/check/build/run/test`, strict TOML/Unicode/flag validation,
 explicit compiler paths, and always-rebuilt serial native outputs.
-Schema-1 `joyeer.toml` defines one source/bin/test module; schema-1
+Schema-1 `project.toml` defines one source/bin/test module; schema-1
 `workspace.toml` explicitly lists 1..256 member directories. Sources and
 dependencies belong to each module. Legacy project files and `--target`
 report migration errors. There is no independent source-library binary ABI.
 
 Project commands use `--manifest-path <file>` (default current-directory
-joyeer.toml) or `--workspace <file>`, with optional exact `--module` selection.
+project.toml) or `--workspace <file>`, with optional exact `--module` selection.
 No upward scanning or PATH/sibling discovery occurs. Each document is bounded
 to 65536 bytes with a sentinel read after regular-file classification;
 strings are limited to 4096 bytes and module arrays to 1024 entries.

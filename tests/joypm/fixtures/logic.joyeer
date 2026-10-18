@@ -80,6 +80,17 @@ func main(args: [String]): Int {
     if !duplicate { return 12 }
     let unknown = match parseCli(args: ["not-a-command"]) { .Ok(_) => false, .Err(_) => true }
     if !unknown { return 13 }
+    let defaultManifest = match parseCli(args: ["check", "--compiler", "unused"]) {
+        .Ok(options) => options.manifestPath == "project.toml",
+        .Err(_) => false,
+    }
+    if !defaultManifest { return 17 }
+    let explicitManifest = match parseCli(args: ["check", "--compiler", "unused",
+        "--manifest-path", "custom.toml"]) {
+        .Ok(options) => options.manifestPath == "custom.toml",
+        .Err(_) => false,
+    }
+    if !explicitManifest { return 18 }
     let source = "schema-version = 1\n[module]\nname = 'logic.app'\nkind = 'bin'\n" +
         "output = 'logic'\nsources = ['main.joyeer']\ndependencies = []\n"
     let valid = match parseManifest(contents: source) { .Ok(_) => true, .Err(_) => false }

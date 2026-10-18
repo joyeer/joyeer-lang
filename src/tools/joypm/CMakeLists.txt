@@ -24,7 +24,7 @@ foreach(source IN LISTS JOYEER_JOYPM_SOURCES)
     configure_file("${source}" "${JOYEER_JOYPM_PROJECT_DIRECTORY}/${name}" COPYONLY)
     string(APPEND JOYEER_JOYPM_PROJECT_SOURCES "    '${name}',\n")
 endforeach()
-configure_file(joyeer.toml.in "${JOYEER_JOYPM_PROJECT_DIRECTORY}/joyeer.toml" @ONLY)
+configure_file(project.toml.in "${JOYEER_JOYPM_PROJECT_DIRECTORY}/project.toml" @ONLY)
 
 if(CMAKE_CONFIGURATION_TYPES)
     set(JOYEER_JOYPM_EXECUTABLE
@@ -71,7 +71,7 @@ add_custom_command(
     VERBATIM)
 add_custom_target(joypm ALL
     DEPENDS "${JOYEER_JOYPM_EXECUTABLE}" ${JOYEER_JOYPM_SOURCES}
-    SOURCES ${JOYEER_JOYPM_SOURCES} platform.joyeer.in joyeer.toml.in)
+    SOURCES ${JOYEER_JOYPM_SOURCES} platform.joyeer.in project.toml.in)
 add_dependencies(joypm joyeer JoyeerNativeBackend JoyeerNativeRuntime)
 
 install(PROGRAMS "${JOYEER_JOYPM_EXECUTABLE}"

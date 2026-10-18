@@ -58,31 +58,31 @@ endif()
 
 host_project(wide-compiler compiler-wide)
 jp_call(1 "${cwd}" check --compiler "${HOST_FIXTURE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_contains("${jp_err}" "compiler exited with status ${wide_status}")
 jp_no_outputs("${package}")
 
 host_project(wide-child artifact-copy)
 jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
-    --manifest-path "${package}/joyeer.toml" -- exit-wide)
+    --manifest-path "${package}/project.toml" -- exit-wide)
 jp_contains("${jp_err}" "child exited with status ${wide_status}")
 jp_artifacts("${package}" debug sample 1)
 
 host_project(directory-artifact artifact-directory)
 jp_call(1 "${cwd}" build --compiler "${HOST_FIXTURE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_contains("${jp_err}" "expected executable is a directory")
 
 host_project(unlaunchable-artifact artifact-empty)
 jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_contains("${jp_err}" "cannot run")
 
 file(CREATE_LINK "${HOST_FIXTURE}" "${work}/symbolic probe" SYMBOLIC RESULT symbolic_result)
 if(symbolic_result STREQUAL "0")
     host_project(link-artifact artifact-link)
     jp_call(1 "${cwd}" build --compiler "${HOST_FIXTURE}"
-        --manifest-path "${package}/joyeer.toml")
+        --manifest-path "${package}/project.toml")
     jp_contains("${jp_err}" "expected executable is a link")
 else()
     message(STATUS "Symbolic-link acceptance unavailable on this filesystem: ${symbolic_result}")
@@ -93,22 +93,22 @@ file(CREATE_LINK "${package}/main.joyeer" "${package}/alias.joyeer" RESULT hard_
 if(NOT hard_result STREQUAL "0")
     message(FATAL_ERROR "Cannot create the required physical-source alias: ${hard_result}")
 endif()
-file(READ "${package}/joyeer.toml" manifest)
+file(READ "${package}/project.toml" manifest)
 string(REPLACE "sources = [\"main.joyeer\"]"
     "sources = ['main.joyeer', 'alias.joyeer']" manifest "${manifest}")
-jp_write_bytes("${package}/joyeer.toml" "${manifest}")
+jp_write_bytes("${package}/project.toml" "${manifest}")
 jp_call(1 "${cwd}" check --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_contains("${jp_out}${jp_err}" "module.duplicate-source")
 jp_no_outputs("${package}")
 
 host_project(link-failure artifact-copy)
 jp_write_bytes("${package}/main.joyeer" "func value(): Int { return 42 }\n")
 jp_call(0 "${cwd}" check --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_no_outputs("${package}")
 jp_call(1 "${cwd}" build --compiler "${JOYEER_EXECUTABLE}"
-    --manifest-path "${package}/joyeer.toml")
+    --manifest-path "${package}/project.toml")
 jp_contains("${jp_out}${jp_err}" "linker.missing-entry-point")
 jp_artifacts("${package}" debug sample 0)
 
@@ -137,8 +137,8 @@ jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}"
     --manifest-path "${work}/directory manifest")
 jp_contains("${jp_err}" "manifest must be an ordinary regular file")
 if(symbolic_result STREQUAL "0")
-    set(link_manifest "${work}/linked joyeer.toml")
-    file(CREATE_LINK "${FIXTURE_DIR}/single/joyeer.toml" "${link_manifest}"
+    set(link_manifest "${work}/linked project.toml")
+    file(CREATE_LINK "${FIXTURE_DIR}/single/project.toml" "${link_manifest}"
         SYMBOLIC RESULT result)
     if(NOT result STREQUAL "0")
         message(FATAL_ERROR "Manifest link creation failed after the capability probe: ${result}")
@@ -150,7 +150,7 @@ if(WIN32)
     jp_call(1 "${cwd}" check --compiler "${COMPILER_SPY}" --manifest-path NUL)
     jp_contains("${jp_err}" "manifest must be an ordinary regular file")
 else()
-    set(fifo "${work}/fifo joyeer.toml")
+    set(fifo "${work}/fifo project.toml")
     execute_process(COMMAND "${HOST_FIXTURE}" fifo "${fifo}" RESULT_VARIABLE result)
     if(NOT result STREQUAL "0")
         message(FATAL_ERROR "Cannot create FIFO manifest fixture: ${result}")
@@ -179,7 +179,7 @@ if(WIN32)
         else()
             jp_copy_project(single "${destination}")
             execute_process(COMMAND "${JOYPM_EXECUTABLE}" build --compiler "${COMPILER_SPY}"
-                --manifest-path "${destination}/joyeer.toml"
+                --manifest-path "${destination}/project.toml"
                 WORKING_DIRECTORY "${outside}"
                 RESULT_VARIABLE status OUTPUT_VARIABLE jp_out ERROR_VARIABLE jp_err TIMEOUT 15)
         endif()
@@ -194,13 +194,13 @@ if(WIN32)
         if(case STREQUAL "partial-init")
             jp_contains("${jp_err}" "partial initialization")
             jp_contains("${jp_err}" "created files were retained")
-            if(NOT EXISTS "${destination}/joyeer.toml" OR
+            if(NOT EXISTS "${destination}/project.toml" OR
                     EXISTS "${destination}/src" OR EXISTS "${destination}/.gitignore")
                 jp_fail("Partial initialization did not retain exactly its first manifest write")
             endif()
-            file(SHA256 "${destination}/joyeer.toml" before)
+            file(SHA256 "${destination}/project.toml" before)
             jp_call(1 "${outside}" init "${destination}" --name replacement)
-            file(SHA256 "${destination}/joyeer.toml" after)
+            file(SHA256 "${destination}/project.toml" after)
             if(NOT before STREQUAL after)
                 jp_fail("Retry overwrote the retained partial manifest")
             endif()
@@ -212,7 +212,7 @@ if(WIN32)
 else()
     host_project(non-executable-artifact artifact-not-executable)
     jp_call(1 "${cwd}" run --compiler "${HOST_FIXTURE}"
-        --manifest-path "${package}/joyeer.toml")
+        --manifest-path "${package}/project.toml")
     jp_contains("${jp_err}" "process permission denied")
 
     host_test_suite(signaled-suite artifact-copy)

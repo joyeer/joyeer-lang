@@ -43,7 +43,7 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
         return .Err(ToolError(message: "unknown command: " + command + "; use joypm --help", pos: -1))
     }
     var compiler = ""
-    var manifestPath = "joyeer.toml"
+    var manifestPath = "project.toml"
     var workspacePath = ""
     var hasManifest = false
     var release = false
@@ -175,8 +175,8 @@ func printHelp() {
         "  joypm --version\n" +
         "  joypm init <directory> --name <module> [--kind source|bin|test] [--output <name>]\n" +
         "  joypm check|build|run|test --compiler <path> [project options] [--module <name>]\n" +
-        "Project options: --manifest-path <joyeer.toml> OR --workspace <workspace.toml>, --release, --verbose\n" +
-        "Default input: joyeer.toml in the current directory; no upward discovery.\n" +
+        "Project options: --manifest-path <project.toml> OR --workspace <workspace.toml>, --release, --verbose\n" +
+        "Default input: project.toml in the current directory; no upward discovery.\n" +
         "Module schema 1: one [module], explicit sources/dependencies, kind, and bin/test output.\n" +
         "Workspace schema 1: one [workspace] with explicit member directories.\n" +
         "check selects all module kinds; build/run select bin; test selects test.\n" +

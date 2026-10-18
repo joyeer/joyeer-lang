@@ -107,7 +107,7 @@ file(MAKE_DIRECTORY "${cwd}")
 jp_call(1 "${cwd}" build --compiler "${COMPILER_SPY}"
     --workspace "${diamond}/workspace.toml" --module graph.root)
 jp_contains("${jp_err}" "module dependency cycle: graph.unselected -> graph.unselected")
-jp_contains_path("${jp_err}" "${diamond}/unused/joyeer.toml:")
+jp_contains_path("${jp_err}" "${diamond}/unused/project.toml:")
 if(EXISTS "${cwd}/compiler-record.txt")
     jp_fail("An unselected cycle reached the compiler")
 endif()
