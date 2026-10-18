@@ -1,6 +1,6 @@
 #include "compiler/codegen/llvm.h"
 #include "compiler/codegen/linker.h"
-#include "backend/native_backend.h"
+#include "backend/backend.h"
 #include "compiler/ir/irlowering.h"
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
@@ -118,8 +118,8 @@ TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
         }
     };
     Printed before;
-    ASSERT_EQ(joyeer_native_backend_print_module(module.get(), collect, &before),
-            JOYEER_NATIVE_BACKEND_SUCCESS);
+    ASSERT_EQ(joyeer_backend_print_module(module.get(), collect, &before),
+            JOYEER_BACKEND_SUCCESS);
     ASSERT_FALSE(before.failed);
     ASSERT_FALSE(before.text.empty());
     EXPECT_EQ(before.text.find("target triple"), std::string::npos);
@@ -141,22 +141,22 @@ TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
             EXPECT_FALSE(error) << error.message();
         }
     } cleanup {directory};
-    for (const auto level : {JOYEER_NATIVE_BACKEND_O0, JOYEER_NATIVE_BACKEND_O1,
-                            JOYEER_NATIVE_BACKEND_O2, JOYEER_NATIVE_BACKEND_O3}) {
+    for (const auto level : {JOYEER_BACKEND_O0, JOYEER_BACKEND_O1,
+                            JOYEER_BACKEND_O2, JOYEER_BACKEND_O3}) {
         SCOPED_TRACE(level);
         const auto object = directory / ("object-" + std::to_string(level) + ".o");
         const auto encoded = object.u8string();
         const std::string path(encoded.begin(), encoded.end());
-        const JoyeerNativeBackendObjectOptions objectOptions {
-            JOYEER_NATIVE_BACKEND_ABI_VERSION, sizeof(JoyeerNativeBackendObjectOptions),
+        const JoyeerBackendObjectOptions objectOptions {
+            JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendObjectOptions),
             "not LLVM assembly", 17, path.c_str(), static_cast<uint32_t>(level), module.get(),
         };
-        ASSERT_EQ(joyeer_native_backend_emit_object(&objectOptions, nullptr, nullptr),
-                JOYEER_NATIVE_BACKEND_SUCCESS);
+        ASSERT_EQ(joyeer_backend_emit_object(&objectOptions, nullptr, nullptr),
+                JOYEER_BACKEND_SUCCESS);
         EXPECT_GT(std::filesystem::file_size(object), 0u);
         Printed after;
-        ASSERT_EQ(joyeer_native_backend_print_module(module.get(), collect, &after),
-                JOYEER_NATIVE_BACKEND_SUCCESS);
+        ASSERT_EQ(joyeer_backend_print_module(module.get(), collect, &after),
+                JOYEER_BACKEND_SUCCESS);
         ASSERT_FALSE(after.failed);
         EXPECT_EQ(after.text, before.text);
     }

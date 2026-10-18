@@ -1,4 +1,4 @@
-#include "backend/native_backend.h"
+#include "backend/backend.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -13,7 +13,7 @@
 static int diagnosticSeen = 0;
 
 static void collectIRDiagnostic(
-    void* context, const JoyeerNativeBackendIRDiagnostic* diagnostic) {
+    void* context, const JoyeerBackendIRDiagnostic* diagnostic) {
     (void)context;
     if (diagnostic != NULL && diagnostic->message != NULL && diagnostic->messageSize != 0) {
     diagnosticSeen = 1;
@@ -21,36 +21,36 @@ static void collectIRDiagnostic(
 }
 
 static int checkModuleInputs(void) {
-    JoyeerNativeBackendModule* module = NULL;
+    JoyeerBackendModule* module = NULL;
     diagnosticSeen = 0;
-    if (joyeer_native_backend_build_module(NULL, &module, collectIRDiagnostic, NULL) !=
-        JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || module != NULL || !diagnosticSeen) return 10;
+    if (joyeer_backend_build_module(NULL, &module, collectIRDiagnostic, NULL) !=
+        JOYEER_BACKEND_INVALID_ARGUMENT || module != NULL || !diagnosticSeen) return 10;
     static const char truncated[] = {0, 0, 0, 0, 0, 0, 0, 0};
-    JoyeerNativeBackendModuleOptions options = {
-    JOYEER_NATIVE_BACKEND_ABI_VERSION, sizeof(JoyeerNativeBackendModuleOptions),
-    1, truncated, sizeof(truncated), JOYEER_NATIVE_BACKEND_O0, 0, 0, 0,
+    JoyeerBackendModuleOptions options = {
+    JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendModuleOptions),
+    2, truncated, sizeof(truncated), JOYEER_BACKEND_O0, 0, 0, 0,
     };
     diagnosticSeen = 0;
-    if (joyeer_native_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=
-        JOYEER_NATIVE_BACKEND_INVALID_IR || module != NULL || !diagnosticSeen) return 11;
+    if (joyeer_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=
+        JOYEER_BACKEND_INVALID_IR || module != NULL || !diagnosticSeen) return 11;
     options.irVersion = 0;
     diagnosticSeen = 0;
-    if (joyeer_native_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=
-        JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || module != NULL || !diagnosticSeen) return 12;
-    if (joyeer_native_backend_module_has_entry(NULL) != 0 ||
-        joyeer_native_backend_print_module(NULL, NULL, NULL) !=
-        JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT) return 13;
-    joyeer_native_backend_destroy_module(NULL);
+    if (joyeer_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=
+        JOYEER_BACKEND_INVALID_ARGUMENT || module != NULL || !diagnosticSeen) return 12;
+    if (joyeer_backend_module_has_entry(NULL) != 0 ||
+        joyeer_backend_print_module(NULL, NULL, NULL) !=
+        JOYEER_BACKEND_INVALID_ARGUMENT) return 13;
+    joyeer_backend_destroy_module(NULL);
     return 0;
 }
 
 static void collectDiagnostic(
         void* context,
-        JoyeerNativeBackendStatus status,
+        JoyeerBackendStatus status,
         const char* message,
         size_t messageSize) {
     (void)context;
-    if (status == JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT &&
+    if (status == JOYEER_BACKEND_INVALID_ARGUMENT &&
         message != NULL && messageSize != 0) {
         diagnosticSeen = 1;
     }
@@ -59,11 +59,11 @@ static void collectDiagnostic(
 #if defined(_WIN32)
 static void printDiagnostic(
         void* context,
-        JoyeerNativeBackendStatus status,
+        JoyeerBackendStatus status,
         const char* message,
         size_t messageSize) {
     (void)context;
-    fprintf(stderr, "native backend status %u: ", (unsigned)status);
+    fprintf(stderr, "JoyeerBackend status %u: ", (unsigned)status);
     if (message != NULL) fwrite(message, 1, messageSize, stderr);
     fputc('\n', stderr);
 }
@@ -140,17 +140,17 @@ static int checkUnicodePaths(void) {
             "!5 = !DILocation(line: 1, column: 1, scope: !4)\n"
             "!6 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
             "!7 = !{i32 2, !\"CodeView\", i32 1}\n";
-    const JoyeerNativeBackendObjectOptions objectOptions = {
-        JOYEER_NATIVE_BACKEND_ABI_VERSION,
-        sizeof(JoyeerNativeBackendObjectOptions),
+    const JoyeerBackendObjectOptions objectOptions = {
+        JOYEER_BACKEND_ABI_VERSION,
+        sizeof(JoyeerBackendObjectOptions),
         llvmIR,
         sizeof(llvmIR) - 1,
         objectUtf8,
-        JOYEER_NATIVE_BACKEND_O0,
+        JOYEER_BACKEND_O0,
     };
     result = 7;
-    if (joyeer_native_backend_emit_object(&objectOptions, printDiagnostic, NULL) !=
-        JOYEER_NATIVE_BACKEND_SUCCESS || !isNonemptyFile(objectPath)) {
+    if (joyeer_backend_emit_object(&objectOptions, printDiagnostic, NULL) !=
+        JOYEER_BACKEND_SUCCESS || !isNonemptyFile(objectPath)) {
         goto cleanup;
     }
 
@@ -159,15 +159,15 @@ static int checkUnicodePaths(void) {
         "/ENTRY:unicode_entry", "/DEBUG:FULL", "/INCREMENTAL:NO",
         outputArgument, pdbArgument, objectUtf8,
     };
-    const JoyeerNativeBackendLinkOptions linkOptions = {
-        JOYEER_NATIVE_BACKEND_ABI_VERSION,
-        sizeof(JoyeerNativeBackendLinkOptions),
+    const JoyeerBackendLinkOptions linkOptions = {
+        JOYEER_BACKEND_ABI_VERSION,
+        sizeof(JoyeerBackendLinkOptions),
         arguments,
         sizeof(arguments) / sizeof(arguments[0]),
     };
     result = 8;
-    if (joyeer_native_backend_link_coff(&linkOptions, printDiagnostic, NULL) !=
-        JOYEER_NATIVE_BACKEND_SUCCESS || !isNonemptyFile(executablePath) ||
+    if (joyeer_backend_link_coff(&linkOptions, printDiagnostic, NULL) !=
+        JOYEER_BACKEND_SUCCESS || !isNonemptyFile(executablePath) ||
         !isNonemptyFile(pdbPath)) {
         goto cleanup;
     }
@@ -184,55 +184,55 @@ cleanup:
 #endif
 
 int main(void) {
-    if (joyeer_native_backend_abi_version() !=
-        JOYEER_NATIVE_BACKEND_ABI_VERSION) {
+    if (joyeer_backend_abi_version() !=
+        JOYEER_BACKEND_ABI_VERSION) {
         return 1;
     }
-    if (strcmp(joyeer_native_backend_llvm_version(), "22.1.8") != 0) {
+    if (strcmp(joyeer_backend_llvm_version(), "22.1.8") != 0) {
         return 2;
     }
 #if defined(_WIN32)
-    if (!joyeer_native_backend_has_coff_linker() ||
-        joyeer_native_backend_has_macho_linker() ||
-        joyeer_native_backend_has_elf_linker()) {
+    if (!joyeer_backend_has_coff_linker() ||
+        joyeer_backend_has_macho_linker() ||
+        joyeer_backend_has_elf_linker()) {
         return 3;
     }
 #elif defined(__APPLE__)
-    if (joyeer_native_backend_has_coff_linker() ||
-        !joyeer_native_backend_has_macho_linker() ||
-        joyeer_native_backend_has_elf_linker()) {
+    if (joyeer_backend_has_coff_linker() ||
+        !joyeer_backend_has_macho_linker() ||
+        joyeer_backend_has_elf_linker()) {
         return 3;
     }
 #else
-    if (joyeer_native_backend_has_coff_linker() ||
-        joyeer_native_backend_has_macho_linker() ||
-        !joyeer_native_backend_has_elf_linker()) {
+    if (joyeer_backend_has_coff_linker() ||
+        joyeer_backend_has_macho_linker() ||
+        !joyeer_backend_has_elf_linker()) {
         return 3;
     }
 #endif
 
-    JoyeerNativeBackendObjectOptions invalidOptions = { 0 };
-    const JoyeerNativeBackendStatus status = joyeer_native_backend_emit_object(
+    JoyeerBackendObjectOptions invalidOptions = { 0 };
+    const JoyeerBackendStatus status = joyeer_backend_emit_object(
             &invalidOptions,
             collectDiagnostic,
             NULL);
-    if (status != JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
+    if (status != JOYEER_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
         return 4;
     }
 
     diagnosticSeen = 0;
-    JoyeerNativeBackendLinkOptions invalidLinkOptions = { 0 };
+    JoyeerBackendLinkOptions invalidLinkOptions = { 0 };
 #if defined(_WIN32)
-    const JoyeerNativeBackendStatus linkStatus = joyeer_native_backend_link_coff(
+    const JoyeerBackendStatus linkStatus = joyeer_backend_link_coff(
 #elif defined(__APPLE__)
-    const JoyeerNativeBackendStatus linkStatus = joyeer_native_backend_link_macho(
+    const JoyeerBackendStatus linkStatus = joyeer_backend_link_macho(
 #else
-    const JoyeerNativeBackendStatus linkStatus = joyeer_native_backend_link_elf(
+    const JoyeerBackendStatus linkStatus = joyeer_backend_link_elf(
 #endif
             &invalidLinkOptions,
             collectDiagnostic,
             NULL);
-    if (linkStatus != JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
+    if (linkStatus != JOYEER_BACKEND_INVALID_ARGUMENT || !diagnosticSeen) {
         return 5;
     }
     const int moduleStatus = checkModuleInputs();

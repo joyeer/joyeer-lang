@@ -244,10 +244,10 @@ add_subdirectory(src)
 add_subdirectory(tests)
 
 include(GNUInstallDirs)
-install(TARGETS joyeer JoyeerNativeBackend
+install(TARGETS joyeer JoyeerBackend
     RUNTIME DESTINATION . COMPONENT JoyeerRuntime
     LIBRARY DESTINATION . COMPONENT JoyeerRuntime)
-install(TARGETS JoyeerNativeRuntime
+install(TARGETS JoyeerRuntime
     ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION licenses COMPONENT JoyeerRuntime)

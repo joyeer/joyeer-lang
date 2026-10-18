@@ -23,6 +23,11 @@ ScopeId SemanticModel::fileScope() const {
     return fileScope_;
 }
 
+bool SemanticModel::isRuntimeSource(SourceSpan span) const {
+    const auto found = runtimeSources_.find(span.sourceId);
+    return found != runtimeSources_.end() && found->second;
+}
+
 std::optional<NodeId> SemanticModel::nodeId(const syntax::NodePtr& node) const {
     if (node == nullptr) return std::nullopt;
     const auto found = nodeIds_.find(node.get());

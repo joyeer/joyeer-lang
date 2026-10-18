@@ -30,6 +30,7 @@ enum class NameResolutionDiagnosticId {
 struct ModuleInput {
     std::string name;
     std::vector<syntax::SourceFileSyntax::Ptr> files;
+    bool runtimeContext = false;
 };
 
 struct NameResolutionDiagnostic {

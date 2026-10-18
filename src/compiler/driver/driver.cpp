@@ -14,8 +14,8 @@
 
 #include <vector>
 
-#ifndef JOYEER_NATIVE_RUNTIME_PATH
-#define JOYEER_NATIVE_RUNTIME_PATH ""
+#ifndef JOYEER_RUNTIME_PATH
+#define JOYEER_RUNTIME_PATH ""
 #endif
 
 #ifndef JOYEER_SDK_ROOT_PATH
@@ -78,8 +78,8 @@ std::filesystem::path executableDirectory() {
     return {};
 }
 
-std::filesystem::path nativeRuntimePath() {
-    const auto configuredPath = std::filesystem::u8path(JOYEER_NATIVE_RUNTIME_PATH);
+std::filesystem::path runtimePath() {
+    const auto configuredPath = std::filesystem::u8path(JOYEER_RUNTIME_PATH);
     if (configuredPath.is_relative()) {
         const auto directory = executableDirectory();
         if (!directory.empty()) return directory / configuredPath;
@@ -102,6 +102,7 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->moduleName,
                 arguments->sourceFiles,
                 arguments->modules,
+                arguments->runtimeModules,
             });
 }
 
@@ -111,7 +112,8 @@ int Driver::run() {
         diagnostics->printErrors();
         return 1;
     }
-    if(arguments->outputMode == joyeer::OutputMode::executable) {
+    if(arguments->outputMode == joyeer::OutputMode::executable ||
+       arguments->outputMode == joyeer::OutputMode::runtimeObject) {
         const auto& source = compiler->getLastCompiledSourceFile();
         if (source == nullptr) {
             diagnostics->reportDiagnostic(
@@ -119,11 +121,8 @@ int Driver::run() {
                     "driver.missing-source-result",
                     "compiler produced no source result");
         } else {
-            const auto linking = joyeer::native::Linker().link(
-                    source->llvmIR,
-                    source->llvmHasEntryPoint,
-                    joyeer::native::LinkOptions {
-                        nativeRuntimePath(),
+            const joyeer::native::LinkOptions options {
+                        runtimePath(),
                         std::filesystem::u8path(JOYEER_SDK_ROOT_PATH),
                         JOYEER_SDK_VERSION,
                         JOYEER_MACOS_DEPLOYMENT_TARGET,
@@ -133,7 +132,10 @@ int Driver::run() {
                         arguments->debugInfo,
                         source->getAbstractPath(),
                         source->llvmModule,
-                    });
+                    };
+            const auto linking = arguments->outputMode == joyeer::OutputMode::runtimeObject
+                    ? joyeer::native::Linker().emitObject(source->llvmIR, options)
+                    : joyeer::native::Linker().link(source->llvmIR, source->llvmHasEntryPoint, options);
             for (const auto& diagnostic : linking.diagnostics) {
                         diagnostics->reportDiagnostic(
                         ErrorLevel::failure,

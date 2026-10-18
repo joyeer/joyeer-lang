@@ -109,6 +109,19 @@ void Builder::emitFunction(const ir::Function& function) {
     builder.SetCurrentDebugLocation(nullptr);
 }
 
+void Builder::emitNativeExport(const ir::Function& function) {
+    auto* entry = declareNativeFunction(function);
+    builder.SetCurrentDebugLocation(nullptr);
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context(), "entry", entry));
+    std::vector<llvm::Value*> arguments;
+    for (auto& argument : entry->args()) arguments.push_back(&argument);
+    // The exported C entry is separate from Joyeer's internal calling
+    // convention, even when the first scalar slice needs no conversions.
+    auto* result = builder.CreateCall(functions.at(function.id), arguments);
+    if (function.returnsValue) builder.CreateRet(result);
+    else builder.CreateRetVoid();
+}
+
 bool Builder::emitInstruction(const ir::Instruction& instruction) {
     const auto argument = [&](size_t index) { return operand(instruction.operands.at(index)); };
     llvm::Value* result = nullptr;
@@ -419,6 +432,15 @@ void Builder::emitEntry() {
                 entry->debugLocation.has_value() ? entry->debugLocation->span : SourceSpan{}, entry->id,
                 std::nullopt, "entry function must have signature 'func main()' or 'func main(args: [String]): Int'"});
         return;
+    }
+    for (const auto* symbol : {"joyeer_main", "joyeer_main_uses_arguments"}) {
+        if (module().getNamedValue(symbol) != nullptr) {
+            diagnostics.push_back({DiagnosticId::invalidEntryPoint,
+                    entry->debugLocation.has_value() ? entry->debugLocation->span : SourceSpan{},
+                    entry->id, std::nullopt,
+                    "native binding conflicts with toolchain entry symbol '" + std::string(symbol) + "'"});
+            return;
+        }
     }
     // The native C runtime calls these stable adapters, not the source main's
     // language-specific signature. Ownership of argv remains with the runtime.

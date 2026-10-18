@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-struct JoyeerNativeBackendModule;
+struct JoyeerBackendModule;
 
 namespace joyeer::native {
 
@@ -37,7 +37,7 @@ struct LinkOptions {
     std::filesystem::path sourceFile;
     // Native compilation consumes objects directly; text remains a fallback
     // for standalone linker tests and explicit LLVM inspection workflows.
-    std::shared_ptr<JoyeerNativeBackendModule> module;
+    std::shared_ptr<JoyeerBackendModule> module;
 };
 
 struct LinkResult {
@@ -51,6 +51,9 @@ struct LinkResult {
 
 class Linker {
 public:
+    [[nodiscard]] LinkResult emitObject(
+            const std::string& llvmIR,
+            const LinkOptions& options) const;
     [[nodiscard]] LinkResult link(
             const std::string& llvmIR,
             bool hasEntryPoint,

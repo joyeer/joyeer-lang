@@ -82,6 +82,7 @@ private:
     std::vector<size_t> payloadOffsets(const ir::EnumCaseDefinition& definition);
     void defineTypes();
     llvm::Function* declareFunction(const ir::Function& function);
+    llvm::Function* declareNativeFunction(const ir::Function& function);
     llvm::FunctionCallee runtime(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Type*> parameters);
     llvm::CallInst* call(std::string_view name, llvm::Type* result,
@@ -100,6 +101,7 @@ private:
 
     // Functions/instructions preserve SSA IDs while LLVM owns the actual values.
     void emitFunction(const ir::Function& function);
+    void emitNativeExport(const ir::Function& function);
     bool emitInstruction(const ir::Instruction& instruction);
     void emitEntry();
     void trap(llvm::Value* condition, std::string_view message);

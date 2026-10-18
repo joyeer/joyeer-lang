@@ -1,0 +1,46 @@
+@c_extern(symbol: "c_fixture_identity")
+func nativeIdentity(value: Int): Int
+
+@c_extern(symbol: "c_fixture_zero")
+func nativeZero(): Int
+
+@c_extern(symbol: "c_fixture_store")
+func nativeStore(value: Int): Void
+
+@c_extern(symbol: "c_fixture_load")
+func nativeLoad(): Int
+
+@c_extern(symbol: "c_fixture_arguments")
+func nativeArguments(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int,
+                     g: Int, h: Int, i: Int, j: Int, k: Int, l: Int): Int
+
+private func identity(value: Int): Int {
+    return nativeIdentity(value: value)
+}
+
+@c_export(symbol: "joyeer_fixture_identity")
+private func exportedIdentity(input value: Int): Int {
+    return identity(value: value)
+}
+
+@c_export(symbol: "joyeer_fixture_zero")
+func exportedZero(): Int {
+    return nativeZero()
+}
+
+@c_export(symbol: "joyeer_fixture_store")
+func exportedStore(value: Int): () {
+    nativeStore(value: value)
+}
+
+@c_export(symbol: "joyeer_fixture_load")
+func exportedLoad(): Int {
+    return nativeLoad()
+}
+
+@c_export(symbol: "joyeer_fixture_arguments")
+func exportedArguments(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int,
+                       g: Int, h: Int, i: Int, j: Int, k: Int, l: Int): Int {
+    return nativeArguments(a: a, b: b, c: c, d: d, e: e, f: f,
+                           g: g, h: h, i: i, j: j, k: k, l: l)
+}

@@ -45,6 +45,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Strings | Concatenation, comparisons, byte count/indexing, owned `utf8()` byte array |
 | Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, byte conversions, legacy `readFile(path:)`, portable filesystem functions, synchronous `runProcess` |
 | Output | Frontend validation, textual LLVM IR, native executables, optimization and debug flags |
+| Internal runtime bindings | Explicitly authorized named units only: `@c_extern`/`@c_export`, borrowing `Int`/C `int64_t` parameters, explicit `Int` or `Void`/`()` results, and object-only output |
 
 This is an implemented subset with regression coverage, not a claim that every
 combination is supported or that the compiler is free of correctness gaps.
@@ -70,6 +71,16 @@ the root name. Removed `--module-root` and `--module` flags report migration
 errors. See [CLI usage](cli.md#named-compilation-units) for exact input and
 path rules. The compiler flags do not add library artifacts, a manifest format,
 or cleanup facilities; the separate joypm owns local manifest policy.
+
+The internal C binding exception uses `--runtime-module <name>` per supplied
+unit and `--emit-runtime-object <file>` for a runtime object without startup
+or executable linking. It is not general application FFI or a stable
+binary-module ABI. Imports and names such as `Foundation` do not grant runtime
+context. Ordinary modules use checked, unannotated wrappers rather than
+declaring or directly calling C bindings. Static/shared provider selection and
+loader deployment belong to the native build system, not joypm manifests.
+Do not generate C signatures using `Bool`, `UInt8`, other widths, floating
+types, addresses, `Optional`, `Result`, or ordinary aggregates as if supported.
 
 ## Local project-manager source boundary
 
@@ -97,6 +108,9 @@ See [CLI usage](cli.md#local-projects-with-joypm).
 - User-defined generics, traits/protocols/interfaces, classes, closures,
   concurrency, or async functions.
 - User-defined `init` / `deinit` bodies or explicit copy initializers.
+- General user FFI, native pointer/unsafe syntax, output pointers, callbacks,
+  C aggregates/varargs, or C binding types beyond the runtime-only `Int`/`Void`
+  subset. `@spec`/`@property` shorthand and DSLs are also unsupported.
 - Top-level executable statements or global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.

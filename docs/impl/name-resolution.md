@@ -33,6 +33,11 @@ must wait for type information. The public model is in
 `src/compiler/frontend/semantic.h`; the resolver API is in
 `src/compiler/frontend/nameresolution.h`.
 
+For internal runtime compilation, each `ModuleInput.runtimeContext` is an
+explicit toolchain input. The semantic model records it by source identity
+for later C binding checks. Imports and module/path spellings do not grant
+or propagate that context; see [C binding coverage](c-interop.md).
+
 ---
 
 ## 2. Resolution order

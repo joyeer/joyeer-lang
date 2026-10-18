@@ -35,6 +35,10 @@ if(BUILD_TESTING AND JOYEER_BUILD_JOYPM)
     add_subdirectory(joypm)
 endif()
 
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(c-interop)
+endif()
+
 if(JOYEER_BUILD_UNITTESTS)
     add_subdirectory(unittests)
 endif()

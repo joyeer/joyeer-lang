@@ -19,6 +19,7 @@ struct CommandLineArguments {
     std::string moduleName;
     std::vector<std::filesystem::path> sourceFiles;
     std::vector<joyeer::ModuleSources> modules;
+    std::vector<std::string> runtimeModules;
 
     bool accepted = false;
     joyeer::OutputMode outputMode = joyeer::OutputMode::validate;

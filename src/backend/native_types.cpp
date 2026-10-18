@@ -49,17 +49,34 @@ std::vector<Diagnostic> Builder::build() {
             }
             initializeDebug();
         }
+        // Reserve C linkage names first, so private generated helpers can never
+        // take a native symbol and force LLVM to rename the public entry.
+        for (const auto& function : source.functions) {
+            if (function.nativeBinding.has_value()) declareNativeFunction(function);
+        }
         emitOwnership();
         // Declare source functions before emitting their bodies so recursive
         // and forward calls do not depend on source declaration order.
         for (const auto& function : source.functions) {
-            if (!function.isExternal) functions.emplace(function.id, declareFunction(function));
+            if (!function.isExternal) {
+                functions.emplace(function.id, declareFunction(function));
+            } else if (function.nativeBinding.has_value()) {
+                functions.emplace(function.id, declareNativeFunction(function));
+            }
         }
         for (const auto& function : source.functions) {
             if (!function.isExternal) emitFunction(function);
             if (!diagnostics.empty()) break;
         }
-        if (diagnostics.empty()) emitEntry();
+        if (diagnostics.empty()) {
+            for (const auto& function : source.functions) {
+                if (function.nativeBinding.has_value() &&
+                    function.nativeBinding->kind == NativeBindingKind::cExport) {
+                    emitNativeExport(function);
+                }
+            }
+            if (!source.isRuntimeObject) emitEntry();
+        }
         if (debug) {
             debug->finalize();
             // Preserve the existing textual debug-intrinsic contract while
@@ -219,7 +236,29 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
     }
     auto* result = unit(function.resultType) ? builder.getVoidTy() : llvmType(function.resultType);
     return llvm::Function::Create(llvm::FunctionType::get(result, parameters, false),
-            llvm::GlobalValue::ExternalLinkage, "joyeer_fn_" + std::to_string(function.id), module());
+            source.isRuntimeObject || function.nativeBinding.has_value()
+                    ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
+            "joyeer_fn_" + std::to_string(function.id), module());
+}
+
+llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
+    std::vector<llvm::Type*> parameters;
+    for (const auto& parameter : function.parameters) {
+        parameters.push_back(llvmType(parameter.value.type));
+    }
+    auto* result = unit(function.resultType) ? builder.getVoidTy() : llvmType(function.resultType);
+    auto* signature = llvm::FunctionType::get(result, parameters, false);
+    const auto& symbol = function.nativeBinding->symbol;
+    if (auto* existing = module().getFunction(symbol)) {
+        if (existing->getFunctionType() != signature) {
+            throw std::runtime_error("conflicting native symbol '" + symbol + "'");
+        }
+        return existing;
+    }
+    auto* entry = llvm::Function::Create(
+            signature, llvm::GlobalValue::ExternalLinkage, symbol, module());
+    entry->setCallingConv(llvm::CallingConv::C);
+    return entry;
 }
 
 llvm::FunctionCallee Builder::runtime(std::string_view name, llvm::Type* result,

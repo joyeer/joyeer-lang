@@ -677,7 +677,12 @@ private:
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
-        if (module->sourceFile(0) != nullptr) {
+        function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
+        if (const auto* binding = model->nativeBinding(*symbol)) {
+            function.nativeBinding = *binding;
+            function.isExternal = binding->kind == NativeBindingKind::cImport;
+        }
+        if (module->sourceFile(0) != nullptr && !function.isExternal) {
             function.debugScope = debugScopeForNode(declaration, function.id);
             function.debugLocation = ir::DebugLocation {
                 declaration->span,
@@ -688,7 +693,7 @@ private:
         function.resultType = signature->result;
         function.returnsValue = signature->result != model->types().voidType() &&
                 signature->result != model->types().neverType();
-        function.entry = 0;
+        function.entry = function.isExternal ? ir::invalidBlockId : 0;
 
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
             const auto& parameter = declaration->parameters[index];
@@ -726,7 +731,7 @@ private:
                 parameterEffect == syntax::AccessEffect::initializing,
                 parameter->label == nullptr ? std::string() : parameter->label->rawValue,
             });
-            const auto debugVariable = ensureDebugVariable(
+            const auto debugVariable = function.isExternal ? std::nullopt : ensureDebugVariable(
                     *parameterSymbol,
                     function.id,
                     static_cast<uint32_t>(index + 1));
@@ -752,7 +757,9 @@ private:
             const auto symbol = semanticModel.declaredSymbol(declaration);
             if (!symbol.has_value()) continue;
             const auto found = functions.find(*symbol);
-            if (found != functions.end()) lowerFunction(declaration, found->second);
+            if (found != functions.end() && !module->functions[found->second].isExternal) {
+                lowerFunction(declaration, found->second);
+            }
         }
     }
 

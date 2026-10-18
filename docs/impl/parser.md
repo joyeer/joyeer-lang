@@ -13,6 +13,8 @@ The parser converts the explicit token stream produced by the
 [lexer](lexer.md) into a syntax-only AST. Its current surface includes:
 
 - typed `func` declarations and mandatory call-site labels;
+- parenthesized declaration annotations with argument syntax, including
+  bodyless annotated functions for later C import/export validation;
 - file-leading dotted module imports (without aliases or wildcards);
 - `public`, `internal`, and `private` top-level declarations and stored fields;
 - `let` / `var` bindings;
@@ -132,8 +134,10 @@ binding_decl       ::= binding_kind identifier
                        [ '=' expression ]
 binding_kind       ::= 'let' | 'var'
 
-func_decl          ::= 'func' identifier parameter_clause
-                       [ ':' type ] block
+func_decl          ::= attribute* [ visibility ] 'func' identifier parameter_clause
+                       [ ':' type ] [ block ]
+attribute          ::= '@' identifier argument_clause
+visibility         ::= 'public' | 'internal' | 'private'
 parameter_clause   ::= '(' [ parameter ( ',' parameter )* ','? ] ')'
 parameter          ::= identifier [ identifier ] ':' [ 'borrowing' | 'inout' | 'consuming' | 'initializing' ] type
 
@@ -151,6 +155,13 @@ associated_type    ::= [ identifier ':' ] type
 ```
 
 Rules and intentional restrictions:
+
+An omitted body is parsed only when annotations are present. Type checking
+admits it only for an authorized, valid `@c_extern` declaration; every other
+function requires a body. Annotation arguments reuse call-argument syntax
+for precise diagnostics, but C annotations admit only a `symbol:` string
+literal without access markers. `@spec`/`@property` shorthand/DSL syntax and
+parameter defaults remain unsupported. See [C binding coverage](c-interop.md).
 
 1. A top-level binding may infer its type; a stored field must declare one.
 2. A function parameter always has an external label. With one identifier it

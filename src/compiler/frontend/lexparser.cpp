@@ -493,8 +493,7 @@ void LexParser::parseOperatorOrPunctuation() {
             emitInvalid(start);
             return;
         case '@':
-            report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "@");
-            emitInvalid(start);
+            emit(atSign, start);
             return;
         case '#':
             report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "#");

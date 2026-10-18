@@ -23,18 +23,28 @@ let (x, y) = somePair        // tuple destructuring
 ### 3.2 Function declarations
 
 ```
-func_decl       ::= [ visibility ] [ method_effect ] 'func' identifier
+func_decl       ::= attribute* [ visibility ] [ method_effect ] 'func' identifier
                     '(' [ param , ... ] ')'
-                    [ ':' return_type ]
-                    function_body
+                    [ ':' type ]
+                    [ block ]
 
 method_effect   ::= 'borrowing' | 'mutating' | 'consuming'   // self access; 'borrowing' is default
-param           ::= label [ identifier ] ':' [ access_effect ] type [ '=' default_expr ]
+param           ::= label [ identifier ] ':' [ access_effect ] type [ '=' expression ]
 label           ::= identifier
 access_effect   ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'   // 'borrowing' is default
-return_type     ::= type
-function_body   ::= '{' statement* '}'
+block           ::= '{' statement* '}'
 ```
+
+`attribute` is defined in [§11](11-annotations.md) and [§17](17-grammar.md).
+The optional body in this production is constrained semantically: only a
+`@c_extern` declaration may omit it, and that declaration must omit it.
+All other functions, including `@c_export`, require a body. The restricted
+C binding rules, including authorization and explicit result types, are
+specified in [§19](19-c-interop.md), not implied by the grammar alone.
+
+**Implementation status:** the initial runtime-only C binding subset accepts
+bodyless imports. Ordinary functions still require bodies; broader C scalar
+support is tracked in [the implementation boundary](../impl/c-interop.md).
 
 `method_effect` is only meaningful for functions that have a receiver
 (methods declared inside a `struct`, `enum`, or `extension`). Free functions
@@ -68,6 +78,9 @@ A `Void` return may be written as `: ()` or omitted entirely. A block's
 (or any block, including `if` / `match` arms) is an expression of the return
 type, the `return` keyword may be omitted for it. `return` is still required
 for early exits.
+
+C binding declarations must write their result type explicitly, including
+`Void` or `()`; see [§19.2](19-c-interop.md#192-declarations-and-annotation-arguments).
 
 ```joyeer
 func sq(x: Int): Int { x * x }
@@ -122,7 +135,7 @@ which initializes `self` field-by-field, §3.7).
 
 #### 3.2.5 Default parameter values
 
-A parameter may declare a default value with `= default_expr` (§3.2 grammar).
+A parameter may declare a default value with `= expression` (§3.2 grammar).
 When the caller omits that argument, the default expression is used.
 
 ```joyeer
@@ -170,6 +183,15 @@ process exit status in `0..255` after normal scope and argument cleanup.
 Values outside that range cause an explicit runtime error and failure,
 not truncation. This limit applies to Joyeer's own entry point, not to exit
 statuses observed from other processes.
+
+#### 3.2.7 C binding declarations
+
+`@c_extern(symbol: "...")` and `@c_export(symbol: "...")` attach native
+import/export semantics to the source function signature. Their complete
+rules, including body presence, scalar types, labels, symbol identity,
+visibility, diagnostics, and linking responsibilities, are specified in
+[§19](19-c-interop.md). They do not create ordinary bodyless prototypes,
+new parameter syntax, or a general user FFI.
 
 ### 3.3 Struct declarations
 
@@ -340,9 +362,9 @@ enclosing statement (§4.5.3).
 
 ```
 init_decl       ::= [ visibility ] 'init' '(' [ param , ... ] ')'
-                    function_body
+                    block
 
-deinit_decl     ::= 'deinit' '(' ')' function_body
+deinit_decl     ::= 'deinit' '(' ')' block
 ```
 
 - `init` constructs a value. The body must initialize every stored field

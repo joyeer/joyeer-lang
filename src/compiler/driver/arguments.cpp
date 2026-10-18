@@ -268,7 +268,22 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     }
                 }
             }
-        } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o")) {
+        } else if (parseOptions && *iterator == "--runtime-module") {
+            ++iterator;
+            if (iterator == arguments.end()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                        "--runtime-module requires an explicit logical module name");
+                break;
+            }
+            if (!joyeer::isModuleName(*iterator) ||
+                std::find(runtimeModules.begin(), runtimeModules.end(), *iterator) != runtimeModules.end()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                        "--runtime-module requires a valid, nonduplicate logical module name");
+            } else {
+                runtimeModules.push_back(*iterator);
+            }
+        } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o" ||
+                                   *iterator == "--emit-runtime-object")) {
             const auto option = *iterator;
             ++iterator;
             if (iterator == arguments.end()) {
@@ -289,7 +304,9 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             }
             outputMode = option == "--emit-llvm"
                     ? OutputMode::llvmIR
-                    : OutputMode::executable;
+                    : option == "--emit-runtime-object"
+                            ? OutputMode::runtimeObject
+                            : OutputMode::executable;
             if (iterator->empty()) {
                 diagnostics->reportDiagnostic(
                         ErrorLevel::failure, "driver.output-file-error",
@@ -340,6 +357,20 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     ErrorLevel::failure, "dependency module '%s' conflicts with the root module", module.name.c_str());
         }
         inputs.insert(inputs.end(), module.files.begin(), module.files.end());
+    }
+    for (const auto& name : runtimeModules) {
+        if (moduleName.empty() || (name != moduleName &&
+            std::none_of(modules.begin(), modules.end(),
+                         [&](const auto& module) { return module.name == name; }))) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                    "runtime context must select an explicitly supplied named module: '" + name + "'");
+        }
+    }
+    if (outputMode == OutputMode::runtimeObject &&
+        (moduleName.empty() || std::find(runtimeModules.begin(), runtimeModules.end(), moduleName) ==
+                                      runtimeModules.end())) {
+        diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                "--emit-runtime-object requires the named root in --runtime-module");
     }
     for (size_t index = 0; index < inputs.size(); ++index) {
         std::error_code error;
@@ -406,6 +437,8 @@ void CommandLineArguments::printUsage() {
     std::cout << "  -o <file>           write a native executable" << std::endl;
     std::cout << "  --module-name <name> name the root compilation unit of explicit source files" << std::endl;
     std::cout << "  --module-source <name=file> add a file to a dependency module (repeatable)" << std::endl;
+    std::cout << "  --runtime-module <name> authorize one explicit unit for internal runtime bindings (repeatable)" << std::endl;
+    std::cout << "  --emit-runtime-object <file> write an internal runtime object without startup or linking" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
     std::cout << "  -g|-gline-tables-only emit source line tables using the platform format" << std::endl;

@@ -16,7 +16,8 @@ is in `src/compiler/ir/ir.h`; typed AST lowering is in
 
 A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
-`--emit-llvm` and `-o`; see the [compiler backend](backend.md).
+`--emit-llvm`, `-o`, and `--emit-runtime-object`; see the
+[compiler backend](backend.md).
 
 Named compilation lowers the entire reachable graph into one IR module.
 Each source-language module is an explicit source-file set with its own
@@ -52,6 +53,14 @@ Qualified calls, constructors, and enum cases lower from their resolved
 symbols without evaluating module-name prefixes. `Function::isRootModule`
 records whether a function can be considered for executable entry selection;
 dependency declarations named `main` keep their source name.
+
+Restricted [C bindings](c-interop.md) add a `NativeBinding` record and
+per-function runtime context. Imports remain external declarations without
+invented bodies/debug scopes; exports keep normal Joyeer definitions plus
+explicit C linkage metadata. The shared verifier validates the initial
+`Int`/`Void` ABI, declaration/call authorization, and native symbol agreement.
+`Module::isRuntimeObject` requests isolated runtime-object emission without
+application startup; its defined root functions require runtime context.
 
 Debug locations are optional so hand-built/backend-only modules remain valid
 without source metadata and byte offset zero remains distinguishable from no

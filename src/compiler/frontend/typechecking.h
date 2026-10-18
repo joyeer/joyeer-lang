@@ -2,6 +2,7 @@
 #define __joyeer_compiler_typechecking_h__
 
 #include "semantic.h"
+#include "nativebinding.h"
 #include "compiler/diagnostics/diagnostic.h"
 
 #include <cstddef>
@@ -153,6 +154,11 @@ enum class TypeCheckingDiagnosticId {
     invalidCallArguments,
     invalidLoopControl,
     unresolvedReference,
+    invalidAnnotation,
+    invalidNativeDeclaration,
+    unsupportedNativeSignature,
+    unauthorizedNativeBinding,
+    conflictingNativeSymbol,
 };
 
 struct TypeCheckingDiagnostic {
@@ -176,6 +182,7 @@ public:
     [[nodiscard]] std::optional<TypeId> typeOf(const syntax::NodePtr& node) const;
     [[nodiscard]] std::optional<TypeId> typeOf(semantic::SymbolId symbol) const;
     [[nodiscard]] const TypedCallableSignature* callable(semantic::SymbolId symbol) const;
+    [[nodiscard]] const NativeBinding* nativeBinding(semantic::SymbolId symbol) const;
         [[nodiscard]] std::optional<semantic::SymbolId> referencedSymbol(
             const syntax::NodePtr& node) const;
         [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
@@ -191,6 +198,7 @@ private:
     std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
     std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
     std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;
+    std::unordered_map<semantic::SymbolId, NativeBinding> nativeBindings;
     std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedReferences;
     std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedCallTargets;
 };

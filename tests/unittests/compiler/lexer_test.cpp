@@ -118,6 +118,15 @@ TEST_F(LexerTest, ClassifiesLoopControlAsSupportedKeywords) {
     }
 }
 
+TEST_F(LexerTest, ClassifiesAnnotationPunctuationAndNames) {
+    lex("@c_extern(symbol: \"native\")");
+    expectKinds({atSign, identifier, leftParen, identifier, colon,
+                 stringLiteral, rightParen, endOfFile});
+    EXPECT_FALSE(diagnostics.hasFailure());
+    EXPECT_EQ(source->tokens.front()->span.offset, 0u);
+    EXPECT_EQ(source->tokens.front()->span.length, 1u);
+}
+
 TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
     lex("for where yield performs pure");
 
@@ -338,11 +347,11 @@ TEST_F(LexerTest, TracksSpansLinesAndCommentTrivia) {
 }
 
 TEST_F(LexerTest, RejectsDeferredMvpSyntaxAsSingleInvalidTokens) {
-    lex("?? ?. ; @ # 'x' += << >> 1.2 0xff");
+    lex("?? ?. ; # 'x' += << >> 1.2 0xff");
 
-    expectKinds({invalid, invalid, invalid, invalid, invalid, invalid,
+    expectKinds({invalid, invalid, invalid, invalid, invalid,
                  invalid, invalid, invalid, invalid, invalid, endOfFile});
-    EXPECT_EQ(diagnostics.errors.size(), 11u);
+    EXPECT_EQ(diagnostics.errors.size(), 10u);
 }
 
 TEST_F(LexerTest, RejectsCompoundAndShiftOperatorsAsWholeTokens) {

@@ -1,5 +1,5 @@
 #include "linker.h"
-#include "backend/native_backend.h"
+#include "backend/backend.h"
 
 #include <algorithm>
 #include <atomic>
@@ -135,25 +135,25 @@ std::string utf8Path(const std::filesystem::path& path) {
             bytes.size());
 }
 
-JoyeerNativeBackendOptimizationLevel backendOptimizationLevel(
+JoyeerBackendOptimizationLevel backendOptimizationLevel(
         OptimizationLevel level) {
     switch (level) {
-        case OptimizationLevel::O0: return JOYEER_NATIVE_BACKEND_O0;
-        case OptimizationLevel::O1: return JOYEER_NATIVE_BACKEND_O1;
-        case OptimizationLevel::O2: return JOYEER_NATIVE_BACKEND_O2;
-        case OptimizationLevel::O3: return JOYEER_NATIVE_BACKEND_O3;
+        case OptimizationLevel::O0: return JOYEER_BACKEND_O0;
+        case OptimizationLevel::O1: return JOYEER_BACKEND_O1;
+        case OptimizationLevel::O2: return JOYEER_BACKEND_O2;
+        case OptimizationLevel::O3: return JOYEER_BACKEND_O3;
     }
-    return JOYEER_NATIVE_BACKEND_O2;
+    return JOYEER_BACKEND_O2;
 }
 
 struct BackendDiagnostic {
-    JoyeerNativeBackendStatus status = JOYEER_NATIVE_BACKEND_SUCCESS;
+    JoyeerBackendStatus status = JOYEER_BACKEND_SUCCESS;
     std::string message;
 };
 
 void collectBackendDiagnostic(
         void* context,
-        JoyeerNativeBackendStatus status,
+        JoyeerBackendStatus status,
         const char* message,
         size_t messageSize) {
     auto& diagnostic = *static_cast<BackendDiagnostic*>(context);
@@ -226,6 +226,59 @@ ProcessResult runProcess(
 
 } // namespace
 
+LinkResult Linker::emitObject(
+        const std::string& llvmIR,
+        const LinkOptions& options) const {
+    LinkResult result;
+    const auto report = [&](LinkDiagnosticId id, std::string message) {
+        result.diagnostics.push_back({id, std::move(message)});
+    };
+    if (options.outputFile.empty() || pathsAlias(options.outputFile, options.sourceFile)) {
+        report(LinkDiagnosticId::fileError, "object output path is empty or collides with a source input");
+        return result;
+    }
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(options.outputFile, error);
+    if (error && error != std::errc::no_such_file_or_directory) {
+        report(LinkDiagnosticId::fileError, "cannot inspect object output: " + error.message());
+        return result;
+    }
+    if (std::filesystem::is_directory(status)) {
+        report(LinkDiagnosticId::fileError, "refusing to overwrite a directory with an object file");
+        return result;
+    }
+    if (std::filesystem::exists(status)) {
+        error.clear();
+        if (!std::filesystem::remove(options.outputFile, error) || error) {
+            report(LinkDiagnosticId::fileError, "cannot remove stale object output: " + error.message());
+            return result;
+        }
+    }
+    const auto outputPath = utf8Path(options.outputFile);
+    const JoyeerBackendObjectOptions objectOptions {
+        JOYEER_BACKEND_ABI_VERSION,
+        sizeof(JoyeerBackendObjectOptions),
+        llvmIR.data(),
+        llvmIR.size(),
+        outputPath.c_str(),
+        backendOptimizationLevel(options.optimizationLevel),
+        options.module.get(),
+    };
+    BackendDiagnostic diagnostic;
+    const auto objectStatus = joyeer_backend_emit_object(
+            &objectOptions, collectBackendDiagnostic, &diagnostic);
+    if (objectStatus != JOYEER_BACKEND_SUCCESS || !isNonemptyRegularFile(options.outputFile)) {
+        report(objectStatus == JOYEER_BACKEND_FILE_ERROR
+                        ? LinkDiagnosticId::fileError : LinkDiagnosticId::toolFailure,
+                "embedded LLVM failed to generate the native object" +
+                        (diagnostic.message.empty() ? std::string() : ":\n" + diagnostic.message));
+        error.clear();
+        std::filesystem::remove(options.outputFile, error);
+        if (error) report(LinkDiagnosticId::fileError, "cannot remove failed object output: " + error.message());
+    }
+    return result;
+}
+
 LinkResult Linker::link(
         const std::string& llvmIR,
         bool hasEntryPoint,
@@ -249,7 +302,7 @@ LinkResult Linker::link(
         filesystemError) {
         report(
                 LinkDiagnosticId::missingTool,
-                "Joyeer native runtime was not found at '" +
+                "JoyeerRuntime was not found at '" +
                         utf8Path(options.runtimeLibrary) + "'");
         return result;
     }
@@ -464,34 +517,11 @@ LinkResult Linker::link(
     const auto objectPath = utf8Path(objectFile);
     const auto outputPath = utf8Path(options.outputFile);
     const auto runtimePath = utf8Path(options.runtimeLibrary);
-    const JoyeerNativeBackendObjectOptions objectOptions {
-        JOYEER_NATIVE_BACKEND_ABI_VERSION,
-        sizeof(JoyeerNativeBackendObjectOptions),
-        llvmIR.data(),
-        llvmIR.size(),
-        objectPath.c_str(),
-        backendOptimizationLevel(options.optimizationLevel),
-        options.module.get(),
-    };
+    auto objectOptions = options;
+    objectOptions.outputFile = objectFile;
+    auto emission = emitObject(llvmIR, objectOptions);
+    if (!emission.succeeded()) return emission;
     BackendDiagnostic backendDiagnostic;
-    const auto objectStatus = joyeer_native_backend_emit_object(
-            &objectOptions,
-            collectBackendDiagnostic,
-            &backendDiagnostic);
-    if (objectStatus != JOYEER_NATIVE_BACKEND_SUCCESS ||
-        !isNonemptyRegularFile(objectFile)) {
-        filesystemError.clear();
-        std::filesystem::remove(objectFile, filesystemError);
-        report(
-                objectStatus == JOYEER_NATIVE_BACKEND_FILE_ERROR
-                        ? LinkDiagnosticId::fileError
-                        : LinkDiagnosticId::toolFailure,
-                "embedded LLVM failed to generate the native object" +
-                        (backendDiagnostic.message.empty()
-                                ? std::string()
-                                : ":\n" + backendDiagnostic.message));
-        return result;
-    }
 
 #if defined(_WIN32)
 #if defined(_M_ARM64)
@@ -575,19 +605,19 @@ LinkResult Linker::link(
     for (const auto& argument : lldArguments) {
         rawLldArguments.push_back(argument.c_str());
     }
-    const JoyeerNativeBackendLinkOptions linkOptions {
-        JOYEER_NATIVE_BACKEND_ABI_VERSION,
-        sizeof(JoyeerNativeBackendLinkOptions),
+    const JoyeerBackendLinkOptions linkOptions {
+        JOYEER_BACKEND_ABI_VERSION,
+        sizeof(JoyeerBackendLinkOptions),
         rawLldArguments.data(),
         rawLldArguments.size(),
     };
     backendDiagnostic = {};
 #if defined(_WIN32)
-    const auto linkStatus = joyeer_native_backend_link_coff(
+    const auto linkStatus = joyeer_backend_link_coff(
 #elif defined(__APPLE__)
-    const auto linkStatus = joyeer_native_backend_link_macho(
+    const auto linkStatus = joyeer_backend_link_macho(
 #else
-    const auto linkStatus = joyeer_native_backend_link_elf(
+    const auto linkStatus = joyeer_backend_link_elf(
 #endif
             &linkOptions,
             collectBackendDiagnostic,
@@ -603,11 +633,11 @@ LinkResult Linker::link(
         std::filesystem::remove_all(dsymDirectory, error);
 #endif
     };
-    if (linkStatus != JOYEER_NATIVE_BACKEND_SUCCESS ||
+    if (linkStatus != JOYEER_BACKEND_SUCCESS ||
         !isNonemptyRegularFile(options.outputFile)) {
         cleanupFailedOutput();
         report(
-                linkStatus == JOYEER_NATIVE_BACKEND_FILE_ERROR
+                linkStatus == JOYEER_BACKEND_FILE_ERROR
                         ? LinkDiagnosticId::fileError
                         : LinkDiagnosticId::toolFailure,
                 "embedded native backend failed to link the executable" +

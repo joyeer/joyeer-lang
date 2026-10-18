@@ -212,6 +212,8 @@ struct Function {
     std::optional<DebugScopeId> debugScope;
     std::vector<DebugVariableBinding> entryDebugVariableBindings;
     bool isRootModule = true;
+    bool runtimeContext = false;
+    std::optional<NativeBinding> nativeBinding;
 };
 
 struct TypeName {
@@ -261,6 +263,7 @@ struct Module {
     std::vector<DebugVariable> debugVariables;
     // SourceSpan::sourceId indexes this table; sourceInfo is the legacy ID-zero fallback.
     std::vector<SourceInfo> sourceFiles;
+    bool isRuntimeObject = false;
 
     [[nodiscard]] const SourceInfo* sourceFile(uint32_t sourceId) const {
         if (!sourceFiles.empty()) {

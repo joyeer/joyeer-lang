@@ -108,9 +108,17 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Postfix | `?` (Result / Optional propagation) `!` (force-unwrap) |
 | Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
+| Declaration annotation | `@` (§11, §19) |
 
 `&` is both bitwise-AND (binary infix) and the inout call-site marker
 (prefix on argument). Disambiguated by syntactic position.
+
+`@` starts a declaration annotation. Annotation names such as `c_extern`
+and `c_export`, and argument labels such as `symbol`, are identifiers, not
+new keywords. The C annotation grammar is specified in [§17](17-grammar.md)
+and its semantics in [§19](19-c-interop.md). **Implementation status:** `@`
+and the restricted C annotation subset are accepted; the proposed
+`@spec`/`@property` shorthand and DSL remain unsupported.
 
 ### 1.7 String interpolation ⏳
 

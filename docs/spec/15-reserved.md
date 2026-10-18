@@ -9,6 +9,10 @@ message in v0.1:
 
 `class` is also reserved (§1.4) and rejected by the current lexer.
 
+The restricted scalar [C interoperation rules](19-c-interop.md) do not
+unreserve `unsafe` or select pointer, dereference, or unsafe-block syntax.
+The source representation of native addresses remains a separate proposal.
+
 Reserved syntactic constructs:
 - Trailing closure call syntax (`f { ... }`)
 - Record literal struct construction (`Point { x: 1, y: 2 }`)

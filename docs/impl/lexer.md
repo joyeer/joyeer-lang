@@ -56,6 +56,8 @@ The lexer recognizes terminals needed by the current parser:
 - strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
   literals additionally support `\'`, which is not a supported string escape;
 - delimiters, labels, member access, `=>`, `?`, and `&`;
+- `@` punctuation for declaration annotations; names and named arguments
+  remain ordinary identifiers, with C binding rules checked after parsing;
 - assignment, arithmetic/comparison operators including `/` and `%`, logical
   `&&` and `||`, and `!` for prefix negation;
 - line comments and nested block comments.

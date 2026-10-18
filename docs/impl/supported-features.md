@@ -15,7 +15,7 @@ directories, and distinct modules can use distinct files from one directory.
 It runs the source graph through lexing,
 parsing, name resolution, type checking, semantic analysis, verified Joyeer
 IR, and LLVM object construction with optional textual IR export. Native executable output additionally
-generates machine code and links it with `JoyeerNativeRuntime`.
+generates machine code and links it with `JoyeerRuntime`.
 
 Named mode uses `--module-name <name>` with positional root files and repeatable
 `--module-source <name>=<file>` dependency inputs. Repeated dependency names
@@ -63,6 +63,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
+| Internal C bindings | Runtime-authorized `@c_extern`/`@c_export`, borrowing `Int`/C `int64_t` parameters, `Int` or explicit `Void`/`()` results, and runtime-object output without startup/linking |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
 builtins. Their type arguments do not imply support for user-defined generic
@@ -109,8 +110,13 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   type or between `Optional` results. Other errors require explicit `match`.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
   aggregate printing, streaming file APIs, or a general standard library.
-- Source-language FFI, contracts or property annotations as executable
-  language features, incremental compilation, or formal verification.
+- General user FFI, native addresses/output pointers, C aggregates, callbacks,
+  variadic calls, or C signatures beyond the implemented `Int`/`Void` slice.
+  The [C binding implementation](c-interop.md) documents explicit runtime
+  authorization and object output; the rest of the scalar mapping table in
+  [§19](../spec/19-c-interop.md) remains design, not coverage.
+- Contracts or property annotations as executable language features,
+  incremental compilation, or formal verification.
 - Project-manager commands on the **compiler**, such as `joyeer build`, `run`,
   `test`, or `init`; use the separate source-implemented `joypm`. Toolchain
   installation, `doctor`, registries, local path packages, and workspaces

@@ -65,14 +65,14 @@ add_custom_command(
         "$<IF:$<CONFIG:Debug>,-O0,-O2>"
         "$<IF:$<CONFIG:Debug>,${joypm_debug_flag},-g0>"
         -o "${JOYEER_JOYPM_EXECUTABLE}" -- ${JOYEER_JOYPM_SOURCES}
-    DEPENDS joyeer JoyeerNativeBackend JoyeerNativeRuntime
+    DEPENDS JoyeerToolchain joyeer JoyeerBackend JoyeerRuntime
         ${JOYEER_JOYPM_SOURCES}
     COMMENT "Bootstrapping joypm with the build-tree Joyeer compiler"
     VERBATIM)
 add_custom_target(joypm ALL
     DEPENDS "${JOYEER_JOYPM_EXECUTABLE}" ${JOYEER_JOYPM_SOURCES}
     SOURCES ${JOYEER_JOYPM_SOURCES} platform.joyeer.in project.toml.in)
-add_dependencies(joypm joyeer JoyeerNativeBackend JoyeerNativeRuntime)
+add_dependencies(joypm JoyeerToolchain)
 
 install(PROGRAMS "${JOYEER_JOYPM_EXECUTABLE}"
     DESTINATION . COMPONENT PRODUCT)

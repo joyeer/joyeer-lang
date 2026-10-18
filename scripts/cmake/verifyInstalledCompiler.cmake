@@ -1,7 +1,8 @@
 if(NOT DEFINED BUILD_DIR OR NOT DEFINED STAGING_DIR OR
-   NOT DEFINED INPUT_FILE OR NOT DEFINED EXPECTED_OUTPUT)
+   NOT DEFINED INPUT_FILE OR NOT DEFINED EXPECTED_OUTPUT OR
+   NOT DEFINED RUNTIME_ARCHIVE_NAME)
     message(FATAL_ERROR
-            "BUILD_DIR, STAGING_DIR, INPUT_FILE, and EXPECTED_OUTPUT are required")
+            "BUILD_DIR, STAGING_DIR, INPUT_FILE, EXPECTED_OUTPUT, and RUNTIME_ARCHIVE_NAME are required")
 endif()
 
 function(fail_installed_validation message_text)
@@ -26,6 +27,10 @@ set(compiler "${STAGING_DIR}/joyeer${EXECUTABLE_SUFFIX}")
 set(output "${STAGING_DIR}/joyeer-native-hello${EXECUTABLE_SUFFIX}")
 if(NOT EXISTS "${compiler}")
     fail_installed_validation("Installed compiler does not exist: ${compiler}")
+endif()
+if(NOT EXISTS "${STAGING_DIR}/${RUNTIME_ARCHIVE_NAME}" OR
+   IS_DIRECTORY "${STAGING_DIR}/${RUNTIME_ARCHIVE_NAME}")
+    fail_installed_validation("Installed JoyeerRuntime archive does not exist: ${RUNTIME_ARCHIVE_NAME}")
 endif()
 
 execute_process(

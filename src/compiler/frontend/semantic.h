@@ -144,6 +144,7 @@ public:
     [[nodiscard]] const std::vector<DeferredReference>& deferredReferences() const;
     [[nodiscard]] bool isAccessible(SymbolId symbol, SourceSpan use) const;
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
+    [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
 
 private:
     friend class NameResolutionBuilder;
@@ -169,6 +170,7 @@ private:
     std::unordered_map<NodeId, SymbolId> callTargets_;
     std::unordered_map<NodeId, size_t> deferredReferenceIndices_;
     std::unordered_map<uint32_t, uint32_t> sourceModules_;
+    std::unordered_map<uint32_t, bool> runtimeSources_;
     std::unordered_map<NodeId, bool> moduleQualified_;
 };
 

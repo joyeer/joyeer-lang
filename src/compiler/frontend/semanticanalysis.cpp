@@ -44,6 +44,8 @@ private:
         const auto symbol = model->semanticModel()->declaredSymbol(declaration);
         const auto* signature = symbol.has_value() ? model->callable(*symbol) : nullptr;
         if (signature == nullptr) return;
+        const auto* binding = model->nativeBinding(*symbol);
+        if (binding != nullptr && binding->kind == NativeBindingKind::cImport) return;
 
         const auto terminates = analyzeBlock(declaration->body);
         if (signature->result == model->types().voidType() || terminates) return;

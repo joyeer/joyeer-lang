@@ -14,6 +14,7 @@
 #include <functional>
 #include <limits>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -124,6 +125,12 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     sourceFiles.clear();
     compilationSources.clear();
     lastCompiledSourceFile.reset();
+    if ((!options.runtimeModules.empty() || options.outputMode == joyeer::OutputMode::runtimeObject) &&
+        options.moduleName.empty()) {
+        diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                "runtime compilation requires explicit named compilation units");
+        return;
+    }
     if (!options.moduleName.empty() || !options.sourceFiles.empty()) {
         if (!inputFile.empty()) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "module.conflicting-input",
@@ -191,6 +198,22 @@ void CompilerService::compileModules() {
     std::unordered_map<std::string, size_t> names;
     auto sourceSets = options.modules;
     sourceSets.insert(sourceSets.begin(), {options.moduleName, options.sourceFiles});
+    std::unordered_set<std::string> runtimeModules;
+    for (const auto& name : options.runtimeModules) {
+        if (!runtimeModules.insert(name).second ||
+            std::none_of(sourceSets.begin(), sourceSets.end(),
+                         [&](const auto& sourceSet) { return sourceSet.name == name; })) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                    "runtime context must select a unique, explicitly supplied module: '" + name + "'");
+            return;
+        }
+    }
+    if (options.outputMode == joyeer::OutputMode::runtimeObject &&
+        !runtimeModules.contains(options.moduleName)) {
+        diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                "runtime-object output requires an explicitly authorized root module");
+        return;
+    }
     for (const auto& sourceSet : sourceSets) {
         if (!joyeer::isModuleName(sourceSet.name)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-name",
@@ -208,6 +231,8 @@ void CompilerService::compileModules() {
             return;
         }
         Module module {sourceSet.name, {}, {sourceSet.name, {}}};
+        // Authorization belongs to each supplied unit, never to its imports.
+        module.syntax.runtimeContext = runtimeModules.contains(sourceSet.name);
         for (const auto& input : sourceSet.files) {
             if (input.empty()) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",
@@ -432,6 +457,7 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
     if (!lowering.succeeded()) {
         return;
     }
+    lowering.module->isRuntimeObject = options.outputMode == joyeer::OutputMode::runtimeObject;
 
     const auto llvm = joyeer::llvmbackend::Emitter().emit(
             *lowering.module,
@@ -440,7 +466,8 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
                 options.debugInfo.format,
                 options.optimizationLevel,
                 options.debugInfo.emitVariables,
-                options.outputMode != joyeer::OutputMode::executable,
+                options.outputMode == joyeer::OutputMode::llvmIR ||
+                        options.outputMode == joyeer::OutputMode::validate,
             });
     sourcefile->llvmIR = llvm.text;
     sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;

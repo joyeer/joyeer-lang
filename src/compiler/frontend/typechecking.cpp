@@ -299,6 +299,11 @@ const TypedCallableSignature* TypeCheckedModel::callable(
     return &found->second;
 }
 
+const NativeBinding* TypeCheckedModel::nativeBinding(semantic::SymbolId symbol) const {
+    const auto found = nativeBindings.find(symbol);
+    return found == nativeBindings.end() ? nullptr : &found->second;
+}
+
 std::optional<semantic::SymbolId> TypeCheckedModel::referencedSymbol(
         const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
@@ -329,6 +334,7 @@ public:
         const auto& root = semanticModel->root();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+            validateNativeSymbols();
             for (const auto& item : root->items) checkTopLevelBody(item);
         }
         validateDeferredReferences();
@@ -645,6 +651,118 @@ private:
 
         model->symbolTypes[*function] = signature.result;
         model->callables[*function] = std::move(signature);
+        resolveNativeBinding(declaration, *function);
+    }
+
+    void resolveNativeBinding(
+            const syntax::FunctionDeclSyntax::Ptr& declaration,
+            semantic::SymbolId function) {
+        if (declaration->attributes.empty()) return;
+        const auto diagnosticStart = diagnostics.size();
+        std::optional<NativeBinding> binding;
+        for (const auto& attribute : declaration->attributes) {
+            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if (name != "c_extern" && name != "c_export") {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "unknown annotation '@" + name + "'");
+                continue;
+            }
+            if (binding.has_value()) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "a function may have only one C binding annotation");
+                continue;
+            }
+            binding = NativeBinding {
+                name == "c_extern" ? NativeBindingKind::cImport : NativeBindingKind::cExport,
+                {},
+                attribute.span,
+            };
+            if (attribute.arguments.size() != 1) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "C annotations require exactly one 'symbol:' string-literal argument");
+                continue;
+            }
+            const auto& argument = attribute.arguments.front();
+            const auto literal = argument->value != nullptr &&
+                    argument->value->kind == syntax::Kind::literalExpr
+                    ? std::static_pointer_cast<syntax::LiteralExprSyntax>(argument->value)
+                    : nullptr;
+            if (argument->label == nullptr || argument->label->rawValue != "symbol" ||
+                argument->accessMarker != nullptr || literal == nullptr ||
+                literal->literal == nullptr || literal->literal->kind != stringLiteral) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, argument->span,
+                       "C annotations require 'symbol:' followed by a string literal");
+                continue;
+            }
+            binding->symbol = literal->literal->rawValue;
+            if (!isCIdentifier(binding->symbol)) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, argument->span,
+                       "native symbol must be a nonempty ASCII C identifier without linker decoration");
+            }
+        }
+        if (!binding.has_value()) return;
+        if (!model->semanticModelValue->isRuntimeSource(declaration->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, binding->span,
+                   "C bindings require an explicitly selected runtime compilation unit");
+        }
+        const bool importing = binding->kind == NativeBindingKind::cImport;
+        const bool hasBody = declaration->body != nullptr;
+        if ((importing && hasBody) || (!importing && !hasBody)) {
+            report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                   importing ? "@c_extern must not have a function body"
+                             : "@c_export requires a function body");
+        }
+        if (declaration->returnType == nullptr) {
+            report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                   "C bindings require an explicit result type, including Void");
+        }
+        const auto* symbol = model->semanticModelValue->symbol(function);
+        if ((symbol->isRootModule && symbol->name == "main") ||
+            (!importing && isCEntrySymbol(binding->symbol))) {
+            report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                   "C bindings must not replace a toolchain executable entry point");
+        }
+        const auto& signature = model->callables.at(function);
+        for (size_t index = 0; index < declaration->parameters.size(); ++index) {
+            const auto& parameter = declaration->parameters[index];
+            if (parameter->accessEffect() != syntax::AccessEffect::borrowing ||
+                signature.parameters[index] != model->typeContext.intType()) {
+                report(TypeCheckingDiagnosticId::unsupportedNativeSignature, parameter->span,
+                       "this C binding implementation accepts only borrowing Int parameters");
+            }
+        }
+        if (signature.result != model->typeContext.intType() &&
+            signature.result != model->typeContext.voidType()) {
+            report(TypeCheckingDiagnosticId::unsupportedNativeSignature,
+                   declaration->returnType == nullptr ? declaration->span : declaration->returnType->span,
+                   "this C binding implementation accepts only Int or Void results");
+        }
+        if (diagnostics.size() == diagnosticStart) {
+            model->nativeBindings.emplace(function, std::move(*binding));
+        }
+    }
+
+    void validateNativeSymbols() {
+        std::unordered_map<std::string, semantic::SymbolId> declarations;
+        std::unordered_set<std::string> exports;
+        for (const auto& symbol : model->semanticModelValue->symbols()) {
+            const auto* binding = model->nativeBinding(symbol.id);
+            if (binding == nullptr) continue;
+            const auto [previous, inserted] = declarations.emplace(binding->symbol, symbol.id);
+            if (!inserted) {
+                const auto& left = model->callables.at(previous->second);
+                const auto& right = model->callables.at(symbol.id);
+                if (left.parameters != right.parameters || left.result != right.result) {
+                    report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                           "incompatible C signatures for native symbol '" + binding->symbol + "'");
+                }
+            }
+            if (binding->kind == NativeBindingKind::cExport &&
+                !exports.insert(binding->symbol).second) {
+                report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                       "duplicate C export for native symbol '" + binding->symbol + "'");
+            }
+        }
     }
 
     void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
@@ -1323,6 +1441,11 @@ private:
         }
 
         const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
+        if (target.has_value() && model->nativeBinding(*target) != nullptr &&
+            !model->semanticModelValue->isRuntimeSource(expression->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, expression->span,
+                   "direct calls to C bindings require a runtime compilation unit; use a checked Joyeer wrapper");
+        }
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
@@ -2622,6 +2745,16 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-loop-control";
         case TypeCheckingDiagnosticId::unresolvedReference:
             return "type-checking.unresolved-reference";
+        case TypeCheckingDiagnosticId::invalidAnnotation:
+            return "type-checking.invalid-annotation";
+        case TypeCheckingDiagnosticId::invalidNativeDeclaration:
+            return "type-checking.invalid-native-declaration";
+        case TypeCheckingDiagnosticId::unsupportedNativeSignature:
+            return "type-checking.unsupported-native-signature";
+        case TypeCheckingDiagnosticId::unauthorizedNativeBinding:
+            return "type-checking.unauthorized-native-binding";
+        case TypeCheckingDiagnosticId::conflictingNativeSymbol:
+            return "type-checking.conflicting-native-symbol";
     }
     return "type-checking.unknown";
 }

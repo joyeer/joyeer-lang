@@ -95,8 +95,18 @@ protected:
 
 using NodePtr = Node::Ptr;
 
+struct CallArgumentSyntax;
+
+struct AttributeSyntax {
+    SourceSpan span;
+    Token::Ptr name;
+    std::vector<std::shared_ptr<CallArgumentSyntax>> arguments;
+};
+
 struct DeclSyntax : Node {
     using Ptr = std::shared_ptr<DeclSyntax>;
+
+    std::vector<AttributeSyntax> attributes;
 
 protected:
     DeclSyntax(Kind kind, SourceSpan span): Node(kind, span) {}

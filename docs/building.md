@@ -177,7 +177,7 @@ and SDK roots for x64 and ARM64;
 do not switch architectures inside an existing CMake build tree.
 
 These are native builds, not a cross-compilation interface. The compiler,
-backend library, native runtime archive, LLVM default target, and system
+backend library, runtime archive, LLVM default target, and system
 libraries must agree on the architecture. Joyeer does not currently expose
 a `--target` option; 32-bit Windows and ARM64EC are not supported.
 
@@ -188,12 +188,31 @@ The build is out-of-source only. Preset builds write the executable under
 `build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
 focused iteration.
 
+### Compiler construction and product staging
+
+The `joyeer` target builds the compiler/backend independently of the program
+runtime. Internal [runtime-object generation](impl/c-interop.md) can therefore
+run before a completed runtime archive exists. The `JoyeerToolchain` `ALL`
+target separately copies `JoyeerRuntime` beside the compiler, and joypm
+bootstrap waits for that staged product. Use the default build, or explicitly
+build `JoyeerToolchain`, for a compiler ready to link ordinary executables;
+`--target joyeer` alone is a compiler-construction step, not full staging.
+The production runtime remains C; this separation does not by itself migrate
+algorithms or assemble Joyeer runtime objects into that archive.
+
+On macOS, the configured Joyeer deployment target also controls generated
+object metadata. If the active SDK is newer than LLVM/LLD 22.1.8 can read,
+select an already installed compatible SDK with `CMAKE_OSX_SYSROOT`,
+`CMAKE_OSX_DEPLOYMENT_TARGET`, `JOYEER_MACOS_SDK_PATH`,
+`JOYEER_MACOS_SDK_VERSION`, and `JOYEER_MACOS_DEPLOYMENT_TARGET` consistently.
+Do not bypass the embedded linker or silently substitute another SDK.
+
 ## joypm bootstrap and acceptance
 
 `JOYEER_BUILD_JOYPM=ON` is the default. The `joypm` `ALL` target invokes the
 newly built compiler with an explicit list of seven sources from
 [src/tools/joypm/](../src/tools/joypm/) and a generated platform source. It
-depends on the compiler, backend, and native runtime and produces `joypm` next
+depends on the compiler, backend, and runtime and produces `joypm` next
 to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
 (and other non-Debug configurations). On macOS, Debug falls back to `-g0`
 when `dsymutil` is unavailable, so ordinary native output remains possible.
@@ -261,7 +280,7 @@ With that setting, the Joyeer package contains:
 ```text
 joyeer.exe
 joyeer-backend.dll
-JoyeerNativeRuntime.lib
+JoyeerRuntime.lib
 joypm.exe                 # when JOYEER_BUILD_JOYPM=ON (default)
 licenses/LICENSE         # Joyeer's own license; third-party notices deferred
 ```
@@ -304,7 +323,7 @@ cmake --install out/build/linux-release --prefix out/package/joyeer
 
 Replace `linux-release` with `macos-release` on macOS. The installed package
 keeps the `joyeer` executable, `joyeer-backend` shared library,
-`JoyeerNativeRuntime` archive, optional `joypm`, and licenses together. Linux
+`JoyeerRuntime` archive, optional `joypm`, and licenses together. Linux
 uses an `$ORIGIN` runtime search path and macOS uses `@loader_path`; the compiler also resolves
 the runtime archive relative to its own executable. Building Joyeer programs
 still requires the host libc/platform SDK startup objects and system
@@ -456,9 +475,9 @@ Debug symbols must exist before installation.
 
 | Platform | Runtime products |
 |---|---|
-| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, optional `joypm.exe` |
-| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerNativeRuntime.a`, optional `joypm` |
-| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerNativeRuntime.a`, optional `joypm` |
+| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerRuntime.lib`, optional `joypm.exe` |
+| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerRuntime.a`, optional `joypm` |
+| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerRuntime.a`, optional `joypm` |
 
 All platforms install these files together directly in the selected directory,
 along with Joyeer's own `licenses/LICENSE`. Windows also requires and copies

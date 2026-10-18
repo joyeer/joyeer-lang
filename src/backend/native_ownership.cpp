@@ -16,14 +16,48 @@ void Builder::copy(ir::TypeId id, llvm::Value* destination, llvm::Value* sourceA
 }
 
 void Builder::emitOwnership() {
+    std::unordered_set<ir::TypeId> usedTypes;
+    if (source.isRuntimeObject) {
+        std::vector<ir::TypeId> pending;
+        for (const auto& function : source.functions) {
+            if (function.isExternal) continue;
+            pending.push_back(function.resultType);
+            for (const auto& parameter : function.parameters) pending.push_back(parameter.value.type);
+            for (const auto& block : function.blocks) {
+                for (const auto& instruction : block.instructions) {
+                    if (instruction.result.has_value()) pending.push_back(instruction.result->type);
+                }
+            }
+        }
+        // Prelude signatures must not pull managed helpers into a leaf runtime
+        // object. Include only used types and their stored component types.
+        while (!pending.empty()) {
+            const auto id = pending.back();
+            pending.pop_back();
+            if (!usedTypes.insert(id).second) continue;
+            const auto& info = type(id);
+            pending.insert(pending.end(), info.arguments.begin(), info.arguments.end());
+            if (const auto found = structures.find(id); found != structures.end()) {
+                for (const auto& field : found->second->fields) pending.push_back(field.type);
+            }
+            if (const auto found = enumerations.find(id); found != enumerations.end()) {
+                for (const auto& enumCase : found->second->cases) {
+                    pending.insert(pending.end(), enumCase.payloadTypes.begin(), enumCase.payloadTypes.end());
+                }
+            }
+        }
+    }
     for (const auto& type : source.types) {
         if (!ir::requiresDestruction(source, type.id)) continue;
+        if (source.isRuntimeObject && !usedTypes.contains(type.id)) continue;
         auto* cloneType = llvm::FunctionType::get(builder.getVoidTy(), {pointer(), pointer()}, false);
         auto* destroyType = llvm::FunctionType::get(builder.getVoidTy(), {pointer()}, false);
+        const auto linkage = source.isRuntimeObject
+                ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage;
         clones.emplace(type.id, llvm::Function::Create(cloneType,
-                llvm::GlobalValue::ExternalLinkage, "joyeer_clone_type_" + std::to_string(type.id), module()));
+                linkage, "joyeer_clone_type_" + std::to_string(type.id), module()));
         destroys.emplace(type.id, llvm::Function::Create(destroyType,
-                llvm::GlobalValue::ExternalLinkage, "joyeer_destroy_type_" + std::to_string(type.id), module()));
+                linkage, "joyeer_destroy_type_" + std::to_string(type.id), module()));
     }
     for (const auto& [id, function] : clones) {
         activeFunction = function;

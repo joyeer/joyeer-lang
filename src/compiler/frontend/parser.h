@@ -85,8 +85,9 @@ private:
     };
 
     syntax::NodePtr parseTopLevelItem();
+    syntax::AttributeSyntax parseAttribute();
     syntax::BindingDeclSyntax::Ptr parseBindingDecl(bool requireType);
-    syntax::FunctionDeclSyntax::Ptr parseFunctionDecl();
+    syntax::FunctionDeclSyntax::Ptr parseFunctionDecl(bool hasAttributes = false);
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();

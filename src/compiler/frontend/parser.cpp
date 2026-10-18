@@ -232,8 +232,32 @@ ParseResult Parser::parse() {
 }
 
 syntax::NodePtr Parser::parseTopLevelItem() {
+    if (cursor.at(atSign)) {
+        const size_t start = cursor.position();
+        std::vector<syntax::AttributeSyntax> attributes;
+        while (cursor.at(atSign)) attributes.push_back(parseAttribute());
+        Token::Ptr modifier;
+        if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
+        if (!cursor.at(kwFunc)) {
+            report(DiagnosticId::unsupportedSyntax, spanFrom(start),
+                   "declaration annotations are supported only on top-level functions");
+            return parseTopLevelItem();
+        }
+        auto declaration = parseFunctionDecl(true);
+        declaration->attributes = std::move(attributes);
+        if (modifier != nullptr) {
+            declaration->visibility = visibilityFor(modifier->kind);
+            declaration->explicitVisibility = true;
+        }
+        declaration->span = spanFrom(start);
+        return declaration;
+    }
     if (isVisibility(cursor.peek()->kind)) {
         const auto modifier = cursor.advance();
+        if (cursor.at(atSign)) {
+            report(DiagnosticId::unexpectedToken, modifier->span,
+                   "annotations must precede the visibility modifier");
+        }
         auto declaration = parseTopLevelItem();
         if (declaration != nullptr) {
             if (declaration->explicitVisibility) {
@@ -272,6 +296,19 @@ syntax::NodePtr Parser::parseTopLevelItem() {
     }
 }
 
+syntax::AttributeSyntax Parser::parseAttribute() {
+    const size_t start = cursor.position();
+    cursor.advance();
+    auto name = expect(identifier, "an annotation name");
+    std::vector<syntax::CallArgumentSyntax::Ptr> arguments;
+    if (cursor.at(leftParen)) {
+        arguments = parseArgumentClause();
+    } else {
+        reportExpected(DiagnosticId::expectedToken, "'(' to begin annotation arguments");
+    }
+    return {spanFrom(start), std::move(name), std::move(arguments)};
+}
+
 syntax::BindingDeclSyntax::Ptr Parser::parseBindingDecl(bool requireType) {
     const size_t start = cursor.position();
     auto keyword = cursor.advance();
@@ -303,7 +340,7 @@ syntax::BindingDeclSyntax::Ptr Parser::parseBindingDecl(bool requireType) {
             std::move(initializer));
 }
 
-syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl() {
+syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl(bool hasAttributes) {
     const size_t start = cursor.position();
     cursor.advance();
     auto name = expect(identifier, "a function name");
@@ -344,7 +381,9 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl() {
         returnType = parseType();
     }
 
-    auto body = parseBlock();
+    // Body presence depends on the annotation's meaning, not on parser trust.
+    // Semantic checking admits only c_extern without a body.
+    auto body = cursor.at(leftCurly) || !hasAttributes ? parseBlock() : nullptr;
     return std::make_shared<syntax::FunctionDeclSyntax>(
             spanFrom(start),
             std::move(name),
@@ -1234,7 +1273,8 @@ bool Parser::isTopLevelStart(const Token::Ptr& token) const {
     if (token == nullptr) return false;
     return token->kind == kwLet || token->kind == kwVar ||
            token->kind == kwFunc || token->kind == kwStruct ||
-           token->kind == kwEnum || token->kind == kwImport || isVisibility(token->kind);
+           token->kind == kwEnum || token->kind == kwImport ||
+           token->kind == atSign || isVisibility(token->kind);
 }
 
 bool Parser::isBlockItemStart(const Token::Ptr& token) const {

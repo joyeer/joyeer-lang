@@ -1,4 +1,4 @@
-#include "native_backend.h"
+#include "backend.h"
 #include "native_module.h"
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -71,37 +71,37 @@ lld::Driver nativeLinkerDriver = &lld::elf::link;
 std::mutex lldMutex;
 
 void report(
-        JoyeerNativeBackendDiagnosticCallback callback,
+        JoyeerBackendDiagnosticCallback callback,
         void* context,
-        JoyeerNativeBackendStatus status,
+        JoyeerBackendStatus status,
         std::string_view message) {
     if (callback == nullptr) return;
     callback(context, status, message.data(), message.size());
 }
 
 bool validHeader(uint32_t abiVersion, uint32_t structSize, size_t expectedSize) {
-    return abiVersion == JOYEER_NATIVE_BACKEND_ABI_VERSION &&
+    return abiVersion == JOYEER_BACKEND_ABI_VERSION &&
             structSize >= expectedSize;
 }
 
 llvm::OptimizationLevel optimizationLevel(
-        JoyeerNativeBackendOptimizationLevel level) {
+        JoyeerBackendOptimizationLevel level) {
     switch (level) {
-        case JOYEER_NATIVE_BACKEND_O0: return llvm::OptimizationLevel::O0;
-        case JOYEER_NATIVE_BACKEND_O1: return llvm::OptimizationLevel::O1;
-        case JOYEER_NATIVE_BACKEND_O2: return llvm::OptimizationLevel::O2;
-        case JOYEER_NATIVE_BACKEND_O3: return llvm::OptimizationLevel::O3;
+        case JOYEER_BACKEND_O0: return llvm::OptimizationLevel::O0;
+        case JOYEER_BACKEND_O1: return llvm::OptimizationLevel::O1;
+        case JOYEER_BACKEND_O2: return llvm::OptimizationLevel::O2;
+        case JOYEER_BACKEND_O3: return llvm::OptimizationLevel::O3;
     }
     return llvm::OptimizationLevel::O2;
 }
 
 llvm::CodeGenOptLevel codeGenerationLevel(
-        JoyeerNativeBackendOptimizationLevel level) {
+        JoyeerBackendOptimizationLevel level) {
     switch (level) {
-        case JOYEER_NATIVE_BACKEND_O0: return llvm::CodeGenOptLevel::None;
-        case JOYEER_NATIVE_BACKEND_O1: return llvm::CodeGenOptLevel::Less;
-        case JOYEER_NATIVE_BACKEND_O2: return llvm::CodeGenOptLevel::Default;
-        case JOYEER_NATIVE_BACKEND_O3: return llvm::CodeGenOptLevel::Aggressive;
+        case JOYEER_BACKEND_O0: return llvm::CodeGenOptLevel::None;
+        case JOYEER_BACKEND_O1: return llvm::CodeGenOptLevel::Less;
+        case JOYEER_BACKEND_O2: return llvm::CodeGenOptLevel::Default;
+        case JOYEER_BACKEND_O3: return llvm::CodeGenOptLevel::Aggressive;
     }
     return llvm::CodeGenOptLevel::Default;
 }
@@ -113,9 +113,9 @@ std::string sourceDiagnostic(const llvm::SMDiagnostic& diagnostic) {
     return message;
 }
 
-JoyeerNativeBackendStatus emitObject(
-        const JoyeerNativeBackendObjectOptions& options,
-        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+JoyeerBackendStatus emitObject(
+        const JoyeerBackendObjectOptions& options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
     static const bool targetInitializationFailed = [] {
         return llvm::InitializeNativeTarget() ||
@@ -125,9 +125,9 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                JOYEER_BACKEND_INTERNAL_ERROR,
                 "LLVM native target initialization failed");
-        return JOYEER_NATIVE_BACKEND_INTERNAL_ERROR;
+        return JOYEER_BACKEND_INTERNAL_ERROR;
     }
 
     llvm::LLVMContext context;
@@ -144,9 +144,9 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INVALID_IR,
+                JOYEER_BACKEND_INVALID_IR,
                 message);
-        return JOYEER_NATIVE_BACKEND_INVALID_IR;
+        return JOYEER_BACKEND_INVALID_IR;
     }
 
     std::string verificationMessage;
@@ -155,20 +155,25 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INVALID_IR,
+                JOYEER_BACKEND_INVALID_IR,
                 verificationMessage);
-        return JOYEER_NATIVE_BACKEND_INVALID_IR;
+        return JOYEER_BACKEND_INVALID_IR;
     }
 
-    const llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+    llvm::Triple triple(llvm::sys::getDefaultTargetTriple());
+#if defined(__APPLE__)
+    // Runtime objects must match the configured SDK/deployment target, not
+    // accidentally inherit a newer OS version from the machine running LLVM.
+    triple.setOSName("macosx" JOYEER_MACOS_DEPLOYMENT_TARGET);
+#endif
 #if defined(_WIN32)
     if (!triple.isWindowsMSVCEnvironment() || triple.getArch() != windowsTargetArchitecture) {
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED,
+                JOYEER_BACKEND_CODE_GENERATION_FAILED,
                 "LLVM default target must match the Windows native backend architecture");
-        return JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED;
+        return JOYEER_BACKEND_CODE_GENERATION_FAILED;
     }
 #endif
     std::string targetError;
@@ -177,9 +182,9 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED,
+                JOYEER_BACKEND_CODE_GENERATION_FAILED,
                 targetError);
-        return JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED;
+        return JOYEER_BACKEND_CODE_GENERATION_FAILED;
     }
 
     llvm::TargetOptions targetOptions;
@@ -195,9 +200,9 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED,
+                JOYEER_BACKEND_CODE_GENERATION_FAILED,
                 "LLVM could not create the native target machine");
-        return JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED;
+        return JOYEER_BACKEND_CODE_GENERATION_FAILED;
     }
     module->setTargetTriple(triple);
     module->setDataLayout(targetMachine->createDataLayout());
@@ -228,9 +233,9 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_FILE_ERROR,
+                JOYEER_BACKEND_FILE_ERROR,
                 fileError.message());
-        return JOYEER_NATIVE_BACKEND_FILE_ERROR;
+        return JOYEER_BACKEND_FILE_ERROR;
     }
     llvm::legacy::PassManager codeGenerationPasses;
     if (targetMachine->addPassesToEmitFile(
@@ -241,9 +246,9 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED,
+                JOYEER_BACKEND_CODE_GENERATION_FAILED,
                 "LLVM target does not support object emission");
-        return JOYEER_NATIVE_BACKEND_CODE_GENERATION_FAILED;
+        return JOYEER_BACKEND_CODE_GENERATION_FAILED;
     }
     codeGenerationPasses.run(*module);
     objectStream.flush();
@@ -251,11 +256,11 @@ JoyeerNativeBackendStatus emitObject(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_FILE_ERROR,
+                JOYEER_BACKEND_FILE_ERROR,
                 "LLVM failed while writing the object file");
-        return JOYEER_NATIVE_BACKEND_FILE_ERROR;
+        return JOYEER_BACKEND_FILE_ERROR;
     }
-    return JOYEER_NATIVE_BACKEND_SUCCESS;
+    return JOYEER_BACKEND_SUCCESS;
 }
 
 #if defined(_WIN32)
@@ -353,7 +358,7 @@ bool appendWindowsLibraryPaths(
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 std::optional<std::vector<std::string>> buildElfLinkerArguments(
-    const JoyeerNativeBackendLinkOptions& options,
+    const JoyeerBackendLinkOptions& options,
     std::string& error) {
     std::string diagnosticsText;
     llvm::raw_string_ostream diagnosticsStream(diagnosticsText);
@@ -402,9 +407,9 @@ std::optional<std::vector<std::string>> buildElfLinkerArguments(
 }
 #endif
 
-JoyeerNativeBackendStatus linkNative(
-        const JoyeerNativeBackendLinkOptions* options,
-        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+JoyeerBackendStatus linkNative(
+        const JoyeerBackendLinkOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
     if (options == nullptr ||
         !validHeader(options->abiVersion, options->structSize, sizeof(*options)) ||
@@ -412,18 +417,18 @@ JoyeerNativeBackendStatus linkNative(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                JOYEER_BACKEND_INVALID_ARGUMENT,
                 "invalid native backend linker options");
-        return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+        return JOYEER_BACKEND_INVALID_ARGUMENT;
     }
     for (size_t index = 0; index < options->argumentCount; ++index) {
         if (options->arguments[index] == nullptr) {
             report(
                     diagnosticCallback,
                     diagnosticContext,
-                    JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                    JOYEER_BACKEND_INVALID_ARGUMENT,
                     "native backend linker arguments must not contain null entries");
-            return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+            return JOYEER_BACKEND_INVALID_ARGUMENT;
         }
     }
 
@@ -440,9 +445,9 @@ JoyeerNativeBackendStatus linkNative(
             report(
                     diagnosticCallback,
                     diagnosticContext,
-                    JOYEER_NATIVE_BACKEND_LINK_FAILED,
+                    JOYEER_BACKEND_LINK_FAILED,
                     discoveryError);
-            return JOYEER_NATIVE_BACKEND_LINK_FAILED;
+            return JOYEER_BACKEND_LINK_FAILED;
         }
 #endif
         std::vector<const char*> arguments;
@@ -465,7 +470,7 @@ JoyeerNativeBackendStatus linkNative(
         if (!linking.canRunAgain) {
             lld::exitLld(linking.retCode == 0 ? 1 : linking.retCode);
         }
-        if (linking.retCode == 0) return JOYEER_NATIVE_BACKEND_SUCCESS;
+        if (linking.retCode == 0) return JOYEER_BACKEND_SUCCESS;
         auto message = standardError;
         if (!standardOutput.empty()) {
             if (!message.empty()) message.push_back('\n');
@@ -475,36 +480,36 @@ JoyeerNativeBackendStatus linkNative(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_LINK_FAILED,
+                JOYEER_BACKEND_LINK_FAILED,
                 message);
-        return JOYEER_NATIVE_BACKEND_LINK_FAILED;
+        return JOYEER_BACKEND_LINK_FAILED;
     } catch (const std::exception& error) {
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                JOYEER_BACKEND_INTERNAL_ERROR,
                 error.what());
     } catch (...) {
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                JOYEER_BACKEND_INTERNAL_ERROR,
                 "unknown LLD failure");
     }
-    return JOYEER_NATIVE_BACKEND_INTERNAL_ERROR;
+    return JOYEER_BACKEND_INTERNAL_ERROR;
 }
 
 } // namespace
 
-extern "C" uint32_t joyeer_native_backend_abi_version(void) {
-    return JOYEER_NATIVE_BACKEND_ABI_VERSION;
+extern "C" uint32_t joyeer_backend_abi_version(void) {
+    return JOYEER_BACKEND_ABI_VERSION;
 }
 
-extern "C" const char* joyeer_native_backend_llvm_version(void) {
+extern "C" const char* joyeer_backend_llvm_version(void) {
     return LLVM_VERSION_STRING;
 }
 
-extern "C" int joyeer_native_backend_has_coff_linker(void) {
+extern "C" int joyeer_backend_has_coff_linker(void) {
 #if defined(_WIN32)
     return nativeLinkerDriver != nullptr;
 #else
@@ -512,7 +517,7 @@ extern "C" int joyeer_native_backend_has_coff_linker(void) {
 #endif
 }
 
-extern "C" int joyeer_native_backend_has_macho_linker(void) {
+extern "C" int joyeer_backend_has_macho_linker(void) {
 #if defined(__APPLE__)
     return nativeLinkerDriver != nullptr;
 #else
@@ -520,9 +525,9 @@ extern "C" int joyeer_native_backend_has_macho_linker(void) {
 #endif
 }
 
-extern "C" JoyeerNativeBackendStatus joyeer_native_backend_emit_object(
-        const JoyeerNativeBackendObjectOptions* options,
-        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+extern "C" JoyeerBackendStatus joyeer_backend_emit_object(
+        const JoyeerBackendObjectOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
     if (options == nullptr ||
         !validHeader(options->abiVersion, options->structSize, sizeof(*options)) ||
@@ -531,9 +536,9 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_emit_object(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                JOYEER_BACKEND_INVALID_ARGUMENT,
                 "invalid native backend object options");
-        return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+        return JOYEER_BACKEND_INVALID_ARGUMENT;
     }
     try {
         return emitObject(*options, diagnosticCallback, diagnosticContext);
@@ -541,21 +546,21 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_emit_object(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                JOYEER_BACKEND_INTERNAL_ERROR,
                 error.what());
     } catch (...) {
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INTERNAL_ERROR,
+                JOYEER_BACKEND_INTERNAL_ERROR,
                 "unknown native backend failure");
     }
-    return JOYEER_NATIVE_BACKEND_INTERNAL_ERROR;
+    return JOYEER_BACKEND_INTERNAL_ERROR;
 }
 
-extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_coff(
-        const JoyeerNativeBackendLinkOptions* options,
-        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+extern "C" JoyeerBackendStatus joyeer_backend_link_coff(
+        const JoyeerBackendLinkOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
 #if defined(_WIN32)
     return linkNative(options, diagnosticCallback, diagnosticContext);
@@ -563,15 +568,15 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_coff(
     report(
             diagnosticCallback,
             diagnosticContext,
-            JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+            JOYEER_BACKEND_INVALID_ARGUMENT,
             "COFF linking is unavailable in this native backend");
-    return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+    return JOYEER_BACKEND_INVALID_ARGUMENT;
 #endif
 }
 
-extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_macho(
-        const JoyeerNativeBackendLinkOptions* options,
-        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+extern "C" JoyeerBackendStatus joyeer_backend_link_macho(
+        const JoyeerBackendLinkOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
 #if defined(__APPLE__)
     return linkNative(options, diagnosticCallback, diagnosticContext);
@@ -579,13 +584,13 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_macho(
     report(
             diagnosticCallback,
             diagnosticContext,
-            JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+            JOYEER_BACKEND_INVALID_ARGUMENT,
             "Mach-O linking is unavailable in this native backend");
-    return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+    return JOYEER_BACKEND_INVALID_ARGUMENT;
 #endif
 }
 
-extern "C" int joyeer_native_backend_has_elf_linker(void) {
+extern "C" int joyeer_backend_has_elf_linker(void) {
 #if !defined(_WIN32) && !defined(__APPLE__)
     return nativeLinkerDriver != nullptr;
 #else
@@ -593,9 +598,9 @@ extern "C" int joyeer_native_backend_has_elf_linker(void) {
 #endif
 }
 
-extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_elf(
-        const JoyeerNativeBackendLinkOptions* options,
-        JoyeerNativeBackendDiagnosticCallback diagnosticCallback,
+extern "C" JoyeerBackendStatus joyeer_backend_link_elf(
+        const JoyeerBackendLinkOptions* options,
+        JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
 #if !defined(_WIN32) && !defined(__APPLE__)
     if (options == nullptr ||
@@ -604,18 +609,18 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_elf(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                JOYEER_BACKEND_INVALID_ARGUMENT,
                 "invalid native backend ELF linker options");
-        return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+        return JOYEER_BACKEND_INVALID_ARGUMENT;
     }
     for (size_t index = 0; index < options->argumentCount; ++index) {
         if (options->arguments[index] == nullptr) {
             report(
                     diagnosticCallback,
                     diagnosticContext,
-                    JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+                    JOYEER_BACKEND_INVALID_ARGUMENT,
                     "native backend ELF linker arguments must not contain null entries");
-            return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+            return JOYEER_BACKEND_INVALID_ARGUMENT;
         }
     }
 
@@ -625,18 +630,18 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_elf(
         report(
                 diagnosticCallback,
                 diagnosticContext,
-                JOYEER_NATIVE_BACKEND_LINK_FAILED,
+                JOYEER_BACKEND_LINK_FAILED,
                 driverError);
-        return JOYEER_NATIVE_BACKEND_LINK_FAILED;
+        return JOYEER_BACKEND_LINK_FAILED;
     }
     std::vector<const char*> rawArguments;
     rawArguments.reserve(linkerArguments->size());
     for (const auto& argument : *linkerArguments) {
         rawArguments.push_back(argument.c_str());
     }
-    const JoyeerNativeBackendLinkOptions linkerOptions {
-        JOYEER_NATIVE_BACKEND_ABI_VERSION,
-        sizeof(JoyeerNativeBackendLinkOptions),
+    const JoyeerBackendLinkOptions linkerOptions {
+        JOYEER_BACKEND_ABI_VERSION,
+        sizeof(JoyeerBackendLinkOptions),
         rawArguments.data(),
         rawArguments.size(),
     };
@@ -645,8 +650,8 @@ extern "C" JoyeerNativeBackendStatus joyeer_native_backend_link_elf(
     report(
             diagnosticCallback,
             diagnosticContext,
-            JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT,
+            JOYEER_BACKEND_INVALID_ARGUMENT,
             "ELF linking is unavailable in this native backend");
-    return JOYEER_NATIVE_BACKEND_INVALID_ARGUMENT;
+    return JOYEER_BACKEND_INVALID_ARGUMENT;
 #endif
 }

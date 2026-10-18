@@ -420,9 +420,25 @@ and concurrency model.
 
 ### 4.9 Raw memory (FFI)
 
-Out of scope for v0.1. A future `unsafe` block will expose raw pointers
-for C interop. Until then, the standard library is the only producer of
-heap-backed types (`Array`, `String`, `Dict`).
+The restricted [C boundary](19-c-interop.md) specifies scalar native imports
+and exports for an explicitly authorized runtime compilation context.
+By-value scalar ABI adaptation does not introduce references, aliasing
+values, or a way for native code to mutate the caller's scalar storage.
+The initial `Int`/`Void` binding subset is implemented; broader ABI mappings
+remain design, as recorded in [implementation coverage](../impl/c-interop.md).
+
+Raw memory remains outside the accepted source surface. This revision adds
+no raw/opaque address type, address-taking or dereference syntax, nullable
+address representation, or public pointer API. `unsafe` remains reserved
+(§15); a future block or pointer spelling is not selected here.
+
+The [deferred memory-boundary proposal](../plan/c-interop.md#8-memory-errors-and-the-next-slice)
+must settle byte extents, read/write access, nullability, output
+initialization, retention, and allocator ownership before any address
+mechanism is admitted. Ordinary access effects, `Optional`, and managed
+aggregate layouts are not substitutes for those contracts. Internal runtime
+storage and existing compiler-known host operations do not grant ordinary
+source code native privileges.
 
 ### 4.10 Return values & ownership escape
 

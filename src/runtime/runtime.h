@@ -1,5 +1,5 @@
-#ifndef __joyeer_native_runtime_h__
-#define __joyeer_native_runtime_h__
+#ifndef __joyeer_runtime_h__
+#define __joyeer_runtime_h__
 
 #include <stdbool.h>
 #include <stddef.h>

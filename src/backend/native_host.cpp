@@ -174,7 +174,9 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     const auto& callee = *found;
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
-    if (!callee.isExternal) return builder.CreateCall(functions.at(callee.id), arguments);
+    if (!callee.isExternal || callee.nativeBinding.has_value()) {
+        return builder.CreateCall(functions.at(callee.id), arguments);
+    }
     if (hostbuiltins::findFunction(callee.name) != nullptr) return emitHostCall(callee, arguments, instruction);
     if (callee.name == "print" && arguments.size() == 1) {
         const auto& argumentType = type(values.at(instruction.operands[0]).type);

@@ -27,7 +27,7 @@ source
   -> versioned C ABI carrying Joyeer IR bytes
   -> LLVM context / module / types / instructions / debug metadata
   -> LLVM optimization and .o / .obj generation
-  -> LLD + JoyeerNativeRuntime
+  -> LLD + JoyeerRuntime
   -> native executable
 ```
 
@@ -46,9 +46,9 @@ the ABI. The context outlives its module; the lowering session and decoded
 Joyeer model are discarded once construction finishes. Operations on the same
 handle are serial; independent handles have independent contexts.
 
-For inspection, `--emit-llvm` calls LLVM's module printer. Native executable
+For inspection, `--emit-llvm` calls LLVM's module printer. Native executable and internal runtime-object
 builds skip that serialization and retain the module handle through object
-generation. The linker receives a COFF, Mach-O, or ELF object and the runtime
+generation. Executable linking receives a COFF, Mach-O, or ELF object and the runtime
 archive, never Joyeer source or an LLVM `.ll` source file. Object generation
 clones the portable module before setting a native target/data layout and
 optimizing it, so inspection and repeated generation do not change the original.
@@ -71,10 +71,10 @@ and `src/backend/`:
 | [native_collections.cpp](../../src/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
 | [native_host.cpp](../../src/backend/native_host.cpp) | External builtins, flat C arguments, Result construction, and ABI tag mapping |
 | [native_debug.cpp](../../src/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
-| [native_backend.cpp](../../src/backend/native_backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
+| [backend.cpp](../../src/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
 | [linker.cpp](../../src/compiler/codegen/linker.cpp) | Artifact paths, runtime/SDK inputs, native linking, and debug sidecars |
 
-Start with `Emitter::emit`, follow `joyeer_native_backend_build_module` into
+Start with `Emitter::emit`, follow `joyeer_backend_build_module` into
 `Builder::build`, and then read `emitFunction` / `emitInstruction`. Ownership,
 collection, host, and debug helpers are separate implementation units of the
 same session, not alternate execution pipelines. Functions are declared before
@@ -88,10 +88,15 @@ interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
 from the same revision. The interface includes module construction, printing,
 destruction, and the object options' module handle. The private IR wire version
-also remains 1. Numeric fields use 64-bit little-endian encoding; strings are
+is version 2. Numeric fields use 64-bit little-endian encoding; strings are
 length-prefixed arbitrary bytes.
 Inputs and callback messages are borrowed only during a call. Callbacks must
 not throw, and clients must never delete or interpret the opaque handle.
+
+The component is named `JoyeerBackend`. Its C header uses `JoyeerBackend*`
+types, `JOYEER_BACKEND_*` constants/macros, and `joyeer_backend_*` entry
+points. The shared library remains `joyeer-backend` with the platform's
+usual prefix/suffix; rebuild compiler clients and the backend together.
 
 ### Source and build boundaries
 
@@ -103,17 +108,19 @@ stage-specific C++ unit tests. Only `main.cpp` belongs exclusively to the
 compiler executable. Include paths are target-scoped: same-directory headers
 use their filename, and cross-directory headers use paths relative to `src/`.
 
-`src/backend/` remains the shared `JoyeerNativeBackend` C ABI library. Its LLVM
+`src/backend/` remains the shared `JoyeerBackend` C ABI library. Its LLVM
 dependencies, exception handling, allocation, and Windows `/MT` compilation
 are separate from the compiler core. The verifier in `src/compiler/ir/ir.cpp`
 is compiled privately into this target with its own CRT and hidden visibility;
 it is the same implementation, not a second verifier or a reused frontend
-object file. `src/runtime/` builds the C11 `JoyeerNativeRuntime` static archive
+object file. `src/runtime/` builds the C11 `JoyeerRuntime` static archive
 linked into generated programs. Existing artifact names and install components
 remain unchanged, and the private object target is not installed.
 
 The layout permits a future Joyeer-written frontend/driver to use the same C
-backend boundary. It does not itself implement self-hosting or a Joyeer C FFI.
+backend boundary. It does not implement self-hosting. The separate
+[restricted C binding slice](c-interop.md) supports runtime-only `Int`/`Void`
+source imports/exports, not general user FFI.
 
 For module compilation, one verified Joyeer IR module contains the reachable
 graph of named explicit source-file sets. This whole-graph code-generation
@@ -127,7 +134,7 @@ entry-point rules.
 
 The native linker lives in `src/compiler/codegen/linker.h` and
 `src/compiler/codegen/linker.cpp`. It calls the versioned C ABI in
-`src/backend/native_backend.h` on every platform. The
+`src/backend/backend.h` on every platform. The
 native-backend library verifies the constructed module, runs the selected LLVM
 optimization pipeline, emits a COFF, Mach-O, or ELF object, and invokes the
 corresponding LLD driver in-process. A mutex serializes LLD because its library
@@ -141,7 +148,7 @@ uses LLVM's assembly parser; it is not the compiler's native build path.
 
 The DLL discovers MSVC, the Universal CRT, and Windows SDK library directories
 through LLVM's Visual Studio Setup Configuration and registry helpers. It then
-links the generated object with the sibling `JoyeerNativeRuntime.lib`. The
+links the generated object with the sibling `JoyeerRuntime.lib`. The
 release package keeps the DLL, runtime archive, and `joyeer.exe` together.
 
 Windows supports native x64 and ARM64 builds. The compiled backend architecture
@@ -224,6 +231,20 @@ Build a native executable:
 ```pwsh
 joyeer -o output.exe source.joyeer
 ```
+
+Produce an internal runtime object without application startup or linking:
+
+```text
+joyeer --module-name runtime.core --runtime-module runtime.core --emit-runtime-object runtime.o bindings.joyeer
+```
+
+`--runtime-module <name>` explicitly authorizes one supplied named unit;
+repeat it to select more units. Unknown or duplicate selections are errors.
+`--emit-runtime-object <file>` requires authorization for the named root,
+uses `.o`/`.obj` code generation, and does not require a runtime archive or
+an application `main`. It does not establish a general binary-module ABI.
+See [C binding coverage](c-interop.md) for signatures, static/shared providers,
+authorization boundaries, and acceptance gates.
 
 Compile a named root source set and explicitly supply its dependency files
 (example paths):
@@ -535,7 +556,7 @@ and the host's `joyeer-backend` shared library to compile and link native
 Joyeer programs. They verify compiler output and debug-info metadata in both
 DWARF/CodeView modes and make the configured Clang emit objects containing the
 corresponding DWARF `.debug_line` and Windows CodeView `.debug$S` sections.
-`NativeBackendAbiTests` is compiled as C and checks the shared library's C
+`BackendAbiTests` is compiled as C and checks the shared library's C
 ABI/version without exposing C++ types. Native artifact tests additionally
 validate no-debug output, Windows PDB source and line records, embedded
 Windows/ELF DWARF sections, platform artifact retention, safe metacharacter

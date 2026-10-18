@@ -104,7 +104,7 @@ void __cdecl recordStderrInvalidParameter(
 }
 #endif
 
-TEST(NativeRuntimeTest, WritesExactBinaryStderrWithoutAppendingNewline) {
+TEST(RuntimeTest, WritesExactBinaryStderrWithoutAppendingNewline) {
     const std::array<uint8_t, 9> bytes { 'J', 0, '\n', '\r', 0xff, 0xc0, 0xaf, 'y', 'r' };
     const auto allocations = joyeer_runtime_active_allocations();
     testing::internal::CaptureStderr();
@@ -117,7 +117,7 @@ TEST(NativeRuntimeTest, WritesExactBinaryStderrWithoutAppendingNewline) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), allocations);
 }
 
-TEST(NativeRuntimeTest, AcceptsNullEmptyStderrAndResetsErrorStorage) {
+TEST(RuntimeTest, AcceptsNullEmptyStderrAndResetsErrorStorage) {
     testing::internal::CaptureStderr();
     int64_t errorCode = 123;
     const auto status = joyeer_write_stderr_abi(&errorCode, nullptr, 0);
@@ -129,7 +129,7 @@ TEST(NativeRuntimeTest, AcceptsNullEmptyStderrAndResetsErrorStorage) {
 }
 
 #if defined(_WIN32)
-TEST(NativeRuntimeTest, RestoresWindowsStderrTextModeAfterExactWrite) {
+TEST(RuntimeTest, RestoresWindowsStderrTextModeAfterExactWrite) {
     testing::internal::CaptureStderr();
     const int previous = _setmode(_fileno(stderr), _O_TEXT);
     int64_t errorCode = -1;
@@ -144,7 +144,7 @@ TEST(NativeRuntimeTest, RestoresWindowsStderrTextModeAfterExactWrite) {
     EXPECT_EQ(captured, "\n"); // Not Windows text mode's CRLF.
 }
 
-TEST(NativeRuntimeTest, RestoresWindowsInvalidParameterHandlerAfterStderrWrite) {
+TEST(RuntimeTest, RestoresWindowsInvalidParameterHandlerAfterStderrWrite) {
     testing::internal::CaptureStderr();
     const auto previousHandler =
             _set_thread_local_invalid_parameter_handler(recordStderrInvalidParameter);
@@ -165,7 +165,7 @@ TEST(NativeRuntimeTest, RestoresWindowsInvalidParameterHandlerAfterStderrWrite) 
 }
 #endif
 
-TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrWriteFailure) {
+TEST(RuntimeDeathTest, ReturnsNativeErrorForStderrWriteFailure) {
     EXPECT_EXIT({
         char buffer[4096];
         if (!prepareFailingStderr(buffer, sizeof(buffer), false)) std::_Exit(120);
@@ -177,7 +177,7 @@ TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrWriteFailure) {
     }, testing::ExitedWithCode(0), "");
 }
 
-TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrFlushFailure) {
+TEST(RuntimeDeathTest, ReturnsNativeErrorForStderrFlushFailure) {
     EXPECT_EXIT({
         char buffer[4096];
         if (!prepareFailingStderr(buffer, sizeof(buffer))) std::_Exit(120);
@@ -190,7 +190,7 @@ TEST(NativeRuntimeDeathTest, ReturnsNativeErrorForStderrFlushFailure) {
 }
 
 #if defined(_WIN32)
-TEST(NativeRuntimeDeathTest, ReturnsBadDescriptorForClosedWindowsStderrWithoutLeaking) {
+TEST(RuntimeDeathTest, ReturnsBadDescriptorForClosedWindowsStderrWithoutLeaking) {
     const std::array<_invalid_parameter_handler, 2> handlers {
         nullptr, recordStderrInvalidParameter,
     };
@@ -231,7 +231,7 @@ TEST(NativeRuntimeDeathTest, ReturnsBadDescriptorForClosedWindowsStderrWithoutLe
     }
 }
 
-TEST(NativeRuntimeDeathTest, RestoresWindowsStderrModeAfterFailedWrite) {
+TEST(RuntimeDeathTest, RestoresWindowsStderrModeAfterFailedWrite) {
     EXPECT_EXIT({
         char buffer[4096];
         if (!prepareFailingStderr(buffer, sizeof(buffer), false)) std::_Exit(120);
@@ -246,7 +246,7 @@ TEST(NativeRuntimeDeathTest, RestoresWindowsStderrModeAfterFailedWrite) {
 }
 #endif
 
-TEST(NativeRuntimeDeathTest, FlushesPendingStderrEvenForEmptyContents) {
+TEST(RuntimeDeathTest, FlushesPendingStderrEvenForEmptyContents) {
     EXPECT_EXIT({
         char buffer[4096];
         if (!prepareFailingStderr(buffer, sizeof(buffer))) std::_Exit(120);
@@ -258,7 +258,7 @@ TEST(NativeRuntimeDeathTest, FlushesPendingStderrEvenForEmptyContents) {
     }, testing::ExitedWithCode(0), "");
 }
 
-TEST(NativeRuntimeDeathTest, TrapsInvalidStderrAbiStorageAndContents) {
+TEST(RuntimeDeathTest, TrapsInvalidStderrAbiStorageAndContents) {
     int64_t code = 0;
     EXPECT_DEATH(static_cast<void>(joyeer_write_stderr_abi(nullptr, nullptr, 0)),
                  "stderr error output is null");
@@ -268,13 +268,13 @@ TEST(NativeRuntimeDeathTest, TrapsInvalidStderrAbiStorageAndContents) {
                  "invalid stderr contents");
 }
 
-TEST(NativeRuntimeTest, PerformsCheckedIntegerArithmetic) {
+TEST(RuntimeTest, PerformsCheckedIntegerArithmetic) {
     EXPECT_EQ(joyeer_checked_add_int(40, 2), 42);
     EXPECT_EQ(joyeer_checked_sub_int(40, 2), 38);
     EXPECT_EQ(joyeer_checked_mul_int(-6, 7), -42);
 }
 
-TEST(NativeRuntimeDeathTest, TrapsIntegerOverflow) {
+TEST(RuntimeDeathTest, TrapsIntegerOverflow) {
     EXPECT_DEATH(
             static_cast<void>(joyeer_checked_add_int(
                     std::numeric_limits<int64_t>::max(),
@@ -287,7 +287,7 @@ TEST(NativeRuntimeDeathTest, TrapsIntegerOverflow) {
             "integer multiplication overflow");
 }
 
-TEST(NativeRuntimeTest, DividesAndTakesRemaindersWithSignedIntegerSemantics) {
+TEST(RuntimeTest, DividesAndTakesRemaindersWithSignedIntegerSemantics) {
     const auto minimum = std::numeric_limits<int64_t>::min();
     const auto maximum = std::numeric_limits<int64_t>::max();
     const int64_t cases[][4] = {
@@ -320,7 +320,7 @@ TEST(NativeRuntimeTest, DividesAndTakesRemaindersWithSignedIntegerSemantics) {
     }
 }
 
-TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionByZero) {
+TEST(RuntimeDeathTest, TrapsIntegerDivisionByZero) {
     for (const auto dividend : { int64_t { 0 }, std::numeric_limits<int64_t>::min(),
                                 std::numeric_limits<int64_t>::max() }) {
         SCOPED_TRACE(dividend);
@@ -330,7 +330,7 @@ TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionByZero) {
     }
 }
 
-TEST(NativeRuntimeDeathTest, TrapsIntegerRemainderByZero) {
+TEST(RuntimeDeathTest, TrapsIntegerRemainderByZero) {
     for (const auto dividend : { int64_t { 0 }, std::numeric_limits<int64_t>::min(),
                                 std::numeric_limits<int64_t>::max() }) {
         SCOPED_TRACE(dividend);
@@ -340,7 +340,7 @@ TEST(NativeRuntimeDeathTest, TrapsIntegerRemainderByZero) {
     }
 }
 
-TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionAndRemainderOverflow) {
+TEST(RuntimeDeathTest, TrapsIntegerDivisionAndRemainderOverflow) {
     EXPECT_DEATH(
             static_cast<void>(joyeer_checked_div_int(
                     std::numeric_limits<int64_t>::min(), -1)),
@@ -351,7 +351,7 @@ TEST(NativeRuntimeDeathTest, TrapsIntegerDivisionAndRemainderOverflow) {
             "integer remainder overflow");
 }
 
-TEST(NativeRuntimeTest, ConcatenatesComparesAndIndexesStrings) {
+TEST(RuntimeTest, ConcatenatesComparesAndIndexesStrings) {
     const std::string left = "Joy";
     const std::string right = "eer";
     auto joined = joyeer_string_concat(view(left), view(right));
@@ -368,7 +368,7 @@ TEST(NativeRuntimeTest, ConcatenatesComparesAndIndexesStrings) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
+TEST(RuntimeTest, ClonesOwnedStringsIndependently) {
     const std::string sourceText = "owned";
     JoyeerString first {};
     joyeer_string_clone_abi(&first, view(sourceText).data, sourceText.size());
@@ -387,7 +387,7 @@ TEST(NativeRuntimeTest, ClonesOwnedStringsIndependently) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, ConvertsBytesToOwnedSingleByteStrings) {
+TEST(RuntimeTest, ConvertsBytesToOwnedSingleByteStrings) {
     JoyeerString text {};
     joyeer_byte_to_string_abi(&text, static_cast<uint8_t>('J'));
 
@@ -397,15 +397,15 @@ TEST(NativeRuntimeTest, ConvertsBytesToOwnedSingleByteStrings) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
+TEST(RuntimeDeathTest, TrapsStringBoundsFailures) {
     EXPECT_DEATH(
             static_cast<void>(joyeer_string_byte_at(view(std::string("x")), 1)),
             "string index out of bounds");
 }
 
-        TEST(NativeRuntimeTest, ReadsFilesAsOwnedBinaryStrings) {
+        TEST(RuntimeTest, ReadsFilesAsOwnedBinaryStrings) {
             const auto path = std::filesystem::temp_directory_path() /
-                "joyeer-native-runtime-read-file.bin";
+                "joyeer-runtime-read-file.bin";
             const std::array<uint8_t, 7> expected { 'J', 'o', 'y', 0, 'e', 'e', 'r' };
             {
             std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -434,9 +434,9 @@ TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
             EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
         }
 
-        TEST(NativeRuntimeTest, ReturnsAnErrorForMissingFilesWithoutLeaking) {
+        TEST(RuntimeTest, ReturnsAnErrorForMissingFilesWithoutLeaking) {
             const auto path = std::filesystem::temp_directory_path() /
-                "joyeer-native-runtime-definitely-missing.txt";
+                "joyeer-runtime-definitely-missing.txt";
             std::filesystem::remove(path);
             const auto pathText = path.string();
             JoyeerString contents {};
@@ -454,7 +454,7 @@ TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
             EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
         }
 
-        TEST(NativeRuntimeTest, ClassifiesEmbeddedNullPathsAsInvalid) {
+        TEST(RuntimeTest, ClassifiesEmbeddedNullPathsAsInvalid) {
             const std::array<uint8_t, 3> path { 'a', 0, 'b' };
             JoyeerString contents {};
             int64_t errorCode = 0;
@@ -472,7 +472,7 @@ TEST(NativeRuntimeDeathTest, TrapsStringBoundsFailures) {
             EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
         }
 
-TEST(NativeRuntimeTest, CopiesIndexesAndMutatesArrays) {
+TEST(RuntimeTest, CopiesIndexesAndMutatesArrays) {
     const std::array<int64_t, 3> source { 10, 20, 30 };
     auto array = joyeer_array_create(
             source.data(),
@@ -490,7 +490,7 @@ TEST(NativeRuntimeTest, CopiesIndexesAndMutatesArrays) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, AppendsTrivialElementsAndGrowsCapacity) {
+TEST(RuntimeTest, AppendsTrivialElementsAndGrowsCapacity) {
     JoyeerArray array {};
     joyeer_array_create_owned_abi(
             &array,
@@ -514,7 +514,7 @@ TEST(NativeRuntimeTest, AppendsTrivialElementsAndGrowsCapacity) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, TakesAndRecursivelyDestroysAppendedOwnedElements) {
+TEST(RuntimeTest, TakesAndRecursivelyDestroysAppendedOwnedElements) {
     cloneCount = 0;
     destroyCount = 0;
     JoyeerArray array {};
@@ -542,7 +542,7 @@ TEST(NativeRuntimeTest, TakesAndRecursivelyDestroysAppendedOwnedElements) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
+TEST(RuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
     cloneCount = 0;
     destroyCount = 0;
     std::array<JoyeerString, 2> source {
@@ -573,7 +573,7 @@ TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeDeathTest, TrapsArrayBoundsFailures) {
+TEST(RuntimeDeathTest, TrapsArrayBoundsFailures) {
     const int64_t source = 1;
     auto array = joyeer_array_create(&source, 1, sizeof(source));
     EXPECT_DEATH(static_cast<void>(joyeer_array_at(array, -1)), "array index out of bounds");
@@ -585,7 +585,7 @@ struct IntEntry {
     int64_t value;
 };
 
-TEST(NativeRuntimeTest, LooksUpDictionaryValuesByPrimitiveKey) {
+TEST(RuntimeTest, LooksUpDictionaryValuesByPrimitiveKey) {
     const std::array<IntEntry, 2> entries { IntEntry { 1, 10 }, IntEntry { 2, 20 } };
     auto dictionary = joyeer_dictionary_create(
             entries.data(),
@@ -660,19 +660,19 @@ void expectDictionaryFind(
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyIntegerDictionaryEntries) {
+TEST(RuntimeTest, FindsPresentMissingAndEmptyIntegerDictionaryEntries) {
     expectDictionaryFind<int64_t>(2, 2, 3, JOYEER_DICTIONARY_KEY_INT);
 }
 
-TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyBooleanDictionaryEntries) {
+TEST(RuntimeTest, FindsPresentMissingAndEmptyBooleanDictionaryEntries) {
     expectDictionaryFind<bool>(false, false, true, JOYEER_DICTIONARY_KEY_BOOL);
 }
 
-TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyByteDictionaryEntries) {
+TEST(RuntimeTest, FindsPresentMissingAndEmptyByteDictionaryEntries) {
     expectDictionaryFind<uint8_t>(255, 255, 0, JOYEER_DICTIONARY_KEY_BYTE);
 }
 
-TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyStringDictionaryEntriesByContent) {
+TEST(RuntimeTest, FindsPresentMissingAndEmptyStringDictionaryEntriesByContent) {
     const std::string stored("key\0suffix", 10);
     const std::string hit(stored);
     const std::string missing("key");
@@ -680,7 +680,7 @@ TEST(NativeRuntimeTest, FindsPresentMissingAndEmptyStringDictionaryEntriesByCont
     expectDictionaryFind(view(stored), view(hit), view(missing), JOYEER_DICTIONARY_KEY_STRING);
 }
 
-TEST(NativeRuntimeTest, FindsZeroSizedDictionaryValuesWithNonNullPresence) {
+TEST(RuntimeTest, FindsZeroSizedDictionaryValuesWithNonNullPresence) {
     const std::array<int64_t, 2> keys { 1, 2 };
     auto dictionary = joyeer_dictionary_create(
             keys.data(), keys.size(), sizeof(int64_t), 0,
@@ -700,7 +700,7 @@ TEST(NativeRuntimeTest, FindsZeroSizedDictionaryValuesWithNonNullPresence) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, FindsBorrowedStorageWithoutCloningOrConsumingDictionaryEntries) {
+TEST(RuntimeTest, FindsBorrowedStorageWithoutCloningOrConsumingDictionaryEntries) {
     cloneCount = 0;
     destroyCount = 0;
     const std::array<OwnedStringEntry, 2> entries {
@@ -750,7 +750,7 @@ TEST(NativeRuntimeTest, FindsBorrowedStorageWithoutCloningOrConsumingDictionaryE
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeDeathTest, StrictDictionaryLookupStillTrapsForMissingAndEmptyEntries) {
+TEST(RuntimeDeathTest, StrictDictionaryLookupStillTrapsForMissingAndEmptyEntries) {
     const IntEntry entry { 1, 42 };
     const int64_t missing = 2;
     for (const int64_t count : { 0, 1 }) {
@@ -774,7 +774,7 @@ TEST(NativeRuntimeDeathTest, StrictDictionaryLookupStillTrapsForMissingAndEmptyE
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeDeathTest, DictionaryFindPreservesInvalidLookupDiagnostics) {
+TEST(RuntimeDeathTest, DictionaryFindPreservesInvalidLookupDiagnostics) {
     const int64_t key = 1;
     auto dictionary = joyeer_dictionary_create(
             nullptr, 0, sizeof(int64_t), sizeof(int64_t),
@@ -801,7 +801,7 @@ TEST(NativeRuntimeDeathTest, DictionaryFindPreservesInvalidLookupDiagnostics) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, DictionaryConstructionMatchesInsertionForDuplicateKeys) {
+TEST(RuntimeTest, DictionaryConstructionMatchesInsertionForDuplicateKeys) {
     const std::array<IntEntry, 5> entries {
     IntEntry { 1, 10 }, IntEntry { 2, 30 }, IntEntry { 1, 20 },
     IntEntry { 3, 40 }, IntEntry { 2, 50 },
@@ -833,7 +833,7 @@ TEST(NativeRuntimeTest, DictionaryConstructionMatchesInsertionForDuplicateKeys) 
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, DestroysDuplicateOwnedDictionaryEntriesExactlyOnce) {
+TEST(RuntimeTest, DestroysDuplicateOwnedDictionaryEntriesExactlyOnce) {
     cloneCount = 0;
     destroyCount = 0;
     const std::array<OwnedStringEntry, 4> entries {
@@ -879,7 +879,7 @@ TEST(NativeRuntimeTest, DestroysDuplicateOwnedDictionaryEntriesExactlyOnce) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
+TEST(RuntimeTest, LooksUpDictionaryValuesByStringKey) {
     const std::string name = "answer";
     const StringEntry entry { view(name), 42 };
     auto dictionary = joyeer_dictionary_create(
@@ -903,7 +903,7 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-    TEST(NativeRuntimeTest, InsertsUpdatesAndGrowsDictionaryEntries) {
+    TEST(RuntimeTest, InsertsUpdatesAndGrowsDictionaryEntries) {
         JoyeerDictionary dictionary {};
         joyeer_dictionary_create_owned_abi(
             &dictionary,
@@ -940,7 +940,7 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
         EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
     }
 
-    TEST(NativeRuntimeTest, TakesAndDestroysOwnedDictionaryInsertionsAndUpdates) {
+    TEST(RuntimeTest, TakesAndDestroysOwnedDictionaryInsertionsAndUpdates) {
         cloneCount = 0;
         destroyCount = 0;
         JoyeerDictionary dictionary {};
@@ -984,7 +984,7 @@ TEST(NativeRuntimeTest, LooksUpDictionaryValuesByStringKey) {
         EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
     }
 
-TEST(NativeRuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
+TEST(RuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
     cloneCount = 0;
     destroyCount = 0;
     const OwnedStringEntry entry {

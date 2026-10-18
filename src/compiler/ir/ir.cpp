@@ -599,8 +599,59 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
+    std::unordered_map<std::string, const Function*> nativeSymbols;
+    std::unordered_set<std::string> nativeExports;
     for (const auto& function : module.functions) {
         const auto functionId = std::optional<FunctionId>(function.id);
+        if (module.isRuntimeObject && function.isRootModule &&
+            !function.isExternal && !function.runtimeContext) {
+            report(VerificationErrorId::invalidInstruction, functionId, {}, {},
+                   "runtime-object root functions require runtime authorization");
+        }
+        if (function.nativeBinding.has_value()) {
+            const auto& binding = *function.nativeBinding;
+            const auto hasKind = [&](TypeId id, typing::TypeKind kind) {
+                const auto found = types.find(id);
+                return found != types.end() && found->second->kind == kind;
+            };
+            const bool importing = binding.kind == NativeBindingKind::cImport;
+            bool valid = (importing || binding.kind == NativeBindingKind::cExport) &&
+                    function.runtimeContext && isCIdentifier(binding.symbol) &&
+                    function.isExternal == importing &&
+                    !(function.isRootModule && function.name == "main") &&
+                    (importing || !isCEntrySymbol(binding.symbol));
+            const bool integerResult = hasKind(function.resultType, typing::TypeKind::integer);
+            valid &= (integerResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
+                    function.returnsValue == integerResult;
+            for (const auto& parameter : function.parameters) {
+                valid &= hasKind(parameter.value.type, typing::TypeKind::integer) &&
+                        parameter.value.category == ValueCategory::value &&
+                        !parameter.isMutable && !parameter.isConsuming &&
+                        !parameter.isInitializing && !parameter.acceptsAnyType;
+            }
+            if (!valid) {
+                report(VerificationErrorId::invalidInstruction, functionId, {}, {},
+                       "invalid or unauthorized C binding; only by-value Int and Void results are supported");
+            }
+            const auto [previous, inserted] = nativeSymbols.emplace(binding.symbol, &function);
+            if (!inserted) {
+                const auto& other = *previous->second;
+                bool matches = function.resultType == other.resultType &&
+                        function.parameters.size() == other.parameters.size();
+                for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
+                    matches &= function.parameters[index].value.type == other.parameters[index].value.type;
+                }
+                if (!matches) {
+                    report(VerificationErrorId::callMismatch, functionId, {}, {},
+                           "conflicting signatures for C symbol '" + binding.symbol + "'");
+                }
+            }
+            if (binding.kind == NativeBindingKind::cExport &&
+                !nativeExports.insert(binding.symbol).second) {
+                report(VerificationErrorId::duplicateId, functionId, {}, {},
+                       "duplicate C export '" + binding.symbol + "'");
+            }
+        }
         if (function.debugScope.has_value()) {
             const auto scope = debugScopes.find(*function.debugScope);
             if (scope == debugScopes.end() || scope->second->function != function.id ||
@@ -1397,6 +1448,10 @@ VerificationResult Verifier::verify(const Module& module) const {
                             break;
                         }
                         const auto& callee = *functions.at(*instruction.callee);
+                        if (callee.nativeBinding.has_value() && !function.runtimeContext) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "direct call to a C binding requires runtime authorization");
+                        }
                         bool matches = instruction.operands.size() == callee.parameters.size();
                         const auto count = std::min(
                                 instruction.operands.size(),
@@ -2126,6 +2181,11 @@ std::string dump(const Module& module) {
             if (parameter.acceptsAnyType) out << " accepts-any";
         }
         out << ") -> " << typeName(types, function.resultType);
+        if (function.nativeBinding.has_value()) {
+            out << (function.nativeBinding->kind == NativeBindingKind::cImport
+                            ? " c_import \"" : " c_export \"")
+                << escape(function.nativeBinding->symbol) << '"';
+        }
         if (function.isExternal) {
             out << "\n";
             continue;
