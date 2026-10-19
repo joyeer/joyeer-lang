@@ -149,6 +149,10 @@ JoyeerBackendStatus emitObject(
         return JOYEER_BACKEND_INVALID_IR;
     }
 
+    // Code generation consumes debug records, not the inspection module's
+    // legacy debug intrinsics. Convert only the target-specific clone.
+    module->convertToNewDbgValues();
+
     std::string verificationMessage;
     llvm::raw_string_ostream verificationStream(verificationMessage);
     if (llvm::verifyModule(*module, &verificationStream)) {

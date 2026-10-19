@@ -240,11 +240,18 @@ When enabled, `JoypmAcceptanceTools` also builds native fixtures as an `ALL`
 target. The full acceptance configuration enables all three options and runs
 unfiltered CTest; turning off C++ tests does not remove joypm gates.
 
-**Validation status:** native Windows ARM64 Debug default `ALL` and unfiltered
+**Validation status:** fresh native Windows x64 Debug and Release default
+`ALL` builds and unfiltered serial CTest each pass 846/846, including all
+15 joypm gates. Toolchain provenance, C interop coverage, and the in-memory
+debug-information regression are recorded in
+[C interop acceptance](impl/c-interop.md#windows-x64).
+
+Earlier native Windows ARM64 Debug default `ALL` and unfiltered
 CTest pass 790/790, including all 15 joypm gates for the module/workspace
 organization. Debug/optimized self-build and relocated product workflows
 pass. The previous 0.1.0 full Release 789/789 is historical; a fresh full
-Release gate for the new layout is open despite the retained 0.1.0 version.
+native ARM64 Release gate for the new layout is open despite the retained
+0.1.0 version.
 Hardware, process, MSVC/LLVM architecture,
 and PE headers were independently recorded. See the
 [implementation evidence](impl/joypm.md#5-validation-evidence) and

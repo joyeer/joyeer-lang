@@ -94,10 +94,25 @@ protected:
     joyeer::llvmbackend::Result result;
 };
 
-TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
+class LLVMOwnedModuleTest : public LLVMBackendTest,
+        public testing::WithParamInterface<std::optional<joyeer::DebugInfoFormat>> {};
+
+TEST_P(LLVMOwnedModuleTest, CompilesWithoutTextAndPreservesPortableIR) {
+    const auto format = GetParam();
     joyeer::llvmbackend::EmitOptions options;
     options.emitText = false;
-    ASSERT_NO_FATAL_FAILURE(emit("func main() { print(value: 42) }\n", false, options));
+    options.emitLineTables = format.has_value();
+    options.emitVariables = format.has_value();
+    if (format.has_value()) options.debugInfoFormat = *format;
+    ASSERT_NO_FATAL_FAILURE(emit(
+            "func calculate(left: Int, right: Int): Int {\n"
+            "let sum = left + right\nreturn sum - left * right\n}\n"
+            "func main() {\nlet text = \"answer\"\n"
+            "var values = [calculate(left: 7, right: 6)]\n"
+            "&values.append(element: 2)\n"
+            "print(value: values[0])\n"
+            "print(value: text)\n}\n",
+            format.has_value(), options));
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     ASSERT_NE(result.module, nullptr);
     EXPECT_TRUE(result.text.empty());
@@ -123,6 +138,9 @@ TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
     ASSERT_FALSE(before.failed);
     ASSERT_FALSE(before.text.empty());
     EXPECT_EQ(before.text.find("target triple"), std::string::npos);
+    if (format.has_value()) {
+        EXPECT_NE(before.text.find("@llvm.dbg.declare"), std::string::npos);
+    }
 
 #ifdef _WIN32
     const auto process = GetCurrentProcessId();
@@ -161,6 +179,15 @@ TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
         EXPECT_EQ(after.text, before.text);
     }
 }
+
+INSTANTIATE_TEST_SUITE_P(InMemory, LLVMOwnedModuleTest, testing::Values(
+        std::optional<joyeer::DebugInfoFormat> {},
+        std::optional {joyeer::DebugInfoFormat::dwarf},
+        std::optional {joyeer::DebugInfoFormat::codeView}),
+        [](const testing::TestParamInfo<std::optional<joyeer::DebugInfoFormat>>& info) {
+            if (!info.param.has_value()) return "NoDebug";
+            return *info.param == joyeer::DebugInfoFormat::dwarf ? "Dwarf" : "CodeView";
+        });
 
 TEST(LLVMModuleConstructionTest, DoesNotRequireBasicBlocksInDefinitionOrder) {
     joyeer::ir::Module module;

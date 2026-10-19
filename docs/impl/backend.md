@@ -52,6 +52,10 @@ generation. Executable linking receives a COFF, Mach-O, or ELF object and the ru
 archive, never Joyeer source or an LLVM `.ll` source file. Object generation
 clones the portable module before setting a native target/data layout and
 optimizing it, so inspection and repeated generation do not change the original.
+The clone converts legacy debug intrinsics to LLVM debug records before
+optimization and code generation. The portable module keeps its textual
+`llvm.dbg.declare` representation for inspection; native compilation does not
+depend on a print/parse round trip to normalize debug information.
 
 ### Lowering responsibilities
 

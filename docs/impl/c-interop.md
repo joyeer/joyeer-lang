@@ -170,6 +170,8 @@ establish acceptance on other platforms or a complete implementation of §19.
 
 ### Native validation evidence
 
+#### macOS ARM64
+
 On native macOS ARM64 with AppleClang 21.0.0.21000334, LLVM/LLD 22.1.8,
 and the already installed macOS 26.5 SDK/deployment target:
 
@@ -189,5 +191,38 @@ the installed 26.5 SDK. A parallel unfiltered run also exposed an existing
 filesystem-test temporary-directory collision: those tests do not include
 process identity in their directory names. No unrelated runtime/test code
 was changed; the final unfiltered acceptance above used `-j 1`.
-Windows/Linux native acceptance and a full Release compiler build remain
-separate gates, not inferred from these results.
+A full native macOS Release compiler build remains a separate gate.
+
+#### Windows x64
+
+On native Windows x64 on 2026-10-19, with Windows 11 Enterprise build 26300,
+MSVC 19.51.36260 (toolset 14.51.36231), Windows SDK 10.0.28000.0,
+LLVM/LLD 22.1.8, CMake 4.4.4, and Ninja
+1.13.0.git.kitware.jobserver-pipe-1:
+
+- Fresh build trees at `out\build\c-interop-x64-debug` and
+  `out\build\c-interop-x64-release` used the x64 presets with `BUILD_TESTING`,
+  `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_JOYPM` enabled, and
+  `INSTALL_GTEST=OFF`.
+- Before building a runtime archive in the Debug tree, the compiler,
+  C interop unit tests, and static/shared round-trip targets built, and all
+  30 `c-interop` tests passed, including both Joyeer optimization profiles.
+- Both complete default `ALL` builds passed, including joypm bootstrap.
+  Subsequent incremental builds required only product staging.
+- Unfiltered serial CTest passed **846/846 in Debug** and
+  **846/846 in Release**, with no skipped tests. Each run included all
+  30 C interop tests and all 15 joypm gates, including self-build and
+  relocated component installation.
+- The in-memory module regression covers no debug information, full DWARF,
+  and full CodeView, each generating objects at `-O0` through `-O3` while
+  preserving the original printed module. Before the fix, both full-debug
+  cases reproduced the `0xc0000005` object-generation failure with managed
+  locals. Normalizing debug records only in the code-generation clone fixes
+  those cases and the real Debug joypm bootstrap without serializing LLVM IR.
+- PE headers independently identify the compiler, backend, and joypm as
+  `IMAGE_FILE_MACHINE_AMD64` in both configurations. Debug bootstrap also
+  produced the joypm PDB.
+
+These results validate the existing `Int`/`Void` slice, not the broader scalar
+design or runtime migration. Linux and Windows ARM64 C interop acceptance
+remain separate native gates.

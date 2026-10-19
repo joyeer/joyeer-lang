@@ -57,7 +57,7 @@ strengthen lexical path checks into confinement claims.
 
 ## 3. Native Platform Validation
 
-- Execute fresh native Windows x64, Linux, and macOS Debug/Release default
+- Execute fresh native Linux and macOS Debug/Release default
   builds and unfiltered CTest with `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, and
   `JOYEER_BUILD_UNITTESTS` enabled. Keep hardware, process, compiler, and SDK
   target identities distinct from emulation.
