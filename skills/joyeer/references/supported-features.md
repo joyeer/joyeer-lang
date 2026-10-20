@@ -34,7 +34,7 @@ require a source checkout, internet access, or access to a moving branch.
 |---|---|
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` |
 | Modules | Named source-file sets; file-local public short names and qualified imports; use-site ambiguity checks; `private` / `internal` / `public`; dependency-cycle and exposed-type checking; per-file source/debug locations |
-| Values | `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, unit `()` / `Void`; local `let` and `var` |
+| Values | `Bool`, `Int`/`UInt` (64-bit), signed/unsigned 8/16/32/64-bit integers, `Float`, `Double`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, Boolean `!`, short-circuit `&&` / `||`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
@@ -114,8 +114,7 @@ See [CLI usage](cli.md#local-projects-with-joypm).
 - Top-level executable statements or global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.
-- Floating-point `Float` / `Double` programs, general tuples, or tuple
-  destructuring.
+- General tuples or tuple destructuring.
 - `for-in`, labeled loop exits, compound assignment such as `+=`,
   `is` / `as` casts, match guards, or range/alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. `T?` as an

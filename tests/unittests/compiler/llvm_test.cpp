@@ -1029,8 +1029,17 @@ print(value: "left" + "right")
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("%joyeer.string = type { ptr, i64 }"), std::string::npos);
     EXPECT_NE(result.text.find("declare void @joyeer_print_int(i64)"), std::string::npos);
+#if (defined(_M_ARM64) || defined(__aarch64__)) && !defined(__APPLE__)
     EXPECT_NE(result.text.find("declare void @joyeer_print_bool(i1)"), std::string::npos);
     EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8)"), std::string::npos);
+#else
+    EXPECT_NE(result.text.find("declare void @joyeer_print_bool(i1 zeroext)"), std::string::npos);
+#if defined(_WIN32)
+    EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8)"), std::string::npos);
+#else
+    EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8 zeroext)"), std::string::npos);
+#endif
+#endif
     EXPECT_NE(
             result.text.find("declare void @joyeer_print_string_abi(ptr, i64)"),
             std::string::npos);

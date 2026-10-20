@@ -49,6 +49,15 @@ llvm::DIType* Builder::debugType(ir::TypeId id) {
     if (const auto found = debugTypes.find(id); found != debugTypes.end()) return found->second;
     const auto& value = type(id);
     llvm::DIType* result = nullptr;
+    if (typing::isNumeric(value.kind)) {
+        const auto encoding = typing::isFloating(value.kind) ? llvm::dwarf::DW_ATE_float :
+                value.kind == typing::TypeKind::uint8 ? llvm::dwarf::DW_ATE_unsigned_char :
+                value.kind == typing::TypeKind::int8 ? llvm::dwarf::DW_ATE_signed_char :
+                typing::isSignedInteger(value.kind) ? llvm::dwarf::DW_ATE_signed : llvm::dwarf::DW_ATE_unsigned;
+        result = debug->createBasicType(value.name, typing::scalarBitWidth(value.kind), encoding);
+        debugTypes.emplace(id, result);
+        return result;
+    }
     switch (value.kind) {
         case typing::TypeKind::integer:
             result = debug->createBasicType("Int", 64, llvm::dwarf::DW_ATE_signed); break;

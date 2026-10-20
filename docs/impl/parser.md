@@ -24,7 +24,7 @@ The parser converts the explicit token stream produced by the
 - `inout` and `consuming` parameters plus mandatory `&` / `consume` call-site
   markers;
 - nominal, array, dictionary, optional, and built-in generic types;
-- byte, integer, string, Boolean, and `nil` literals;
+- byte, integer, floating, string, Boolean, and `nil` literals;
 - member access, calls, subscripts, arrays, dictionaries, `if`, `while`, and
   `return`;
 - unlabeled `break` and `continue` block statements;
@@ -419,6 +419,7 @@ Implemented pattern rules:
 
 ```ebnf
 literal            ::= decimal_literal
+                     | float_literal
                      | string_literal
                      | byte_literal
                      | boolean_literal

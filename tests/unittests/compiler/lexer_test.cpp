@@ -199,25 +199,39 @@ TEST_F(LexerTest, ScansDecimalIntegersWithoutImplicitOctal) {
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
-TEST_F(LexerTest, PreservesInt64WidthAndDiagnosesOverflow) {
-    lex("9223372036854775807 9223372036854775808");
+TEST_F(LexerTest, PreservesUInt64MagnitudeAndDiagnosesOverflow) {
+    lex("9223372036854775807 9223372036854775808 18446744073709551615 18446744073709551616");
 
-    expectKinds({decimalLiteral, decimalLiteral, endOfFile});
+    expectKinds({decimalLiteral, decimalLiteral, decimalLiteral, decimalLiteral, endOfFile});
     EXPECT_EQ(source->tokens[0]->intValue, std::numeric_limits<int64_t>::max());
+    EXPECT_EQ(static_cast<uint64_t>(source->tokens[1]->intValue), uint64_t{1} << 63);
+    EXPECT_EQ(static_cast<uint64_t>(source->tokens[2]->intValue), UINT64_MAX);
     ASSERT_EQ(diagnostics.errors.size(), 1u);
     EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorIntegerLiteralOverflow);
 }
 
 TEST_F(LexerTest, RejectsUnsupportedNumbersAsWholeTokens) {
-    lex("1.2 1e3 0xff 0b1 0o7 12abc 1_000");
+    lex("0xff 0b1 0o7 12abc 1_000");
 
-    expectKinds({invalid, invalid, invalid, invalid, invalid, invalid, invalid, endOfFile});
-    ASSERT_EQ(diagnostics.errors.size(), 7u);
-    for (size_t index = 0; index < 5; ++index) {
+    expectKinds({invalid, invalid, invalid, invalid, invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 5u);
+    for (size_t index = 0; index < 3; ++index) {
         EXPECT_EQ(diagnostics.errors[index].message, Diagnostics::errorUnsupportedNumericLiteral);
     }
-    EXPECT_EQ(diagnostics.errors[5].message, Diagnostics::errorInvalidNumericSuffix);
-    EXPECT_EQ(diagnostics.errors[6].message, Diagnostics::errorInvalidNumericSuffix);
+    EXPECT_EQ(diagnostics.errors[3].message, Diagnostics::errorInvalidNumericSuffix);
+    EXPECT_EQ(diagnostics.errors[4].message, Diagnostics::errorInvalidNumericSuffix);
+}
+
+TEST_F(LexerTest, ScansFixedPrototypeFloatingLiterals) {
+    lex("1.2 1e3 1.25E-2 0.0 3.5e+38");
+    expectKinds({floatLiteral, floatLiteral, floatLiteral, floatLiteral, floatLiteral, endOfFile});
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, RejectsMalformedFloatingLiterals) {
+    lex("1e 1e+ 1.2abc 1.2_3");
+    expectKinds({invalid, invalid, invalid, invalid, endOfFile});
+    EXPECT_EQ(diagnostics.errors.size(), 4u);
 }
 
 TEST_F(LexerTest, DecodesTheFixedStringEscapeSet) {
@@ -347,11 +361,11 @@ TEST_F(LexerTest, TracksSpansLinesAndCommentTrivia) {
 }
 
 TEST_F(LexerTest, RejectsDeferredMvpSyntaxAsSingleInvalidTokens) {
-    lex("?? ?. ; # 'x' += << >> 1.2 0xff");
+    lex("?? ?. ; # 'x' += << >> 0xff");
 
     expectKinds({invalid, invalid, invalid, invalid, invalid,
-                 invalid, invalid, invalid, invalid, invalid, endOfFile});
-    EXPECT_EQ(diagnostics.errors.size(), 10u);
+                 invalid, invalid, invalid, invalid, endOfFile});
+    EXPECT_EQ(diagnostics.errors.size(), 9u);
 }
 
 TEST_F(LexerTest, RejectsCompoundAndShiftOperatorsAsWholeTokens) {

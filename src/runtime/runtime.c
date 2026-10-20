@@ -154,6 +154,18 @@ void joyeer_print_int(int64_t value) {
     printf("%" PRId64 "\n", value);
 }
 
+void joyeer_print_uint(uint64_t value) {
+    printf("%" PRIu64 "\n", value);
+}
+
+void joyeer_print_float(float value) {
+    printf("%.9g\n", (double)value);
+}
+
+void joyeer_print_double(double value) {
+    printf("%.17g\n", value);
+}
+
 void joyeer_print_bool(bool value) {
     puts(value ? "true" : "false");
 }

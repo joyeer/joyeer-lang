@@ -26,7 +26,8 @@ kind, declaring type symbol, and concrete type arguments.
 
 The model covers:
 
-- `Void`, `Never`, `Any`, `Int`, `Bool`, `String`, and `UInt8`;
+- `Void`, `Never`, `Any`, `Bool`, `String`, `Int`/`UInt`,
+  signed/unsigned 8/16/32/64-bit integers, `Float`, and `Double`;
 - user `struct` and `enum` nominal types;
 - `[T]`, `[K: V]`, `T?`, and `Result<T, E>`;
 - a dedicated error type that suppresses cascading diagnostics.
@@ -84,7 +85,9 @@ The current checker validates:
 - explicit `byteToInt(value: UInt8) -> Int` and
   `byteToString(value: UInt8) -> String` built-in calls;
 - optional value promotion and `Never` as the bottom type;
-- checked `Int` arithmetic including `/` and `%`, string concatenation,
+- width-correct integer arithmetic including `/` and `%`, floating arithmetic,
+  contextual numeric literals with `type-checking.invalid-numeric-literal`
+  range diagnostics, string concatenation,
   comparison, and Boolean `!`, `&&`, and `||` operators;
 - `if`/`while` conditions, `if` branch unification, and return values;
 - unlabeled `break` / `continue` in the current function's nearest loop,

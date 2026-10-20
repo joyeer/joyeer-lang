@@ -1,0 +1,38 @@
+struct ScalarValues {
+    let small: Int8
+    let wide: UInt64
+    let single: Float
+    let dual: Double
+}
+
+func increment(value: Int8): Int8 { return value + 1 }
+
+func main() {
+    let single: Float = match true { true => { 1.5 }, false => { 2.5 } }
+    let values = ScalarValues(small: -128, wide: 18446744073709551615, single: single, dual: 2.25)
+    let unsigned16: UInt16 = 65535
+    let signed32: Int32 = -2147483648
+    print(value: values.small)
+    print(value: unsigned16)
+    print(value: signed32)
+    print(value: values.wide)
+    print(value: values.small < 0)
+    print(value: values.wide > 9223372036854775807)
+    let wrapped: UInt64 = values.wide + 1
+    print(value: wrapped)
+    print(value: increment(value: 126))
+    print(value: values.single)
+    print(value: values.dual)
+    var array: [Float] = [1.25, 2.5]
+    &array.append(element: 3.5)
+    print(value: array[2])
+    let optional: Double? = 1.25
+    match optional {
+        .Some(value) => print(value: value),
+        .None => print(value: 0),
+    }
+    print(value: match values.single {
+        1.5 => true,
+        _ => false,
+    })
+}

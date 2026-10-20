@@ -130,7 +130,7 @@ remain unchanged, and the private object target is not installed.
 
 The layout permits a future Joyeer-written frontend/driver to use the same C
 backend boundary. It does not implement self-hosting. The separate
-[restricted C binding slice](c-interop.md) supports runtime-only `Int`/`Void`
+[restricted C binding implementation](c-interop.md) supports runtime-only scalar
 source imports/exports, not general user FFI.
 
 For module compilation, one verified Joyeer IR module contains the reachable

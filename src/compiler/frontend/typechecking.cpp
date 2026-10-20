@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <charconv>
+#include <cmath>
 #include <functional>
 #include <sstream>
 #include <unordered_set>
@@ -50,6 +52,16 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     registerGenericBuiltin("Optional", TypeKind::optional, 1);
     registerGenericBuiltin("Result", TypeKind::result, 2);
+    for (const auto& [name, kind] : {
+            std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
+            {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
+            {"UInt16", TypeKind::uint16}, {"UInt32", TypeKind::uint32},
+            {"UInt64", TypeKind::uint64}, {"UInt", TypeKind::unsignedInteger},
+            {"Float", TypeKind::float32}}) {
+        TypeId registeredType = invalidTypeId;
+        registerConcreteBuiltin(name, kind, registeredType);
+    }
+    registerConcreteBuiltin("Double", TypeKind::float64, doubleTypeId);
 }
 
 TypeId TypeContext::errorType() const {
@@ -82,6 +94,10 @@ TypeId TypeContext::stringType() const {
 
 TypeId TypeContext::uint8Type() const {
     return uint8TypeId;
+}
+
+TypeId TypeContext::doubleType() const {
+    return doubleTypeId;
 }
 
 TypeId TypeContext::ioErrorType() const {
@@ -726,16 +742,16 @@ private:
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
             const auto& parameter = declaration->parameters[index];
             if (parameter->accessEffect() != syntax::AccessEffect::borrowing ||
-                signature.parameters[index] != model->typeContext.intType()) {
+                !isNativeScalar(model->typeContext.type(signature.parameters[index])->kind)) {
                 report(TypeCheckingDiagnosticId::unsupportedNativeSignature, parameter->span,
-                       "this C binding implementation accepts only borrowing Int parameters");
+                       "C bindings require borrowing scalar parameters passed by value");
             }
         }
-        if (signature.result != model->typeContext.intType() &&
+        if (!isNativeScalar(model->typeContext.type(signature.result)->kind) &&
             signature.result != model->typeContext.voidType()) {
             report(TypeCheckingDiagnosticId::unsupportedNativeSignature,
                    declaration->returnType == nullptr ? declaration->span : declaration->returnType->span,
-                   "this C binding implementation accepts only Int or Void results");
+                   "C bindings require a scalar or Void result");
         }
         if (diagnostics.size() == diagnosticStart) {
             model->nativeBindings.emplace(function, std::move(*binding));
@@ -752,7 +768,14 @@ private:
             if (!inserted) {
                 const auto& left = model->callables.at(previous->second);
                 const auto& right = model->callables.at(symbol.id);
-                if (left.parameters != right.parameters || left.result != right.result) {
+                const auto compatible = [&](TypeId a, TypeId b) {
+                    return sameNativeRepresentation(model->typeContext.type(a)->kind,
+                            model->typeContext.type(b)->kind);
+                };
+                if (left.parameters.size() != right.parameters.size() ||
+                        !std::equal(left.parameters.begin(), left.parameters.end(),
+                                right.parameters.begin(), right.parameters.end(), compatible) ||
+                        !compatible(left.result, right.result)) {
                     report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
                            "incompatible C signatures for native symbol '" + binding->symbol + "'");
                 }
@@ -917,18 +940,21 @@ private:
         }
     }
 
-    TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block) {
+    TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block,
+            std::optional<TypeId> expected = std::nullopt) {
         if (block == nullptr) return model->typeContext.errorType();
         TypeId result = model->typeContext.voidType();
-        for (const auto& item : block->items) {
-            const auto itemType = checkNode(item);
+        for (size_t index = 0; index < block->items.size(); ++index) {
+            const auto itemType = checkNode(block->items[index],
+                    index + 1 == block->items.size() ? expected : std::nullopt);
             if (result != model->typeContext.neverType()) result = itemType;
         }
         recordNodeType(block, result);
         return result;
     }
 
-    TypeId checkNode(const syntax::NodePtr& node) {
+    TypeId checkNode(const syntax::NodePtr& node,
+            std::optional<TypeId> expected = std::nullopt) {
         if (node == nullptr) return model->typeContext.errorType();
         if (node->kind == syntax::Kind::bindingDecl) {
             checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
@@ -962,7 +988,7 @@ private:
             return model->typeContext.neverType();
         }
         if (isExpressionKind(node->kind)) {
-            return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node)).value_or(
+            return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node), expected).value_or(
                     model->typeContext.errorType());
         }
         return model->typeContext.errorType();
@@ -1025,7 +1051,7 @@ private:
                 break;
             case syntax::Kind::prefixExpr:
                 result = checkPrefix(
-                    std::static_pointer_cast<syntax::PrefixExprSyntax>(expression));
+                    std::static_pointer_cast<syntax::PrefixExprSyntax>(expression), expected);
                 break;
             case syntax::Kind::accessExpr:
                 if (std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
@@ -1085,7 +1111,7 @@ private:
                 break;
             }
             case syntax::Kind::blockExpr:
-                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
+                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), expected);
                 break;
             case syntax::Kind::ifExpr: {
                 const auto conditional = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
@@ -1095,7 +1121,7 @@ private:
                     condition,
                     model->typeContext.boolType(),
                     conditional->condition->span);
-                const auto thenType = checkBlock(conditional->thenBranch);
+                const auto thenType = checkBlock(conditional->thenBranch, expected);
                 if (conditional->elseBranch == nullptr) {
                     result = model->typeContext.voidType();
                     break;
@@ -1127,7 +1153,7 @@ private:
             }
             case syntax::Kind::binaryExpr: {
                 result = checkBinary(
-                        std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
+                        std::static_pointer_cast<syntax::BinaryExprSyntax>(expression), expected);
                 break;
             }
             case syntax::Kind::subscriptExpr:
@@ -1142,12 +1168,52 @@ private:
         return result;
     }
 
+    TypeId checkNumericLiteral(const Token::Ptr& literal, std::optional<TypeId> expected,
+            bool negative = false) {
+        auto result = literal->kind == floatLiteral
+                ? model->typeContext.doubleType() : model->typeContext.intType();
+        if (expected.has_value()) {
+            auto* contextual = model->typeContext.type(*expected);
+            if (contextual != nullptr && contextual->kind == TypeKind::optional) {
+                expected = contextual->arguments.front();
+                contextual = model->typeContext.type(*expected);
+            }
+            if (contextual != nullptr && isNumeric(contextual->kind)) result = *expected;
+        }
+        const auto kind = model->typeContext.type(result)->kind;
+        bool valid = false;
+        if (isFloating(kind)) {
+            const auto& text = literal->rawValue;
+            const auto fits = [&text](auto value) {
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(),
+                        value, std::chars_format::general);
+                return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() &&
+                        std::isfinite(value);
+            };
+            valid = kind == TypeKind::float32 ? fits(float{}) : fits(double{});
+        } else if (literal->kind == decimalLiteral && (!negative || isSignedInteger(kind))) {
+            const auto bits = scalarBitWidth(kind);
+            const auto maximum = isSignedInteger(kind)
+                    ? (uint64_t{1} << (bits - 1)) - (negative ? 0 : 1)
+                    : bits == 64 ? UINT64_MAX : (uint64_t{1} << bits) - 1;
+            valid = static_cast<uint64_t>(literal->intValue) <= maximum;
+        }
+        if (!valid) {
+            report(TypeCheckingDiagnosticId::invalidNumericLiteral, literal->span,
+                    "numeric literal is not representable as '" +
+                            model->typeContext.displayName(result) + "'");
+            return model->typeContext.errorType();
+        }
+        return result;
+    }
+
     TypeId checkLiteral(
             const syntax::LiteralExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
         if (expression->literal == nullptr) return model->typeContext.errorType();
         switch (expression->literal->kind) {
-            case decimalLiteral: return model->typeContext.intType();
+            case decimalLiteral:
+            case floatLiteral: return checkNumericLiteral(expression->literal, expected);
             case booleanLiteral: return model->typeContext.boolType();
             case stringLiteral: return model->typeContext.stringType();
             case byteLiteral: return model->typeContext.uint8Type();
@@ -1226,12 +1292,23 @@ private:
         return operandType->arguments[0];
     }
 
-    TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
-        const auto operand = checkExpression(expression->operand).value_or(
+    TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        if (expression->op != nullptr && expression->op->kind == minus &&
+                expression->operand->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression->operand);
+            if (literal->literal->kind == decimalLiteral) {
+                const auto result = checkNumericLiteral(literal->literal, expected, true);
+                recordNodeType(literal, result);
+                return result;
+            }
+        }
+        const auto operand = checkExpression(expression->operand, expected).value_or(
                 model->typeContext.errorType());
         if (operand == model->typeContext.errorType()) return operand;
         if (expression->op != nullptr && expression->op->kind == minus &&
-            operand == model->typeContext.intType()) {
+            (isSignedInteger(model->typeContext.type(operand)->kind) ||
+             isFloating(model->typeContext.type(operand)->kind))) {
             return operand;
         }
         if (expression->op != nullptr && expression->op->kind == bang &&
@@ -1242,11 +1319,30 @@ private:
         return model->typeContext.errorType();
     }
 
-    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression) {
-        const auto left = checkExpression(expression->left).value_or(
-                model->typeContext.errorType());
-        const auto right = checkExpression(expression->right).value_or(
-                model->typeContext.errorType());
+    bool isNumericLiteral(const syntax::ExprPtr& expression) const {
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isNumericLiteral(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::prefixExpr) {
+            return isNumericLiteral(std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand);
+        }
+        if (expression->kind != syntax::Kind::literalExpr) return false;
+        const auto kind = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal->kind;
+        return kind == decimalLiteral || kind == floatLiteral;
+    }
+
+    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        TypeId left;
+        TypeId right;
+        if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
+            right = checkExpression(expression->right, expected).value_or(model->typeContext.errorType());
+            left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
+        } else {
+            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
+            right = checkExpression(expression->right, left).value_or(model->typeContext.errorType());
+        }
         if (left == model->typeContext.errorType() ||
             right == model->typeContext.errorType()) {
             return model->typeContext.errorType();
@@ -1255,22 +1351,23 @@ private:
         const auto op = expression->op == nullptr ? invalid : expression->op->kind;
         switch (op) {
             case plus:
-                if (left == model->typeContext.intType() && left == right) return left;
+                if (isNumeric(model->typeContext.type(left)->kind) && left == right) return left;
                 if (left == model->typeContext.stringType() && left == right) return left;
                 break;
             case minus:
             case multiply:
             case divide:
+                if (isNumeric(model->typeContext.type(left)->kind) && left == right) return left;
+                break;
             case percentage:
-                if (left == model->typeContext.intType() && left == right) return left;
+                if (isInteger(model->typeContext.type(left)->kind) && left == right) return left;
                 break;
             case less:
             case lessEqual:
             case greater:
             case greaterEqual:
                 if (left == right &&
-                    (left == model->typeContext.intType() ||
-                     left == model->typeContext.uint8Type() ||
+                    (isNumeric(model->typeContext.type(left)->kind) ||
                      left == model->typeContext.stringType())) {
                     return model->typeContext.boolType();
                 }
@@ -2390,10 +2487,11 @@ private:
         return coverage;
     }
 
-    TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) const {
+    TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) {
         if (literal == nullptr) return model->typeContext.errorType();
         switch (literal->kind) {
-            case decimalLiteral: return model->typeContext.intType();
+            case decimalLiteral:
+            case floatLiteral: return checkNumericLiteral(literal, expected);
             case booleanLiteral: return model->typeContext.boolType();
             case stringLiteral: return model->typeContext.stringType();
             case byteLiteral: return model->typeContext.uint8Type();
@@ -2693,6 +2791,16 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::dictionary: return "dictionary";
         case TypeKind::optional: return "optional";
         case TypeKind::result: return "result";
+        case TypeKind::int8: return "int8";
+        case TypeKind::int16: return "int16";
+        case TypeKind::int32: return "int32";
+        case TypeKind::int64: return "int64";
+        case TypeKind::uint16: return "uint16";
+        case TypeKind::uint32: return "uint32";
+        case TypeKind::uint64: return "uint64";
+        case TypeKind::unsignedInteger: return "uint";
+        case TypeKind::float32: return "float32";
+        case TypeKind::float64: return "float64";
     }
     return "unknown";
 }
@@ -2755,6 +2863,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.unauthorized-native-binding";
         case TypeCheckingDiagnosticId::conflictingNativeSymbol:
             return "type-checking.conflicting-native-symbol";
+        case TypeCheckingDiagnosticId::invalidNumericLiteral:
+            return "type-checking.invalid-numeric-literal";
     }
     return "type-checking.unknown";
 }

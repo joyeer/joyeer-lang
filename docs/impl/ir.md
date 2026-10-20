@@ -57,8 +57,11 @@ dependency declarations named `main` keep their source name.
 Restricted [C bindings](c-interop.md) add a `NativeBinding` record and
 per-function runtime context. Imports remain external declarations without
 invented bodies/debug scopes; exports keep normal Joyeer definitions plus
-explicit C linkage metadata. The shared verifier validates the initial
-`Int`/`Void` ABI, declaration/call authorization, and native symbol agreement.
+explicit C linkage metadata. The shared verifier validates the complete
+scalar ABI, declaration/call authorization, and native representation agreement.
+Integer constants retain all 64 payload bits; floating constants retain their
+decimal spelling for direct target-precision rounding. Constant types/ranges
+and floating pattern literals are verified before LLVM construction.
 `Module::isRuntimeObject` requests isolated runtime-object emission without
 application startup; its defined root functions require runtime context.
 
@@ -234,7 +237,7 @@ temporaries remain live through lookup and are cleaned on every exit path.
 Patterns recursively represent:
 
 - wildcard and binding positions;
-- integer, Boolean, string, and byte literals;
+- integer, floating, Boolean, string, and byte literals;
 - enum cases with nested payload patterns.
 
 Each arm has its own basic block. Payload bindings use `extract_payload`, then

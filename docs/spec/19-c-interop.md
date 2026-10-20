@@ -4,15 +4,14 @@
 the broader language design. It does not introduce a public pointer or
 general-purpose unsafe system.
 
-**Implementation status:** the initial runtime-only `Int`/`Void` slice
-implements both annotations, bodyless imports, and C-callable exports.
+**Implementation status:** the runtime-only scalar implementation supports
+both annotations, bodyless imports, C-callable exports, and all §19.4 mappings.
 The example in §19.2 requires an explicitly authorized compilation context;
-it is not an ordinary application program. Other scalar mappings below
-remain specified design, not current compiler support. See the
+it is not an ordinary application program. Native platform acceptance and
+the still-unsupported memory extensions are recorded in the
 [C binding implementation](../impl/c-interop.md),
 [implemented surface](../impl/supported-features.md) and the separate
-[implementation plan](../plan/c-interop.md). The plan's initial `Int`/`Void`
-slice is not the limit of the scalar types specified here.
+[implementation plan](../plan/c-interop.md).
 
 ### 19.1 Scope and authorization
 

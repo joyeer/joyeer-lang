@@ -1,10 +1,10 @@
 # C Interoperation Implementation Plan
 
-> **Status:** the first runtime-only `Int`/`Void` import/export and object-build
-> slice is implemented; see [current coverage](../impl/c-interop.md).
-> The broader annotation/scalar design is specified in
+> **Status:** runtime-only import/export and object building now support all
+> specified scalar representations; see [current coverage](../impl/c-interop.md).
+> The annotation/scalar contract is specified in
 > [§19 C Interoperation](../spec/19-c-interop.md). This plan tracks remaining
-> scalar/platform gates and unresolved memory proposals, not new language
+> platform gates and unresolved memory proposals, not new language
 > rules or a completed runtime migration.
 
 ## 1. Purpose and Direction
@@ -38,7 +38,7 @@ Joyeer currently calls selected C runtime functions through compiler-known
 operations. The [host builtin table](../../src/compiler/frontend/hostbuiltins.h)
 describes filesystem/process interfaces; it is not a general external-function
 declaration facility. The separate restricted C binding mechanism implements
-the first `Int`/`Void` slice. General user FFI and pointers remain outside the
+the specified by-value scalar boundary. General user FFI and pointers remain outside the
 [implemented surface](../impl/supported-features.md) and
 [raw-memory scope](../spec/04-memory.md#49-raw-memory-ffi).
 
@@ -88,11 +88,11 @@ Implementation obligations under [§19](../spec/19-c-interop.md):
 - Native calls may have side effects. Do not assume purity, thread safety,
   pointer retention rules, or error conventions from a function's name.
 
-## 4. First Slice: Scalar Import and Export
+## 4. Delivered Scalar Import and Export
 
-The delivered implementation is deliberately narrower than both general
-C and the [specified scalar boundary](../spec/19-c-interop.md#194-c-scalar-representations).
-This is the H1-H2 subset, not the long-term language type limit. Its measured
+The initial H1-H2 `Int`/`Void` slice has been extended to the complete
+[specified scalar boundary](../spec/19-c-interop.md#194-c-scalar-representations),
+not to general C interoperability. Its measured
 acceptance and supported toolchain inputs belong in
 [the implementation reference](../impl/c-interop.md):
 
@@ -101,7 +101,7 @@ acceptance and supported toolchain inputs belong in
 | `Int` parameter or result | `int64_t` | Supported exactly, without implicit narrowing |
 | `Void` result | `void` | Supported; no result value crosses the ABI |
 | Empty parameter list | C prototype with `(void)` | Supported; not a variadic declaration |
-| `Bool`, other integer widths, `UInt`, `Float`, `Double` | Defined in §19.4 | Follow-up scalar implementation after the first round trip |
+| `Bool`, other integer widths, `UInt`, `Float`, `Double` | Defined in §19.4 | Implemented with target C calling conventions and scalar fixtures |
 | `String`, arrays, dictionaries, structs, enums, `Optional`, `Result` | No automatic C-compatible representation | Rejected in native signatures |
 | `inout`, `initializing`, `consuming` | Not native pointer or ownership syntax | Rejected |
 | Raw addresses, output pointers, callbacks | No accepted source representation | Separate design and implementation gates |
@@ -139,9 +139,9 @@ func runtimeIdentity(value: Int): Int {
 ```
 
 The initial lexer/parser, typed binding, IR/verifier, backend, diagnostic, and
-runtime-context plumbing is implemented. Extend that same source-derived
-binding model for the remaining scalar representations rather than adding
-special cases per native function or a second signature configuration.
+runtime-context plumbing is implemented. All specified scalar representations
+use that same source-derived binding model, without special cases per native
+function or a second signature configuration.
 Keep this work independent of the proposed `@spec`/`@property` parser/runner;
 see [annotation status](../spec/11-annotations.md).
 
@@ -255,10 +255,11 @@ on other platform/architecture combinations remains open until measured.
 A scalar fixture does not complete runtime migration, safe pointer support,
 or general user FFI.
 
-### 9.1 Follow-up scalar acceptance
+### 9.1 Complete scalar acceptance
 
-Implement the rest of §19.4 as a separate scalar gate, not an implicit change
-to the H1-H2 fixture:
+The separate scalar fixtures implement these gates in addition to the
+original H1-H2 fixture. Keep platform-specific native execution evidence
+separate from compiler support and from cross-target ABI inspection:
 
 - Round-trip every signed/unsigned width, `Int`/`UInt`, `_Bool`, `Float`, and
   `Double` through real C callers and callees. Cover signed boundaries,
@@ -270,9 +271,8 @@ to the H1-H2 fixture:
 - Verify the LP64/LLP64 `long` difference, signedness-selected plain `char`,
   `size_t`, and `ptrdiff_t` on every claimed target. Use real C prototypes
   to distinguish `_Bool` from integer conventions such as Windows `BOOL`.
-- Reject unsupported target properties and all unimplemented scalar kinds
-  explicitly until their gates pass. Do not advertise full C scalar support
-  on the strength of the `Int`/`Void` round trip.
+- Reject unsupported target properties and non-scalar signatures explicitly.
+  Do not infer other platforms' native acceptance from one host's results.
 
 ## 10. Remaining Decisions
 

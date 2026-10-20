@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include "scalar-fixture.h"
 
 int64_t joyeer_fixture_identity(int64_t value);
 int64_t joyeer_fixture_second(int64_t value);
@@ -28,5 +29,6 @@ int main(void) {
     }
     CHECK(joyeer_fixture_zero() == -17);
     CHECK(joyeer_fixture_arguments(-1, 2, -3, 4, -5, 6, -7, 8, -9, 10, -11, 12) == 1);
+    CHECK(cinterop_check_scalars() == 0);
     return 0;
 }

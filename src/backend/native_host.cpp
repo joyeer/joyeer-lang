@@ -174,11 +174,27 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
     if (!callee.isExternal || callee.nativeBinding.has_value()) {
-        return builder.CreateCall(functions.at(callee.id), arguments);
+        auto* function = functions.at(callee.id);
+        auto* invocation = builder.CreateCall(function, arguments);
+        invocation->setAttributes(function->getAttributes());
+        return invocation;
     }
     if (hostbuiltins::findFunction(callee.name) != nullptr) return emitHostCall(callee, arguments, instruction);
     if (callee.name == "print" && arguments.size() == 1) {
         const auto& argumentType = type(values.at(instruction.operands[0]).type);
+        if (typing::isSignedInteger(argumentType.kind)) {
+            return call("joyeer_print_int", builder.getVoidTy(),
+                    {builder.CreateSExtOrTrunc(arguments[0], builder.getInt64Ty())});
+        }
+        if (typing::isUnsignedInteger(argumentType.kind) && argumentType.kind != typing::TypeKind::uint8) {
+            return call("joyeer_print_uint", builder.getVoidTy(),
+                    {builder.CreateZExtOrTrunc(arguments[0], builder.getInt64Ty())});
+        }
+        if (typing::isFloating(argumentType.kind)) {
+            return call(argumentType.kind == typing::TypeKind::float32
+                            ? "joyeer_print_float" : "joyeer_print_double",
+                    builder.getVoidTy(), arguments);
+        }
         std::string_view name;
         switch (argumentType.kind) {
             case typing::TypeKind::integer: name = "joyeer_print_int"; break;

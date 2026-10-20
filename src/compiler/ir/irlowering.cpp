@@ -2,6 +2,7 @@
 #include "compiler/frontend/hostbuiltins.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <sstream>
 #include <unordered_map>
@@ -1039,7 +1040,11 @@ private:
 
         ir::Opcode opcode;
         switch (expression->literal->kind) {
-            case decimalLiteral: opcode = ir::Opcode::integerConstant; break;
+            case decimalLiteral:
+                opcode = typing::isFloating(model->types().type(*type)->kind)
+                        ? ir::Opcode::floatingConstant : ir::Opcode::integerConstant;
+                break;
+            case floatLiteral: opcode = ir::Opcode::floatingConstant; break;
             case booleanLiteral: opcode = ir::Opcode::booleanConstant; break;
             case stringLiteral: opcode = ir::Opcode::stringConstant; break;
             case byteLiteral: opcode = ir::Opcode::byteConstant; break;
@@ -1066,10 +1071,10 @@ private:
         instruction.result = makeValue(*type, ir::ValueCategory::value);
         if (expression->literal->kind == booleanLiteral) {
             instruction.integerValue = expression->literal->rawValue == Literals::TRUE ? 1 : 0;
-        } else if (expression->literal->kind != stringLiteral) {
-            instruction.integerValue = expression->literal->intValue;
-        } else {
+        } else if (opcode == ir::Opcode::floatingConstant || expression->literal->kind == stringLiteral) {
             instruction.text = expression->literal->rawValue;
+        } else {
+            instruction.integerValue = expression->literal->intValue;
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
@@ -1101,9 +1106,24 @@ private:
     }
 
     std::optional<ir::Value> lowerPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
+        const auto type = model->typeOf(expression);
+        if (type.has_value() && expression->op != nullptr && expression->op->kind == minus &&
+                typing::isInteger(model->types().type(*type)->kind) &&
+                expression->operand->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression->operand);
+            if (literal->literal->kind == decimalLiteral) {
+                auto constant = makeInstruction(ir::Opcode::integerConstant, expression->span);
+                constant.result = makeValue(*type, ir::ValueCategory::value);
+                constant.integerValue = std::bit_cast<int64_t>(
+                        uint64_t{0} - static_cast<uint64_t>(literal->literal->intValue));
+                const auto result = *constant.result;
+                emit(std::move(constant));
+                recordValue(result, ValueOwnership::trivial);
+                return result;
+            }
+        }
         const auto operand = lowerExpression(expression->operand);
         if (currentBlockTerminated()) return std::nullopt;
-        const auto type = model->typeOf(expression);
         if (!operand.has_value() || !type.has_value()) return std::nullopt;
         if (expression->op != nullptr && expression->op->kind == bang) {
             auto constant = makeInstruction(ir::Opcode::booleanConstant, expression->op->span);
@@ -1126,7 +1146,10 @@ private:
             return std::nullopt;
         }
 
-        auto zero = makeInstruction(ir::Opcode::integerConstant, expression->op->span);
+        const bool floating = typing::isFloating(model->types().type(*type)->kind);
+        auto zero = makeInstruction(floating ? ir::Opcode::floatingConstant : ir::Opcode::integerConstant,
+                expression->op->span);
+        if (floating) zero.text = "-0.0";
         zero.result = makeValue(*type, ir::ValueCategory::value);
         const auto zeroValue = *zero.result;
         emit(std::move(zero));
@@ -1863,8 +1886,16 @@ private:
                 if (literal->literal == nullptr) return std::nullopt;
                 switch (literal->literal->kind) {
                     case decimalLiteral:
-                        result.kind = ir::PatternKind::integerLiteral;
+                        result.kind = typing::isFloating(model->types().type(*type)->kind)
+                                ? ir::PatternKind::floatingLiteral : ir::PatternKind::integerLiteral;
                         result.integerValue = literal->literal->intValue;
+                        if (result.kind == ir::PatternKind::floatingLiteral) {
+                            result.text = literal->literal->rawValue;
+                        }
+                        break;
+                    case floatLiteral:
+                        result.kind = ir::PatternKind::floatingLiteral;
+                        result.text = literal->literal->rawValue;
                         break;
                     case booleanLiteral:
                         result.kind = ir::PatternKind::booleanLiteral;

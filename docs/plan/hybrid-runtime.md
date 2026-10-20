@@ -92,7 +92,7 @@ an operator, implicit copy, cleanup helper, or indirect callback.
 ## 4. Minimum Runtime-Writing Capabilities
 
 The [C interoperation specification](../spec/19-c-interop.md) defines the
-restricted scalar binding syntax and ABI; its initial `Int`/`Void` subset is
+restricted scalar binding syntax and ABI; its by-value scalar boundary is
 [implemented](../impl/c-interop.md). Storage and
 address capabilities below remain separate proposals without accepted source
 syntax. Define those contracts before implementing them. Do not use a module
@@ -115,9 +115,9 @@ contracts, and compiler execution versus product-build dependencies.
   adding compiler cases for individual native functions.
 - Begin H1-H2 with by-value `Int`/`int64_t`, `Void`/`void` results, and empty
   parameter lists. The broader Boolean, fixed-width integer, and floating
-  mappings are already specified in
+  mappings are specified and implemented in
   [§19.4](../spec/19-c-interop.md#194-c-scalar-representations);
-  implement and validate them separately. Address/byte-region source syntax
+  separate scalar fixtures track their platform acceptance. Address/byte-region source syntax
   still needs its own design before later string operations require it.
 - After the address/output-storage gate, emit C-callable adapters for the
   existing storage-dependent signatures. Keep native aggregate results

@@ -2,6 +2,8 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -11,6 +13,15 @@ namespace joyeer::llvmbackend::native {
 namespace {
 size_t alignTo(size_t size, size_t alignment) {
     return (size + alignment - 1) / alignment * alignment;
+}
+
+llvm::Attribute::AttrKind cExtension(const llvm::Triple& target, llvm::Type* type, bool isSigned) {
+    if (!type->isIntegerTy() || type->getIntegerBitWidth() >= 32) return llvm::Attribute::None;
+    const bool extended = target.isOSDarwin() ||
+            (target.getArch() == llvm::Triple::x86_64 &&
+             (!target.isOSWindows() || type->isIntegerTy(1)));
+    return !extended ? llvm::Attribute::None :
+            isSigned ? llvm::Attribute::SExt : llvm::Attribute::ZExt;
 }
 }
 
@@ -43,6 +54,19 @@ std::vector<Diagnostic> Builder::build() {
         return std::move(diagnostics);
     }
     try {
+        const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
+        const bool supportedLinux = target.isOSLinux() &&
+                (target.getEnvironment() == llvm::Triple::GNU || target.getEnvironment() == llvm::Triple::Musl);
+        const bool supportedTarget =
+                (target.getArch() == llvm::Triple::x86_64 || target.getArch() == llvm::Triple::aarch64) &&
+                (supportedLinux || target.isMacOSX() || target.isWindowsMSVCEnvironment());
+        for (const auto& function : source.functions) {
+            if (function.nativeBinding.has_value() && !supportedTarget) {
+                report(DiagnosticId::unsupportedType, function.nativeBinding->span,
+                        "C scalar ABI is not supported for target '" + target.str() + "'");
+                return std::move(diagnostics);
+            }
+        }
         destruction.emplace(source);
         defineTypes();
         if (options.emitLineTables) {
@@ -111,12 +135,17 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
     }
     llvm::Type* result = nullptr;
     std::string name;
+    if (typing::isInteger(found->second->kind)) {
+        result = builder.getIntNTy(typing::scalarBitWidth(found->second->kind));
+    } else if (found->second->kind == typing::TypeKind::float32) {
+        result = builder.getFloatTy();
+    } else if (found->second->kind == typing::TypeKind::float64) {
+        result = builder.getDoubleTy();
+    }
     switch (found->second->kind) {
         case typing::TypeKind::voidType: result = llvm::StructType::get(context()); break;
         case typing::TypeKind::never: result = builder.getVoidTy(); break;
-        case typing::TypeKind::integer: result = builder.getInt64Ty(); break;
         case typing::TypeKind::boolean: result = builder.getInt1Ty(); break;
-        case typing::TypeKind::uint8: result = builder.getInt8Ty(); break;
         case typing::TypeKind::string: name = "joyeer.string"; break;
         case typing::TypeKind::array: name = "joyeer.array"; break;
         case typing::TypeKind::dictionary: name = "joyeer.dictionary"; break;
@@ -154,6 +183,10 @@ Layout Builder::layout(ir::TypeId id) {
         throw std::runtime_error("recursive inline layout");
     }
     Layout result;
+    if (typing::isNumeric(info.kind)) {
+        const auto size = typing::scalarBitWidth(info.kind) / 8;
+        result = {size, size};
+    }
     switch (info.kind) {
         case typing::TypeKind::voidType:
         case typing::TypeKind::never: break;
@@ -186,7 +219,9 @@ Layout Builder::layout(ir::TypeId id) {
             result = {8 + payloadSize, 8};
             break;
         }
-        default: throw std::runtime_error("unsupported inline layout");
+        default:
+            if (!typing::isNumeric(info.kind)) throw std::runtime_error("unsupported inline layout");
+            break;
     }
     layoutStack.erase(id);
     layouts.emplace(id, result);
@@ -247,20 +282,41 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
 
 llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
     std::vector<llvm::Type*> parameters;
+    std::vector<typing::TypeKind> kinds;
     for (const auto& parameter : function.parameters) {
         parameters.push_back(llvmType(parameter.value.type));
+        kinds.push_back(type(parameter.value.type).kind);
     }
     auto* result = unit(function.resultType) ? builder.getVoidTy() : llvmType(function.resultType);
-    return declareCFunction(function.nativeBinding->symbol, result, parameters);
+    return declareCFunction(function.nativeBinding->symbol, result, parameters,
+            kinds, type(function.resultType).kind);
 }
 
 llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* result,
-        llvm::ArrayRef<llvm::Type*> parameters) {
+        llvm::ArrayRef<llvm::Type*> parameters,
+        llvm::ArrayRef<typing::TypeKind> parameterKinds, typing::TypeKind resultKind) {
     const llvm::StringRef symbol(name.data(), name.size());
     auto* signature = llvm::FunctionType::get(result, parameters, false);
+    const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
+    llvm::AttributeList attributes;
+    const auto returnExtension = cExtension(target, result, typing::isSignedInteger(resultKind));
+    if (returnExtension != llvm::Attribute::None) {
+        attributes = attributes.addRetAttribute(context(), returnExtension);
+    }
+    for (unsigned index = 0; index < parameters.size(); ++index) {
+        const auto extension = cExtension(target, parameters[index],
+                !parameterKinds.empty() && typing::isSignedInteger(parameterKinds[index]));
+        if (extension != llvm::Attribute::None) {
+            attributes = attributes.addParamAttribute(context(), index, extension);
+        }
+    }
     if (auto* existing = module().getFunction(symbol)) {
+        bool compatible = existing->getAttributes().getRetAttrs() == attributes.getRetAttrs();
+        for (unsigned index = 0; index < parameters.size(); ++index) {
+            compatible &= existing->getAttributes().getParamAttrs(index) == attributes.getParamAttrs(index);
+        }
         if (existing->getFunctionType() != signature ||
-                existing->getCallingConv() != llvm::CallingConv::C) {
+                existing->getCallingConv() != llvm::CallingConv::C || !compatible) {
             const auto binding = std::find_if(source.functions.begin(), source.functions.end(),
                     [name](const auto& function) {
                         return function.nativeBinding.has_value() && function.nativeBinding->symbol == name;
@@ -277,6 +333,7 @@ llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* res
     auto* entry = llvm::Function::Create(
             signature, llvm::GlobalValue::ExternalLinkage, symbol, module());
     entry->setCallingConv(llvm::CallingConv::C);
+    entry->setAttributes(attributes);
     return entry;
 }
 
@@ -284,8 +341,11 @@ llvm::CallInst* Builder::call(std::string_view name, llvm::Type* result,
         llvm::ArrayRef<llvm::Value*> arguments) {
     std::vector<llvm::Type*> parameters;
     for (const auto* argument : arguments) parameters.push_back(argument->getType());
-    return builder.CreateCall(declareCFunction(name, result, parameters), arguments,
+    auto* function = declareCFunction(name, result, parameters);
+    auto* invocation = builder.CreateCall(function, arguments,
             result->isVoidTy() ? "" : temporary());
+    invocation->setAttributes(function->getAttributes());
+    return invocation;
 }
 
 llvm::Value* Builder::stack(llvm::Type* type, const llvm::Twine& name) {

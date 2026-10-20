@@ -90,6 +90,7 @@ enum class Opcode {
     returnValue,
     returnVoid,
     unreachable,
+    floatingConstant,
 };
 
 enum class PatternKind {
@@ -99,6 +100,7 @@ enum class PatternKind {
     stringLiteral,
     byteLiteral,
     enumCase,
+    floatingLiteral,
 };
 
 struct Pattern {

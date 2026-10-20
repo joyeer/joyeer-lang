@@ -1,6 +1,8 @@
 #include "ir.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <functional>
 #include <sstream>
 #include <unordered_map>
@@ -10,9 +12,21 @@ namespace joyeer::ir {
 
 namespace {
 
+bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
+    const auto fits = [text](auto value) {
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(),
+                value, std::chars_format::general);
+        return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() &&
+                std::isfinite(value);
+    };
+    return kind == typing::TypeKind::float32 ? fits(float{}) :
+            kind == typing::TypeKind::float64 && fits(double{});
+}
+
 bool producesValue(Opcode opcode) {
     switch (opcode) {
         case Opcode::integerConstant:
+        case Opcode::floatingConstant:
         case Opcode::booleanConstant:
         case Opcode::stringConstant:
         case Opcode::byteConstant:
@@ -90,7 +104,14 @@ std::string patternText(
             out << '_';
             break;
         case PatternKind::integerLiteral:
-            out << pattern.integerValue;
+            if (types.contains(pattern.type) && typing::isUnsignedInteger(types.at(pattern.type)->kind)) {
+                out << static_cast<uint64_t>(pattern.integerValue);
+            } else {
+                out << pattern.integerValue;
+            }
+            break;
+        case PatternKind::floatingLiteral:
+            out << pattern.text;
             break;
         case PatternKind::booleanLiteral:
             out << (pattern.integerValue == 0 ? "false" : "true");
@@ -629,26 +650,33 @@ VerificationResult Verifier::verify(const Module& module) const {
                     function.isExternal == importing &&
                     !(function.isRootModule && function.name == "main") &&
                     (importing || !isCEntrySymbol(binding.symbol));
-            const bool integerResult = hasKind(function.resultType, typing::TypeKind::integer);
-            valid &= (integerResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
-                    function.returnsValue == integerResult;
+            const auto scalar = [&](TypeId id) {
+                return types.contains(id) && typing::isNativeScalar(types.at(id)->kind);
+            };
+            const bool scalarResult = scalar(function.resultType);
+            valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
+                    function.returnsValue == scalarResult;
             for (const auto& parameter : function.parameters) {
-                valid &= hasKind(parameter.value.type, typing::TypeKind::integer) &&
+                valid &= scalar(parameter.value.type) &&
                         parameter.value.category == ValueCategory::value &&
                         !parameter.isMutable && !parameter.isConsuming &&
                         !parameter.isInitializing && !parameter.acceptsAnyType;
             }
             if (!valid) {
                 report(VerificationErrorId::invalidInstruction, functionId, {}, {},
-                       "invalid or unauthorized C binding; only by-value Int and Void results are supported");
+                       "invalid or unauthorized C binding; only by-value scalars and Void results are supported");
             }
             const auto [previous, inserted] = nativeSymbols.emplace(binding.symbol, &function);
             if (!inserted) {
                 const auto& other = *previous->second;
-                bool matches = function.resultType == other.resultType &&
+                const auto compatible = [&](TypeId a, TypeId b) {
+                    return types.contains(a) && types.contains(b) &&
+                            typing::sameNativeRepresentation(types.at(a)->kind, types.at(b)->kind);
+                };
+                bool matches = compatible(function.resultType, other.resultType) &&
                         function.parameters.size() == other.parameters.size();
                 for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
-                    matches &= function.parameters[index].value.type == other.parameters[index].value.type;
+                    matches &= compatible(function.parameters[index].value.type, other.parameters[index].value.type);
                 }
                 if (!matches) {
                     report(VerificationErrorId::callMismatch, functionId, {}, {},
@@ -1282,9 +1310,10 @@ VerificationResult Verifier::verify(const Module& module) const {
                         break;
                     }
                     case Opcode::integerConstant:
+                    case Opcode::floatingConstant:
                     case Opcode::booleanConstant:
                     case Opcode::stringConstant:
-                    case Opcode::byteConstant:
+                    case Opcode::byteConstant: {
                         requireShape(0, 0);
                         if (instruction.result.has_value() &&
                             instruction.result->category != ValueCategory::value) {
@@ -1295,7 +1324,40 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     location,
                                     "constant result must be an object value");
                         }
+                        if (instruction.result.has_value() && types.contains(instruction.result->type)) {
+                            const auto kind = types.at(instruction.result->type)->kind;
+                            bool valid = false;
+                            switch (instruction.opcode) {
+                                case Opcode::integerConstant:
+                                    if (typing::isInteger(kind)) {
+                                        const auto bits = typing::scalarBitWidth(kind);
+                                        valid = bits == 64 || (typing::isSignedInteger(kind)
+                                                ? instruction.integerValue >= -(int64_t{1} << (bits - 1)) &&
+                                                  instruction.integerValue < (int64_t{1} << (bits - 1))
+                                                : static_cast<uint64_t>(instruction.integerValue) < (uint64_t{1} << bits));
+                                    }
+                                    break;
+                                case Opcode::floatingConstant:
+                                    valid = validFloatingLiteral(kind, instruction.text);
+                                    break;
+                                case Opcode::booleanConstant:
+                                    valid = kind == typing::TypeKind::boolean &&
+                                            (instruction.integerValue == 0 || instruction.integerValue == 1);
+                                    break;
+                                case Opcode::byteConstant:
+                                    valid = kind == typing::TypeKind::uint8 &&
+                                            instruction.integerValue >= 0 && instruction.integerValue <= 255;
+                                    break;
+                                case Opcode::stringConstant: valid = kind == typing::TypeKind::string; break;
+                                default: break;
+                            }
+                            if (!valid) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                        "constant kind or value does not match its result type");
+                            }
+                        }
                         break;
+                    }
                     case Opcode::stackAllocate:
                         requireShape(0, 0);
                         if (instruction.result.has_value() &&
@@ -1398,11 +1460,12 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 instruction.result->category != ValueCategory::value ||
                                 operands[0]->type != operands[1]->type ||
                                 instruction.result->type != operands[0]->type ||
-                                type == nullptr || type->kind != typing::TypeKind::integer) {
+                                type == nullptr || !typing::isNumeric(type->kind) ||
+                                (instruction.opcode == Opcode::remainder && !typing::isInteger(type->kind))) {
                                 report(
                                         VerificationErrorId::typeMismatch,
                                         functionId, block.id, location,
-                                        "division and remainder require Int values and an Int result");
+                                        "division and remainder require matching numeric values and result");
                             }
                         }
                         break;
@@ -1882,7 +1945,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 return false;
                             }
                             if (pattern.kind != PatternKind::enumCase) {
-                                return pattern.payloads.empty() && !pattern.symbol.has_value();
+                                return pattern.payloads.empty() && !pattern.symbol.has_value() &&
+                                        (pattern.kind != PatternKind::floatingLiteral ||
+                                         validFloatingLiteral(types.at(pattern.type)->kind, pattern.text));
                             }
                             if (!pattern.symbol.has_value()) return false;
                             const auto* enumCase = enumCaseFor(expectedType, *pattern.symbol);
@@ -1978,6 +2043,7 @@ bool isTerminator(Opcode opcode) {
 const char* opcodeName(Opcode opcode) {
     switch (opcode) {
         case Opcode::integerConstant: return "integer";
+        case Opcode::floatingConstant: return "floating";
         case Opcode::booleanConstant: return "boolean";
         case Opcode::stringConstant: return "string";
         case Opcode::byteConstant: return "byte";
@@ -2224,9 +2290,19 @@ std::string dump(const Module& module) {
                 out << opcodeName(instruction.opcode);
                 switch (instruction.opcode) {
                     case Opcode::integerConstant:
+                        if (instruction.result.has_value() && types.contains(instruction.result->type) &&
+                                typing::isUnsignedInteger(types.at(instruction.result->type)->kind)) {
+                            out << ' ' << static_cast<uint64_t>(instruction.integerValue);
+                        } else {
+                            out << ' ' << instruction.integerValue;
+                        }
+                        break;
                     case Opcode::booleanConstant:
                     case Opcode::byteConstant:
                         out << ' ' << instruction.integerValue;
+                        break;
+                    case Opcode::floatingConstant:
+                        out << ' ' << instruction.text;
                         break;
                     case Opcode::stringConstant:
                         out << " \"" << escape(instruction.text) << "\"";

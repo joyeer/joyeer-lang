@@ -136,14 +136,14 @@ TEST_F(CInteropTest, RejectsWrongBodiesAndImplicitUnitResults) {
 
 TEST_F(CInteropTest, RejectsUnsupportedNativeTypesAndAccessEffects) {
     for (const auto& parameter : std::vector<std::string> {
-            "Bool", "UInt8", "String", "Void", "()", "Int?", "[Int]",
+            "String", "Void", "()", "Int?", "[Int]",
             "Result<Int, IOError>", "inout Int", "consuming Int", "initializing Int",
         }) {
         SCOPED_TRACE(parameter);
         check("@c_extern(symbol: \"native\")\nfunc native(value: " + parameter + "): Int\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
     }
-    for (const auto& result : {"Bool", "UInt8", "String", "Int?", "Never"}) {
+    for (const auto& result : {"String", "Int?", "Never"}) {
         SCOPED_TRACE(result);
         check("@c_extern(symbol: \"native\")\nfunc native(): " + std::string(result) + "\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
@@ -158,6 +158,192 @@ func nativeFlush(): ()
 func runtimeFlush(): Void { nativeFlush() }
 )");
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, EmitsEveryScalarWithTargetCArgumentAndResultConventions) {
+    struct Scalar { const char* name; const char* llvm; const char* extension; };
+    for (const auto& scalar : std::vector<Scalar> {
+            {"Bool", "i1", "zeroext"}, {"Int8", "i8", "signext"}, {"UInt8", "i8", "zeroext"},
+            {"Int16", "i16", "signext"}, {"UInt16", "i16", "zeroext"},
+            {"Int32", "i32", ""}, {"UInt32", "i32", ""}, {"Int64", "i64", ""},
+            {"UInt64", "i64", ""}, {"Int", "i64", ""}, {"UInt", "i64", ""},
+            {"Float", "float", ""}, {"Double", "double", ""},
+        }) {
+        SCOPED_TRACE(scalar.name);
+        const std::string type = scalar.name;
+        ASSERT_NO_FATAL_FAILURE(lower(
+                "@c_extern(symbol: \"scalar_in\")\nfunc input(value: " + type + "): " + type + "\n"
+                "@c_export(symbol: \"scalar_out\")\nfunc output(value: " + type + "): " + type +
+                " { return input(value: value) }\n"));
+        joyeer::llvmbackend::wire::Writer writer;
+        writer(*module);
+        joyeer::ir::Module decoded;
+        joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+        reader(decoded);
+        ASSERT_TRUE(reader.succeeded());
+        ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+        joyeer::llvmbackend::EmitOptions options;
+        options.emitLineTables = true;
+        options.emitVariables = true;
+        const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded, options);
+        ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+        std::string extension = scalar.extension;
+#if (defined(_M_ARM64) || defined(__aarch64__)) && !defined(__APPLE__)
+        extension.clear();
+#elif defined(_WIN32)
+        if (type != "Bool") extension.clear();
+#endif
+        const std::string result = (extension.empty() ? "" : extension + " ") + scalar.llvm;
+        const std::string parameter = std::string(scalar.llvm) + (extension.empty() ? "" : " " + extension);
+        EXPECT_NE(emitted.text.find("declare " + result + " @scalar_in(" + parameter + ")"), std::string::npos);
+        EXPECT_NE(emitted.text.find("define " + result + " @scalar_out(" + parameter), std::string::npos);
+        EXPECT_NE(emitted.text.find("call " + result + " @scalar_in(" + parameter), std::string::npos);
+        EXPECT_EQ(emitted.text.find("@joyeer_main"), std::string::npos);
+        EXPECT_EQ(emitted.text.find("@joyeer_panic"), std::string::npos);
+    }
+}
+
+TEST_F(CInteropTest, AcceptsBoundaryLiteralsAndPreservesTheirWireRepresentation) {
+    for (const auto& [type, literal] : std::vector<std::pair<std::string, std::string>> {
+            {"Int8", "-128"}, {"Int8", "127"}, {"UInt8", "255"},
+            {"Int16", "-32768"}, {"Int16", "32767"}, {"UInt16", "65535"},
+            {"Int32", "-2147483648"}, {"Int32", "2147483647"}, {"UInt32", "4294967295"},
+            {"Int64", "-9223372036854775808"}, {"Int64", "9223372036854775807"},
+            {"Int", "-9223372036854775808"}, {"UInt64", "18446744073709551615"},
+            {"UInt", "18446744073709551615"}, {"Float", "3.4028234663852886e38"},
+            {"Float", "1.401298464324817e-45"}, {"Float", "-0.0"},
+            {"Double", "1.7976931348623157e308"}, {"Double", "4.9406564584124654e-324"},
+            {"Double", "1"}, {"Bool", "true"},
+        }) {
+        SCOPED_TRACE(type + ": " + literal);
+        ASSERT_NO_FATAL_FAILURE(lower("@c_export(symbol: \"constant\")\nfunc value(): " +
+                type + " { return " + literal + " }\n"));
+        joyeer::llvmbackend::wire::Writer writer;
+        writer(*module);
+        joyeer::ir::Module decoded;
+        joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+        reader(decoded);
+        ASSERT_TRUE(reader.succeeded());
+        EXPECT_EQ(joyeer::ir::dump(decoded), joyeer::ir::dump(*module));
+        const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+        EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    }
+}
+
+TEST_F(CInteropTest, RejectsUnrepresentableScalarLiterals) {
+    for (const auto& [type, literal] : std::vector<std::pair<std::string, std::string>> {
+            {"Int8", "128"}, {"Int8", "-129"}, {"UInt8", "256"}, {"UInt8", "-1"},
+            {"Int16", "32768"}, {"Int16", "-32769"}, {"UInt16", "65536"},
+            {"Int32", "2147483648"}, {"Int32", "-2147483649"}, {"UInt32", "4294967296"},
+            {"Int64", "9223372036854775808"}, {"Int", "-9223372036854775809"},
+            {"UInt64", "-1"}, {"UInt", "-1"}, {"Float", "3.5e38"},
+            {"Float", "1e-100"}, {"Double", "1e309"}, {"Double", "1e-400"},
+            {"Int", "1.5"},
+        }) {
+        SCOPED_TRACE(type + ": " + literal);
+        check("func value(): " + type + " { return " + literal + " }\n");
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidNumericLiteral));
+    }
+}
+
+TEST_F(CInteropTest, KeepsScalarSourceTypesDistinctWithoutImplicitConversions) {
+    for (const auto& [sourceType, destination] : std::vector<std::pair<std::string, std::string>> {
+            {"Int", "Int64"}, {"UInt", "UInt64"}, {"Int8", "Int16"}, {"Int32", "UInt32"},
+            {"UInt8", "Bool"}, {"Float", "Double"}, {"Int", "Double"},
+        }) {
+        SCOPED_TRACE(sourceType + " to " + destination);
+        check("@c_extern(symbol: \"native\")\nfunc native(value: " + destination + "): Void\n"
+                "func call(value: " + sourceType + "): Void { native(value: value) }\n");
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::typeMismatch));
+    }
+}
+
+TEST_F(CInteropTest, ContextuallyTypesScalarLiteralsInBranchesAndBlockArms) {
+    for (const auto& [type, literal] : std::vector<std::pair<std::string, std::string>> {
+            {"Int8", "-128"}, {"UInt64", "18446744073709551615"},
+            {"Float", "1.25"}, {"Double", "1.25"},
+        }) {
+        SCOPED_TRACE(type);
+        ASSERT_NO_FATAL_FAILURE(lower("func choose(flag: Bool): " + type + " {\n"
+                "let value: " + type + " = if flag { " + literal + " } else { " + literal + " }\n"
+                "return match flag { true => { value }, false => { " + literal + " } }\n}\n"));
+        const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+        EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    }
+}
+
+TEST_F(CInteropTest, ComparesNativeRepresentationsRatherThanSourceTypeIdentities) {
+    lower(R"(
+@c_extern(symbol: "native")
+func first(value: Int): Int
+@c_extern(symbol: "native")
+func second(value: Int64): Int64
+func use(value: Int64): Int64 { return second(value: value) }
+)");
+    ASSERT_NE(module, nullptr);
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+    EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    for (const auto* type : {"UInt64", "Bool", "Float", "Double", "Int32"}) {
+        check("@c_extern(symbol: \"native\")\nfunc first(value: Int): Int\n"
+                "@c_extern(symbol: \"native\")\nfunc second(value: " + std::string(type) + "): Int\n");
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::conflictingNativeSymbol));
+    }
+}
+
+TEST_F(CInteropTest, VerifierRejectsMalformedFloatingConstantsAndPatterns) {
+    ASSERT_NO_FATAL_FAILURE(lower("func value(): Float { return 1.5 }\n"));
+    bool foundConstant = false;
+    for (auto& block : function("value").blocks) {
+        for (auto& instruction : block.instructions) {
+            if (instruction.opcode == joyeer::ir::Opcode::floatingConstant) {
+                instruction.text = "1e999";
+                foundConstant = true;
+            }
+        }
+    }
+    ASSERT_TRUE(foundConstant);
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    EXPECT_FALSE(joyeer::llvmbackend::Emitter().emit(*module).succeeded());
+
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+func value(input: Float): Bool {
+    return match input { 1.5 => true, _ => false }
+}
+)"));
+    bool foundPattern = false;
+    for (auto& block : function("value").blocks) {
+        for (auto& instruction : block.instructions) {
+            for (auto& arm : instruction.switchCases) {
+                if (arm.pattern.kind == joyeer::ir::PatternKind::floatingLiteral) {
+                    arm.pattern.text = "invalid";
+                    foundPattern = true;
+                }
+            }
+        }
+    }
+    ASSERT_TRUE(foundPattern);
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    EXPECT_FALSE(joyeer::llvmbackend::Emitter().emit(*module).succeeded());
+}
+
+TEST_F(CInteropTest, SharesScalarRuntimeDeclarationsAndCallSiteAttributes) {
+    for (const auto& [type, symbol] : std::vector<std::pair<std::string, std::string>> {
+            {"Bool", "joyeer_print_bool"}, {"UInt8", "joyeer_print_byte"},
+            {"UInt", "joyeer_print_uint"}, {"Float", "joyeer_print_float"},
+            {"Double", "joyeer_print_double"},
+        }) {
+        SCOPED_TRACE(type);
+        for (const bool importing : {true, false}) {
+            ASSERT_NO_FATAL_FAILURE(lower(
+                    std::string(importing ? "@c_extern" : "@c_export") +
+                    "(symbol: \"" + symbol + "\")\nfunc native(value: " + type + "): Void" +
+                    (importing ? "" : " {}") + "\nfunc probe(value: " + type +
+                    "): Void { native(value: value)\n print(value: value) }\n"));
+            const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+            EXPECT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+            EXPECT_EQ(emitted.text.find("@" + symbol + ".1"), std::string::npos);
+        }
+    }
 }
 
 TEST_F(CInteropTest, AcceptsCompatibleImportsAndImportOfAnExport) {

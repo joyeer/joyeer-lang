@@ -13,9 +13,9 @@ Module validAddModule() {
     Module module;
     module.sourceName = "manual.joyeer";
     module.types = {
-        TypeName { 0, "Void" },
-        TypeName { 1, "Int" },
-        TypeName { 2, "Bool" },
+        TypeName { 0, "Void", joyeer::typing::TypeKind::voidType },
+        TypeName { 1, "Int", joyeer::typing::TypeKind::integer },
+        TypeName { 2, "Bool", joyeer::typing::TypeKind::boolean },
     };
 
     Function add;

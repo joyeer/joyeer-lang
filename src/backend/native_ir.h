@@ -88,7 +88,9 @@ private:
     llvm::Function* declareFunction(const ir::Function& function);
     llvm::Function* declareNativeFunction(const ir::Function& function);
     llvm::Function* declareCFunction(std::string_view name, llvm::Type* result,
-            llvm::ArrayRef<llvm::Type*> parameters);
+            llvm::ArrayRef<llvm::Type*> parameters,
+            llvm::ArrayRef<typing::TypeKind> parameterKinds = {},
+            typing::TypeKind resultKind = typing::TypeKind::error);
     llvm::CallInst* call(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Value*> arguments);
     llvm::Value* stack(llvm::Type* type, const llvm::Twine& name = "");
@@ -110,7 +112,8 @@ private:
     void emitEntry();
     void trap(llvm::Value* condition, std::string_view message);
     llvm::Value* arithmetic(const ir::Instruction& instruction);
-    llvm::Value* comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right);
+    llvm::Value* comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,
+            typing::TypeKind kind = typing::TypeKind::integer);
     llvm::Value* constructEnum(ir::TypeId id, size_t tag, llvm::ArrayRef<llvm::Value*> values);
     llvm::Value* extractPayload(ir::TypeId id, llvm::Value* value,
             semantic::SymbolId symbol, size_t index);

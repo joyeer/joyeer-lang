@@ -1255,7 +1255,7 @@ syntax::MatchArmSyntax::Ptr Parser::parseMatchArm() {
 }
 
 bool Parser::isLiteral(TokenKind kind) const {
-    return kind == decimalLiteral || kind == stringLiteral ||
+    return kind == decimalLiteral || kind == floatLiteral || kind == stringLiteral ||
            kind == byteLiteral || kind == booleanLiteral || kind == nilLiteral;
 }
 

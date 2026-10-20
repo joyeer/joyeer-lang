@@ -1,6 +1,7 @@
 #include "lexparser.h"
 #include "compiler/diagnostics/diagnostic.h"
 
+#include <bit>
 #include <charconv>
 #include <cstdarg>
 #include <cstdio>
@@ -272,9 +273,9 @@ void LexParser::parseNumberLiteral() {
         advance();
     }
 
-    bool unsupportedNumber = false;
+    bool floating = false;
     if ((peek() == '.' && isDigit(peek(1))) || peek() == 'e' || peek() == 'E') {
-        unsupportedNumber = true;
+        floating = true;
         if (peek() == '.') {
             advance();
             while (isDigit(peek())) {
@@ -286,6 +287,11 @@ void LexParser::parseNumberLiteral() {
             if (peek() == '+' || peek() == '-') {
                 advance();
             }
+            if (!isDigit(peek())) {
+                report(tokenLine, tokenColumn, Diagnostics::errorInvalidNumericSuffix);
+                emitInvalid(start);
+                return;
+            }
             while (isDigit(peek())) {
                 advance();
             }
@@ -293,12 +299,15 @@ void LexParser::parseNumberLiteral() {
     } else if (position == start + 1 && sourcefile->content[start] == '0' &&
                (peek() == 'x' || peek() == 'X' || peek() == 'b' || peek() == 'B' ||
                 peek() == 'o' || peek() == 'O')) {
-        unsupportedNumber = true;
         advance();
         while (isIdentifierTail(peek())) {
             advance();
         }
-    } else if (isIdentifierHead(peek())) {
+        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedNumericLiteral);
+        emitInvalid(start);
+        return;
+    }
+    if (isIdentifierHead(peek())) {
         while (isIdentifierTail(peek())) {
             advance();
         }
@@ -307,21 +316,20 @@ void LexParser::parseNumberLiteral() {
         return;
     }
 
-    if (unsupportedNumber) {
-        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedNumericLiteral);
-        emitInvalid(start);
+    const std::string value = sourcefile->content.substr(start, position - start);
+    if (floating) {
+        emit(floatLiteral, start, value);
         return;
     }
 
-    const std::string value = sourcefile->content.substr(start, position - start);
-    int64_t parsed = 0;
+    uint64_t parsed = 0;
     const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed, 10);
     if (result.ec == std::errc::result_out_of_range) {
         report(tokenLine, tokenColumn, Diagnostics::errorIntegerLiteralOverflow);
     }
 
     emit(decimalLiteral, start, value);
-    sourcefile->tokens.back()->intValue = parsed;
+    sourcefile->tokens.back()->intValue = std::bit_cast<int64_t>(parsed);
 }
 
 void LexParser::parseStringLiteral() {

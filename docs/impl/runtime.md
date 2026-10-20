@@ -16,7 +16,7 @@ Joyeer implementations behind the existing runtime interfaces; this document
 describes the current C implementation. Public library modules and their
 separate joypm workflow are tracked in the [library plan](../plan/library.md).
 The [C binding implementation](c-interop.md) supports the restricted
-`Int`/`Void` runtime-source subset of [§19](../spec/19-c-interop.md).
+by-value scalar runtime-source boundary of [§19](../spec/19-c-interop.md).
 It does not replace any production C algorithm or compiler-known runtime
 interface described here.
 
@@ -31,6 +31,12 @@ available for runtime clients. String and dictionary accesses use runtime
 operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
+
+Scalar printing includes all integer widths, `Float`, and `Double`. Signed
+integers use the existing 64-bit printer after sign extension; unsigned
+integers use an unsigned printer after zero extension. Floating printers use
+9 and 17 significant decimal digits, respectively. These internal printing
+adaptations do not introduce implicit conversions at explicit C bindings.
 
 Checked `Int` division truncates toward zero; a nonzero remainder has the
 dividend's sign. Both `joyeer_checked_div_int` and `joyeer_checked_rem_int`

@@ -101,8 +101,8 @@ establish C compatibility. In particular, `Bool` maps to C `_Bool`, not a
 platform integer Boolean; `Char` is not C `char`; and `Void` is permitted
 only as a native result, not a native parameter.
 
-These rules include the broader fixed-width integer and floating-point
-design, not just the current compiler's primitive subset. They introduce no
+These rules include the implemented fixed-width integer and floating-point
+scalar boundary. They introduce no
 pointer types or C-specific source aliases, and do not give `String`,
 `Optional`, `Result`, or ordinary aggregates a C-compatible layout.
 

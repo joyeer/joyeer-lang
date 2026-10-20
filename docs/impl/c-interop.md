@@ -1,28 +1,47 @@
 # Restricted C Interoperation
 
-> **Status:** the initial runtime-only `Int`/`Void` import/export slice is
-> implemented. The broader scalar design in [§19](../spec/19-c-interop.md)
-> is not fully implemented. Native addresses, output pointers, C aggregates,
+> **Status:** runtime-only scalar imports/exports implement every representation
+> in [§19.4](../spec/19-c-interop.md#194-c-scalar-representations).
+> Platform acceptance is recorded separately below. Native addresses, output pointers, C aggregates,
 > callbacks, variadic calls, and public user FFI remain unsupported.
 
-## 1. Current subset
+## 1. Current scalar boundary
 
 | Surface | Current support |
 |---|---|
 | Import | `@c_extern(symbol: "...")` on a bodyless top-level function |
 | Export | `@c_export(symbol: "...")` on a top-level Joyeer definition |
-| Native parameters | Default or explicit `borrowing Int`, passed as C `int64_t` |
-| Native result | Explicit `Int`, `Void`, or `()`; the latter two map to C `void` |
+| Native parameters | Default or explicit `borrowing` scalar, passed by value |
+| Native result | Any supported scalar, or explicit `Void` / `()` mapping to C `void` |
 | Empty parameter list | A fixed C11 `(void)` prototype |
 | Source names | Ordinary labels, optional separate internal parameter names, and visibility |
 | Authorization | Explicit named-unit selection with `--runtime-module` |
 | Object output | `--emit-runtime-object`, without executable startup or a runtime archive |
 
+| Joyeer scalar | C representation |
+|---|---|
+| `Bool` | `_Bool` |
+| `Int8`, `Int16`, `Int32`, `Int64` | Corresponding `intN_t` |
+| `UInt8`, `UInt16`, `UInt32`, `UInt64` | Corresponding `uintN_t` |
+| `Int`, `UInt` | `int64_t`, `uint64_t` |
+| `Float`, `Double` | IEEE 754 C `float`, `double` |
+
 The implementation enforces the declaration, annotation, and symbol rules
-in §19 for this subset. It rejects all other native parameter/result types
-instead of approximating their representations. In particular, ordinary
-Joyeer `Bool` and `UInt8` support does not make them usable in C signatures
-yet, and the broader integer/floating types are not added to the prelude.
+in §19. All these types are available in the prelude. Source types remain
+distinct: for example, an `Int64` value is not implicitly converted to `Int`.
+Repeated declarations of one C symbol compare native representations, so
+`Int` and `Int64` signatures agree, as do `UInt` and `UInt64`. Signedness,
+width, Boolean, and floating representations cannot be interchanged.
+All other native parameter/result types are rejected.
+
+Native declarations, export adapters, and call sites carry the target's
+required narrow-integer attributes. On x86-64 Unix and macOS ARM64, narrow
+signed/unsigned values use `signext`/`zeroext`; Windows x64 requires
+`zeroext` for `_Bool` but not 8/16-bit integers. Windows and Linux ARM64
+use neither extension attribute. Fixed-prototype `Float` stays `float`,
+not a variadically promoted `double`. These rules also apply to
+compiler-generated C runtime calls. Native targets outside the admitted
+x86-64/ARM64 Windows MSVC, Linux, and macOS families are diagnosed.
 
 This does not migrate any production runtime algorithm from C to Joyeer.
 Existing host builtins and normal executable generation remain supported.
@@ -141,7 +160,7 @@ blanket-reserved. This check covers declarations known to the compiler, not
 the prototypes in an external native library.
 
 Object emission uses the existing versioned backend C ABI and opaque module
-handle. The private IR wire format is version 2; the backend C ABI remains
+handle. The private IR wire format is version 3; the backend C ABI remains
 version 1. The compiler and backend must be built/deployed from the same
 revision. macOS objects use the configured deployment target rather than a
 newer default OS version inferred from the host running LLVM.
@@ -167,7 +186,7 @@ syntax, semantic validation, module authorization, lowering, wire transport,
 malformed native IR, symbol conflicts, and debug-preserving emission.
 The [native fixtures](../../tests/c-interop/) cover C/Joyeer/C calls with
 static and shared providers at `-O0 -gfull` and `-O2 -g0`, signed-64-bit
-boundaries, zero and twelve arguments, `void` results, two independently
+boundaries, zero and twelve arguments, `void` results, multiple independently
 compiled Joyeer objects, archive extraction, missing native definitions,
 ordinary-source rejection, and output-path failures.
 Conflicts with generated runtime signatures are rejected before object
@@ -175,11 +194,30 @@ emission at both `-O0` and `-O2`.
 Where `llvm-nm` is available, object checks require exactly the approved C
 exports/imports and reject incidental startup or runtime dependencies.
 
+The added scalar fixtures cover every signed/unsigned width, both default
+64-bit types, `_Bool`, `float`, and `double`. They exercise unsigned high bits,
+floating subnormals/extrema, signed zero, infinities, NaNs without payload
+assumptions, exact-precision literals, and 21 mixed integer/floating arguments
+that exhaust both register classes. Target-derived bindings use real C
+`long`, `unsigned long`, plain `char`, `size_t`, `ptrdiff_t`, and Windows
+`BOOL` prototypes. Configure determines plain-char signedness with the target
+C compiler, and C assertions reject stale or unsupported data-model assumptions.
+
+Separate native scalar programs check field/array/optional storage, printing,
+contextual literals in conditional/match blocks, unsigned wrapping, and signed
+overflow/division traps in both Joyeer optimization profiles. Unit tests also
+reject out-of-range literals, implicit numeric conversions, malformed floating
+IR, and conflicting native representations.
+
 Full acceptance uses unit tests and joypm enabled and unfiltered CTest;
 focused labels do not replace that gate. Native results for one host do not
 establish acceptance on other platforms or a complete implementation of §19.
 
 ### Native validation evidence
+
+The macOS ARM64 and Windows x64 records below describe the historical
+`Int`/`Void` slice. Complete scalar validation is recorded separately for
+Windows ARM64.
 
 #### macOS ARM64
 
@@ -234,6 +272,30 @@ LLVM/LLD 22.1.8, CMake 4.4.4, and Ninja
   `IMAGE_FILE_MACHINE_AMD64` in both configurations. Debug bootstrap also
   produced the joypm PDB.
 
-These results validate the existing `Int`/`Void` slice, not the broader scalar
-design or runtime migration. Linux and Windows ARM64 C interop acceptance
-remain separate native gates.
+These results validate the initial `Int`/`Void` slice, not the subsequent
+complete scalar implementation or runtime migration.
+
+#### Windows ARM64: complete scalars
+
+On native Windows ARM64 on 2026-10-20, using MSVC 19.51.36260,
+Windows SDK 10.0.28000.0, and LLVM/LLD 22.1.8:
+
+- Both `arm64-debug` and `arm64-release` complete default builds passed,
+  including runtime staging and direct joypm bootstrap, with unit tests and
+  joypm enabled. The Release tree used the installed SDK and existing pinned
+  dependency sources, not a downloaded host toolchain.
+- Final unfiltered serial CTest passed **871/871 in Debug** and
+  **871/871 in Release**, with no skipped tests. Each run included all
+  **50 C interop gates** and all **15 joypm gates**, including self-build
+  and relocated installation.
+- Both static and shared providers passed the complete scalar round trips
+  at `-O0 -gfull` and `-O2 -g0`, in each host build configuration.
+- PE headers independently confirmed ARM64 compiler products and a
+  representative optimized shared-provider caller.
+- SDK Clang IR inspection agreed with the narrow-extension rules for
+  x86-64 and ARM64 on Windows, Linux, and macOS. This is ABI inspection,
+  not native execution on those other hosts.
+
+Complete scalar native acceptance on Windows x64, Linux, and macOS remains
+open until measured on those targets. These gates do not establish native
+memory safety, general user FFI, or production runtime migration.

@@ -109,7 +109,7 @@ The runtime does not import the public library to implement itself.
 The [C interoperation specification](../spec/19-c-interop.md) defines
 `@c_extern`/`@c_export` with implied C ABI for that restricted runtime
 context; its [implementation plan](c-interop.md) tracks pending gates.
-The initial `Int`/`Void` subset is [implemented](../impl/c-interop.md), but
+The complete by-value scalar boundary is [implemented](../impl/c-interop.md), but
 it is not a prerequisite for ordinary library modules or wrappers around
 existing host builtins.
 Public APIs wrap internal bindings rather than exposing native privileges.

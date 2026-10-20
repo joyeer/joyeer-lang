@@ -633,7 +633,8 @@ let copy = integer
 
     TEST_F(TypeCheckingTest, RejectsNonByteConversionArguments) {
         check(R"JOYEER(func invalid() {
-    let integer = byteToInt(value: 1)
+    let nonByte: Int = 1
+    let integer = byteToInt(value: nonByte)
     let text = byteToString(value: "x")
     }
     )JOYEER");
@@ -728,7 +729,7 @@ return total
 
 TEST_F(TypeCheckingTest, RejectsM006WrongOperandTypes) {
     for (const auto* expression : { "!1", "true || 1", "1 || false",
-                                    "true / false", "1 % b'A'", "\"x\" / \"y\"" }) {
+                                    "true / false", "byteToInt(value: b'A') % b'A'", "\"x\" / \"y\"" }) {
         SCOPED_TRACE(expression);
         ASSERT_NO_FATAL_FAILURE(check(
                 "func run() { let value = " + std::string(expression) + "\n}\n"));

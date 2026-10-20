@@ -50,7 +50,10 @@ The lexer recognizes terminals needed by the current parser:
 
 - identifiers, wildcard `_`, and current/deferred keywords, including supported
   `break`, `continue`, `import`, `public`, `internal`, and `private` terminals;
-- decimal `Int` literals with `int64_t` overflow diagnostics;
+- decimal integer magnitudes through `UINT64_MAX`, stored as 64-bit payloads;
+  contextual type/range checking belongs to the type checker;
+- decimal floating literals with optional signed exponents, retaining their
+  source spelling for direct rounding to `Float` or `Double`;
 - strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, and
   `\\`;
 - strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
@@ -63,7 +66,7 @@ The lexer recognizes terminals needed by the current parser:
 - line comments and nested block comments.
 
 The longest valid terminal wins. Unsupported compound, shift, range,
-coalescing, optional-chain, interpolation, float/base-prefixed numeric, and
+coalescing, optional-chain, interpolation, base-prefixed numeric, and
 other deferred forms are consumed as coherent invalid tokens where possible,
 then reported with stable `lexer.*` IDs.
 
@@ -80,7 +83,7 @@ unsupported numeric forms, and reserved syntax all produce diagnostics.
 
 For malformed multi-byte forms, recovery consumes the complete recognizable
 unit instead of emitting misleading valid prefixes. Examples include `+=`,
-`<<=`, `?.`, `1.5`, and `0xff`.
+`<<=`, `?.`, `1.5suffix`, and `0xff`.
 
 Source files larger than the 32-bit span capacity are rejected before scanning.
 

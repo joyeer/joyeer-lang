@@ -36,7 +36,68 @@ enum class TypeKind {
     dictionary,
     optional,
     result,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint16,
+    uint32,
+    uint64,
+    unsignedInteger,
+    float32,
+    float64,
 };
+
+[[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
+    return kind == TypeKind::integer || kind == TypeKind::int8 ||
+            kind == TypeKind::int16 || kind == TypeKind::int32 || kind == TypeKind::int64;
+}
+
+[[nodiscard]] constexpr bool isUnsignedInteger(TypeKind kind) {
+    return kind == TypeKind::unsignedInteger || kind == TypeKind::uint8 ||
+            kind == TypeKind::uint16 || kind == TypeKind::uint32 || kind == TypeKind::uint64;
+}
+
+[[nodiscard]] constexpr bool isInteger(TypeKind kind) {
+    return isSignedInteger(kind) || isUnsignedInteger(kind);
+}
+
+[[nodiscard]] constexpr bool isFloating(TypeKind kind) {
+    return kind == TypeKind::float32 || kind == TypeKind::float64;
+}
+
+[[nodiscard]] constexpr bool isNumeric(TypeKind kind) {
+    return isInteger(kind) || isFloating(kind);
+}
+
+[[nodiscard]] constexpr bool isNativeScalar(TypeKind kind) {
+    return isNumeric(kind) || kind == TypeKind::boolean;
+}
+
+[[nodiscard]] constexpr unsigned scalarBitWidth(TypeKind kind) {
+    switch (kind) {
+        case TypeKind::boolean: return 1;
+        case TypeKind::int8:
+        case TypeKind::uint8: return 8;
+        case TypeKind::int16:
+        case TypeKind::uint16: return 16;
+        case TypeKind::int32:
+        case TypeKind::uint32:
+        case TypeKind::float32: return 32;
+        case TypeKind::integer:
+        case TypeKind::int64:
+        case TypeKind::unsignedInteger:
+        case TypeKind::uint64:
+        case TypeKind::float64: return 64;
+        default: return 0;
+    }
+}
+
+[[nodiscard]] constexpr bool sameNativeRepresentation(TypeKind left, TypeKind right) {
+    return left == right || (isInteger(left) && isInteger(right) &&
+            isSignedInteger(left) == isSignedInteger(right) &&
+            scalarBitWidth(left) == scalarBitWidth(right));
+}
 
 struct TypeRecord {
     TypeId id = invalidTypeId;
@@ -58,6 +119,7 @@ public:
     [[nodiscard]] TypeId boolType() const;
     [[nodiscard]] TypeId stringType() const;
     [[nodiscard]] TypeId uint8Type() const;
+    [[nodiscard]] TypeId doubleType() const;
     [[nodiscard]] TypeId ioErrorType() const;
 
     [[nodiscard]] TypeId arrayType(TypeId element);
@@ -121,6 +183,7 @@ private:
     TypeId stringTypeId = invalidTypeId;
     TypeId uint8TypeId = invalidTypeId;
     TypeId ioErrorTypeId = invalidTypeId;
+    TypeId doubleTypeId = invalidTypeId;
 };
 
 struct TypedCallableSignature {
@@ -159,6 +222,7 @@ enum class TypeCheckingDiagnosticId {
     unsupportedNativeSignature,
     unauthorizedNativeBinding,
     conflictingNativeSymbol,
+    invalidNumericLiteral,
 };
 
 struct TypeCheckingDiagnostic {

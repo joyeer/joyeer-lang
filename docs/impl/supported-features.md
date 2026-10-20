@@ -50,8 +50,8 @@ paths containing spaces are supported and require appropriate CLI quoting.
 |---|---|
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Modules | Named source-file sets, file-local public short names and qualified imports, use-site ambiguity checks, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
-| Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
-| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer `+`, `-`, `*`, `/`, `%`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
+| Bindings and values | Function-local `let` and `var`; `Bool`, `Int`/`UInt` (64-bit), signed/unsigned 8/16/32/64-bit integers, `Float`, `Double`, `String`, and unit `()` / `Void` |
+| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
@@ -63,11 +63,31 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
-| Internal C bindings | Runtime-authorized `@c_extern`/`@c_export`, borrowing `Int`/C `int64_t` parameters, `Int` or explicit `Void`/`()` results, and runtime-object output without startup/linking |
+| Internal C bindings | Runtime-authorized `@c_extern`/`@c_export`, all §19.4 by-value scalars, explicit scalar or `Void`/`()` results, target narrow-extension attributes, and runtime-object output without startup/linking |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
 builtins. Their type arguments do not imply support for user-defined generic
 declarations.
+
+Decimal integer literals use their contextual numeric type, or default to
+`Int`; decimal floating literals (including exponents) default to `Double`.
+Literal range checking includes the minimum signed values and the full
+unsigned 64-bit range. Floating literals are rounded directly to the selected
+precision; overflow and underflow to an unrepresentable nonzero value are
+diagnosed. Hexadecimal/binary/octal literals and numeric separators remain
+unsupported. Values of different numeric types are not implicitly converted;
+`Int`/`Int64` and `UInt`/`UInt64` remain distinct source types despite matching
+C representations. Explicit casts and general numeric conversion APIs remain
+outside this implementation.
+
+Signed integer arithmetic traps on overflow at every optimization level.
+Unsigned addition/subtraction/multiplication wrap modulo their width.
+Integer division/remainder trap on zero; signed minimum divided by `-1`
+also traps for either operation. Floating arithmetic uses IEEE 754 behavior,
+including signed zero, infinities, and unordered NaN comparisons, without
+fast-math assumptions. Floating remainder and unsigned unary minus are not
+supported. New scalars can be stored in arrays, fields, and enum/optional/result
+payloads; dictionary keys still support only `Int`, `Bool`, `UInt8`, and `String`.
 
 ## Source-implemented local project tool
 
@@ -102,7 +122,7 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
 - Top-level executable statements or global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.
-- `Float`, `Double`, general tuples, or tuple destructuring.
+- General tuples or tuple destructuring.
 - `for-in`, labeled loop exits, compound assignment, `is` / `as`,
   match guards, range patterns, or alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. Optional
@@ -111,7 +131,7 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
   aggregate printing, streaming file APIs, or a general standard library.
 - General user FFI, native addresses/output pointers, C aggregates, callbacks,
-  variadic calls, or C signatures beyond the implemented `Int`/`Void` slice.
+  variadic calls, or C signatures beyond the specified by-value scalar boundary.
   The [C binding implementation](c-interop.md) documents explicit runtime
   authorization and object output; the rest of the scalar mapping table in
   [§19](../spec/19-c-interop.md) remains design, not coverage.

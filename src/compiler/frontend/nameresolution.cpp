@@ -826,6 +826,10 @@ private:
             symbol(function).declaredType = resultType;
             symbol(function).callable = std::move(signature);
         }
+        for (const auto* name : {"Int8", "Int16", "Int32", "Int64", "UInt",
+                "UInt16", "UInt32", "UInt64", "Float", "Double"}) {
+            declareBuiltinType(name);
+        }
     }
 
     void collectTopLevelDeclarations(const syntax::SourceFileSyntax::Ptr& root) {
@@ -1829,6 +1833,7 @@ private:
                 const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression);
                 switch (literal->literal->kind) {
                     case decimalLiteral: return lookupType(model->fileScope_, "Int").symbol;
+                    case floatLiteral: return lookupType(model->fileScope_, "Double").symbol;
                     case stringLiteral: return lookupType(model->fileScope_, "String").symbol;
                     case byteLiteral: return lookupType(model->fileScope_, "UInt8").symbol;
                     case booleanLiteral: return lookupType(model->fileScope_, "Bool").symbol;
