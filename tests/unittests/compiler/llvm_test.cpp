@@ -390,6 +390,58 @@ TEST_F(LLVMBackendTest, WrapsCrossFileInstructionScopesForLineTablesAndFullDebug
     }
 }
 
+TEST_F(LLVMBackendTest, ResolvesSparseReorderedFunctionAndDebugIdentities) {
+    auto lowered = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    const auto remap = [](uint32_t id) { return id * 7 + 11; };
+    const auto remapOptional = [&](std::optional<uint32_t>& id) {
+        if (id.has_value()) id = remap(*id);
+    };
+    for (auto& function : lowered.module->functions) {
+        function.id = remap(function.id);
+        remapOptional(function.debugScope);
+        if (function.debugLocation.has_value()) remapOptional(function.debugLocation->scope);
+        for (auto& binding : function.entryDebugVariableBindings) binding.variable = remap(binding.variable);
+        for (auto& block : function.blocks) {
+            for (auto& instruction : block.instructions) {
+                remapOptional(instruction.callee);
+                if (instruction.debugLocation.has_value()) remapOptional(instruction.debugLocation->scope);
+                for (auto& binding : instruction.debugVariableBindings) binding.variable = remap(binding.variable);
+            }
+        }
+    }
+    for (auto& scope : lowered.module->debugScopes) {
+        scope.id = remap(scope.id);
+        scope.function = remap(scope.function);
+        remapOptional(scope.parent);
+    }
+    for (auto& variable : lowered.module->debugVariables) {
+        variable.id = remap(variable.id);
+        variable.function = remap(variable.function);
+        variable.scope = remap(variable.scope);
+    }
+    std::reverse(lowered.module->functions.begin(), lowered.module->functions.end());
+    std::reverse(lowered.module->debugScopes.begin(), lowered.module->debugScopes.end());
+    std::reverse(lowered.module->debugVariables.begin(), lowered.module->debugVariables.end());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*lowered.module).succeeded());
+    for (const auto format : {joyeer::DebugInfoFormat::dwarf, joyeer::DebugInfoFormat::codeView}) {
+        result = joyeer::llvmbackend::Emitter().emit(*lowered.module, {
+            true, format, joyeer::OptimizationLevel::O0, true,
+        });
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        EXPECT_TRUE(result.hasEntryPoint);
+        EXPECT_NE(result.text.find("!DILocalVariable("), std::string::npos);
+        EXPECT_NE(result.text.find("!DILexicalBlock("), std::string::npos);
+        EXPECT_NE(result.text.find("!DIFile(filename: \"library.joyeer\""), std::string::npos);
+        for (const auto& function : lowered.module->functions) {
+            if (!function.isExternal) {
+                EXPECT_NE(result.text.find("@joyeer_fn_" + std::to_string(function.id) + "("),
+                          std::string::npos);
+            }
+        }
+    }
+}
+
 TEST_F(LLVMBackendTest, UnitConstantsDoNotAllocateOrStorePayloads) {
     emit("func run(): Void { return () }\n"
          "func complete(): Result<Void, String> { return .Ok(()) }\n");

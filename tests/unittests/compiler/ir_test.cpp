@@ -653,6 +653,51 @@ TEST(IRModelTest, ClassifiesNestedTypesThatRequireDestruction) {
     EXPECT_TRUE(requiresDestruction(module, 2));
     EXPECT_TRUE(requiresDestruction(module, 3));
     EXPECT_TRUE(requiresDestruction(module, 4));
+
+    const DestructionAnalysis analysis(module);
+    for (const auto id : {4u, 2u, 0u, 3u, 1u, 4u}) {
+        EXPECT_EQ(analysis.requiresDestruction(id), requiresDestruction(module, id));
+    }
+    EXPECT_FALSE(analysis.requiresDestruction(999));
+}
+
+TEST(IRModelTest, KeepsDestructionAnalysisLocalToItsTypeSnapshot) {
+    Module module;
+    module.types = {
+        TypeName { 42, "Box", joyeer::typing::TypeKind::structure },
+        TypeName { 7, "Element", joyeer::typing::TypeKind::integer },
+    };
+    module.structures = {
+        StructureDefinition { 0, 42, "Box", {FieldDefinition { 1, "value", 7, false }} },
+    };
+    const DestructionAnalysis trivial(module);
+    EXPECT_FALSE(trivial.requiresDestruction(42));
+
+    module.types[1].kind = joyeer::typing::TypeKind::string;
+    const DestructionAnalysis managed(module);
+    EXPECT_TRUE(managed.requiresDestruction(42));
+    EXPECT_TRUE(managed.requiresDestruction(7));
+    EXPECT_FALSE(trivial.requiresDestruction(42));
+    EXPECT_FALSE(trivial.requiresDestruction(7));
+}
+
+TEST(IRModelTest, ConservativelyClassifiesRecursiveDestructionDependencies) {
+    Module module;
+    module.types = {
+        TypeName { 42, "Left", joyeer::typing::TypeKind::structure },
+        TypeName { 7, "Right", joyeer::typing::TypeKind::enumeration },
+        TypeName { 100, "Int", joyeer::typing::TypeKind::integer },
+    };
+    module.structures = {
+        StructureDefinition { 0, 42, "Left", {FieldDefinition { 1, "next", 7, false }} },
+    };
+    module.enumerations = {
+        EnumerationDefinition { 2, 7, "Right", {EnumCaseDefinition { 3, "Next", {42} }} },
+    };
+    const DestructionAnalysis analysis(module);
+    EXPECT_TRUE(analysis.requiresDestruction(7));
+    EXPECT_TRUE(analysis.requiresDestruction(42));
+    EXPECT_FALSE(analysis.requiresDestruction(100));
 }
 
 TEST(IRModelTest, VerifiesExplicitCopyTakeAndDestroyOperations) {

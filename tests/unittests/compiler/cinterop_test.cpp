@@ -328,6 +328,63 @@ func implementation(argument: Int): Int { return argument }
     EXPECT_EQ(emitted.text.find("@shared.1"), std::string::npos);
 }
 
+TEST_F(CInteropTest, RejectsNativeSignaturesConflictingWithGeneratedRuntimeCalls) {
+    struct Conflict {
+        const char* symbol;
+        const char* signature;
+        const char* body;
+    };
+    for (const auto& conflict : std::vector<Conflict> {
+            {"joyeer_print_int", "(): Int", "print(value: 42)"},
+            {"joyeer_print_int", "(value: Int): Int", "print(value: 42)"},
+            {"joyeer_print_bool", "(value: Int): Void", "print(value: true)"},
+            {"joyeer_panic", "(value: Int): Void", "let sum = value + 1\nprint(value: sum)"},
+            {"joyeer_string_clone_abi", "(): Int", "let text = \"value\"\nprint(value: text)"},
+        }) {
+        for (const bool importing : {false, true}) {
+            for (const bool runtimeObject : {false, true}) {
+                SCOPED_TRACE(conflict.symbol);
+                SCOPED_TRACE(conflict.signature);
+                SCOPED_TRACE(importing);
+                SCOPED_TRACE(runtimeObject);
+                const auto attribute = importing ? "@c_extern" : "@c_export";
+                const auto implementation = importing ? "" :
+                        std::string(conflict.signature).ends_with("Int") ? " { return 0 }" : " {}";
+                ASSERT_NO_FATAL_FAILURE(lower(
+                        std::string(attribute) + "(symbol: \"" + conflict.symbol + "\")\n" +
+                        "func native" + conflict.signature + implementation + "\n" +
+                        "func probe(value: Int): Void {\n" + conflict.body + "\n}\n"));
+                module->isRuntimeObject = runtimeObject;
+                const auto span = function("native").nativeBinding->span;
+                const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+                ASSERT_FALSE(emitted.succeeded());
+                ASSERT_EQ(emitted.diagnostics.size(), 1u);
+                EXPECT_STREQ(joyeer::llvmbackend::diagnosticName(emitted.diagnostics[0].id),
+                             "llvm.conflicting-native-symbol");
+                EXPECT_EQ(emitted.diagnostics[0].span.sourceId, span.sourceId);
+                EXPECT_EQ(emitted.diagnostics[0].span.offset, span.offset);
+                EXPECT_EQ(emitted.diagnostics[0].span.length, span.length);
+                EXPECT_NE(emitted.diagnostics[0].message.find(conflict.symbol), std::string::npos);
+            }
+        }
+    }
+}
+
+TEST_F(CInteropTest, AcceptsCompatibleNativeAndGeneratedRuntimeDeclarations) {
+    for (const bool importing : {false, true}) {
+        SCOPED_TRACE(importing);
+        ASSERT_NO_FATAL_FAILURE(lower(
+                std::string(importing ? "@c_extern" : "@c_export") +
+                "(symbol: \"joyeer_print_int\")\n"
+                "func native(value: Int): Void" + (importing ? "" : " {}") + "\n"
+                "func probe(value: Int): Void { native(value: value)\nprint(value: value) }\n"));
+        const auto emitted = joyeer::llvmbackend::Emitter().emit(*module);
+        ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+        EXPECT_NE(emitted.text.find("call void @joyeer_print_int(i64"), std::string::npos);
+        EXPECT_EQ(emitted.text.find("@joyeer_print_int.1"), std::string::npos);
+    }
+}
+
 TEST_F(CInteropTest, KeepsTheCNameWhenItResemblesAPrivateGeneratedName) {
     lower(identitySource);
     ASSERT_NE(module, nullptr);

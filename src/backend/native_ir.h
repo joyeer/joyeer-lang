@@ -42,6 +42,7 @@ private:
     llvm::BasicBlock* prologue = nullptr;
     llvm::DISubprogram* subprogram = nullptr;
     std::vector<Diagnostic> diagnostics;
+    std::optional<ir::DestructionAnalysis> destruction;
     std::unordered_map<ir::TypeId, const ir::TypeName*> types;
     std::unordered_map<ir::TypeId, const ir::StructureDefinition*> structures;
     std::unordered_map<ir::TypeId, const ir::EnumerationDefinition*> enumerations;
@@ -49,6 +50,7 @@ private:
     std::unordered_map<ir::TypeId, Layout> layouts;
     std::unordered_set<ir::TypeId> layoutStack;
     std::unordered_map<std::string, llvm::Value*> panicMessages;
+    std::unordered_map<ir::FunctionId, const ir::Function*> sourceFunctions;
     std::unordered_map<ir::FunctionId, llvm::Function*> functions;
     std::unordered_map<ir::ValueId, ir::Value> values;
     std::unordered_map<ir::ValueId, llvm::Value*> operands;
@@ -56,6 +58,8 @@ private:
     std::map<ir::TypeId, llvm::Function*> clones;
     std::map<ir::TypeId, llvm::Function*> destroys;
     std::vector<llvm::DIFile*> debugFiles;
+    std::unordered_map<ir::DebugScopeId, const ir::DebugScope*> sourceDebugScopes;
+    std::unordered_map<ir::DebugVariableId, const ir::DebugVariable*> sourceDebugVariables;
     std::unordered_map<ir::TypeId, llvm::DIType*> debugTypes;
     std::unordered_map<ir::DebugScopeId, llvm::DILocalScope*> debugScopes;
     std::unordered_map<ir::DebugVariableId, llvm::DILocalVariable*> debugVariables;
@@ -83,7 +87,7 @@ private:
     void defineTypes();
     llvm::Function* declareFunction(const ir::Function& function);
     llvm::Function* declareNativeFunction(const ir::Function& function);
-    llvm::FunctionCallee runtime(std::string_view name, llvm::Type* result,
+    llvm::Function* declareCFunction(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Type*> parameters);
     llvm::CallInst* call(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Value*> arguments);

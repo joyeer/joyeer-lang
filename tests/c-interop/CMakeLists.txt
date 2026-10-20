@@ -74,6 +74,7 @@ add_test(NAME JoyeerCInterop.CompilationContext
     COMMAND "${CMAKE_COMMAND}"
         "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
         "-DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/roundtrip.joyeer"
+        "-DCONFLICT_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/conflicting-runtime-symbol.joyeer"
         "-DOUTPUT_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-context.cmake")
 set_tests_properties(JoyeerCInterop.CompilationContext PROPERTIES

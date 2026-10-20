@@ -30,6 +30,7 @@ enum class DiagnosticId {
     unsupportedInstruction,
     unsupportedExternal,
     invalidEntryPoint,
+    conflictingNativeSymbol,
 };
 
 struct Diagnostic {

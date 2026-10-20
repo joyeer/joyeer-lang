@@ -167,11 +167,10 @@ llvm::Value* Builder::emitHostCall(const ir::Function& function,
 }
 
 llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
-    const auto found = std::find_if(source.functions.begin(), source.functions.end(), [&instruction](const auto& function) {
-        return function.id == instruction.callee;
-    });
-    if (found == source.functions.end()) return nullptr;
-    const auto& callee = *found;
+    if (!instruction.callee.has_value()) return nullptr;
+    const auto found = sourceFunctions.find(*instruction.callee);
+    if (found == sourceFunctions.end()) return nullptr;
+    const auto& callee = *found->second;
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
     if (!callee.isExternal || callee.nativeBinding.has_value()) {

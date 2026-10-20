@@ -87,6 +87,13 @@ reverse postorder to establish dominating SSA values independent of storage
 order. All stack allocations live in a one-time prologue; initialization and
 debug declarations remain at their original execution sites.
 
+Each lowering session indexes source functions, debug scopes, and debug
+variables by their IR identities rather than scanning module-wide lists for
+each call or source location. Destruction requirements reuse one
+`ir::DestructionAnalysis` snapshot for the module's type graph. These indexes
+and caches belong to that session, never to global state or another module;
+sparse IDs and reordered definitions remain valid.
+
 During unreleased development, the backend ABI version remains 1 even when
 interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
@@ -605,3 +612,17 @@ concatenation can copy the growing prefix many times. Copy elision, check
 elimination, and any future container-to-stack promotion must preserve
 ownership, destruction, and observable behavior; none is a blanket guarantee
 that every allocation, copy, or check disappears.
+
+### Module lookup timing sample
+
+On native Windows x64 on 2026-10-20, the Release compiler built with MSVC
+19.51.36260 and LLVM/LLD 22.1.8 compiled the seven joypm sources and generated
+platform source as `joypm.app`, using `-O0 -gfull --emit-llvm`.
+After one warm-up invocation, five sequential process-wall-time measurements
+had medians of 210.1 ms at `8c0e905` and 142.8 ms with the module-local
+destruction analysis and source-identity indexes, approximately 32% lower.
+The before/after LLVM output was byte-identical.
+
+This is a local compilation-to-IR sample including process startup and file
+I/O, not native linking, a clean C++ build, generated-program performance,
+or a cross-platform speed guarantee.

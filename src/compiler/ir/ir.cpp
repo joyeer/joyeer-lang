@@ -119,7 +119,7 @@ std::string patternText(
 
 } // namespace
 
-bool requiresDestruction(const Module& module, TypeId requestedType) {
+DestructionAnalysis::DestructionAnalysis(const Module& module) {
     std::unordered_map<TypeId, const TypeName*> types;
     std::unordered_map<TypeId, const StructureDefinition*> structures;
     std::unordered_map<TypeId, const EnumerationDefinition*> enumerations;
@@ -131,11 +131,10 @@ bool requiresDestruction(const Module& module, TypeId requestedType) {
         enumerations.emplace(enumeration.type, &enumeration);
     }
 
-    std::unordered_map<TypeId, bool> memo;
     std::unordered_set<TypeId> visiting;
     std::function<bool(TypeId)> visit = [&](TypeId id) {
-        const auto cached = memo.find(id);
-        if (cached != memo.end()) return cached->second;
+        const auto cached = required.find(id);
+        if (cached != required.end()) return cached->second;
         const auto found = types.find(id);
         if (found == types.end()) return false;
         if (!visiting.insert(id).second) return true;
@@ -178,10 +177,19 @@ bool requiresDestruction(const Module& module, TypeId requestedType) {
                 break;
         }
         visiting.erase(id);
-        memo.emplace(id, result);
+        required.emplace(id, result);
         return result;
     };
-    return visit(requestedType);
+    for (const auto& type : module.types) visit(type.id);
+}
+
+bool DestructionAnalysis::requiresDestruction(TypeId type) const {
+    const auto found = required.find(type);
+    return found != required.end() && found->second;
+}
+
+bool requiresDestruction(const Module& module, TypeId type) {
+    return DestructionAnalysis(module).requiresDestruction(type);
 }
 
 VerificationResult Verifier::verify(const Module& module) const {
@@ -599,6 +607,7 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
+    const DestructionAnalysis destruction(module);
     std::unordered_map<std::string, const Function*> nativeSymbols;
     std::unordered_set<std::string> nativeExports;
     for (const auto& function : module.functions) {
@@ -1369,7 +1378,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                     case Opcode::destroy:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                             (operands[0]->category != ValueCategory::address ||
-                             !requiresDestruction(module, operands[0]->type))) {
+                             !destruction.requiresDestruction(operands[0]->type))) {
                             report(
                                     VerificationErrorId::typeMismatch,
                                     functionId,

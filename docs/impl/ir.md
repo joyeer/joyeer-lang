@@ -68,6 +68,14 @@ location. Compiler-generated parameter plumbing and ownership cleanup retain a
 source anchor but are marked implicit, allowing a backend to avoid misleading
 source-level stepping stops.
 
+`DestructionAnalysis` snapshots destruction requirements once per type graph,
+including nested aggregate payloads. Typed AST lowering, verification, and
+LLVM emission each reuse their own snapshot instead of rebuilding type
+indexes for every ownership operation. Type definitions must be finalized
+before constructing it; changing them requires a fresh analysis. Function
+body construction does not invalidate the snapshot, and no cache crosses a
+module or the backend C ABI.
+
 Source-map offsets index the exact binary-preserved `SourceFile::content`
 buffer for the selected file. `Module::sourceFiles` is indexed directly by
 `SourceSpan::sourceId`. A nonempty table is authoritative; when it is empty,

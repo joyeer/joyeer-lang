@@ -131,6 +131,15 @@ internal, and emit managed helpers only for types actually used by their
 definitions and stored components. A leaf scalar object therefore does not
 acquire runtime dependencies merely from prelude signatures.
 
+Explicit C bindings and compiler-generated runtime calls share the backend's
+C declaration check. Reusing a symbol with a different LLVM function type or
+calling convention fails with `llvm.conflicting-native-symbol`, anchored to
+the explicit binding when present. This includes runtime calls introduced by
+printing, checked arithmetic, and ownership helpers. Compatible runtime
+symbols remain usable for imports and exports; the `joyeer_` prefix is not
+blanket-reserved. This check covers declarations known to the compiler, not
+the prototypes in an external native library.
+
 Object emission uses the existing versioned backend C ABI and opaque module
 handle. The private IR wire format is version 2; the backend C ABI remains
 version 1. The compiler and backend must be built/deployed from the same
@@ -161,6 +170,8 @@ static and shared providers at `-O0 -gfull` and `-O2 -g0`, signed-64-bit
 boundaries, zero and twelve arguments, `void` results, two independently
 compiled Joyeer objects, archive extraction, missing native definitions,
 ordinary-source rejection, and output-path failures.
+Conflicts with generated runtime signatures are rejected before object
+emission at both `-O0` and `-O2`.
 Where `llvm-nm` is available, object checks require exactly the approved C
 exports/imports and reject incidental startup or runtime dependencies.
 

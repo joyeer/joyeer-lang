@@ -150,7 +150,7 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::copyValue: {
             const auto id = instruction.result->type;
             result = argument(0);
-            if (ir::requiresDestruction(source, id)) {
+            if (destruction->requiresDestruction(id)) {
                 auto* destination = stack(resultType());
                 copy(id, destination, spill(result));
                 result = builder.CreateLoad(resultType(), destination);

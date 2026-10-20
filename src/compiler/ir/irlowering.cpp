@@ -49,6 +49,7 @@ public:
 
         snapshotTypes();
         collectAggregateDefinitions();
+        destruction.emplace(*module);
         collectFunctions();
         lowerFunctions();
 
@@ -95,6 +96,7 @@ private:
 
     typing::TypeCheckedModel::Ptr model;
     std::shared_ptr<ir::Module> module;
+    std::optional<ir::DestructionAnalysis> destruction;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
     std::unordered_map<semantic::ScopeId, ir::DebugScopeId> debugScopes;
@@ -213,7 +215,7 @@ private:
     }
 
     bool requiresDestroy(typing::TypeId type) const {
-        return ir::requiresDestruction(*module, type);
+        return destruction->requiresDestruction(type);
     }
 
     void pushScope() {

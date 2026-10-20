@@ -21,6 +21,9 @@ Builder::Builder(ModuleStorage& storage, const ir::Module& source, EmitOptions o
     for (const auto& value : source.types) types.emplace(value.id, &value);
     for (const auto& value : source.structures) structures.emplace(value.type, &value);
     for (const auto& value : source.enumerations) enumerations.emplace(value.type, &value);
+    for (const auto& value : source.functions) sourceFunctions.emplace(value.id, &value);
+    for (const auto& value : source.debugScopes) sourceDebugScopes.emplace(value.id, &value);
+    for (const auto& value : source.debugVariables) sourceDebugVariables.emplace(value.id, &value);
 }
 
 void Builder::report(DiagnosticId id, SourceSpan span, std::string message) {
@@ -40,6 +43,7 @@ std::vector<Diagnostic> Builder::build() {
         return std::move(diagnostics);
     }
     try {
+        destruction.emplace(source);
         defineTypes();
         if (options.emitLineTables) {
             if (source.sourceFile(0) == nullptr) {
@@ -247,11 +251,26 @@ llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
         parameters.push_back(llvmType(parameter.value.type));
     }
     auto* result = unit(function.resultType) ? builder.getVoidTy() : llvmType(function.resultType);
+    return declareCFunction(function.nativeBinding->symbol, result, parameters);
+}
+
+llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* result,
+        llvm::ArrayRef<llvm::Type*> parameters) {
+    const llvm::StringRef symbol(name.data(), name.size());
     auto* signature = llvm::FunctionType::get(result, parameters, false);
-    const auto& symbol = function.nativeBinding->symbol;
     if (auto* existing = module().getFunction(symbol)) {
-        if (existing->getFunctionType() != signature) {
-            throw std::runtime_error("conflicting native symbol '" + symbol + "'");
+        if (existing->getFunctionType() != signature ||
+                existing->getCallingConv() != llvm::CallingConv::C) {
+            const auto binding = std::find_if(source.functions.begin(), source.functions.end(),
+                    [name](const auto& function) {
+                        return function.nativeBinding.has_value() && function.nativeBinding->symbol == name;
+                    });
+            const auto span = binding != source.functions.end() ? binding->nativeBinding->span
+                    : currentFunction != nullptr && currentFunction->debugLocation.has_value()
+                            ? currentFunction->debugLocation->span : SourceSpan {};
+            const auto message = "conflicting C signatures for native symbol '" + std::string(name) + "'";
+            report(DiagnosticId::conflictingNativeSymbol, span, message);
+            throw std::runtime_error(message);
         }
         return existing;
     }
@@ -261,17 +280,11 @@ llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
     return entry;
 }
 
-llvm::FunctionCallee Builder::runtime(std::string_view name, llvm::Type* result,
-        llvm::ArrayRef<llvm::Type*> parameters) {
-    return module().getOrInsertFunction(llvm::StringRef(name.data(), name.size()),
-            llvm::FunctionType::get(result, parameters, false));
-}
-
 llvm::CallInst* Builder::call(std::string_view name, llvm::Type* result,
         llvm::ArrayRef<llvm::Value*> arguments) {
     std::vector<llvm::Type*> parameters;
     for (const auto* argument : arguments) parameters.push_back(argument->getType());
-    return builder.CreateCall(runtime(name, result, parameters), arguments,
+    return builder.CreateCall(declareCFunction(name, result, parameters), arguments,
             result->isVoidTy() ? "" : temporary());
 }
 

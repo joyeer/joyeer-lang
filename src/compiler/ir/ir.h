@@ -8,6 +8,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace joyeer::ir {
@@ -303,6 +304,16 @@ struct VerificationResult {
 class Verifier {
 public:
     [[nodiscard]] VerificationResult verify(const Module& module) const;
+};
+
+// Snapshot of one module's type graph. Rebuild after changing type definitions.
+class DestructionAnalysis {
+public:
+    explicit DestructionAnalysis(const Module& module);
+    [[nodiscard]] bool requiresDestruction(TypeId type) const;
+
+private:
+    std::unordered_map<TypeId, bool> required;
 };
 
 [[nodiscard]] bool requiresDestruction(const Module& module, TypeId type);

@@ -23,3 +23,13 @@ expect_failure("linker.file-error"
 if(NOT IS_DIRECTORY "${OUTPUT_DIRECTORY}")
     message(FATAL_ERROR "Runtime object emission removed its directory output")
 endif()
+
+foreach(optimization IN ITEMS -O0 -O2)
+    set(conflict_object "${OUTPUT_DIRECTORY}/conflicting-runtime-symbol${optimization}.o")
+    expect_failure("llvm.conflicting-native-symbol"
+        --module-name runtime.fixture --runtime-module runtime.fixture
+        "${optimization}" -gfull --emit-runtime-object "${conflict_object}" "${CONFLICT_SOURCE}")
+    if(EXISTS "${conflict_object}")
+        message(FATAL_ERROR "Conflicting runtime signature produced an object file")
+    endif()
+endforeach()

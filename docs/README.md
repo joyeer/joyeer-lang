@@ -53,17 +53,8 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
 | [c-interop.md](impl/c-interop.md) | Implemented runtime-only `Int`/`Void` C imports/exports, object generation, static/shared native providers, and acceptance gates |
 | [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
-| [joypm.md](impl/joypm.md) | Joyeer-written local workflow, strict manifest, bootstrap/self-build, and native ARM64 acceptance evidence |
+| [joypm.md](impl/joypm.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |
-
-The joypm 0.1.0 module/workspace workflow passes native Windows ARM64 Debug
-default build and unfiltered CTest (809/809, including all 15 tool gates).
-Exact limits, failures, concurrent generations, Debug/optimized self-build, and
-relocated product/Debug installation are verified. The implementation
-reference owns the evidence; the plan tracks other native platforms and
-future external dependencies/registries and a fresh full Release gate.
-No published release or universal
-platform acceptance is implied.
 
 ## Plans
 

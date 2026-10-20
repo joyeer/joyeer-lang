@@ -88,6 +88,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::unsupportedInstruction: return "llvm.unsupported-instruction";
         case DiagnosticId::unsupportedExternal: return "llvm.unsupported-external";
         case DiagnosticId::invalidEntryPoint: return "llvm.invalid-entry-point";
+        case DiagnosticId::conflictingNativeSymbol: return "llvm.conflicting-native-symbol";
     }
     return "llvm.unknown";
 }
