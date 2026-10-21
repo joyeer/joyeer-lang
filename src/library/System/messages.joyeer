@@ -1,0 +1,33 @@
+import Foundation
+
+// Human-readable text for the host error and status types. Each message keeps
+// the original platform code, so no information is lost by formatting.
+
+public func fileSystemMessage(error: FileSystemError): String {
+    return match error {
+        .InvalidPath(code) => "invalid path (platform code " + decimalString(value: code) + ")",
+        .NotFound(code) => "not found (platform code " + decimalString(value: code) + ")",
+        .PermissionDenied(code) => "permission denied (platform code " + decimalString(value: code) + ")",
+        .AlreadyExists(code) => "already exists (platform code " + decimalString(value: code) + ")",
+        .NotDirectory(code) => "not a directory (platform code " + decimalString(value: code) + ")",
+        .IsDirectory(code) => "is a directory (platform code " + decimalString(value: code) + ")",
+        .Other(code) => "filesystem failure (platform code " + decimalString(value: code) + ")",
+    }
+}
+
+public func processMessage(error: ProcessError): String {
+    return match error {
+        .InvalidInput(code) => "invalid process input (platform code " + decimalString(value: code) + ")",
+        .NotFound(code) => "executable or working directory not found (platform code " + decimalString(value: code) + ")",
+        .PermissionDenied(code) => "process permission denied (platform code " + decimalString(value: code) + ")",
+        .LaunchFailed(code) => "process launch failed (platform code " + decimalString(value: code) + ")",
+        .WaitFailed(code) => "process wait failed (platform code " + decimalString(value: code) + ")",
+    }
+}
+
+public func processStatusMessage(status: ProcessStatus): String {
+    return match status {
+        .Exited(code) => "exited with status " + decimalString(value: code),
+        .Signaled(signal) => "terminated by signal " + decimalString(value: signal),
+    }
+}

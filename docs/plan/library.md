@@ -3,7 +3,12 @@
 > **Status:** rollout step 1 is implemented: a small `Foundation` source
 > module (`src/library/Foundation/`: `substring`, `decimalString`,
 > `isValidUtf8`), the `FoundationTests` executable test module, and the
-> repository-root `workspace.toml`. `System`, `Collections`, `Testing`,
+> repository-root `workspace.toml`. Step 2 has started: `System` provides
+> lexical path helpers (`pathDirectory`, `trimDirectoryPath`,
+> `isPathSeparator`; the host is passed as an explicit `windows` flag because
+> no host-detection builtin exists) and message formatters for the host
+> error/status types, with `SystemTests`. Filesystem/process wrappers, host
+> detection, `Collections`, `Testing`,
 > joypm adoption, and installed-library resolution remain pending. Names are
 > still not compiler-reserved and no new language syntax is introduced.
 
