@@ -1,9 +1,11 @@
 # Library Modules and joypm Management Plan
 
-> **Status:** planning direction selected in discussion; module implementation,
-> workspace manifests, and installed-library resolution remain pending.
-> This document records intended organization, not implemented modules,
-> compiler-reserved names, or new language syntax.
+> **Status:** rollout step 1 is implemented: a small `Foundation` source
+> module (`src/library/Foundation/`: `substring`, `decimalString`,
+> `isValidUtf8`), the `FoundationTests` executable test module, and the
+> repository-root `workspace.toml`. `System`, `Collections`, `Testing`,
+> joypm adoption, and installed-library resolution remain pending. Names are
+> still not compiler-reserved and no new language syntax is introduced.
 
 ## 1. Public Module Direction
 
@@ -265,7 +267,8 @@ for local library development, not for automatic installed SDK resolution.
 
 ## 6. Rollout and Acceptance
 
-1. **Local Foundation:** add a small nonempty module and an executable test
+1. **Local Foundation (done; run
+   `joypm test --compiler <compiler-path> --workspace workspace.toml`):** add a small nonempty module and an executable test
    module using current capabilities. Extract appropriate algorithms from
    [joypm helpers](../../src/tools/joypm/common.joyeer) only after defining
    public input, error, and complexity contracts.

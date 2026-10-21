@@ -1,0 +1,39 @@
+import Foundation
+
+func check(name: String, ok: Bool): Int {
+    if ok { return 0 }
+    print(value: "FAIL: " + name)
+    return 1
+}
+
+func main(args: [String]): Int {
+    var failures = 0
+
+    failures = failures + check(name: "decimal zero", ok: decimalString(value: 0) == "0")
+    failures = failures + check(name: "decimal positive", ok: decimalString(value: 1234) == "1234")
+    failures = failures + check(name: "decimal negative", ok: decimalString(value: -56) == "-56")
+    failures = failures + check(name: "decimal max",
+        ok: decimalString(value: 9223372036854775807) == "9223372036854775807")
+    failures = failures + check(name: "decimal min",
+        ok: decimalString(value: -9223372036854775807 - 1) == "-9223372036854775808")
+
+    failures = failures + check(name: "substring middle", ok: substring(text: "abcdef", start: 1, end: 4) == "bcd")
+    failures = failures + check(name: "substring clamp", ok: substring(text: "abc", start: -5, end: 99) == "abc")
+    failures = failures + check(name: "substring empty", ok: substring(text: "abc", start: 2, end: 2) == "")
+    failures = failures + check(name: "substring inverted", ok: substring(text: "abc", start: 3, end: 1) == "")
+
+    failures = failures + check(name: "utf8 ascii", ok: isValidUtf8(text: "hello"))
+    failures = failures + check(name: "utf8 empty", ok: isValidUtf8(text: ""))
+    failures = failures + check(name: "utf8 multibyte", ok: isValidUtf8(text: "é中😀"))
+    failures = failures + check(name: "utf8 lone continuation",
+        ok: !isValidUtf8(text: byteToString(value: 128)))
+    failures = failures + check(name: "utf8 truncated",
+        ok: !isValidUtf8(text: byteToString(value: 226) + byteToString(value: 130)))
+    failures = failures + check(name: "utf8 overlong",
+        ok: !isValidUtf8(text: byteToString(value: 192) + byteToString(value: 128)))
+    failures = failures + check(name: "utf8 surrogate",
+        ok: !isValidUtf8(text: byteToString(value: 237) + byteToString(value: 160) + byteToString(value: 128)))
+
+    if failures == 0 { print(value: "Foundation tests passed") }
+    return failures
+}
