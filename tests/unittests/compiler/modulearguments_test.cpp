@@ -105,6 +105,28 @@ TEST(ModuleArgumentsTest, PreservesLegacySingleFileInput) {
     EXPECT_TRUE(arguments->sourceFiles.empty());
 }
 
+TEST(ModuleArgumentsTest, CollectsExplicitNativeLibrariesAndProtectsTheirPaths) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(diagnostics, {
+        "joyeer", source().string(), "--link-library", source("ir_test.cpp").string(),
+        "--link-library", source("llvm_test.cpp").string(),
+    });
+    ASSERT_TRUE(arguments->accepted);
+    EXPECT_EQ(arguments->nativeLibraries, (std::vector {source("ir_test.cpp"), source("llvm_test.cpp")}));
+    for (const auto& options : std::vector<std::vector<std::string>> {
+            {"--link-library"}, {"--link-library", ""}, {"--link-library", "-O0"},
+            {"--link-library", "missing-library.a"},
+            {"--link-library", source().parent_path().string()},
+            {"--link-library", source("ir_test.cpp").string(), "-o", source("ir_test.cpp").string()},
+        }) {
+        Diagnostics errors;
+        std::vector<std::string> values {"joyeer", source().string()};
+        values.insert(values.end(), options.begin(), options.end());
+        EXPECT_FALSE(parseArguments(errors, values)->accepted);
+        EXPECT_TRUE(errors.hasFailure());
+    }
+}
+
 TEST(ModuleArgumentsTest, RejectsEmptyPositionalSourcePaths) {
     for (const auto& values : std::vector<std::vector<std::string>> {
             {"joyeer", ""},

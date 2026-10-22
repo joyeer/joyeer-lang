@@ -38,6 +38,7 @@ struct LinkOptions {
     // Native compilation consumes objects directly; text remains a fallback
     // for standalone linker tests and explicit LLVM inspection workflows.
     std::shared_ptr<JoyeerBackendModule> module;
+    std::vector<std::filesystem::path> nativeLibraries;
 };
 
 struct LinkResult {

@@ -106,6 +106,35 @@ struct TypeRecord {
     std::vector<TypeId> arguments;
 };
 
+enum class NativeBufferKind {
+    none,
+    string,
+    bytes,
+    strings,
+    byteArrays,
+};
+
+// Both frontend and verified IR use this boundary; nested native storage is
+// limited to borrowed lists of strings or byte arrays, never arbitrary values.
+template<class Lookup>
+[[nodiscard]] NativeBufferKind nativeBufferKind(TypeId id, const Lookup& lookup) {
+    const auto* value = lookup(id);
+    if (value == nullptr) return NativeBufferKind::none;
+    if (value->kind == TypeKind::string) return NativeBufferKind::string;
+    if (value->kind != TypeKind::array || value->arguments.size() != 1) {
+        return NativeBufferKind::none;
+    }
+    const auto* element = lookup(value->arguments[0]);
+    if (element == nullptr) return NativeBufferKind::none;
+    if (element->kind == TypeKind::uint8) return NativeBufferKind::bytes;
+    if (element->kind == TypeKind::string) return NativeBufferKind::strings;
+    if (element->kind == TypeKind::array && element->arguments.size() == 1) {
+        const auto* byte = lookup(element->arguments[0]);
+        if (byte != nullptr && byte->kind == TypeKind::uint8) return NativeBufferKind::byteArrays;
+    }
+    return NativeBufferKind::none;
+}
+
 // Owns canonical compile-time types for one SemanticModel.
 class TypeContext {
 public:

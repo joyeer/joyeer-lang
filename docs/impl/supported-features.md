@@ -63,7 +63,8 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
-| Internal C bindings | Runtime-authorized `@c_extern`/`@c_export`, all §19.4 by-value scalars, explicit scalar or `Void`/`()` results, target narrow-extension attributes, and runtime-object output without startup/linking |
+| Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
+| Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
 builtins. Their type arguments do not imply support for user-defined generic
@@ -130,11 +131,11 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   type or between `Optional` results. Other errors require explicit `match`.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
   aggregate printing, streaming file APIs, or a general standard library.
-- General user FFI, native addresses/output pointers, C aggregates, callbacks,
-  variadic calls, or C signatures beyond the specified by-value scalar boundary.
+- General user FFI, raw native addresses, arbitrary output pointers, C
+  aggregates, callbacks, variadic calls, or signatures beyond the specified
+  scalar and restricted buffer-import boundary.
   The [C binding implementation](c-interop.md) documents explicit runtime
-  authorization and object output; the rest of the scalar mapping table in
-  [§19](../spec/19-c-interop.md) remains design, not coverage.
+  authorization, buffer ownership, object output, and native linking.
 - Contracts or property annotations as executable language features,
   incremental compilation, or formal verification.
 - Project-manager commands on the **compiler**, such as `joyeer build`, `run`,

@@ -1,4 +1,5 @@
 #include "runtime/runtime.h"
+#include "runtime/native.h"
 
 #include <gtest/gtest.h>
 
@@ -22,6 +23,32 @@
 #endif
 
 namespace {
+
+TEST(NativeBufferTest, CopiesBinaryBuffersAndStringListsWithRuntimeOwnership) {
+    const auto baseline = joyeer_runtime_active_allocations();
+    const uint8_t data[] {0, 255, 65};
+    JoyeerArray bytes {};
+    joyeer_native_bytes_init(&bytes);
+    joyeer_native_bytes_assign(&bytes, data, 3);
+    EXPECT_EQ(bytes.count, 3);
+    EXPECT_EQ(std::memcmp(bytes.data, data, 3), 0);
+    joyeer_native_bytes_assign(&bytes, static_cast<const uint8_t*>(bytes.data), bytes.count);
+    JoyeerString name {};
+    joyeer_native_string_assign(&name, data, 3);
+    JoyeerArray names {};
+    joyeer_native_strings_init(&names);
+    joyeer_native_strings_assign(&names, &name, 1);
+    joyeer_string_destroy_abi(&name);
+    JoyeerArray copy {};
+    joyeer_array_clone_abi(&copy, names.data, names.count);
+    joyeer_array_destroy_abi(&names);
+    const auto* copied = static_cast<const JoyeerString*>(copy.data);
+    EXPECT_EQ(copied->count, 3);
+    EXPECT_EQ(std::memcmp(copied->data, data, 3), 0);
+    joyeer_array_destroy_abi(&copy);
+    joyeer_array_destroy_abi(&bytes);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
 
 int cloneCount = 0;
 int destroyCount = 0;

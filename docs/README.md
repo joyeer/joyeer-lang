@@ -18,6 +18,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Read the C binding design and distinguish its implemented subset | [spec/19-c-interop.md](spec/19-c-interop.md) and [impl/c-interop.md](impl/c-interop.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
+| Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
@@ -51,7 +52,8 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
-| [c-interop.md](impl/c-interop.md) | Implemented runtime-only `Int`/`Void` C imports/exports, object generation, static/shared native providers, and acceptance gates |
+| [c-interop.md](impl/c-interop.md) | Authorized scalar and buffer C bindings, object generation, explicit native-library inputs, and acceptance gates |
+| [compression.md](impl/compression.md) | Optional miniz-backed ZIP module, limits, ownership, build and packaging |
 | [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
 | [joypm.md](impl/joypm.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |

@@ -268,6 +268,23 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
                     }
                 }
             }
+        } else if (parseOptions && *iterator == "--link-library") {
+            ++iterator;
+            if (iterator == arguments.end()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                        "--link-library requires a native library file path");
+                break;
+            }
+            if (iterator->empty() || iterator->starts_with('-')) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                        "--link-library requires a nonempty file path, not an option");
+                if (!iterator->empty()) --iterator;
+                continue;
+            }
+            std::filesystem::path path;
+            if (parseUtf8Path(diagnostics, *iterator, path, "driver.native-library-error")) {
+                nativeLibraries.push_back(absoluteNormalized(path));
+            }
         } else if (parseOptions && *iterator == "--runtime-module") {
             ++iterator;
             if (iterator == arguments.end()) {
@@ -372,6 +389,13 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
                 "--emit-runtime-object requires the named root in --runtime-module");
     }
+    for (const auto& library : nativeLibraries) {
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(library, error) || error) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.native-library-error",
+                    "native library must be a regular file: '" + pathUtf8(library) + "'");
+        }
+    }
     for (size_t index = 0; index < inputs.size(); ++index) {
         std::error_code error;
         if (!moduleName.empty() && !std::filesystem::is_regular_file(inputs[index], error)) {
@@ -401,6 +425,7 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
     }
 #endif
 
+    inputs.insert(inputs.end(), nativeLibraries.begin(), nativeLibraries.end());
     if (outputMode != OutputMode::validate) {
         for (const auto& input : inputs) {
             if (pathsAlias(input, outputFile)) {
@@ -438,6 +463,7 @@ void CommandLineArguments::printUsage() {
     std::cout << "  --module-name <name> name the root compilation unit of explicit source files" << std::endl;
     std::cout << "  --module-source <name=file> add a file to a dependency module (repeatable)" << std::endl;
     std::cout << "  --runtime-module <name> authorize one explicit unit for internal runtime bindings (repeatable)" << std::endl;
+    std::cout << "  --link-library <file> link an explicit native library in supplied order (repeatable)" << std::endl;
     std::cout << "  --emit-runtime-object <file> write an internal runtime object without startup or linking" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;

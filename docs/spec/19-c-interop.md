@@ -4,8 +4,9 @@
 the broader language design. It does not introduce a public pointer or
 general-purpose unsafe system.
 
-**Implementation status:** the runtime-only scalar implementation supports
-both annotations, bodyless imports, C-callable exports, and all §19.4 mappings.
+**Implementation status:** the authorized native implementation supports
+both annotations, bodyless imports, C-callable scalar exports, all §19.4 mappings,
+and the restricted buffer imports in §19.4.3.
 The example in §19.2 requires an explicitly authorized compilation context;
 it is not an ordinary application program. Native platform acceptance and
 the still-unsupported memory extensions are recorded in the
@@ -20,8 +21,9 @@ definition written in Joyeer. Both select the configured target's ordinary
 C calling convention. There is no `abi` argument or selection of another
 calling convention.
 
-Only compilation units explicitly selected by the toolchain for runtime
-construction may declare or directly call these bindings. Authorization is
+Only compilation units explicitly selected by the toolchain for native
+bindings may declare or directly call these bindings, including runtime
+construction and optional native-backed source libraries. Authorization is
 an explicit compilation input, not a property inferred from a path, module
 name such as `Foundation`, visibility modifier, or annotation itself.
 It is not inherited by importing an authorized unit, nor automatically
@@ -64,9 +66,10 @@ linker decorations are not allowed.
 
 Parameter types and the result type must be explicit. A unit result may be
 written `: Void` or `: ()`, but it may not be omitted on a C binding. Parameter
-names and labels follow §3.2.1. Only default or explicit `borrowing` parameters
-are admitted; defaults for argument values and other access effects are not.
-The function must satisfy the scalar signature rules in §19.4 and §19.5.
+names and labels follow §3.2.1. Scalar parameters use default or explicit
+`borrowing`; imports may also use the buffer access forms in §19.4.3.
+Defaults for argument values are not admitted. The function must satisfy
+the signature rules in §19.4 and §19.5.
 
 A bodyless declaration is valid only with `@c_extern`; an empty `{}` is
 still a body and is invalid on an import. Ordinary functions and
@@ -196,15 +199,44 @@ Fixed-prototype calls do not apply variadic default promotions: `Float`
 remains C `float`. `_Bool` represents only `false` and `true`; it is not
 an arbitrary integer truth convention.
 
+#### 19.4.3 Restricted buffer imports
+
+`@c_extern` additionally admits borrowing `String`, `[UInt8]`, `[String]`,
+and `[[UInt8]]`, and initializing `String`, `[UInt8]`, and `[String]`.
+These are explicit adapter conventions, not general C aggregate or pointer
+types. Results and `@c_export` signatures remain scalar/`Void` only.
+
+A borrowed buffer crosses as a read-only data pointer and signed 64-bit
+count. Strings and byte arrays count bytes; lists count elements and expose
+read-only runtime string/array descriptors. The native function must not
+mutate, retain, or free descriptors or backing storage. No encoding conversion
+or NUL terminator is implied. In particular, `String` is not a C string.
+
+An initializing argument is passed by pointer to a caller-owned empty handle.
+The caller must provide uninitialized mutable owning storage with `&`.
+The adapter constructs a valid empty value before entering C. Native code
+may replace that value only with runtime-owned storage through the designated
+buffer assignment helpers, and must leave it initialized on every return,
+including failure. The caller then owns its ordinary destruction obligation.
+Foreign allocator storage must not be installed directly in such handles.
+
+Exclusivity and initialization rules apply exactly as for ordinary Joyeer
+calls. Native declarations for one symbol must agree on buffer shape and
+access effect, not merely on the size of the flattened pointer arguments.
+Descriptor layouts, helper names, and runtime revision matching are defined
+in the [buffer ABI implementation contract](../impl/c-interop.md#buffer-imports).
+There is no source-level raw-pointer value, asynchronous retention, callback,
+or general aggregate FFI in this extension.
+
 ### 19.5 Invalid signatures
 
 All types and parameter effects not admitted by §19.4 are rejected at this
 boundary. In particular:
 
 - `Void` parameters and `Never` results have no admitted C representation.
-- `inout`, `initializing`, and `consuming` parameters are not substitutes for
-  native pointers, output parameters, or ownership transfer.
-- `String`, arrays, dictionaries, tuples, ordinary structs and enums,
+- `inout` and `consuming` parameters are not substitutes for native pointers
+  or ownership transfer. `initializing` is restricted to §19.4.3's outputs.
+- Other array forms, dictionaries, tuples, ordinary structs and enums,
   `Optional`, and `Result` have no implicit C ABI representation.
 - Neither `T?` nor `Optional<T>` denotes a nullable C value or address.
 - Function values, callbacks, variadic or unprototyped functions, C
@@ -217,7 +249,7 @@ boundary. In particular:
 
 In particular, `String` is not `char*`: its current implementation preserves
 arbitrary bytes, including NUL and invalid UTF-8. Neither a string's storage
-layout nor its longer-term text design grants a C pointer conversion.
+layout nor its longer-term text design grants a C-string conversion.
 An explicit future C-string adapter must define encoding, terminators,
 embedded-NUL handling, ownership, and lifetime.
 

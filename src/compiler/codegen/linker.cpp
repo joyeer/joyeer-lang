@@ -233,8 +233,10 @@ LinkResult Linker::emitObject(
     const auto report = [&](LinkDiagnosticId id, std::string message) {
         result.diagnostics.push_back({id, std::move(message)});
     };
-    if (options.outputFile.empty() || pathsAlias(options.outputFile, options.sourceFile)) {
-        report(LinkDiagnosticId::fileError, "object output path is empty or collides with a source input");
+    if (options.outputFile.empty() || pathsAlias(options.outputFile, options.sourceFile) ||
+        std::any_of(options.nativeLibraries.begin(), options.nativeLibraries.end(),
+                [&](const auto& path) { return pathsAlias(options.outputFile, path); })) {
+        report(LinkDiagnosticId::fileError, "object output path is empty or collides with an input file");
         return result;
     }
     std::error_code error;
@@ -364,11 +366,19 @@ LinkResult Linker::link(
     const auto pdbFile = pdbPathFor(options.outputFile);
     auto dsymDirectory = options.outputFile;
     dsymDirectory += ".dSYM";
-    const std::vector<std::filesystem::path> protectedFiles {
+    std::vector<std::filesystem::path> protectedFiles {
         options.runtimeLibrary,
         options.debugSymbolTool,
         options.sourceFile,
     };
+    for (const auto& library : options.nativeLibraries) {
+        filesystemError.clear();
+        if (library.empty() || !std::filesystem::is_regular_file(library, filesystemError) || filesystemError) {
+            report(LinkDiagnosticId::fileError, "native library must be a regular file: '" + utf8Path(library) + "'");
+            return result;
+        }
+        protectedFiles.push_back(library);
+    }
     auto collidesWithProtectedFile = [&](const std::filesystem::path& path) {
         return std::any_of(
                 protectedFiles.begin(),
@@ -595,10 +605,20 @@ LinkResult Linker::link(
         "clang",
         "-fuse-ld=lld",
         objectPath,
-        runtimePath,
         "-o",
         outputPath,
     };
+#endif
+#if !defined(_WIN32) && !defined(__APPLE__)
+    lldArguments.emplace_back("-Wl,--start-group");
+#endif
+    for (const auto& library : options.nativeLibraries) {
+        lldArguments.push_back(utf8Path(absoluteNormalized(library)));
+    }
+#if !defined(_WIN32) && !defined(__APPLE__)
+    // Native libraries can reference runtime allocation helpers.
+    lldArguments.push_back(runtimePath);
+    lldArguments.emplace_back("-Wl,--end-group");
 #endif
     std::vector<const char*> rawLldArguments;
     rawLldArguments.reserve(lldArguments.size());

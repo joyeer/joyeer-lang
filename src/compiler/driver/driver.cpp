@@ -103,6 +103,7 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->sourceFiles,
                 arguments->modules,
                 arguments->runtimeModules,
+                arguments->nativeLibraries,
             });
 }
 
@@ -132,6 +133,7 @@ int Driver::run() {
                         arguments->debugInfo,
                         source->getAbstractPath(),
                         source->llvmModule,
+                        arguments->nativeLibraries,
                     };
             const auto linking = arguments->outputMode == joyeer::OutputMode::runtimeObject
                     ? joyeer::native::Linker().emitObject(source->llvmIR, options)

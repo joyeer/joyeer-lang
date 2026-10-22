@@ -1,8 +1,9 @@
 # Restricted C Interoperation
 
-> **Status:** runtime-only scalar imports/exports implement every representation
+> **Status:** authorized scalar imports/exports implement every representation
 > in [§19.4](../spec/19-c-interop.md#194-c-scalar-representations).
-> Platform acceptance is recorded separately below. Native addresses, output pointers, C aggregates,
+> Imports also support the restricted buffer ABI below. Platform acceptance
+> is recorded separately below. General native addresses/output pointers, C aggregates,
 > callbacks, variadic calls, and public user FFI remain unsupported.
 
 ## 1. Current scalar boundary
@@ -11,7 +12,7 @@
 |---|---|
 | Import | `@c_extern(symbol: "...")` on a bodyless top-level function |
 | Export | `@c_export(symbol: "...")` on a top-level Joyeer definition |
-| Native parameters | Default or explicit `borrowing` scalar, passed by value |
+| Native parameters | Borrowing scalars; imports additionally accept the buffer forms below |
 | Native result | Any supported scalar, or explicit `Void` / `()` mapping to C `void` |
 | Empty parameter list | A fixed C11 `(void)` prototype |
 | Source names | Ordinary labels, optional separate internal parameter names, and visibility |
@@ -32,7 +33,8 @@ distinct: for example, an `Int64` value is not implicitly converted to `Int`.
 Repeated declarations of one C symbol compare native representations, so
 `Int` and `Int64` signatures agree, as do `UInt` and `UInt64`. Signedness,
 width, Boolean, and floating representations cannot be interchanged.
-All other native parameter/result types are rejected.
+All other native parameter/result types are rejected, except for the
+explicit buffer-import extension below.
 
 Native declarations, export adapters, and call sites carry the target's
 required narrow-integer attributes. On x86-64 Unix and macOS ARM64, narrow
@@ -45,6 +47,43 @@ x86-64/ARM64 Windows MSVC, Linux, and macOS families are diagnosed.
 
 This does not migrate any production runtime algorithm from C to Joyeer.
 Existing host builtins and normal executable generation remain supported.
+
+### Buffer imports
+
+Only `@c_extern` admits these additional parameter forms:
+
+| Joyeer parameter | C ABI parameters, in source-parameter order |
+|---|---|
+| borrowing `String` or `[UInt8]` | `const uint8_t* data, int64_t count` |
+| borrowing `[String]` | `const JoyeerString* data, int64_t count` |
+| borrowing `[[UInt8]]` | `const JoyeerArray* data, int64_t count` |
+| initializing `String` | `JoyeerString* output` |
+| initializing `[UInt8]` or `[String]` | `JoyeerArray* output` |
+
+Counts are byte counts for strings/byte buffers and element counts for
+lists. There is no implicit C-string conversion or NUL terminator.
+The native declarations come from `src/runtime/native.h` and `runtime.h`.
+List descriptors expose only borrowed runtime handles: the native function
+must not mutate, retain, or free descriptors or backing storage.
+
+Output arguments require the ordinary `&` marker and uninitialized owning
+storage. Before the native call, generated code constructs valid empty output
+handles. Native implementations replace them using
+`joyeer_native_bytes_assign`, `joyeer_native_string_assign`, or
+`joyeer_native_strings_assign`. Those helpers copy through the runtime
+allocator and preserve clone/destruction metadata. Do not assign foreign
+allocations into an output handle. Every return, including failure, leaves
+valid destroyable outputs; a status-returning Joyeer wrapper decides whether
+to expose them. Allocation failures follow the existing runtime panic policy.
+
+Existing exclusivity, definite-initialization and lifetime rules still apply.
+`inout`/`consuming` buffers, nested output byte arrays, buffer return values,
+buffer exports, arbitrary aggregate ABI, escaping pointers and callbacks are
+not supported. Repeated native declarations must agree on buffer shape and
+access effect, even when two flattened pointer signatures happen to match.
+The interface is revision-matched to the compiler/runtime; version 1 is
+identified by `JOYEER_NATIVE_BUFFER_ABI_VERSION`, not a stable ABI for every
+internal runtime operation.
 
 ## 2. Explicit runtime compilation
 
@@ -108,9 +147,18 @@ the shared-library dependency and build-tree runtime search path. Installed
 library locations, RPATH/install names, and deployment remain build/package
 responsibilities, not per-function annotation arguments.
 
+The compiler also accepts repeatable `--link-library <file>` arguments.
+Each path resolves against the compiler working directory, must be a regular
+file, and is protected against output/PDB cleanup collisions. No library-name
+search or shell flags are inferred. COFF/Mach-O receive explicit inputs;
+ELF groups the native archives and runtime to resolve inter-archive references.
+Files are checked in validation/text/object modes too, but linking occurs only
+for executable output. Native provider deployment remains the caller's job.
+joypm's optional module fields are described in [its manifest contract](joypm.md).
+
 This is ordinary link-time selection of a dynamic dependency. It does not
 implement `dlopen`, `LoadLibrary`, function-address lookup, header import,
-or native dependency fields in joypm manifests. Missing required native
+or native dependency fetching/building in joypm. Missing required native
 definitions fail at the native link; source checking cannot prove a native
 library's actual prototype agrees.
 

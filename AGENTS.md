@@ -88,7 +88,8 @@ cross-directory includes use the path relative to `src/`.
 `joyeer` and the compiler unit tests. Directories are responsibility groups,
 not separate libraries. Keep `JoyeerBackend` shared and
 `JoyeerRuntime` static: LLVM and Windows `/MT` objects stay in the backend,
-and generated programs link only the runtime. Compile the same IR verifier
+and generated programs link the runtime plus explicitly selected optional
+native libraries. Compile the same IR verifier
 source privately in the backend rather than reusing compiler-core objects.
 
 ## Joyeer source conventions
@@ -134,7 +135,10 @@ source privately in the backend rather than reusing compiler-core objects.
   checked-in automation must not install or resolve the host compiler, platform
   SDK, CMake, Ninja, LLVM, Clang, or LLD.
 - CMake may acquire pinned project dependencies such as GoogleTest and the
-  static LibXml2 needed by the official Windows LLD libraries. LLVM and
+  static LibXml2 needed by the official Windows LLD libraries, and miniz when
+  `JOYEER_BUILD_COMPRESSION=ON`. The optional `Compression` library remains a
+  separate archive/source package, never a core-runtime dependency. Its
+  install component includes the miniz license. LLVM and
   platform toolchains remain developer-managed external prerequisites.
 - Write checked-in installation, packaging, and release automation in
   cross-platform Python 3.9+ using the standard library when scripting is

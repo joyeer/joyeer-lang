@@ -28,6 +28,10 @@ configure_file(platform-scalars.joyeer.in platform-scalars.joyeer @ONLY)
 
 add_library(CInteropNativeStatic STATIC native.c native-scalars.c)
 add_library(CInteropNativeShared SHARED native.c native-scalars.c)
+add_library(CInteropBuffers STATIC native-buffers.c)
+target_include_directories(CInteropBuffers PRIVATE "${JOYEER_SRC_DIR}")
+set_target_properties(CInteropBuffers PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
 target_compile_definitions(CInteropNativeShared PRIVATE CINTEROP_SHARED)
 foreach(provider IN ITEMS CInteropNativeStatic CInteropNativeShared)
     target_compile_definitions(${provider} PRIVATE
@@ -46,6 +50,15 @@ foreach(profile IN ITEMS Debug Optimized)
     else()
         set(compile_flags -O2 -g0)
     endif()
+    add_test(NAME "JoyeerCInterop.Buffers${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/buffers.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/buffers-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.buffers;--runtime-module;runtime.buffers;--link-library;$<TARGET_FILE:CInteropBuffers>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=native buffer ownership passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Buffers${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
     add_test(NAME "JoyeerCInterop.ScalarValues${profile}"
         COMMAND "${CMAKE_COMMAND}"
             "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"

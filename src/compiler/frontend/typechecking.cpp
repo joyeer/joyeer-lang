@@ -741,10 +741,19 @@ private:
         const auto& signature = model->callables.at(function);
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
             const auto& parameter = declaration->parameters[index];
-            if (parameter->accessEffect() != syntax::AccessEffect::borrowing ||
-                !isNativeScalar(model->typeContext.type(signature.parameters[index])->kind)) {
+            const auto effect = parameter->accessEffect();
+            const auto buffer = nativeBufferKind(signature.parameters[index],
+                    [&](TypeId id) { return model->typeContext.type(id); });
+            const bool scalar = effect == syntax::AccessEffect::borrowing &&
+                    isNativeScalar(model->typeContext.type(signature.parameters[index])->kind);
+            const bool nativeBuffer = importing && buffer != NativeBufferKind::none &&
+                    (effect == syntax::AccessEffect::borrowing ||
+                     (effect == syntax::AccessEffect::initializing &&
+                      buffer != NativeBufferKind::byteArrays));
+            if (!scalar && !nativeBuffer) {
                 report(TypeCheckingDiagnosticId::unsupportedNativeSignature, parameter->span,
-                       "C bindings require borrowing scalar parameters passed by value");
+                       "C bindings require borrowing scalars; C imports also accept borrowing "
+                       "String, [UInt8], [String], [[UInt8]] and initializing String, [UInt8], [String]");
             }
         }
         if (!isNativeScalar(model->typeContext.type(signature.result)->kind) &&
@@ -769,13 +778,25 @@ private:
                 const auto& left = model->callables.at(previous->second);
                 const auto& right = model->callables.at(symbol.id);
                 const auto compatible = [&](TypeId a, TypeId b) {
+                    const auto lookup = [&](TypeId id) { return model->typeContext.type(id); };
+                    const auto leftBuffer = nativeBufferKind(a, lookup);
+                    const auto rightBuffer = nativeBufferKind(b, lookup);
+                    if (leftBuffer != NativeBufferKind::none || rightBuffer != NativeBufferKind::none) {
+                        return leftBuffer == rightBuffer;
+                    }
                     return sameNativeRepresentation(model->typeContext.type(a)->kind,
                             model->typeContext.type(b)->kind);
                 };
+                const auto* previousSymbol = model->semanticModelValue->symbol(previous->second);
+                bool sameEffects = previousSymbol->callable->parameters.size() == symbol.callable->parameters.size();
+                for (size_t index = 0; sameEffects && index < symbol.callable->parameters.size(); ++index) {
+                    sameEffects = previousSymbol->callable->parameters[index].access ==
+                            symbol.callable->parameters[index].access;
+                }
                 if (left.parameters.size() != right.parameters.size() ||
                         !std::equal(left.parameters.begin(), left.parameters.end(),
                                 right.parameters.begin(), right.parameters.end(), compatible) ||
-                        !compatible(left.result, right.result)) {
+                        !compatible(left.result, right.result) || !sameEffects) {
                     report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
                            "incompatible C signatures for native symbol '" + binding->symbol + "'");
                 }

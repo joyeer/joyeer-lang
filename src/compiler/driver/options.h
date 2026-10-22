@@ -73,6 +73,7 @@ struct CompileOptions {
     std::vector<std::filesystem::path> sourceFiles;
     std::vector<ModuleSources> modules;
     std::vector<std::string> runtimeModules;
+    std::vector<std::filesystem::path> nativeLibraries;
 };
 
 } // namespace joyeer

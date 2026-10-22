@@ -55,8 +55,29 @@ Local library development can use the existing workspace workflow; automatic
 installed-library resolution remains planned. Compiler/runtime construction
 and the first joypm bootstrap remain CMake responsibilities, not new joypm
 module kinds.
-The specified [C binding boundary](../spec/19-c-interop.md) does not add native
-dependency fields or runtime-compilation privileges to current manifests.
+Native-backed source modules can additionally declare:
+
+```toml
+native-bindings = true
+native-libraries = ["native/library.a"]
+```
+
+Both fields are optional, defaulting to `false` and `[]`. `native-bindings`
+must be a Boolean and explicitly authorizes only that module's restricted
+C declarations/calls via `--runtime-module`. Importing a module never grants
+the caller these privileges. `native-libraries` is an ordered array of
+relative file paths without parent traversal, resolved against the module's
+directory and forwarded as explicit `--link-library` inputs. The same
+1024-entry, duplicate-path, and decoded-string limits as source lists apply.
+These files must already exist, including during `check`; they are validated
+by the compiler. Only the selected dependency closure contributes bindings
+and libraries. Unknown/repeated keys and malformed values are errors.
+
+joypm does not compile C, fetch dependencies, discover libraries, choose
+platform-specific filenames, or deploy shared libraries. CMake can stage
+platform-specific manifests, as the optional [Compression](compression.md)
+package does. Treat manifests with native privileges and libraries as trusted
+build inputs, not a sandbox.
 
 A workspace owns only its explicit member directories:
 
@@ -172,7 +193,7 @@ multiline strings, dates, and floating-point values are unsupported.
 | Each manifest | 65536 original bytes |
 | Decoded string | 4096 bytes |
 | Workspace members | 256 |
-| Sources/dependencies per module array | 1024 strings |
+| Sources/dependencies/native libraries per module array | 1024 strings |
 
 Every module requires name/kind/nonempty sources/dependencies. Bin/test output
 names are portable ASCII 1..64 bytes; logical names follow the compiler's

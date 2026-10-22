@@ -136,8 +136,9 @@ TEST_F(CInteropTest, RejectsWrongBodiesAndImplicitUnitResults) {
 
 TEST_F(CInteropTest, RejectsUnsupportedNativeTypesAndAccessEffects) {
     for (const auto& parameter : std::vector<std::string> {
-            "String", "Void", "()", "Int?", "[Int]",
+            "Void", "()", "Int?", "[Int]", "[[[UInt8]]]", "[Bool]",
             "Result<Int, IOError>", "inout Int", "consuming Int", "initializing Int",
+            "inout [UInt8]", "consuming String", "initializing [[UInt8]]",
         }) {
         SCOPED_TRACE(parameter);
         check("@c_extern(symbol: \"native\")\nfunc native(value: " + parameter + "): Int\n");
@@ -148,6 +149,72 @@ TEST_F(CInteropTest, RejectsUnsupportedNativeTypesAndAccessEffects) {
         check("@c_extern(symbol: \"native\")\nfunc native(): " + std::string(result) + "\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
     }
+}
+
+TEST_F(CInteropTest, ImportsBorrowedBuffersAndInitializesOwnedOutputs) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "native_buffers")
+func nativeBuffers(text: String, bytes: [UInt8], names: [String], contents: [[UInt8]],
+    output: initializing [UInt8], name: initializing String, listing: initializing [String]): Int
+func use(text: String, bytes: [UInt8], names: [String], contents: [[UInt8]]): Int {
+    var output: [UInt8]
+    var name: String
+    var listing: [String]
+    let status = nativeBuffers(text: text, bytes: bytes, names: names, contents: contents,
+        output: &output, name: &name, listing: &listing)
+    return status + output.count + name.count + listing.count
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("@native_buffers(ptr, i64, ptr, i64, ptr, i64, ptr, i64, ptr, ptr, ptr)"),
+            std::string::npos);
+    EXPECT_NE(emitted.text.find("call void @joyeer_native_bytes_init"), std::string::npos);
+    EXPECT_NE(emitted.text.find("call void @joyeer_native_strings_init"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsBufferExportsAndConflictingBufferShapesOrAccess) {
+    check("@c_export(symbol: \"exported\")\nfunc exported(value: String): Void {}\n");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
+    for (const auto& other : {"[UInt8]", "[String]", "initializing String"}) {
+        check("@c_extern(symbol: \"native\")\nfunc first(value: String): Void\n"
+              "@c_extern(symbol: \"native\")\nfunc second(value: " + std::string(other) + "): Void\n");
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::conflictingNativeSymbol));
+    }
+}
+
+TEST_F(CInteropTest, VerifierRejectsInvalidBufferAccessAndConflictingAdapters) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "native_borrow")
+func borrowed(bytes: [UInt8]): Void
+@c_extern(symbol: "native_output")
+func output(bytes: initializing [UInt8]): Void
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& borrowed = function("borrowed");
+    auto& output = function("output");
+    const auto original = output.parameters[0];
+    output.parameters[0].isMutable = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    output.parameters[0] = original;
+    output.parameters[0].isConsuming = true;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    output.parameters[0] = original;
+    output.parameters[0].value.category = joyeer::ir::ValueCategory::value;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    output.parameters[0] = original;
+    borrowed.parameters[0].isMutable = true;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.parameters[0].isMutable = false;
+    output.nativeBinding->symbol = borrowed.nativeBinding->symbol;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 
 TEST_F(CInteropTest, AcceptsEmptyParameterListsAndExplicitUnitSpellings) {

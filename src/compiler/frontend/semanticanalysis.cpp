@@ -323,6 +323,9 @@ private:
         assert(loops.empty());
         tracked.clear();
         initializingParameters.clear();
+        const auto function = model->semanticModel()->declaredSymbol(declaration);
+        const auto* binding = function.has_value() ? model->nativeBinding(*function) : nullptr;
+        if (binding != nullptr && binding->kind == NativeBindingKind::cImport) return;
         InitializationState state;
         for (const auto& parameter : declaration->parameters) {
             const auto symbol = model->semanticModel()->declaredSymbol(parameter);

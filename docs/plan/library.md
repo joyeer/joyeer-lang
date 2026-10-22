@@ -11,6 +11,12 @@
 > detection, `Collections`, `Testing`,
 > joypm adoption, and installed-library resolution remain pending. Names are
 > still not compiler-reserved and no new language syntax is introduced.
+>
+> A separate optional `Compression` module is now implemented using miniz,
+> explicit native-buffer imports, and generated joypm native-library inputs.
+> Its configuration-specific workspace and installation contract are in
+> [Compression](../impl/compression.md); it is not an automatic dependency of
+> the source-only root workspace or the core runtime.
 
 ## 1. Public Module Direction
 
@@ -24,6 +30,7 @@ public hierarchy. The proposed source directory is `src/library/`, not
 | `System` | Paths, filesystem, processes, environment, and time | May depend on `Foundation` when genuinely needed; preserve existing host contracts |
 | `Collections` | Additional containers and collection algorithms | Keep independent where possible; not required to use builtin arrays or dictionaries |
 | `Testing` | Assertions, failure reporting, and shared test helpers | May use `Foundation` for diagnostics; test executables declare dependencies on the modules under test |
+| `Compression` | Implemented classic ZIP creation, listing, and bounded extraction | Optional miniz archive behind private authorized native bindings; no filesystem extraction |
 
 Future source use:
 
@@ -120,8 +127,9 @@ The complete by-value scalar boundary is [implemented](../impl/c-interop.md), bu
 it is not a prerequisite for ordinary library modules or wrappers around
 existing host builtins.
 Public APIs wrap internal bindings rather than exposing native privileges.
-No extra ABI selection or native dependency fields are added to library
-manifests by this plan.
+No extra ABI selection is introduced. Native-backed libraries can now use
+the explicit `native-bindings` and `native-libraries` fields described in
+[joypm](../impl/joypm.md); CMake still owns native dependency builds.
 
 ## 3. Build and Management Ownership
 

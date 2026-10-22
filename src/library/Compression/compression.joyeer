@@ -1,0 +1,80 @@
+public enum CompressionError {
+    InvalidArgument,
+    InvalidArchive,
+    UnsupportedArchive,
+    LimitExceeded,
+    EntryNotFound,
+    DuplicateEntry,
+    NativeFailure(Int),
+}
+
+public enum ZipMethod {
+    Stored,
+    Deflate,
+}
+
+public struct ZipEntry {
+    public let name: String
+    public let contents: [UInt8]
+}
+
+@c_extern(symbol: "joyeer_compression_create_zip")
+private func nativeCreateZip(names: [String], contents: [[UInt8]], method: Int,
+    maximumBytes: Int, output: initializing [UInt8]): Int
+
+@c_extern(symbol: "joyeer_compression_list_zip")
+private func nativeListZip(archive: [UInt8], maximumEntries: Int,
+    maximumNameBytes: Int, output: initializing [String]): Int
+
+@c_extern(symbol: "joyeer_compression_extract_zip")
+private func nativeExtractZip(archive: [UInt8], index: Int,
+    maximumBytes: Int, output: initializing [UInt8]): Int
+
+private func compressionError(status: Int): CompressionError {
+    return match status {
+        1 => .InvalidArgument,
+        2 => .InvalidArchive,
+        3 => .UnsupportedArchive,
+        4 => .LimitExceeded,
+        5 => .EntryNotFound,
+        6 => .DuplicateEntry,
+        _ => .NativeFailure(status),
+    }
+}
+
+public func createZip(entries: [ZipEntry], method: ZipMethod,
+    maximumBytes: Int): Result<[UInt8], CompressionError> {
+    if maximumBytes < 0 { return .Err(.InvalidArgument) }
+    var names: [String] = []
+    var contents: [[UInt8]] = []
+    var index = 0
+    while index < entries.count {
+        &names.append(element: entries[index].name)
+        &contents.append(element: entries[index].contents)
+        index = index + 1
+    }
+    let level = match method { .Stored => 0, .Deflate => 6 }
+    var output: [UInt8]
+    let status = nativeCreateZip(names: names, contents: contents, method: level,
+        maximumBytes: maximumBytes, output: &output)
+    if status != 0 { return .Err(compressionError(status: status)) }
+    return .Ok(output)
+}
+
+public func listZip(archive: [UInt8], maximumEntries: Int,
+    maximumNameBytes: Int): Result<[String], CompressionError> {
+    var output: [String]
+    let status = nativeListZip(archive: archive, maximumEntries: maximumEntries,
+        maximumNameBytes: maximumNameBytes, output: &output)
+    if status != 0 { return .Err(compressionError(status: status)) }
+    return .Ok(output)
+}
+
+public func extractZipEntry(archive: [UInt8], index: Int,
+    maximumBytes: Int): Result<[UInt8], CompressionError> {
+    var output: [UInt8]
+    let status = nativeExtractZip(archive: archive, index: index,
+        maximumBytes: maximumBytes, output: &output)
+    if status != 0 { return .Err(compressionError(status: status)) }
+    return .Ok(output)
+}

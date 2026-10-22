@@ -169,7 +169,9 @@ bool CompilerService::protectInputs(const std::vector<std::filesystem::path>& in
 #endif
     auto pdb = options.outputFile;
     pdb.replace_extension(".pdb");
-    for (const auto& input : inputs) {
+    auto protectedInputs = inputs;
+    protectedInputs.insert(protectedInputs.end(), options.nativeLibraries.begin(), options.nativeLibraries.end());
+    for (const auto& input : protectedInputs) {
         if (pathsAlias(input, options.outputFile)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.output-file-error",
                 "output path must not overwrite input file '" + pathUtf8(input) + "'");

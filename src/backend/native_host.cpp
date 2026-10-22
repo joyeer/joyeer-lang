@@ -173,6 +173,33 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     const auto& callee = *found->second;
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
+    if (callee.isExternal && callee.nativeBinding.has_value()) {
+        std::vector<llvm::Value*> nativeArguments;
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const auto& parameter = callee.parameters[index];
+            const auto kind = type(parameter.value.type).kind;
+            if (parameter.isInitializing) {
+                if (kind == typing::TypeKind::string) {
+                    builder.CreateStore(llvm::Constant::getNullValue(llvmType(parameter.value.type)), arguments[index]);
+                } else {
+                    const auto element = type(type(parameter.value.type).arguments.at(0)).kind;
+                    call(element == typing::TypeKind::uint8
+                                    ? "joyeer_native_bytes_init" : "joyeer_native_strings_init",
+                            builder.getVoidTy(), {arguments[index]});
+                }
+                nativeArguments.push_back(arguments[index]);
+            } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
+                nativeArguments.push_back(builder.CreateExtractValue(arguments[index], 0, temporary()));
+                nativeArguments.push_back(builder.CreateExtractValue(arguments[index], 1, temporary()));
+            } else {
+                nativeArguments.push_back(arguments[index]);
+            }
+        }
+        auto* function = functions.at(callee.id);
+        auto* invocation = builder.CreateCall(function, nativeArguments);
+        invocation->setAttributes(function->getAttributes());
+        return invocation;
+    }
     if (!callee.isExternal || callee.nativeBinding.has_value()) {
         auto* function = functions.at(callee.id);
         auto* invocation = builder.CreateCall(function, arguments);

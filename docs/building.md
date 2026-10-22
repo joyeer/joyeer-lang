@@ -22,6 +22,14 @@ platform, `JOYEER_BUILD_UNITTESTS=ON` also fetches GoogleTest 1.15.2. The first
 configuration that needs these dependencies requires network access. Neither
 dependency adds a runtime DLL to the Joyeer package.
 
+`JOYEER_BUILD_COMPRESSION=ON` additionally acquires the pinned miniz 3.1.0
+source using Git and builds a separate optional `JoyeerCompression` static
+archive. The default is `OFF`. Neither the compiler/backend nor the core
+runtime links miniz. See [Compression](impl/compression.md) for its generated
+joypm workspace and the `Compression` install component, which includes
+miniz's MIT license. Python 3.9+ enables an optional independent ZIP oracle
+when already available; it is not required to build or use the library.
+
 ## Source-build prerequisites
 
 All platforms require:
@@ -293,8 +301,12 @@ licenses/LICENSE         # Joyeer's own license; third-party notices deferred
 ```
 
 Compiler, backend, runtime, and the current Joyeer license use install
-component `JoyeerRuntime`; optional `joypm` uses `PRODUCT`. An unfiltered
-install includes both enabled components. The Windows Debug joypm PDB is
+component `JoyeerRuntime`; optional `joypm` uses `PRODUCT`. Optional
+`Compression` and `NativeDevelopment` components contain the native-backed
+ZIP source package and C buffer-adapter headers respectively; keep them
+separate from compiler-only product staging. An unfiltered install includes
+all enabled product components; `NativeDevelopment` must be selected
+explicitly. The Windows Debug joypm PDB is
 also installed by `PRODUCT`; Release has no joypm Debug-PDB install rule.
 An install limited to
 `JoyeerRuntime` does not install joypm; select `PRODUCT` as well when staging

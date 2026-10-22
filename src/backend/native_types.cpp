@@ -284,8 +284,19 @@ llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
     std::vector<llvm::Type*> parameters;
     std::vector<typing::TypeKind> kinds;
     for (const auto& parameter : function.parameters) {
-        parameters.push_back(llvmType(parameter.value.type));
-        kinds.push_back(type(parameter.value.type).kind);
+        const auto kind = type(parameter.value.type).kind;
+        if (parameter.isInitializing) {
+            parameters.push_back(pointer());
+            kinds.push_back(typing::TypeKind::voidType);
+        } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
+            parameters.push_back(pointer());
+            parameters.push_back(builder.getInt64Ty());
+            kinds.push_back(typing::TypeKind::voidType);
+            kinds.push_back(typing::TypeKind::integer);
+        } else {
+            parameters.push_back(llvmType(parameter.value.type));
+            kinds.push_back(kind);
+        }
     }
     auto* result = unit(function.resultType) ? builder.getVoidTy() : llvmType(function.resultType);
     return declareCFunction(function.nativeBinding->symbol, result, parameters,

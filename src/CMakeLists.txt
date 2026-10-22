@@ -13,6 +13,7 @@ add_custom_target(JoyeerToolchain ALL
 	VERBATIM)
 
 add_subdirectory(tools)
+add_subdirectory(library)
 
 # Root-level acceptance tests consume the same explicit bootstrap inputs.
 if(JOYEER_BUILD_JOYPM)

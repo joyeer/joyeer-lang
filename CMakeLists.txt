@@ -47,6 +47,7 @@ enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
 option(JOYEER_BUILD_JOYPM "Bootstrap the Joyeer-written joypm project tool" ON)
+option(JOYEER_BUILD_COMPRESSION "Build the optional miniz-backed Compression library" OFF)
 
 if(JOYEER_BUILD_JOYPM AND CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR
@@ -251,3 +252,5 @@ install(TARGETS JoyeerRuntime
     ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION licenses COMPONENT JoyeerRuntime)
+install(FILES src/runtime/native.h src/runtime/runtime.h
+    DESTINATION include/joyeer COMPONENT NativeDevelopment EXCLUDE_FROM_ALL)

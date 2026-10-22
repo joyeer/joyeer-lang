@@ -20,6 +20,7 @@ struct CommandLineArguments {
     std::vector<std::filesystem::path> sourceFiles;
     std::vector<joyeer::ModuleSources> modules;
     std::vector<std::string> runtimeModules;
+    std::vector<std::filesystem::path> nativeLibraries;
 
     bool accepted = false;
     joyeer::OutputMode outputMode = joyeer::OutputMode::validate;

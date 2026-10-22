@@ -656,20 +656,39 @@ VerificationResult Verifier::verify(const Module& module) const {
             const bool scalarResult = scalar(function.resultType);
             valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
                     function.returnsValue == scalarResult;
+            const auto bufferKind = [&](TypeId id) {
+                return typing::nativeBufferKind(id, [&](TypeId value) {
+                    const auto found = types.find(value);
+                    return found == types.end() ? nullptr : found->second;
+                });
+            };
             for (const auto& parameter : function.parameters) {
-                valid &= scalar(parameter.value.type) &&
+                const auto buffer = bufferKind(parameter.value.type);
+                const bool borrowed =
+                        (scalar(parameter.value.type) ||
+                         (importing && buffer != typing::NativeBufferKind::none)) &&
                         parameter.value.category == ValueCategory::value &&
                         !parameter.isMutable && !parameter.isConsuming &&
                         !parameter.isInitializing && !parameter.acceptsAnyType;
+                const bool output = importing && buffer != typing::NativeBufferKind::none &&
+                        buffer != typing::NativeBufferKind::byteArrays &&
+                        parameter.value.category == ValueCategory::address &&
+                        parameter.isMutable && parameter.isInitializing &&
+                        !parameter.isConsuming && !parameter.acceptsAnyType;
+                valid &= borrowed || output;
             }
             if (!valid) {
                 report(VerificationErrorId::invalidInstruction, functionId, {}, {},
-                       "invalid or unauthorized C binding; only by-value scalars and Void results are supported");
+                       "invalid or unauthorized C binding; expected scalar ABI or supported C import buffers");
             }
             const auto [previous, inserted] = nativeSymbols.emplace(binding.symbol, &function);
             if (!inserted) {
                 const auto& other = *previous->second;
                 const auto compatible = [&](TypeId a, TypeId b) {
+                    if (bufferKind(a) != typing::NativeBufferKind::none ||
+                        bufferKind(b) != typing::NativeBufferKind::none) {
+                        return bufferKind(a) == bufferKind(b);
+                    }
                     return types.contains(a) && types.contains(b) &&
                             typing::sameNativeRepresentation(types.at(a)->kind, types.at(b)->kind);
                 };
@@ -677,6 +696,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                         function.parameters.size() == other.parameters.size();
                 for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
                     matches &= compatible(function.parameters[index].value.type, other.parameters[index].value.type);
+                    matches &= function.parameters[index].isInitializing == other.parameters[index].isInitializing;
                 }
                 if (!matches) {
                     report(VerificationErrorId::callMismatch, functionId, {}, {},
