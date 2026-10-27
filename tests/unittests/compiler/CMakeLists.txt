@@ -1077,6 +1077,20 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
+            NativeCompoundAssignment compound_assignment
+            "3
+680
+abcdabcd
+101
+1
+42
+255
+9
+3
+1099511627776
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
             NativeRadixLiterals radix_literals
             "255
 3988292384
@@ -1148,6 +1162,10 @@ true
             NativeConversionNarrow conversion_narrow "integer conversion out of range")
     add_joyeer_native_checked_trap(
             NativeConversionUnsignedHigh conversion_unsigned_high "integer conversion out of range")
+    add_joyeer_native_checked_trap(
+            NativeCompoundOverflow compound_overflow "integer addition overflow")
+    add_joyeer_native_checked_trap(
+            NativeCompoundShiftRange compound_shift_range "integer shift count out of range")
     add_joyeer_native_checked_trap(
             NativeCheckedRemainderZero checked_remainder_zero "integer remainder by zero")
     add_joyeer_native_checked_trap(

@@ -803,6 +803,49 @@ TEST_F(TypeCheckingTest, RejectsInvalidConversions) {
     }
 }
 
+TEST_F(TypeCheckingTest, AcceptsCompoundAssignments) {
+    check(R"JOYEER(struct Box { var total: Int }
+func run(count: UInt8) {
+    var n = 1
+    n += 2
+    n -= 1
+    n *= 3
+    n /= 2
+    n %= 4
+    var bits: UInt32 = 1
+    bits |= 2
+    bits &= 3
+    bits ^= 1
+    bits <<= count
+    bits >>= 1
+    var text = "a"
+    text += "b"
+    var box = Box(total: 1)
+    box.total += 1
+    var d = 1.5
+    d *= 2.0
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidCompoundAssignments) {
+    for (const auto* statement : { "flag += true", "text -= \"b\"", "bits <<= 1.5",
+                                   "n %= 1.5", "n += wide", "d %= 2.0", "n &= flag" }) {
+        SCOPED_TRACE(statement);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(wide: UInt32) {\n"
+                "var flag = true\nvar text = \"a\"\nvar bits: UInt32 = 1\n"
+                "var n = 1\nvar d = 1.5\n" + std::string(statement) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, RejectsCompoundAssignmentToDictionaryElements) {
+    check("func run() {\nvar d: [String: Int] = [\"a\": 1]\n&d[\"a\"] += 1\n}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
 TEST_F(TypeCheckingTest, LoopExitBranchesAndLogicalOperandsCanDiverge) {
     check(R"JOYEER(func run(flag: Bool) {
 while if flag { break } else { true } {

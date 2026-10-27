@@ -93,8 +93,22 @@ enum TokenKind {
     caret,
     tilde,
     shiftLeft,
-    shiftRight
+    shiftRight,
+    plusEqual,
+    minusEqual,
+    multiplyEqual,
+    divideEqual,
+    percentEqual,
+    ampersandEqual,
+    pipeEqual,
+    caretEqual,
+    shiftLeftEqual,
+    shiftRightEqual
 };
+
+// The binary operator a compound assignment token applies, or `invalid` if
+// `kind` is not a compound assignment token.
+[[nodiscard]] TokenKind compoundBaseOperator(TokenKind kind);
 
 struct SourceSpan {
         uint32_t offset = 0;

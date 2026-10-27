@@ -153,8 +153,24 @@ bool isPunctuationKind(TokenKind kind) {
   return kind >= leftCurly && kind <= fatArrow;
 }
 
+TokenKind compoundBaseOperator(TokenKind kind) {
+  switch (kind) {
+    case plusEqual: return plus;
+    case minusEqual: return minus;
+    case multiplyEqual: return multiply;
+    case divideEqual: return divide;
+    case percentEqual: return percentage;
+    case ampersandEqual: return ampersand;
+    case pipeEqual: return pipe;
+    case caretEqual: return caret;
+    case shiftLeftEqual: return shiftLeft;
+    case shiftRightEqual: return shiftRight;
+    default: return invalid;
+  }
+}
+
 bool isOperatorKind(TokenKind kind) {
-  return kind >= equal && kind <= shiftRight;
+  return kind >= equal && kind <= shiftRightEqual;
 }
 
 bool tokenKindMatches(TokenKind actual, TokenKind expected) {

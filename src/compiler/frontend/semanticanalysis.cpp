@@ -695,6 +695,17 @@ private:
     void analyzeAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             InitializationState& state) {
+        if (expression->op != nullptr && expression->op->kind != equal) {
+            // `x op= y` reads x first, so it must already be initialized.
+            auto read = expression->target;
+            while (read != nullptr && (read->kind == syntax::Kind::accessExpr ||
+                                       read->kind == syntax::Kind::parenthesizedExpr)) {
+                read = read->kind == syntax::Kind::accessExpr
+                        ? std::static_pointer_cast<syntax::AccessExprSyntax>(read)->operand
+                        : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(read)->expression;
+            }
+            analyzeExpression(read, state);
+        }
         auto assigned = storagePath(expression->target);
         if (assigned.has_value()) activePaths.push_back(&*assigned);
         analyzeAssignmentTarget(expression->target, state);

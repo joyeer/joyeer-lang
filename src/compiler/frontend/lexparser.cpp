@@ -565,11 +565,7 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '<':
             if (consumeIf('<')) {
-                if (consumeIf('=')) {
-                    emitUnsupported();
-                } else {
-                    emit(shiftLeft, start);
-                }
+                emit(consumeIf('=') ? shiftLeftEqual : shiftLeft, start);
                 return;
             }
             if (consumeIf('=')) { emit(lessEqual, start); return; }
@@ -581,7 +577,7 @@ void LexParser::parseOperatorOrPunctuation() {
             if (peek() == '>' && peek(1) == '=') {
                 advance();
                 advance();
-                emitUnsupported();
+                emit(shiftRightEqual, start);
                 return;
             }
             if (consumeIf('=')) { emit(greaterEqual, start); return; }
@@ -597,7 +593,7 @@ void LexParser::parseOperatorOrPunctuation() {
                 return;
             }
             if (consumeIf('=')) {
-                emitUnsupported();
+                emit(ampersandEqual, start);
                 return;
             }
             emit(ampersand, start);
@@ -610,7 +606,7 @@ void LexParser::parseOperatorOrPunctuation() {
                     emitMvpOperator(orOr);
                 }
             } else if (consumeIf('=')) {
-                emitUnsupported();
+                emit(pipeEqual, start);
             } else {
                 emit(pipe, start);
             }
@@ -627,45 +623,42 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '+':
             if (consumeIf('=')) {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "+=");
-                emitInvalid(start);
+                emit(plusEqual, start);
                 return;
             }
             emit(plus, start);
             return;
         case '-':
             if (consumeIf('=')) {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "-=");
-                emitInvalid(start);
+                emit(minusEqual, start);
                 return;
             }
             emit(minus, start);
             return;
         case '*':
             if (consumeIf('=')) {
-                report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "*=");
-                emitInvalid(start);
+                emit(multiplyEqual, start);
                 return;
             }
             emit(multiply, start);
             return;
         case '/':
             if (consumeIf('=')) {
-                emitUnsupported();
+                emit(divideEqual, start);
                 return;
             }
             emitMvpOperator(divide);
             return;
         case '%':
             if (consumeIf('=')) {
-                emitUnsupported();
+                emit(percentEqual, start);
                 return;
             }
             emitMvpOperator(percentage);
             return;
         case '^':
             if (consumeIf('=')) {
-                emitUnsupported();
+                emit(caretEqual, start);
                 return;
             }
             emit(caret, start);
@@ -795,6 +788,16 @@ bool LexParser::isMvpOperator(TokenKind kind) const {
         case tilde:
         case shiftLeft:
         case shiftRight:
+        case plusEqual:
+        case minusEqual:
+        case multiplyEqual:
+        case divideEqual:
+        case percentEqual:
+        case ampersandEqual:
+        case pipeEqual:
+        case caretEqual:
+        case shiftLeftEqual:
+        case shiftRightEqual:
             return true;
         default:
             return false;

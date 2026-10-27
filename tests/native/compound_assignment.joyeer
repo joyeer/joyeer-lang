@@ -1,0 +1,47 @@
+struct Counter { var total: Int }
+
+func next(calls: inout Int): Int {
+    &calls += 1
+    return 0
+}
+
+func main() {
+    var n = 10
+    n += 5
+    n -= 3
+    n *= 4
+    n /= 6
+    n %= 5
+    print(value: n)
+    var bits: UInt32 = 0xF0
+    bits |= 0x0F
+    bits &= 0xFF
+    bits ^= 0x55
+    bits <<= 4
+    bits >>= 2
+    print(value: bits)
+    var text = "ab"
+    text += "cd"
+    text += text
+    print(value: text)
+    var values = [1, 2, 3]
+    var calls = 0
+    &values[next(calls: &calls)] += 100
+    print(value: values[0])
+    print(value: calls)
+    var counter = Counter(total: 1)
+    counter.total += 41
+    print(value: counter.total)
+    var small: UInt8 = 250
+    small += 5
+    print(value: small)
+    small += 10
+    print(value: small)
+    var d = 1.5
+    d *= 2.0
+    print(value: d)
+    var shifted: UInt64 = 1
+    let amount: UInt8 = 40
+    shifted <<= amount
+    print(value: shifted)
+}

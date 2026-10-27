@@ -1434,6 +1434,9 @@ private:
 
     std::optional<ir::Value> lowerAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression) {
+        if (expression->op != nullptr && expression->op->kind != equal) {
+            return lowerCompoundAssignment(expression);
+        }
         auto target = expression->target;
         while (target != nullptr &&
                (target->kind == syntax::Kind::accessExpr ||
@@ -1468,6 +1471,42 @@ private:
             return emitUnit(expression->span);
         }
         return std::nullopt;
+    }
+
+    // `target op= value`: the address (and any index) is computed once, the old
+    // value is read, combined with the right side, and stored back.
+    std::optional<ir::Value> lowerCompoundAssignment(
+            const syntax::AssignmentExprSyntax::Ptr& expression) {
+        const auto address = lowerAddress(expression->target);
+        if (!address.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto old = emitValue(
+                ir::Opcode::load,
+                address->type,
+                ir::ValueCategory::value,
+                { address->id },
+                expression->target->span);
+        const auto right = lowerExpression(expression->value);
+        if (!right.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto opcode = binaryOpcode(compoundBaseOperator(expression->op->kind));
+        if (!opcode.has_value()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                    "compound assignment operator is not supported by primitive IR lowering");
+            return std::nullopt;
+        }
+        auto result = emitValue(
+                *opcode,
+                address->type,
+                ir::ValueCategory::value,
+                { old.id, right->id },
+                expression->span);
+        if (requiresDestroy(address->type)) {
+            const auto owned = acquireOwned(result, expression->value->span);
+            if (!owned.has_value()) return std::nullopt;
+            result = *owned;
+            emitDestroyStorage(*address, expression->target->span);
+        }
+        emitRawStore(result, *address, expression->span);
+        return emitUnit(expression->span);
     }
 
     std::optional<ir::Value> lowerDictionarySet(

@@ -1350,7 +1350,17 @@ bool Parser::shouldParseReturnValue() const {
 
 Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
     switch (kind) {
-        case equal: return {1, true, false, true};
+        case equal:
+        case plusEqual:
+        case minusEqual:
+        case multiplyEqual:
+        case divideEqual:
+        case percentEqual:
+        case ampersandEqual:
+        case pipeEqual:
+        case caretEqual:
+        case shiftLeftEqual:
+        case shiftRightEqual: return {1, true, false, true};
         case orOr: return {2, false, false, false};
         case andAnd: return {3, false, false, false};
         case equalEqual:

@@ -54,8 +54,7 @@ The parser deliberately does **not** implement:
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
-- postfix force unwrap `!`, `??`, `?.`, compound assignment, ranges, or
-  labeled loop control;
+- postfix force unwrap `!`, `??`, `?.`, ranges, or labeled loop control;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
   so the parser produces a spanned AST rather than pretending to be lossless.
@@ -316,7 +315,10 @@ same line, `&` is infix bitwise AND. Bitwise operators follow the spec table:
 `<<` `>>` bind tighter than `&`, then `^`, then `|`, all tighter than
 comparisons, and looser than `+` `-`. `>>` is two adjacent `>` tokens joined
 in expression position, so nested generic arguments still close normally;
-`<<` is one token. Compound forms such as `<<=` and `&=` remain unsupported.
+`<<` is one token. Compound assignment tokens (`+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`)
+parse as right-associative assignments at the lowest precedence; `&&=` and `||=`
+remain unsupported. `>>=` is one token, so write `Array<Array<Int>> = …` with a
+space before `=`.
 
 An assignment target must have one of these syntactic shapes:
 

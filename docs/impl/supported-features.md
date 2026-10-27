@@ -51,7 +51,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Modules | Named source-file sets, file-local public short names and qualified imports, use-site ambiguity checks, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
 | Bindings and values | Function-local `let` and `var`; `Bool`, `Int`/`UInt` (64-bit), signed/unsigned 8/16/32/64-bit integers, `Float`, `Double`, `String`, and unit `()` / `Void` |
-| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, string concatenation, and integer bitwise `&`, `\|`, `^`, `~`, `<<`, `>>` |
+| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, string concatenation, compound assignment (`+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`; not on dictionary elements), and integer bitwise `&`, `\|`, `^`, `~`, `<<`, `>>` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
@@ -134,7 +134,7 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.
 - General tuples or tuple destructuring.
-- `for-in`, labeled loop exits, compound assignment, `is`,
+- `for-in`, labeled loop exits, `&&=` / `||=`, `is`,
   match guards, range patterns, or alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. Optional
   types use `T?`; postfix `?` propagates only between the same `Result` error

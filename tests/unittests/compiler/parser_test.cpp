@@ -250,6 +250,29 @@ TEST_F(ParserTest, ParsesCastsBetweenPrefixAndBinaryOperators) {
     EXPECT_EQ(wrapping->op->rawValue, "&as");
 }
 
+TEST_F(ParserTest, ParsesCompoundAssignmentsAsRightAssociativeAssignments) {
+    parse("let x = a += b * c\nlet y = a <<= b = c\nlet z = &items[0] ^= 1\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 3u);
+    const auto initializer = [this](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                result.root->items[index])->initializer;
+    };
+    const auto first = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(initializer(0));
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->op->kind, plusEqual);
+    EXPECT_EQ(first->value->kind, Kind::binaryExpr);
+    const auto second = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(initializer(1));
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(second->op->kind, shiftLeftEqual);
+    EXPECT_EQ(second->value->kind, Kind::assignmentExpr);
+    const auto third = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(initializer(2));
+    ASSERT_NE(third, nullptr);
+    EXPECT_EQ(third->op->kind, caretEqual);
+    EXPECT_EQ(third->target->kind, Kind::accessExpr);
+}
+
 TEST_F(ParserTest, ParsesLogicalOperatorsWithSpecPrecedence) {
     parse("let value = target = !a || b && c == d < e + f * g\n");
 

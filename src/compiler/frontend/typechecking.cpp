@@ -1099,6 +1099,10 @@ private:
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
                 const auto target = checkExpression(assignment->target);
                 checkAssignmentAccess(assignment->target);
+                if (assignment->op != nullptr && assignment->op->kind != equal) {
+                    result = checkCompoundAssignment(assignment, target);
+                    break;
+                }
                 const auto value = checkExpression(assignment->value, target);
                 if (target.has_value() && value.has_value()) {
                     requireAssignable(*value, *target, assignment->value->span);
@@ -1380,29 +1384,8 @@ private:
         return kind == decimalLiteral || kind == floatLiteral;
     }
 
-    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression,
-            std::optional<TypeId> expected) {
-        TypeId left;
-        TypeId right;
-        const auto isShift = expression->op != nullptr &&
-                (expression->op->kind == shiftLeft || expression->op->kind == shiftRight);
-        if (isShift) {
-            // The shifted value takes the contextual type; the count is independent.
-            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
-            right = checkExpression(expression->right).value_or(model->typeContext.errorType());
-        } else if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
-            right = checkExpression(expression->right, expected).value_or(model->typeContext.errorType());
-            left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
-        } else {
-            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
-            right = checkExpression(expression->right, left).value_or(model->typeContext.errorType());
-        }
-        if (left == model->typeContext.errorType() ||
-            right == model->typeContext.errorType()) {
-            return model->typeContext.errorType();
-        }
-
-        const auto op = expression->op == nullptr ? invalid : expression->op->kind;
+    // Result type of `left op right`, or nullopt if the operands are invalid.
+    std::optional<TypeId> binaryResult(TokenKind op, TypeId left, TypeId right) {
         switch (op) {
             case plus:
                 if (isNumeric(model->typeContext.type(left)->kind) && left == right) return left;
@@ -1452,6 +1435,33 @@ private:
             default:
                 break;
         }
+        return std::nullopt;
+    }
+
+    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        TypeId left;
+        TypeId right;
+        const auto isShift = expression->op != nullptr &&
+                (expression->op->kind == shiftLeft || expression->op->kind == shiftRight);
+        if (isShift) {
+            // The shifted value takes the contextual type; the count is independent.
+            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
+            right = checkExpression(expression->right).value_or(model->typeContext.errorType());
+        } else if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
+            right = checkExpression(expression->right, expected).value_or(model->typeContext.errorType());
+            left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
+        } else {
+            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
+            right = checkExpression(expression->right, left).value_or(model->typeContext.errorType());
+        }
+        if (left == model->typeContext.errorType() ||
+            right == model->typeContext.errorType()) {
+            return model->typeContext.errorType();
+        }
+
+        const auto op = expression->op == nullptr ? invalid : expression->op->kind;
+        if (const auto result = binaryResult(op, left, right); result.has_value()) return *result;
 
         reportInvalidOperator(expression->op, { left, right }, expression->span);
         return model->typeContext.errorType();
@@ -2087,6 +2097,44 @@ private:
             default:
                 return StorageAccess { false, false, "<expression>" };
         }
+    }
+
+    // `target op= value` reads the target, applies the binary operator, and
+    // stores the result, so the operator's result type must be the target type.
+    TypeId checkCompoundAssignment(const syntax::AssignmentExprSyntax::Ptr& assignment,
+            std::optional<TypeId> target) {
+        auto path = assignment->target;
+        while (path != nullptr && (path->kind == syntax::Kind::accessExpr ||
+                                   path->kind == syntax::Kind::parenthesizedExpr)) {
+            path = path->kind == syntax::Kind::accessExpr
+                    ? std::static_pointer_cast<syntax::AccessExprSyntax>(path)->operand
+                    : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(path)->expression;
+        }
+        if (path != nullptr && path->kind == syntax::Kind::subscriptExpr) {
+            const auto base = model->typeOf(
+                    std::static_pointer_cast<syntax::SubscriptExprSyntax>(path)->base);
+            const auto* baseType = base.has_value() ? model->typeContext.type(*base) : nullptr;
+            if (baseType != nullptr && baseType->kind == TypeKind::dictionary) {
+                report(TypeCheckingDiagnosticId::invalidOperatorOperands, assignment->span,
+                       "compound assignment to a dictionary element is not supported; "
+                       "read it with 'get' and assign the result");
+                return model->typeContext.voidType();
+            }
+        }
+        const auto op = compoundBaseOperator(assignment->op->kind);
+        const bool isShift = op == shiftLeft || op == shiftRight;
+        // Shift counts are independent of the target type; other operands share it.
+        const auto value = isShift ? checkExpression(assignment->value)
+                                   : checkExpression(assignment->value, target);
+        if (target.has_value() && value.has_value() &&
+            *target != model->typeContext.errorType() &&
+            *value != model->typeContext.errorType()) {
+            const auto result = binaryResult(op, *target, *value);
+            if (!result.has_value() || *result != *target) {
+                reportInvalidOperator(assignment->op, { *target, *value }, assignment->span);
+            }
+        }
+        return model->typeContext.voidType();
     }
 
     void checkAssignmentAccess(const syntax::ExprPtr& target) {

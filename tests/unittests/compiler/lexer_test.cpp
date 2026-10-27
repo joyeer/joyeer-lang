@@ -406,27 +406,34 @@ TEST_F(LexerTest, TracksSpansLinesAndCommentTrivia) {
 }
 
 TEST_F(LexerTest, RejectsDeferredMvpSyntaxAsSingleInvalidTokens) {
-    lex("?? ?. ; # 'x' += 0xfg");
+    lex("?? ?. ; # 'x' 0xfg");
 
     expectKinds({invalid, invalid, invalid, invalid, invalid,
-                 invalid, invalid, endOfFile});
-    EXPECT_EQ(diagnostics.errors.size(), 7u);
+                 invalid, endOfFile});
+    EXPECT_EQ(diagnostics.errors.size(), 6u);
 }
 
-TEST_F(LexerTest, RejectsCompoundAndShiftOperatorsAsWholeTokens) {
-    lex("-= *= /= %= &= |= ^= <<= >>= &&= ||=");
+TEST_F(LexerTest, ScansCompoundAssignmentOperators) {
+    lex("+= -= *= /= %= &= |= ^= <<= >>=");
 
     expectKinds({
-        invalid, invalid, invalid, invalid, invalid, invalid,
-        invalid, invalid, invalid, invalid, invalid,
+        plusEqual, minusEqual, multiplyEqual, divideEqual, percentEqual,
+        ampersandEqual, pipeEqual, caretEqual, shiftLeftEqual, shiftRightEqual,
         endOfFile
     });
-    ASSERT_EQ(diagnostics.errors.size(), 11u);
+    EXPECT_TRUE(diagnostics.errors.empty());
+    EXPECT_EQ(compoundBaseOperator(shiftRightEqual), shiftRight);
+    EXPECT_EQ(compoundBaseOperator(plusEqual), plus);
+    EXPECT_EQ(compoundBaseOperator(plus), invalid);
+}
 
-    const std::vector<std::string> expected {
-        "-=", "*=", "/=", "%=", "&=", "|=", "^=",
-        "<<=", ">>=", "&&=", "||="
-    };
+TEST_F(LexerTest, RejectsLogicalCompoundOperatorsAsWholeTokens) {
+    lex("&&= ||=");
+
+    expectKinds({invalid, invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 2u);
+
+    const std::vector<std::string> expected {"&&=", "||="};
     for (size_t index = 0; index < expected.size(); ++index) {
         EXPECT_EQ(source->tokens[index]->rawValue, expected[index]);
         EXPECT_EQ(source->tokens[index]->span.length, expected[index].size());
