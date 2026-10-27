@@ -1,298 +1,130 @@
 # Hybrid Joyeer/C Runtime Plan
 
-> **Status:** runtime migration remains proposed. The initial scalar C binding
-> and isolated object-build foundation is implemented; the remaining phases
-> below are pending. This document plans migration, not new language rules. Current
-> behavior belongs in [runtime](../impl/runtime.md),
-> [strings](../impl/string.md), and the
-> [implemented surface](../impl/supported-features.md).
+> **Status:** runtime migration is proposed; no production operation has moved
+> to Joyeer yet. The scalar C binding and internal object-build path are
+> implemented ([impl/c-interop](../impl/c-interop.md)). Current behavior:
+> [runtime](../impl/runtime.md), [strings](../impl/string.md). Remove completed
+> work from this plan.
 
-Public module names, project layout, and joypm/CMake ownership are tracked in
-the [library plan](library.md). The runtime migration does not depend on
-building that public library, and public source-library development can begin
-before runtime migration.
+## 1. Goal
 
-## 1. Goal and First Milestone
+One runtime, two languages: Joyeer for portable algorithms, C for the native
+substrate (allocation, platform APIs, startup, panic). Programs still link one
+`JoyeerRuntime` static archive.
 
-Build one runtime with two implementation languages:
+**First milestone:** string equality, ordering, and concatenation are
+implemented in Joyeer. Keep the string layout, behavior, entry points, and
+allocation ownership. Clone/destroy, arrays, dictionaries, and host operations
+stay in C. Wrapping the old C algorithm does not count.
 
-- Joyeer implements portable algorithms and, incrementally, storage policies.
-- C provides a small native substrate for allocation, platform APIs, startup,
-  and failure paths that must not depend on higher-level runtime operations.
-- Generated programs continue linking one `JoyeerRuntime` static
-  archive. LLVM/LLD stay in the compiler backend, not the program runtime.
+**Non-goals:** rewriting the compiler, public FFI, generics/protocols/closures
+as prerequisites, GC/ARC/COW, enforcing UTF-8 on `String`, selectable runtime
+profiles, a package registry.
 
-The first milestone replaces string equality, ordering, and concatenation
-algorithms with Joyeer implementations. Preserve the existing string layout,
-source behavior, runtime entry points, and allocation ownership. Keep sru'guotring
-clone/destruction, arrays, dictionaries, and host operations in C initially.
-A migration unit is one operation, not necessarily an entire type.
+## 2. Constraints
 
-Success means the original C algorithms no longer supply these operations in
-production. Joyeer wrappers around the same C algorithms do not meet this goal.
+- Runtime archive is five C sources today; no Joyeer objects yet.
+- Compiler string and collection lowering calls runtime functions. A Joyeer
+  implementation must not reach its own operation through an operator, implicit
+  copy, or cleanup helper (recursion).
+- Generated functions and ownership helpers use numeric-ID names, so separately
+  compiled runtime and application objects can collide. Non-exported symbols
+  must be internal or namespaced; export only the approved interface.
+- Runtime generation must not depend on a compiler target that waits for the
+  runtime.
 
-### Non-goals
+## 3. Ownership of Work
 
-- Rewriting the C++ compiler or eliminating the system C library.
-- A public general-purpose FFI, arbitrary user pointers, reference types, or
-  a stable third-party library ABI.
-- Other foreign ABIs or automatic C header import in the initial binding slice.
-- User generics, protocols, closures, custom destructors, or concurrency as
-  prerequisites for the first milestone.
-- Changing ordinary value copying to implicit moves, adding GC/ARC/COW, or
-  making `String` enforce valid UTF-8.
-- Shipping separate selectable `core`/`alloc`/`std` runtime profiles, new
-  freestanding targets, or a package registry.
-- Moving directories or introducing a separate library for every layer.
-
-## 2. Current Constraints
-
-| Surface | Current implementation and consequence |
+| Work | Owner |
 |---|---|
-| Runtime archive | [CMake](../../src/runtime/CMakeLists.txt) builds five C sources into one static archive; no Joyeer runtime objects are built yet. |
-| Strings and containers | [runtime.c](../../src/runtime/runtime.c) owns storage and algorithms; ordinary heap-backed copies clone independent storage. |
-| Compiler lowering | [String arithmetic](../../src/backend/native_functions.cpp) and [collections](../../src/backend/native_collections.cpp) call runtime functions. Implementing those functions with the same high-level operations can recurse. |
-| Native boundary | [Filesystem](../../src/runtime/filesystem.h) and [process](../../src/runtime/process.h) interfaces use flat inputs, output pointers, and explicit error tags/codes. These are not source-language FFI. |
-| Linkage | [Function emission](../../src/backend/native_types.cpp) and [ownership helpers](../../src/backend/native_ownership.cpp) export numeric-ID names. Separately compiled runtime and application objects can collide. |
-| Build ordering | [Product staging](../../src/CMakeLists.txt) separates the independent compiler from `JoyeerToolchain`; the internal runtime-object path can run before a completed archive. Mixed production-runtime assembly remains pending. |
-| Language support | The [implemented surface](../impl/supported-features.md) excludes user generics, methods, custom `init`/`deinit`, general FFI, and separately linkable source libraries. |
+| Allocation, release, accounting; startup; minimal panic | C substrate |
+| Filesystem/process calls | Existing C host code |
+| String equality, ordering, concatenation | Joyeer (this plan) |
+| String clone/destroy, arrays, dictionaries | C, until follow-up gates |
+| Scope cleanup, copy/transfer decisions | Compiler (unchanged) |
 
-The backend already emits native objects internally; the missing work is a
-supported internal runtime-object path with explicit bindings, exports, and
-an acyclic build. Existing module support alone does not provide these.
+## 4. Prerequisite: Storage Primitives
 
-## 3. Responsibility Boundaries
+Needs a separate design (see [c-interop §3.2](c-interop.md)) before H3/H4:
+
+- Borrowed byte regions and raw result storage, distinct from owning values.
+- Byte access, checked offset/length math, bulk copy; define extents,
+  null/zero-length behavior, initialization, non-overlap.
+- Allocation through the existing tracked allocator; keep the empty-result
+  policy and panic-on-failure.
+- Reject invalid sizes and overflow before allocation or access.
+- Panic reporting independent of managed string formatting and heap allocation.
+- Inputs are borrowed; a successful result has exactly one destruction
+  obligation, published only after initialization. Joyeer-allocated strings
+  must be releasable by the retained C destroy path.
+
+## 5. Build Shape
 
 ```text
-Application machine code / compiler-generated ownership helpers
-                         |
-             Existing runtime ABI entry points
-                         |
-              Joyeer portable implementations
-                         |
-          C substrate / compiler storage primitives
-                         |
-                 Platform APIs / system C library
+compiler + backend -> joyeer -> runtime Joyeer objects --+
+C compiler -----------------> substrate objects ---------+-> runtime archive
+runtime archive + compiler/backend -> product staging -> joypm / acceptance
 ```
 
-| Responsibility | Initial owner |
-|---|---|
-| Allocation, reallocation, release, and allocation-balance accounting | C substrate |
-| Process entry, argument conversion, exit checks, minimal panic/output | C substrate |
-| Filesystem/process calls and platform encoding conversion | Existing C host implementation |
-| String equality, ordering, and concatenation | Joyeer after the required gates |
-| String clone/destruction, arrays, dictionaries | Existing C implementation until separate follow-up gates |
-| Scope cleanup, value-copy/transfer decisions, typed ownership helpers | Compiler, unchanged in responsibility |
-| Future text/path utilities and convenient host wrappers | Source standard library, not new compiler builtins |
+- Use the newly built compiler, not an installed one.
+- List runtime sources explicitly; no source discovery.
+- Keep artifact names and install components unchanged.
+- One production provider per migrated operation. Retained C entry points may
+  be thin adapters.
 
-C-to-Joyeer-to-C calls are acceptable if they descend to lower-level
-capabilities. No implementation may reach its own exported operation through
-an operator, implicit copy, cleanup helper, or indirect callback.
+## 6. Phases
 
-## 4. Minimum Runtime-Writing Capabilities
-
-The [C interoperation specification](../spec/19-c-interop.md) defines the
-restricted scalar binding syntax and ABI; its by-value scalar boundary is
-[implemented](../impl/c-interop.md). Storage and
-address capabilities below remain separate proposals without accepted source
-syntax. Define those contracts before implementing them. Do not use a module
-name or source-directory location as proof that code is trusted.
-
-The [C interop implementation plan](c-interop.md) tracks the first
-`@c_extern`/`@c_export` round trip, broader scalar gates, unresolved memory
-contracts, and compiler execution versus product-build dependencies.
-
-### 4.1 Native bindings and ABI exports
-
-- Use `@c_extern(symbol: "...")` for bodyless native imports and
-  `@c_export(symbol: "...")` for Joyeer definitions with C-callable exports.
-  Both imply C ABI; neither accepts an `abi` argument.
-- Restrict the annotations to an explicit toolchain-controlled runtime
-  compilation context. Ordinary programs must not acquire native privileges
-  through imports or module names alone.
-- Derive signatures from source declarations and lower them to a common typed
-  binding model, rather than maintaining a second signature configuration or
-  adding compiler cases for individual native functions.
-- Begin H1-H2 with by-value `Int`/`int64_t`, `Void`/`void` results, and empty
-  parameter lists. The broader Boolean, fixed-width integer, and floating
-  mappings are specified and implemented in
-  [§19.4](../spec/19-c-interop.md#194-c-scalar-representations);
-  separate scalar fixtures track their platform acceptance. Address/byte-region source syntax
-  still needs its own design before later string operations require it.
-- After the address/output-storage gate, emit C-callable adapters for the
-  existing storage-dependent signatures. Keep native aggregate results
-  behind explicitly specified output pointers rather than assuming Joyeer
-  structs or enums have a C-compatible by-value calling convention.
-- Internalize or uniquely namespace all non-exported runtime functions and
-  ownership helpers. Export only the approved runtime interface, not
-  incidental `joyeer_fn_<id>` or `joyeer_clone_type_<id>` symbols.
-- Diagnose invalid annotation arguments or body presence, duplicate/conflicting
-  annotations and exports, unsupported types, and incompatible signatures
-  through the normal stable-ID diagnostics system.
-
-Retained C convenience entry points may become thin adapters, but there must
-be exactly one production algorithm provider for each migrated operation.
-The interface remains private and version-locked to the compiler.
-
-### 4.2 Storage primitives without managed-container dependencies
-
-- Provide internal borrowed byte regions and raw result storage, distinct
-  from owning `String`/`Array` values; do not implicitly clone or destroy raw
-  addresses.
-- Support byte access, checked offset/length calculations, and bulk copying
-  through explicit compiler primitives or substrate calls. Specify readable
-  and writable extents, null/zero-length behavior, initialization, and
-  non-overlap requirements.
-- Route allocation/release through the existing tracked allocator. Preserve
-  the empty-result storage policy and panic-on-allocation-failure behavior.
-- Reject invalid sizes or overflow before allocation or memory access. A
-  zero-byte operation must not dereference an otherwise permitted null input.
-- Keep minimal panic reporting independent of managed string formatting,
-  concatenation, and heap allocation.
-
-Borrowed byte access follows the scalar binding/object-build slice; owned
-result storage follows before concatenation. Byte storage is enough for the
-first milestone. Typed uninitialized storage, element alignment, and
-copy/move/destroy operations are later container gates; do not expose an
-unrestricted raw-memory API to solve this narrower task.
-
-### 4.3 Ownership and compatibility
-
-- Inputs remain borrowed; successful results acquire exactly one destruction
-  obligation. Result storage is published only after initialization.
-- Existing compiler-generated clone/take/destroy machinery stays responsible
-  for source value semantics. A copied address is not an independent string.
-- Joyeer-allocated string storage must remain releasable by the retained C
-  destroy path, using the same allocator and accounting.
-- Define cleanup for recoverable partial failures. Do not disguise a failed
-  operation as an empty result or silently fall back to the old algorithm.
-- Preserve arbitrary bytes, embedded NUL, byte indexing, independent copies,
-  and current panic/error contracts.
-- Preserve legacy `readFile` behavior and the separate filesystem/process
-  error types. UTF-8 host-path validation must not become content validation.
-
-Custom user `deinit` is not needed while existing ownership hooks remain in
-charge. Later user-defined resource types require a separately completed
-noncopyability/destruction design consistent with
-[the memory model](../spec/04-memory.md).
-
-### 4.4 Object generation and bootstrap
-
-- Use the implemented internal object-only path: explicit sources, no
-  application `main`, no executable link, and no already-built full runtime.
-- Preserve verified IR, source spans, debug information, optimization options,
-  and target identity. Do not turn this into a public binary-module promise.
-- Preserve the existing separation between compiler construction and
-  `JoyeerToolchain` product staging; runtime generation must not acquire a
-  dependency on a compiler target that itself waits for the runtime.
-- Assemble the Joyeer and C objects into the existing static archive. Only
-  then stage a usable compiler/backend/runtime product and build joypm.
-
-```text
-C++ compiler + backend -> joyeer -> runtime Joyeer objects --+
-C compiler ----------------------> native substrate objects +-> runtime archive
-runtime archive + compiler/backend --------------------------> product staging
-staged toolchain --------------------------------------------> joypm / acceptance
-```
-
-Use the newly built compiler, not a previously installed compiler or runtime.
-List runtime sources explicitly, as required by the
-[module input contract](../spec/12-modules.md). No source discovery, mandatory
-Python scripting, external LLVM executables, or new cross-compilation support
-is implied. Keep artifact names and install components unchanged.
-
-## 5. Implementation Phases
-
-The scalar binding and object-build prerequisites are implemented and covered
-by [C interop acceptance](../impl/c-interop.md#5-build-and-acceptance).
-They do not include byte storage or runtime-algorithm migration. Remaining
-phases are:
-
-| Phase | Prerequisites | Deliverables and exit criteria |
+| Phase | Prerequisites | Deliverable and exit criteria |
 |---|---|---|
-| H0: Runtime migration baseline | Implemented binding/object foundation | Inventory the runtime entry points being migrated and their generated dependencies; capture focused behavior/allocation baselines and failure cases before changing providers. |
-| H3: Byte access and leaf string algorithms | H0, implemented binding/object foundation | Specify the required address/byte-region source and lifetime contracts separately, then implement and test borrowed byte access before replacing equality and ordering with Joyeer algorithms. Compile out the corresponding C algorithms, retain necessary adapters, and prove allocation-free behavior, exact comparison results, and absence of recursive runtime dependencies. |
-| H4: Owned string result | H3 | Define allocation, copying, and owned-result transfer contracts, then replace concatenation with checked length calculation, one tracked result-buffer allocation, and bulk copies. Preserve the existing ABI/layout and retained C clone/destroy compatibility; independent-value and boundary tests pass. |
-| H5: Product acceptance | H4 | Validate clean/incremental builds, installation/relocation, joypm bootstrap, Debug/Release behavior, and full native acceptance for each claimed platform/architecture. Update implementation documentation with measured evidence. |
+| H0: Baseline | Binding/object foundation | Inventory migrated entry points and their dependencies; record behavior, allocation, and failure baselines |
+| H3: Byte access, equality, ordering | H0, storage design | Borrowed byte access; Joyeer equality and ordering replace C; C algorithms compiled out; no allocation, exact `-1/0/1`, no recursive dependency |
+| H4: Concatenation | H3 | Checked length, one tracked allocation, bulk copy; layout and C clone/destroy compatible; independence and boundary tests pass |
+| H5: Product acceptance | H4 | Clean and incremental builds, install/relocation, joypm bootstrap, Debug/Release, native acceptance per claimed platform; evidence added to impl docs |
 
-The first milestone ends at H5. It does not require every remaining C
-operation to migrate. The implemented foundation validates only the first
-scalar slice; it does not narrow §19 or establish full scalar ABI
-support. The [follow-up scalar gate](c-interop.md#91-follow-up-scalar-acceptance)
-covers the remaining specified types independently of raw-memory design.
+The milestone ends at H5.
 
-## 6. Validation and Acceptance
+## 7. Acceptance
 
-Extend the existing [tests](../../tests/) rather than adding a parallel test
-framework. Use focused tests during development; final acceptance requires
-default builds and unfiltered CTest with unit tests and joypm enabled, as
-specified in [building](../building.md).
+Extend existing [tests](../../tests/); final gate is default builds plus
+unfiltered CTest with unit tests and joypm enabled ([building](../building.md)).
 
-### Compiler and artifact gates
+**Compiler/artifact**
+- Accepted/rejected bindings, export names, signatures, malformed IR; ordinary
+  diagnostics and ownership checks unweakened.
+- One provider per migrated entry point; no numeric-symbol collisions; no
+  recursive or unexpected runtime dependencies.
+- Archive extraction and Windows whole-archive linking; a retained C algorithm
+  must not mask a missing Joyeer object.
+- Rebuild invalidation, parallel ordering, Debug locations, staging freshness,
+  relocated lookup. No test reference implementation or fallback runtime ships.
 
-- Test accepted/rejected internal bindings, address/ABI types, export names,
-  signatures, storage operations, and malformed IR. Runtime compilation must
-  not weaken ordinary source diagnostics, visibility, or ownership checks.
-- Inspect emitted IR/object definitions and references: one provider per
-  migrated entry point, no application/runtime numeric-symbol collisions, no
-  unexpected high-level runtime dependencies, and no recursive provider path.
-- Test normal archive extraction and Windows whole-archive linking. A
-  retained C algorithm must not mask a missing or unreferenced Joyeer object.
-- Check runtime object dependencies, rebuild invalidation, parallel ordering,
-  Debug source locations, staging freshness, and installed/relocated lookup.
-- Never ship a test reference implementation or a second fallback runtime.
+**Strings/allocation**
+- Cover empty, identical, unequal length, shared prefix, embedded NUL, invalid
+  UTF-8, bytes above `0x7f`, large inputs.
+- Exact concatenated bytes and length; releasing either source leaves the
+  result valid; clone/destroy works in structs, arrays, dictionaries, enums.
+- Overflow and allocation-failure paths are checked, never success-shaped.
+- No allocation for comparison; exactly one for concatenation (including
+  empty); zero balance after cleanup; linear time. Compare against the C
+  baseline before accepting.
 
-### String and allocation gates
+**Host/product**
+- Existing runtime, file-I/O, filesystem, process, host, and joypm gates pass;
+  Unicode paths, native error codes, stderr bytes, exclusive create, process
+  statuses preserved. Legacy `readFile` unchanged.
+- No LLVM/Python dependency in generated programs; packaging unchanged.
+- Fresh native Debug/Release results per platform; one host does not certify
+  another.
 
-- Cover empty inputs, identical values, unequal lengths, shared prefixes,
-  embedded NUL, invalid UTF-8, bytes above `0x7f`, and large inputs.
-  Ordering must return exactly `-1`, `0`, or `1`.
-- Verify concatenated bytes and byte count exactly. Releasing either source
-  must not invalidate the result; retained clone/destroy paths must work in
-  nested structs, arrays, dictionaries, and enum payloads.
-- Exercise the declared invalid-input, overflow, and allocation-failure
-  paths without introducing unchecked memory access or success-shaped errors.
-- Assert no tracked allocations for comparison and exactly one result-buffer
-  allocation for concatenation, including empty results. Use focused test
-  instrumentation if needed: final allocation balance alone does not measure
-  allocation frequency. Require zero balance after normal cleanup.
-- Keep concatenation linear in the combined byte count; do not rebuild
-  prefixes through repeated single-byte strings. Record time/allocation
-  comparisons against the C baseline before accepting the provider change.
+## 8. Follow-ups (not first milestone)
 
-### Host and product regression gates
-
-- Run the existing runtime, file-I/O, filesystem, process, host, and joypm
-  gates. Preserve Unicode path conversion, original native error codes,
-  byte-exact stderr, exclusive file creation, process statuses, and argument
-  boundaries.
-- Preserve link semantics, packaging contents, install components, and the
-  absence of LLVM/Python dependencies in generated programs.
-- Record fresh native Debug/Release results with platform, architecture, and
-  toolchain provenance. One host's results do not certify another platform.
-
-## 7. Follow-up Gates, Not First-Milestone Requirements
-
-- **Additional leaf algorithms:** migrate UTF-8 validation, lexical path
-  algorithms, and numeric formatting where it reduces duplication. Keep
-  Windows/POSIX encoding and path contracts explicit.
-- **String lifecycle:** migrate clone/destruction only after allocator
-  provenance, implicit-copy behavior, and bootstrap-safe cleanup are verified.
-- **Containers:** choose user generics or a bounded internal type-operation
-  mechanism before moving typed storage, growth, lookup, and destruction.
-  Do not replace independent value copies with shallow pointer copies.
-- **Owned OS resources:** complete custom destruction/noncopyability and
-  partial-initialization behavior before exposing long-lived files or sockets.
-- **Source standard library:** follow the
-  [library modules and joypm plan](library.md) for the selected
-  `Foundation`/`System`/`Collections`/`Testing` direction, `src/library/`
-  layout, source-module management, and separate installed-SDK resolution
-  gate. Public library development need not wait for runtime migration.
-  Revisit methods, protocols, formatting, streaming, and other APIs separately.
+- More leaf algorithms: UTF-8 validation, lexical paths, numeric formatting.
+- String clone/destroy, after allocator provenance and bootstrap-safe cleanup.
+- Containers, after generics or an internal type-operation mechanism.
+- Owned OS resources, after custom destruction and noncopyability.
+- Source standard library: see [library](library.md).
 
 Update [runtime](../impl/runtime.md), [strings](../impl/string.md),
-[backend](../impl/backend.md), the
-[implemented surface](../impl/supported-features.md), and relevant
-[build/install documentation](../building.md) as phases actually land.
-Remove completed work from this plan; proposals and planned syntax must never
-be reported as implemented support.
+[backend](../impl/backend.md),
+[supported features](../impl/supported-features.md), and
+[building](../building.md) as phases land.
