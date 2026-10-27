@@ -10,7 +10,7 @@
 
 | # | Feature | Today | Needed for |
 |---|---|---|---|
-| 1 | Constant tables (top-level `let` or equivalent) | No global storage | CRC and Huffman tables, length/distance bases |
+| 1 | [Constant tables](constant-tables.md) (top-level `let`) | Design proposed; no global storage | CRC and Huffman tables, length/distance bases |
 
 Each item needs the usual path: parser, type checking, IR and verifier,
 backend, diagnostics with stable IDs, GoogleTests, and one durable native
