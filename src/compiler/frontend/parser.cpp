@@ -1539,7 +1539,7 @@ Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
         case lessEqual:
         case greater:
         case greaterEqual: return {5, false, true, false};
-        case pipe: return {6, false, false, false};
+        case verticalBar: return {6, false, false, false};
         case caret: return {7, false, false, false};
         case ampersand: return {8, false, false, false};
         case shiftLeft:

@@ -621,7 +621,7 @@ void LexParser::parseOperatorOrPunctuation() {
             } else if (consumeIf('=')) {
                 emit(pipeEqual, start);
             } else {
-                emit(pipe, start);
+                emit(verticalBar, start);
             }
             return;
         case '?':
@@ -798,7 +798,7 @@ bool LexParser::isMvpOperator(TokenKind kind) const {
         case greater:
         case greaterEqual:
         case ampersand:
-        case pipe:
+        case verticalBar:
         case caret:
         case tilde:
         case shiftLeft:

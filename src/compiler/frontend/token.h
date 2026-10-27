@@ -89,7 +89,7 @@ enum TokenKind {
     greater,
     greaterEqual,
     ampersand,
-    pipe,
+    verticalBar,
     caret,
     tilde,
     shiftLeft,

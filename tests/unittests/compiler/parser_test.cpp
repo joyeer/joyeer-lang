@@ -198,7 +198,7 @@ TEST_F(ParserTest, ParsesBitwiseOperatorsWithSpecPrecedence) {
     EXPECT_EQ(equality->op->kind, equalEqual);
     const auto bitOr = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(equality->left);
     ASSERT_NE(bitOr, nullptr);
-    EXPECT_EQ(bitOr->op->kind, pipe);
+    EXPECT_EQ(bitOr->op->kind, verticalBar);
     const auto bitXor = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitOr->right);
     ASSERT_NE(bitXor, nullptr);
     EXPECT_EQ(bitXor->op->kind, caret);

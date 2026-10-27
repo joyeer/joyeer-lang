@@ -1407,7 +1407,7 @@ private:
                 break;
             case percentage:
             case ampersand:
-            case pipe:
+            case verticalBar:
             case caret:
                 if (isInteger(model->typeContext.type(left)->kind) && left == right) return left;
                 break;

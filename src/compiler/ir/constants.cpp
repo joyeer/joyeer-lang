@@ -390,7 +390,7 @@ std::optional<ConstantValue> ConstantEvaluator::evaluateBinary(
             return makeInteger(std::bit_cast<uint64_t>(op == divide ? sa / sb : sa % sb), width);
         }
         case ampersand: return makeInteger(ua & ub, width);
-        case pipe: return makeInteger(ua | ub, width);
+        case verticalBar: return makeInteger(ua | ub, width);
         case caret: return makeInteger(ua ^ ub, width);
         case shiftLeft:
         case shiftRight: {

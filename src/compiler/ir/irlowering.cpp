@@ -1483,7 +1483,7 @@ private:
             case divide: return ir::Opcode::divide;
             case percentage: return ir::Opcode::remainder;
             case ampersand: return ir::Opcode::bitAnd;
-            case pipe: return ir::Opcode::bitOr;
+            case verticalBar: return ir::Opcode::bitOr;
             case caret: return ir::Opcode::bitXor;
             case shiftLeft: return ir::Opcode::shiftLeft;
             case shiftRight: return ir::Opcode::shiftRight;

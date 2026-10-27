@@ -177,7 +177,7 @@ TEST_F(LexerTest, UsesLongestMatchForMvpOperators) {
 TEST_F(LexerTest, ScansBitwiseOperators) {
     lex("& | ^ ~ << >> ||");
 
-    expectKinds({ampersand, pipe, caret, tilde, shiftLeft, greater, greater, orOr, endOfFile});
+    expectKinds({ampersand, verticalBar, caret, tilde, shiftLeft, greater, greater, orOr, endOfFile});
     EXPECT_EQ(source->tokens[5]->span.offset + 1, source->tokens[6]->span.offset);
     EXPECT_TRUE(diagnostics.errors.empty());
 }

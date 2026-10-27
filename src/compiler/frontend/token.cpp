@@ -161,7 +161,7 @@ TokenKind compoundBaseOperator(TokenKind kind) {
     case divideEqual: return divide;
     case percentEqual: return percentage;
     case ampersandEqual: return ampersand;
-    case pipeEqual: return pipe;
+    case pipeEqual: return verticalBar;
     case caretEqual: return caret;
     case shiftLeftEqual: return shiftLeft;
     case shiftRightEqual: return shiftRight;
