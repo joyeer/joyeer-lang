@@ -91,6 +91,44 @@ Contents are still returned whole, and the archive is still held in memory.
 `UnsupportedArchive`, and applies the same size, CRC, limit, ZIP64 and
 local-header checks as `extractZipEntry`.
 
+### Reading ZIP and JAR files from disk
+
+A JAR is a ZIP archive, so the same functions read it. These helpers load a
+file with the host `readFilePrefix` builtin and then use `zipEntries` and
+`readZipEntry`:
+
+```joyeer
+public enum ZipFileError { ReadFailed(FileSystemError), FileTooLarge, Invalid(CompressionError) }
+
+public struct ZipArchive { public let path: String; public let entries: [ZipEntryInfo] /* + bytes */ }
+public struct ZipFileEntry { public let info: ZipEntryInfo; public let contents: [UInt8] }
+
+public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
+    maximumNameBytes: Int): Result<ZipArchive, ZipFileError>
+
+public func readZipArchiveEntry(archive: ZipArchive, entry: ZipEntryInfo,
+    maximumBytes: Int): Result<[UInt8], CompressionError>
+
+public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
+    maximumNameBytes: Int, maximumEntryBytes: Int,
+    maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError>
+```
+
+`openZipFile` reads at most `maximumFileBytes + 1` bytes, so an oversized file
+fails with `FileTooLarge` without being loaded. The whole file is held in
+memory, briefly twice while it is copied into bytes. Visit entries with
+`for`-style loops over `archive.entries` and `readZipArchiveEntry`; skip
+`isDirectory` entries. `readZipFile` reads everything at once, with directories
+returned as empty contents. It enforces `maximumEntryBytes` per entry and
+`maximumTotalBytes` across all contents, and one unreadable entry fails the call.
+
+The helpers live in `Compression`, not `System`, so `System` does not depend on
+the optional native archive. Coverage uses a small jar built by the JDK `jar`
+tool (`tests/library/Compression/fixtures/hello.jar`: manifest, directories, a
+compiled class, an empty file). It was also checked against Python's `zipfile`
+on the JDK's `jrt-fs.jar` (60 entries) and `src.zip` (15,066 entries, 211 MB of
+source), matching entry counts, sizes and successful CRC-checked reads.
+
 An entry is only a description. Its location fields are internal and
 `readZipEntry` re-validates them against the archive bytes (bounds, header
 signature, method, flags, sizes, CRC), so passing an entry from another archive
