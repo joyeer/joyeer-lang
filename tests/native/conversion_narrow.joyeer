@@ -1,0 +1,4 @@
+func main() {
+    let values = [300, 0]
+    print(value: values[0] as UInt8)
+}

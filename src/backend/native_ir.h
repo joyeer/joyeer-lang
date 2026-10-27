@@ -113,6 +113,7 @@ private:
     void trap(llvm::Value* condition, std::string_view message);
     llvm::Value* arithmetic(const ir::Instruction& instruction);
     llvm::Value* shift(const ir::Instruction& instruction);
+    llvm::Value* convert(const ir::Instruction& instruction);
     llvm::Value* comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,
             typing::TypeKind kind = typing::TypeKind::integer);
     llvm::Value* constructEnum(ir::TypeId id, size_t tag, llvm::ArrayRef<llvm::Value*> values);

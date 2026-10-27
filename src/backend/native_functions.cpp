@@ -188,6 +188,8 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::bitXor: result = builder.CreateXor(argument(0), argument(1)); break;
         case Opcode::shiftLeft:
         case Opcode::shiftRight: result = shift(instruction); break;
+        case Opcode::convertChecked:
+        case Opcode::convertWrapping: result = convert(instruction); break;
         case Opcode::call: result = emitCall(instruction); break;
         case Opcode::constructStruct:
             result = llvm::PoisonValue::get(resultType());
@@ -328,6 +330,36 @@ llvm::Value* Builder::arithmetic(const ir::Instruction& instruction) {
             {left, right}, temporary());
     trap(builder.CreateExtractValue(checked, 1, temporary()), "integer " + message + " overflow");
     return builder.CreateExtractValue(checked, 0);
+}
+
+llvm::Value* Builder::convert(const ir::Instruction& instruction) {
+    auto* value = operand(instruction.operands[0]);
+    const auto sourceKind = type(values.at(instruction.operands[0]).type).kind;
+    const auto targetKind = type(instruction.result->type).kind;
+    const bool sourceSigned = typing::isSignedInteger(sourceKind);
+    const bool targetSigned = typing::isSignedInteger(targetKind);
+    auto* targetType = llvmType(instruction.result->type);
+    // Preserves the low bits; widening extends by the source signedness.
+    const auto resize = [this](llvm::Value* input, llvm::Type* to, bool signedSource) -> llvm::Value* {
+        return signedSource ? builder.CreateSExtOrTrunc(input, to, temporary())
+                            : builder.CreateZExtOrTrunc(input, to, temporary());
+    };
+    auto* converted = resize(value, targetType, sourceSigned);
+    if (instruction.opcode == ir::Opcode::convertWrapping) return converted;
+
+    // The value is representable when converting back reproduces it and the
+    // sign did not flip.
+    auto* roundTrip = resize(converted, value->getType(), targetSigned);
+    llvm::Value* outOfRange = builder.CreateICmpNE(roundTrip, value, temporary());
+    if (sourceSigned && !targetSigned) {
+        outOfRange = builder.CreateOr(outOfRange, builder.CreateICmpSLT(
+                value, llvm::ConstantInt::get(value->getType(), 0), temporary()), temporary());
+    } else if (!sourceSigned && targetSigned) {
+        outOfRange = builder.CreateOr(outOfRange, builder.CreateICmpSLT(
+                converted, llvm::ConstantInt::get(targetType, 0), temporary()), temporary());
+    }
+    trap(outOfRange, "integer conversion out of range");
+    return converted;
 }
 
 llvm::Value* Builder::shift(const ir::Instruction& instruction) {

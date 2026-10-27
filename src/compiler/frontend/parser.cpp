@@ -753,7 +753,7 @@ syntax::ExprPtr Parser::parseExpression() {
 }
 
 syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
-    auto left = parsePrefixExpr();
+    auto left = parseCastExpr();
     if (left == nullptr) return nullptr;
 
     int consumedNonAssociativePower = 0;
@@ -811,6 +811,38 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
         }
     }
     return left;
+}
+
+// `x as T` converts with a range check; `x &as T` truncates. Casts bind tighter
+// than binary operators and looser than prefix operators, and the target is a
+// plain type name so a following `<` is a comparison, not generic arguments.
+syntax::ExprPtr Parser::parseCastExpr() {
+    auto expression = parsePrefixExpr();
+    if (expression == nullptr) return nullptr;
+
+    while (!cursor.atEnd() && !cursor.peek()->startsLine) {
+        const bool wrapping = cursor.at(ampersand) && cursor.at(kwAs, 1) &&
+                !cursor.peek(1)->startsLine &&
+                spanEnd(tokenSpan(cursor.peek())) == cursor.peek(1)->span.offset;
+        if (!wrapping && !cursor.at(kwAs)) break;
+
+        auto op = cursor.advance();
+        if (wrapping) {
+            const auto keyword = cursor.advance();
+            op = std::make_shared<Token>(
+                    kwAs, "&as", coveringSpan(tokenSpan(op), tokenSpan(keyword)),
+                    op->lineNumber, op->columnAt, false);
+        }
+        auto name = expect(identifier, "a type name after 'as'");
+        auto target = std::make_shared<syntax::NominalTypeSyntax>(
+                tokenSpan(name), name, std::vector<syntax::TypePtr> {});
+        const SourceSpan span = coveringSpan(expression->span, tokenSpan(name));
+        auto cast = std::make_shared<syntax::PrefixExprSyntax>(
+                span, std::move(op), std::move(expression));
+        cast->castTarget = std::move(target);
+        expression = std::move(cast);
+    }
+    return expression;
 }
 
 syntax::ExprPtr Parser::parsePrefixExpr() {

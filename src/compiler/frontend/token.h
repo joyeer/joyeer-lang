@@ -56,6 +56,7 @@ enum TokenKind {
     kwPublic,
     kwInternal,
     kwPrivate,
+    kwAs,
 
     leftCurly,
     rightCurly,

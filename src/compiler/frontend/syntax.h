@@ -420,6 +420,9 @@ struct PrefixExprSyntax final : ExprSyntax {
 
     Token::Ptr op;
     ExprPtr operand;
+    // Set only for `x as T` and `x &as T`: a cast is a one-operand expression,
+    // so it shares this node and every analysis that already visits `operand`.
+    TypePtr castTarget;
 
     PrefixExprSyntax(SourceSpan span, Token::Ptr op, ExprPtr operand):
             ExprSyntax(Kind::prefixExpr, span),

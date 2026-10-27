@@ -165,6 +165,13 @@ TEST_F(LexerTest, ScansBitwiseOperators) {
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
+TEST_F(LexerTest, ScansAsKeywordAndWrappingCastSpelling) {
+    lex("as &as");
+
+    expectKinds({kwAs, ampersand, kwAs, endOfFile});
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
 TEST_F(LexerTest, ClassifiesLogicalAndDivisionOperators) {
     lex("! != || / %");
 

@@ -219,6 +219,37 @@ TEST_F(ParserTest, ParsesBitwiseOperatorsWithSpecPrecedence) {
     EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::PrefixExprSyntax>(inverted->initializer)->op->kind, tilde);
 }
 
+TEST_F(ParserTest, ParsesCastsBetweenPrefixAndBinaryOperators) {
+    parse("let value = a + -b as UInt32 << 8\nlet wrapped = c &as UInt8 < d\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    const auto shift = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(shift, nullptr);
+    EXPECT_EQ(shift->op->kind, shiftLeft);
+    const auto sum = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(shift->left);
+    ASSERT_NE(sum, nullptr);
+    EXPECT_EQ(sum->op->kind, plus);
+    // The cast applies to the negated operand: (-b) as UInt32.
+    const auto cast = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(sum->right);
+    ASSERT_NE(cast, nullptr);
+    ASSERT_NE(cast->castTarget, nullptr);
+    EXPECT_EQ(cast->op->kind, kwAs);
+    EXPECT_EQ(cast->operand->kind, Kind::prefixExpr);
+
+    const auto second = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[1]);
+    const auto comparison = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            second->initializer);
+    ASSERT_NE(comparison, nullptr);
+    EXPECT_EQ(comparison->op->kind, less);
+    const auto wrapping = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(comparison->left);
+    ASSERT_NE(wrapping, nullptr);
+    EXPECT_EQ(wrapping->op->rawValue, "&as");
+}
+
 TEST_F(ParserTest, ParsesLogicalOperatorsWithSpecPrecedence) {
     parse("let value = target = !a || b && c == d < e + f * g\n");
 

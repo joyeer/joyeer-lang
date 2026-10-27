@@ -53,8 +53,8 @@ performs binding and exhaustiveness checks (§7).
 > `struct` for aggregates. The other reserved words are also rejected in
 > v0.1 (§15).
 
-> `as` is reserved for future import aliases and type casts (`x as T`).
-> Neither use is accepted by the implemented module/import grammar (§12).
+> `as` introduces an integer conversion (`x as T`, `x &as T`, §5.2.1). It is not
+> accepted in the module/import grammar (§12); import aliases remain reserved.
 > The `is` type-test operator is also deferred (§15).
 
 ### 1.5 Literals

@@ -1313,8 +1313,31 @@ private:
         return operandType->arguments[0];
     }
 
+    TypeId checkCast(const syntax::PrefixExprSyntax::Ptr& expression) {
+        const auto target = resolveType(expression->castTarget).value_or(
+                model->typeContext.errorType());
+        if (target == model->typeContext.errorType()) return target;
+        if (!isInteger(model->typeContext.type(target)->kind)) {
+            reportInvalidOperator(expression->op, { target }, expression->span);
+            return model->typeContext.errorType();
+        }
+        // A literal operand takes the target type, so out-of-range literals
+        // are compile-time errors rather than run-time traps.
+        const auto operand = isNumericLiteral(expression->operand)
+                ? checkExpression(expression->operand, target)
+                : checkExpression(expression->operand);
+        const auto operandType = operand.value_or(model->typeContext.errorType());
+        if (operandType == model->typeContext.errorType()) return operandType;
+        if (!isInteger(model->typeContext.type(operandType)->kind)) {
+            reportInvalidOperator(expression->op, { operandType, target }, expression->span);
+            return model->typeContext.errorType();
+        }
+        return target;
+    }
+
     TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
+        if (expression->castTarget != nullptr) return checkCast(expression);
         if (expression->op != nullptr && expression->op->kind == minus &&
                 expression->operand->kind == syntax::Kind::literalExpr) {
             const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression->operand);

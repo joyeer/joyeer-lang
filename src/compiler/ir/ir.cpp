@@ -52,6 +52,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::bitXor:
         case Opcode::shiftLeft:
         case Opcode::shiftRight:
+        case Opcode::convertChecked:
+        case Opcode::convertWrapping:
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
@@ -1521,6 +1523,25 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::convertChecked:
+                    case Opcode::convertWrapping:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value()) {
+                            const auto* source = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            const auto* target = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type) : nullptr;
+                            if (operands[0]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                source == nullptr || target == nullptr ||
+                                !typing::isInteger(source->kind) || !typing::isInteger(target->kind)) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "integer conversion requires integer operand and result values");
+                            }
+                        }
+                        break;
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
@@ -2124,6 +2145,8 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::bitXor: return "bit_xor";
         case Opcode::shiftLeft: return "shl";
         case Opcode::shiftRight: return "shr";
+        case Opcode::convertChecked: return "convert";
+        case Opcode::convertWrapping: return "convert_wrapping";
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
@@ -2374,6 +2397,8 @@ std::string dump(const Module& module) {
                     case Opcode::copyValue:
                     case Opcode::take:
                     case Opcode::destroy:
+                    case Opcode::convertChecked:
+                    case Opcode::convertWrapping:
                     case Opcode::returnValue:
                         if (!instruction.operands.empty()) {
                             out << ' ' << valueName(instruction.operands[0]);

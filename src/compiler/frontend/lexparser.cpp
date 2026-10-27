@@ -764,6 +764,7 @@ bool LexParser::isMvpKeyword(TokenKind kind) const {
         case kwPublic:
         case kwInternal:
         case kwPrivate:
+        case kwAs:
             return true;
         default:
             return false;

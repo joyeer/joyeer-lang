@@ -1042,6 +1042,22 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
+            NativeIntegerConversions integer_conversions
+            "300
+200
+-5
+251
+4294967291
+69
+9029
+74565
+-1
+18446744073709551615
+43981
+255
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
             NativeRadixLiterals radix_literals
             "255
 3988292384
@@ -1107,6 +1123,12 @@ true
             NativeBitwiseShiftOverflow bitwise_shift_overflow "integer shift count out of range")
     add_joyeer_native_checked_trap(
             NativeBitwiseShiftNegative bitwise_shift_negative "integer shift count out of range")
+    add_joyeer_native_checked_trap(
+            NativeConversionNegative conversion_negative "integer conversion out of range")
+    add_joyeer_native_checked_trap(
+            NativeConversionNarrow conversion_narrow "integer conversion out of range")
+    add_joyeer_native_checked_trap(
+            NativeConversionUnsignedHigh conversion_unsigned_high "integer conversion out of range")
     add_joyeer_native_checked_trap(
             NativeCheckedRemainderZero checked_remainder_zero "integer remainder by zero")
     add_joyeer_native_checked_trap(

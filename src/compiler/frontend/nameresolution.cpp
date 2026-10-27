@@ -414,9 +414,12 @@ private:
             case Kind::parenthesizedExpr:
                 indexNode(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(node)->expression);
                 break;
-            case Kind::prefixExpr:
-                indexNode(std::static_pointer_cast<syntax::PrefixExprSyntax>(node)->operand);
+            case Kind::prefixExpr: {
+                const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(node);
+                indexNode(prefix->operand);
+                if (prefix->castTarget != nullptr) indexNode(prefix->castTarget);
                 break;
+            }
             case Kind::accessExpr:
                 indexNode(std::static_pointer_cast<syntax::AccessExprSyntax>(node)->operand);
                 break;
@@ -1447,11 +1450,12 @@ private:
                         std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression,
                         currentScope);
                 break;
-            case syntax::Kind::prefixExpr:
-                resolveExpression(
-                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
-                        currentScope);
+            case syntax::Kind::prefixExpr: {
+                const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(expression);
+                resolveExpression(prefix->operand, currentScope);
+                if (prefix->castTarget != nullptr) resolveType(prefix->castTarget, currentScope);
                 break;
+            }
             case syntax::Kind::accessExpr:
                 resolveExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,

@@ -81,8 +81,10 @@ in any integer literal and in the integer part of a floating literal, but may
 not lead, trail, or repeat. Radix literals use the same range checks as decimal
 and take the sign from a preceding unary `-`. Values of different numeric types are not implicitly converted;
 `Int`/`Int64` and `UInt`/`UInt64` remain distinct source types despite matching
-C representations. Explicit casts and general numeric conversion APIs remain
-outside this implementation.
+C representations. `x as T` converts between integer types and traps when the
+value does not fit; `x &as T` truncates or extends without trapping. Literal
+operands take the target type. Floating-point and non-numeric conversions
+remain outside this implementation.
 
 Signed integer arithmetic traps on overflow at every optimization level.
 Unsigned addition/subtraction/multiplication wrap modulo their width.
@@ -131,7 +133,7 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.
 - General tuples or tuple destructuring.
-- `for-in`, labeled loop exits, compound assignment, `is` / `as`,
+- `for-in`, labeled loop exits, compound assignment, `is`,
   match guards, range patterns, or alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. Optional
   types use `T?`; postfix `?` propagates only between the same `Result` error

@@ -780,6 +780,29 @@ TEST_F(TypeCheckingTest, RejectsBitwiseOperatorsOnNonIntegersOrMixedTypes) {
     }
 }
 
+TEST_F(TypeCheckingTest, AcceptsIntegerConversions) {
+    check(R"JOYEER(func run(a: Int, b: UInt8, c: Int8) {
+    let x: UInt32 = a as UInt32
+    let y: Int = b as Int
+    let z: UInt8 = c &as UInt8
+    let w: UInt8 = 255 as UInt8
+    let v: Int64 = a as Int64
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidConversions) {
+    for (const auto* expression : { "1.5 as Int", "true as Int", "a as Bool", "a as String",
+                                    "300 as UInt8", "-1 as UInt", "f as Int" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(a: Int, f: Double) { let value = " +
+                std::string(expression) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
 TEST_F(TypeCheckingTest, LoopExitBranchesAndLogicalOperandsCanDiverge) {
     check(R"JOYEER(func run(flag: Bool) {
 while if flag { break } else { true } {

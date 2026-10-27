@@ -104,6 +104,7 @@ private:
 
     syntax::ExprPtr parseExpression();
     syntax::ExprPtr parsePrecedence(int minimumBindingPower);
+    syntax::ExprPtr parseCastExpr();
     syntax::ExprPtr parsePrefixExpr();
     syntax::ExprPtr parsePostfixExpr();
     syntax::ExprPtr parsePrimaryExpr();

@@ -72,6 +72,8 @@ enum class Opcode {
     bitXor,
     shiftLeft,
     shiftRight,
+    convertChecked,
+    convertWrapping,
 
     call,
     constructStruct,

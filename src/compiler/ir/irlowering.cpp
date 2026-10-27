@@ -1125,6 +1125,16 @@ private:
         const auto operand = lowerExpression(expression->operand);
         if (currentBlockTerminated()) return std::nullopt;
         if (!operand.has_value() || !type.has_value()) return std::nullopt;
+        if (expression->castTarget != nullptr) {
+            if (operand->type == *type) return operand;
+            return emitValue(
+                    expression->op->rawValue == "&as"
+                            ? ir::Opcode::convertWrapping : ir::Opcode::convertChecked,
+                    *type,
+                    ir::ValueCategory::value,
+                    { operand->id },
+                    expression->span);
+        }
         if (expression->op != nullptr && expression->op->kind == bang) {
             auto constant = makeInstruction(ir::Opcode::booleanConstant, expression->op->span);
             constant.integerValue = 0;
