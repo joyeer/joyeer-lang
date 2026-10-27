@@ -604,6 +604,7 @@ LinkResult Linker::link(
     std::vector<std::string> lldArguments {
         "clang",
         "-fuse-ld=lld",
+        "-no-pie",
         objectPath,
         "-o",
         outputPath,
