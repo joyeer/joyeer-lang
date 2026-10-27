@@ -72,8 +72,9 @@ then reported with stable `lexer.*` IDs.
 
 The lexer emits `!` without deciding whether it is prefix or postfix. The
 parser accepts prefix negation and rejects postfix force unwrap. `break` and
-`continue` are no longer deferred words; labeled jumps and `for-in` remain
-outside the implemented grammar.
+`continue`, `for` and `in` are no longer deferred words; labeled jumps remain
+outside the implemented grammar. `..<` and `...` are range operators, accepted
+by the parser only as the source of a `for` loop.
 
 ## Invalid input and recovery
 

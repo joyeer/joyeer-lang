@@ -273,6 +273,39 @@ TEST_F(ParserTest, ParsesCompoundAssignmentsAsRightAssociativeAssignments) {
     EXPECT_EQ(third->target->kind, Kind::accessExpr);
 }
 
+TEST_F(ParserTest, ParsesForInLoopsAsHiddenBindingsAndAWhile) {
+    parse("func run(items: [Int]) {\nfor x in items {\nprint(value: x)\n}\n"
+          "for i in 0..<3 { }\nfor _ in 1...2 { }\n}\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    const auto& items = function->body->items;
+    // Sequence loop: 2 hidden bindings + while. Exclusive range: 3 + while.
+    // Inclusive range: 4 + while.
+    ASSERT_EQ(items.size(), 2u + 1u + 3u + 1u + 4u + 1u);
+    EXPECT_EQ(items[0]->kind, Kind::bindingDecl);
+    EXPECT_EQ(items[2]->kind, Kind::whileStmt);
+    const auto loop = std::static_pointer_cast<joyeer::syntax::WhileStmtSyntax>(items[2]);
+    // counter advance, the loop variable, then the original body statement
+    ASSERT_EQ(loop->body->items.size(), 3u);
+    EXPECT_EQ(loop->body->items[0]->kind, Kind::assignmentExpr);
+    EXPECT_EQ(loop->body->items[1]->kind, Kind::bindingDecl);
+    EXPECT_EQ(loop->body->items[2]->kind, Kind::callExpr);
+    const auto name = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(loop->body->items[1]);
+    EXPECT_EQ(name->name->rawValue, "x");
+    const auto first = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(items[0]);
+    EXPECT_EQ(first->name->rawValue, "$for1");
+}
+
+TEST_F(ParserTest, DiagnosesInvalidForInHeaders) {
+    for (const auto* header : { "for &x in a { }", "for 1 in a { }", "for x a { }" }) {
+        SCOPED_TRACE(header);
+        parse(std::string("func run(a: [Int]) {\n") + header + "\n}\n");
+        EXPECT_FALSE(result.succeeded());
+    }
+}
+
 TEST_F(ParserTest, ParsesLogicalOperatorsWithSpecPrecedence) {
     parse("let value = target = !a || b && c == d < e + f * g\n");
 

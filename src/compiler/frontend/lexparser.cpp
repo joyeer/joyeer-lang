@@ -532,6 +532,19 @@ void LexParser::parseOperatorOrPunctuation() {
         case ':': emit(colon, start); return;
         case ',': emit(comma, start); return;
         case '.':
+            // `..<` and `...` are the range operators used by for-in loops.
+            if (peek() == '.' && peek(1) == '<') {
+                advance();
+                advance();
+                emit(dotDotLess, start);
+                return;
+            }
+            if (peek() == '.' && peek(1) == '.') {
+                advance();
+                advance();
+                emit(dotDotDot, start);
+                return;
+            }
             if (peek() == '.' || isDigit(peek())) {
                 while (peek() == '.' || isDigit(peek())) {
                     advance();
@@ -744,6 +757,8 @@ bool LexParser::isMvpKeyword(TokenKind kind) const {
         case kwIf:
         case kwElse:
         case kwWhile:
+        case kwFor:
+        case kwIn:
         case kwBreak:
         case kwContinue:
         case kwReturn:
@@ -798,6 +813,8 @@ bool LexParser::isMvpOperator(TokenKind kind) const {
         case caretEqual:
         case shiftLeftEqual:
         case shiftRightEqual:
+        case dotDotLess:
+        case dotDotDot:
             return true;
         default:
             return false;

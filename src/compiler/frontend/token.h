@@ -103,7 +103,9 @@ enum TokenKind {
     pipeEqual,
     caretEqual,
     shiftLeftEqual,
-    shiftRightEqual
+    shiftRightEqual,
+    dotDotLess,
+    dotDotDot
 };
 
 // The binary operator a compound assignment token applies, or `invalid` if

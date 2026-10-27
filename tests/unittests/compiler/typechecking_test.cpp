@@ -846,6 +846,33 @@ TEST_F(TypeCheckingTest, RejectsCompoundAssignmentToDictionaryElements) {
     EXPECT_FALSE(checking.succeeded());
 }
 
+TEST_F(TypeCheckingTest, AcceptsForInOverArraysAndRanges) {
+    check(R"JOYEER(struct Box { let value: Int }
+func run(items: [String], limit: UInt8) {
+    var total = 0
+    for item in items { print(value: item) }
+    for box in [Box(value: 1)] { total += box.value }
+    for i in 0..<10 { total += i }
+    for i in 1...total { total += i }
+    for k in 0..<limit { print(value: k) }
+    for byte in "abc" { print(value: byte) }
+    for _ in 0..<3 { }
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidForInUses) {
+    for (const auto* statement : { "for x in 5 { }", "for x in [1] { x = 2 }",
+                                   "for k in 0..<limit { let n: Int = k }",
+                                   "for s in \"a\"..<\"c\" { }", "for x in [1] { break }\nbreak" }) {
+        SCOPED_TRACE(statement);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(limit: UInt8) {\n" + std::string(statement) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
 TEST_F(TypeCheckingTest, LoopExitBranchesAndLogicalOperandsCanDiverge) {
     check(R"JOYEER(func run(flag: Bool) {
 while if flag { break } else { true } {

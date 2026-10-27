@@ -128,11 +128,28 @@ TEST_F(LexerTest, ClassifiesAnnotationPunctuationAndNames) {
 }
 
 TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
-    lex("for where yield performs pure");
+    lex("where yield defer performs pure");
 
     expectKinds({deferredKeyword, deferredKeyword, deferredKeyword,
                  identifier, identifier, endOfFile});
     ASSERT_EQ(diagnostics.errors.size(), 3u);
+}
+
+TEST_F(LexerTest, ScansForInKeywordsAndRangeOperators) {
+    lex("for x in 0..<3 for y in 1...n 1...3 a.b");
+
+    expectKinds({kwFor, identifier, kwIn, decimalLiteral, dotDotLess, decimalLiteral,
+                 kwFor, identifier, kwIn, decimalLiteral, dotDotDot, identifier,
+                 decimalLiteral, dotDotDot, decimalLiteral,
+                 identifier, dot, identifier, endOfFile});
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, StillRejectsMalformedDotSequences) {
+    lex(".5 ..");
+
+    expectKinds({invalid, invalid, endOfFile});
+    EXPECT_EQ(diagnostics.errors.size(), 2u);
 }
 
 TEST_F(LexerTest, ClassifiesModuleKeywords) {

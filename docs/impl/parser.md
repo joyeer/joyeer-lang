@@ -48,7 +48,7 @@ it to a supplied module rather than traversing folders or implicit submodules.
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, `for-in`, extensions, explicit `init` / `deinit`, methods,
+- `class`, extensions, explicit `init` / `deinit`, methods,
   subscript declarations, or user-defined generics;
 - `mutating`, `indirect`,
   `where`, or `yield`;
@@ -673,3 +673,16 @@ ctest --test-dir build --output-on-failure -L parser
 
 A source file parsing successfully does not imply that it is fully typed or
 executable. Run the complete unfiltered CTest suite for the final gate.
+
+## for-in lowering
+
+`for x in source { body }` is rewritten by the parser into hidden bindings and a
+`while` loop, so name resolution, type checking, analysis and IR lowering see
+only constructs they already support. Hidden names start with `$for` and cannot
+be written in source. A sequence loop copies the source once into a hidden
+`let`, advances a hidden index at the top of each iteration (so `continue` is
+correct), and binds the loop variable to `$for1[$for1i]`. A range loop keeps
+hidden `next` and `end` variables; an inclusive range tracks a hidden `more`
+flag so the last value never computes `end + 1`. Type errors in a malformed
+source (for example `for x in 5`) are therefore reported on the synthesized
+`.count` and subscript.

@@ -170,7 +170,7 @@ TokenKind compoundBaseOperator(TokenKind kind) {
 }
 
 bool isOperatorKind(TokenKind kind) {
-  return kind >= equal && kind <= shiftRightEqual;
+  return kind >= equal && kind <= dotDotDot;
 }
 
 bool tokenKindMatches(TokenKind actual, TokenKind expected) {
