@@ -432,7 +432,7 @@ no raw/opaque address type, address-taking or dereference syntax, nullable
 address representation, or public pointer API. `unsafe` remains reserved
 (§15); a future block or pointer spelling is not selected here.
 
-The [deferred memory-boundary proposal](../plan/c-interop.md#8-memory-errors-and-the-next-slice)
+The [deferred memory-boundary proposal](../plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 must settle byte extents, read/write access, nullability, output
 initialization, retention, and allocator ownership before any address
 mechanism is admitted. Ordinary access effects, `Optional`, and managed

@@ -263,7 +263,7 @@ native ARM64 Release gate for the new layout is open despite the retained
 Hardware, process, MSVC/LLVM architecture,
 and PE headers were independently recorded. See the
 [implementation evidence](impl/joypm.md#5-validation-evidence) and
-[remaining platform gates](plan/package-manager.md#3-native-platform-validation).
+[remaining platform gates](plan/package-manager.md#4-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh
 Debug/Release trees; registration or another target's pass is not acceptance.
 

@@ -362,7 +362,7 @@ output parameters, and owned native result storage need a separate accepted
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 
-The [memory-boundary proposal](../plan/c-interop.md#8-memory-errors-and-the-next-slice)
+The [memory-boundary proposal](../plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 tracks those decisions separately, including whether a mechanism remains
 runtime-only. It is not an implicit approval of `Optional` pointer layouts,
 C-compatible ordinary structs, callbacks, variadic calls, or a general
