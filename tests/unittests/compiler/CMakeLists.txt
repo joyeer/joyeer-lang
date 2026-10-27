@@ -1058,6 +1058,25 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
+            NativeConstantTables constant_tables
+            "3421780262
+256
+755167117
+17
+6
+beta
+6
+hello, constants
+true
+100000
+99
+2
+42
+3
+114
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
             NativeRadixLiterals radix_literals
             "255
 3988292384

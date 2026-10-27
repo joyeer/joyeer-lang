@@ -64,6 +64,7 @@ private:
     std::unordered_map<ir::DebugScopeId, llvm::DILocalScope*> debugScopes;
     std::unordered_map<ir::DebugVariableId, llvm::DILocalVariable*> debugVariables;
     std::map<std::pair<llvm::DILocalScope*, uint32_t>, llvm::DILocalScope*> debugFileScopes;
+    std::unordered_map<uint32_t, llvm::Constant*> constantArrays;
     size_t nextString = 0;
     size_t nextTemporary = 0;
 
@@ -99,6 +100,8 @@ private:
     llvm::Value* payload(llvm::Type* type, llvm::Value* address, size_t offset = 0);
     llvm::Value* bytes(llvm::Value* address, llvm::Value* offset);
     llvm::Value* stringLiteral(std::string_view text, bool terminate = false);
+    llvm::Constant* constantArray(const ir::Constant& constant);
+    llvm::Constant* decodeConstant(ir::TypeId id, const std::string& data, size_t& offset);
     llvm::Value* helper(ir::TypeId id, bool clone);
     void emitOwnership();
     void emitClone(ir::TypeId id);

@@ -74,6 +74,7 @@ enum class Opcode {
     shiftRight,
     convertChecked,
     convertWrapping,
+    constantValue,
 
     call,
     constructStruct,
@@ -262,12 +263,24 @@ struct EnumerationDefinition {
     std::vector<EnumCaseDefinition> cases;
 };
 
+// Read-only array data shared by every use of one top-level constant. `data`
+// uses the compiler's constant encoding: little-endian scalars, and strings and
+// arrays prefixed by a 64-bit length, nested by the element type.
+struct Constant {
+    uint32_t id = 0;
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    TypeId type = typing::invalidTypeId;
+    std::string name;
+    std::string data;
+};
+
 struct Module {
     std::string sourceName;
     std::vector<TypeName> types;
     std::vector<StructureDefinition> structures;
     std::vector<EnumerationDefinition> enumerations;
     std::vector<Function> functions;
+    std::vector<Constant> constants;
     std::optional<SourceInfo> sourceInfo;
     std::vector<DebugScope> debugScopes;
     std::vector<DebugVariable> debugVariables;

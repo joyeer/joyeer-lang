@@ -34,6 +34,8 @@ add_library(JoyeerCompilerCore OBJECT
 	frontend/token.h
 	frontend/typechecking.cpp
 	frontend/typechecking.h
+	ir/constants.cpp
+	ir/constants.h
 	ir/ir.cpp
 	ir/ir.h
 	ir/irlowering.cpp

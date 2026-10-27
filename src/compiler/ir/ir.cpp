@@ -54,6 +54,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::shiftRight:
         case Opcode::convertChecked:
         case Opcode::convertWrapping:
+        case Opcode::constantValue:
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
@@ -1336,6 +1337,21 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::constantValue: {
+                        requireShape(0, 0);
+                        const auto index = static_cast<uint64_t>(instruction.integerValue);
+                        if (!instruction.result.has_value() ||
+                            instruction.result->category != ValueCategory::value ||
+                            index >= module.constants.size() ||
+                            module.constants[index].type != instruction.result->type ||
+                            module.constants[index].data.empty()) {
+                            report(
+                                    VerificationErrorId::invalidInstruction,
+                                    functionId, block.id, location,
+                                    "constant reference must name a module constant of the result type");
+                        }
+                        break;
+                    }
                     case Opcode::integerConstant:
                     case Opcode::floatingConstant:
                     case Opcode::booleanConstant:
@@ -2147,6 +2163,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::shiftRight: return "shr";
         case Opcode::convertChecked: return "convert";
         case Opcode::convertWrapping: return "convert_wrapping";
+        case Opcode::constantValue: return "constant";
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
@@ -2383,6 +2400,9 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::floatingConstant:
                         out << ' ' << instruction.text;
+                        break;
+                    case Opcode::constantValue:
+                        out << " #" << instruction.integerValue;
                         break;
                     case Opcode::stringConstant:
                         out << " \"" << escape(instruction.text) << "\"";

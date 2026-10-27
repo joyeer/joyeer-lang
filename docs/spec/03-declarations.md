@@ -20,6 +20,32 @@ var count: Int = 0
 let (x, y) = somePair        // tuple destructuring
 ```
 
+#### 3.1.1 Top-level constants
+
+A top-level `let` declares a **compile-time constant**:
+
+```joyeer
+public let polynomial: UInt32 = 0xEDB8_8320
+let table: [UInt32] = [0, 0x7707_3096, 0xEE0E_612C]
+```
+
+- Only `let` is allowed at the top level, and the type annotation is required.
+- The type is `Bool`, an integer type, `Float`, `Double`, `String`, or an array
+  of those (arrays may nest). Structs, enums, dictionaries and optionals are
+  not supported.
+- The initializer is evaluated by the compiler. It may use literals, array
+  literals, prefix and binary operators, `as` and `&as`, and other constants,
+  in any declaration order. Function calls, `if` and `match` are not allowed.
+  Cyclic references are an error.
+- Overflow, division by zero, a shift count out of range, or an out-of-range
+  `as` in a constant is a compile-time error, never a run-time trap.
+- Array data is limited to 1 MiB per constant (8-byte length prefixes and
+  nested lengths included).
+- A use borrows the constant without copying. Binding it to a `var` or passing
+  it to a `consuming` parameter makes an ordinary independent copy.
+- Visibility follows §12: a `public` constant can be used from importing
+  modules by short or qualified name.
+
 ### 3.2 Function declarations
 
 ```

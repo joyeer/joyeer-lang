@@ -64,6 +64,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 | Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
+| Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
@@ -129,7 +130,7 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   asynchronous/concurrent functions.
 - User-defined `init` / `deinit` bodies, explicit copy initializers, or
   user-defined accessors.
-- Top-level executable statements or global storage, import aliases,
+- Top-level executable statements, mutable global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.
 - General tuples or tuple destructuring.

@@ -28,7 +28,7 @@ static int checkModuleInputs(void) {
     static const char truncated[] = {0, 0, 0, 0, 0, 0, 0, 0};
     JoyeerBackendModuleOptions options = {
     JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendModuleOptions),
-    5, truncated, sizeof(truncated), JOYEER_BACKEND_O0, 0, 0, 0,
+    6, truncated, sizeof(truncated), JOYEER_BACKEND_O0, 0, 0, 0,
     };
     diagnosticSeen = 0;
     if (joyeer_backend_build_module(&options, &module, collectIRDiagnostic, NULL) !=

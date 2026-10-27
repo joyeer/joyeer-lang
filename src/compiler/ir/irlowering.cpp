@@ -1,9 +1,11 @@
 #include "irlowering.h"
+#include "constants.h"
 #include "compiler/frontend/hostbuiltins.h"
 
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstdio>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -100,6 +102,15 @@ private:
     std::optional<ir::DestructionAnalysis> destruction;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
+    // Top-level `let` constants, evaluated at compile time. Scalars and strings
+    // fold into each use; arrays become shared module constants.
+    std::unordered_map<semantic::SymbolId, syntax::BindingDeclSyntax::Ptr> constantDeclarations;
+    std::vector<semantic::SymbolId> constantOrder;
+    // Every top-level binding, valid or not, so a rejected one is reported only once.
+    std::unordered_set<semantic::SymbolId> topLevelBindings;
+    std::unordered_set<semantic::SymbolId> failedConstants;
+    std::unordered_map<semantic::SymbolId, uint32_t> constantIds;
+    std::optional<ConstantEvaluator> constantEvaluator;
     std::unordered_map<semantic::ScopeId, ir::DebugScopeId> debugScopes;
     std::unordered_map<semantic::SymbolId, ir::DebugVariableId> debugVariables;
     std::unordered_map<semantic::SymbolId, ir::Value> slots;
@@ -536,12 +547,131 @@ private:
             if (item->kind == syntax::Kind::functionDecl) {
                 collectFunction(std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
             } else if (item->kind == syntax::Kind::bindingDecl) {
-                report(
-                        DiagnosticId::unsupportedSyntax,
-                        item->span,
-                        "top-level bindings are not supported by primitive IR lowering");
+                collectConstant(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
             }
         }
+        evaluateConstants();
+    }
+
+    bool isConstantType(typing::TypeId id) const {
+        const auto* type = model->types().type(id);
+        if (type == nullptr) return false;
+        if (type->kind == typing::TypeKind::array) {
+            return type->arguments.size() == 1 && isConstantType(type->arguments.front());
+        }
+        return typing::isNativeScalar(type->kind) || type->kind == typing::TypeKind::string;
+    }
+
+    void collectConstant(const syntax::BindingDeclSyntax::Ptr& declaration) {
+        const auto symbol = model->semanticModel()->declaredSymbol(declaration);
+        if (!symbol.has_value()) return;
+        topLevelBindings.insert(*symbol);
+        if (declaration->isMutable()) {
+            report(DiagnosticId::invalidConstant, declaration->span,
+                    "top-level 'var' is not supported; declare an immutable 'let' constant");
+            return;
+        }
+        if (declaration->annotation == nullptr) {
+            report(DiagnosticId::invalidConstant, declaration->span,
+                    "a top-level constant requires an explicit type");
+            return;
+        }
+        const auto type = model->typeOf(*symbol);
+        if (declaration->initializer == nullptr || !type.has_value() || !isConstantType(*type)) {
+            report(DiagnosticId::invalidConstant, declaration->span,
+                    "a top-level constant must be a Bool, number, String, or array of those, "
+                    "with an initializer");
+            return;
+        }
+        constantDeclarations.emplace(*symbol, declaration);
+        constantOrder.push_back(*symbol);
+    }
+
+    void evaluateConstants() {
+        if (constantOrder.empty()) return;
+        constantEvaluator.emplace(
+                model,
+                [this](semantic::SymbolId symbol) -> syntax::ExprPtr {
+                    const auto found = constantDeclarations.find(symbol);
+                    return found == constantDeclarations.end() ? nullptr : found->second->initializer;
+                },
+                [this](SourceSpan span, std::string message) {
+                    report(DiagnosticId::invalidConstant, span, std::move(message));
+                });
+        // Evaluate every constant, used or not, so an invalid one is always reported.
+        for (const auto symbol : constantOrder) {
+            const auto& declaration = constantDeclarations.at(symbol);
+            const auto value = constantEvaluator->evaluateSymbol(symbol, declaration->span);
+            const auto type = model->typeOf(symbol);
+            // Encoding enforces the size limit, so an oversized table fails here once.
+            if (!value.has_value() ||
+                (model->types().type(*type)->kind == typing::TypeKind::array &&
+                 !constantEvaluator->encode(*value, *type, declaration->span).has_value())) {
+                failedConstants.insert(symbol);
+            }
+        }
+    }
+
+    std::optional<ir::Value> lowerConstant(semantic::SymbolId symbol, SourceSpan span) {
+        const auto type = model->typeOf(symbol);
+        if (!type.has_value()) {
+            report(DiagnosticId::missingType, span, "constant has no resolved type");
+            return std::nullopt;
+        }
+        if (failedConstants.contains(symbol)) return std::nullopt;
+        const auto value = constantEvaluator->evaluateSymbol(symbol, span);
+        if (!value.has_value()) return std::nullopt;
+
+        const auto kind = model->types().type(*type)->kind;
+        ir::Opcode opcode = ir::Opcode::integerConstant;
+        auto instruction = makeInstruction(opcode, span);
+        if (kind == typing::TypeKind::array) {
+            auto found = constantIds.find(symbol);
+            if (found == constantIds.end()) {
+                const auto encoded = constantEvaluator->encode(*value, *type, span);
+                if (!encoded.has_value()) {
+                    failedConstants.insert(symbol);
+                    return std::nullopt;
+                }
+                ir::Constant constant;
+                constant.id = static_cast<uint32_t>(module->constants.size());
+                constant.symbol = symbol;
+                constant.type = *type;
+                constant.name = model->semanticModel()->symbol(symbol)->name;
+                constant.data = *encoded;
+                module->constants.push_back(std::move(constant));
+                found = constantIds.emplace(symbol, module->constants.back().id).first;
+            }
+            instruction.opcode = ir::Opcode::constantValue;
+            instruction.integerValue = found->second;
+        } else if (kind == typing::TypeKind::string) {
+            instruction.opcode = ir::Opcode::stringConstant;
+            instruction.text = value->text;
+        } else if (typing::isFloating(kind)) {
+            instruction.opcode = ir::Opcode::floatingConstant;
+            char text[40] = {};
+            std::snprintf(text, sizeof(text), kind == typing::TypeKind::float32 ? "%.9g" : "%.17g",
+                    value->floating);
+            instruction.text = text;
+        } else if (kind == typing::TypeKind::boolean) {
+            instruction.opcode = ir::Opcode::booleanConstant;
+            instruction.integerValue = static_cast<int64_t>(value->integer);
+        } else {
+            const auto width = typing::scalarBitWidth(kind);
+            auto bits = value->integer;
+            if (typing::isSignedInteger(kind) && width < 64 && ((bits >> (width - 1)) & 1) != 0) {
+                bits |= ~((uint64_t{1} << width) - 1);
+            }
+            instruction.opcode = ir::Opcode::integerConstant;
+            instruction.integerValue = std::bit_cast<int64_t>(bits);
+        }
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        // Constants are never owned: every use borrows, and an owned use copies.
+        recordValue(result, kind == typing::TypeKind::array || kind == typing::TypeKind::string
+                ? ValueOwnership::borrowed : ValueOwnership::trivial);
+        return result;
     }
 
     void collectPrint() {
@@ -1088,6 +1218,11 @@ private:
 
     std::optional<ir::Value> lowerName(const syntax::NodePtr& expression) {
         const auto symbol = model->referencedSymbol(expression);
+        if (symbol.has_value() && topLevelBindings.contains(*symbol)) {
+            // A rejected declaration was already reported; do not add a second error.
+            if (!constantDeclarations.contains(*symbol)) return std::nullopt;
+            return lowerConstant(*symbol, expression->span);
+        }
         if (!symbol.has_value() || !slots.contains(*symbol)) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1448,6 +1583,10 @@ private:
                     expression->span,
                     "member has no typed resolved symbol");
             return std::nullopt;
+        }
+        if (topLevelBindings.contains(*symbol)) {
+            if (!constantDeclarations.contains(*symbol)) return std::nullopt;
+            return lowerConstant(*symbol, expression->span);
         }
 
         if (semanticSymbol->kind == semantic::SymbolKind::structureField) {
@@ -2741,6 +2880,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::missingReturn: return "ir-lowering.missing-return";
         case DiagnosticId::ownershipViolation: return "ir-lowering.ownership-violation";
         case DiagnosticId::verificationFailed: return "ir-lowering.verification-failed";
+        case DiagnosticId::invalidConstant: return "ir-lowering.invalid-constant";
     }
     return "ir-lowering.unknown";
 }
