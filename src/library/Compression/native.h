@@ -12,6 +12,11 @@ int64_t joyeer_compression_create_zip(const JoyeerString* names, int64_t nameCou
     int64_t maximumBytes, JoyeerArray* result);
 int64_t joyeer_compression_list_zip(const uint8_t* data, int64_t count,
     int64_t maximumEntries, int64_t maximumNameBytes, JoyeerArray* result);
+int64_t joyeer_compression_entries_zip(const uint8_t* data, int64_t count,
+    int64_t maximumEntries, int64_t maximumNameBytes, JoyeerArray* names, JoyeerArray* table);
+int64_t joyeer_compression_read_entry(const uint8_t* data, int64_t count, int64_t headerOffset,
+    int64_t method, int64_t flags, int64_t compressedSize, int64_t size, int64_t checksum,
+    int64_t maximumBytes, JoyeerArray* result);
 int64_t joyeer_compression_extract_zip(const uint8_t* data, int64_t count,
     int64_t index, int64_t maximumBytes, JoyeerArray* result);
 

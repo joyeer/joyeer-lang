@@ -215,19 +215,45 @@ static int64_t validateEntryHeader(const uint8_t* data, size_t count,
     return COMPRESSION_OK;
 }
 
-int64_t joyeer_compression_list_zip(const uint8_t* data, int64_t count,
-        int64_t maximumEntries, int64_t maximumNameBytes, JoyeerArray* result) {
+// Each entry's metadata is seven little-endian 64-bit fields, in central-directory order:
+// local header offset, compressed size, size, CRC-32, method, bit flags, and attributes
+// (bit 0: directory, bit 1: extractable with STORE or DEFLATE).
+enum { ENTRY_FIELDS = 7, ENTRY_RECORD_BYTES = ENTRY_FIELDS * 8 };
+
+static bool isSymbolicLink(const mz_zip_archive_file_stat* stat) {
+    return ((stat->m_external_attr >> 16) & 0170000) == 0120000;
+}
+
+static void putLE64(uint8_t* destination, uint64_t value) {
+    for (int byte = 0; byte < 8; ++byte) destination[byte] = (uint8_t)(value >> (8 * byte));
+}
+
+static void putEntryRecord(uint8_t* record, const mz_zip_archive_file_stat* stat) {
+    const uint64_t extractable = stat->m_is_supported && !stat->m_is_encrypted && !isSymbolicLink(stat);
+    const uint64_t fields[ENTRY_FIELDS] = {
+        stat->m_local_header_ofs, stat->m_comp_size, stat->m_uncomp_size, stat->m_crc32,
+        stat->m_method, stat->m_bit_flag, (stat->m_is_directory ? 1u : 0u) | (extractable << 1)};
+    for (int field = 0; field < ENTRY_FIELDS; ++field) putLE64(record + 8 * field, fields[field]);
+}
+
+static int64_t listEntries(const uint8_t* data, int64_t count, int64_t maximumEntries,
+        int64_t maximumNameBytes, JoyeerArray* result, JoyeerArray* table) {
     if (result == NULL || maximumEntries < 0 || maximumNameBytes < 0) return COMPRESSION_INVALID_ARGUMENT;
     mz_zip_archive zip = {0};
     int64_t status = openReader(&zip, data, count);
     if (status != COMPRESSION_OK) return status;
     const mz_uint entries = mz_zip_reader_get_num_files(&zip);
     JoyeerString* names = NULL;
-    if ((uint64_t)entries > (uint64_t)maximumEntries || entries > SIZE_MAX / sizeof(*names)) {
+    uint8_t* records = NULL;
+    if ((uint64_t)entries > (uint64_t)maximumEntries || entries > SIZE_MAX / sizeof(*names) ||
+        entries > SIZE_MAX / ENTRY_RECORD_BYTES) {
         status = COMPRESSION_LIMIT;
     } else if (entries != 0) {
         names = (JoyeerString*)calloc(entries, sizeof(*names));
-        if (names == NULL) status = COMPRESSION_NATIVE_ERROR + MZ_ZIP_ALLOC_FAILED;
+        if (table != NULL) records = (uint8_t*)calloc(entries, ENTRY_RECORD_BYTES);
+        if (names == NULL || (table != NULL && records == NULL)) {
+            status = COMPRESSION_NATIVE_ERROR + MZ_ZIP_ALLOC_FAILED;
+        }
     }
     int64_t remaining = maximumNameBytes;
     for (mz_uint index = 0; status == COMPRESSION_OK && index < entries; ++index) {
@@ -236,6 +262,7 @@ int64_t joyeer_compression_list_zip(const uint8_t* data, int64_t count,
             status = nativeError(&zip);
             break;
         }
+        if (records != NULL) putEntryRecord(records + (size_t)index * ENTRY_RECORD_BYTES, &stat);
         const mz_uint required = mz_zip_reader_get_filename(&zip, index, NULL, 0);
         if (required < 2) {
             status = COMPRESSION_INVALID_ARCHIVE;
@@ -268,11 +295,86 @@ int64_t joyeer_compression_list_zip(const uint8_t* data, int64_t count,
         remaining -= required - 1;
     }
     if (!mz_zip_reader_end(&zip) && status == COMPRESSION_OK) status = nativeError(&zip);
-    if (status == COMPRESSION_OK) joyeer_native_strings_assign(result, names, entries);
+    if (status == COMPRESSION_OK) {
+        joyeer_native_strings_assign(result, names, entries);
+        if (table != NULL) {
+            joyeer_native_bytes_assign(table, records, (int64_t)entries * ENTRY_RECORD_BYTES);
+        }
+    }
     if (names != NULL) {
         for (mz_uint index = 0; index < entries; ++index) free((void*)names[index].data);
     }
     free(names);
+    free(records);
+    return status;
+}
+
+int64_t joyeer_compression_list_zip(const uint8_t* data, int64_t count,
+        int64_t maximumEntries, int64_t maximumNameBytes, JoyeerArray* result) {
+    return listEntries(data, count, maximumEntries, maximumNameBytes, result, NULL);
+}
+
+int64_t joyeer_compression_entries_zip(const uint8_t* data, int64_t count,
+        int64_t maximumEntries, int64_t maximumNameBytes, JoyeerArray* names, JoyeerArray* table) {
+    if (table == NULL) return COMPRESSION_INVALID_ARGUMENT;
+    return listEntries(data, count, maximumEntries, maximumNameBytes, names, table);
+}
+
+static int writeInflated(const void* buffer, int length, void* opaque) {
+    OutputBuffer* output = (OutputBuffer*)opaque;
+    return length >= 0 && writeBuffer(output, output->count, buffer, (size_t)length) == (size_t)length;
+}
+
+// Reads one entry straight from its local header, without parsing the central directory.
+// The caller's description of the entry is untrusted: everything is checked against `data`.
+int64_t joyeer_compression_read_entry(const uint8_t* data, int64_t count, int64_t headerOffset,
+        int64_t method, int64_t flags, int64_t compressedSize, int64_t size, int64_t checksum,
+        int64_t maximumBytes, JoyeerArray* result) {
+    if (result == NULL || maximumBytes < 0 || !validView(data, count, 1) ||
+        headerOffset < 0 || compressedSize < 0 || size < 0 || checksum < 0 || flags < 0 ||
+        flags > UINT16_MAX || (uint64_t)count >= UINT32_MAX) return COMPRESSION_INVALID_ARGUMENT;
+    if ((uint64_t)headerOffset >= (uint64_t)count || (uint64_t)compressedSize >= UINT32_MAX ||
+        (uint64_t)size >= UINT32_MAX || (uint64_t)checksum > UINT32_MAX) return COMPRESSION_INVALID_ARCHIVE;
+    if ((method != MZ_DEFLATED && method != 0) || (flags & 0x41) != 0) return COMPRESSION_UNSUPPORTED;
+    if (size > maximumBytes) return COMPRESSION_LIMIT;
+
+    mz_zip_archive_file_stat stat = {0};
+    stat.m_local_header_ofs = (mz_uint64)headerOffset;
+    stat.m_bit_flag = (mz_uint16)flags;
+    stat.m_method = (mz_uint16)method;
+    stat.m_crc32 = (mz_uint32)checksum;
+    stat.m_comp_size = (mz_uint64)compressedSize;
+    stat.m_uncomp_size = (mz_uint64)size;
+    int64_t status = validateEntryHeader(data, (size_t)count, &stat);
+    if (status != COMPRESSION_OK) return status;
+
+    const uint8_t* header = data + headerOffset;
+    const size_t start = (size_t)headerOffset + 30 + MZ_READ_LE16(header + 26) + MZ_READ_LE16(header + 28);
+    OutputBuffer output = {0};
+    output.limit = (size_t)size;
+    if (method == 0) {
+        if (compressedSize != size) {
+            status = COMPRESSION_INVALID_ARCHIVE;
+        } else if (size != 0 && writeBuffer(&output, 0, data + start, (size_t)size) != (size_t)size) {
+            status = output.allocationFailed ? COMPRESSION_NATIVE_ERROR + MZ_ZIP_ALLOC_FAILED
+                                              : COMPRESSION_LIMIT;
+        }
+    } else {
+        size_t available = (size_t)compressedSize;
+        if (!tinfl_decompress_mem_to_callback(data + start, &available, writeInflated, &output, 0)) {
+            status = output.limited ? COMPRESSION_LIMIT
+                   : output.allocationFailed ? COMPRESSION_NATIVE_ERROR + MZ_ZIP_ALLOC_FAILED
+                                             : COMPRESSION_INVALID_ARCHIVE;
+        }
+    }
+    if (status == COMPRESSION_OK &&
+        (output.count != (size_t)size ||
+         mz_crc32(MZ_CRC32_INIT, output.data, output.count) != (mz_ulong)checksum ||
+         (compressedSize == 0 && checksum != MZ_CRC32_INIT))) {
+        status = COMPRESSION_INVALID_ARCHIVE;
+    }
+    if (status == COMPRESSION_OK) joyeer_native_bytes_assign(result, output.data, (int64_t)output.count);
+    free(output.data);
     return status;
 }
 

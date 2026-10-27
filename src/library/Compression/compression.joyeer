@@ -18,6 +18,24 @@ public struct ZipEntry {
     public let contents: [UInt8]
 }
 
+// Metadata for one archive entry, as recorded in the central directory. The
+// location fields are internal; reading an entry re-validates them against the
+// archive bytes, so a mismatched entry yields an error, never wrong memory access.
+public struct ZipEntryInfo {
+    public let name: String
+    public let isDirectory: Bool
+    // Uncompressed size in bytes.
+    public let size: Int
+    public let compressedSize: Int
+    // CRC-32 of the uncompressed contents.
+    public let crc32: UInt32
+    // True for a STORE or DEFLATE entry that is not encrypted or a symbolic link.
+    public let isSupported: Bool
+    let headerOffset: Int
+    let method: Int
+    let flags: Int
+}
+
 @c_extern(symbol: "joyeer_compression_create_zip")
 private func nativeCreateZip(names: [String], contents: [[UInt8]], method: Int,
     maximumBytes: Int, output: initializing [UInt8]): Int
@@ -29,6 +47,15 @@ private func nativeListZip(archive: [UInt8], maximumEntries: Int,
 @c_extern(symbol: "joyeer_compression_extract_zip")
 private func nativeExtractZip(archive: [UInt8], index: Int,
     maximumBytes: Int, output: initializing [UInt8]): Int
+
+@c_extern(symbol: "joyeer_compression_entries_zip")
+private func nativeEntriesZip(archive: [UInt8], maximumEntries: Int,
+    maximumNameBytes: Int, names: initializing [String], table: initializing [UInt8]): Int
+
+@c_extern(symbol: "joyeer_compression_read_entry")
+private func nativeReadEntry(archive: [UInt8], headerOffset: Int, method: Int, flags: Int,
+    compressedSize: Int, size: Int, checksum: Int, maximumBytes: Int,
+    output: initializing [UInt8]): Int
 
 private func compressionError(status: Int): CompressionError {
     return match status {
@@ -75,6 +102,65 @@ public func extractZipEntry(archive: [UInt8], index: Int,
     var output: [UInt8]
     let status = nativeExtractZip(archive: archive, index: index,
         maximumBytes: maximumBytes, output: &output)
+    if status != 0 { return .Err(compressionError(status: status)) }
+    return .Ok(output)
+}
+
+// One little-endian 64-bit field of the native metadata table (seven per entry).
+private func tableField(table: [UInt8], entry: Int, field: Int): Int {
+    let start = entry * 56 + field * 8
+    var value: UInt64 = 0
+    var shift = 0
+    while shift < 64 {
+        value |= (table[start + shift / 8] as UInt64) << shift
+        shift += 8
+    }
+    // Zip64 is rejected, so every stored value fits in 32 bits.
+    return value as Int
+}
+
+// Lists every entry with its metadata, in central-directory order. Reads the
+// central directory once; pair it with readZipEntry to visit all entries in
+// linear time. Limits are inclusive, as for listZip.
+public func zipEntries(archive: [UInt8], maximumEntries: Int,
+    maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError> {
+    var names: [String]
+    var table: [UInt8]
+    let status = nativeEntriesZip(archive: archive, maximumEntries: maximumEntries,
+        maximumNameBytes: maximumNameBytes, names: &names, table: &table)
+    if status != 0 { return .Err(compressionError(status: status)) }
+    var entries: [ZipEntryInfo] = []
+    var index = 0
+    while index < names.count {
+        let attributes = tableField(table: table, entry: index, field: 6)
+        &entries.append(element: ZipEntryInfo(
+            name: names[index],
+            isDirectory: (attributes & 1) != 0,
+            size: tableField(table: table, entry: index, field: 2),
+            compressedSize: tableField(table: table, entry: index, field: 1),
+            crc32: tableField(table: table, entry: index, field: 3) as UInt32,
+            isSupported: (attributes & 2) != 0,
+            headerOffset: tableField(table: table, entry: index, field: 0),
+            method: tableField(table: table, entry: index, field: 4),
+            flags: tableField(table: table, entry: index, field: 5)))
+        index += 1
+    }
+    return .Ok(entries)
+}
+
+// Reads one entry's contents directly from its local header, without parsing
+// the central directory again. `entry` must come from zipEntries on this same
+// archive. Directories and unsupported entries are refused. Checks size, CRC,
+// and the limit exactly like extractZipEntry.
+public func readZipEntry(archive: [UInt8], entry: ZipEntryInfo,
+    maximumBytes: Int): Result<[UInt8], CompressionError> {
+    if maximumBytes < 0 { return .Err(.InvalidArgument) }
+    if entry.isDirectory || !entry.isSupported { return .Err(.UnsupportedArchive) }
+    var output: [UInt8]
+    let status = nativeReadEntry(archive: archive, headerOffset: entry.headerOffset,
+        method: entry.method, flags: entry.flags, compressedSize: entry.compressedSize,
+        size: entry.size, checksum: entry.crc32 as Int, maximumBytes: maximumBytes,
+        output: &output)
     if status != 0 { return .Err(compressionError(status: status)) }
     return .Ok(output)
 }

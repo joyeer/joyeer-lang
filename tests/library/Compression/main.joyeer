@@ -152,9 +152,178 @@ func testEmptyEntryHeaders(): Result<Void, String> {
     return check(condition: zip64Rejected, message: "local ZIP64 size sentinel accepted")
 }
 
+func sameBytes(left: [UInt8], right: [UInt8]): Bool {
+    if left.count != right.count { return false }
+    var index = 0
+    while index < left.count {
+        if left[index] != right[index] { return false }
+        index += 1
+    }
+    return true
+}
+
+func entriesOf(archive: [UInt8]): Result<[Compression.ZipEntryInfo], String> {
+    return match Compression.zipEntries(archive: archive, maximumEntries: 1000, maximumNameBytes: 100000) {
+        .Ok(value) => .Ok(value),
+        .Err(_) => .Err("entry listing failed"),
+    }
+}
+
+func testEntryMetadata(method: Compression.ZipMethod): Result<Void, String> {
+    var repeated: [UInt8] = []
+    var count = 0
+    while count < 2000 {
+        &repeated.append(element: 65)
+        count += 1
+    }
+    let checkValue: [UInt8] = [49, 50, 51, 52, 53, 54, 55, 56, 57]
+    let archive = match Compression.createZip(entries: [
+            Compression.ZipEntry(name: "check.txt", contents: checkValue),
+            Compression.ZipEntry(name: "empty", contents: []),
+            Compression.ZipEntry(name: "dir/repeated.txt", contents: repeated),
+        ], method: method, maximumBytes: 100000) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("create ZIP failed") },
+    }
+    let entries = entriesOf(archive: archive)?
+    check(condition: entries.count == 3, message: "wrong metadata count")?
+    check(condition: entries[0].name == "check.txt" && entries[2].name == "dir/repeated.txt",
+        message: "wrong metadata names")?
+    check(condition: !entries[0].isDirectory && entries[0].isSupported, message: "wrong entry flags")?
+    check(condition: entries[0].size == 9, message: "wrong size")?
+    check(condition: entries[0].crc32 == 0xCBF43926, message: "wrong CRC-32")?
+    check(condition: entries[1].size == 0 && entries[1].crc32 == 0, message: "wrong empty metadata")?
+    check(condition: entries[2].size == 2000, message: "wrong large size")?
+    let sizing = match method {
+        .Stored => check(condition: entries[2].compressedSize == 2000, message: "stored size changed"),
+        .Deflate => check(condition: entries[2].compressedSize < 200, message: "deflate did not shrink"),
+    }
+    sizing?
+
+    check(condition: sameBytes(left: readEntry(archive: archive, entry: entries[0])?, right: checkValue),
+        message: "wrong first entry contents")?
+    let emptyContents = readEntry(archive: archive, entry: entries[1])?
+    check(condition: emptyContents.count == 0, message: "wrong empty contents")?
+    check(condition: sameBytes(left: readEntry(archive: archive, entry: entries[2])?, right: repeated),
+        message: "wrong repeated contents")?
+    let limited = match Compression.readZipEntry(archive: archive, entry: entries[2], maximumBytes: 1999) {
+        .Err(.LimitExceeded) => true,
+        _ => false,
+    }
+    check(condition: limited, message: "read limit ignored")?
+    let exact = match Compression.readZipEntry(archive: archive, entry: entries[2], maximumBytes: 2000) {
+        .Ok(value) => value.count == 2000,
+        .Err(_) => false,
+    }
+    check(condition: exact, message: "exact read limit rejected")?
+    let negative = match Compression.readZipEntry(archive: archive, entry: entries[0], maximumBytes: -1) {
+        .Err(.InvalidArgument) => true,
+        _ => false,
+    }
+    check(condition: negative, message: "negative read limit accepted")?
+    let entryLimited = match Compression.zipEntries(archive: archive, maximumEntries: 2, maximumNameBytes: 1000) {
+        .Err(.LimitExceeded) => true,
+        _ => false,
+    }
+    check(condition: entryLimited, message: "metadata count limit ignored")?
+
+    // An entry applied to a different archive is rejected, not misread.
+    let other = match Compression.createZip(entries: [
+            Compression.ZipEntry(name: "check.txt", contents: [57, 56, 55, 54, 53, 52, 51, 50, 49]),
+        ], method: method, maximumBytes: 1000) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("create other ZIP failed") },
+    }
+    let mismatched = match Compression.readZipEntry(archive: other, entry: entries[0], maximumBytes: 100) {
+        .Err(_) => true,
+        .Ok(_) => false,
+    }
+    check(condition: mismatched, message: "entry accepted for a different archive")?
+    let outside = match Compression.readZipEntry(archive: other, entry: entries[2], maximumBytes: 5000) {
+        .Err(_) => true,
+        .Ok(_) => false,
+    }
+    return check(condition: outside, message: "out-of-range entry accepted")
+}
+
+func readEntry(archive: [UInt8], entry: Compression.ZipEntryInfo): Result<[UInt8], String> {
+    return match Compression.readZipEntry(archive: archive, entry: entry, maximumBytes: 100000) {
+        .Ok(value) => .Ok(value),
+        .Err(_) => .Err("read entry failed"),
+    }
+}
+
+func testDirectoryEntry(): Result<Void, String> {
+    var archive = match Compression.createZip(
+        entries: [Compression.ZipEntry(name: "folderX", contents: [])],
+        method: .Stored, maximumBytes: 1000) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("create directory ZIP failed") },
+    }
+    // Turn the last name byte into '/', in both the local and central headers.
+    var central = 30
+    while central + 4 < archive.count {
+        if archive[central] == 80 && archive[central + 1] == 75 &&
+            archive[central + 2] == 1 && archive[central + 3] == 2 { break }
+        central += 1
+    }
+    &archive[30 + 6] = 47
+    &archive[central + 46 + 6] = 47
+    let entries = entriesOf(archive: archive)?
+    check(condition: entries.count == 1 && entries[0].name == "folder/", message: "directory name wrong")?
+    check(condition: entries[0].isDirectory, message: "directory not detected")?
+    let refused = match Compression.readZipEntry(archive: archive, entry: entries[0], maximumBytes: 10) {
+        .Err(.UnsupportedArchive) => true,
+        _ => false,
+    }
+    return check(condition: refused, message: "directory entry was readable")
+}
+
+func testManyEntries(): Result<Void, String> {
+    var items: [Compression.ZipEntry] = []
+    var number = 0
+    while number < 300 {
+        let low = number % 256
+        let high = number / 256
+        &items.append(element: Compression.ZipEntry(
+            name: "entry-" + decimal(value: number), contents: [low as UInt8, high as UInt8]))
+        number += 1
+    }
+    let archive = match Compression.createZip(entries: items, method: .Deflate, maximumBytes: 1000000) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("create many-entry ZIP failed") },
+    }
+    let entries = entriesOf(archive: archive)?
+    check(condition: entries.count == 300, message: "wrong many-entry count")?
+    number = 0
+    while number < entries.count {
+        let contents = readEntry(archive: archive, entry: entries[number])?
+        check(condition: contents.count == 2 && contents[0] == (number % 256) as UInt8 &&
+            contents[1] == (number / 256) as UInt8, message: "wrong many-entry contents")?
+        number += 1
+    }
+    return .Ok(())
+}
+
+func decimal(value: Int): String {
+    if value == 0 { return "0" }
+    var remaining = value
+    var text = ""
+    let digits = "0123456789"
+    while remaining > 0 {
+        text = byteToString(value: digits[remaining % 10]) + text
+        remaining /= 10
+    }
+    return text
+}
+
 func runTests(): Result<Void, String> {
     testZip(method: .Stored)?
     testZip(method: .Deflate)?
+    testEntryMetadata(method: .Stored)?
+    testEntryMetadata(method: .Deflate)?
+    testDirectoryEntry()?
+    testManyEntries()?
     testErrors()?
     testEmptyEntryHeaders()?
     var repeated: [UInt8] = []

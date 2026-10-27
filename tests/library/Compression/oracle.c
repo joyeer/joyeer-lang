@@ -25,6 +25,58 @@ static void emit(int64_t status, JoyeerArray* output, bool listing) {
     joyeer_array_destroy_abi(output);
 }
 
+static uint64_t getLE64(const uint8_t* source) {
+    uint64_t value = 0;
+    for (int byte = 7; byte >= 0; --byte) value = (value << 8) | source[byte];
+    return value;
+}
+
+// Prints "name<TAB>directory<TAB>size<TAB>compressed<TAB>crc<TAB>supported" per entry.
+static void emitEntries(int64_t status, const JoyeerArray* names, const JoyeerArray* table) {
+    printf("%lld\n", (long long)status);
+    if (status != 0) return;
+    const JoyeerString* labels = (const JoyeerString*)names->data;
+    const uint8_t* records = (const uint8_t*)table->data;
+    for (int64_t index = 0; index < names->count; ++index) {
+        const uint8_t* record = records + index * 56;
+        fwrite(labels[index].data, 1, (size_t)labels[index].count, stdout);
+        const uint64_t attributes = getLE64(record + 48);
+        printf("\t%d\t%llu\t%llu\t%llu\t%d\n", (int)(attributes & 1),
+                (unsigned long long)getLE64(record + 16), (unsigned long long)getLE64(record + 8),
+                (unsigned long long)getLE64(record + 24), (int)((attributes >> 1) & 1));
+    }
+}
+
+// Mirrors readZipEntry: look the entry up once, then read it from its local header.
+static int64_t readByIndex(const uint8_t* input, int64_t count, int64_t index,
+        int64_t maximumBytes, JoyeerArray* output) {
+    JoyeerArray names = {0};
+    JoyeerArray table = {0};
+    joyeer_native_strings_init(&names);
+    joyeer_native_bytes_init(&table);
+    int64_t status = joyeer_compression_entries_zip(input, count, 1000, 100000, &names, &table);
+    if (status == 0) {
+        if (index < 0 || index >= names.count) {
+            status = 5;
+        } else {
+            const uint8_t* record = (const uint8_t*)table.data + index * 56;
+            const uint64_t attributes = getLE64(record + 48);
+            if ((attributes & 1) != 0 || (attributes & 2) == 0) {
+                status = 3;
+            } else {
+                status = joyeer_compression_read_entry(input, count,
+                        (int64_t)getLE64(record), (int64_t)getLE64(record + 32),
+                        (int64_t)getLE64(record + 40), (int64_t)getLE64(record + 8),
+                        (int64_t)getLE64(record + 16), (int64_t)getLE64(record + 24),
+                        maximumBytes, output);
+            }
+        }
+    }
+    joyeer_array_destroy_abi(&names);
+    joyeer_array_destroy_abi(&table);
+    return status;
+}
+
 int main(int argc, char** argv) {
 #if defined(_WIN32)
     if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
@@ -58,6 +110,18 @@ int main(int argc, char** argv) {
         if (strcmp(argv[1], "list") == 0) {
             joyeer_native_strings_init(&output);
             emit(joyeer_compression_list_zip(input, (int64_t)count, first, second, &output), &output, true);
+        } else if (strcmp(argv[1], "entries") == 0) {
+            JoyeerArray names = {0};
+            JoyeerArray table = {0};
+            joyeer_native_strings_init(&names);
+            joyeer_native_bytes_init(&table);
+            emitEntries(joyeer_compression_entries_zip(
+                    input, (int64_t)count, first, second, &names, &table), &names, &table);
+            joyeer_array_destroy_abi(&names);
+            joyeer_array_destroy_abi(&table);
+        } else if (strcmp(argv[1], "read") == 0) {
+            joyeer_native_bytes_init(&output);
+            emit(readByIndex(input, (int64_t)count, first, second, &output), &output, false);
         } else if (strcmp(argv[1], "extract") == 0) {
             joyeer_native_bytes_init(&output);
             emit(joyeer_compression_extract_zip(input, (int64_t)count, first, second, &output), &output, false);

@@ -113,7 +113,81 @@ def main():
         with archive.open("local-zip64", "w", force_zip64=True) as entry:
             entry.write(b"small")
     assert invoke(executable, "extract", 0, 100, data=output.getvalue()) == (3, b"")
+    check_entry_metadata(executable)
     print("ZIP interoperability, CRC, encoding, unsupported formats and limits passed")
+
+
+def check_entry_metadata(executable):
+    """Entry metadata matches zipfile, and the local-header read path matches extraction."""
+    entries = [("dir/", b""), ("dir/file.txt", b"hello" * 100), ("empty", b""),
+               ("binary.bin", bytes(range(256)) * 4)]
+    for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        data = make_zip(entries, method)
+        status, body = invoke(executable, "entries", 100, 10000, data=data)
+        assert status == 0, status
+        rows = [line.split("\t") for line in body.decode("utf-8").splitlines()]
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            infos = archive.infolist()
+        assert len(rows) == len(infos)
+        for row, info in zip(rows, infos):
+            assert row[0] == info.filename, row
+            assert int(row[1]) == int(info.is_dir()), row
+            assert int(row[2]) == info.file_size and int(row[3]) == info.compress_size, row
+            assert int(row[4]) == info.CRC and int(row[5]) == 1, row
+        for index, (name, expected) in enumerate(entries):
+            if name.endswith("/"):
+                assert invoke(executable, "read", index, 10000, data=data) == (3, b"")
+            else:
+                assert invoke(executable, "read", index, len(expected), data=data) == (0, expected)
+        assert invoke(executable, "read", 1, 499, data=data) == (4, b"")
+        assert invoke(executable, "read", 1, 500, data=data)[0] == 0
+        assert invoke(executable, "read", 9, 100, data=data) == (5, b"")
+        assert invoke(executable, "entries", 3, 10000, data=data) == (4, b"")
+        assert invoke(executable, "entries", 100, 3, data=data) == (4, b"")
+
+    # Damaged and unsupported archives behave the same through both read paths.
+    for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        base = make_zip([("file", b"payload" * 20)], method)
+        central = base.index(b"PK\x01\x02")
+        variants = []
+        flipped = bytearray(base)
+        flipped[30 + 4] ^= 0xFF
+        variants.append(flipped)
+        wrong_crc = bytearray(base)
+        struct.pack_into("<I", wrong_crc, 14, 1)
+        struct.pack_into("<I", wrong_crc, central + 16, 1)
+        variants.append(wrong_crc)
+        bad_header = bytearray(base)
+        bad_header[0] = 0
+        variants.append(bad_header)
+        encrypted = bytearray(base)
+        struct.pack_into("<H", encrypted, 6, 1)
+        struct.pack_into("<H", encrypted, central + 8, 1)
+        variants.append(encrypted)
+        other_method = bytearray(base)
+        struct.pack_into("<H", other_method, 8, 99)
+        struct.pack_into("<H", other_method, central + 10, 99)
+        variants.append(other_method)
+        symlink = bytearray(base)
+        struct.pack_into("<I", symlink, central + 38, 0o120777 << 16)
+        variants.append(symlink)
+        short_size = bytearray(base)
+        struct.pack_into("<I", short_size, 22, 1)
+        struct.pack_into("<I", short_size, central + 24, 1)
+        variants.append(short_size)
+        for damaged in variants:
+            extracted = invoke(executable, "extract", 0, 1000, data=bytes(damaged))
+            read = invoke(executable, "read", 0, 1000, data=bytes(damaged))
+            assert extracted[0] != 0 and read[0] != 0, (extracted, read)
+            # Corrupt DEFLATE data is a generic miniz failure (1000+) when extracted by
+            # index, and a plain invalid-archive error (2) on the local-header path.
+            assert read == extracted or {extracted[0], read[0]} <= {2, 4} or                 (extracted[0] >= 1000 and read[0] == 2), (extracted, read)
+
+    # A truncated archive and garbage never produce metadata.
+    good = make_zip([("file", b"x")])
+    for invalid in (b"", good[:-5], b"not a zip" * 20):
+        assert invoke(executable, "entries", 10, 1000, data=invalid)[0] == 2
+        assert invoke(executable, "read", 0, 100, data=invalid)[0] == 2
 
 
 if __name__ == "__main__":

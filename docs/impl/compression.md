@@ -60,6 +60,47 @@ public func extractZipEntry(archive: [UInt8], index: Int,
     maximumBytes: Int): Result<[UInt8], CompressionError>
 ```
 
+```joyeer
+public struct ZipEntryInfo {
+    public let name: String
+    public let isDirectory: Bool
+    public let size: Int            // uncompressed bytes
+    public let compressedSize: Int
+    public let crc32: UInt32
+    public let isSupported: Bool    // STORE/DEFLATE, not encrypted, not a symbolic link
+    // plus internal location fields
+}
+
+public func zipEntries(archive: [UInt8], maximumEntries: Int,
+    maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError>
+
+public func readZipEntry(archive: [UInt8], entry: ZipEntryInfo,
+    maximumBytes: Int): Result<[UInt8], CompressionError>
+```
+
+To visit every entry, call `zipEntries` once and then `readZipEntry` for each
+one. `zipEntries` parses the central directory once, with the same name and
+limit rules as `listZip`, and returns entries in central-directory order.
+`readZipEntry` goes straight to the entry's local header and inflates it,
+so it does not parse the central directory again. In one measured run (Windows
+x64, optimized) that read all 16,000 eight-byte entries of a generated archive,
+the whole program took 3.9 s using `extractZipEntry(index:)` and 0.45 s using
+`zipEntries` plus `readZipEntry`, of which about 0.4 s was creating the archive.
+Contents are still returned whole, and the archive is still held in memory.
+`readZipEntry` refuses directories and unsupported entries with
+`UnsupportedArchive`, and applies the same size, CRC, limit, ZIP64 and
+local-header checks as `extractZipEntry`.
+
+An entry is only a description. Its location fields are internal and
+`readZipEntry` re-validates them against the archive bytes (bounds, header
+signature, method, flags, sizes, CRC), so passing an entry from another archive
+returns an error such as `InvalidArchive` and never reads outside the archive.
+Corrupt DEFLATE data is reported as `InvalidArchive`.
+`extractZipEntry(index:)` still works, but parses the central directory on
+every call.
+
+`Stored` preserves uncompressed bytes;
+
 `Stored` preserves uncompressed bytes; `Deflate` uses miniz compression level
 6. This is ZIP, not a bare DEFLATE, zlib, or gzip stream.
 
