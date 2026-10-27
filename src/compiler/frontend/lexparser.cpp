@@ -1,6 +1,7 @@
 #include "lexparser.h"
 #include "compiler/diagnostics/diagnostic.h"
 
+#include <algorithm>
 #include <bit>
 #include <charconv>
 #include <cstdarg>
@@ -44,8 +45,8 @@ const char* lexerDiagnosticCode(const char* error) {
     if (std::strcmp(error, Diagnostics::errorInvalidByteEscape) == 0) {
         return "lexer.invalid-byte-escape";
     }
-    if (std::strcmp(error, Diagnostics::errorUnsupportedNumericLiteral) == 0) {
-        return "lexer.unsupported-numeric-literal";
+    if (std::strcmp(error, Diagnostics::errorInvalidRadixLiteral) == 0) {
+        return "lexer.invalid-radix-literal";
     }
     if (std::strcmp(error, Diagnostics::errorInvalidNumericSuffix) == 0) {
         return "lexer.invalid-numeric-suffix";
@@ -269,9 +270,22 @@ void LexParser::parseIdentifier() {
 
 void LexParser::parseNumberLiteral() {
     const size_t start = position;
-    while (isDigit(peek())) {
-        advance();
+    if (peek() == '0') {
+        const char prefix = peek(1);
+        if (prefix == 'x' || prefix == 'X' || prefix == 'b' || prefix == 'B' ||
+            prefix == 'o' || prefix == 'O') {
+            parseRadixLiteral(start);
+            return;
+        }
     }
+
+    // A separator is accepted only between two decimal digits.
+    const auto scanDigits = [this]() {
+        while (isDigit(peek()) || (peek() == '_' && isDigit(peek(1)))) {
+            advance();
+        }
+    };
+    scanDigits();
 
     bool floating = false;
     if ((peek() == '.' && isDigit(peek(1))) || peek() == 'e' || peek() == 'E') {
@@ -296,16 +310,6 @@ void LexParser::parseNumberLiteral() {
                 advance();
             }
         }
-    } else if (position == start + 1 && sourcefile->content[start] == '0' &&
-               (peek() == 'x' || peek() == 'X' || peek() == 'b' || peek() == 'B' ||
-                peek() == 'o' || peek() == 'O')) {
-        advance();
-        while (isIdentifierTail(peek())) {
-            advance();
-        }
-        report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedNumericLiteral);
-        emitInvalid(start);
-        return;
     }
     if (isIdentifierHead(peek())) {
         while (isIdentifierTail(peek())) {
@@ -316,19 +320,62 @@ void LexParser::parseNumberLiteral() {
         return;
     }
 
-    const std::string value = sourcefile->content.substr(start, position - start);
+    std::string value = sourcefile->content.substr(start, position - start);
+    value.erase(std::remove(value.begin(), value.end(), '_'), value.end());
     if (floating) {
         emit(floatLiteral, start, value);
         return;
     }
 
+    emitIntegerLiteral(start, value, 10);
+}
+
+void LexParser::parseRadixLiteral(size_t start) {
+    const char prefix = static_cast<char>(peek(1) | 0x20);
+    const int radix = prefix == 'x' ? 16 : prefix == 'b' ? 2 : 8;
+    advance();
+    advance();
+
+    // Consume the whole token so a malformed literal is one diagnostic.
+    std::string digits;
+    bool valid = true;
+    bool previousSeparator = true;
+    while (isIdentifierTail(peek())) {
+        const char value = advance();
+        if (value == '_') {
+            if (previousSeparator) valid = false;
+            previousSeparator = true;
+            continue;
+        }
+        previousSeparator = false;
+        int digit = -1;
+        if (isDigit(value)) {
+            digit = value - '0';
+        } else if ((value | 0x20) >= 'a' && (value | 0x20) <= 'f') {
+            digit = (value | 0x20) - 'a' + 10;
+        }
+        if (digit < 0 || digit >= radix) valid = false;
+        digits.push_back(value);
+    }
+    if (digits.empty() || previousSeparator) valid = false;
+
+    if (!valid) {
+        report(tokenLine, tokenColumn, Diagnostics::errorInvalidRadixLiteral);
+        emitInvalid(start);
+        return;
+    }
+    emitIntegerLiteral(start, digits, radix);
+}
+
+void LexParser::emitIntegerLiteral(size_t start, const std::string& digits, int radix) {
     uint64_t parsed = 0;
-    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed, 10);
+    const auto result = std::from_chars(digits.data(), digits.data() + digits.size(), parsed, radix);
     if (result.ec == std::errc::result_out_of_range) {
         report(tokenLine, tokenColumn, Diagnostics::errorIntegerLiteralOverflow);
     }
 
-    emit(decimalLiteral, start, value);
+    // The canonical decimal spelling keeps equal values textually identical.
+    emit(decimalLiteral, start, std::to_string(parsed));
     sourcefile->tokens.back()->intValue = std::bit_cast<int64_t>(parsed);
 }
 

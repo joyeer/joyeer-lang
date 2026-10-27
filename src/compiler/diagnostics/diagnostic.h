@@ -74,7 +74,7 @@ struct Diagnostics {
     DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedByteLiteral,                     "Unterminated byte literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidByteLiteral,                          "A byte literal must contain exactly one ASCII byte")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidByteEscape,                           "Invalid byte escape sequence")
-    DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedNumericLiteral,                   "This numeric literal form is not supported")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidRadixLiteral,                         "Invalid digit or separator in hexadecimal, binary, or octal literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidNumericSuffix,                        "Invalid suffix on decimal integer literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidSourceCharacter,                      "Invalid source character '%s'")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedSyntax,                           "Syntax '%s' is not supported in the JSON-parser MVP")

@@ -75,8 +75,11 @@ Decimal integer literals use their contextual numeric type, or default to
 Literal range checking includes the minimum signed values and the full
 unsigned 64-bit range. Floating literals are rounded directly to the selected
 precision; overflow and underflow to an unrepresentable nonzero value are
-diagnosed. Hexadecimal/binary/octal literals and numeric separators remain
-unsupported. Values of different numeric types are not implicitly converted;
+diagnosed. Integer literals may also be hexadecimal (`0x`), binary (`0b`), or
+octal (`0o`); a plain leading `0` is decimal. A single `_` may separate digits
+in any integer literal and in the integer part of a floating literal, but may
+not lead, trail, or repeat. Radix literals use the same range checks as decimal
+and take the sign from a preceding unary `-`. Values of different numeric types are not implicitly converted;
 `Int`/`Int64` and `UInt`/`UInt64` remain distinct source types despite matching
 C representations. Explicit casts and general numeric conversion APIs remain
 outside this implementation.

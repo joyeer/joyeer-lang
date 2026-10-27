@@ -210,21 +210,51 @@ TEST_F(LexerTest, PreservesUInt64MagnitudeAndDiagnosesOverflow) {
     EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorIntegerLiteralOverflow);
 }
 
-TEST_F(LexerTest, RejectsUnsupportedNumbersAsWholeTokens) {
-    lex("0xff 0b1 0o7 12abc 1_000");
+TEST_F(LexerTest, ScansRadixIntegersAndSeparators) {
+    lex("0xff 0XDEAD_beef 0b1010 0B1_0 0o17 0O7_7 1_000 0xFFFFFFFFFFFFFFFF");
 
-    expectKinds({invalid, invalid, invalid, invalid, invalid, endOfFile});
-    ASSERT_EQ(diagnostics.errors.size(), 5u);
-    for (size_t index = 0; index < 3; ++index) {
-        EXPECT_EQ(diagnostics.errors[index].message, Diagnostics::errorUnsupportedNumericLiteral);
+    expectKinds({decimalLiteral, decimalLiteral, decimalLiteral, decimalLiteral,
+            decimalLiteral, decimalLiteral, decimalLiteral, decimalLiteral, endOfFile});
+    EXPECT_EQ(source->tokens[0]->intValue, 255);
+    EXPECT_EQ(source->tokens[1]->intValue, 0xDEADBEEF);
+    EXPECT_EQ(source->tokens[2]->intValue, 10);
+    EXPECT_EQ(source->tokens[3]->intValue, 2);
+    EXPECT_EQ(source->tokens[4]->intValue, 15);
+    EXPECT_EQ(source->tokens[5]->intValue, 63);
+    EXPECT_EQ(source->tokens[6]->intValue, 1000);
+    EXPECT_EQ(static_cast<uint64_t>(source->tokens[7]->intValue), UINT64_MAX);
+    EXPECT_EQ(source->tokens[0]->rawValue, "255");
+    EXPECT_EQ(source->tokens[0]->span.length, 4u);
+    EXPECT_TRUE(diagnostics.errors.empty());
+}
+
+TEST_F(LexerTest, DiagnosesRadixOverflow) {
+    lex("0x1_0000_0000_0000_0000");
+
+    expectKinds({decimalLiteral, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 1u);
+    EXPECT_EQ(diagnostics.errors[0].message, Diagnostics::errorIntegerLiteralOverflow);
+}
+
+TEST_F(LexerTest, RejectsMalformedNumbersAsWholeTokens) {
+    lex("0x 0b2 0o8 0xg 0x_1 0x1_ 0b1__0 12abc 1_ 1__0");
+
+    expectKinds({invalid, invalid, invalid, invalid, invalid, invalid, invalid, invalid,
+            invalid, invalid, endOfFile});
+    ASSERT_EQ(diagnostics.errors.size(), 10u);
+    for (size_t index = 0; index < 7; ++index) {
+        EXPECT_EQ(diagnostics.errors[index].message, Diagnostics::errorInvalidRadixLiteral);
     }
-    EXPECT_EQ(diagnostics.errors[3].message, Diagnostics::errorInvalidNumericSuffix);
-    EXPECT_EQ(diagnostics.errors[4].message, Diagnostics::errorInvalidNumericSuffix);
+    for (size_t index = 7; index < 10; ++index) {
+        EXPECT_EQ(diagnostics.errors[index].message, Diagnostics::errorInvalidNumericSuffix);
+    }
 }
 
 TEST_F(LexerTest, ScansFixedPrototypeFloatingLiterals) {
-    lex("1.2 1e3 1.25E-2 0.0 3.5e+38");
-    expectKinds({floatLiteral, floatLiteral, floatLiteral, floatLiteral, floatLiteral, endOfFile});
+    lex("1.2 1e3 1.25E-2 0.0 3.5e+38 1_000.5");
+    expectKinds({floatLiteral, floatLiteral, floatLiteral, floatLiteral, floatLiteral,
+            floatLiteral, endOfFile});
+    EXPECT_EQ(source->tokens[5]->rawValue, "1000.5");
     EXPECT_TRUE(diagnostics.errors.empty());
 }
 
@@ -361,7 +391,7 @@ TEST_F(LexerTest, TracksSpansLinesAndCommentTrivia) {
 }
 
 TEST_F(LexerTest, RejectsDeferredMvpSyntaxAsSingleInvalidTokens) {
-    lex("?? ?. ; # 'x' += << >> 0xff");
+    lex("?? ?. ; # 'x' += << >> 0xfg");
 
     expectKinds({invalid, invalid, invalid, invalid, invalid,
                  invalid, invalid, invalid, invalid, endOfFile});

@@ -61,10 +61,10 @@ performs binding and exhaustiveness checks (§7).
 
 ```
 integer_literal  ::= decimal_lit | hex_lit | binary_lit | octal_lit
-decimal_lit      ::= digit ( digit | '_' )*
-hex_lit          ::= '0x' hex_digit ( hex_digit | '_' )*
-binary_lit       ::= '0b' ( '0' | '1' | '_' )+
-octal_lit        ::= '0o' ( '0'..'7' | '_' )+
+decimal_lit      ::= digit ( '_'? digit )*
+hex_lit          ::= ('0x'|'0X') hex_digit ( '_'? hex_digit )*
+binary_lit       ::= ('0b'|'0B') ('0'|'1') ( '_'? ('0'|'1') )*
+octal_lit        ::= ('0o'|'0O') ('0'..'7') ( '_'? ('0'..'7') )*
 
 float_literal    ::= decimal_lit '.' decimal_lit [ exponent ]
                   |  decimal_lit exponent

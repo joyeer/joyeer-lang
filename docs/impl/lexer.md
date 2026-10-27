@@ -83,7 +83,7 @@ unsupported numeric forms, and reserved syntax all produce diagnostics.
 
 For malformed multi-byte forms, recovery consumes the complete recognizable
 unit instead of emitting misleading valid prefixes. Examples include `+=`,
-`<<=`, `?.`, `1.5suffix`, and `0xff`.
+`<<=`, `?.`, `1.5suffix`, and `0xfg`.
 
 Source files larger than the 32-bit span capacity are rejected before scanning.
 

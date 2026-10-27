@@ -1022,6 +1022,18 @@ if(JOYEER_CLANG_EXECUTABLE)
             NativeCheckedArithmetic checked_arithmetic
             "9223372036854775807\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-9223372036854775808\n0\n21\n2\n49995000\n"
             0 1 2 3)
+    add_joyeer_native_regression(
+            NativeRadixLiterals radix_literals
+            "255
+3988292384
+165
+493
+18446744073709551615
+1000000
+-16
+1000.5
+"
+            0 1 2 3)
     set(typed_array_output
             "2\n40\n50\n30\n122\nfalse\ntrue\ntrue\nsecond\nchanged\n2\n9\n121\n9\ntrue\n11\nowned\n2\ntrue\n")
     add_joyeer_native_regression(

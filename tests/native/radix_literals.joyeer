@@ -1,0 +1,18 @@
+func main() {
+    let hex: Int = 0xFF
+    let mask: UInt32 = 0xEDB8_8320
+    let bits: UInt8 = 0b1010_0101
+    let octal: Int = 0o755
+    let big: UInt = 0xFFFF_FFFF_FFFF_FFFF
+    let grouped: Int = 1_000_000
+    let negative: Int = -0x10
+    let fraction: Double = 1_000.5
+    print(value: hex)
+    print(value: mask)
+    print(value: bits)
+    print(value: octal)
+    print(value: big)
+    print(value: grouped)
+    print(value: negative)
+    print(value: fraction)
+}
