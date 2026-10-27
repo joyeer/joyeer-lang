@@ -1325,9 +1325,11 @@ private:
             reportInvalidOperator(expression->op, { target }, expression->span);
             return model->typeContext.errorType();
         }
+        const bool tryCast = expression->op->rawValue == "as?";
         // A literal operand takes the target type, so out-of-range literals
-        // are compile-time errors rather than run-time traps.
-        const auto operand = isNumericLiteral(expression->operand)
+        // are compile-time errors rather than run-time traps. `as?` accepts any
+        // value and reports a range failure in its Result, so literals stay Int.
+        const auto operand = isNumericLiteral(expression->operand) && !tryCast
                 ? checkExpression(expression->operand, target)
                 : checkExpression(expression->operand);
         const auto operandType = operand.value_or(model->typeContext.errorType());
@@ -1335,6 +1337,13 @@ private:
         if (!isInteger(model->typeContext.type(operandType)->kind)) {
             reportInvalidOperator(expression->op, { operandType, target }, expression->span);
             return model->typeContext.errorType();
+        }
+        if (tryCast) {
+            const auto symbol = model->typeContext.builtinSymbol("ConversionError");
+            const auto failure = symbol.has_value()
+                    ? model->typeContext.typeForSymbol(*symbol) : std::nullopt;
+            if (!failure.has_value()) return model->typeContext.errorType();
+            return model->typeContext.resultType(target, *failure);
         }
         return target;
     }

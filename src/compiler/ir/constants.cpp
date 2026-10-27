@@ -224,6 +224,9 @@ std::optional<ConstantValue> ConstantEvaluator::evaluatePrefix(
     if (!operand.has_value()) return std::nullopt;
 
     if (expression->castTarget != nullptr) {
+        if (expression->op->rawValue == "as?") {
+            return fail(expression->span, "'as?' is not allowed in a constant expression");
+        }
         const auto sourceType = model->typeOf(expression->operand);
         if (!sourceType.has_value()) return fail(expression->span, "constant has no resolved type");
         const auto sourceKind = model->types().type(*sourceType)->kind;

@@ -273,6 +273,25 @@ TEST_F(ParserTest, ParsesCompoundAssignmentsAsRightAssociativeAssignments) {
     EXPECT_EQ(third->target->kind, Kind::accessExpr);
 }
 
+TEST_F(ParserTest, ParsesTryConversionAsACastWithAQuestionMark) {
+    parse("let a = x as? UInt8\nlet b = x as Int\nlet c = (x as? UInt8)?\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto cast = [this](size_t index) {
+        return std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(
+                std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                        result.root->items[index])->initializer);
+    };
+    ASSERT_NE(cast(0), nullptr);
+    EXPECT_EQ(cast(0)->op->rawValue, "as?");
+    EXPECT_EQ(cast(0)->op->kind, kwAs);
+    ASSERT_NE(cast(1), nullptr);
+    EXPECT_EQ(cast(1)->op->rawValue, "as");
+    // The third form propagates the Result with postfix '?'.
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[2])->initializer->kind, Kind::propagateExpr);
+}
+
 TEST_F(ParserTest, ParsesForInLoopsAsHiddenBindingsAndAWhile) {
     parse("func run(items: [Int]) {\nfor x in items {\nprint(value: x)\n}\n"
           "for i in 0..<3 { }\nfor _ in 1...2 { }\n}\n");

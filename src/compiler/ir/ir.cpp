@@ -55,6 +55,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::convertChecked:
         case Opcode::convertWrapping:
         case Opcode::constantValue:
+        case Opcode::integerFits:
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
@@ -1337,6 +1338,27 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::integerFits:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value()) {
+                            const auto* source = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            const auto target = static_cast<TypeId>(instruction.integerValue);
+                            const auto* targetType = types.contains(target) ? types.at(target) : nullptr;
+                            const auto* result = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type) : nullptr;
+                            if (operands[0]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                source == nullptr || targetType == nullptr || result == nullptr ||
+                                !typing::isInteger(source->kind) || !typing::isInteger(targetType->kind) ||
+                                result->kind != typing::TypeKind::boolean) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "integer range test requires integer operand and target types and a Boolean result");
+                            }
+                        }
+                        break;
                     case Opcode::constantValue: {
                         requireShape(0, 0);
                         const auto index = static_cast<uint64_t>(instruction.integerValue);
@@ -2164,6 +2186,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::convertChecked: return "convert";
         case Opcode::convertWrapping: return "convert_wrapping";
         case Opcode::constantValue: return "constant";
+        case Opcode::integerFits: return "fits";
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
@@ -2403,6 +2426,10 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::constantValue:
                         out << " #" << instruction.integerValue;
+                        break;
+                    case Opcode::integerFits:
+                        out << ' ' << valueName(instruction.operands[0]) << " in type "
+                            << instruction.integerValue;
                         break;
                     case Opcode::stringConstant:
                         out << " \"" << escape(instruction.text) << "\"";

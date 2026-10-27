@@ -1260,6 +1260,9 @@ private:
         const auto operand = lowerExpression(expression->operand);
         if (currentBlockTerminated()) return std::nullopt;
         if (!operand.has_value() || !type.has_value()) return std::nullopt;
+        if (expression->castTarget != nullptr && expression->op->rawValue == "as?") {
+            return lowerTryConversion(expression, *operand, *type);
+        }
         if (expression->castTarget != nullptr) {
             if (operand->type == *type) return operand;
             return emitValue(
@@ -1352,6 +1355,68 @@ private:
                 ir::ValueCategory::value,
                 { left->id, right->id },
                 expression->span);
+    }
+
+    // `x as? T`: .Ok(converted) when the value fits in T, else .Err(.OutOfRange).
+    std::optional<ir::Value> lowerTryConversion(
+            const syntax::PrefixExprSyntax::Ptr& expression,
+            ir::Value operand,
+            typing::TypeId resultType) {
+        const auto* result = model->types().type(resultType);
+        const auto okCase = findEnumCase(resultType, "Ok");
+        const auto errCase = findEnumCase(resultType, "Err");
+        if (result == nullptr || result->arguments.size() != 2 ||
+            !okCase.has_value() || !errCase.has_value()) {
+            report(DiagnosticId::missingType, expression->span,
+                    "'as?' result is not a Result with Ok and Err cases");
+            return std::nullopt;
+        }
+        const auto target = result->arguments[0];
+        const auto errorType = result->arguments[1];
+        const auto outOfRange = findEnumCase(errorType, "OutOfRange");
+        if (!outOfRange.has_value()) {
+            report(DiagnosticId::missingSymbol, expression->span,
+                    "ConversionError has no OutOfRange case in IR");
+            return std::nullopt;
+        }
+
+        auto test = makeInstruction(ir::Opcode::integerFits, expression->span);
+        test.result = makeValue(model->types().boolType(), ir::ValueCategory::value);
+        test.operands = { operand.id };
+        test.integerValue = static_cast<int64_t>(target);
+        const auto fits = *test.result;
+        emit(std::move(test));
+        recordValue(fits, ValueOwnership::trivial);
+
+        const auto slot = emitValue(
+                ir::Opcode::stackAllocate, resultType, ir::ValueCategory::address,
+                {}, expression->span, std::nullopt, true);
+        const auto okBlock = createBlock("convert.ok");
+        const auto errBlock = createBlock("convert.out_of_range");
+        const auto mergeBlock = createBlock("convert.merge");
+        emitConditionalBranch(fits, okBlock, errBlock, expression->span);
+
+        switchToBlock(okBlock);
+        const auto converted = emitValue(
+                ir::Opcode::convertWrapping, target, ir::ValueCategory::value,
+                { operand.id }, expression->span);
+        const auto ok = emitEnumConstruction(resultType, *okCase, { converted }, expression->span);
+        if (!ok.has_value()) return std::nullopt;
+        emitRawStore(*ok, slot, expression->span, std::nullopt, true);
+        emitBranch(mergeBlock, expression->span);
+
+        switchToBlock(errBlock);
+        const auto failure = emitEnumConstruction(errorType, *outOfRange, {}, expression->span);
+        if (!failure.has_value()) return std::nullopt;
+        const auto err = emitEnumConstruction(resultType, *errCase, { *failure }, expression->span);
+        if (!err.has_value()) return std::nullopt;
+        emitRawStore(*err, slot, expression->span, std::nullopt, true);
+        emitBranch(mergeBlock, expression->span);
+
+        switchToBlock(mergeBlock);
+        return emitValue(
+                ir::Opcode::load, resultType, ir::ValueCategory::value,
+                { slot.id }, expression->span);
     }
 
     std::optional<ir::Value> lowerLogical(

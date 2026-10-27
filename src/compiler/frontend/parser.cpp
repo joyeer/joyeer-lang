@@ -975,7 +975,8 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
     return left;
 }
 
-// `x as T` converts with a range check; `x &as T` truncates. Casts bind tighter
+// `x as T` converts with a range check; `x as? T` returns a Result instead of
+// trapping; `x &as T` truncates. Casts bind tighter
 // than binary operators and looser than prefix operators, and the target is a
 // plain type name so a following `<` is a comparison, not generic arguments.
 syntax::ExprPtr Parser::parseCastExpr() {
@@ -993,6 +994,13 @@ syntax::ExprPtr Parser::parseCastExpr() {
             const auto keyword = cursor.advance();
             op = std::make_shared<Token>(
                     kwAs, "&as", coveringSpan(tokenSpan(op), tokenSpan(keyword)),
+                    op->lineNumber, op->columnAt, false);
+        } else if (cursor.at(question) && !cursor.peek()->startsLine &&
+                   spanEnd(tokenSpan(op)) == cursor.peek()->span.offset) {
+            // `as?` converts to a Result instead of trapping.
+            const auto mark = cursor.advance();
+            op = std::make_shared<Token>(
+                    kwAs, "as?", coveringSpan(tokenSpan(op), tokenSpan(mark)),
                     op->lineNumber, op->columnAt, false);
         }
         auto name = expect(identifier, "a type name after 'as'");

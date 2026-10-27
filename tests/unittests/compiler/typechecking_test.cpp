@@ -846,6 +846,34 @@ TEST_F(TypeCheckingTest, RejectsCompoundAssignmentToDictionaryElements) {
     EXPECT_FALSE(checking.succeeded());
 }
 
+TEST_F(TypeCheckingTest, TypesTryConversionsAsResultsOfConversionError) {
+    check(R"JOYEER(func narrow(value: Int): Result<UInt8, ConversionError> {
+    let byte = (value as? UInt8)?
+    return .Ok(byte)
+}
+func run(small: Int8, big: UInt64) {
+    let a: Result<UInt32, ConversionError> = small as? UInt32
+    let b = big as? Int
+    let c: Result<Int8, ConversionError> = 300 as? Int8
+    match b {
+        .Ok(value) => { print(value: value) },
+        .Err(.OutOfRange) => { print(value: "range") },
+    }
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidTryConversions) {
+    for (const auto* expression : { "1.5 as? Int", "true as? Int", "a as? Bool", "a as? String",
+                                    "a as? UInt8 + 1", "f as? Int" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(a: Int, f: Double) { let value = " + std::string(expression) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
 TEST_F(TypeCheckingTest, AcceptsForInOverArraysAndRanges) {
     check(R"JOYEER(struct Box { let value: Int }
 func run(items: [String], limit: UInt8) {

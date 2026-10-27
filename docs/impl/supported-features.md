@@ -83,7 +83,7 @@ not lead, trail, or repeat. Radix literals use the same range checks as decimal
 and take the sign from a preceding unary `-`. Values of different numeric types are not implicitly converted;
 `Int`/`Int64` and `UInt`/`UInt64` remain distinct source types despite matching
 C representations. `x as T` converts between integer types and traps when the
-value does not fit; `x &as T` truncates or extends without trapping. Literal
+value does not fit; `x &as T` truncates or extends without trapping; `x as? T` returns `Result<T, ConversionError>` (`.Err(.OutOfRange)` instead of a trap). Literal
 operands take the target type. Floating-point and non-numeric conversions
 remain outside this implementation.
 

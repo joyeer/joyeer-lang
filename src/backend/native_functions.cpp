@@ -190,6 +190,14 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::shiftRight: result = shift(instruction); break;
         case Opcode::convertChecked:
         case Opcode::convertWrapping: result = convert(instruction); break;
+        case Opcode::integerFits: {
+            llvm::Value* converted = nullptr;
+            auto* outOfRange = conversionOutOfRange(argument(0),
+                    type(values.at(instruction.operands[0]).type).kind,
+                    static_cast<ir::TypeId>(instruction.integerValue), converted);
+            result = builder.CreateNot(outOfRange, temporary());
+            break;
+        }
         case Opcode::call: result = emitCall(instruction); break;
         case Opcode::constructStruct:
             result = llvm::PoisonValue::get(resultType());
@@ -332,20 +340,19 @@ llvm::Value* Builder::arithmetic(const ir::Instruction& instruction) {
     return builder.CreateExtractValue(checked, 0);
 }
 
-llvm::Value* Builder::convert(const ir::Instruction& instruction) {
-    auto* value = operand(instruction.operands[0]);
-    const auto sourceKind = type(values.at(instruction.operands[0]).type).kind;
-    const auto targetKind = type(instruction.result->type).kind;
+// Converts `value` to the target integer type by keeping the low bits (widening by the
+// source signedness) and returns whether the exact value is not representable there.
+llvm::Value* Builder::conversionOutOfRange(llvm::Value* value, typing::TypeKind sourceKind,
+        ir::TypeId targetId, llvm::Value*& converted) {
+    const auto targetKind = type(targetId).kind;
     const bool sourceSigned = typing::isSignedInteger(sourceKind);
     const bool targetSigned = typing::isSignedInteger(targetKind);
-    auto* targetType = llvmType(instruction.result->type);
-    // Preserves the low bits; widening extends by the source signedness.
+    auto* targetType = llvmType(targetId);
     const auto resize = [this](llvm::Value* input, llvm::Type* to, bool signedSource) -> llvm::Value* {
         return signedSource ? builder.CreateSExtOrTrunc(input, to, temporary())
                             : builder.CreateZExtOrTrunc(input, to, temporary());
     };
-    auto* converted = resize(value, targetType, sourceSigned);
-    if (instruction.opcode == ir::Opcode::convertWrapping) return converted;
+    converted = resize(value, targetType, sourceSigned);
 
     // The value is representable when converting back reproduces it and the
     // sign did not flip.
@@ -358,6 +365,15 @@ llvm::Value* Builder::convert(const ir::Instruction& instruction) {
         outOfRange = builder.CreateOr(outOfRange, builder.CreateICmpSLT(
                 converted, llvm::ConstantInt::get(targetType, 0), temporary()), temporary());
     }
+    return outOfRange;
+}
+
+llvm::Value* Builder::convert(const ir::Instruction& instruction) {
+    auto* value = operand(instruction.operands[0]);
+    llvm::Value* converted = nullptr;
+    auto* outOfRange = conversionOutOfRange(value,
+            type(values.at(instruction.operands[0]).type).kind, instruction.result->type, converted);
+    if (instruction.opcode == ir::Opcode::convertWrapping) return converted;
     trap(outOfRange, "integer conversion out of range");
     return converted;
 }

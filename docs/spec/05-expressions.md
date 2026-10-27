@@ -68,8 +68,13 @@ than `||`. Prefix negation is not postfix force unwrap, which remains deferred.
 traps with "integer conversion out of range" in every build when the value is
 not representable in `T`. `x &as T` instead keeps the low bits: it truncates
 when narrowing and extends by the source type's signedness when widening, so
-it never traps. `T` is a plain type name. A numeric literal operand takes type
-`T`, so an out-of-range literal is a compile-time error. Only integer-to-integer
+it never traps. `x as? T` returns `Result<T, ConversionError>`: `.Ok` with the
+converted value, or `.Err(.OutOfRange)` when the value is not representable in
+`T`, never trapping. `ConversionError` is a prelude enum with the single case
+`OutOfRange`; use postfix `?` to propagate it, or `match` to handle it. With `as?`
+a literal operand stays an `Int` (so `300 as? UInt8` is `.Err(.OutOfRange)`, not a
+compile-time error). `T` is a plain type name. With `as` and `&as`, a numeric
+literal operand takes type `T`, so an out-of-range literal is a compile-time error. Only integer-to-integer
 conversion is defined; floating-point and non-numeric conversions are rejected.
 A cast binds tighter than binary operators and looser than prefix operators:
 `a + b as UInt32 << 8` is `(a + (b as UInt32)) << 8`, and `-x as T` is

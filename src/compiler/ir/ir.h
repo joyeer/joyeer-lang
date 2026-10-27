@@ -75,6 +75,7 @@ enum class Opcode {
     convertChecked,
     convertWrapping,
     constantValue,
+    integerFits,
 
     call,
     constructStruct,

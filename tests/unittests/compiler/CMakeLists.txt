@@ -1095,6 +1095,10 @@ abcdabcd
             "10\na\nbc\nx\ny\n17\n0\n1\n2\n10\n20\n30\n-2\n-1\n255\n0\n1\n2\n16\ntick\ntick\n104\n105\n10\n20\n30\n6\n0\n1\n10\n11\np\nq\npq\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            NativeTryConversions conversion_try
+            "true\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\ntrue\nfalse\n200\n-1\n-3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             NativeRadixLiterals radix_literals
             "255
 3988292384
