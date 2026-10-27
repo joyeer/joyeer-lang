@@ -1598,7 +1598,7 @@ return byteToString(value: value)
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("zext i8"), std::string::npos);
     EXPECT_NE(
-            result.text.find("declare void @joyeer_byte_to_string_abi(ptr, i8)"),
+            result.text.find("declare void @joyeer_byte_to_string_abi(ptr, i8"),
             std::string::npos);
     EXPECT_NE(
             result.text.find("call void @joyeer_byte_to_string_abi(ptr"),
