@@ -1,0 +1,4 @@
+func main() {
+    let counts = [-1, 1]
+    print(value: 8 >> counts[0])
+}

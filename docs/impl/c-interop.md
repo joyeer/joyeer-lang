@@ -208,7 +208,7 @@ blanket-reserved. This check covers declarations known to the compiler, not
 the prototypes in an external native library.
 
 Object emission uses the existing versioned backend C ABI and opaque module
-handle. The private IR wire format is version 3; the backend C ABI remains
+handle. The private IR wire format is version 4; the backend C ABI remains
 version 1. The compiler and backend must be built/deployed from the same
 revision. macOS objects use the configured deployment target rather than a
 newer default OS version inferred from the host running LLVM.

@@ -54,8 +54,8 @@ The parser deliberately does **not** implement:
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
-- postfix force unwrap `!`, `??`, `?.`, compound assignment, ranges, shifts,
-  bitwise expressions, or labeled loop control;
+- postfix force unwrap `!`, `??`, `?.`, compound assignment, ranges, or
+  labeled loop control;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
   so the parser produces a spanned AST rather than pretending to be lossless.
@@ -311,8 +311,12 @@ a = b = value   => a = (b = value)
 a < b < c       => syntax error: comparison operators do not chain
 ```
 
-`&` is prefix-only in the current parser and produces an explicit access-marker
-node. The full language later also uses it as infix bitwise AND.
+Prefix `&` produces an explicit access-marker node. After an operand on the
+same line, `&` is infix bitwise AND. Bitwise operators follow the spec table:
+`<<` `>>` bind tighter than `&`, then `^`, then `|`, all tighter than
+comparisons, and looser than `+` `-`. `>>` is two adjacent `>` tokens joined
+in expression position, so nested generic arguments still close normally;
+`<<` is one token. Compound forms such as `<<=` and `&=` remain unsupported.
 
 An assignment target must have one of these syntactic shapes:
 

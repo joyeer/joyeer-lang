@@ -185,6 +185,40 @@ let invalid = (a + b) = c
     EXPECT_EQ(result.root->items.size(), 2u);
 }
 
+TEST_F(ParserTest, ParsesBitwiseOperatorsWithSpecPrecedence) {
+    parse("let value = a | b ^ c & d << e + f == g\nlet nested = x >> 2\nlet inverted = ~x\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    // Bitwise operators bind tighter than comparison: (a | ...) == g.
+    const auto equality = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(equality, nullptr);
+    EXPECT_EQ(equality->op->kind, equalEqual);
+    const auto bitOr = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(equality->left);
+    ASSERT_NE(bitOr, nullptr);
+    EXPECT_EQ(bitOr->op->kind, pipe);
+    const auto bitXor = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitOr->right);
+    ASSERT_NE(bitXor, nullptr);
+    EXPECT_EQ(bitXor->op->kind, caret);
+    const auto bitAnd = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitXor->right);
+    ASSERT_NE(bitAnd, nullptr);
+    EXPECT_EQ(bitAnd->op->kind, ampersand);
+    const auto shift = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitAnd->right);
+    ASSERT_NE(shift, nullptr);
+    EXPECT_EQ(shift->op->kind, shiftLeft);
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(shift->right)->op->kind, plus);
+
+    const auto right = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(result.root->items[1]);
+    const auto shiftRightExpression = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            right->initializer);
+    ASSERT_NE(shiftRightExpression, nullptr);
+    EXPECT_EQ(shiftRightExpression->op->kind, shiftRight);
+    const auto inverted = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(result.root->items[2]);
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::PrefixExprSyntax>(inverted->initializer)->op->kind, tilde);
+}
+
 TEST_F(ParserTest, ParsesLogicalOperatorsWithSpecPrecedence) {
     parse("let value = target = !a || b && c == d < e + f * g\n");
 

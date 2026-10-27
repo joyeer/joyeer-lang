@@ -754,6 +754,32 @@ TEST_F(TypeCheckingTest, RejectsLoopControlOutsideCurrentFunctionLoop) {
     }
 }
 
+TEST_F(TypeCheckingTest, AcceptsBitwiseOperatorsOnIntegers) {
+    check(R"JOYEER(func run(a: UInt32, b: UInt32, count: UInt8, signed: Int) {
+    let x: UInt32 = a & b | a ^ ~b
+    let y: UInt32 = a << count
+    let z: Int = signed >> 2
+    let w: Bool = (signed & 1) == 0
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsBitwiseOperatorsOnNonIntegersOrMixedTypes) {
+    for (const auto* expression : { "true & false", "1.5 | 2.5", "~1.5", "~true",
+                                    "1.5 << 1", "1 << 1.5", "narrow & wide", "\"x\" ^ \"y\"" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(narrow: UInt8, wide: UInt32) { let value = " +
+                std::string(expression) + "\n}\n"));
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id ==
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidOperatorOperands;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 TEST_F(TypeCheckingTest, LoopExitBranchesAndLogicalOperandsCanDiverge) {
     check(R"JOYEER(func run(flag: Bool) {
 while if flag { break } else { true } {

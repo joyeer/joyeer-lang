@@ -51,7 +51,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Modules | Named source-file sets, file-local public short names and qualified imports, use-site ambiguity checks, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
 | Bindings and values | Function-local `let` and `var`; `Bool`, `Int`/`UInt` (64-bit), signed/unsigned 8/16/32/64-bit integers, `Float`, `Double`, `String`, and unit `()` / `Void` |
-| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
+| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, string concatenation, and integer bitwise `&`, `\|`, `^`, `~`, `<<`, `>>` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
@@ -86,7 +86,11 @@ outside this implementation.
 
 Signed integer arithmetic traps on overflow at every optimization level.
 Unsigned addition/subtraction/multiplication wrap modulo their width.
-Integer division/remainder trap on zero; signed minimum divided by `-1`
+Bitwise `&`, `|`, `^` require two integers of the same type; `~` takes one
+integer. `<<` and `>>` take an integer on the left and any integer type as the
+count; a negative count or one at least the left operand's bit width traps in
+every build. `>>` is arithmetic for signed and logical for unsigned types, and
+`<<` discards bits shifted out. Integer division/remainder trap on zero; signed minimum divided by `-1`
 also traps for either operation. Floating arithmetic uses IEEE 754 behavior,
 including signed zero, infinities, and unordered NaN comparisons, without
 fast-math assumptions. Floating remainder and unsigned unary minus are not

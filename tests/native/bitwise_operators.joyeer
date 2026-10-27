@@ -1,0 +1,25 @@
+func main() {
+    let a: UInt32 = 0xF0F0_F0F0
+    let b: UInt32 = 0x0FF0_0FF0
+    print(value: a & b)
+    print(value: a | b)
+    print(value: a ^ b)
+    print(value: ~a)
+    let flags: UInt8 = 0b1000_0001
+    print(value: flags >> 1)
+    print(value: flags << 1)
+    print(value: ~flags)
+    let negative: Int = -16
+    print(value: negative >> 2)
+    print(value: negative << 2)
+    let count: Int = 3
+    print(value: 1 << count)
+    let top: UInt = 1 << 63
+    print(value: top)
+    let narrow: UInt8 = 4
+    print(value: a >> narrow)
+    let mask: Int = 6
+    print(value: mask & 3 == 2)
+    print(value: 1 + 2 << 1)
+    print(value: ~0)
+}

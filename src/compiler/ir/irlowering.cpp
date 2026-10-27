@@ -1138,6 +1138,23 @@ private:
                     { operand->id, falseValue.id },
                     expression->span);
         }
+        if (expression->op != nullptr && expression->op->kind == tilde) {
+            // ~x is x ^ all-ones; the constant is truncated to the operand width.
+            auto ones = makeInstruction(ir::Opcode::integerConstant, expression->op->span);
+            const auto kind = model->types().type(*type)->kind;
+            const auto bits = typing::scalarBitWidth(kind);
+            ones.integerValue = typing::isSignedInteger(kind) || bits == 64
+                    ? -1 : static_cast<int64_t>((uint64_t{1} << bits) - 1);
+            ones.result = makeValue(*type, ir::ValueCategory::value);
+            const auto onesValue = *ones.result;
+            emit(std::move(ones));
+            return emitValue(
+                    ir::Opcode::bitXor,
+                    *type,
+                    ir::ValueCategory::value,
+                    { operand->id, onesValue.id },
+                    expression->span);
+        }
         if (expression->op == nullptr || expression->op->kind != minus) {
             report(
                     DiagnosticId::unsupportedSyntax,
@@ -1255,6 +1272,11 @@ private:
             case multiply: return ir::Opcode::multiply;
             case divide: return ir::Opcode::divide;
             case percentage: return ir::Opcode::remainder;
+            case ampersand: return ir::Opcode::bitAnd;
+            case pipe: return ir::Opcode::bitOr;
+            case caret: return ir::Opcode::bitXor;
+            case shiftLeft: return ir::Opcode::shiftLeft;
+            case shiftRight: return ir::Opcode::shiftRight;
             case less: return ir::Opcode::less;
             case lessEqual: return ir::Opcode::lessEqual;
             case greater: return ir::Opcode::greater;

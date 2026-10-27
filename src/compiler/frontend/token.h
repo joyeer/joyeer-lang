@@ -87,7 +87,12 @@ enum TokenKind {
     lessEqual,
     greater,
     greaterEqual,
-    ampersand
+    ampersand,
+    pipe,
+    caret,
+    tilde,
+    shiftLeft,
+    shiftRight
 };
 
 struct SourceSpan {

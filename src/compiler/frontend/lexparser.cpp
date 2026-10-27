@@ -565,16 +565,22 @@ void LexParser::parseOperatorOrPunctuation() {
             return;
         case '<':
             if (consumeIf('<')) {
-                consumeIf('=');
-                emitUnsupported();
+                if (consumeIf('=')) {
+                    emitUnsupported();
+                } else {
+                    emit(shiftLeft, start);
+                }
                 return;
             }
             if (consumeIf('=')) { emit(lessEqual, start); return; }
             emit(less, start);
             return;
         case '>':
-            if (consumeIf('>')) {
-                consumeIf('=');
+            // `>>` stays two adjacent `>` tokens so nested generic arguments
+            // close normally; the expression parser joins them into a shift.
+            if (peek() == '>' && peek(1) == '=') {
+                advance();
+                advance();
                 emitUnsupported();
                 return;
             }
@@ -603,9 +609,10 @@ void LexParser::parseOperatorOrPunctuation() {
                 } else {
                     emitMvpOperator(orOr);
                 }
-            } else {
-                consumeIf('=');
+            } else if (consumeIf('=')) {
                 emitUnsupported();
+            } else {
+                emit(pipe, start);
             }
             return;
         case '?':
@@ -657,9 +664,14 @@ void LexParser::parseOperatorOrPunctuation() {
             emitMvpOperator(percentage);
             return;
         case '^':
+            if (consumeIf('=')) {
+                emitUnsupported();
+                return;
+            }
+            emit(caret, start);
+            return;
         case '~':
-            consumeIf('=');
-            emitUnsupported();
+            emit(tilde, start);
             return;
         case '\'':
             report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, "'");
@@ -777,6 +789,11 @@ bool LexParser::isMvpOperator(TokenKind kind) const {
         case greater:
         case greaterEqual:
         case ampersand:
+        case pipe:
+        case caret:
+        case tilde:
+        case shiftLeft:
+        case shiftRight:
             return true;
         default:
             return false;

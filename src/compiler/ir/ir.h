@@ -67,6 +67,11 @@ enum class Opcode {
     equal,
     notEqual,
     logicalAnd,
+    bitAnd,
+    bitOr,
+    bitXor,
+    shiftLeft,
+    shiftRight,
 
     call,
     constructStruct,

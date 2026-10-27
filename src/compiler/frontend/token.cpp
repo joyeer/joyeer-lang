@@ -152,7 +152,7 @@ bool isPunctuationKind(TokenKind kind) {
 }
 
 bool isOperatorKind(TokenKind kind) {
-  return kind >= equal && kind <= ampersand;
+  return kind >= equal && kind <= shiftRight;
 }
 
 bool tokenKindMatches(TokenKind actual, TokenKind expected) {

@@ -47,6 +47,11 @@ bool producesValue(Opcode opcode) {
         case Opcode::equal:
         case Opcode::notEqual:
         case Opcode::logicalAnd:
+        case Opcode::bitAnd:
+        case Opcode::bitOr:
+        case Opcode::bitXor:
+        case Opcode::shiftLeft:
+        case Opcode::shiftRight:
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
@@ -1489,6 +1494,33 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::bitAnd:
+                    case Opcode::bitOr:
+                    case Opcode::bitXor:
+                    case Opcode::shiftLeft:
+                    case Opcode::shiftRight:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value()) {
+                            const auto* type = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            const auto* count = types.contains(operands[1]->type)
+                                    ? types.at(operands[1]->type) : nullptr;
+                            const auto isShift = instruction.opcode == Opcode::shiftLeft ||
+                                    instruction.opcode == Opcode::shiftRight;
+                            if (operands[0]->category != ValueCategory::value ||
+                                operands[1]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                instruction.result->type != operands[0]->type ||
+                                (!isShift && operands[0]->type != operands[1]->type) ||
+                                type == nullptr || !typing::isInteger(type->kind) ||
+                                (isShift && (count == nullptr || !typing::isInteger(count->kind)))) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "bitwise operators require integer operands and a matching result");
+                            }
+                        }
+                        break;
                     case Opcode::add:
                     case Opcode::subtract:
                     case Opcode::multiply:
@@ -2087,6 +2119,11 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::equal: return "eq";
         case Opcode::notEqual: return "ne";
         case Opcode::logicalAnd: return "and";
+        case Opcode::bitAnd: return "bit_and";
+        case Opcode::bitOr: return "bit_or";
+        case Opcode::bitXor: return "bit_xor";
+        case Opcode::shiftLeft: return "shl";
+        case Opcode::shiftRight: return "shr";
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
@@ -2358,6 +2395,11 @@ std::string dump(const Module& module) {
                     case Opcode::equal:
                     case Opcode::notEqual:
                     case Opcode::logicalAnd:
+                    case Opcode::bitAnd:
+                    case Opcode::bitOr:
+                    case Opcode::bitXor:
+                    case Opcode::shiftLeft:
+                    case Opcode::shiftRight:
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
                             out << (index == 0 ? " " : ", ")
                                 << valueName(instruction.operands[index]);

@@ -183,6 +183,11 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
                     type(values.at(instruction.operands[0]).type).kind);
             break;
         case Opcode::logicalAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
+        case Opcode::bitAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
+        case Opcode::bitOr: result = builder.CreateOr(argument(0), argument(1)); break;
+        case Opcode::bitXor: result = builder.CreateXor(argument(0), argument(1)); break;
+        case Opcode::shiftLeft:
+        case Opcode::shiftRight: result = shift(instruction); break;
         case Opcode::call: result = emitCall(instruction); break;
         case Opcode::constructStruct:
             result = llvm::PoisonValue::get(resultType());
@@ -323,6 +328,21 @@ llvm::Value* Builder::arithmetic(const ir::Instruction& instruction) {
             {left, right}, temporary());
     trap(builder.CreateExtractValue(checked, 1, temporary()), "integer " + message + " overflow");
     return builder.CreateExtractValue(checked, 0);
+}
+
+llvm::Value* Builder::shift(const ir::Instruction& instruction) {
+    auto* value = operand(instruction.operands[0]);
+    auto* count = operand(instruction.operands[1]);
+    const auto kind = type(values.at(instruction.operands[0]).type).kind;
+    const auto bits = typing::scalarBitWidth(kind);
+    // A negative signed count wraps to a large unsigned value, so one unsigned
+    // comparison rejects both negative counts and counts at or past the width.
+    auto* width = llvm::ConstantInt::get(count->getType(), bits);
+    trap(builder.CreateICmpUGE(count, width, temporary()), "integer shift count out of range");
+    auto* amount = builder.CreateZExtOrTrunc(count, value->getType(), temporary());
+    if (instruction.opcode == ir::Opcode::shiftLeft) return builder.CreateShl(value, amount);
+    return typing::isSignedInteger(kind) ? builder.CreateAShr(value, amount)
+                                         : builder.CreateLShr(value, amount);
 }
 
 llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,

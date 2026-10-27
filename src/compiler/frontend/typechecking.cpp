@@ -1332,6 +1332,10 @@ private:
              isFloating(model->typeContext.type(operand)->kind))) {
             return operand;
         }
+        if (expression->op != nullptr && expression->op->kind == tilde &&
+            isInteger(model->typeContext.type(operand)->kind)) {
+            return operand;
+        }
         if (expression->op != nullptr && expression->op->kind == bang &&
             model->typeContext.isAssignable(operand, model->typeContext.boolType())) {
             return model->typeContext.boolType();
@@ -1357,7 +1361,13 @@ private:
             std::optional<TypeId> expected) {
         TypeId left;
         TypeId right;
-        if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
+        const auto isShift = expression->op != nullptr &&
+                (expression->op->kind == shiftLeft || expression->op->kind == shiftRight);
+        if (isShift) {
+            // The shifted value takes the contextual type; the count is independent.
+            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
+            right = checkExpression(expression->right).value_or(model->typeContext.errorType());
+        } else if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
             right = checkExpression(expression->right, expected).value_or(model->typeContext.errorType());
             left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
         } else {
@@ -1381,7 +1391,17 @@ private:
                 if (isNumeric(model->typeContext.type(left)->kind) && left == right) return left;
                 break;
             case percentage:
+            case ampersand:
+            case pipe:
+            case caret:
                 if (isInteger(model->typeContext.type(left)->kind) && left == right) return left;
+                break;
+            case shiftLeft:
+            case shiftRight:
+                if (isInteger(model->typeContext.type(left)->kind) &&
+                    isInteger(model->typeContext.type(right)->kind)) {
+                    return left;
+                }
                 break;
             case less:
             case lessEqual:

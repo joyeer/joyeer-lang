@@ -1023,6 +1023,25 @@ if(JOYEER_CLANG_EXECUTABLE)
             "9223372036854775807\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-9223372036854775808\n0\n21\n2\n49995000\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            NativeBitwiseOperators bitwise_operators
+            "15728880
+4293984240
+4278255360
+252645135
+64
+2
+126
+-4
+-64
+8
+9223372036854775808
+252645135
+true
+6
+-1
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
             NativeRadixLiterals radix_literals
             "255
 3988292384
@@ -1084,6 +1103,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             NativeCheckedMinMultiplyOverflow checked_min_multiply_overflow "integer multiplication overflow")
     add_joyeer_native_checked_trap(
             NativeCheckedDivideZero checked_divide_zero "integer division by zero")
+    add_joyeer_native_checked_trap(
+            NativeBitwiseShiftOverflow bitwise_shift_overflow "integer shift count out of range")
+    add_joyeer_native_checked_trap(
+            NativeBitwiseShiftNegative bitwise_shift_negative "integer shift count out of range")
     add_joyeer_native_checked_trap(
             NativeCheckedRemainderZero checked_remainder_zero "integer remainder by zero")
     add_joyeer_native_checked_trap(

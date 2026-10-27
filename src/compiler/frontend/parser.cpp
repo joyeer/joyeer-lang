@@ -757,8 +757,14 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
     if (left == nullptr) return nullptr;
 
     int consumedNonAssociativePower = 0;
-    while (!cursor.atEnd() && !cursor.peek()->startsLine && isInfix(cursor.peek()->kind)) {
-        const InfixInfo info = infixInfo(cursor.peek()->kind);
+    while (!cursor.atEnd() && !cursor.peek()->startsLine) {
+        // Two adjacent `>` tokens form a right shift in expression position.
+        const bool shiftRightPair = cursor.at(greater) && cursor.at(greater, 1) &&
+                !cursor.peek(1)->startsLine &&
+                spanEnd(tokenSpan(cursor.peek())) == cursor.peek(1)->span.offset;
+        const TokenKind infixKind = shiftRightPair ? shiftRight : cursor.peek()->kind;
+        if (!isInfix(infixKind)) break;
+        const InfixInfo info = infixInfo(infixKind);
         if (info.bindingPower < minimumBindingPower) break;
 
         if (info.nonAssociative && consumedNonAssociativePower == info.bindingPower) {
@@ -769,6 +775,12 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
         if (info.nonAssociative) consumedNonAssociativePower = info.bindingPower;
 
         auto op = cursor.advance();
+        if (shiftRightPair) {
+            const auto second = cursor.advance();
+            op = std::make_shared<Token>(
+                    shiftRight, ">>", coveringSpan(tokenSpan(op), tokenSpan(second)),
+                    op->lineNumber, op->columnAt, false);
+        }
         syntax::ExprPtr right;
         if (info.assignment) {
             right = parseExpression();
@@ -803,7 +815,7 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
 
 syntax::ExprPtr Parser::parsePrefixExpr() {
     const size_t start = cursor.position();
-    if (cursor.at(minus) || cursor.at(bang)) {
+    if (cursor.at(minus) || cursor.at(bang) || cursor.at(tilde)) {
         auto op = cursor.advance();
         auto operand = parsePrefixExpr();
         if (operand == nullptr) {
@@ -1266,7 +1278,7 @@ bool Parser::isExpressionStart(const Token::Ptr& token) const {
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
             token->kind == minus || token->kind == bang ||
-            token->kind == ampersand);
+            token->kind == tilde || token->kind == ampersand);
 }
 
 bool Parser::isTopLevelStart(const Token::Ptr& token) const {
@@ -1315,11 +1327,16 @@ Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
         case lessEqual:
         case greater:
         case greaterEqual: return {5, false, true, false};
+        case pipe: return {6, false, false, false};
+        case caret: return {7, false, false, false};
+        case ampersand: return {8, false, false, false};
+        case shiftLeft:
+        case shiftRight: return {9, false, false, false};
         case plus:
-        case minus: return {6, false, false, false};
+        case minus: return {10, false, false, false};
         case multiply:
         case divide:
-        case percentage: return {7, false, false, false};
+        case percentage: return {11, false, false, false};
         default: return {0, false, false, false};
     }
 }

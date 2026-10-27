@@ -42,6 +42,13 @@ Both operators trap when the divisor is zero. Both also trap for the minimum
 `Int` and divisor `-1`, including remainder even though its mathematical
 result would be zero. These checks apply in every optimization mode.
 
+Bitwise `&`, `|`, `^` take two integers of the same type; prefix `~` takes one
+integer. `<<` and `>>` take an integer on the left and an integer of any type
+as the shift count. A count that is negative or not less than the bit width of
+the left operand traps in every build. `>>` is arithmetic for signed types and
+logical for unsigned types; `<<` discards bits shifted out and never traps for
+that reason.
+
 Prefix `!` takes a `Bool` and returns its negation. Logical `&&` and `||`
 take Boolean operands and produce `Bool`.
 
