@@ -3,7 +3,7 @@
 > **Status:** unfinished work only. Remove items when they are done.
 >
 > **Done (see [joypm](../impl/joypm.md), [Compression](../impl/compression.md)):**
-> `Foundation` (+ `FoundationTests`), root `workspace.toml`, part of `System`
+> `Foundation` (text helpers and `crc32`, + `FoundationTests`), root `workspace.toml`, part of `System`
 > (lexical path helpers, host error/status formatters, `SystemTests`), and the
 > optional `Compression` module.
 >
@@ -13,7 +13,7 @@
 
 | Module | Responsibility | Boundary |
 |---|---|---|
-| `Foundation` | Text, encoding validation, numeric parsing/formatting | No dependency on `System` |
+| `Foundation` | Text, encoding validation, numeric parsing/formatting, checksums | No dependency on `System` |
 | `System` | Paths, filesystem, processes, environment, time | May use `Foundation`; keep existing host contracts |
 | `Collections` | Extra containers and algorithms | Independent; builtin arrays/dicts do not need it |
 | `Testing` | Assertions, failure reporting, helpers | May use `Foundation` |
