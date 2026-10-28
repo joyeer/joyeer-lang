@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <functional>
@@ -912,9 +913,38 @@ private:
                     "binding requires a type annotation or an initializer");
         }
 
+        // The parser rewrites `for x in source` into a hidden `$for<N>` copy of the
+        // source that is later counted and subscripted. Reject a source that cannot
+        // be, and poison the binding so the rewrite adds no follow-on errors.
+        if (isForInSourceBinding(declaration) && initializer.has_value() &&
+            *initializer != model->typeContext.errorType()) {
+            const auto* sourceType = model->typeContext.type(*initializer);
+            if (sourceType == nullptr || (sourceType->kind != TypeKind::array &&
+                                          sourceType->kind != TypeKind::string)) {
+                report(
+                        TypeCheckingDiagnosticId::notIterable,
+                        declaration->initializer->span,
+                        "cannot iterate over a value of type '" +
+                                model->typeContext.displayName(*initializer) +
+                                "'; 'for' needs an array, a string, or an integer range "
+                                "('a..<b' or 'a...b')");
+                bindingType = model->typeContext.errorType();
+            }
+        }
+
         const auto symbol = model->semanticModelValue->declaredSymbol(declaration);
         if (symbol.has_value()) model->symbolTypes[*symbol] = bindingType;
         recordNodeType(declaration, bindingType);
+    }
+
+    // `$for<N>`: the hidden source copy made by the parser's for-in rewrite
+    // (`$for<N>i` and the range temporaries carry a suffix after the digits).
+    static bool isForInSourceBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
+        if (declaration->name == nullptr) return false;
+        const auto& name = declaration->name->rawValue;
+        if (name.size() <= 4 || name.compare(0, 4, "$for") != 0) return false;
+        return std::all_of(name.begin() + 4, name.end(),
+                [](unsigned char c) { return std::isdigit(c) != 0; });
     }
 
     void checkTopLevelBody(const syntax::NodePtr& node) {
@@ -2972,6 +3002,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-call-arguments";
         case TypeCheckingDiagnosticId::invalidLoopControl:
             return "type-checking.invalid-loop-control";
+        case TypeCheckingDiagnosticId::notIterable:
+            return "type-checking.not-iterable";
         case TypeCheckingDiagnosticId::unresolvedReference:
             return "type-checking.unresolved-reference";
         case TypeCheckingDiagnosticId::invalidAnnotation:

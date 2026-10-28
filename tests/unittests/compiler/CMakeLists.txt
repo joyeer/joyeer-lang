@@ -1247,6 +1247,10 @@ add_joyeer_rejected_regression(TypeDictionaryGetArguments type-checking
         dictionary_get_arguments type-checking.invalid-call-arguments)
 add_joyeer_rejected_regression(TypeLoopControlOutside type-checking
         loop_control_outside type-checking.invalid-loop-control)
+add_joyeer_rejected_regression(TypeForInNotIterable type-checking
+        for_in_not_iterable type-checking.not-iterable)
+add_joyeer_rejected_regression(TypeForInDictionary type-checking
+        for_in_dictionary type-checking.not-iterable)
 add_joyeer_rejected_regression(TypeControlFlowOperands type-checking
         control_flow_operands type-checking.invalid-operator-operands)
 add_joyeer_rejected_regression(FlowLoopContinueConsumed semantic-analysis

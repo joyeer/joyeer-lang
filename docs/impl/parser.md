@@ -683,6 +683,14 @@ be written in source. A sequence loop copies the source once into a hidden
 `let`, advances a hidden index at the top of each iteration (so `continue` is
 correct), and binds the loop variable to `$for1[$for1i]`. A range loop keeps
 hidden `next` and `end` variables; an inclusive range tracks a hidden `more`
-flag so the last value never computes `end + 1`. Type errors in a malformed
-source (for example `for x in 5`) are therefore reported on the synthesized
-`.count` and subscript.
+flag so the last value never computes `end + 1`. The type checker recognises the
+hidden `$for<N>` source binding and reports `type-checking.not-iterable` on the
+source expression when its type is not an array or `String` (for example
+`for x in 5` or a dictionary), then gives the binding the error type so the
+synthesized `.count` and subscript add no further errors.
+
+The hidden source is an ordinary value copy. Arrays and strings have no
+copy-on-write, so iterating a variable copies it once per loop even when the
+body never mutates it; iterate a literal or a call result to avoid the copy.
+Skipping the copy needs a proof that the body leaves the source unchanged and
+is not implemented.

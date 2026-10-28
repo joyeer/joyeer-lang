@@ -245,6 +245,7 @@ enum class TypeCheckingDiagnosticId {
     notCallable,
     invalidCallArguments,
     invalidLoopControl,
+    notIterable,
     unresolvedReference,
     invalidAnnotation,
     invalidNativeDeclaration,

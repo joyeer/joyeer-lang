@@ -901,6 +901,17 @@ TEST_F(TypeCheckingTest, RejectsInvalidForInUses) {
     }
 }
 
+TEST_F(TypeCheckingTest, ReportsOneNotIterableDiagnosticForNonSequenceSources) {
+    for (const auto* source : { "5", "true", "1.5", "[1: 2]" }) {
+        SCOPED_TRACE(source);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run() {\nfor x in " + std::string(source) + " { }\n}\n"));
+        ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(checking.diagnostics[0].id,
+                  joyeer::typing::TypeCheckingDiagnosticId::notIterable);
+    }
+}
+
 TEST_F(TypeCheckingTest, LoopExitBranchesAndLogicalOperandsCanDiverge) {
     check(R"JOYEER(func run(flag: Bool) {
 while if flag { break } else { true } {
