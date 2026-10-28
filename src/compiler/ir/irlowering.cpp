@@ -6,6 +6,7 @@
 #include <bit>
 #include <cassert>
 #include <cstdio>
+#include <functional>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -1521,9 +1522,11 @@ private:
                 return lowerDictionarySet(expression, subscript, *dictionaryType);
             }
         }
-        const auto address = lowerAddress(expression->target);
-        if (!address.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto deferredAddress = prepareAddress(expression->target);
+        if (!deferredAddress.has_value() || currentBlockTerminated()) return std::nullopt;
         auto value = lowerExpression(expression->value);
+        if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto address = (*deferredAddress)();
         if (address.has_value() && value.has_value()) {
             value = coerce(*value, address->type, expression->value->span);
             if (!value.has_value()) return std::nullopt;
@@ -1538,20 +1541,23 @@ private:
         return std::nullopt;
     }
 
-    // `target op= value`: the address (and any index) is computed once, the old
-    // value is read, combined with the right side, and stored back.
+    // `target op= value`: any index is evaluated once, then the right side,
+    // and only then is the element address computed, the old value read,
+    // combined with the right side, and stored back.
     std::optional<ir::Value> lowerCompoundAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression) {
-        const auto address = lowerAddress(expression->target);
-        if (!address.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto deferredAddress = prepareAddress(expression->target);
+        if (!deferredAddress.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto right = lowerExpression(expression->value);
+        if (!right.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto address = (*deferredAddress)();
+        if (!address.has_value()) return std::nullopt;
         const auto old = emitValue(
                 ir::Opcode::load,
                 address->type,
                 ir::ValueCategory::value,
                 { address->id },
                 expression->target->span);
-        const auto right = lowerExpression(expression->value);
-        if (!right.has_value() || currentBlockTerminated()) return std::nullopt;
         const auto opcode = binaryOpcode(compoundBaseOperator(expression->op->kind));
         if (!opcode.has_value()) {
             report(DiagnosticId::unsupportedSyntax, expression->span,
@@ -1649,6 +1655,71 @@ private:
                 expression->span,
                 "assignment target is not supported by primitive IR lowering");
         return std::nullopt;
+    }
+
+    // An assignment target whose index operands are already evaluated but
+    // whose element address is not yet computed. Element addresses point into
+    // storage the right-hand side may reallocate (for example by appending to
+    // the same array), so they are taken only after the right side is lowered.
+    using DeferredAddress = std::function<std::optional<ir::Value>()>;
+
+    std::optional<DeferredAddress> prepareAddress(const syntax::ExprPtr& expression) {
+        if (expression == nullptr) return std::nullopt;
+        if (expression->kind == syntax::Kind::accessExpr) {
+            return prepareAddress(
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+        }
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return prepareAddress(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::subscriptExpr) {
+            const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(
+                    expression);
+            auto base = prepareAddress(subscript->base);
+            if (!base.has_value()) return std::nullopt;
+            const auto index = lowerExpression(subscript->index);
+            const auto type = model->typeOf(subscript);
+            if (!index.has_value() || !type.has_value()) return std::nullopt;
+            return DeferredAddress([this, base = std::move(*base), index = *index, type = *type,
+                                    span = subscript->span]() -> std::optional<ir::Value> {
+                const auto baseAddress = base();
+                if (!baseAddress.has_value()) return std::nullopt;
+                return emitValue(
+                        ir::Opcode::subscriptAddress,
+                        type,
+                        ir::ValueCategory::address,
+                        { baseAddress->id, index.id },
+                        span);
+            });
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            const auto symbol = model->referencedSymbol(member);
+            const auto* semanticSymbol = symbol.has_value()
+                    ? model->semanticModel()->symbol(*symbol)
+                    : nullptr;
+            const auto type = model->typeOf(member);
+            if (semanticSymbol != nullptr &&
+                semanticSymbol->kind == semantic::SymbolKind::structureField &&
+                type.has_value()) {
+                auto base = prepareAddress(member->base);
+                if (!base.has_value()) return std::nullopt;
+                return DeferredAddress([this, base = std::move(*base), type = *type, symbol,
+                                        span = member->span]() -> std::optional<ir::Value> {
+                    const auto baseAddress = base();
+                    if (!baseAddress.has_value()) return std::nullopt;
+                    return emitValue(
+                            ir::Opcode::fieldAddress,
+                            type,
+                            ir::ValueCategory::address,
+                            { baseAddress->id },
+                            span,
+                            symbol);
+                });
+            }
+        }
+        return DeferredAddress([this, expression] { return lowerAddress(expression); });
     }
 
     bool isAddressable(const syntax::ExprPtr& expression) const {

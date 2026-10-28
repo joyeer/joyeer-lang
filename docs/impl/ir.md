@@ -186,7 +186,11 @@ IR. Borrowed values are cloned before entering owned storage, so ordinary
 binding initialization and assignment leave the source usable. Owned
 temporaries transfer directly. An overwrite first acquires the owned
 replacement, then destroys the previous value, then stores the replacement;
-this ordering keeps self-assignment valid. Scope exits destroy owned storage
+this ordering keeps self-assignment valid. For `=` and `op=`, index operands of
+the target are lowered first, then the right-hand side, and only then is the
+element address computed (`subscript_addr`, `field_addr`): a right side that
+reallocates the target's storage cannot leave a stale address behind.
+Scope exits destroy owned storage
 and live temporaries in reverse order.
 Early returns must clean every active scope, including pending temporaries,
 before transferring the result to the caller. A typed local declared without

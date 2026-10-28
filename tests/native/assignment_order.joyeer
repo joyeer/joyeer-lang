@@ -1,0 +1,44 @@
+struct Cell { var n: Int }
+
+func grow(a: inout [Int]): Int {
+    for i in 0..<100 { &a.append(element: i) }
+    return 1
+}
+
+func growText(a: inout [String]): String {
+    for _ in 0..<50 { &a.append(element: "x") }
+    return "!"
+}
+
+func growCells(a: inout [Cell]): Int {
+    for i in 0..<64 { &a.append(element: Cell(n: i)) }
+    return 5
+}
+
+func main() {
+    var a = [1, 2]
+    var pad = [7, 8, 9]
+    &a[0] += grow(a: &a)
+    print(value: a[0])
+    print(value: a.count)
+    &a[1] = grow(a: &a) + 10
+    print(value: a[1])
+    print(value: a.count)
+
+    var s = ["a", "b"]
+    &s[0] += growText(a: &s)
+    print(value: s[0])
+    print(value: s.count)
+
+    var cells = [Cell(n: 1)]
+    &cells[0].n += growCells(a: &cells)
+    print(value: cells[0].n)
+    print(value: cells.count)
+
+    var b = [10, 20, 30]
+    &b[0] += b[1]
+    &b[2] = b[2] + b[0]
+    print(value: b[0])
+    print(value: b[2])
+    print(value: pad[0])
+}
