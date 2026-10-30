@@ -52,8 +52,7 @@ func testOpenAndRead(): Result<Void, String> {
     }
 
     // Entry 3 is the real compiled class: it must start with the class-file magic number.
-    let classFile = match Compression.readZipArchiveEntry(archive: archive,
-        entry: archive.entries[3], maximumBytes: 437) {
+    let classFile = match archive.readEntry(entry: archive.entries[3], maximumBytes: 437) {
         .Ok(value) => value,
         .Err(_) => { return .Err("read class failed") },
     }
@@ -61,21 +60,18 @@ func testOpenAndRead(): Result<Void, String> {
     check(condition: classFile[0] == 0xCA && classFile[1] == 0xFE && classFile[2] == 0xBA &&
         classFile[3] == 0xBE, message: "class magic missing")?
 
-    let manifest = match Compression.readZipArchiveEntry(archive: archive,
-        entry: archive.entries[1], maximumBytes: 1000) {
+    let manifest = match archive.readEntry(entry: archive.entries[1], maximumBytes: 1000) {
         .Ok(value) => value,
         .Err(_) => { return .Err("read manifest failed") },
     }
     check(condition: textOf(bytes: manifest, count: 21) == "Manifest-Version: 1.0",
         message: "wrong manifest")?
-    let empty = match Compression.readZipArchiveEntry(archive: archive,
-        entry: archive.entries[4], maximumBytes: 0) {
+    let empty = match archive.readEntry(entry: archive.entries[4], maximumBytes: 0) {
         .Ok(value) => value,
         .Err(_) => { return .Err("read empty failed") },
     }
     check(condition: empty.count == 0, message: "wrong empty entry")?
-    let directory = match Compression.readZipArchiveEntry(archive: archive,
-        entry: archive.entries[0], maximumBytes: 10) {
+    let directory = match archive.readEntry(entry: archive.entries[0], maximumBytes: 10) {
         .Err(.UnsupportedArchive) => true,
         _ => false,
     }

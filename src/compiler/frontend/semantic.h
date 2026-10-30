@@ -146,6 +146,11 @@ public:
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
     [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
 
+    // Registers a node the type checker synthesized while rewriting a method call
+    // so later phases can key per-node facts on it. `scopeLike` supplies the
+    // containing scope when it is itself indexed.
+    NodeId registerSyntheticNode(const syntax::NodePtr& node, const syntax::NodePtr& scopeLike);
+
 private:
     friend class NameResolutionBuilder;
     friend std::string dump(const SemanticModel& model);

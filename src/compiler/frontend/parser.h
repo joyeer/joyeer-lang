@@ -90,6 +90,9 @@ private:
     syntax::FunctionDeclSyntax::Ptr parseFunctionDecl(bool hasAttributes = false);
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
+    // Parses `[effect] func ...` as a method of `owner`, hoisting it to file scope.
+    void parseMethod(const Token::Ptr& owner, const Token::Ptr& modifier);
+    void parseExtensionDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();
     syntax::EnumDeclSyntax::Ptr parseEnumDecl();
     syntax::EnumCaseDeclSyntax::Ptr parseEnumCaseDecl();
@@ -156,6 +159,8 @@ private:
     std::vector<TokenKind> activeClosers;
     // Declarations a for-in loop adds before its loop; the enclosing block takes them.
     std::vector<syntax::NodePtr> pendingItems;
+    // Methods hoisted out of struct and extension bodies, appended after the item.
+    std::vector<syntax::NodePtr> hoistedItems;
     size_t forLoopCount = 0;
 };
 

@@ -299,6 +299,12 @@ struct FunctionDeclSyntax final : DeclSyntax {
     TypePtr returnType;
     std::shared_ptr<BlockExprSyntax> body;
 
+    // Set for methods hoisted out of a struct/enum/extension body. `name` then
+    // holds the mangled "Owner.method" spelling, `methodName` the written one,
+    // and parameters[0] is the synthesized `self` receiver.
+    Token::Ptr ownerName;
+    std::string methodName;
+
     FunctionDeclSyntax(SourceSpan span,
                        Token::Ptr name,
                        std::vector<ParameterDeclSyntax::Ptr> parameters,
@@ -513,6 +519,9 @@ struct CallExprSyntax final : ExprSyntax {
 
     ExprPtr callee;
     std::vector<CallArgumentSyntax::Ptr> arguments;
+    // The `&` or `consume` written directly before the whole call; it marks the
+    // receiver when the call turns out to be a method call.
+    Token::Ptr receiverMarker;
 
     CallExprSyntax(SourceSpan span,
                    ExprPtr callee,

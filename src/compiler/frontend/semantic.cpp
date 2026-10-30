@@ -35,6 +35,18 @@ std::optional<NodeId> SemanticModel::nodeId(const syntax::NodePtr& node) const {
     return found->second;
 }
 
+NodeId SemanticModel::registerSyntheticNode(
+        const syntax::NodePtr& node,
+        const syntax::NodePtr& scopeLike) {
+    const auto existing = nodeIds_.find(node.get());
+    if (existing != nodeIds_.end()) return existing->second;
+    const auto id = static_cast<NodeId>(nodes_.size());
+    nodeIds_[node.get()] = id;
+    nodes_.push_back(node);
+    if (const auto scope = containingScope(scopeLike)) containingScopes_[id] = *scope;
+    return id;
+}
+
 const syntax::NodePtr& SemanticModel::node(NodeId id) const {
     assert(id < nodes_.size());
     return nodes_[id];

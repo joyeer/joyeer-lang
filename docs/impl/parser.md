@@ -48,9 +48,9 @@ it to a supplied module rather than traversing folders or implicit submodules.
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, extensions, explicit `init` / `deinit`, methods,
+- `class`, explicit `init` / `deinit`,
   subscript declarations, or user-defined generics;
-- `mutating`, `indirect`,
+- `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;

@@ -173,7 +173,7 @@ public enum ZipFileError {
 }
 
 // A ZIP or JAR file loaded into memory, with its entries listed. Use
-// readZipArchiveEntry to read any entry without parsing the file again.
+// readEntry to read any entry without parsing the file again.
 public struct ZipArchive {
     public let path: String
     public let entries: [ZipEntryInfo]
@@ -209,10 +209,11 @@ public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int
     return .Ok(ZipArchive(path: path, entries: entries, bytes: bytes))
 }
 
-// Reads one entry of an opened file; see readZipEntry.
-public func readZipArchiveEntry(archive: ZipArchive, entry: ZipEntryInfo,
-    maximumBytes: Int): Result<[UInt8], CompressionError> {
-    return readZipEntry(archive: archive.bytes, entry: entry, maximumBytes: maximumBytes)
+extension ZipArchive {
+    // Reads one entry of an opened file; see readZipEntry.
+    public func readEntry(entry: ZipEntryInfo, maximumBytes: Int): Result<[UInt8], CompressionError> {
+        return readZipEntry(archive: self.bytes, entry: entry, maximumBytes: maximumBytes)
+    }
 }
 
 // Opens a ZIP or JAR file and reads every entry, in central-directory order.
@@ -233,7 +234,7 @@ public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int
         if !info.isDirectory {
             var limit = maximumEntryBytes
             if remaining < limit { limit = remaining }
-            contents = match readZipArchiveEntry(archive: archive, entry: info, maximumBytes: limit) {
+            contents = match archive.readEntry(entry: info, maximumBytes: limit) {
                 .Ok(value) => value,
                 .Err(error) => { return .Err(.Invalid(error)) },
             }

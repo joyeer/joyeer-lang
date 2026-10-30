@@ -106,8 +106,9 @@ public struct ZipFileEntry { public let info: ZipEntryInfo; public let contents:
 public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
     maximumNameBytes: Int): Result<ZipArchive, ZipFileError>
 
-public func readZipArchiveEntry(archive: ZipArchive, entry: ZipEntryInfo,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+extension ZipArchive {
+    public func readEntry(entry: ZipEntryInfo, maximumBytes: Int): Result<[UInt8], CompressionError>
+}
 
 public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
     maximumNameBytes: Int, maximumEntryBytes: Int,
@@ -117,7 +118,7 @@ public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int
 `openZipFile` reads at most `maximumFileBytes + 1` bytes, so an oversized file
 fails with `FileTooLarge` without being loaded. The whole file is held in
 memory, briefly twice while it is copied into bytes. Visit entries with
-`for`-style loops over `archive.entries` and `readZipArchiveEntry`; skip
+`for`-style loops over `archive.entries` and `archive.readEntry`; skip
 `isDirectory` entries. `readZipFile` reads everything at once, with directories
 returned as empty contents. It enforces `maximumEntryBytes` per entry and
 `maximumTotalBytes` across all contents, and one unreadable entry fails the call.

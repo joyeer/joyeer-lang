@@ -1108,7 +1108,9 @@ private:
                 if (std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
                         ->marker != nullptr &&
                     std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
-                        ->marker->kind == kwConsume) {
+                        ->marker->kind == kwConsume &&
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
+                        ->operand->kind != syntax::Kind::callExpr) {
                     report(
                         TypeCheckingDiagnosticId::invalidConsumeArgument,
                         expression->span,
@@ -1618,11 +1620,70 @@ private:
         bool sustained = true;
     };
 
+    // Deferred counterpart of the name-resolution rewrite: the receiver's type was
+    // unknown there, so `receiver.method(args)` becomes `Owner.method(self:
+    // receiver, args)` here. Returns true when the call was a method call.
+    bool rewriteMethodCall(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr) return false;
+        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        if (model->semanticModelValue->isModuleQualified(member)) return false;
+        const auto referenced = model->referencedSymbol(member);
+        if (!referenced.has_value()) return false;
+        const auto* method = model->semanticModelValue->symbol(*referenced);
+        if (method == nullptr || method->kind != semantic::SymbolKind::function ||
+            !method->callable.has_value() || method->callable->parameters.empty() ||
+            method->callable->parameters[0].label != std::optional<std::string>("self") ||
+            method->name.find('.') == std::string::npos) {
+            return false;
+        }
+
+        auto calleeName = std::make_shared<Token>(
+                identifier, method->name, member->member->span,
+                member->member->lineNumber, member->member->columnAt, false);
+        auto callee = std::make_shared<syntax::NameExprSyntax>(member->span, calleeName);
+        auto selfLabel = std::make_shared<Token>(
+                identifier, "self", member->base->span,
+                member->member->lineNumber, member->member->columnAt, false);
+        auto receiver = std::make_shared<syntax::CallArgumentSyntax>(
+                member->base->span, selfLabel, expression->receiverMarker, member->base);
+
+        model->semanticModelValue->registerSyntheticNode(callee, member);
+        model->semanticModelValue->registerSyntheticNode(receiver, member);
+        recordResolvedReference(callee, *referenced);
+        recordNodeType(callee, model->typeOf(*referenced).value_or(model->typeContext.errorType()));
+        expression->callee = callee;
+        expression->arguments.insert(expression->arguments.begin(), receiver);
+        return true;
+    }
+
     TypeId checkCall(
             const syntax::CallExprSyntax::Ptr& expression,
             bool hasReceiverAccessMarker = false) {
-        const auto calleeType = checkExpression(expression->callee).value_or(
+        auto calleeType = checkExpression(expression->callee).value_or(
                 model->typeContext.errorType());
+        bool methodCall = rewriteMethodCall(expression);
+        if (!methodCall && expression->callee->kind == syntax::Kind::nameExpr) {
+            // Name resolution may already have rewritten the call.
+            const auto resolved = model->referencedSymbol(expression->callee);
+            const auto* symbol = resolved.has_value()
+                    ? model->semanticModelValue->symbol(*resolved)
+                    : nullptr;
+            methodCall = symbol != nullptr && symbol->kind == semantic::SymbolKind::function &&
+                    symbol->callable.has_value() && !symbol->callable->parameters.empty() &&
+                    symbol->callable->parameters[0].label == std::optional<std::string>("self") &&
+                    symbol->name.find('.') != std::string::npos;
+        }
+        if (methodCall) {
+            // The marker now belongs to the receiver argument, which is checked
+            // like any other `inout` or `consuming` argument.
+            hasReceiverAccessMarker = false;
+            calleeType = checkExpression(expression->callee).value_or(
+                    model->typeContext.errorType());
+        } else if (hasReceiverAccessMarker && expression->receiverMarker != nullptr &&
+                   expression->receiverMarker->kind == kwConsume) {
+            report(TypeCheckingDiagnosticId::invalidConsumeArgument, expression->span,
+                   "'consume' is only valid on an argument to a consuming parameter");
+        }
         auto target = model->callTarget(expression);
         if (!target.has_value()) {
             const auto callee = model->referencedSymbol(expression->callee);
@@ -2103,7 +2164,9 @@ private:
                 if (symbol == nullptr) return StorageAccess { false, false, "<invalid>" };
                 return StorageAccess {
                     symbol->isMutable,
-                    symbol->kind == semantic::SymbolKind::parameter && symbol->isMutable,
+                    // The receiver of a mutating method is writable without '&'.
+                    symbol->kind == semantic::SymbolKind::parameter && symbol->isMutable &&
+                            symbol->name != "self",
                     symbol->name,
                 };
             }
