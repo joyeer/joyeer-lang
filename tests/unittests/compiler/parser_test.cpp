@@ -1104,4 +1104,204 @@ TEST_F(ParserTest, ErrorCorpusMatchesDiagnosticSnapshot) {
                           readFixture("parser/err/recovery.diag.txt"));
 }
 
+TEST_F(ParserTest, StructBodyMethodsAreHoistedWithSelfReceiver) {
+    parse(R"JOYEER(struct Counter {
+    var n: Int
+    func get(): Int { return self.n }
+    mutating func inc() { self.n = self.n + 1 }
+    consuming func take(): Int { return self.n }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 4u);
+    EXPECT_EQ(result.root->items[0]->kind, Kind::structDecl);
+
+    const char* names[] = {"Counter.get", "Counter.inc", "Counter.take"};
+    const char* methods[] = {"get", "inc", "take"};
+    for (size_t index = 0; index < 3; ++index) {
+        ASSERT_EQ(result.root->items[index + 1]->kind, Kind::functionDecl);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                result.root->items[index + 1]);
+        EXPECT_EQ(function->name->rawValue, names[index]);
+        EXPECT_EQ(function->methodName, methods[index]);
+        ASSERT_NE(function->ownerName, nullptr);
+        EXPECT_EQ(function->ownerName->rawValue, "Counter");
+        ASSERT_FALSE(function->parameters.empty());
+        EXPECT_EQ(function->parameters[0]->label->rawValue, "self");
+        EXPECT_EQ(function->parameters[0]->name->rawValue, "self");
+    }
+
+    const auto receiver = [&](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                result.root->items[index])->parameters[0];
+    };
+    EXPECT_EQ(receiver(1)->accessEffect(), joyeer::syntax::AccessEffect::borrowing);
+    EXPECT_EQ(receiver(2)->accessEffect(), joyeer::syntax::AccessEffect::inout);
+    EXPECT_EQ(receiver(3)->accessEffect(), joyeer::syntax::AccessEffect::consuming);
+}
+
+TEST_F(ParserTest, ExtensionMethodsAreHoistedEvenBeforeTheType) {
+    parse(R"JOYEER(extension Box {
+    public func twice(): Int { return self.value * 2 }
+    mutating func reset() { self.value = 0 }
+}
+struct Box {
+    var value: Int
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 3u);
+    const auto twice = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    EXPECT_EQ(twice->name->rawValue, "Box.twice");
+    EXPECT_EQ(twice->visibility, joyeer::syntax::Visibility::public_);
+    EXPECT_TRUE(twice->explicitVisibility);
+    const auto reset = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[1]);
+    EXPECT_EQ(reset->parameters[0]->accessEffect(), joyeer::syntax::AccessEffect::inout);
+    EXPECT_EQ(result.root->items[2]->kind, Kind::structDecl);
+}
+
+TEST_F(ParserTest, ReceiverMarkerAttachesToTheMethodCall) {
+    parse(R"JOYEER(func use(s: Counter) {
+    &s.inc()
+    let a = &s.step()?
+    let b = consume s.take()
+    let c = wrap(value: consume s.take())
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(function->body->items.size(), 4u);
+
+    const auto callOf = [](joyeer::syntax::ExprPtr expression) {
+        while (expression->kind == Kind::accessExpr || expression->kind == Kind::propagateExpr) {
+            expression = expression->kind == Kind::accessExpr
+                    ? std::static_pointer_cast<joyeer::syntax::AccessExprSyntax>(expression)->operand
+                    : std::static_pointer_cast<joyeer::syntax::PropagateExprSyntax>(expression)->operand;
+        }
+        return std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(expression);
+    };
+    const auto initializer = [&](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                function->body->items[index])->initializer;
+    };
+
+    const auto statement = std::static_pointer_cast<joyeer::syntax::AccessExprSyntax>(
+            function->body->items[0]);
+    const auto direct = callOf(statement);
+    ASSERT_NE(direct->receiverMarker, nullptr);
+    EXPECT_EQ(direct->receiverMarker->kind, ampersand);
+
+    const auto propagated = callOf(initializer(1));
+    ASSERT_NE(propagated->receiverMarker, nullptr);
+    EXPECT_EQ(propagated->receiverMarker->kind, ampersand);
+
+    const auto consumed = callOf(initializer(2));
+    ASSERT_NE(consumed->receiverMarker, nullptr);
+    EXPECT_EQ(consumed->receiverMarker->kind, kwConsume);
+
+    const auto outer = callOf(initializer(3));
+    ASSERT_EQ(outer->arguments.size(), 1u);
+    EXPECT_EQ(outer->arguments[0]->accessMarker, nullptr);
+    const auto inner = callOf(outer->arguments[0]->value);
+    ASSERT_NE(inner->receiverMarker, nullptr);
+    EXPECT_EQ(inner->receiverMarker->kind, kwConsume);
+}
+
+TEST_F(ParserTest, PlainArgumentMarkersStayOnTheArgument) {
+    parse(R"JOYEER(func use() {
+    var total = 0
+    update(value: &total)
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(
+            function->body->items[1]);
+    ASSERT_EQ(call->arguments.size(), 1u);
+    ASSERT_NE(call->arguments[0]->accessMarker, nullptr);
+    EXPECT_EQ(call->arguments[0]->accessMarker->kind, ampersand);
+    EXPECT_EQ(call->receiverMarker, nullptr);
+}
+
+TEST_F(ParserTest, ExtensionBodiesRejectNonMethodMembers) {
+    parse(R"JOYEER(extension Box {
+    var extra: Int
+}
+)JOYEER");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::unsupportedSyntax));
+}
+
+TEST_F(ParserTest, ExtensionRequiresABody) {
+    parse("extension Box\nfunc after() {}\n");
+
+    EXPECT_FALSE(result.succeeded());
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::expectedBlock));
+}
+
+TEST_F(ParserTest, TopLevelFunctionAfterStructWithMethodsIsNotAMethod) {
+    parse(R"JOYEER(struct S {
+    var a: Int
+    func m(): Int { return self.a }
+}
+func free(): Int { return 1 }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 3u);
+    const auto free = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[2]);
+    EXPECT_EQ(free->name->rawValue, "free");
+    EXPECT_EQ(free->ownerName, nullptr);
+}
+
+TEST_F(ParserTest, MethodKeywordsRemainUsableAsIdentifiers) {
+    parse("let extension = 1\nlet mutating = 2\nlet self = 3\n");
+
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    EXPECT_EQ(result.root->items.size(), 3u);
+}
+
+TEST_F(ParserTest, ExtensionsMayNameBuiltinTypesAndInstantiations) {
+    parse(R"JOYEER(extension String {
+    func shout(): String { return self }
+}
+extension [UInt8] {
+    func sum(): Int { return 0 }
+}
+extension [String: Int] {
+    func size(): Int { return 0 }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 3u);
+    const auto function = [&](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(result.root->items[index]);
+    };
+    EXPECT_EQ(function(0)->name->rawValue, "String.shout");
+    EXPECT_EQ(function(0)->ownerName->rawValue, "String");
+    EXPECT_EQ(function(1)->name->rawValue, "Array_UInt8.sum");
+    EXPECT_EQ(function(1)->ownerName->rawValue, "Array");
+    EXPECT_EQ(function(1)->parameters[0]->type->kind, Kind::arrayType);
+    EXPECT_EQ(function(2)->name->rawValue, "Dict_String_Int.size");
+    EXPECT_EQ(function(2)->ownerName->rawValue, "Dict");
+    EXPECT_EQ(function(2)->parameters[0]->type->kind, Kind::dictionaryType);
+}
+
+TEST_F(ParserTest, ExtensionOwnerMustBeANominalOrCollectionType) {
+    parse("extension () {\n    func run() {}\n}\n");
+
+    EXPECT_FALSE(result.succeeded());
+}
+
 } // namespace

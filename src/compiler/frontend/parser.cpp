@@ -22,6 +22,83 @@ bool isVisibility(TokenKind kind) {
     return kind == kwPublic || kind == kwInternal || kind == kwPrivate;
 }
 
+bool isMethodEffect(const Token::Ptr& token) {
+    if (token == nullptr) return false;
+    return token->kind == kwConsuming || token->kind == kwBorrowing ||
+           (token->kind == identifier && token->rawValue == "mutating");
+}
+
+// Spelling of a type with no characters that are awkward in symbol names.
+std::string spellType(const syntax::TypePtr& type) {
+    if (type == nullptr) return "";
+    switch (type->kind) {
+        case syntax::Kind::nominalType: {
+            const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(type);
+            std::string text = nominal->name == nullptr ? "" : nominal->name->rawValue;
+            for (const auto& argument : nominal->arguments) text += "_" + spellType(argument);
+            return text;
+        }
+        case syntax::Kind::arrayType:
+            return "Array_" + spellType(
+                    std::static_pointer_cast<syntax::ArrayTypeSyntax>(type)->element);
+        case syntax::Kind::dictionaryType: {
+            const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
+            return "Dict_" + spellType(dictionary->key) + "_" + spellType(dictionary->value);
+        }
+        case syntax::Kind::optionalType:
+            return "Optional_" + spellType(
+                    std::static_pointer_cast<syntax::OptionalTypeSyntax>(type)->wrapped);
+        default:
+            return "";
+    }
+}
+
+// Each method's `self` parameter needs its own copy of the owner type syntax.
+syntax::TypePtr cloneType(const syntax::TypePtr& type) {
+    if (type == nullptr) return nullptr;
+    switch (type->kind) {
+        case syntax::Kind::nominalType: {
+            const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(type);
+            std::vector<syntax::TypePtr> arguments;
+            for (const auto& argument : nominal->arguments) arguments.push_back(cloneType(argument));
+            return std::make_shared<syntax::NominalTypeSyntax>(
+                    nominal->span, nominal->name, std::move(arguments));
+        }
+        case syntax::Kind::arrayType: {
+            const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(type);
+            return std::make_shared<syntax::ArrayTypeSyntax>(array->span, cloneType(array->element));
+        }
+        case syntax::Kind::dictionaryType: {
+            const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
+            return std::make_shared<syntax::DictionaryTypeSyntax>(
+                    dictionary->span, cloneType(dictionary->key), cloneType(dictionary->value));
+        }
+        case syntax::Kind::optionalType: {
+            const auto optional = std::static_pointer_cast<syntax::OptionalTypeSyntax>(type);
+            return std::make_shared<syntax::OptionalTypeSyntax>(
+                    optional->span, cloneType(optional->wrapped));
+        }
+        default:
+            return type;
+    }
+}
+
+// The name of the type whose member scope receives methods of `type`.
+Token::Ptr ownerToken(const syntax::TypePtr& type) {
+    if (type == nullptr) return nullptr;
+    const auto make = [&](const char* name) {
+        return std::make_shared<Token>(identifier, name, type->span, 0, 0, false);
+    };
+    switch (type->kind) {
+        case syntax::Kind::nominalType:
+            return std::static_pointer_cast<syntax::NominalTypeSyntax>(type)->name;
+        case syntax::Kind::arrayType: return make("Array");
+        case syntax::Kind::dictionaryType: return make("Dict");
+        case syntax::Kind::optionalType: return make("Optional");
+        default: return nullptr;
+    }
+}
+
 syntax::Visibility visibilityFor(TokenKind kind) {
     if (kind == kwPublic) return syntax::Visibility::public_;
     if (kind == kwPrivate) return syntax::Visibility::private_;
@@ -213,6 +290,8 @@ ParseResult Parser::parse() {
         if (item != nullptr) {
             items.push_back(std::move(item));
         }
+        for (auto& hoisted : hoistedItems) items.push_back(std::move(hoisted));
+        hoistedItems.clear();
         if (cursor.position() == before) {
             report(DiagnosticId::unexpectedToken,
                    tokenSpan(cursor.peek()),
@@ -273,6 +352,12 @@ syntax::NodePtr Parser::parseTopLevelItem() {
     if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
         const auto token = cursor.advance();
         return std::make_shared<syntax::ErrorDeclSyntax>(tokenSpan(token));
+    }
+
+    if (cursor.at(identifier) && cursor.peek()->rawValue == "extension" &&
+        (cursor.at(identifier, 1) || cursor.at(leftSquare, 1))) {
+        parseExtensionDecl();
+        return nullptr;
     }
 
     switch (cursor.peek()->kind) {
@@ -429,7 +514,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     std::vector<syntax::StructFieldDeclSyntax::Ptr> fields;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         if (cursor.peek()->startsLine &&
-            (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum))) {
+            (cursor.at(kwStruct) || cursor.at(kwEnum))) {
             break;
         }
         const size_t before = cursor.position();
@@ -442,12 +527,15 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
                 fields.back()->explicitVisibility = true;
                 fields.back()->span = coveringSpan(modifier->span, fields.back()->span);
             }
+        } else if (cursor.at(kwFunc) || isMethodEffect(cursor.peek())) {
+            parseMethod(std::make_shared<syntax::NominalTypeSyntax>(
+                    tokenSpan(name), name, std::vector<syntax::TypePtr> {}), modifier);
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
             cursor.advance();
         } else {
             report(DiagnosticId::unsupportedSyntax,
                    tokenSpan(cursor.peek()),
-                   "only stored 'let' and 'var' fields are supported in a Parser MVP struct");
+                   "only stored 'let' and 'var' fields and methods are supported in a struct");
             cursor.advance();
             synchronizeBlock();
         }
@@ -458,6 +546,85 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
 
     return std::make_shared<syntax::StructDeclSyntax>(
             spanFrom(start), std::move(name), std::move(fields));
+}
+
+
+
+void Parser::parseMethod(const syntax::TypePtr& ownerType, const Token::Ptr& modifier) {
+    const auto owner = ownerToken(ownerType);
+    Token::Ptr effect;
+    if (isMethodEffect(cursor.peek())) effect = cursor.advance();
+    if (!cursor.at(kwFunc)) {
+        report(DiagnosticId::unsupportedSyntax,
+               tokenSpan(cursor.peek()),
+               "only stored fields and methods are supported in a struct body");
+        cursor.advance();
+        synchronizeBlock();
+        return;
+    }
+    auto declaration = parseFunctionDecl();
+    if (declaration->name == nullptr || owner == nullptr) return;
+
+    const auto nameSpan = declaration->name->span;
+    const auto line = declaration->name->lineNumber;
+    const auto column = declaration->name->columnAt;
+    declaration->methodName = declaration->name->rawValue;
+    declaration->ownerName = owner;
+    declaration->name = std::make_shared<Token>(
+            identifier, spellType(ownerType) + "." + declaration->methodName,
+            nameSpan, line, column, false);
+
+    Token::Ptr access;
+    if (effect != nullptr && effect->kind == kwConsuming) {
+        access = effect;
+    } else if (effect != nullptr && effect->kind == identifier) {
+        access = std::make_shared<Token>(kwInout, "inout", nameSpan, line, column, false);
+    }
+    auto selfToken = std::make_shared<Token>(identifier, "self", nameSpan, line, column, false);
+    auto selfType = cloneType(ownerType);
+    declaration->parameters.insert(
+            declaration->parameters.begin(),
+            std::make_shared<syntax::ParameterDeclSyntax>(
+                    nameSpan, selfToken, selfToken, std::move(access), std::move(selfType)));
+
+    if (modifier != nullptr) {
+        declaration->visibility = visibilityFor(modifier->kind);
+        declaration->explicitVisibility = true;
+    }
+    hoistedItems.push_back(std::move(declaration));
+}
+
+void Parser::parseExtensionDecl() {
+    cursor.advance();
+    auto ownerType = parseType();
+    if (ownerToken(ownerType) == nullptr) {
+        report(DiagnosticId::unsupportedSyntax, ownerType->span,
+               "an extension must name a struct, enum, or built-in type");
+        synchronizeTopLevel();
+        return;
+    }
+    if (cursor.eat(leftCurly) == nullptr) {
+        reportExpected(DiagnosticId::expectedBlock, "'{' to begin the extension body");
+        return;
+    }
+    DelimiterScope delimiter(activeClosers, rightCurly);
+    while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        const size_t before = cursor.position();
+        Token::Ptr modifier;
+        if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
+        if (cursor.at(kwFunc) || isMethodEffect(cursor.peek())) {
+            parseMethod(ownerType, modifier);
+        } else {
+            report(DiagnosticId::unsupportedSyntax,
+                   tokenSpan(cursor.peek()),
+                   "only methods are supported in an extension body");
+            cursor.advance();
+            synchronizeBlock();
+        }
+        if (cursor.position() == before) cursor.advance();
+        enforceItemBoundary(false);
+    }
+    expect(rightCurly, "'}' to close the extension body");
 }
 
 syntax::StructFieldDeclSyntax::Ptr Parser::parseStructField() {
@@ -1039,6 +1206,14 @@ syntax::ExprPtr Parser::parsePrefixExpr() {
                         : "an access path after '&'");
             operand = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         }
+        // `&receiver.method(...)?` marks the call under the propagation operators.
+        auto marked = operand;
+        while (marked->kind == syntax::Kind::propagateExpr) {
+            marked = std::static_pointer_cast<syntax::PropagateExprSyntax>(marked)->operand;
+        }
+        if (marked->kind == syntax::Kind::callExpr) {
+            std::static_pointer_cast<syntax::CallExprSyntax>(marked)->receiverMarker = marker;
+        }
         return std::make_shared<syntax::AccessExprSyntax>(
                 spanFrom(start), std::move(marker), std::move(operand));
     }
@@ -1319,6 +1494,19 @@ syntax::CallArgumentSyntax::Ptr Parser::parseCallArgument() {
     if (value == nullptr) {
         reportExpected(DiagnosticId::expectedExpression, "a call argument value");
         value = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
+    }
+    if (accessMarker != nullptr) {
+        // `f(x: consume value.method())` marks the method's receiver: a call
+        // result is not storage, so the marker cannot belong to the argument.
+        auto marked = value;
+        while (marked->kind == syntax::Kind::propagateExpr) {
+            marked = std::static_pointer_cast<syntax::PropagateExprSyntax>(marked)->operand;
+        }
+        if (marked->kind == syntax::Kind::callExpr) {
+            std::static_pointer_cast<syntax::CallExprSyntax>(marked)->receiverMarker =
+                    std::move(accessMarker);
+            accessMarker = nullptr;
+        }
     }
     return std::make_shared<syntax::CallArgumentSyntax>(
             spanFrom(start), std::move(label), std::move(accessMarker), std::move(value));

@@ -3,31 +3,37 @@ import Foundation
 // Human-readable text for the host error and status types. Each message keeps
 // the original platform code, so no information is lost by formatting.
 
-public func fileSystemMessage(error: FileSystemError): String {
-    return match error {
-        .InvalidPath(code) => "invalid path (platform code " + decimalString(value: code) + ")",
-        .NotFound(code) => "not found (platform code " + decimalString(value: code) + ")",
-        .PermissionDenied(code) => "permission denied (platform code " + decimalString(value: code) + ")",
-        .AlreadyExists(code) => "already exists (platform code " + decimalString(value: code) + ")",
-        .NotDirectory(code) => "not a directory (platform code " + decimalString(value: code) + ")",
-        .IsDirectory(code) => "is a directory (platform code " + decimalString(value: code) + ")",
-        .Other(code) => "filesystem failure (platform code " + decimalString(value: code) + ")",
+extension FileSystemError {
+    public func message(): String {
+        return match self {
+            .InvalidPath(code) => "invalid path (platform code " + code.decimalString() + ")",
+            .NotFound(code) => "not found (platform code " + code.decimalString() + ")",
+            .PermissionDenied(code) => "permission denied (platform code " + code.decimalString() + ")",
+            .AlreadyExists(code) => "already exists (platform code " + code.decimalString() + ")",
+            .NotDirectory(code) => "not a directory (platform code " + code.decimalString() + ")",
+            .IsDirectory(code) => "is a directory (platform code " + code.decimalString() + ")",
+            .Other(code) => "filesystem failure (platform code " + code.decimalString() + ")",
+        }
     }
 }
 
-public func processMessage(error: ProcessError): String {
-    return match error {
-        .InvalidInput(code) => "invalid process input (platform code " + decimalString(value: code) + ")",
-        .NotFound(code) => "executable or working directory not found (platform code " + decimalString(value: code) + ")",
-        .PermissionDenied(code) => "process permission denied (platform code " + decimalString(value: code) + ")",
-        .LaunchFailed(code) => "process launch failed (platform code " + decimalString(value: code) + ")",
-        .WaitFailed(code) => "process wait failed (platform code " + decimalString(value: code) + ")",
+extension ProcessError {
+    public func message(): String {
+        return match self {
+            .InvalidInput(code) => "invalid process input (platform code " + code.decimalString() + ")",
+            .NotFound(code) => "executable or working directory not found (platform code " + code.decimalString() + ")",
+            .PermissionDenied(code) => "process permission denied (platform code " + code.decimalString() + ")",
+            .LaunchFailed(code) => "process launch failed (platform code " + code.decimalString() + ")",
+            .WaitFailed(code) => "process wait failed (platform code " + code.decimalString() + ")",
+        }
     }
 }
 
-public func processStatusMessage(status: ProcessStatus): String {
-    return match status {
-        .Exited(code) => "exited with status " + decimalString(value: code),
-        .Signaled(signal) => "terminated by signal " + decimalString(value: signal),
+extension ProcessStatus {
+    public func message(): String {
+        return match self {
+            .Exited(code) => "exited with self " + code.decimalString(),
+            .Signaled(signal) => "terminated by signal " + signal.decimalString(),
+        }
     }
 }

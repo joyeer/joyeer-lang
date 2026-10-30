@@ -69,20 +69,24 @@ let crcTable: [UInt32] = [
     0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D,
 ]
 
-// Continues a checksum over more bytes. Start with 0 for the first chunk;
-// feeding a message in pieces gives the same result as one call.
-public func crc32Update(checksum: UInt32, bytes: [UInt8]): UInt32 {
-    var state: UInt32 = ~checksum
-    var index = 0
-    while index < bytes.count {
-        let slot = (state ^ (bytes[index] as UInt32)) & 0xFF
-        state = crcTable[slot as Int] ^ (state >> 8)
-        index += 1
+extension [UInt8] {
+    // Continues a checksum over more bytes. Start with 0 for the first chunk;
+    // feeding a message in pieces gives the same result as one call.
+    public func crc32Update(checksum: UInt32): UInt32 {
+        var state: UInt32 = ~checksum
+        var index = 0
+        while index < self.count {
+            let slot = (state ^ (self[index] as UInt32)) & 0xFF
+            state = crcTable[slot as Int] ^ (state >> 8)
+            index += 1
+        }
+        return ~state
     }
-    return ~state
 }
 
-// CRC-32 of all the bytes, for example 0xCBF43926 for "123456789".
-public func crc32(bytes: [UInt8]): UInt32 {
-    return crc32Update(checksum: 0, bytes: bytes)
+extension [UInt8] {
+    // CRC-32 of all the bytes, for example 0xCBF43926 for "123456789".
+    public func crc32(): UInt32 {
+        return self.crc32Update(checksum: 0)
+    }
 }

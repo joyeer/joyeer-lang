@@ -583,4 +583,100 @@ TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
             }));
 }
 
+TEST_F(NameResolutionTest, RewritesMethodCallOnKnownReceiverTypeToSelfArgument) {
+    resolve(R"JOYEER(struct Counter {
+    var n: Int
+    func get(): Int { return self.n }
+}
+func read(counter: Counter): Int {
+    return counter.get()
+}
+)JOYEER");
+
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[2]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(returned->value);
+
+    ASSERT_EQ(call->callee->kind, Kind::nameExpr);
+    EXPECT_EQ(referenced(call->callee).name, "Counter.get");
+    ASSERT_EQ(call->arguments.size(), 1u);
+    EXPECT_EQ(call->arguments[0]->label->rawValue, "self");
+    EXPECT_EQ(call->arguments[0]->value->kind, Kind::nameExpr);
+    EXPECT_TRUE(resolution.model->callTarget(call).has_value());
+}
+
+TEST_F(NameResolutionTest, ResolvesExtensionDeclaredBeforeItsType) {
+    resolve(R"JOYEER(extension Box {
+    func twice(): Int { return self.value * 2 }
+}
+struct Box {
+    var value: Int
+}
+func use(box: Box): Int {
+    return box.twice()
+}
+)JOYEER");
+
+    EXPECT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+}
+
+TEST_F(NameResolutionTest, ReportsDuplicateMethodNames) {
+    resolve(R"JOYEER(struct Box {
+    var value: Int
+    func read(): Int { return self.value }
+}
+extension Box {
+    func read(): Int { return 0 }
+}
+)JOYEER");
+
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::duplicateDeclaration));
+}
+
+TEST_F(NameResolutionTest, ReportsMethodNamedLikeAStoredField) {
+    resolve(R"JOYEER(struct Box {
+    var value: Int
+    func value(): Int { return 1 }
+}
+)JOYEER");
+
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::duplicateDeclaration));
+}
+
+TEST_F(NameResolutionTest, MethodsOnDifferentTypesMayShareANameWithFreeFunctions) {
+    resolve(R"JOYEER(struct A {
+    var n: Int
+    func size(): Int { return self.n }
+}
+struct B {
+    var n: Int
+    func size(): Int { return self.n + 1 }
+}
+func size(value: Int): Int { return value }
+)JOYEER");
+
+    EXPECT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+}
+
+TEST_F(NameResolutionTest, ExtensionOnUnknownTypeIsRejected) {
+    resolve(R"JOYEER(extension Missing {
+    func run(): Int { return 1 }
+}
+)JOYEER");
+
+    EXPECT_FALSE(resolution.succeeded());
+}
+
+TEST_F(NameResolutionTest, SelfIsNotVisibleOutsideMethods) {
+    resolve(R"JOYEER(func outside(): Int {
+    return self.value
+}
+)JOYEER");
+
+    EXPECT_FALSE(resolution.succeeded());
+}
+
 } // namespace

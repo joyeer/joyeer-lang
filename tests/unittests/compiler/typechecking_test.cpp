@@ -1975,4 +1975,158 @@ func invalid() {
                     }
                 }
 
+const char* const methodProgram = R"JOYEER(struct S {
+    var n: Int
+    func get(): Int { return self.n }
+    mutating func inc() { self.n = self.n + 1 }
+    consuming func take(): Int { return self.n }
+}
+func make(): S { return S(n: 1) }
+)JOYEER";
+
+    bool hasId(const joyeer::typing::TypeCheckingResult& checking,
+               joyeer::typing::TypeCheckingDiagnosticId id) {
+        return std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [id](const auto& diagnostic) { return diagnostic.id == id; });
+    }
+
+    TEST_F(TypeCheckingTest, MethodCallsOnInferredReceiversBecomeSelfCalls) {
+        check(std::string(methodProgram) + R"JOYEER(func use(): Int {
+    var s = make()
+    &s.inc()
+    return s.get()
+}
+)JOYEER");
+
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+                parseResult.root->items.back());
+        const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+                function->body->items[2]);
+        const auto call = std::static_pointer_cast<joyeer::syntax::CallExprSyntax>(returned->value);
+        ASSERT_EQ(call->callee->kind, joyeer::syntax::Kind::nameExpr);
+        ASSERT_EQ(call->arguments.size(), 1u);
+        EXPECT_EQ(call->arguments[0]->label->rawValue, "self");
+        EXPECT_TRUE(checking.model->callTarget(call).has_value());
+    }
+
+    TEST_F(TypeCheckingTest, ConsumingMethodCallAcceptsConsumeOnTheReceiver) {
+        check(std::string(methodProgram) + R"JOYEER(func use(): Int {
+    var s = make()
+    let value = consume s.take()
+    return value
+}
+)JOYEER");
+
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, MutatingMethodCallWithoutAmpersandIsRejected) {
+        check(std::string(methodProgram) + R"JOYEER(func use() {
+    var s = make()
+    s.inc()
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, NonMutatingMethodCallWithAmpersandIsRejected) {
+        check(std::string(methodProgram) + R"JOYEER(func use() {
+    var s = make()
+    &s.get()
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, MutatingMethodCallThroughLetBindingIsRejected) {
+        check(std::string(methodProgram) + R"JOYEER(func use() {
+    let s = make()
+    &s.inc()
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidInoutArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, ConsumingMethodCallWithoutConsumeIsRejected) {
+        check(std::string(methodProgram) + R"JOYEER(func use(): Int {
+    var s = make()
+    return s.take()
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, UnknownMethodOnInferredReceiverIsReported) {
+        check(std::string(methodProgram) + R"JOYEER(func use() {
+    var s = make()
+    s.missing()
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::unknownMember))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, MethodCallArgumentsRequireLabelsAndMatchingTypes) {
+        check(std::string(methodProgram) + R"JOYEER(extension S {
+    func add(amount: Int): Int { return self.n + amount }
+}
+func use(): Int {
+    let s = make()
+    let first = s.add(1)
+    let second = s.add(amount: "text")
+    return first + second
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_FALSE(checking.succeeded());
+    }
+
+    TEST_F(TypeCheckingTest, MutatingMethodMayAssignThroughSelfAndCallOtherMutatingMethods) {
+        check(R"JOYEER(struct Box {
+    var value: Int
+    mutating func bump() { self.value = self.value + 1 }
+    mutating func bumpTwice() {
+        &self.bump()
+        &self.bump()
+    }
+}
+)JOYEER");
+
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, NonMutatingMethodCannotAssignThroughSelf) {
+        check(R"JOYEER(struct Box {
+    var value: Int
+    func broken() { self.value = 1 }
+}
+)JOYEER");
+
+        EXPECT_FALSE(checking.succeeded());
+    }
+
+    TEST_F(TypeCheckingTest, ConsumeOnAPlainCallStillReportsInvalidConsume) {
+        check(R"JOYEER(func one(): Int { return 1 }
+func use(): Int {
+    let x = consume one()
+    return x
+}
+)JOYEER");
+
+        EXPECT_TRUE(hasId(checking, joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
 } // namespace

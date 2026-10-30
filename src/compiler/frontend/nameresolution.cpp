@@ -195,6 +195,7 @@ public:
         }
 
         collectTopLevelDeclarations(root);
+        collectMethodAliases(root, model->fileScope_);
         for (const auto& item : root->items) {
             resolveTopLevelSignature(item);
         }
@@ -277,6 +278,10 @@ public:
                 }
                 imports.emplace(import.name, target->second);
             }
+        }
+        for (const auto& file : files) {
+            activeModule = file.module;
+            collectMethodAliases(file.file, file.scope);
         }
         for (const auto& file : files) {
             activeModule = file.module;
@@ -855,6 +860,33 @@ private:
                 default:
                     break;
             }
+        }
+    }
+
+    // A method is an ordinary function named "Owner.method" whose first parameter
+    // is `self`; exposing it in the owner's member scope lets `value.method(...)`
+    // find it. A duplicate name is reported.
+    void collectMethodAliases(const syntax::SourceFileSyntax::Ptr& root, ScopeId fileScope) {
+        for (const auto& item : root->items) {
+            if (item->kind != syntax::Kind::functionDecl) continue;
+            const auto function = std::static_pointer_cast<syntax::FunctionDeclSyntax>(item);
+            if (function->ownerName == nullptr) continue;
+            const auto owner = lookupType(fileScope, function->ownerName->rawValue).symbol;
+            if (!owner.has_value()) continue;
+            const auto& ownerSymbol = symbol(*owner);
+            if (!ownerSymbol.memberScope.has_value()) continue;
+            const auto declared = model->declarationSymbols_.find(nodeId(function));
+            if (declared == model->declarationSymbols_.end()) continue;
+            auto& members = scope(*ownerSymbol.memberScope).values;
+            if (members.contains(function->methodName)) {
+                report(
+                        NameResolutionDiagnosticId::duplicateDeclaration,
+                        tokenSpan(function->name, function->span),
+                        "duplicate declaration of '" + function->methodName + "' in type '" +
+                                function->ownerName->rawValue + "'");
+                continue;
+            }
+            members.emplace(function->methodName, declared->second);
         }
     }
 
@@ -1588,6 +1620,39 @@ private:
         }
     }
 
+    static bool isMethodSymbol(const Symbol& candidate) {
+        return candidate.kind == SymbolKind::function && candidate.callable.has_value() &&
+               !candidate.callable->parameters.empty() &&
+               candidate.callable->parameters[0].label == std::optional<std::string>("self") &&
+               candidate.name.find('.') != std::string::npos;
+    }
+
+    // Rewrites `receiver.method(args)` into `Owner.method(self: receiver, args)`
+    // so type checking, flow analysis, and lowering see an ordinary function call.
+    void rewriteMethodCall(
+            const syntax::CallExprSyntax::Ptr& expression,
+            SymbolId method,
+            ScopeId currentScope) {
+        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto& anchor = member->member;
+        auto calleeToken = std::make_shared<Token>(
+                identifier, symbol(method).name, anchor->span,
+                anchor->lineNumber, anchor->columnAt, false);
+        auto selfLabel = std::make_shared<Token>(
+                identifier, "self", member->base->span,
+                anchor->lineNumber, anchor->columnAt, false);
+        auto callee = std::make_shared<syntax::NameExprSyntax>(member->span, calleeToken);
+        auto receiver = std::make_shared<syntax::CallArgumentSyntax>(
+                member->base->span, selfLabel, expression->receiverMarker, member->base);
+        indexNode(callee);
+        indexNode(receiver);
+        setContainingScope(callee, currentScope);
+        setContainingScope(receiver, currentScope);
+        model->referenceSymbols_[nodeId(callee)] = method;
+        expression->callee = callee;
+        expression->arguments.insert(expression->arguments.begin(), receiver);
+    }
+
     void resolveCall(const syntax::CallExprSyntax::Ptr& expression, ScopeId currentScope) {
         resolveExpression(expression->callee, currentScope);
         for (const auto& argument : expression->arguments) {
@@ -1605,6 +1670,12 @@ private:
                         expression->callee->span);
             }
             return;
+        }
+
+        if (expression->callee->kind == syntax::Kind::memberExpr &&
+            isMethodSymbol(symbol(*referenced)) &&
+            !model->isModuleQualified(expression->callee)) {
+            rewriteMethodCall(expression, *referenced, currentScope);
         }
 
         auto target = *referenced;

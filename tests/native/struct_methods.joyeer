@@ -1,0 +1,53 @@
+struct Inner {
+    var n: Int
+    mutating func bump() { self.n = self.n + 1 }
+    func read(): Int { return self.n }
+}
+
+struct Box {
+    var value: Int
+    var inner: Inner
+    mutating func inc() {
+        self.value = self.value + 1
+        &self.inner.bump()
+        &self.bumpTwice()
+    }
+    mutating func bumpTwice() {
+        &self.inner.bump()
+        &self.inner.bump()
+    }
+    consuming func finish(): Int { return self.value }
+    func total(add: Int): Int { return self.value + self.inner.read() + add }
+}
+
+extension Box {
+    func twice(): Int { return self.value * 2 }
+}
+
+enum Color {
+    Red,
+    Blue,
+}
+
+extension Color {
+    func code(): Int {
+        return match self {
+            .Red => 1,
+            .Blue => 2,
+        }
+    }
+}
+
+func make(): Box { return Box(value: 10, inner: Inner(n: 0)) }
+
+func main() {
+    var b = Box(value: 1, inner: Inner(n: 5))
+    &b.inc()
+    print(value: b.total(add: 100))
+    print(value: b.twice())
+    print(value: make().total(add: 1))
+    let c = Color.Blue
+    print(value: c.code())
+    let finished = consume b.finish()
+    print(value: finished)
+}

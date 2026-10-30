@@ -50,14 +50,18 @@ public struct ZipEntry {
 
 public enum ZipMethod { Stored, Deflate }
 
-public func createZip(entries: [ZipEntry], method: ZipMethod,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+extension [ZipEntry] {
+    public func createZip(method: ZipMethod,
+        maximumBytes: Int): Result<[UInt8], CompressionError>
+}
 
-public func listZip(archive: [UInt8], maximumEntries: Int,
-    maximumNameBytes: Int): Result<[String], CompressionError>
+extension [UInt8] {
+    public func listZip(maximumEntries: Int,
+        maximumNameBytes: Int): Result<[String], CompressionError>
 
-public func extractZipEntry(archive: [UInt8], index: Int,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+    public func extractZipEntry(index: Int,
+        maximumBytes: Int): Result<[UInt8], CompressionError>
+}
 ```
 
 ```joyeer
@@ -71,11 +75,15 @@ public struct ZipEntryInfo {
     // plus internal location fields
 }
 
-public func zipEntries(archive: [UInt8], maximumEntries: Int,
-    maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError>
+extension [UInt8] {
+    public func zipEntries(maximumEntries: Int,
+        maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError>
 
-public func readZipEntry(archive: [UInt8], entry: ZipEntryInfo,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+    public func readZipEntry(entry: ZipEntryInfo,
+        maximumBytes: Int): Result<[UInt8], CompressionError>
+}
+
+These are methods on the byte array that holds the archive (`bytes.listZip(...)`).
 ```
 
 To visit every entry, call `zipEntries` once and then `readZipEntry` for each
@@ -103,21 +111,26 @@ public enum ZipFileError { ReadFailed(FileSystemError), FileTooLarge, Invalid(Co
 public struct ZipArchive { public let path: String; public let entries: [ZipEntryInfo] /* + bytes */ }
 public struct ZipFileEntry { public let info: ZipEntryInfo; public let contents: [UInt8] }
 
-public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
-    maximumNameBytes: Int): Result<ZipArchive, ZipFileError>
+extension String {
+    public func openZipFile(maximumFileBytes: Int, maximumEntries: Int,
+        maximumNameBytes: Int): Result<ZipArchive, ZipFileError>
+}
 
-public func readZipArchiveEntry(archive: ZipArchive, entry: ZipEntryInfo,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+extension ZipArchive {
+    public func readEntry(entry: ZipEntryInfo, maximumBytes: Int): Result<[UInt8], CompressionError>
+}
 
-public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
-    maximumNameBytes: Int, maximumEntryBytes: Int,
-    maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError>
+extension String {
+    public func readZipFile(maximumFileBytes: Int, maximumEntries: Int,
+        maximumNameBytes: Int, maximumEntryBytes: Int,
+        maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError>
+}
 ```
 
 `openZipFile` reads at most `maximumFileBytes + 1` bytes, so an oversized file
 fails with `FileTooLarge` without being loaded. The whole file is held in
 memory, briefly twice while it is copied into bytes. Visit entries with
-`for`-style loops over `archive.entries` and `readZipArchiveEntry`; skip
+`for`-style loops over `archive.entries` and `archive.readEntry`; skip
 `isDirectory` entries. `readZipFile` reads everything at once, with directories
 returned as empty contents. It enforces `maximumEntryBytes` per entry and
 `maximumTotalBytes` across all contents, and one unreadable entry fails the call.

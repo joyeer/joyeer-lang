@@ -1,0 +1,48 @@
+extension String {
+    func shout(): String { return self + "!" }
+}
+
+extension Int {
+    func doubled(): Int { return self * 2 }
+}
+
+extension UInt8 {
+    func isDigit(): Bool { return self >= b'0' && self <= b'9' }
+}
+
+extension [UInt8] {
+    func sum(): Int {
+        var total = 0
+        var index = 0
+        while index < self.count {
+            total = total + byteToInt(value: self[index])
+            index = index + 1
+        }
+        return total
+    }
+
+    mutating func addOne() { &self.append(element: 1) }
+}
+
+extension [Int] {
+    func first(): Int { return self[0] }
+}
+
+extension [String: Int] {
+    func size(): Int { return self.count }
+}
+
+func main() {
+    print(value: "hey".shout())
+    print(value: 21.doubled())
+    let n = 4
+    print(value: n.doubled())
+    print(value: b'7'.isDigit())
+    var bytes: [UInt8] = [1, 2, 3]
+    &bytes.addOne()
+    print(value: bytes.sum())
+    let ints = [7, 8]
+    print(value: ints.first())
+    let table: [String: Int] = [:]
+    print(value: table.size())
+}

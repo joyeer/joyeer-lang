@@ -135,8 +135,7 @@ TokenKind keywordKind(std::string_view value) {
 
 bool isDeferredKeyword(std::string_view value) {
   static const std::unordered_set<std::string_view> words = {
-    "extension", "subscript", "deinit", "typealias", "indirect",
-    "mutating",
+    "subscript", "deinit", "typealias", "indirect",
     "yield", "where",
     "async", "await", "actor", "throws", "catch", "defer",
     "is", "protocol", "trait", "macro", "invariant",

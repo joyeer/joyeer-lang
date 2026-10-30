@@ -804,6 +804,30 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;runtime;ownership;array"
     )
 
+    add_test(NAME NativeExecutableStructMethods
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/struct_methods.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-struct-methods${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=110\n4\n11\n2\n2\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableStructMethods PROPERTIES
+            LABELS "native;llvm-backend;runtime;methods"
+    )
+
+    add_test(NAME NativeExecutableBuiltinExtensions
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/builtin_extensions.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-builtin-extensions${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=hey!\n42\n8\ntrue\n7\n7\n0\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableBuiltinExtensions PROPERTIES
+            LABELS "native;llvm-backend;runtime;methods"
+    )
+
     set(dictionary_set_output
             "3\nupdated!\ntwo\nretained\nretained\n2\n6\n2\n40\n30\n2\n40\n30\n2\nlast\nkept\n2\nlast\nkept\n")
     add_test(NAME NativeExecutableDictionarySet

@@ -100,6 +100,24 @@ fast-math assumptions. Floating remainder and unsigned unary minus are not
 supported. New scalars can be stored in arrays, fields, and enum/optional/result
 payloads; dictionary keys still support only `Int`, `Bool`, `UInt8`, and `String`.
 
+### Methods
+
+A `struct` body and `extension Type { ... }` blocks (for structs and enums) may
+declare methods. A method is an ordinary function named `Type.method` whose
+first parameter is a synthesized `self` of the owner type: `func` borrows it,
+`mutating func` takes it `inout`, and `consuming func` takes it `consuming`.
+The parser hoists methods to file scope; name resolution (or type checking when
+the receiver type is inferred) rewrites `value.method(a: 1)` to
+`Type.method(self: value, a: 1)`, so later phases see a plain call. Call sites
+mark the receiver like an argument: `&value.mutate()` and
+`consume value.finish()`. Inside a `mutating` method, assigning through `self`
+needs no `&`. Extensions may also name built-in types: `extension String`,
+`extension Int`, and concrete instantiations such as `extension [UInt8]` or
+`extension [String: Int]` (the method is declared on the `Array` or `Dict`
+member scope, so two array extensions cannot reuse one method name for different
+element types). Subscripts, `init`, `deinit`, and user-defined generics are
+not supported.
+
 ## Source-implemented local project tool
 
 The separate Joyeer-written `joypm 0.1.0` implements `init/check/build/run/test`

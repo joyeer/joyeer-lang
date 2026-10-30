@@ -254,6 +254,12 @@ void LexParser::parseIdentifier() {
     }
 
     const TokenKind kind = keywordKind(value);
+    if (kind == kwSelf) {
+        // `self` is the receiver parameter synthesized for methods; it names an
+        // ordinary parameter, so it lexes as an identifier.
+        emit(identifier, start, value);
+        return;
+    }
     if (kind != identifier && !isMvpKeyword(kind)) {
         report(tokenLine, tokenColumn, Diagnostics::errorUnsupportedSyntax, value.c_str());
         emit(deferredKeyword, start, value);
