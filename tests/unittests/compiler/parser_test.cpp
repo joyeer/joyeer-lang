@@ -1271,4 +1271,37 @@ TEST_F(ParserTest, MethodKeywordsRemainUsableAsIdentifiers) {
     EXPECT_EQ(result.root->items.size(), 3u);
 }
 
+TEST_F(ParserTest, ExtensionsMayNameBuiltinTypesAndInstantiations) {
+    parse(R"JOYEER(extension String {
+    func shout(): String { return self }
+}
+extension [UInt8] {
+    func sum(): Int { return 0 }
+}
+extension [String: Int] {
+    func size(): Int { return 0 }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 3u);
+    const auto function = [&](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(result.root->items[index]);
+    };
+    EXPECT_EQ(function(0)->name->rawValue, "String.shout");
+    EXPECT_EQ(function(0)->ownerName->rawValue, "String");
+    EXPECT_EQ(function(1)->name->rawValue, "Array_UInt8.sum");
+    EXPECT_EQ(function(1)->ownerName->rawValue, "Array");
+    EXPECT_EQ(function(1)->parameters[0]->type->kind, Kind::arrayType);
+    EXPECT_EQ(function(2)->name->rawValue, "Dict_String_Int.size");
+    EXPECT_EQ(function(2)->ownerName->rawValue, "Dict");
+    EXPECT_EQ(function(2)->parameters[0]->type->kind, Kind::dictionaryType);
+}
+
+TEST_F(ParserTest, ExtensionOwnerMustBeANominalOrCollectionType) {
+    parse("extension () {\n    func run() {}\n}\n");
+
+    EXPECT_FALSE(result.succeeded());
+}
+
 } // namespace

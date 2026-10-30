@@ -91,7 +91,7 @@ private:
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
     // Parses `[effect] func ...` as a method of `owner`, hoisting it to file scope.
-    void parseMethod(const Token::Ptr& owner, const Token::Ptr& modifier);
+    void parseMethod(const syntax::TypePtr& ownerType, const Token::Ptr& modifier);
     void parseExtensionDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();
     syntax::EnumDeclSyntax::Ptr parseEnumDecl();

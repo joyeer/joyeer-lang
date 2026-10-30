@@ -69,41 +69,44 @@ private func compressionError(status: Int): CompressionError {
     }
 }
 
-public func createZip(entries: [ZipEntry], method: ZipMethod,
-    maximumBytes: Int): Result<[UInt8], CompressionError> {
-    if maximumBytes < 0 { return .Err(.InvalidArgument) }
-    var names: [String] = []
-    var contents: [[UInt8]] = []
-    var index = 0
-    while index < entries.count {
-        &names.append(element: entries[index].name)
-        &contents.append(element: entries[index].contents)
-        index = index + 1
+extension [ZipEntry] {
+    public func createZip(method: ZipMethod, maximumBytes: Int): Result<[UInt8], CompressionError> {
+        if maximumBytes < 0 { return .Err(.InvalidArgument) }
+        var names: [String] = []
+        var contents: [[UInt8]] = []
+        var index = 0
+        while index < self.count {
+            &names.append(element: self[index].name)
+            &contents.append(element: self[index].contents)
+            index = index + 1
+        }
+        let level = match method { .Stored => 0, .Deflate => 6 }
+        var output: [UInt8]
+        let status = nativeCreateZip(names: names, contents: contents, method: level,
+            maximumBytes: maximumBytes, output: &output)
+        if status != 0 { return .Err(compressionError(status: status)) }
+        return .Ok(output)
     }
-    let level = match method { .Stored => 0, .Deflate => 6 }
-    var output: [UInt8]
-    let status = nativeCreateZip(names: names, contents: contents, method: level,
-        maximumBytes: maximumBytes, output: &output)
-    if status != 0 { return .Err(compressionError(status: status)) }
-    return .Ok(output)
 }
 
-public func listZip(archive: [UInt8], maximumEntries: Int,
-    maximumNameBytes: Int): Result<[String], CompressionError> {
-    var output: [String]
-    let status = nativeListZip(archive: archive, maximumEntries: maximumEntries,
-        maximumNameBytes: maximumNameBytes, output: &output)
-    if status != 0 { return .Err(compressionError(status: status)) }
-    return .Ok(output)
+extension [UInt8] {
+    public func listZip(maximumEntries: Int, maximumNameBytes: Int): Result<[String], CompressionError> {
+        var output: [String]
+        let status = nativeListZip(archive: self, maximumEntries: maximumEntries,
+            maximumNameBytes: maximumNameBytes, output: &output)
+        if status != 0 { return .Err(compressionError(status: status)) }
+        return .Ok(output)
+    }
 }
 
-public func extractZipEntry(archive: [UInt8], index: Int,
-    maximumBytes: Int): Result<[UInt8], CompressionError> {
-    var output: [UInt8]
-    let status = nativeExtractZip(archive: archive, index: index,
-        maximumBytes: maximumBytes, output: &output)
-    if status != 0 { return .Err(compressionError(status: status)) }
-    return .Ok(output)
+extension [UInt8] {
+    public func extractZipEntry(index: Int, maximumBytes: Int): Result<[UInt8], CompressionError> {
+        var output: [UInt8]
+        let status = nativeExtractZip(archive: self, index: index,
+            maximumBytes: maximumBytes, output: &output)
+        if status != 0 { return .Err(compressionError(status: status)) }
+        return .Ok(output)
+    }
 }
 
 // One little-endian 64-bit field of the native metadata table (seven per entry).
@@ -119,50 +122,52 @@ private func tableField(table: [UInt8], entry: Int, field: Int): Int {
     return value as Int
 }
 
-// Lists every entry with its metadata, in central-directory order. Reads the
-// central directory once; pair it with readZipEntry to visit all entries in
-// linear time. Limits are inclusive, as for listZip.
-public func zipEntries(archive: [UInt8], maximumEntries: Int,
-    maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError> {
-    var names: [String]
-    var table: [UInt8]
-    let status = nativeEntriesZip(archive: archive, maximumEntries: maximumEntries,
-        maximumNameBytes: maximumNameBytes, names: &names, table: &table)
-    if status != 0 { return .Err(compressionError(status: status)) }
-    var entries: [ZipEntryInfo] = []
-    var index = 0
-    while index < names.count {
-        let attributes = tableField(table: table, entry: index, field: 6)
-        &entries.append(element: ZipEntryInfo(
-            name: names[index],
-            isDirectory: (attributes & 1) != 0,
-            size: tableField(table: table, entry: index, field: 2),
-            compressedSize: tableField(table: table, entry: index, field: 1),
-            crc32: tableField(table: table, entry: index, field: 3) as UInt32,
-            isSupported: (attributes & 2) != 0,
-            headerOffset: tableField(table: table, entry: index, field: 0),
-            method: tableField(table: table, entry: index, field: 4),
-            flags: tableField(table: table, entry: index, field: 5)))
-        index += 1
+extension [UInt8] {
+    // Lists every entry with its metadata, in central-directory order. Reads the
+    // central directory once; pair it with readZipEntry to visit all entries in
+    // linear time. Limits are inclusive, as for listZip.
+    public func zipEntries(maximumEntries: Int, maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError> {
+        var names: [String]
+        var table: [UInt8]
+        let status = nativeEntriesZip(archive: self, maximumEntries: maximumEntries,
+            maximumNameBytes: maximumNameBytes, names: &names, table: &table)
+        if status != 0 { return .Err(compressionError(status: status)) }
+        var entries: [ZipEntryInfo] = []
+        var index = 0
+        while index < names.count {
+            let attributes = tableField(table: table, entry: index, field: 6)
+            &entries.append(element: ZipEntryInfo(
+                name: names[index],
+                isDirectory: (attributes & 1) != 0,
+                size: tableField(table: table, entry: index, field: 2),
+                compressedSize: tableField(table: table, entry: index, field: 1),
+                crc32: tableField(table: table, entry: index, field: 3) as UInt32,
+                isSupported: (attributes & 2) != 0,
+                headerOffset: tableField(table: table, entry: index, field: 0),
+                method: tableField(table: table, entry: index, field: 4),
+                flags: tableField(table: table, entry: index, field: 5)))
+            index += 1
+        }
+        return .Ok(entries)
     }
-    return .Ok(entries)
 }
 
-// Reads one entry's contents directly from its local header, without parsing
-// the central directory again. `entry` must come from zipEntries on this same
-// archive. Directories and unsupported entries are refused. Checks size, CRC,
-// and the limit exactly like extractZipEntry.
-public func readZipEntry(archive: [UInt8], entry: ZipEntryInfo,
-    maximumBytes: Int): Result<[UInt8], CompressionError> {
-    if maximumBytes < 0 { return .Err(.InvalidArgument) }
-    if entry.isDirectory || !entry.isSupported { return .Err(.UnsupportedArchive) }
-    var output: [UInt8]
-    let status = nativeReadEntry(archive: archive, headerOffset: entry.headerOffset,
-        method: entry.method, flags: entry.flags, compressedSize: entry.compressedSize,
-        size: entry.size, checksum: entry.crc32 as Int, maximumBytes: maximumBytes,
-        output: &output)
-    if status != 0 { return .Err(compressionError(status: status)) }
-    return .Ok(output)
+extension [UInt8] {
+    // Reads one entry's contents directly from its local header, without parsing
+    // the central directory again. `entry` must come from zipEntries on this same
+    // archive. Directories and unsupported entries are refused. Checks size, CRC,
+    // and the limit exactly like extractZipEntry.
+    public func readZipEntry(entry: ZipEntryInfo, maximumBytes: Int): Result<[UInt8], CompressionError> {
+        if maximumBytes < 0 { return .Err(.InvalidArgument) }
+        if entry.isDirectory || !entry.isSupported { return .Err(.UnsupportedArchive) }
+        var output: [UInt8]
+        let status = nativeReadEntry(archive: self, headerOffset: entry.headerOffset,
+            method: entry.method, flags: entry.flags, compressedSize: entry.compressedSize,
+            size: entry.size, checksum: entry.crc32 as Int, maximumBytes: maximumBytes,
+            output: &output)
+        if status != 0 { return .Err(compressionError(status: status)) }
+        return .Ok(output)
+    }
 }
 
 // Why a ZIP or JAR file could not be opened or read.
@@ -201,7 +206,7 @@ public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int
     }
     if text.count > maximumFileBytes { return .Err(.FileTooLarge) }
     let bytes = text.utf8()
-    let entries = match zipEntries(archive: bytes, maximumEntries: maximumEntries,
+    let entries = match bytes.zipEntries(maximumEntries: maximumEntries,
         maximumNameBytes: maximumNameBytes) {
         .Ok(value) => value,
         .Err(error) => { return .Err(.Invalid(error)) },
@@ -212,7 +217,7 @@ public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int
 extension ZipArchive {
     // Reads one entry of an opened file; see readZipEntry.
     public func readEntry(entry: ZipEntryInfo, maximumBytes: Int): Result<[UInt8], CompressionError> {
-        return readZipEntry(archive: self.bytes, entry: entry, maximumBytes: maximumBytes)
+        return self.bytes.readZipEntry(entry: entry, maximumBytes: maximumBytes)
     }
 }
 

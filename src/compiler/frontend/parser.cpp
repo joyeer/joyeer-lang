@@ -28,6 +28,77 @@ bool isMethodEffect(const Token::Ptr& token) {
            (token->kind == identifier && token->rawValue == "mutating");
 }
 
+// Spelling of a type with no characters that are awkward in symbol names.
+std::string spellType(const syntax::TypePtr& type) {
+    if (type == nullptr) return "";
+    switch (type->kind) {
+        case syntax::Kind::nominalType: {
+            const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(type);
+            std::string text = nominal->name == nullptr ? "" : nominal->name->rawValue;
+            for (const auto& argument : nominal->arguments) text += "_" + spellType(argument);
+            return text;
+        }
+        case syntax::Kind::arrayType:
+            return "Array_" + spellType(
+                    std::static_pointer_cast<syntax::ArrayTypeSyntax>(type)->element);
+        case syntax::Kind::dictionaryType: {
+            const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
+            return "Dict_" + spellType(dictionary->key) + "_" + spellType(dictionary->value);
+        }
+        case syntax::Kind::optionalType:
+            return "Optional_" + spellType(
+                    std::static_pointer_cast<syntax::OptionalTypeSyntax>(type)->wrapped);
+        default:
+            return "";
+    }
+}
+
+// Each method's `self` parameter needs its own copy of the owner type syntax.
+syntax::TypePtr cloneType(const syntax::TypePtr& type) {
+    if (type == nullptr) return nullptr;
+    switch (type->kind) {
+        case syntax::Kind::nominalType: {
+            const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(type);
+            std::vector<syntax::TypePtr> arguments;
+            for (const auto& argument : nominal->arguments) arguments.push_back(cloneType(argument));
+            return std::make_shared<syntax::NominalTypeSyntax>(
+                    nominal->span, nominal->name, std::move(arguments));
+        }
+        case syntax::Kind::arrayType: {
+            const auto array = std::static_pointer_cast<syntax::ArrayTypeSyntax>(type);
+            return std::make_shared<syntax::ArrayTypeSyntax>(array->span, cloneType(array->element));
+        }
+        case syntax::Kind::dictionaryType: {
+            const auto dictionary = std::static_pointer_cast<syntax::DictionaryTypeSyntax>(type);
+            return std::make_shared<syntax::DictionaryTypeSyntax>(
+                    dictionary->span, cloneType(dictionary->key), cloneType(dictionary->value));
+        }
+        case syntax::Kind::optionalType: {
+            const auto optional = std::static_pointer_cast<syntax::OptionalTypeSyntax>(type);
+            return std::make_shared<syntax::OptionalTypeSyntax>(
+                    optional->span, cloneType(optional->wrapped));
+        }
+        default:
+            return type;
+    }
+}
+
+// The name of the type whose member scope receives methods of `type`.
+Token::Ptr ownerToken(const syntax::TypePtr& type) {
+    if (type == nullptr) return nullptr;
+    const auto make = [&](const char* name) {
+        return std::make_shared<Token>(identifier, name, type->span, 0, 0, false);
+    };
+    switch (type->kind) {
+        case syntax::Kind::nominalType:
+            return std::static_pointer_cast<syntax::NominalTypeSyntax>(type)->name;
+        case syntax::Kind::arrayType: return make("Array");
+        case syntax::Kind::dictionaryType: return make("Dict");
+        case syntax::Kind::optionalType: return make("Optional");
+        default: return nullptr;
+    }
+}
+
 syntax::Visibility visibilityFor(TokenKind kind) {
     if (kind == kwPublic) return syntax::Visibility::public_;
     if (kind == kwPrivate) return syntax::Visibility::private_;
@@ -284,7 +355,7 @@ syntax::NodePtr Parser::parseTopLevelItem() {
     }
 
     if (cursor.at(identifier) && cursor.peek()->rawValue == "extension" &&
-        cursor.at(identifier, 1)) {
+        (cursor.at(identifier, 1) || cursor.at(leftSquare, 1))) {
         parseExtensionDecl();
         return nullptr;
     }
@@ -457,7 +528,8 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
                 fields.back()->span = coveringSpan(modifier->span, fields.back()->span);
             }
         } else if (cursor.at(kwFunc) || isMethodEffect(cursor.peek())) {
-            parseMethod(name, modifier);
+            parseMethod(std::make_shared<syntax::NominalTypeSyntax>(
+                    tokenSpan(name), name, std::vector<syntax::TypePtr> {}), modifier);
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
             cursor.advance();
         } else {
@@ -478,7 +550,8 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
 
 
 
-void Parser::parseMethod(const Token::Ptr& owner, const Token::Ptr& modifier) {
+void Parser::parseMethod(const syntax::TypePtr& ownerType, const Token::Ptr& modifier) {
+    const auto owner = ownerToken(ownerType);
     Token::Ptr effect;
     if (isMethodEffect(cursor.peek())) effect = cursor.advance();
     if (!cursor.at(kwFunc)) {
@@ -498,7 +571,7 @@ void Parser::parseMethod(const Token::Ptr& owner, const Token::Ptr& modifier) {
     declaration->methodName = declaration->name->rawValue;
     declaration->ownerName = owner;
     declaration->name = std::make_shared<Token>(
-            identifier, owner->rawValue + "." + declaration->methodName,
+            identifier, spellType(ownerType) + "." + declaration->methodName,
             nameSpan, line, column, false);
 
     Token::Ptr access;
@@ -508,8 +581,7 @@ void Parser::parseMethod(const Token::Ptr& owner, const Token::Ptr& modifier) {
         access = std::make_shared<Token>(kwInout, "inout", nameSpan, line, column, false);
     }
     auto selfToken = std::make_shared<Token>(identifier, "self", nameSpan, line, column, false);
-    auto selfType = std::make_shared<syntax::NominalTypeSyntax>(
-            nameSpan, owner, std::vector<syntax::TypePtr> {});
+    auto selfType = cloneType(ownerType);
     declaration->parameters.insert(
             declaration->parameters.begin(),
             std::make_shared<syntax::ParameterDeclSyntax>(
@@ -524,7 +596,13 @@ void Parser::parseMethod(const Token::Ptr& owner, const Token::Ptr& modifier) {
 
 void Parser::parseExtensionDecl() {
     cursor.advance();
-    auto name = expect(identifier, "a type name");
+    auto ownerType = parseType();
+    if (ownerToken(ownerType) == nullptr) {
+        report(DiagnosticId::unsupportedSyntax, ownerType->span,
+               "an extension must name a struct, enum, or built-in type");
+        synchronizeTopLevel();
+        return;
+    }
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the extension body");
         return;
@@ -535,7 +613,7 @@ void Parser::parseExtensionDecl() {
         Token::Ptr modifier;
         if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
         if (cursor.at(kwFunc) || isMethodEffect(cursor.peek())) {
-            parseMethod(name, modifier);
+            parseMethod(ownerType, modifier);
         } else {
             report(DiagnosticId::unsupportedSyntax,
                    tokenSpan(cursor.peek()),

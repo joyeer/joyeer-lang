@@ -50,14 +50,18 @@ public struct ZipEntry {
 
 public enum ZipMethod { Stored, Deflate }
 
-public func createZip(entries: [ZipEntry], method: ZipMethod,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+extension [ZipEntry] {
+    public func createZip(method: ZipMethod,
+        maximumBytes: Int): Result<[UInt8], CompressionError>
+}
 
-public func listZip(archive: [UInt8], maximumEntries: Int,
-    maximumNameBytes: Int): Result<[String], CompressionError>
+extension [UInt8] {
+    public func listZip(maximumEntries: Int,
+        maximumNameBytes: Int): Result<[String], CompressionError>
 
-public func extractZipEntry(archive: [UInt8], index: Int,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+    public func extractZipEntry(index: Int,
+        maximumBytes: Int): Result<[UInt8], CompressionError>
+}
 ```
 
 ```joyeer
@@ -71,11 +75,15 @@ public struct ZipEntryInfo {
     // plus internal location fields
 }
 
-public func zipEntries(archive: [UInt8], maximumEntries: Int,
-    maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError>
+extension [UInt8] {
+    public func zipEntries(maximumEntries: Int,
+        maximumNameBytes: Int): Result<[ZipEntryInfo], CompressionError>
 
-public func readZipEntry(archive: [UInt8], entry: ZipEntryInfo,
-    maximumBytes: Int): Result<[UInt8], CompressionError>
+    public func readZipEntry(entry: ZipEntryInfo,
+        maximumBytes: Int): Result<[UInt8], CompressionError>
+}
+
+These are methods on the byte array that holds the archive (`bytes.listZip(...)`).
 ```
 
 To visit every entry, call `zipEntries` once and then `readZipEntry` for each

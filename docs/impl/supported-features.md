@@ -111,9 +111,12 @@ the receiver type is inferred) rewrites `value.method(a: 1)` to
 `Type.method(self: value, a: 1)`, so later phases see a plain call. Call sites
 mark the receiver like an argument: `&value.mutate()` and
 `consume value.finish()`. Inside a `mutating` method, assigning through `self`
-needs no `&`. Extensions are limited to user-defined structs and enums in the
-same compilation unit; built-in types, generics, subscripts, `init` and
-`deinit` are not supported.
+needs no `&`. Extensions may also name built-in types: `extension String`,
+`extension Int`, and concrete instantiations such as `extension [UInt8]` or
+`extension [String: Int]` (the method is declared on the `Array` or `Dict`
+member scope, so two array extensions cannot reuse one method name for different
+element types). Subscripts, `init`, `deinit`, and user-defined generics are
+not supported.
 
 ## Source-implemented local project tool
 
