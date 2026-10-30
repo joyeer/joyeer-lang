@@ -61,6 +61,40 @@ TEST(ModuleArgumentsTest, ResolvesSourcePathsAgainstCompilerWorkingDirectory) {
     EXPECT_EQ(arguments->sourceFiles[0], source());
 }
 
+TEST(ModuleArgumentsTest, SelectsRuntimeAuthorizationPerExplicitUnit) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(diagnostics, {
+        "joyeer", "--module-name", "runtime.core", source().string(),
+        "--module-source", "runtime.native=" + source("moduleservice.cpp").string(),
+        "--runtime-module", "runtime.core", "--runtime-module", "runtime.native",
+        "--emit-runtime-object", "runtime.o",
+    });
+    ASSERT_FALSE(diagnostics.hasFailure());
+    EXPECT_TRUE(arguments->accepted);
+    EXPECT_EQ(arguments->runtimeModules,
+              (std::vector<std::string> {"runtime.core", "runtime.native"}));
+    EXPECT_EQ(arguments->outputMode, joyeer::OutputMode::runtimeObject);
+}
+
+TEST(ModuleArgumentsTest, RejectsImplicitUnknownOrRepeatedRuntimeAuthorization) {
+    for (const auto& values : std::vector<std::vector<std::string>> {
+            {"joyeer", source().string(), "--runtime-module", "runtime"},
+            {"joyeer", "--module-name", "runtime", source().string(),
+             "--runtime-module", "unknown"},
+            {"joyeer", "--module-name", "runtime", source().string(),
+             "--runtime-module", "runtime", "--runtime-module", "runtime"},
+            {"joyeer", "--module-name", "runtime", source().string(),
+             "--emit-runtime-object", "runtime.o"},
+            {"joyeer", source().string(), "--emit-runtime-object", "runtime.o"},
+            {"joyeer", "--module-name", "runtime", source().string(), "--runtime-module"},
+        }) {
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(diagnostics, values);
+        EXPECT_TRUE(diagnostics.hasFailure());
+        EXPECT_FALSE(arguments->accepted);
+    }
+}
+
 TEST(ModuleArgumentsTest, PreservesLegacySingleFileInput) {
     Diagnostics diagnostics;
     const auto arguments = parseArguments(diagnostics, {"joyeer", source().string()});
@@ -69,6 +103,28 @@ TEST(ModuleArgumentsTest, PreservesLegacySingleFileInput) {
     EXPECT_EQ(arguments->inputfile, source());
     EXPECT_TRUE(arguments->moduleName.empty());
     EXPECT_TRUE(arguments->sourceFiles.empty());
+}
+
+TEST(ModuleArgumentsTest, CollectsExplicitNativeLibrariesAndProtectsTheirPaths) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(diagnostics, {
+        "joyeer", source().string(), "--link-library", source("ir_test.cpp").string(),
+        "--link-library", source("llvm_test.cpp").string(),
+    });
+    ASSERT_TRUE(arguments->accepted);
+    EXPECT_EQ(arguments->nativeLibraries, (std::vector {source("ir_test.cpp"), source("llvm_test.cpp")}));
+    for (const auto& options : std::vector<std::vector<std::string>> {
+            {"--link-library"}, {"--link-library", ""}, {"--link-library", "-O0"},
+            {"--link-library", "missing-library.a"},
+            {"--link-library", source().parent_path().string()},
+            {"--link-library", source("ir_test.cpp").string(), "-o", source("ir_test.cpp").string()},
+        }) {
+        Diagnostics errors;
+        std::vector<std::string> values {"joyeer", source().string()};
+        values.insert(values.end(), options.begin(), options.end());
+        EXPECT_FALSE(parseArguments(errors, values)->accepted);
+        EXPECT_TRUE(errors.hasFailure());
+    }
 }
 
 TEST(ModuleArgumentsTest, RejectsEmptyPositionalSourcePaths) {

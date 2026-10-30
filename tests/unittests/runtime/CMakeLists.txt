@@ -1,30 +1,30 @@
 
-add_executable(NativeRuntimeTests
-        native_runtime_test.cpp
+add_executable(RuntimeTests
+        runtime_test.cpp
         host_test.cpp
 )
 
-target_include_directories(NativeRuntimeTests PRIVATE
+target_include_directories(RuntimeTests PRIVATE
         ${JOYEER_SOURCE_DIR}/src/runtime
 )
 
-target_link_libraries(NativeRuntimeTests
+target_link_libraries(RuntimeTests
         GTest::gtest_main
-        JoyeerNativeRuntime
+        JoyeerRuntime
 )
 
-joyeer_discover_tests(NativeRuntimeTests
-        PROPERTIES LABELS native-runtime
+joyeer_discover_tests(RuntimeTests
+        PROPERTIES LABELS runtime
 )
 
 add_executable(NativeFilesystemTests filesystem_test.cpp)
 target_link_libraries(NativeFilesystemTests
         GTest::gtest_main
-        JoyeerNativeRuntime
+        JoyeerRuntime
 )
 # Preserve label lists through the wrapper and generated discovery script.
 joyeer_discover_tests(NativeFilesystemTests
-        PROPERTIES LABELS "native-runtime\\\\;filesystem"
+        PROPERTIES LABELS "runtime\\\\;filesystem"
 )
 
 add_executable(NativeProcessTestChild process_test_child.c)
@@ -39,10 +39,10 @@ target_compile_definitions(NativeProcessTests PRIVATE
 add_dependencies(NativeProcessTests NativeProcessTestChild)
 target_link_libraries(NativeProcessTests
         GTest::gtest_main
-        JoyeerNativeRuntime
+        JoyeerRuntime
 )
 joyeer_discover_tests(NativeProcessTests
-        PROPERTIES LABELS "native-runtime\\\\;process"
+        PROPERTIES LABELS "runtime\\\\;process"
 )
 
 if(WIN32)
@@ -59,10 +59,10 @@ if(WIN32)
     )
     target_link_libraries(NativeEntryEncodingTests
             GTest::gtest_main
-            JoyeerNativeRuntime
+            JoyeerRuntime
     )
     joyeer_discover_tests(NativeEntryEncodingTests
-            PROPERTIES LABELS "native-runtime\\\\;entry\\\\;encoding"
+            PROPERTIES LABELS "runtime\\\\;entry\\\\;encoding"
     )
 endif()
 
@@ -112,7 +112,7 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
     )
     set_tests_properties(
             NativePortableFilesystem${mode} NativeSynchronousProcess${mode} NativeModuleHost${mode}
-            PROPERTIES LABELS "native;native-runtime;host;ownership" TIMEOUT 120
+            PROPERTIES LABELS "native;runtime;host;ownership" TIMEOUT 120
     )
 endforeach()
 
@@ -126,5 +126,5 @@ target_link_libraries(RuntimeOptionsTests
 )
 
 joyeer_discover_tests(RuntimeOptionsTests
-        PROPERTIES LABELS "native-runtime\;optimization\;debug-info"
+        PROPERTIES LABELS "runtime\;optimization\;debug-info"
 )

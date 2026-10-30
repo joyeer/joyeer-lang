@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-struct JoyeerNativeBackendModule;
+struct JoyeerBackendModule;
 
 namespace joyeer::llvmbackend {
 
@@ -30,6 +30,7 @@ enum class DiagnosticId {
     unsupportedInstruction,
     unsupportedExternal,
     invalidEntryPoint,
+    conflictingNativeSymbol,
 };
 
 struct Diagnostic {
@@ -46,7 +47,7 @@ struct Result {
     bool hasEntryPoint = false;
     // Shared compiler-side ownership invokes the backend's C destructor.
     // The handle exposes no LLVM objects or cross-library C++ allocation.
-    std::shared_ptr<JoyeerNativeBackendModule> module;
+    std::shared_ptr<JoyeerBackendModule> module;
 
     [[nodiscard]] bool succeeded() const {
         return diagnostics.empty();

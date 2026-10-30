@@ -69,6 +69,13 @@ A synthesized struct initializer is limited by the least visible stored
 field and by the struct's own visibility. In particular, a private field
 cannot become publicly writable through memberwise construction.
 
+Joyeer visibility is separate from
+[C binding authorization and linkage](19-c-interop.md#193-source-calls-and-native-symbols).
+`public` does not export a C symbol or grant a runtime compilation context,
+and `@c_export` does not make a source declaration public. Runtime permission
+is a separate explicit compilation input, not a privilege inherited through
+imports; see [the implemented subset](../impl/c-interop.md).
+
 Only the root module contributes an executable entry point: exactly one root
 function named `main` is required for native executable output, using one of
 the signatures in [declarations](03-declarations.md#326-executable-entry-point).

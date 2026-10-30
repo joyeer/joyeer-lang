@@ -1,6 +1,8 @@
 struct PlannedModule {
     let name: String
     let sources: [String]
+    let nativeLibraries: [String]
+    let nativeBindings: Bool
 }
 
 struct BuildPlan {
@@ -118,7 +120,16 @@ func planModule(project: borrowing Project, options: borrowing CliOptions,
     while index < closure.count {
         let node = closure[index]
         let paths = planSources(sources: project.modules[node].spec.sources, base: project.modules[node].directory)?
-        &modules.append(element: PlannedModule(name: project.modules[node].spec.name, sources: paths))
+        var libraries: [String] = []
+        var library = 0
+        while library < project.modules[node].spec.nativeLibraries.count {
+            let path = toolJoin(base: project.modules[node].directory,
+                path: project.modules[node].spec.nativeLibraries[library])?
+            &libraries.append(element: path)
+            library = library + 1
+        }
+        &modules.append(element: PlannedModule(name: project.modules[node].spec.name, sources: paths,
+            nativeLibraries: libraries, nativeBindings: project.modules[node].spec.nativeBindings))
         index = index + 1
     }
     var profile = "debug"
@@ -143,6 +154,16 @@ func compilerInvocation(plan: borrowing BuildPlan, compiler: String, output: Str
     var rootIndex = -1
     var index = 0
     while index < plan.modules.count {
+        if plan.modules[index].nativeBindings {
+            &arguments.append(element: "--runtime-module")
+            &arguments.append(element: plan.modules[index].name)
+        }
+        var library = 0
+        while library < plan.modules[index].nativeLibraries.count {
+            &arguments.append(element: "--link-library")
+            &arguments.append(element: plan.modules[index].nativeLibraries[library])
+            library = library + 1
+        }
         if plan.modules[index].name == plan.moduleName {
             rootIndex = index
         } else {

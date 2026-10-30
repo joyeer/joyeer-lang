@@ -167,17 +167,61 @@ llvm::Value* Builder::emitHostCall(const ir::Function& function,
 }
 
 llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
-    const auto found = std::find_if(source.functions.begin(), source.functions.end(), [&instruction](const auto& function) {
-        return function.id == instruction.callee;
-    });
-    if (found == source.functions.end()) return nullptr;
-    const auto& callee = *found;
+    if (!instruction.callee.has_value()) return nullptr;
+    const auto found = sourceFunctions.find(*instruction.callee);
+    if (found == sourceFunctions.end()) return nullptr;
+    const auto& callee = *found->second;
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
-    if (!callee.isExternal) return builder.CreateCall(functions.at(callee.id), arguments);
+    if (callee.isExternal && callee.nativeBinding.has_value()) {
+        std::vector<llvm::Value*> nativeArguments;
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const auto& parameter = callee.parameters[index];
+            const auto kind = type(parameter.value.type).kind;
+            if (parameter.isInitializing) {
+                if (kind == typing::TypeKind::string) {
+                    builder.CreateStore(llvm::Constant::getNullValue(llvmType(parameter.value.type)), arguments[index]);
+                } else {
+                    const auto element = type(type(parameter.value.type).arguments.at(0)).kind;
+                    call(element == typing::TypeKind::uint8
+                                    ? "joyeer_native_bytes_init" : "joyeer_native_strings_init",
+                            builder.getVoidTy(), {arguments[index]});
+                }
+                nativeArguments.push_back(arguments[index]);
+            } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
+                nativeArguments.push_back(builder.CreateExtractValue(arguments[index], 0, temporary()));
+                nativeArguments.push_back(builder.CreateExtractValue(arguments[index], 1, temporary()));
+            } else {
+                nativeArguments.push_back(arguments[index]);
+            }
+        }
+        auto* function = functions.at(callee.id);
+        auto* invocation = builder.CreateCall(function, nativeArguments);
+        invocation->setAttributes(function->getAttributes());
+        return invocation;
+    }
+    if (!callee.isExternal || callee.nativeBinding.has_value()) {
+        auto* function = functions.at(callee.id);
+        auto* invocation = builder.CreateCall(function, arguments);
+        invocation->setAttributes(function->getAttributes());
+        return invocation;
+    }
     if (hostbuiltins::findFunction(callee.name) != nullptr) return emitHostCall(callee, arguments, instruction);
     if (callee.name == "print" && arguments.size() == 1) {
         const auto& argumentType = type(values.at(instruction.operands[0]).type);
+        if (typing::isSignedInteger(argumentType.kind)) {
+            return call("joyeer_print_int", builder.getVoidTy(),
+                    {builder.CreateSExtOrTrunc(arguments[0], builder.getInt64Ty())});
+        }
+        if (typing::isUnsignedInteger(argumentType.kind) && argumentType.kind != typing::TypeKind::uint8) {
+            return call("joyeer_print_uint", builder.getVoidTy(),
+                    {builder.CreateZExtOrTrunc(arguments[0], builder.getInt64Ty())});
+        }
+        if (typing::isFloating(argumentType.kind)) {
+            return call(argumentType.kind == typing::TypeKind::float32
+                            ? "joyeer_print_float" : "joyeer_print_double",
+                    builder.getVoidTy(), arguments);
+        }
         std::string_view name;
         switch (argumentType.kind) {
             case typing::TypeKind::integer: name = "joyeer_print_int"; break;

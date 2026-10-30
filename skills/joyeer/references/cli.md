@@ -34,6 +34,14 @@ On Windows, run the program separately with `.\output.exe`. On other hosts,
 execute the produced file using the host shell's explicit relative or absolute
 path syntax. Compiling without `-o` does not run the program.
 
+Internal runtime construction additionally supports
+`--module-name runtime.core --runtime-module runtime.core --emit-runtime-object runtime.o bindings.joyeer`.
+It requires an explicitly authorized named root and does not link or generate
+application startup. This narrow `Int`/`Void` C binding path is not an ordinary
+application or joypm workflow; library selection and static/shared deployment
+belong to the native build target. See the
+[compatibility boundary](supported-features.md).
+
 For a compiler path containing spaces, use PowerShell's call operator:
 
 ```powershell
@@ -223,7 +231,7 @@ Exact-boundary and host regressions pass on the recorded native target.
 
 ## Runtime and environment
 
-Keep the compiler, backend shared library, and native runtime archive from the
+Keep the compiler, backend shared library, and runtime archive from the
 same distribution together. Packaged compilation does not require external
 LLVM, Clang, LLD executables, CMake, Ninja, or Python. It still uses platform
 SDK libraries/startup objects. Exact external prerequisites belong in the

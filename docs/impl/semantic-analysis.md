@@ -39,6 +39,10 @@ responsibilities because they depend directly on typed storage access.
 
 ## 3. Control-flow analysis
 
+Validated bodyless `@c_extern` imports have no Joyeer control-flow graph and
+are excluded from missing-return analysis. `@c_export` definitions retain
+the ordinary checks below; see [C binding coverage](c-interop.md).
+
 The pass models normal continuation versus termination for blocks and
 expressions:
 

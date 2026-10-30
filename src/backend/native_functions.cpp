@@ -109,6 +109,19 @@ void Builder::emitFunction(const ir::Function& function) {
     builder.SetCurrentDebugLocation(nullptr);
 }
 
+void Builder::emitNativeExport(const ir::Function& function) {
+    auto* entry = declareNativeFunction(function);
+    builder.SetCurrentDebugLocation(nullptr);
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context(), "entry", entry));
+    std::vector<llvm::Value*> arguments;
+    for (auto& argument : entry->args()) arguments.push_back(&argument);
+    // The exported C entry is separate from Joyeer's internal calling
+    // convention, even when the first scalar slice needs no conversions.
+    auto* result = builder.CreateCall(functions.at(function.id), arguments);
+    if (function.returnsValue) builder.CreateRet(result);
+    else builder.CreateRetVoid();
+}
+
 bool Builder::emitInstruction(const ir::Instruction& instruction) {
     const auto argument = [&](size_t index) { return operand(instruction.operands.at(index)); };
     llvm::Value* result = nullptr;
@@ -120,6 +133,8 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::byteConstant:
         case Opcode::booleanConstant:
             result = llvm::ConstantInt::get(resultType(), static_cast<uint64_t>(instruction.integerValue)); break;
+        case Opcode::floatingConstant:
+            result = llvm::ConstantFP::get(resultType(), instruction.text); break;
         case Opcode::stringConstant: result = stringLiteral(instruction.text); break;
         case Opcode::stackAllocate:
             result = stack(resultType(), "v" + std::to_string(instruction.result->id)); break;
@@ -137,7 +152,7 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::copyValue: {
             const auto id = instruction.result->type;
             result = argument(0);
-            if (ir::requiresDestruction(source, id)) {
+            if (destruction->requiresDestruction(id)) {
                 auto* destination = stack(resultType());
                 copy(id, destination, spill(result));
                 result = builder.CreateLoad(resultType(), destination);
@@ -163,8 +178,26 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::greater:
         case Opcode::greaterEqual:
         case Opcode::equal:
-        case Opcode::notEqual: result = comparison(instruction.opcode, argument(0), argument(1)); break;
+        case Opcode::notEqual:
+            result = comparison(instruction.opcode, argument(0), argument(1),
+                    type(values.at(instruction.operands[0]).type).kind);
+            break;
         case Opcode::logicalAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
+        case Opcode::bitAnd: result = builder.CreateAnd(argument(0), argument(1)); break;
+        case Opcode::bitOr: result = builder.CreateOr(argument(0), argument(1)); break;
+        case Opcode::bitXor: result = builder.CreateXor(argument(0), argument(1)); break;
+        case Opcode::shiftLeft:
+        case Opcode::shiftRight: result = shift(instruction); break;
+        case Opcode::convertChecked:
+        case Opcode::convertWrapping: result = convert(instruction); break;
+        case Opcode::integerFits: {
+            llvm::Value* converted = nullptr;
+            auto* outOfRange = conversionOutOfRange(argument(0),
+                    type(values.at(instruction.operands[0]).type).kind,
+                    static_cast<ir::TypeId>(instruction.integerValue), converted);
+            result = builder.CreateNot(outOfRange, temporary());
+            break;
+        }
         case Opcode::call: result = emitCall(instruction); break;
         case Opcode::constructStruct:
             result = llvm::PoisonValue::get(resultType());
@@ -260,18 +293,38 @@ llvm::Value* Builder::arithmetic(const ir::Instruction& instruction) {
                 builder.CreateExtractValue(right, 0, temporary()), builder.CreateExtractValue(right, 1, temporary())});
         return builder.CreateLoad(left->getType(), address);
     }
-    if (kind != typing::TypeKind::integer) {
+    if (typing::isFloating(kind)) {
+        switch (instruction.opcode) {
+            case ir::Opcode::add: return builder.CreateFAdd(left, right);
+            case ir::Opcode::subtract: return builder.CreateFSub(left, right);
+            case ir::Opcode::multiply: return builder.CreateFMul(left, right);
+            case ir::Opcode::divide: return builder.CreateFDiv(left, right);
+            default: return nullptr;
+        }
+    }
+    if (!typing::isInteger(kind)) {
         report(DiagnosticId::unsupportedInstruction, instruction.span, "unsupported arithmetic operand type");
         return nullptr;
     }
+    const auto bits = typing::scalarBitWidth(kind);
+    const bool signedValue = typing::isSignedInteger(kind);
     if (instruction.opcode == ir::Opcode::divide || instruction.opcode == ir::Opcode::remainder) {
         const bool divide = instruction.opcode == ir::Opcode::divide;
         const auto operation = std::string(divide ? "division" : "remainder");
-        trap(builder.CreateICmpEQ(right, integer(0), temporary()), "integer " + operation + " by zero");
-        auto* minimum = builder.CreateICmpEQ(left, integer(static_cast<uint64_t>(std::numeric_limits<int64_t>::min())), temporary());
-        auto* negativeOne = builder.CreateICmpEQ(right, integer(static_cast<uint64_t>(-1)), temporary());
+        trap(builder.CreateICmpEQ(right, integer(0, bits), temporary()), "integer " + operation + " by zero");
+        if (!signedValue) return divide ? builder.CreateUDiv(left, right) : builder.CreateURem(left, right);
+        auto* minimum = builder.CreateICmpEQ(left, integer(uint64_t{1} << (bits - 1), bits), temporary());
+        auto* negativeOne = builder.CreateICmpEQ(right, integer(UINT64_MAX, bits), temporary());
         trap(builder.CreateAnd(minimum, negativeOne, temporary()), "integer " + operation + " overflow");
         return divide ? builder.CreateSDiv(left, right) : builder.CreateSRem(left, right);
+    }
+    if (!signedValue) {
+        switch (instruction.opcode) {
+            case ir::Opcode::add: return builder.CreateAdd(left, right);
+            case ir::Opcode::subtract: return builder.CreateSub(left, right);
+            case ir::Opcode::multiply: return builder.CreateMul(left, right);
+            default: return nullptr;
+        }
     }
     llvm::Intrinsic::ID intrinsic = llvm::Intrinsic::not_intrinsic;
     std::string message;
@@ -287,8 +340,74 @@ llvm::Value* Builder::arithmetic(const ir::Instruction& instruction) {
     return builder.CreateExtractValue(checked, 0);
 }
 
-llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right) {
+// Converts `value` to the target integer type by keeping the low bits (widening by the
+// source signedness) and returns whether the exact value is not representable there.
+llvm::Value* Builder::conversionOutOfRange(llvm::Value* value, typing::TypeKind sourceKind,
+        ir::TypeId targetId, llvm::Value*& converted) {
+    const auto targetKind = type(targetId).kind;
+    const bool sourceSigned = typing::isSignedInteger(sourceKind);
+    const bool targetSigned = typing::isSignedInteger(targetKind);
+    auto* targetType = llvmType(targetId);
+    const auto resize = [this](llvm::Value* input, llvm::Type* to, bool signedSource) -> llvm::Value* {
+        return signedSource ? builder.CreateSExtOrTrunc(input, to, temporary())
+                            : builder.CreateZExtOrTrunc(input, to, temporary());
+    };
+    converted = resize(value, targetType, sourceSigned);
+
+    // The value is representable when converting back reproduces it and the
+    // sign did not flip.
+    auto* roundTrip = resize(converted, value->getType(), targetSigned);
+    llvm::Value* outOfRange = builder.CreateICmpNE(roundTrip, value, temporary());
+    if (sourceSigned && !targetSigned) {
+        outOfRange = builder.CreateOr(outOfRange, builder.CreateICmpSLT(
+                value, llvm::ConstantInt::get(value->getType(), 0), temporary()), temporary());
+    } else if (!sourceSigned && targetSigned) {
+        outOfRange = builder.CreateOr(outOfRange, builder.CreateICmpSLT(
+                converted, llvm::ConstantInt::get(targetType, 0), temporary()), temporary());
+    }
+    return outOfRange;
+}
+
+llvm::Value* Builder::convert(const ir::Instruction& instruction) {
+    auto* value = operand(instruction.operands[0]);
+    llvm::Value* converted = nullptr;
+    auto* outOfRange = conversionOutOfRange(value,
+            type(values.at(instruction.operands[0]).type).kind, instruction.result->type, converted);
+    if (instruction.opcode == ir::Opcode::convertWrapping) return converted;
+    trap(outOfRange, "integer conversion out of range");
+    return converted;
+}
+
+llvm::Value* Builder::shift(const ir::Instruction& instruction) {
+    auto* value = operand(instruction.operands[0]);
+    auto* count = operand(instruction.operands[1]);
+    const auto kind = type(values.at(instruction.operands[0]).type).kind;
+    const auto bits = typing::scalarBitWidth(kind);
+    // A negative signed count wraps to a large unsigned value, so one unsigned
+    // comparison rejects both negative counts and counts at or past the width.
+    auto* width = llvm::ConstantInt::get(count->getType(), bits);
+    trap(builder.CreateICmpUGE(count, width, temporary()), "integer shift count out of range");
+    auto* amount = builder.CreateZExtOrTrunc(count, value->getType(), temporary());
+    if (instruction.opcode == ir::Opcode::shiftLeft) return builder.CreateShl(value, amount);
+    return typing::isSignedInteger(kind) ? builder.CreateAShr(value, amount)
+                                         : builder.CreateLShr(value, amount);
+}
+
+llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,
+        typing::TypeKind kind) {
     using Opcode = ir::Opcode;
+    if (left->getType()->isFloatingPointTy()) {
+        llvm::CmpInst::Predicate predicate = llvm::CmpInst::FCMP_OEQ;
+        switch (opcode) {
+            case Opcode::less: predicate = llvm::CmpInst::FCMP_OLT; break;
+            case Opcode::lessEqual: predicate = llvm::CmpInst::FCMP_OLE; break;
+            case Opcode::greater: predicate = llvm::CmpInst::FCMP_OGT; break;
+            case Opcode::greaterEqual: predicate = llvm::CmpInst::FCMP_OGE; break;
+            case Opcode::notEqual: predicate = llvm::CmpInst::FCMP_UNE; break;
+            default: break;
+        }
+        return builder.CreateFCmp(predicate, left, right);
+    }
     if (auto* aggregate = llvm::dyn_cast<llvm::StructType>(left->getType());
             aggregate != nullptr && aggregate->getName() == "joyeer.string") {
         std::vector<llvm::Value*> arguments {builder.CreateExtractValue(left, 0, temporary()),
@@ -300,8 +419,9 @@ llvm::Value* Builder::comparison(ir::Opcode opcode, llvm::Value* left, llvm::Val
         }
         left = call("joyeer_string_compare_abi", builder.getInt64Ty(), arguments);
         right = integer(0);
+        kind = typing::TypeKind::integer;
     }
-    const bool signedValue = left->getType()->isIntegerTy(64);
+    const bool signedValue = typing::isSignedInteger(kind);
     llvm::CmpInst::Predicate predicate = llvm::CmpInst::ICMP_EQ;
     switch (opcode) {
         case Opcode::less: predicate = signedValue ? llvm::CmpInst::ICMP_SLT : llvm::CmpInst::ICMP_ULT; break;
@@ -345,6 +465,9 @@ llvm::Value* Builder::pattern(const ir::Pattern& tested, llvm::Value* value) {
     if (tested.kind == ir::PatternKind::wildcard) return integer(1, 1);
     if (tested.kind == ir::PatternKind::stringLiteral) {
         return comparison(ir::Opcode::equal, value, stringLiteral(tested.text));
+    }
+    if (tested.kind == ir::PatternKind::floatingLiteral) {
+        return builder.CreateFCmpOEQ(value, llvm::ConstantFP::get(value->getType(), tested.text));
     }
     if (tested.kind != ir::PatternKind::enumCase) {
         return builder.CreateICmpEQ(value, llvm::ConstantInt::get(value->getType(),
@@ -419,6 +542,15 @@ void Builder::emitEntry() {
                 entry->debugLocation.has_value() ? entry->debugLocation->span : SourceSpan{}, entry->id,
                 std::nullopt, "entry function must have signature 'func main()' or 'func main(args: [String]): Int'"});
         return;
+    }
+    for (const auto* symbol : {"joyeer_main", "joyeer_main_uses_arguments"}) {
+        if (module().getNamedValue(symbol) != nullptr) {
+            diagnostics.push_back({DiagnosticId::invalidEntryPoint,
+                    entry->debugLocation.has_value() ? entry->debugLocation->span : SourceSpan{},
+                    entry->id, std::nullopt,
+                    "native binding conflicts with toolchain entry symbol '" + std::string(symbol) + "'"});
+            return;
+        }
     }
     // The native C runtime calls these stable adapters, not the source main's
     // language-specific signature. Ownership of argv remains with the runtime.

@@ -95,8 +95,18 @@ protected:
 
 using NodePtr = Node::Ptr;
 
+struct CallArgumentSyntax;
+
+struct AttributeSyntax {
+    SourceSpan span;
+    Token::Ptr name;
+    std::vector<std::shared_ptr<CallArgumentSyntax>> arguments;
+};
+
 struct DeclSyntax : Node {
     using Ptr = std::shared_ptr<DeclSyntax>;
+
+    std::vector<AttributeSyntax> attributes;
 
 protected:
     DeclSyntax(Kind kind, SourceSpan span): Node(kind, span) {}
@@ -410,6 +420,9 @@ struct PrefixExprSyntax final : ExprSyntax {
 
     Token::Ptr op;
     ExprPtr operand;
+    // Set only for `x as T` and `x &as T`: a cast is a one-operand expression,
+    // so it shares this node and every analysis that already visits `operand`.
+    TypePtr castTarget;
 
     PrefixExprSyntax(SourceSpan span, Token::Ptr op, ExprPtr operand):
             ExprSyntax(Kind::prefixExpr, span),

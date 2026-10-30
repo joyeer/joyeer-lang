@@ -107,6 +107,65 @@ return left + right
     EXPECT_EQ(opcodeCount(add, joyeer::ir::Opcode::returnValue), 1u);
 }
 
+TEST_F(IRLoweringTest, FoldsScalarConstantsAndSharesArrayConstantData) {
+    lower(R"JOYEER(let mask: UInt32 = 0xFF << 8 | 1
+let table: [UInt32] = [mask, 2, 3]
+let name: String = "a" + "b"
+
+func first(): UInt32 { return table[0] }
+func second(): UInt32 { return table[1] + mask }
+func label(): String { return name }
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    // The array is stored once however many functions use it; scalars fold into uses.
+    ASSERT_EQ(result.module->constants.size(), 1u);
+    EXPECT_EQ(result.module->constants[0].name, "table");
+    EXPECT_EQ(opcodeCount(function("first"), joyeer::ir::Opcode::constantValue), 1u);
+    EXPECT_EQ(opcodeCount(function("second"), joyeer::ir::Opcode::constantValue), 1u);
+    EXPECT_EQ(opcodeCount(function("second"), joyeer::ir::Opcode::integerConstant), 2u);
+    EXPECT_EQ(opcodeCount(function("label"), joyeer::ir::Opcode::stringConstant), 1u);
+    // count (8) + 3 elements * 4 bytes
+    EXPECT_EQ(result.module->constants[0].data.size(), 8u + 3u * 4u);
+}
+
+TEST_F(IRLoweringTest, SharesPublicConstantsAcrossModules) {
+    result = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer",
+          "import dep\nfunc main() {\n"
+          "print(value: dep.polynomial)\nprint(value: dep.table[1])\n"
+          "print(value: table.count)\n}\n" },
+        { "dep", "constants.joyeer",
+          "public let polynomial: UInt32 = 0xEDB8_8320\n"
+          "public let table: [UInt32] = [1, 2, 3]\n" },
+    });
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_EQ(result.module->constants.size(), 1u);
+    EXPECT_EQ(result.module->constants[0].name, "table");
+}
+
+TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
+    const std::vector<std::pair<std::string, std::string>> cases {
+        { "var x: Int = 1\n", "top-level 'var'" },
+        { "let x = 1\n", "explicit type" },
+        { "let x: Int8 = 100 + 100\n", "integer overflow" },
+        { "let x: Int = 1 / (1 - 1)\n", "division by zero" },
+        { "let x: Int = 1 << 64\n", "shift count" },
+        { "let x: UInt8 = (300 as Int) as UInt8\n", "conversion out of range" },
+        { "let a: Int = b\nlet b: Int = a\n", "cycle" },
+        { "func f(): Int { return 1 }\nlet x: Int = f()\n", "not a compile-time constant" },
+        { "struct P { let x: Int }\nlet p: P = P(x: 1)\n", "must be a Bool, number, String" },
+    };
+    for (const auto& [text, expected] : cases) {
+        SCOPED_TRACE(text);
+        ASSERT_NO_FATAL_FAILURE(lower(text));
+        ASSERT_FALSE(result.succeeded());
+        const auto dumped = joyeer::lowering::dump(result.diagnostics);
+        EXPECT_NE(dumped.find("ir-lowering.invalid-constant"), std::string::npos) << dumped;
+        EXPECT_NE(dumped.find(expected), std::string::npos) << dumped;
+    }
+}
+
 TEST_F(IRLoweringTest, PreservesGraphSymbolIdentityAndFileLocalDebugSpans) {
     result = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);

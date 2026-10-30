@@ -1,7 +1,7 @@
 #ifndef JOYEER_BACKEND_NATIVE_MODULE_H
 #define JOYEER_BACKEND_NATIVE_MODULE_H
 
-#include "native_backend.h"
+#include "backend.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
@@ -18,7 +18,7 @@ struct ModuleStorage {
 
 // The public C header forward-declares this handle. Its layout and LLVM
 // ownership are private to this shared library, including on Windows /MT.
-struct JoyeerNativeBackendModule {
+struct JoyeerBackendModule {
     joyeer::llvmbackend::native::ModuleStorage storage;
     bool hasEntryPoint = false;
 };

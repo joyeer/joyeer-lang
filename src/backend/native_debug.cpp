@@ -49,6 +49,15 @@ llvm::DIType* Builder::debugType(ir::TypeId id) {
     if (const auto found = debugTypes.find(id); found != debugTypes.end()) return found->second;
     const auto& value = type(id);
     llvm::DIType* result = nullptr;
+    if (typing::isNumeric(value.kind)) {
+        const auto encoding = typing::isFloating(value.kind) ? llvm::dwarf::DW_ATE_float :
+                value.kind == typing::TypeKind::uint8 ? llvm::dwarf::DW_ATE_unsigned_char :
+                value.kind == typing::TypeKind::int8 ? llvm::dwarf::DW_ATE_signed_char :
+                typing::isSignedInteger(value.kind) ? llvm::dwarf::DW_ATE_signed : llvm::dwarf::DW_ATE_unsigned;
+        result = debug->createBasicType(value.name, typing::scalarBitWidth(value.kind), encoding);
+        debugTypes.emplace(id, result);
+        return result;
+    }
     switch (value.kind) {
         case typing::TypeKind::integer:
             result = debug->createBasicType("Int", 64, llvm::dwarf::DW_ATE_signed); break;
@@ -72,13 +81,13 @@ llvm::DIType* Builder::debugType(ir::TypeId id) {
 
 llvm::DILocalScope* Builder::debugScope(ir::DebugScopeId id) {
     if (const auto found = debugScopes.find(id); found != debugScopes.end()) return found->second;
-    const auto found = std::find_if(source.debugScopes.begin(), source.debugScopes.end(),
-            [id](const auto& scope) { return scope.id == id; });
-    if (found == source.debugScopes.end() || !found->parent.has_value()) return nullptr;
-    auto* parent = debugScope(*found->parent);
+    const auto found = sourceDebugScopes.find(id);
+    if (found == sourceDebugScopes.end() || !found->second->parent.has_value()) return nullptr;
+    const auto& scope = *found->second;
+    auto* parent = debugScope(*scope.parent);
     if (parent == nullptr) return nullptr;
-    const auto [line, column] = position(found->span);
-    auto* result = debug->createLexicalBlock(parent, debugFiles.at(found->span.sourceId), line, column);
+    const auto [line, column] = position(scope.span);
+    auto* result = debug->createLexicalBlock(parent, debugFiles.at(scope.span.sourceId), line, column);
     debugScopes.emplace(id, result);
     return result;
 }
@@ -89,9 +98,8 @@ llvm::DILocalScope* Builder::locationScope(std::optional<ir::DebugScopeId> id, S
             ? currentFunction->debugLocation->span.sourceId : 0u;
     if (fullDebug() && id.has_value()) {
         scope = debugScope(*id);
-        const auto found = std::find_if(source.debugScopes.begin(), source.debugScopes.end(),
-                [id](const auto& candidate) { return candidate.id == *id; });
-        if (found != source.debugScopes.end()) sourceId = found->span.sourceId;
+        const auto found = sourceDebugScopes.find(*id);
+        if (found != sourceDebugScopes.end()) sourceId = found->second->span.sourceId;
     }
     if (scope == nullptr || sourceId == span.sourceId) return scope;
     // A lexical scope can contain instructions from another source file.
@@ -134,10 +142,9 @@ void Builder::functionDebug(const ir::Function& function) {
 
 bool Builder::bindDebug(const ir::DebugVariableBinding& binding) {
     if (!fullDebug()) return true;
-    const auto found = std::find_if(source.debugVariables.begin(), source.debugVariables.end(),
-            [&binding](const auto& variable) { return variable.id == binding.variable; });
-    if (found == source.debugVariables.end()) return false;
-    const auto& variable = *found;
+    const auto found = sourceDebugVariables.find(binding.variable);
+    if (found == sourceDebugVariables.end()) return false;
+    const auto& variable = *found->second;
     auto* scope = debugScope(variable.scope);
     auto* variableType = debugType(variable.type);
     if (scope == nullptr || variableType == nullptr) return false;

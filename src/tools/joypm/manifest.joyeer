@@ -10,6 +10,8 @@ struct ModuleSpec {
     let output: String
     let sources: [String]
     let dependencies: [String]
+    let nativeLibraries: [String]
+    let nativeBindings: Bool
     let pos: Int
 }
 
@@ -580,9 +582,11 @@ private func manifestArray(p: inout ManifestCursor, category: String): Result<[S
         }
         let value = manifestString(p: &p)?
         var key = value
-        if category == "sources" {
+        if category == "sources" || category == "native-libraries" {
             if !manifestSourcePath(path: value) {
-                return .Err(ToolError(message: "source must be a relative file path without parent traversal: " + value, pos: itemPos))
+                var description = "source"
+                if category == "native-libraries" { description = "native library" }
+                return .Err(ToolError(message: description + " must be a relative file path without parent traversal: " + value, pos: itemPos))
             }
             key = manifestSourceKey(path: value)
         } else if category == "members" {
@@ -628,11 +632,15 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
     var output = ""
     var sources: [String] = []
     var dependencies: [String] = []
+    var nativeLibraries: [String] = []
+    var nativeBindings = false
     var hasName = false
     var hasKind = false
     var hasOutput = false
     var hasSources = false
     var hasDependencies = false
+    var hasNativeLibraries = false
+    var hasNativeBindings = false
     while p.pos < p.input.count {
         manifestTrivia(p: &p)?
         if p.pos >= p.input.count || manifestCurrent(p: p) == b'[' { break }
@@ -671,6 +679,21 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
             if hasDependencies { return .Err(ToolError(message: "duplicate module.dependencies", pos: keyPos)) }
             dependencies = manifestArray(p: &p, category: "dependencies")?
             hasDependencies = true
+        } else if key == "native-libraries" {
+            if hasNativeLibraries { return .Err(ToolError(message: "duplicate module.native-libraries", pos: keyPos)) }
+            nativeLibraries = manifestArray(p: &p, category: "native-libraries")?
+            hasNativeLibraries = true
+        } else if key == "native-bindings" {
+            if hasNativeBindings { return .Err(ToolError(message: "duplicate module.native-bindings", pos: keyPos)) }
+            if textSlice(text: p.input, start: p.pos, end: p.pos + 4) == "true" {
+                nativeBindings = true
+                &p.pos = p.pos + 4
+            } else if textSlice(text: p.input, start: p.pos, end: p.pos + 5) == "false" {
+                &p.pos = p.pos + 5
+            } else {
+                return .Err(ToolError(message: "module.native-bindings must be true or false", pos: valuePos))
+            }
+            hasNativeBindings = true
         } else {
             return .Err(ToolError(message: "unknown module key: " + key, pos: keyPos))
         }
@@ -690,7 +713,8 @@ private func manifestModuleBody(p: inout ManifestCursor, pos: Int): Result<Modul
         return .Err(ToolError(message: "bin/test module name must also be a valid artifact-directory component", pos: pos))
     }
     return .Ok(ModuleSpec(name: name, kind: kind, output: output,
-        sources: sources, dependencies: dependencies, pos: pos))
+        sources: sources, dependencies: dependencies, nativeLibraries: nativeLibraries,
+        nativeBindings: nativeBindings, pos: pos))
 }
 
 private func manifestWorkspaceBody(p: inout ManifestCursor, pos: Int): Result<[String], ToolError> {

@@ -1,0 +1,100 @@
+// Boundary values for every checked integer conversion that can fail.
+func main() {
+    let v1: Int = -128
+    print(value: match v1 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v2: Int = 127
+    print(value: match v2 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v3: Int = -129
+    print(value: match v3 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v4: Int = 128
+    print(value: match v4 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v5: Int = 0
+    print(value: match v5 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v6: Int = 255
+    print(value: match v6 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v7: Int = -1
+    print(value: match v7 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v8: Int = 256
+    print(value: match v8 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v9: Int = -32768
+    print(value: match v9 as? Int16 { .Ok(_) => true, .Err(_) => false })
+    let v10: Int = 32767
+    print(value: match v10 as? Int16 { .Ok(_) => true, .Err(_) => false })
+    let v11: Int = -32769
+    print(value: match v11 as? Int16 { .Ok(_) => true, .Err(_) => false })
+    let v12: Int = 32768
+    print(value: match v12 as? Int16 { .Ok(_) => true, .Err(_) => false })
+    let v13: Int = 0
+    print(value: match v13 as? UInt16 { .Ok(_) => true, .Err(_) => false })
+    let v14: Int = 65535
+    print(value: match v14 as? UInt16 { .Ok(_) => true, .Err(_) => false })
+    let v15: Int = -1
+    print(value: match v15 as? UInt16 { .Ok(_) => true, .Err(_) => false })
+    let v16: Int = 65536
+    print(value: match v16 as? UInt16 { .Ok(_) => true, .Err(_) => false })
+    let v17: Int = -2147483648
+    print(value: match v17 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v18: Int = 2147483647
+    print(value: match v18 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v19: Int = -2147483649
+    print(value: match v19 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v20: Int = 2147483648
+    print(value: match v20 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v21: Int = 0
+    print(value: match v21 as? UInt32 { .Ok(_) => true, .Err(_) => false })
+    let v22: Int = 4294967295
+    print(value: match v22 as? UInt32 { .Ok(_) => true, .Err(_) => false })
+    let v23: Int = -1
+    print(value: match v23 as? UInt32 { .Ok(_) => true, .Err(_) => false })
+    let v24: Int = 4294967296
+    print(value: match v24 as? UInt32 { .Ok(_) => true, .Err(_) => false })
+    let v25: Int = 0
+    print(value: match v25 as? UInt { .Ok(_) => true, .Err(_) => false })
+    let v26: Int = 9223372036854775807
+    print(value: match v26 as? UInt { .Ok(_) => true, .Err(_) => false })
+    let v27: Int = -1
+    print(value: match v27 as? UInt { .Ok(_) => true, .Err(_) => false })
+    let v28: UInt = 0
+    print(value: match v28 as? Int { .Ok(_) => true, .Err(_) => false })
+    let v29: UInt = 9223372036854775807
+    print(value: match v29 as? Int { .Ok(_) => true, .Err(_) => false })
+    let v30: UInt = 9223372036854775808
+    print(value: match v30 as? Int { .Ok(_) => true, .Err(_) => false })
+    let v31: UInt = 18446744073709551615
+    print(value: match v31 as? Int { .Ok(_) => true, .Err(_) => false })
+    let v32: Int8 = -1
+    print(value: match v32 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v33: Int8 = 0
+    print(value: match v33 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v34: Int8 = 127
+    print(value: match v34 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v35: UInt8 = 0
+    print(value: match v35 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v36: UInt8 = 127
+    print(value: match v36 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v37: UInt8 = 128
+    print(value: match v37 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v38: UInt8 = 255
+    print(value: match v38 as? Int8 { .Ok(_) => true, .Err(_) => false })
+    let v39: UInt32 = 2147483647
+    print(value: match v39 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v40: UInt32 = 2147483648
+    print(value: match v40 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v41: UInt32 = 4294967295
+    print(value: match v41 as? Int32 { .Ok(_) => true, .Err(_) => false })
+    let v42: Int64 = -5
+    print(value: match v42 as? Int { .Ok(_) => true, .Err(_) => false })
+    let v43: Int64 = 9223372036854775807
+    print(value: match v43 as? Int { .Ok(_) => true, .Err(_) => false })
+    let v44: UInt16 = 255
+    print(value: match v44 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+    let v45: UInt16 = 256
+    print(value: match v45 as? UInt8 { .Ok(_) => true, .Err(_) => false })
+
+    let kept: Int = 200
+    print(value: match kept as? UInt8 { .Ok(byte) => byte as Int, .Err(_) => -1 })
+    let lost: Int = 300
+    print(value: match lost as? UInt8 { .Ok(byte) => byte as Int, .Err(_) => -1 })
+    let negative: Int8 = -3
+    print(value: match negative as? Int { .Ok(value) => value, .Err(_) => 0 })
+}

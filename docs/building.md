@@ -22,6 +22,14 @@ platform, `JOYEER_BUILD_UNITTESTS=ON` also fetches GoogleTest 1.15.2. The first
 configuration that needs these dependencies requires network access. Neither
 dependency adds a runtime DLL to the Joyeer package.
 
+`JOYEER_BUILD_COMPRESSION=ON` additionally acquires the pinned miniz 3.1.0
+source using Git and builds a separate optional `JoyeerCompression` static
+archive. The default is `OFF`. Neither the compiler/backend nor the core
+runtime links miniz. See [Compression](impl/compression.md) for its generated
+joypm workspace and the `Compression` install component, which includes
+miniz's MIT license. Python 3.9+ enables an optional independent ZIP oracle
+when already available; it is not required to build or use the library.
+
 ## Source-build prerequisites
 
 All platforms require:
@@ -177,7 +185,7 @@ and SDK roots for x64 and ARM64;
 do not switch architectures inside an existing CMake build tree.
 
 These are native builds, not a cross-compilation interface. The compiler,
-backend library, native runtime archive, LLVM default target, and system
+backend library, runtime archive, LLVM default target, and system
 libraries must agree on the architecture. Joyeer does not currently expose
 a `--target` option; 32-bit Windows and ARM64EC are not supported.
 
@@ -188,12 +196,31 @@ The build is out-of-source only. Preset builds write the executable under
 `build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
 focused iteration.
 
+### Compiler construction and product staging
+
+The `joyeer` target builds the compiler/backend independently of the program
+runtime. Internal [runtime-object generation](impl/c-interop.md) can therefore
+run before a completed runtime archive exists. The `JoyeerToolchain` `ALL`
+target separately copies `JoyeerRuntime` beside the compiler, and joypm
+bootstrap waits for that staged product. Use the default build, or explicitly
+build `JoyeerToolchain`, for a compiler ready to link ordinary executables;
+`--target joyeer` alone is a compiler-construction step, not full staging.
+The production runtime remains C; this separation does not by itself migrate
+algorithms or assemble Joyeer runtime objects into that archive.
+
+On macOS, the configured Joyeer deployment target also controls generated
+object metadata. If the active SDK is newer than LLVM/LLD 22.1.8 can read,
+select an already installed compatible SDK with `CMAKE_OSX_SYSROOT`,
+`CMAKE_OSX_DEPLOYMENT_TARGET`, `JOYEER_MACOS_SDK_PATH`,
+`JOYEER_MACOS_SDK_VERSION`, and `JOYEER_MACOS_DEPLOYMENT_TARGET` consistently.
+Do not bypass the embedded linker or silently substitute another SDK.
+
 ## joypm bootstrap and acceptance
 
 `JOYEER_BUILD_JOYPM=ON` is the default. The `joypm` `ALL` target invokes the
 newly built compiler with an explicit list of seven sources from
 [src/tools/joypm/](../src/tools/joypm/) and a generated platform source. It
-depends on the compiler, backend, and native runtime and produces `joypm` next
+depends on the compiler, backend, and runtime and produces `joypm` next
 to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
 (and other non-Debug configurations). On macOS, Debug falls back to `-g0`
 when `dsymutil` is unavailable, so ordinary native output remains possible.
@@ -221,15 +248,22 @@ When enabled, `JoypmAcceptanceTools` also builds native fixtures as an `ALL`
 target. The full acceptance configuration enables all three options and runs
 unfiltered CTest; turning off C++ tests does not remove joypm gates.
 
-**Validation status:** native Windows ARM64 Debug default `ALL` and unfiltered
+**Validation status:** fresh native Windows x64 Debug and Release default
+`ALL` builds and unfiltered serial CTest each pass 846/846, including all
+15 joypm gates. Toolchain provenance, C interop coverage, and the in-memory
+debug-information regression are recorded in
+[C interop acceptance](impl/c-interop.md#windows-x64).
+
+Earlier native Windows ARM64 Debug default `ALL` and unfiltered
 CTest pass 790/790, including all 15 joypm gates for the module/workspace
 organization. Debug/optimized self-build and relocated product workflows
 pass. The previous 0.1.0 full Release 789/789 is historical; a fresh full
-Release gate for the new layout is open despite the retained 0.1.0 version.
+native ARM64 Release gate for the new layout is open despite the retained
+0.1.0 version.
 Hardware, process, MSVC/LLVM architecture,
 and PE headers were independently recorded. See the
 [implementation evidence](impl/joypm.md#5-validation-evidence) and
-[remaining platform gates](plan/package-manager.md#3-native-platform-validation).
+[remaining platform gates](plan/package-manager.md#4-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh
 Debug/Release trees; registration or another target's pass is not acceptance.
 
@@ -261,14 +295,18 @@ With that setting, the Joyeer package contains:
 ```text
 joyeer.exe
 joyeer-backend.dll
-JoyeerNativeRuntime.lib
+JoyeerRuntime.lib
 joypm.exe                 # when JOYEER_BUILD_JOYPM=ON (default)
 licenses/LICENSE         # Joyeer's own license; third-party notices deferred
 ```
 
 Compiler, backend, runtime, and the current Joyeer license use install
-component `JoyeerRuntime`; optional `joypm` uses `PRODUCT`. An unfiltered
-install includes both enabled components. The Windows Debug joypm PDB is
+component `JoyeerRuntime`; optional `joypm` uses `PRODUCT`. Optional
+`Compression` and `NativeDevelopment` components contain the native-backed
+ZIP source package and C buffer-adapter headers respectively; keep them
+separate from compiler-only product staging. An unfiltered install includes
+all enabled product components; `NativeDevelopment` must be selected
+explicitly. The Windows Debug joypm PDB is
 also installed by `PRODUCT`; Release has no joypm Debug-PDB install rule.
 An install limited to
 `JoyeerRuntime` does not install joypm; select `PRODUCT` as well when staging
@@ -304,7 +342,7 @@ cmake --install out/build/linux-release --prefix out/package/joyeer
 
 Replace `linux-release` with `macos-release` on macOS. The installed package
 keeps the `joyeer` executable, `joyeer-backend` shared library,
-`JoyeerNativeRuntime` archive, optional `joypm`, and licenses together. Linux
+`JoyeerRuntime` archive, optional `joypm`, and licenses together. Linux
 uses an `$ORIGIN` runtime search path and macOS uses `@loader_path`; the compiler also resolves
 the runtime archive relative to its own executable. Building Joyeer programs
 still requires the host libc/platform SDK startup objects and system
@@ -456,9 +494,9 @@ Debug symbols must exist before installation.
 
 | Platform | Runtime products |
 |---|---|
-| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerNativeRuntime.lib`, optional `joypm.exe` |
-| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerNativeRuntime.a`, optional `joypm` |
-| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerNativeRuntime.a`, optional `joypm` |
+| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerRuntime.lib`, optional `joypm.exe` |
+| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerRuntime.a`, optional `joypm` |
+| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerRuntime.a`, optional `joypm` |
 
 All platforms install these files together directly in the selected directory,
 along with Joyeer's own `licenses/LICENSE`. Windows also requires and copies

@@ -2,6 +2,7 @@
 #define __joyeer_compiler_typechecking_h__
 
 #include "semantic.h"
+#include "nativebinding.h"
 #include "compiler/diagnostics/diagnostic.h"
 
 #include <cstddef>
@@ -35,7 +36,68 @@ enum class TypeKind {
     dictionary,
     optional,
     result,
+    int8,
+    int16,
+    int32,
+    int64,
+    uint16,
+    uint32,
+    uint64,
+    unsignedInteger,
+    float32,
+    float64,
 };
+
+[[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
+    return kind == TypeKind::integer || kind == TypeKind::int8 ||
+            kind == TypeKind::int16 || kind == TypeKind::int32 || kind == TypeKind::int64;
+}
+
+[[nodiscard]] constexpr bool isUnsignedInteger(TypeKind kind) {
+    return kind == TypeKind::unsignedInteger || kind == TypeKind::uint8 ||
+            kind == TypeKind::uint16 || kind == TypeKind::uint32 || kind == TypeKind::uint64;
+}
+
+[[nodiscard]] constexpr bool isInteger(TypeKind kind) {
+    return isSignedInteger(kind) || isUnsignedInteger(kind);
+}
+
+[[nodiscard]] constexpr bool isFloating(TypeKind kind) {
+    return kind == TypeKind::float32 || kind == TypeKind::float64;
+}
+
+[[nodiscard]] constexpr bool isNumeric(TypeKind kind) {
+    return isInteger(kind) || isFloating(kind);
+}
+
+[[nodiscard]] constexpr bool isNativeScalar(TypeKind kind) {
+    return isNumeric(kind) || kind == TypeKind::boolean;
+}
+
+[[nodiscard]] constexpr unsigned scalarBitWidth(TypeKind kind) {
+    switch (kind) {
+        case TypeKind::boolean: return 1;
+        case TypeKind::int8:
+        case TypeKind::uint8: return 8;
+        case TypeKind::int16:
+        case TypeKind::uint16: return 16;
+        case TypeKind::int32:
+        case TypeKind::uint32:
+        case TypeKind::float32: return 32;
+        case TypeKind::integer:
+        case TypeKind::int64:
+        case TypeKind::unsignedInteger:
+        case TypeKind::uint64:
+        case TypeKind::float64: return 64;
+        default: return 0;
+    }
+}
+
+[[nodiscard]] constexpr bool sameNativeRepresentation(TypeKind left, TypeKind right) {
+    return left == right || (isInteger(left) && isInteger(right) &&
+            isSignedInteger(left) == isSignedInteger(right) &&
+            scalarBitWidth(left) == scalarBitWidth(right));
+}
 
 struct TypeRecord {
     TypeId id = invalidTypeId;
@@ -43,6 +105,35 @@ struct TypeRecord {
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     std::vector<TypeId> arguments;
 };
+
+enum class NativeBufferKind {
+    none,
+    string,
+    bytes,
+    strings,
+    byteArrays,
+};
+
+// Both frontend and verified IR use this boundary; nested native storage is
+// limited to borrowed lists of strings or byte arrays, never arbitrary values.
+template<class Lookup>
+[[nodiscard]] NativeBufferKind nativeBufferKind(TypeId id, const Lookup& lookup) {
+    const auto* value = lookup(id);
+    if (value == nullptr) return NativeBufferKind::none;
+    if (value->kind == TypeKind::string) return NativeBufferKind::string;
+    if (value->kind != TypeKind::array || value->arguments.size() != 1) {
+        return NativeBufferKind::none;
+    }
+    const auto* element = lookup(value->arguments[0]);
+    if (element == nullptr) return NativeBufferKind::none;
+    if (element->kind == TypeKind::uint8) return NativeBufferKind::bytes;
+    if (element->kind == TypeKind::string) return NativeBufferKind::strings;
+    if (element->kind == TypeKind::array && element->arguments.size() == 1) {
+        const auto* byte = lookup(element->arguments[0]);
+        if (byte != nullptr && byte->kind == TypeKind::uint8) return NativeBufferKind::byteArrays;
+    }
+    return NativeBufferKind::none;
+}
 
 // Owns canonical compile-time types for one SemanticModel.
 class TypeContext {
@@ -57,6 +148,7 @@ public:
     [[nodiscard]] TypeId boolType() const;
     [[nodiscard]] TypeId stringType() const;
     [[nodiscard]] TypeId uint8Type() const;
+    [[nodiscard]] TypeId doubleType() const;
     [[nodiscard]] TypeId ioErrorType() const;
 
     [[nodiscard]] TypeId arrayType(TypeId element);
@@ -120,6 +212,7 @@ private:
     TypeId stringTypeId = invalidTypeId;
     TypeId uint8TypeId = invalidTypeId;
     TypeId ioErrorTypeId = invalidTypeId;
+    TypeId doubleTypeId = invalidTypeId;
 };
 
 struct TypedCallableSignature {
@@ -152,7 +245,14 @@ enum class TypeCheckingDiagnosticId {
     notCallable,
     invalidCallArguments,
     invalidLoopControl,
+    notIterable,
     unresolvedReference,
+    invalidAnnotation,
+    invalidNativeDeclaration,
+    unsupportedNativeSignature,
+    unauthorizedNativeBinding,
+    conflictingNativeSymbol,
+    invalidNumericLiteral,
 };
 
 struct TypeCheckingDiagnostic {
@@ -176,6 +276,7 @@ public:
     [[nodiscard]] std::optional<TypeId> typeOf(const syntax::NodePtr& node) const;
     [[nodiscard]] std::optional<TypeId> typeOf(semantic::SymbolId symbol) const;
     [[nodiscard]] const TypedCallableSignature* callable(semantic::SymbolId symbol) const;
+    [[nodiscard]] const NativeBinding* nativeBinding(semantic::SymbolId symbol) const;
         [[nodiscard]] std::optional<semantic::SymbolId> referencedSymbol(
             const syntax::NodePtr& node) const;
         [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
@@ -191,6 +292,7 @@ private:
     std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
     std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
     std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;
+    std::unordered_map<semantic::SymbolId, NativeBinding> nativeBindings;
     std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedReferences;
     std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedCallTargets;
 };

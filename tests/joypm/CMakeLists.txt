@@ -23,7 +23,7 @@ foreach(fixture IN ITEMS compiler-spy compiler-no-output forwarding-driver)
         COMMAND "$<TARGET_FILE:joyeer>" -O0 -g0
             -o "${joypm_test_bin}/${fixture}${CMAKE_EXECUTABLE_SUFFIX}"
             -- "${joypm_fixture_dir}/${fixture}.joyeer"
-        DEPENDS joyeer JoyeerNativeBackend JoyeerNativeRuntime
+        DEPENDS joyeer JoyeerBackend JoyeerRuntime
             "${joypm_fixture_dir}/${fixture}.joyeer"
         VERBATIM)
 endforeach()
@@ -37,7 +37,7 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${joypm_test_bin}"
     COMMAND "$<TARGET_FILE:joyeer>" --module-name joypm.app -O0 -g0
         -o "${joypm_input_writer}" -- ${joypm_input_writer_sources}
-    DEPENDS joyeer JoyeerNativeBackend JoyeerNativeRuntime ${joypm_input_writer_sources}
+    DEPENDS joyeer JoyeerBackend JoyeerRuntime ${joypm_input_writer_sources}
     VERBATIM)
 
 set(joypm_logic_sources ${JOYEER_JOYPM_SOURCES})
@@ -48,7 +48,7 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${joypm_test_bin}"
     COMMAND "$<TARGET_FILE:joyeer>" --module-name joypm.app -O0 -g0
         -o "${joypm_logic}" -- ${joypm_logic_sources}
-    DEPENDS joyeer JoyeerNativeBackend JoyeerNativeRuntime ${joypm_logic_sources}
+    DEPENDS joyeer JoyeerBackend JoyeerRuntime ${joypm_logic_sources}
     VERBATIM)
 add_custom_target(JoypmAcceptanceTools ALL
     DEPENDS "${joypm_spy}" "${joypm_no_output}" "${joypm_forwarder}" "${joypm_logic}"
@@ -75,7 +75,7 @@ function(joypm_add_acceptance name script labels timeout)
             "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
             "-DTEST_CONFIGURATION=$<CONFIG>"
             "-DCOMPILER_FILE_NAME=$<TARGET_FILE_NAME:joyeer>"
-            "-DRUNTIME_FILE_NAMES=$<TARGET_FILE_NAME:joyeer>;$<TARGET_FILE_NAME:JoyeerNativeBackend>;$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
+            "-DRUNTIME_FILE_NAMES=$<TARGET_FILE_NAME:joyeer>;$<TARGET_FILE_NAME:JoyeerBackend>;$<TARGET_FILE_NAME:JoyeerRuntime>"
             "-DLICENSE_SOURCE=${JOYEER_SOURCE_DIR}/LICENSE"
             "-DFIXTURE_DIR=${joypm_fixture_dir}"
             "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runs/${name}"

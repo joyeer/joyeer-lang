@@ -42,6 +42,13 @@ Both operators trap when the divisor is zero. Both also trap for the minimum
 `Int` and divisor `-1`, including remainder even though its mathematical
 result would be zero. These checks apply in every optimization mode.
 
+Bitwise `&`, `|`, `^` take two integers of the same type; prefix `~` takes one
+integer. `<<` and `>>` take an integer on the left and an integer of any type
+as the shift count. A count that is negative or not less than the bit width of
+the left operand traps in every build. `>>` is arithmetic for signed types and
+logical for unsigned types; `<<` discards bits shifted out and never traps for
+that reason.
+
 Prefix `!` takes a `Bool` and returns its negation. Logical `&&` and `||`
 take Boolean operands and produce `Bool`.
 
@@ -54,6 +61,24 @@ Logical `||` evaluates its left operand first and evaluates the right operand
 only when the left is `false`. Its result is `true` when the left is `true`;
 the same skipped-side-effect and cleanup rules apply. `&&` binds more tightly
 than `||`. Prefix negation is not postfix force unwrap, which remains deferred.
+
+### 5.2.1 Integer conversion
+
+`x as T` converts an integer expression to integer type `T`. The conversion
+traps with "integer conversion out of range" in every build when the value is
+not representable in `T`. `x &as T` instead keeps the low bits: it truncates
+when narrowing and extends by the source type's signedness when widening, so
+it never traps. `x as? T` returns `Result<T, ConversionError>`: `.Ok` with the
+converted value, or `.Err(.OutOfRange)` when the value is not representable in
+`T`, never trapping. `ConversionError` is a prelude enum with the single case
+`OutOfRange`; use postfix `?` to propagate it, or `match` to handle it. With `as?`
+a literal operand stays an `Int` (so `300 as? UInt8` is `.Err(.OutOfRange)`, not a
+compile-time error). `T` is a plain type name. With `as` and `&as`, a numeric
+literal operand takes type `T`, so an out-of-range literal is a compile-time error. Only integer-to-integer
+conversion is defined; floating-point and non-numeric conversions are rejected.
+A cast binds tighter than binary operators and looser than prefix operators:
+`a + b as UInt32 << 8` is `(a + (b as UInt32)) << 8`, and `-x as T` is
+`(-x) as T`.
 
 ### 5.3 Assignment
 

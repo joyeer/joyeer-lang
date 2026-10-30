@@ -1,0 +1,83 @@
+import Foundation
+
+func check(name: String, ok: Bool): Int {
+    if ok { return 0 }
+    print(value: "FAIL: " + name)
+    return 1
+}
+
+func zeroBytes(count: Int): [UInt8] {
+    var bytes: [UInt8] = []
+    var index = 0
+    while index < count {
+        &bytes.append(element: 0)
+        index = index + 1
+    }
+    return bytes
+}
+
+func main(args: [String]): Int {
+    var failures = 0
+
+    failures = failures + check(name: "decimal zero", ok: decimalString(value: 0) == "0")
+    failures = failures + check(name: "decimal positive", ok: decimalString(value: 1234) == "1234")
+    failures = failures + check(name: "decimal negative", ok: decimalString(value: -56) == "-56")
+    failures = failures + check(name: "decimal max",
+        ok: decimalString(value: 9223372036854775807) == "9223372036854775807")
+    failures = failures + check(name: "decimal min",
+        ok: decimalString(value: -9223372036854775807 - 1) == "-9223372036854775808")
+
+    failures = failures + check(name: "substring middle", ok: substring(text: "abcdef", start: 1, end: 4) == "bcd")
+    failures = failures + check(name: "substring clamp", ok: substring(text: "abc", start: -5, end: 99) == "abc")
+    failures = failures + check(name: "substring empty", ok: substring(text: "abc", start: 2, end: 2) == "")
+    failures = failures + check(name: "substring inverted", ok: substring(text: "abc", start: 3, end: 1) == "")
+
+    failures = failures + check(name: "utf8 ascii", ok: isValidUtf8(text: "hello"))
+    failures = failures + check(name: "utf8 empty", ok: isValidUtf8(text: ""))
+    failures = failures + check(name: "utf8 multibyte", ok: isValidUtf8(text: "é中😀"))
+    failures = failures + check(name: "utf8 lone continuation",
+        ok: !isValidUtf8(text: byteToString(value: 128)))
+    failures = failures + check(name: "utf8 truncated",
+        ok: !isValidUtf8(text: byteToString(value: 226) + byteToString(value: 130)))
+    failures = failures + check(name: "utf8 overlong",
+        ok: !isValidUtf8(text: byteToString(value: 192) + byteToString(value: 128)))
+    failures = failures + check(name: "utf8 surrogate",
+        ok: !isValidUtf8(text: byteToString(value: 237) + byteToString(value: 160) + byteToString(value: 128)))
+
+    // CRC-32 vectors are zlib's crc32().
+    failures = failures + check(name: "crc32 empty", ok: crc32(bytes: "".utf8()) == 0)
+    failures = failures + check(name: "crc32 a", ok: crc32(bytes: "a".utf8()) == 0xE8B7BE43)
+    failures = failures + check(name: "crc32 abc", ok: crc32(bytes: "abc".utf8()) == 0x352441C2)
+    failures = failures + check(name: "crc32 check value",
+        ok: crc32(bytes: "123456789".utf8()) == 0xCBF43926)
+    failures = failures + check(name: "crc32 sentence",
+        ok: crc32(bytes: "The quick brown fox jumps over the lazy dog".utf8()) == 0x414FA339)
+    failures = failures + check(name: "crc32 high bytes",
+        ok: crc32(bytes: [0xFF, 0xFF, 0xFF, 0xFF]) == 0xFFFFFFFF)
+    failures = failures + check(name: "crc32 zeros", ok: crc32(bytes: zeroBytes(count: 32)) == 0x190A55AD)
+
+    var everyByte: [UInt8] = []
+    var value = 0
+    while value < 256 {
+        &everyByte.append(element: value as UInt8)
+        value = value + 1
+    }
+    failures = failures + check(name: "crc32 every byte", ok: crc32(bytes: everyByte) == 0x29058C73)
+
+    var repeated: [UInt8] = []
+    var count = 0
+    while count < 1000 {
+        &repeated.append(element: b'a')
+        count = count + 1
+    }
+    failures = failures + check(name: "crc32 long input", ok: crc32(bytes: repeated) == 0x9A38DA03)
+
+    let partial = crc32Update(checksum: 0, bytes: "1234".utf8())
+    failures = failures + check(name: "crc32 incremental",
+        ok: crc32Update(checksum: partial, bytes: "56789".utf8()) == 0xCBF43926)
+    failures = failures + check(name: "crc32 empty chunk keeps checksum",
+        ok: crc32Update(checksum: partial, bytes: "".utf8()) == partial)
+
+    if failures == 0 { print(value: "Foundation tests passed") }
+    return failures
+}
