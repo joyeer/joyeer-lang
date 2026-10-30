@@ -585,6 +585,10 @@ building a native executable.
 - **macOS native linking cannot find system libraries:** run `xcode-select -p`
   and `xcrun --sdk macosx --show-sdk-path`, then repair or select Xcode Command
   Line Tools before reconfiguring.
+- **Linux linking fails with `invalid linker name in argument '-fuse-ld=lld'`:**
+  the in-process Clang Driver checks that an `ld.lld` file exists even though it
+  never runs it. Put the SDK's `bin` directory on `PATH`, or install `ld.lld`
+  where the driver looks (`/usr/bin`).
 - **Linux native linking cannot find startup objects or libc:** install the
   distribution's libc and GCC runtime development packages; embedded LLD does
   not replace those platform ABI inputs.
