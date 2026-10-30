@@ -24,8 +24,9 @@ declaration syntax.
 | `String` | (pointer, length) | UTF-8 |
 | `Void` / `()` | 0 | unit type |
 
-`Int` and `UInt` are platform-pointer-sized but always 64-bit on the targets
-Joyeer supports. (No 32-bit target in v0.1.)
+`Int` and `UInt` are fixed 64-bit types, independent of pointer width and
+C's `int` or `long`. There is no 32-bit target in v0.1; that does not make
+either type an address type.
 
 #### 2.1.1 `String` is byte-indexed
 
@@ -90,6 +91,20 @@ The pattern `()` matches a `Void` value exhaustively. It does not implicitly
 unwrap an optional or result. Unit equality, ordering, printing, and dictionary
 keys are not part of the implemented primitive operations; use a unit pattern
 or wildcard when matching. See §7 and §8.2.2.
+
+#### 2.1.3 C boundary representations
+
+The [C scalar rules](19-c-interop.md#194-c-scalar-representations) define
+which primitives may cross a restricted native binding and how they map to
+the target C ABI. Ordinary Joyeer storage or calling conventions do not
+establish C compatibility. In particular, `Bool` maps to C `_Bool`, not a
+platform integer Boolean; `Char` is not C `char`; and `Void` is permitted
+only as a native result, not a native parameter.
+
+These rules include the implemented fixed-width integer and floating-point
+scalar boundary. They introduce no
+pointer types or C-specific source aliases, and do not give `String`,
+`Optional`, `Result`, or ordinary aggregates a C-compatible layout.
 
 ### 2.2 Nominal types
 
@@ -218,6 +233,9 @@ var a: [Int] = []   // annotation required when initializer is ambiguous
 Function parameter types **must** be annotated explicitly. An omitted function
 result type means `Void`; a value-returning function needs an explicit result
 type. This is a deliberate AI-era choice (§0.1): signatures are contracts.
+
+C bindings are stricter: [§19.2](19-c-interop.md#192-declarations-and-annotation-arguments)
+requires an explicit result type even for `Void`.
 
 ```joyeer
 func add(a: Int, b: Int): Int { return a + b }  // ✅

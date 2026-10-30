@@ -44,6 +44,8 @@ private:
         const auto symbol = model->semanticModel()->declaredSymbol(declaration);
         const auto* signature = symbol.has_value() ? model->callable(*symbol) : nullptr;
         if (signature == nullptr) return;
+        const auto* binding = model->nativeBinding(*symbol);
+        if (binding != nullptr && binding->kind == NativeBindingKind::cImport) return;
 
         const auto terminates = analyzeBlock(declaration->body);
         if (signature->result == model->types().voidType() || terminates) return;
@@ -321,6 +323,9 @@ private:
         assert(loops.empty());
         tracked.clear();
         initializingParameters.clear();
+        const auto function = model->semanticModel()->declaredSymbol(declaration);
+        const auto* binding = function.has_value() ? model->nativeBinding(*function) : nullptr;
+        if (binding != nullptr && binding->kind == NativeBindingKind::cImport) return;
         InitializationState state;
         for (const auto& parameter : declaration->parameters) {
             const auto symbol = model->semanticModel()->declaredSymbol(parameter);
@@ -690,6 +695,17 @@ private:
     void analyzeAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression,
             InitializationState& state) {
+        if (expression->op != nullptr && expression->op->kind != equal) {
+            // `x op= y` reads x first, so it must already be initialized.
+            auto read = expression->target;
+            while (read != nullptr && (read->kind == syntax::Kind::accessExpr ||
+                                       read->kind == syntax::Kind::parenthesizedExpr)) {
+                read = read->kind == syntax::Kind::accessExpr
+                        ? std::static_pointer_cast<syntax::AccessExprSyntax>(read)->operand
+                        : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(read)->expression;
+            }
+            analyzeExpression(read, state);
+        }
         auto assigned = storagePath(expression->target);
         if (assigned.has_value()) activePaths.push_back(&*assigned);
         analyzeAssignmentTarget(expression->target, state);

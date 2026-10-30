@@ -38,6 +38,7 @@ enum class OutputMode {
     validate,
     llvmIR,
     executable,
+    runtimeObject,
 };
 
 struct ModuleSources {
@@ -71,6 +72,8 @@ struct CompileOptions {
     std::string moduleName;
     std::vector<std::filesystem::path> sourceFiles;
     std::vector<ModuleSources> modules;
+    std::vector<std::string> runtimeModules;
+    std::vector<std::filesystem::path> nativeLibraries;
 };
 
 } // namespace joyeer

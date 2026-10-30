@@ -1,0 +1,49 @@
+@c_extern(symbol: "cinterop_buffers")
+func nativeBuffers(input: [UInt8], bytes: initializing [UInt8],
+    text: initializing String, names: initializing [String]): Int
+
+@c_extern(symbol: "cinterop_buffers_error")
+func nativeFailure(bytes: initializing [UInt8],
+    text: initializing String, names: initializing [String]): Int
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+func allocations(): Int
+
+func exercise(): Int {
+    let input: [UInt8] = [0, 255, 65]
+    var bytes: [UInt8]
+    var text: String
+    var names: [String]
+    let status = nativeBuffers(input: input, bytes: &bytes, text: &text, names: &names)
+    if status != 0 { return 1 }
+    if bytes.count != 3 || bytes[1] != input[1] || text.count != 3 || text[0] != input[0] {
+        return 2
+    }
+    var saved = names
+    if saved.count != 2 || saved[0] != text || saved[1] != "" { return 3 }
+    &saved.append(element: "another")
+    var failedBytes: [UInt8]
+    var failedText: String
+    var failedNames: [String]
+    if nativeFailure(bytes: &failedBytes, text: &failedText, names: &failedNames) != 7 { return 4 }
+    if failedBytes.count != 0 || failedText.count != 0 || failedNames.count != 0 { return 5 }
+    var copied = failedBytes
+    &copied.append(element: 42)
+    var copiedNames = failedNames
+    &copiedNames.append(element: "safe")
+    return 0
+}
+
+func main(args: [String]): Int {
+    if args.count != 0 { return 20 }
+    let baseline = allocations()
+    var index = 0
+    while index < 20 {
+        let status = exercise()
+        if status != 0 { return status }
+        if allocations() != baseline { return 10 }
+        index = index + 1
+    }
+    print(value: "native buffer ownership passed")
+    return 0
+}

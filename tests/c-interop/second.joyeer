@@ -1,0 +1,11 @@
+@c_extern(symbol: "c_fixture_identity")
+func nativeIdentity(value: Int): Int
+
+private func identity(value: Int): Int {
+    return nativeIdentity(value: value)
+}
+
+@c_export(symbol: "joyeer_fixture_second")
+func exportedIdentity(value: Int): Int {
+    return identity(value: value)
+}

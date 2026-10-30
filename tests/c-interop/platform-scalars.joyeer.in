@@ -1,0 +1,14 @@
+@c_extern(symbol: "c_scalar_platform")
+func nativePlatform(a: @CINTEROP_LONG_TYPE@, b: @CINTEROP_ULONG_TYPE@,
+    c: @CINTEROP_CHAR_TYPE@, d: UInt64, e: Int64): Bool
+
+@c_export(symbol: "joyeer_scalar_platform")
+func roundtripPlatform(a: @CINTEROP_LONG_TYPE@, b: @CINTEROP_ULONG_TYPE@,
+    c: @CINTEROP_CHAR_TYPE@, d: UInt64, e: Int64): Bool {
+    return nativePlatform(a: a, b: b, c: c, d: d, e: e)
+}
+
+@c_extern(symbol: "c_scalar_platform_bool")
+func nativePlatformBool(value: Int32): Int32
+@c_export(symbol: "joyeer_scalar_platform_bool")
+func roundtripPlatformBool(value: Int32): Int32 { return nativePlatformBool(value: value) }

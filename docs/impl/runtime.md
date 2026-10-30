@@ -4,12 +4,21 @@ The C11 runtime is declared in `src/runtime/runtime.h`, with portable
 host ABIs in `src/runtime/filesystem.h` and
 `src/runtime/process.h`. Its implementation lives under
 `src/runtime/`, including shared strict UTF-8 host conversion. The
-`JoyeerNativeRuntime` static archive is linked into generated programs;
+`JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
 The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
+
+The [hybrid runtime plan](../plan/hybrid-runtime.md) proposes incremental
+Joyeer implementations behind the existing runtime interfaces; this document
+describes the current C implementation. Public library modules and their
+separate joypm workflow are tracked in the [library plan](../plan/library.md).
+The [C binding implementation](c-interop.md) supports the restricted
+by-value scalar runtime-source boundary of [§19](../spec/19-c-interop.md).
+It does not replace any production C algorithm or compiler-known runtime
+interface described here.
 
 It supplies checked `Int` add/subtract/multiply/divide/remainder, scalar/string printing,
 string storage and operations, arrays and dictionaries, binary file input,
@@ -22,6 +31,12 @@ available for runtime clients. String and dictionary accesses use runtime
 operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
+
+Scalar printing includes all integer widths, `Float`, and `Double`. Signed
+integers use the existing 64-bit printer after sign extension; unsigned
+integers use an unsigned printer after zero extension. Floating printers use
+9 and 17 significant decimal digits, respectively. These internal printing
+adaptations do not introduce implicit conversions at explicit C bindings.
 
 Checked `Int` division truncates toward zero; a nonzero remainder has the
 dividend's sign. Both `joyeer_checked_div_int` and `joyeer_checked_rem_int`
@@ -315,7 +330,7 @@ See the
 Panic flushes stderr and uses C11 `_Exit` with a nonzero status, avoiding
 platform crash dialogs while remaining unrecoverable.
 
-Focused test labels include `native-runtime`, `native`, `file-io`, `filesystem`,
+Focused test labels include `runtime`, `native`, `file-io`, `filesystem`,
 `process`, and `host`.
 Native tests verify string/collection ownership, runtime traps, argument
 boundaries, return statuses, and zero final allocation balance. Entry tests

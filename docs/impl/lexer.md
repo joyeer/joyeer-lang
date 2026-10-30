@@ -50,25 +50,31 @@ The lexer recognizes terminals needed by the current parser:
 
 - identifiers, wildcard `_`, and current/deferred keywords, including supported
   `break`, `continue`, `import`, `public`, `internal`, and `private` terminals;
-- decimal `Int` literals with `int64_t` overflow diagnostics;
+- decimal integer magnitudes through `UINT64_MAX`, stored as 64-bit payloads;
+  contextual type/range checking belongs to the type checker;
+- decimal floating literals with optional signed exponents, retaining their
+  source spelling for direct rounding to `Float` or `Double`;
 - strings with the fixed escape set `\0`, `\t`, `\n`, `\r`, `\"`, and
   `\\`;
 - strict `UInt8` byte literals such as `b'{'`, `b'\n'`, and `b'\\'`; byte
   literals additionally support `\'`, which is not a supported string escape;
 - delimiters, labels, member access, `=>`, `?`, and `&`;
+- `@` punctuation for declaration annotations; names and named arguments
+  remain ordinary identifiers, with C binding rules checked after parsing;
 - assignment, arithmetic/comparison operators including `/` and `%`, logical
   `&&` and `||`, and `!` for prefix negation;
 - line comments and nested block comments.
 
 The longest valid terminal wins. Unsupported compound, shift, range,
-coalescing, optional-chain, interpolation, float/base-prefixed numeric, and
+coalescing, optional-chain, interpolation, base-prefixed numeric, and
 other deferred forms are consumed as coherent invalid tokens where possible,
 then reported with stable `lexer.*` IDs.
 
 The lexer emits `!` without deciding whether it is prefix or postfix. The
 parser accepts prefix negation and rejects postfix force unwrap. `break` and
-`continue` are no longer deferred words; labeled jumps and `for-in` remain
-outside the implemented grammar.
+`continue`, `for` and `in` are no longer deferred words; labeled jumps remain
+outside the implemented grammar. `..<` and `...` are range operators, accepted
+by the parser only as the source of a `for` loop.
 
 ## Invalid input and recovery
 
@@ -78,7 +84,7 @@ unsupported numeric forms, and reserved syntax all produce diagnostics.
 
 For malformed multi-byte forms, recovery consumes the complete recognizable
 unit instead of emitting misleading valid prefixes. Examples include `+=`,
-`<<=`, `?.`, `1.5`, and `0xff`.
+`<<=`, `?.`, `1.5suffix`, and `0xfg`.
 
 Source files larger than the 32-bit span capacity are rejected before scanning.
 

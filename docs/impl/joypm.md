@@ -1,11 +1,12 @@
 # joypm Module and Workspace Manager
 
 > **Status:** `joypm 0.1.0` implements one source module per `project.toml` and
-> explicit multi-module `workspace.toml` files. Native Windows ARM64 Debug
-> default build and unfiltered CTest pass 809/809, including all 15 joypm
-> gates. Debug/optimized self-builds, workspace workflows, concurrent
-> generations, failures, and relocated installs are verified. Other native
-> platforms, a new full Release build, and publication remain open.
+> explicit multi-module `workspace.toml` files. Native Windows x64 Debug and
+> Release default builds and unfiltered CTest each pass 846/846, including
+> all 15 joypm gates. Debug/optimized self-builds, workspace workflows, concurrent
+> generations, failures, and relocated installs are verified. Earlier Windows
+> ARM64 Debug evidence is recorded below; other native platform/profile gates
+> and publication remain open.
 
 The tool is written in Joyeer. It resolves manifests to explicit source sets
 and invokes the compiler; it does not change the
@@ -47,6 +48,36 @@ dependencies = ["example.core"]
 dependency source; it has no standalone library artifact or stable binary
 ABI and must not declare `output`. Test programs are separate modules with
 their own manifests and entries, not extra units hidden inside one manifest.
+
+The [library plan](../plan/library.md) applies this source-module model to
+the proposed `Foundation`, `System`, `Collections`, and `Testing` modules.
+Local library development can use the existing workspace workflow; automatic
+installed-library resolution remains planned. Compiler/runtime construction
+and the first joypm bootstrap remain CMake responsibilities, not new joypm
+module kinds.
+Native-backed source modules can additionally declare:
+
+```toml
+native-bindings = true
+native-libraries = ["native/library.a"]
+```
+
+Both fields are optional, defaulting to `false` and `[]`. `native-bindings`
+must be a Boolean and explicitly authorizes only that module's restricted
+C declarations/calls via `--runtime-module`. Importing a module never grants
+the caller these privileges. `native-libraries` is an ordered array of
+relative file paths without parent traversal, resolved against the module's
+directory and forwarded as explicit `--link-library` inputs. The same
+1024-entry, duplicate-path, and decoded-string limits as source lists apply.
+These files must already exist, including during `check`; they are validated
+by the compiler. Only the selected dependency closure contributes bindings
+and libraries. Unknown/repeated keys and malformed values are errors.
+
+joypm does not compile C, fetch dependencies, discover libraries, choose
+platform-specific filenames, or deploy shared libraries. CMake can stage
+platform-specific manifests, as the optional [Compression](compression.md)
+package does. Treat manifests with native privileges and libraries as trusted
+build inputs, not a sandbox.
 
 A workspace owns only its explicit member directories:
 
@@ -162,7 +193,7 @@ multiline strings, dates, and floating-point values are unsupported.
 | Each manifest | 65536 original bytes |
 | Decoded string | 4096 bytes |
 | Workspace members | 256 |
-| Sources/dependencies per module array | 1024 strings |
+| Sources/dependencies/native libraries per module array | 1024 strings |
 
 Every module requires name/kind/nonempty sources/dependencies. Bin/test output
 names are portable ASCII 1..64 bytes; logical names follow the compiler's
@@ -251,6 +282,16 @@ unchanged; see [building](../building.md#joypm-bootstrap-and-acceptance).
 
 ## 5. Validation evidence
 
+On native Windows x64 on 2026-10-19, fresh default Debug and Release builds
+with unit tests and joypm enabled each passed unfiltered serial CTest
+**846/846**, with no skips, including all 15 joypm gates. Bootstrap,
+Debug/optimized self-build and second-stage execution, workspace workflows,
+and relocated component installs passed in both configurations.
+Compiler, backend, and joypm PE headers were independently verified as AMD64;
+Debug bootstrap produced its PDB. Toolchain provenance and the related
+in-memory debug-information fix are recorded in
+[C interop acceptance](c-interop.md#windows-x64).
+
 A follow-up native Windows ARM64 Debug default build and unfiltered CTest on
 2026-10-11 passed **809/809**, including all 15 joypm gates, after adding
 public short-name imports to the compiler. All nine unchanged Moss modules
@@ -279,9 +320,9 @@ Tests never claim ownership of collided directories.
 
 Previous-layout native Debug/Release acceptance recorded 789/789 each.
 Despite retaining version 0.1.0, those historical Release results are not
-a new full Release CTest run for the module/workspace layout.
-The current optimized tool/workspace self-builds are a narrower gate.
-Windows x64, Linux, and macOS still need their own native acceptance.
+a new full native ARM64 Release CTest run for the module/workspace layout;
+optimized tool/workspace self-builds are a narrower gate.
+Linux and macOS still need their own complete native Debug/Release acceptance.
 
 External local dependencies, registries/version resolution, lockfiles,
 cache/clean, process capture/timeouts, nested workspaces, and remote acquisition

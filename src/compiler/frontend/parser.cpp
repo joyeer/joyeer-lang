@@ -232,8 +232,32 @@ ParseResult Parser::parse() {
 }
 
 syntax::NodePtr Parser::parseTopLevelItem() {
+    if (cursor.at(atSign)) {
+        const size_t start = cursor.position();
+        std::vector<syntax::AttributeSyntax> attributes;
+        while (cursor.at(atSign)) attributes.push_back(parseAttribute());
+        Token::Ptr modifier;
+        if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
+        if (!cursor.at(kwFunc)) {
+            report(DiagnosticId::unsupportedSyntax, spanFrom(start),
+                   "declaration annotations are supported only on top-level functions");
+            return parseTopLevelItem();
+        }
+        auto declaration = parseFunctionDecl(true);
+        declaration->attributes = std::move(attributes);
+        if (modifier != nullptr) {
+            declaration->visibility = visibilityFor(modifier->kind);
+            declaration->explicitVisibility = true;
+        }
+        declaration->span = spanFrom(start);
+        return declaration;
+    }
     if (isVisibility(cursor.peek()->kind)) {
         const auto modifier = cursor.advance();
+        if (cursor.at(atSign)) {
+            report(DiagnosticId::unexpectedToken, modifier->span,
+                   "annotations must precede the visibility modifier");
+        }
         auto declaration = parseTopLevelItem();
         if (declaration != nullptr) {
             if (declaration->explicitVisibility) {
@@ -272,6 +296,19 @@ syntax::NodePtr Parser::parseTopLevelItem() {
     }
 }
 
+syntax::AttributeSyntax Parser::parseAttribute() {
+    const size_t start = cursor.position();
+    cursor.advance();
+    auto name = expect(identifier, "an annotation name");
+    std::vector<syntax::CallArgumentSyntax::Ptr> arguments;
+    if (cursor.at(leftParen)) {
+        arguments = parseArgumentClause();
+    } else {
+        reportExpected(DiagnosticId::expectedToken, "'(' to begin annotation arguments");
+    }
+    return {spanFrom(start), std::move(name), std::move(arguments)};
+}
+
 syntax::BindingDeclSyntax::Ptr Parser::parseBindingDecl(bool requireType) {
     const size_t start = cursor.position();
     auto keyword = cursor.advance();
@@ -303,7 +340,7 @@ syntax::BindingDeclSyntax::Ptr Parser::parseBindingDecl(bool requireType) {
             std::move(initializer));
 }
 
-syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl() {
+syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl(bool hasAttributes) {
     const size_t start = cursor.position();
     cursor.advance();
     auto name = expect(identifier, "a function name");
@@ -344,7 +381,9 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl() {
         returnType = parseType();
     }
 
-    auto body = parseBlock();
+    // Body presence depends on the annotation's meaning, not on parser trust.
+    // Semantic checking admits only c_extern without a body.
+    auto body = cursor.at(leftCurly) || !hasAttributes ? parseBlock() : nullptr;
     return std::make_shared<syntax::FunctionDeclSyntax>(
             spanFrom(start),
             std::move(name),
@@ -653,6 +692,8 @@ syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
         }
         const size_t before = cursor.position();
         auto item = parseBlockItem();
+        for (auto& pending : pendingItems) items.push_back(std::move(pending));
+        pendingItems.clear();
         if (item != nullptr) items.push_back(std::move(item));
         if (cursor.position() == before) {
             report(DiagnosticId::unexpectedToken,
@@ -676,6 +717,9 @@ syntax::NodePtr Parser::parseBlockItem() {
     }
     if (cursor.at(kwWhile)) {
         return parseWhileStmt();
+    }
+    if (cursor.at(kwFor)) {
+        return parseForStmt();
     }
     if (const auto token = cursor.eat(kwBreak)) {
         return std::make_shared<syntax::BreakStmtSyntax>(tokenSpan(token));
@@ -706,6 +750,163 @@ syntax::WhileStmtSyntax::Ptr Parser::parseWhileStmt() {
             spanFrom(start), std::move(condition), std::move(body));
 }
 
+// `for x in source { body }` is rewritten into the loops the compiler already has,
+// so every later stage sees ordinary bindings and a `while`:
+//
+//   let $for1 = source;  var $for1i = -1
+//   while $for1i + 1 < $for1.count { $for1i += 1; let x = $for1[$for1i]; body }
+//
+//   for i in a..<b  ->  var next = a; var end = next; end = b
+//                       while next < end { let i = next; next += 1; body }
+//
+// The source is evaluated once into a hidden copy, so mutating the original inside
+// the body does not change the iteration. `continue` re-tests the loop condition,
+// which is why the counter advances at the top of the body. `a...b` stops after the
+// last value without computing b + 1, so it cannot overflow.
+syntax::NodePtr Parser::parseForStmt() {
+    const size_t start = cursor.position();
+    const auto forToken = cursor.advance();
+    if (cursor.at(ampersand)) {
+        report(DiagnosticId::unsupportedSyntax, tokenSpan(cursor.peek()),
+               "inout iteration ('for &x in') is not supported");
+        cursor.advance();
+    }
+    Token::Ptr variable;
+    if (cursor.at(identifier)) {
+        variable = cursor.advance();
+    } else if (cursor.at(wildcard)) {
+        cursor.advance();
+    } else {
+        reportExpected(DiagnosticId::expectedPattern, "a loop variable name or '_'");
+    }
+    expect(kwIn, "'in' after the loop variable");
+
+    auto lower = parsePrecedence(6);
+    if (lower == nullptr) {
+        reportExpected(DiagnosticId::expectedExpression, "a collection or range to iterate");
+        lower = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
+    }
+    syntax::ExprPtr upper;
+    bool isRange = false;
+    bool inclusive = false;
+    if (cursor.at(dotDotLess) || cursor.at(dotDotDot)) {
+        isRange = true;
+        inclusive = cursor.advance()->kind == dotDotDot;
+        upper = parsePrecedence(6);
+        if (upper == nullptr) {
+            reportExpected(DiagnosticId::expectedExpression, "the end of the range");
+            upper = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
+        }
+    }
+    auto body = parseBlock();
+
+    const SourceSpan span = coveringSpan(tokenSpan(forToken), lower->span);
+    const size_t number = ++forLoopCount;
+    const auto hidden = [&](const std::string& suffix) {
+        return "$for" + std::to_string(number) + suffix;
+    };
+    const auto token = [&](TokenKind kind, const std::string& text) {
+        return std::make_shared<Token>(
+                kind, text, span, forToken->lineNumber, forToken->columnAt, false);
+    };
+    const auto name = [&](const std::string& text) -> syntax::ExprPtr {
+        return std::make_shared<syntax::NameExprSyntax>(span, token(identifier, text));
+    };
+    const auto number_ = [&](int64_t value) -> syntax::ExprPtr {
+        auto literal = token(decimalLiteral, std::to_string(value));
+        literal->intValue = value;
+        return std::make_shared<syntax::LiteralExprSyntax>(span, literal);
+    };
+    const auto binary = [&](TokenKind kind, const std::string& text, syntax::ExprPtr left,
+            syntax::ExprPtr right) -> syntax::ExprPtr {
+        return std::make_shared<syntax::BinaryExprSyntax>(
+                span, token(kind, text), std::move(left), std::move(right));
+    };
+    const auto assign = [&](TokenKind kind, const std::string& text, const std::string& target,
+            syntax::ExprPtr value) -> syntax::NodePtr {
+        return std::make_shared<syntax::AssignmentExprSyntax>(
+                span, token(kind, text), name(target), std::move(value));
+    };
+    const auto declare = [&](TokenKind keyword, const Token::Ptr& named,
+            syntax::ExprPtr initializer) -> syntax::NodePtr {
+        return std::make_shared<syntax::BindingDeclSyntax>(
+                span, token(keyword, keyword == kwLet ? "let" : "var"), named, nullptr,
+                std::move(initializer));
+    };
+    const auto isLiteral = [](const syntax::ExprPtr& expression) {
+        auto inner = expression;
+        if (inner->kind == syntax::Kind::prefixExpr) {
+            const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(inner);
+            if (prefix->op == nullptr || prefix->op->kind != minus) return false;
+            inner = prefix->operand;
+        }
+        return inner->kind == syntax::Kind::literalExpr &&
+               std::static_pointer_cast<syntax::LiteralExprSyntax>(inner)->literal->kind ==
+                       decimalLiteral;
+    };
+
+    std::vector<syntax::NodePtr> declarations;
+    std::vector<syntax::NodePtr> loopBody;
+    syntax::ExprPtr condition;
+    if (!isRange) {
+        const auto sequence = hidden("");
+        const auto index = hidden("i");
+        declarations.push_back(declare(kwLet, token(identifier, sequence), std::move(lower)));
+        declarations.push_back(declare(kwVar, token(identifier, index),
+                std::make_shared<syntax::PrefixExprSyntax>(span, token(minus, "-"), number_(1))));
+        condition = binary(less, "<", binary(plus, "+", name(index), number_(1)),
+                std::make_shared<syntax::MemberExprSyntax>(
+                        span, name(sequence), token(identifier, "count")));
+        loopBody.push_back(assign(plusEqual, "+=", index, number_(1)));
+        if (variable != nullptr) {
+            loopBody.push_back(declare(kwLet, variable,
+                    std::make_shared<syntax::SubscriptExprSyntax>(span, name(sequence), name(index))));
+        }
+    } else {
+        const auto next = hidden("next");
+        const auto end = hidden("end");
+        // A bare integer literal on one side takes the other side's type.
+        if (isLiteral(lower) && !isLiteral(upper)) {
+            declarations.push_back(declare(kwVar, token(identifier, end), std::move(upper)));
+            declarations.push_back(declare(kwVar, token(identifier, next), name(end)));
+            declarations.push_back(assign(equal, "=", next, std::move(lower)));
+        } else {
+            declarations.push_back(declare(kwVar, token(identifier, next), std::move(lower)));
+            declarations.push_back(declare(kwVar, token(identifier, end), name(next)));
+            declarations.push_back(assign(equal, "=", end, std::move(upper)));
+        }
+        if (!inclusive) {
+            condition = binary(less, "<", name(next), name(end));
+            if (variable != nullptr) {
+                loopBody.push_back(declare(kwLet, variable, name(next)));
+            }
+            loopBody.push_back(assign(plusEqual, "+=", next, number_(1)));
+        } else {
+            const auto more = hidden("more");
+            declarations.push_back(declare(kwVar, token(identifier, more),
+                    binary(lessEqual, "<=", name(next), name(end))));
+            condition = name(more);
+            if (variable != nullptr) {
+                loopBody.push_back(declare(kwLet, variable, name(next)));
+            }
+            auto finished = std::make_shared<syntax::BlockExprSyntax>(
+                    span, std::vector<syntax::NodePtr> {assign(equal, "=", more,
+                            std::make_shared<syntax::LiteralExprSyntax>(
+                                    span, token(booleanLiteral, "false")))});
+            auto advance = std::make_shared<syntax::BlockExprSyntax>(
+                    span, std::vector<syntax::NodePtr> {assign(plusEqual, "+=", next, number_(1))});
+            loopBody.push_back(std::make_shared<syntax::IfExprSyntax>(
+                    span, binary(equalEqual, "==", name(next), name(end)),
+                    std::move(finished), std::move(advance)));
+        }
+    }
+    for (auto& item : body->items) loopBody.push_back(std::move(item));
+    auto block = std::make_shared<syntax::BlockExprSyntax>(body->span, std::move(loopBody));
+    for (auto& declaration : declarations) pendingItems.push_back(std::move(declaration));
+    return std::make_shared<syntax::WhileStmtSyntax>(
+            spanFrom(start), std::move(condition), std::move(block));
+}
+
 syntax::ExprPtr Parser::parseExpression() {
     if (cursor.at(kwReturn)) {
         return parseReturnExpr();
@@ -714,12 +915,18 @@ syntax::ExprPtr Parser::parseExpression() {
 }
 
 syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
-    auto left = parsePrefixExpr();
+    auto left = parseCastExpr();
     if (left == nullptr) return nullptr;
 
     int consumedNonAssociativePower = 0;
-    while (!cursor.atEnd() && !cursor.peek()->startsLine && isInfix(cursor.peek()->kind)) {
-        const InfixInfo info = infixInfo(cursor.peek()->kind);
+    while (!cursor.atEnd() && !cursor.peek()->startsLine) {
+        // Two adjacent `>` tokens form a right shift in expression position.
+        const bool shiftRightPair = cursor.at(greater) && cursor.at(greater, 1) &&
+                !cursor.peek(1)->startsLine &&
+                spanEnd(tokenSpan(cursor.peek())) == cursor.peek(1)->span.offset;
+        const TokenKind infixKind = shiftRightPair ? shiftRight : cursor.peek()->kind;
+        if (!isInfix(infixKind)) break;
+        const InfixInfo info = infixInfo(infixKind);
         if (info.bindingPower < minimumBindingPower) break;
 
         if (info.nonAssociative && consumedNonAssociativePower == info.bindingPower) {
@@ -730,6 +937,12 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
         if (info.nonAssociative) consumedNonAssociativePower = info.bindingPower;
 
         auto op = cursor.advance();
+        if (shiftRightPair) {
+            const auto second = cursor.advance();
+            op = std::make_shared<Token>(
+                    shiftRight, ">>", coveringSpan(tokenSpan(op), tokenSpan(second)),
+                    op->lineNumber, op->columnAt, false);
+        }
         syntax::ExprPtr right;
         if (info.assignment) {
             right = parseExpression();
@@ -762,9 +975,49 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
     return left;
 }
 
+// `x as T` converts with a range check; `x as? T` returns a Result instead of
+// trapping; `x &as T` truncates. Casts bind tighter
+// than binary operators and looser than prefix operators, and the target is a
+// plain type name so a following `<` is a comparison, not generic arguments.
+syntax::ExprPtr Parser::parseCastExpr() {
+    auto expression = parsePrefixExpr();
+    if (expression == nullptr) return nullptr;
+
+    while (!cursor.atEnd() && !cursor.peek()->startsLine) {
+        const bool wrapping = cursor.at(ampersand) && cursor.at(kwAs, 1) &&
+                !cursor.peek(1)->startsLine &&
+                spanEnd(tokenSpan(cursor.peek())) == cursor.peek(1)->span.offset;
+        if (!wrapping && !cursor.at(kwAs)) break;
+
+        auto op = cursor.advance();
+        if (wrapping) {
+            const auto keyword = cursor.advance();
+            op = std::make_shared<Token>(
+                    kwAs, "&as", coveringSpan(tokenSpan(op), tokenSpan(keyword)),
+                    op->lineNumber, op->columnAt, false);
+        } else if (cursor.at(question) && !cursor.peek()->startsLine &&
+                   spanEnd(tokenSpan(op)) == cursor.peek()->span.offset) {
+            // `as?` converts to a Result instead of trapping.
+            const auto mark = cursor.advance();
+            op = std::make_shared<Token>(
+                    kwAs, "as?", coveringSpan(tokenSpan(op), tokenSpan(mark)),
+                    op->lineNumber, op->columnAt, false);
+        }
+        auto name = expect(identifier, "a type name after 'as'");
+        auto target = std::make_shared<syntax::NominalTypeSyntax>(
+                tokenSpan(name), name, std::vector<syntax::TypePtr> {});
+        const SourceSpan span = coveringSpan(expression->span, tokenSpan(name));
+        auto cast = std::make_shared<syntax::PrefixExprSyntax>(
+                span, std::move(op), std::move(expression));
+        cast->castTarget = std::move(target);
+        expression = std::move(cast);
+    }
+    return expression;
+}
+
 syntax::ExprPtr Parser::parsePrefixExpr() {
     const size_t start = cursor.position();
-    if (cursor.at(minus) || cursor.at(bang)) {
+    if (cursor.at(minus) || cursor.at(bang) || cursor.at(tilde)) {
         auto op = cursor.advance();
         auto operand = parsePrefixExpr();
         if (operand == nullptr) {
@@ -1216,7 +1469,7 @@ syntax::MatchArmSyntax::Ptr Parser::parseMatchArm() {
 }
 
 bool Parser::isLiteral(TokenKind kind) const {
-    return kind == decimalLiteral || kind == stringLiteral ||
+    return kind == decimalLiteral || kind == floatLiteral || kind == stringLiteral ||
            kind == byteLiteral || kind == booleanLiteral || kind == nilLiteral;
 }
 
@@ -1227,20 +1480,21 @@ bool Parser::isExpressionStart(const Token::Ptr& token) const {
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
             token->kind == minus || token->kind == bang ||
-            token->kind == ampersand);
+            token->kind == tilde || token->kind == ampersand);
 }
 
 bool Parser::isTopLevelStart(const Token::Ptr& token) const {
     if (token == nullptr) return false;
     return token->kind == kwLet || token->kind == kwVar ||
            token->kind == kwFunc || token->kind == kwStruct ||
-           token->kind == kwEnum || token->kind == kwImport || isVisibility(token->kind);
+           token->kind == kwEnum || token->kind == kwImport ||
+           token->kind == atSign || isVisibility(token->kind);
 }
 
 bool Parser::isBlockItemStart(const Token::Ptr& token) const {
     return token != nullptr &&
            (token->kind == kwLet || token->kind == kwVar ||
-            token->kind == kwWhile || token->kind == kwBreak ||
+            token->kind == kwWhile || token->kind == kwFor || token->kind == kwBreak ||
             token->kind == kwContinue || isExpressionStart(token));
 }
 
@@ -1266,7 +1520,17 @@ bool Parser::shouldParseReturnValue() const {
 
 Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
     switch (kind) {
-        case equal: return {1, true, false, true};
+        case equal:
+        case plusEqual:
+        case minusEqual:
+        case multiplyEqual:
+        case divideEqual:
+        case percentEqual:
+        case ampersandEqual:
+        case pipeEqual:
+        case caretEqual:
+        case shiftLeftEqual:
+        case shiftRightEqual: return {1, true, false, true};
         case orOr: return {2, false, false, false};
         case andAnd: return {3, false, false, false};
         case equalEqual:
@@ -1275,11 +1539,16 @@ Parser::InfixInfo Parser::infixInfo(TokenKind kind) const {
         case lessEqual:
         case greater:
         case greaterEqual: return {5, false, true, false};
+        case verticalBar: return {6, false, false, false};
+        case caret: return {7, false, false, false};
+        case ampersand: return {8, false, false, false};
+        case shiftLeft:
+        case shiftRight: return {9, false, false, false};
         case plus:
-        case minus: return {6, false, false, false};
+        case minus: return {10, false, false, false};
         case multiply:
         case divide:
-        case percentage: return {7, false, false, false};
+        case percentage: return {11, false, false, false};
         default: return {0, false, false, false};
     }
 }

@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "System"
+kind = "source"
+sources = ["path.joyeer", "messages.joyeer"]
+dependencies = ["Foundation"]

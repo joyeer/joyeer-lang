@@ -15,6 +15,7 @@ add_library(JoyeerCompilerCore OBJECT
 	driver/driver.h
 	driver/options.h
 	frontend/hostbuiltins.h
+	frontend/nativebinding.h
 	frontend/lexparser.cpp
 	frontend/lexparser.h
 	frontend/nameresolution.cpp
@@ -33,15 +34,17 @@ add_library(JoyeerCompilerCore OBJECT
 	frontend/token.h
 	frontend/typechecking.cpp
 	frontend/typechecking.h
+	ir/constants.cpp
+	ir/constants.h
 	ir/ir.cpp
 	ir/ir.h
 	ir/irlowering.cpp
 	ir/irlowering.h
 )
 target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SRC_DIR})
-target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerNativeBackend)
+target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
-	JOYEER_NATIVE_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
+	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"
 	JOYEER_SDK_ROOT_PATH="${JOYEER_MACOS_SDK_PATH}"
 	JOYEER_SDK_VERSION="${JOYEER_MACOS_SDK_VERSION}"
 	JOYEER_MACOS_DEPLOYMENT_TARGET="${JOYEER_MACOS_DEPLOYMENT_TARGET}"
@@ -50,15 +53,6 @@ target_compile_definitions(JoyeerCompilerCore PRIVATE
 
 add_executable(joyeer main.cpp)
 target_link_libraries(joyeer PRIVATE JoyeerCompilerCore)
-add_dependencies(joyeer JoyeerNativeRuntime)
-set_property(TARGET joyeer APPEND PROPERTY LINK_DEPENDS
-	"$<TARGET_FILE:JoyeerNativeRuntime>"
-)
-add_custom_command(TARGET joyeer POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"$<TARGET_FILE:JoyeerNativeRuntime>"
-		"$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerNativeRuntime>"
-)
 if(APPLE)
 	set_target_properties(joyeer PROPERTIES INSTALL_RPATH "@loader_path")
 elseif(UNIX)

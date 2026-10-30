@@ -1,6 +1,8 @@
 #include "ir.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <functional>
 #include <sstream>
 #include <unordered_map>
@@ -10,9 +12,21 @@ namespace joyeer::ir {
 
 namespace {
 
+bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
+    const auto fits = [text](auto value) {
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(),
+                value, std::chars_format::general);
+        return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() &&
+                std::isfinite(value);
+    };
+    return kind == typing::TypeKind::float32 ? fits(float{}) :
+            kind == typing::TypeKind::float64 && fits(double{});
+}
+
 bool producesValue(Opcode opcode) {
     switch (opcode) {
         case Opcode::integerConstant:
+        case Opcode::floatingConstant:
         case Opcode::booleanConstant:
         case Opcode::stringConstant:
         case Opcode::byteConstant:
@@ -33,6 +47,15 @@ bool producesValue(Opcode opcode) {
         case Opcode::equal:
         case Opcode::notEqual:
         case Opcode::logicalAnd:
+        case Opcode::bitAnd:
+        case Opcode::bitOr:
+        case Opcode::bitXor:
+        case Opcode::shiftLeft:
+        case Opcode::shiftRight:
+        case Opcode::convertChecked:
+        case Opcode::convertWrapping:
+        case Opcode::constantValue:
+        case Opcode::integerFits:
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::constructDictionary:
@@ -90,7 +113,14 @@ std::string patternText(
             out << '_';
             break;
         case PatternKind::integerLiteral:
-            out << pattern.integerValue;
+            if (types.contains(pattern.type) && typing::isUnsignedInteger(types.at(pattern.type)->kind)) {
+                out << static_cast<uint64_t>(pattern.integerValue);
+            } else {
+                out << pattern.integerValue;
+            }
+            break;
+        case PatternKind::floatingLiteral:
+            out << pattern.text;
             break;
         case PatternKind::booleanLiteral:
             out << (pattern.integerValue == 0 ? "false" : "true");
@@ -119,7 +149,7 @@ std::string patternText(
 
 } // namespace
 
-bool requiresDestruction(const Module& module, TypeId requestedType) {
+DestructionAnalysis::DestructionAnalysis(const Module& module) {
     std::unordered_map<TypeId, const TypeName*> types;
     std::unordered_map<TypeId, const StructureDefinition*> structures;
     std::unordered_map<TypeId, const EnumerationDefinition*> enumerations;
@@ -131,11 +161,10 @@ bool requiresDestruction(const Module& module, TypeId requestedType) {
         enumerations.emplace(enumeration.type, &enumeration);
     }
 
-    std::unordered_map<TypeId, bool> memo;
     std::unordered_set<TypeId> visiting;
     std::function<bool(TypeId)> visit = [&](TypeId id) {
-        const auto cached = memo.find(id);
-        if (cached != memo.end()) return cached->second;
+        const auto cached = required.find(id);
+        if (cached != required.end()) return cached->second;
         const auto found = types.find(id);
         if (found == types.end()) return false;
         if (!visiting.insert(id).second) return true;
@@ -178,10 +207,19 @@ bool requiresDestruction(const Module& module, TypeId requestedType) {
                 break;
         }
         visiting.erase(id);
-        memo.emplace(id, result);
+        required.emplace(id, result);
         return result;
     };
-    return visit(requestedType);
+    for (const auto& type : module.types) visit(type.id);
+}
+
+bool DestructionAnalysis::requiresDestruction(TypeId type) const {
+    const auto found = required.find(type);
+    return found != required.end() && found->second;
+}
+
+bool requiresDestruction(const Module& module, TypeId type) {
+    return DestructionAnalysis(module).requiresDestruction(type);
 }
 
 VerificationResult Verifier::verify(const Module& module) const {
@@ -599,8 +637,87 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
+    const DestructionAnalysis destruction(module);
+    std::unordered_map<std::string, const Function*> nativeSymbols;
+    std::unordered_set<std::string> nativeExports;
     for (const auto& function : module.functions) {
         const auto functionId = std::optional<FunctionId>(function.id);
+        if (module.isRuntimeObject && function.isRootModule &&
+            !function.isExternal && !function.runtimeContext) {
+            report(VerificationErrorId::invalidInstruction, functionId, {}, {},
+                   "runtime-object root functions require runtime authorization");
+        }
+        if (function.nativeBinding.has_value()) {
+            const auto& binding = *function.nativeBinding;
+            const auto hasKind = [&](TypeId id, typing::TypeKind kind) {
+                const auto found = types.find(id);
+                return found != types.end() && found->second->kind == kind;
+            };
+            const bool importing = binding.kind == NativeBindingKind::cImport;
+            bool valid = (importing || binding.kind == NativeBindingKind::cExport) &&
+                    function.runtimeContext && isCIdentifier(binding.symbol) &&
+                    function.isExternal == importing &&
+                    !(function.isRootModule && function.name == "main") &&
+                    (importing || !isCEntrySymbol(binding.symbol));
+            const auto scalar = [&](TypeId id) {
+                return types.contains(id) && typing::isNativeScalar(types.at(id)->kind);
+            };
+            const bool scalarResult = scalar(function.resultType);
+            valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
+                    function.returnsValue == scalarResult;
+            const auto bufferKind = [&](TypeId id) {
+                return typing::nativeBufferKind(id, [&](TypeId value) {
+                    const auto found = types.find(value);
+                    return found == types.end() ? nullptr : found->second;
+                });
+            };
+            for (const auto& parameter : function.parameters) {
+                const auto buffer = bufferKind(parameter.value.type);
+                const bool borrowed =
+                        (scalar(parameter.value.type) ||
+                         (importing && buffer != typing::NativeBufferKind::none)) &&
+                        parameter.value.category == ValueCategory::value &&
+                        !parameter.isMutable && !parameter.isConsuming &&
+                        !parameter.isInitializing && !parameter.acceptsAnyType;
+                const bool output = importing && buffer != typing::NativeBufferKind::none &&
+                        buffer != typing::NativeBufferKind::byteArrays &&
+                        parameter.value.category == ValueCategory::address &&
+                        parameter.isMutable && parameter.isInitializing &&
+                        !parameter.isConsuming && !parameter.acceptsAnyType;
+                valid &= borrowed || output;
+            }
+            if (!valid) {
+                report(VerificationErrorId::invalidInstruction, functionId, {}, {},
+                       "invalid or unauthorized C binding; expected scalar ABI or supported C import buffers");
+            }
+            const auto [previous, inserted] = nativeSymbols.emplace(binding.symbol, &function);
+            if (!inserted) {
+                const auto& other = *previous->second;
+                const auto compatible = [&](TypeId a, TypeId b) {
+                    if (bufferKind(a) != typing::NativeBufferKind::none ||
+                        bufferKind(b) != typing::NativeBufferKind::none) {
+                        return bufferKind(a) == bufferKind(b);
+                    }
+                    return types.contains(a) && types.contains(b) &&
+                            typing::sameNativeRepresentation(types.at(a)->kind, types.at(b)->kind);
+                };
+                bool matches = compatible(function.resultType, other.resultType) &&
+                        function.parameters.size() == other.parameters.size();
+                for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
+                    matches &= compatible(function.parameters[index].value.type, other.parameters[index].value.type);
+                    matches &= function.parameters[index].isInitializing == other.parameters[index].isInitializing;
+                }
+                if (!matches) {
+                    report(VerificationErrorId::callMismatch, functionId, {}, {},
+                           "conflicting signatures for C symbol '" + binding.symbol + "'");
+                }
+            }
+            if (binding.kind == NativeBindingKind::cExport &&
+                !nativeExports.insert(binding.symbol).second) {
+                report(VerificationErrorId::duplicateId, functionId, {}, {},
+                       "duplicate C export '" + binding.symbol + "'");
+            }
+        }
         if (function.debugScope.has_value()) {
             const auto scope = debugScopes.find(*function.debugScope);
             if (scope == debugScopes.end() || scope->second->function != function.id ||
@@ -1221,10 +1338,47 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::integerFits:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value()) {
+                            const auto* source = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            const auto target = static_cast<TypeId>(instruction.integerValue);
+                            const auto* targetType = types.contains(target) ? types.at(target) : nullptr;
+                            const auto* result = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type) : nullptr;
+                            if (operands[0]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                source == nullptr || targetType == nullptr || result == nullptr ||
+                                !typing::isInteger(source->kind) || !typing::isInteger(targetType->kind) ||
+                                result->kind != typing::TypeKind::boolean) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "integer range test requires integer operand and target types and a Boolean result");
+                            }
+                        }
+                        break;
+                    case Opcode::constantValue: {
+                        requireShape(0, 0);
+                        const auto index = static_cast<uint64_t>(instruction.integerValue);
+                        if (!instruction.result.has_value() ||
+                            instruction.result->category != ValueCategory::value ||
+                            index >= module.constants.size() ||
+                            module.constants[index].type != instruction.result->type ||
+                            module.constants[index].data.empty()) {
+                            report(
+                                    VerificationErrorId::invalidInstruction,
+                                    functionId, block.id, location,
+                                    "constant reference must name a module constant of the result type");
+                        }
+                        break;
+                    }
                     case Opcode::integerConstant:
+                    case Opcode::floatingConstant:
                     case Opcode::booleanConstant:
                     case Opcode::stringConstant:
-                    case Opcode::byteConstant:
+                    case Opcode::byteConstant: {
                         requireShape(0, 0);
                         if (instruction.result.has_value() &&
                             instruction.result->category != ValueCategory::value) {
@@ -1235,7 +1389,40 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     location,
                                     "constant result must be an object value");
                         }
+                        if (instruction.result.has_value() && types.contains(instruction.result->type)) {
+                            const auto kind = types.at(instruction.result->type)->kind;
+                            bool valid = false;
+                            switch (instruction.opcode) {
+                                case Opcode::integerConstant:
+                                    if (typing::isInteger(kind)) {
+                                        const auto bits = typing::scalarBitWidth(kind);
+                                        valid = bits == 64 || (typing::isSignedInteger(kind)
+                                                ? instruction.integerValue >= -(int64_t{1} << (bits - 1)) &&
+                                                  instruction.integerValue < (int64_t{1} << (bits - 1))
+                                                : static_cast<uint64_t>(instruction.integerValue) < (uint64_t{1} << bits));
+                                    }
+                                    break;
+                                case Opcode::floatingConstant:
+                                    valid = validFloatingLiteral(kind, instruction.text);
+                                    break;
+                                case Opcode::booleanConstant:
+                                    valid = kind == typing::TypeKind::boolean &&
+                                            (instruction.integerValue == 0 || instruction.integerValue == 1);
+                                    break;
+                                case Opcode::byteConstant:
+                                    valid = kind == typing::TypeKind::uint8 &&
+                                            instruction.integerValue >= 0 && instruction.integerValue <= 255;
+                                    break;
+                                case Opcode::stringConstant: valid = kind == typing::TypeKind::string; break;
+                                default: break;
+                            }
+                            if (!valid) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                        "constant kind or value does not match its result type");
+                            }
+                        }
                         break;
+                    }
                     case Opcode::stackAllocate:
                         requireShape(0, 0);
                         if (instruction.result.has_value() &&
@@ -1318,7 +1505,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                     case Opcode::destroy:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                             (operands[0]->category != ValueCategory::address ||
-                             !requiresDestruction(module, operands[0]->type))) {
+                             !destruction.requiresDestruction(operands[0]->type))) {
                             report(
                                     VerificationErrorId::typeMismatch,
                                     functionId,
@@ -1338,11 +1525,58 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 instruction.result->category != ValueCategory::value ||
                                 operands[0]->type != operands[1]->type ||
                                 instruction.result->type != operands[0]->type ||
-                                type == nullptr || type->kind != typing::TypeKind::integer) {
+                                type == nullptr || !typing::isNumeric(type->kind) ||
+                                (instruction.opcode == Opcode::remainder && !typing::isInteger(type->kind))) {
                                 report(
                                         VerificationErrorId::typeMismatch,
                                         functionId, block.id, location,
-                                        "division and remainder require Int values and an Int result");
+                                        "division and remainder require matching numeric values and result");
+                            }
+                        }
+                        break;
+                    case Opcode::bitAnd:
+                    case Opcode::bitOr:
+                    case Opcode::bitXor:
+                    case Opcode::shiftLeft:
+                    case Opcode::shiftRight:
+                        if (requireShape(2, 0) && operands[0] != nullptr &&
+                            operands[1] != nullptr && instruction.result.has_value()) {
+                            const auto* type = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            const auto* count = types.contains(operands[1]->type)
+                                    ? types.at(operands[1]->type) : nullptr;
+                            const auto isShift = instruction.opcode == Opcode::shiftLeft ||
+                                    instruction.opcode == Opcode::shiftRight;
+                            if (operands[0]->category != ValueCategory::value ||
+                                operands[1]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                instruction.result->type != operands[0]->type ||
+                                (!isShift && operands[0]->type != operands[1]->type) ||
+                                type == nullptr || !typing::isInteger(type->kind) ||
+                                (isShift && (count == nullptr || !typing::isInteger(count->kind)))) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "bitwise operators require integer operands and a matching result");
+                            }
+                        }
+                        break;
+                    case Opcode::convertChecked:
+                    case Opcode::convertWrapping:
+                        if (requireShape(1, 0) && operands[0] != nullptr &&
+                            instruction.result.has_value()) {
+                            const auto* source = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type) : nullptr;
+                            const auto* target = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type) : nullptr;
+                            if (operands[0]->category != ValueCategory::value ||
+                                instruction.result->category != ValueCategory::value ||
+                                source == nullptr || target == nullptr ||
+                                !typing::isInteger(source->kind) || !typing::isInteger(target->kind)) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId, block.id, location,
+                                        "integer conversion requires integer operand and result values");
                             }
                         }
                         break;
@@ -1397,6 +1631,10 @@ VerificationResult Verifier::verify(const Module& module) const {
                             break;
                         }
                         const auto& callee = *functions.at(*instruction.callee);
+                        if (callee.nativeBinding.has_value() && !function.runtimeContext) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "direct call to a C binding requires runtime authorization");
+                        }
                         bool matches = instruction.operands.size() == callee.parameters.size();
                         const auto count = std::min(
                                 instruction.operands.size(),
@@ -1818,7 +2056,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 return false;
                             }
                             if (pattern.kind != PatternKind::enumCase) {
-                                return pattern.payloads.empty() && !pattern.symbol.has_value();
+                                return pattern.payloads.empty() && !pattern.symbol.has_value() &&
+                                        (pattern.kind != PatternKind::floatingLiteral ||
+                                         validFloatingLiteral(types.at(pattern.type)->kind, pattern.text));
                             }
                             if (!pattern.symbol.has_value()) return false;
                             const auto* enumCase = enumCaseFor(expectedType, *pattern.symbol);
@@ -1914,6 +2154,7 @@ bool isTerminator(Opcode opcode) {
 const char* opcodeName(Opcode opcode) {
     switch (opcode) {
         case Opcode::integerConstant: return "integer";
+        case Opcode::floatingConstant: return "floating";
         case Opcode::booleanConstant: return "boolean";
         case Opcode::stringConstant: return "string";
         case Opcode::byteConstant: return "byte";
@@ -1937,6 +2178,15 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::equal: return "eq";
         case Opcode::notEqual: return "ne";
         case Opcode::logicalAnd: return "and";
+        case Opcode::bitAnd: return "bit_and";
+        case Opcode::bitOr: return "bit_or";
+        case Opcode::bitXor: return "bit_xor";
+        case Opcode::shiftLeft: return "shl";
+        case Opcode::shiftRight: return "shr";
+        case Opcode::convertChecked: return "convert";
+        case Opcode::convertWrapping: return "convert_wrapping";
+        case Opcode::constantValue: return "constant";
+        case Opcode::integerFits: return "fits";
         case Opcode::call: return "call";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
@@ -2126,6 +2376,11 @@ std::string dump(const Module& module) {
             if (parameter.acceptsAnyType) out << " accepts-any";
         }
         out << ") -> " << typeName(types, function.resultType);
+        if (function.nativeBinding.has_value()) {
+            out << (function.nativeBinding->kind == NativeBindingKind::cImport
+                            ? " c_import \"" : " c_export \"")
+                << escape(function.nativeBinding->symbol) << '"';
+        }
         if (function.isExternal) {
             out << "\n";
             continue;
@@ -2155,9 +2410,26 @@ std::string dump(const Module& module) {
                 out << opcodeName(instruction.opcode);
                 switch (instruction.opcode) {
                     case Opcode::integerConstant:
+                        if (instruction.result.has_value() && types.contains(instruction.result->type) &&
+                                typing::isUnsignedInteger(types.at(instruction.result->type)->kind)) {
+                            out << ' ' << static_cast<uint64_t>(instruction.integerValue);
+                        } else {
+                            out << ' ' << instruction.integerValue;
+                        }
+                        break;
                     case Opcode::booleanConstant:
                     case Opcode::byteConstant:
                         out << ' ' << instruction.integerValue;
+                        break;
+                    case Opcode::floatingConstant:
+                        out << ' ' << instruction.text;
+                        break;
+                    case Opcode::constantValue:
+                        out << " #" << instruction.integerValue;
+                        break;
+                    case Opcode::integerFits:
+                        out << ' ' << valueName(instruction.operands[0]) << " in type "
+                            << instruction.integerValue;
                         break;
                     case Opcode::stringConstant:
                         out << " \"" << escape(instruction.text) << "\"";
@@ -2172,6 +2444,8 @@ std::string dump(const Module& module) {
                     case Opcode::copyValue:
                     case Opcode::take:
                     case Opcode::destroy:
+                    case Opcode::convertChecked:
+                    case Opcode::convertWrapping:
                     case Opcode::returnValue:
                         if (!instruction.operands.empty()) {
                             out << ' ' << valueName(instruction.operands[0]);
@@ -2193,6 +2467,11 @@ std::string dump(const Module& module) {
                     case Opcode::equal:
                     case Opcode::notEqual:
                     case Opcode::logicalAnd:
+                    case Opcode::bitAnd:
+                    case Opcode::bitOr:
+                    case Opcode::bitXor:
+                    case Opcode::shiftLeft:
+                    case Opcode::shiftRight:
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
                             out << (index == 0 ? " " : ", ")
                                 << valueName(instruction.operands[index]);

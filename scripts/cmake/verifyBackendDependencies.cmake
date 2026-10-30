@@ -26,7 +26,7 @@ foreach(binary IN ITEMS "${JOYEER_EXECUTABLE}" "${BACKEND_LIBRARY}")
     if(binary STREQUAL JOYEER_EXECUTABLE AND
        NOT binary_info_lower MATCHES "name: joyeer-backend\\.dll")
         message(FATAL_ERROR
-                "${binary} does not import the Joyeer native backend:\n${binary_info}")
+                "${binary} does not import the JoyeerBackend:\n${binary_info}")
     endif()
 endforeach()
 

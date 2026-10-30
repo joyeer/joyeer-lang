@@ -56,6 +56,7 @@ enum TokenKind {
     kwPublic,
     kwInternal,
     kwPrivate,
+    kwAs,
 
     leftCurly,
     rightCurly,
@@ -87,8 +88,29 @@ enum TokenKind {
     lessEqual,
     greater,
     greaterEqual,
-    ampersand
+    ampersand,
+    verticalBar,
+    caret,
+    tilde,
+    shiftLeft,
+    shiftRight,
+    plusEqual,
+    minusEqual,
+    multiplyEqual,
+    divideEqual,
+    percentEqual,
+    ampersandEqual,
+    pipeEqual,
+    caretEqual,
+    shiftLeftEqual,
+    shiftRightEqual,
+    dotDotLess,
+    dotDotDot
 };
+
+// The binary operator a compound assignment token applies, or `invalid` if
+// `kind` is not a compound assignment token.
+[[nodiscard]] TokenKind compoundBaseOperator(TokenKind kind);
 
 struct SourceSpan {
         uint32_t offset = 0;

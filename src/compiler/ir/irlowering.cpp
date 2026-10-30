@@ -1,8 +1,12 @@
 #include "irlowering.h"
+#include "constants.h"
 #include "compiler/frontend/hostbuiltins.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
+#include <cstdio>
+#include <functional>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -49,6 +53,7 @@ public:
 
         snapshotTypes();
         collectAggregateDefinitions();
+        destruction.emplace(*module);
         collectFunctions();
         lowerFunctions();
 
@@ -95,8 +100,18 @@ private:
 
     typing::TypeCheckedModel::Ptr model;
     std::shared_ptr<ir::Module> module;
+    std::optional<ir::DestructionAnalysis> destruction;
     std::vector<Diagnostic> diagnostics;
     std::unordered_map<semantic::SymbolId, ir::FunctionId> functions;
+    // Top-level `let` constants, evaluated at compile time. Scalars and strings
+    // fold into each use; arrays become shared module constants.
+    std::unordered_map<semantic::SymbolId, syntax::BindingDeclSyntax::Ptr> constantDeclarations;
+    std::vector<semantic::SymbolId> constantOrder;
+    // Every top-level binding, valid or not, so a rejected one is reported only once.
+    std::unordered_set<semantic::SymbolId> topLevelBindings;
+    std::unordered_set<semantic::SymbolId> failedConstants;
+    std::unordered_map<semantic::SymbolId, uint32_t> constantIds;
+    std::optional<ConstantEvaluator> constantEvaluator;
     std::unordered_map<semantic::ScopeId, ir::DebugScopeId> debugScopes;
     std::unordered_map<semantic::SymbolId, ir::DebugVariableId> debugVariables;
     std::unordered_map<semantic::SymbolId, ir::Value> slots;
@@ -213,7 +228,7 @@ private:
     }
 
     bool requiresDestroy(typing::TypeId type) const {
-        return ir::requiresDestruction(*module, type);
+        return destruction->requiresDestruction(type);
     }
 
     void pushScope() {
@@ -533,12 +548,131 @@ private:
             if (item->kind == syntax::Kind::functionDecl) {
                 collectFunction(std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
             } else if (item->kind == syntax::Kind::bindingDecl) {
-                report(
-                        DiagnosticId::unsupportedSyntax,
-                        item->span,
-                        "top-level bindings are not supported by primitive IR lowering");
+                collectConstant(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
             }
         }
+        evaluateConstants();
+    }
+
+    bool isConstantType(typing::TypeId id) const {
+        const auto* type = model->types().type(id);
+        if (type == nullptr) return false;
+        if (type->kind == typing::TypeKind::array) {
+            return type->arguments.size() == 1 && isConstantType(type->arguments.front());
+        }
+        return typing::isNativeScalar(type->kind) || type->kind == typing::TypeKind::string;
+    }
+
+    void collectConstant(const syntax::BindingDeclSyntax::Ptr& declaration) {
+        const auto symbol = model->semanticModel()->declaredSymbol(declaration);
+        if (!symbol.has_value()) return;
+        topLevelBindings.insert(*symbol);
+        if (declaration->isMutable()) {
+            report(DiagnosticId::invalidConstant, declaration->span,
+                    "top-level 'var' is not supported; declare an immutable 'let' constant");
+            return;
+        }
+        if (declaration->annotation == nullptr) {
+            report(DiagnosticId::invalidConstant, declaration->span,
+                    "a top-level constant requires an explicit type");
+            return;
+        }
+        const auto type = model->typeOf(*symbol);
+        if (declaration->initializer == nullptr || !type.has_value() || !isConstantType(*type)) {
+            report(DiagnosticId::invalidConstant, declaration->span,
+                    "a top-level constant must be a Bool, number, String, or array of those, "
+                    "with an initializer");
+            return;
+        }
+        constantDeclarations.emplace(*symbol, declaration);
+        constantOrder.push_back(*symbol);
+    }
+
+    void evaluateConstants() {
+        if (constantOrder.empty()) return;
+        constantEvaluator.emplace(
+                model,
+                [this](semantic::SymbolId symbol) -> syntax::ExprPtr {
+                    const auto found = constantDeclarations.find(symbol);
+                    return found == constantDeclarations.end() ? nullptr : found->second->initializer;
+                },
+                [this](SourceSpan span, std::string message) {
+                    report(DiagnosticId::invalidConstant, span, std::move(message));
+                });
+        // Evaluate every constant, used or not, so an invalid one is always reported.
+        for (const auto symbol : constantOrder) {
+            const auto& declaration = constantDeclarations.at(symbol);
+            const auto value = constantEvaluator->evaluateSymbol(symbol, declaration->span);
+            const auto type = model->typeOf(symbol);
+            // Encoding enforces the size limit, so an oversized table fails here once.
+            if (!value.has_value() ||
+                (model->types().type(*type)->kind == typing::TypeKind::array &&
+                 !constantEvaluator->encode(*value, *type, declaration->span).has_value())) {
+                failedConstants.insert(symbol);
+            }
+        }
+    }
+
+    std::optional<ir::Value> lowerConstant(semantic::SymbolId symbol, SourceSpan span) {
+        const auto type = model->typeOf(symbol);
+        if (!type.has_value()) {
+            report(DiagnosticId::missingType, span, "constant has no resolved type");
+            return std::nullopt;
+        }
+        if (failedConstants.contains(symbol)) return std::nullopt;
+        const auto value = constantEvaluator->evaluateSymbol(symbol, span);
+        if (!value.has_value()) return std::nullopt;
+
+        const auto kind = model->types().type(*type)->kind;
+        ir::Opcode opcode = ir::Opcode::integerConstant;
+        auto instruction = makeInstruction(opcode, span);
+        if (kind == typing::TypeKind::array) {
+            auto found = constantIds.find(symbol);
+            if (found == constantIds.end()) {
+                const auto encoded = constantEvaluator->encode(*value, *type, span);
+                if (!encoded.has_value()) {
+                    failedConstants.insert(symbol);
+                    return std::nullopt;
+                }
+                ir::Constant constant;
+                constant.id = static_cast<uint32_t>(module->constants.size());
+                constant.symbol = symbol;
+                constant.type = *type;
+                constant.name = model->semanticModel()->symbol(symbol)->name;
+                constant.data = *encoded;
+                module->constants.push_back(std::move(constant));
+                found = constantIds.emplace(symbol, module->constants.back().id).first;
+            }
+            instruction.opcode = ir::Opcode::constantValue;
+            instruction.integerValue = found->second;
+        } else if (kind == typing::TypeKind::string) {
+            instruction.opcode = ir::Opcode::stringConstant;
+            instruction.text = value->text;
+        } else if (typing::isFloating(kind)) {
+            instruction.opcode = ir::Opcode::floatingConstant;
+            char text[40] = {};
+            std::snprintf(text, sizeof(text), kind == typing::TypeKind::float32 ? "%.9g" : "%.17g",
+                    value->floating);
+            instruction.text = text;
+        } else if (kind == typing::TypeKind::boolean) {
+            instruction.opcode = ir::Opcode::booleanConstant;
+            instruction.integerValue = static_cast<int64_t>(value->integer);
+        } else {
+            const auto width = typing::scalarBitWidth(kind);
+            auto bits = value->integer;
+            if (typing::isSignedInteger(kind) && width < 64 && ((bits >> (width - 1)) & 1) != 0) {
+                bits |= ~((uint64_t{1} << width) - 1);
+            }
+            instruction.opcode = ir::Opcode::integerConstant;
+            instruction.integerValue = std::bit_cast<int64_t>(bits);
+        }
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        // Constants are never owned: every use borrows, and an owned use copies.
+        recordValue(result, kind == typing::TypeKind::array || kind == typing::TypeKind::string
+                ? ValueOwnership::borrowed : ValueOwnership::trivial);
+        return result;
     }
 
     void collectPrint() {
@@ -677,7 +811,12 @@ private:
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
-        if (module->sourceFile(0) != nullptr) {
+        function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
+        if (const auto* binding = model->nativeBinding(*symbol)) {
+            function.nativeBinding = *binding;
+            function.isExternal = binding->kind == NativeBindingKind::cImport;
+        }
+        if (module->sourceFile(0) != nullptr && !function.isExternal) {
             function.debugScope = debugScopeForNode(declaration, function.id);
             function.debugLocation = ir::DebugLocation {
                 declaration->span,
@@ -688,7 +827,7 @@ private:
         function.resultType = signature->result;
         function.returnsValue = signature->result != model->types().voidType() &&
                 signature->result != model->types().neverType();
-        function.entry = 0;
+        function.entry = function.isExternal ? ir::invalidBlockId : 0;
 
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
             const auto& parameter = declaration->parameters[index];
@@ -726,7 +865,7 @@ private:
                 parameterEffect == syntax::AccessEffect::initializing,
                 parameter->label == nullptr ? std::string() : parameter->label->rawValue,
             });
-            const auto debugVariable = ensureDebugVariable(
+            const auto debugVariable = function.isExternal ? std::nullopt : ensureDebugVariable(
                     *parameterSymbol,
                     function.id,
                     static_cast<uint32_t>(index + 1));
@@ -752,7 +891,9 @@ private:
             const auto symbol = semanticModel.declaredSymbol(declaration);
             if (!symbol.has_value()) continue;
             const auto found = functions.find(*symbol);
-            if (found != functions.end()) lowerFunction(declaration, found->second);
+            if (found != functions.end() && !module->functions[found->second].isExternal) {
+                lowerFunction(declaration, found->second);
+            }
         }
     }
 
@@ -1030,7 +1171,11 @@ private:
 
         ir::Opcode opcode;
         switch (expression->literal->kind) {
-            case decimalLiteral: opcode = ir::Opcode::integerConstant; break;
+            case decimalLiteral:
+                opcode = typing::isFloating(model->types().type(*type)->kind)
+                        ? ir::Opcode::floatingConstant : ir::Opcode::integerConstant;
+                break;
+            case floatLiteral: opcode = ir::Opcode::floatingConstant; break;
             case booleanLiteral: opcode = ir::Opcode::booleanConstant; break;
             case stringLiteral: opcode = ir::Opcode::stringConstant; break;
             case byteLiteral: opcode = ir::Opcode::byteConstant; break;
@@ -1057,10 +1202,10 @@ private:
         instruction.result = makeValue(*type, ir::ValueCategory::value);
         if (expression->literal->kind == booleanLiteral) {
             instruction.integerValue = expression->literal->rawValue == Literals::TRUE ? 1 : 0;
-        } else if (expression->literal->kind != stringLiteral) {
-            instruction.integerValue = expression->literal->intValue;
-        } else {
+        } else if (opcode == ir::Opcode::floatingConstant || expression->literal->kind == stringLiteral) {
             instruction.text = expression->literal->rawValue;
+        } else {
+            instruction.integerValue = expression->literal->intValue;
         }
         const auto result = *instruction.result;
         emit(std::move(instruction));
@@ -1074,6 +1219,11 @@ private:
 
     std::optional<ir::Value> lowerName(const syntax::NodePtr& expression) {
         const auto symbol = model->referencedSymbol(expression);
+        if (symbol.has_value() && topLevelBindings.contains(*symbol)) {
+            // A rejected declaration was already reported; do not add a second error.
+            if (!constantDeclarations.contains(*symbol)) return std::nullopt;
+            return lowerConstant(*symbol, expression->span);
+        }
         if (!symbol.has_value() || !slots.contains(*symbol)) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1092,10 +1242,38 @@ private:
     }
 
     std::optional<ir::Value> lowerPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
+        const auto type = model->typeOf(expression);
+        if (type.has_value() && expression->op != nullptr && expression->op->kind == minus &&
+                typing::isInteger(model->types().type(*type)->kind) &&
+                expression->operand->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression->operand);
+            if (literal->literal->kind == decimalLiteral) {
+                auto constant = makeInstruction(ir::Opcode::integerConstant, expression->span);
+                constant.result = makeValue(*type, ir::ValueCategory::value);
+                constant.integerValue = std::bit_cast<int64_t>(
+                        uint64_t{0} - static_cast<uint64_t>(literal->literal->intValue));
+                const auto result = *constant.result;
+                emit(std::move(constant));
+                recordValue(result, ValueOwnership::trivial);
+                return result;
+            }
+        }
         const auto operand = lowerExpression(expression->operand);
         if (currentBlockTerminated()) return std::nullopt;
-        const auto type = model->typeOf(expression);
         if (!operand.has_value() || !type.has_value()) return std::nullopt;
+        if (expression->castTarget != nullptr && expression->op->rawValue == "as?") {
+            return lowerTryConversion(expression, *operand, *type);
+        }
+        if (expression->castTarget != nullptr) {
+            if (operand->type == *type) return operand;
+            return emitValue(
+                    expression->op->rawValue == "&as"
+                            ? ir::Opcode::convertWrapping : ir::Opcode::convertChecked,
+                    *type,
+                    ir::ValueCategory::value,
+                    { operand->id },
+                    expression->span);
+        }
         if (expression->op != nullptr && expression->op->kind == bang) {
             auto constant = makeInstruction(ir::Opcode::booleanConstant, expression->op->span);
             constant.integerValue = 0;
@@ -1109,6 +1287,23 @@ private:
                     { operand->id, falseValue.id },
                     expression->span);
         }
+        if (expression->op != nullptr && expression->op->kind == tilde) {
+            // ~x is x ^ all-ones; the constant is truncated to the operand width.
+            auto ones = makeInstruction(ir::Opcode::integerConstant, expression->op->span);
+            const auto kind = model->types().type(*type)->kind;
+            const auto bits = typing::scalarBitWidth(kind);
+            ones.integerValue = typing::isSignedInteger(kind) || bits == 64
+                    ? -1 : static_cast<int64_t>((uint64_t{1} << bits) - 1);
+            ones.result = makeValue(*type, ir::ValueCategory::value);
+            const auto onesValue = *ones.result;
+            emit(std::move(ones));
+            return emitValue(
+                    ir::Opcode::bitXor,
+                    *type,
+                    ir::ValueCategory::value,
+                    { operand->id, onesValue.id },
+                    expression->span);
+        }
         if (expression->op == nullptr || expression->op->kind != minus) {
             report(
                     DiagnosticId::unsupportedSyntax,
@@ -1117,7 +1312,10 @@ private:
             return std::nullopt;
         }
 
-        auto zero = makeInstruction(ir::Opcode::integerConstant, expression->op->span);
+        const bool floating = typing::isFloating(model->types().type(*type)->kind);
+        auto zero = makeInstruction(floating ? ir::Opcode::floatingConstant : ir::Opcode::integerConstant,
+                expression->op->span);
+        if (floating) zero.text = "-0.0";
         zero.result = makeValue(*type, ir::ValueCategory::value);
         const auto zeroValue = *zero.result;
         emit(std::move(zero));
@@ -1158,6 +1356,68 @@ private:
                 ir::ValueCategory::value,
                 { left->id, right->id },
                 expression->span);
+    }
+
+    // `x as? T`: .Ok(converted) when the value fits in T, else .Err(.OutOfRange).
+    std::optional<ir::Value> lowerTryConversion(
+            const syntax::PrefixExprSyntax::Ptr& expression,
+            ir::Value operand,
+            typing::TypeId resultType) {
+        const auto* result = model->types().type(resultType);
+        const auto okCase = findEnumCase(resultType, "Ok");
+        const auto errCase = findEnumCase(resultType, "Err");
+        if (result == nullptr || result->arguments.size() != 2 ||
+            !okCase.has_value() || !errCase.has_value()) {
+            report(DiagnosticId::missingType, expression->span,
+                    "'as?' result is not a Result with Ok and Err cases");
+            return std::nullopt;
+        }
+        const auto target = result->arguments[0];
+        const auto errorType = result->arguments[1];
+        const auto outOfRange = findEnumCase(errorType, "OutOfRange");
+        if (!outOfRange.has_value()) {
+            report(DiagnosticId::missingSymbol, expression->span,
+                    "ConversionError has no OutOfRange case in IR");
+            return std::nullopt;
+        }
+
+        auto test = makeInstruction(ir::Opcode::integerFits, expression->span);
+        test.result = makeValue(model->types().boolType(), ir::ValueCategory::value);
+        test.operands = { operand.id };
+        test.integerValue = static_cast<int64_t>(target);
+        const auto fits = *test.result;
+        emit(std::move(test));
+        recordValue(fits, ValueOwnership::trivial);
+
+        const auto slot = emitValue(
+                ir::Opcode::stackAllocate, resultType, ir::ValueCategory::address,
+                {}, expression->span, std::nullopt, true);
+        const auto okBlock = createBlock("convert.ok");
+        const auto errBlock = createBlock("convert.out_of_range");
+        const auto mergeBlock = createBlock("convert.merge");
+        emitConditionalBranch(fits, okBlock, errBlock, expression->span);
+
+        switchToBlock(okBlock);
+        const auto converted = emitValue(
+                ir::Opcode::convertWrapping, target, ir::ValueCategory::value,
+                { operand.id }, expression->span);
+        const auto ok = emitEnumConstruction(resultType, *okCase, { converted }, expression->span);
+        if (!ok.has_value()) return std::nullopt;
+        emitRawStore(*ok, slot, expression->span, std::nullopt, true);
+        emitBranch(mergeBlock, expression->span);
+
+        switchToBlock(errBlock);
+        const auto failure = emitEnumConstruction(errorType, *outOfRange, {}, expression->span);
+        if (!failure.has_value()) return std::nullopt;
+        const auto err = emitEnumConstruction(resultType, *errCase, { *failure }, expression->span);
+        if (!err.has_value()) return std::nullopt;
+        emitRawStore(*err, slot, expression->span, std::nullopt, true);
+        emitBranch(mergeBlock, expression->span);
+
+        switchToBlock(mergeBlock);
+        return emitValue(
+                ir::Opcode::load, resultType, ir::ValueCategory::value,
+                { slot.id }, expression->span);
     }
 
     std::optional<ir::Value> lowerLogical(
@@ -1223,6 +1483,11 @@ private:
             case multiply: return ir::Opcode::multiply;
             case divide: return ir::Opcode::divide;
             case percentage: return ir::Opcode::remainder;
+            case ampersand: return ir::Opcode::bitAnd;
+            case verticalBar: return ir::Opcode::bitOr;
+            case caret: return ir::Opcode::bitXor;
+            case shiftLeft: return ir::Opcode::shiftLeft;
+            case shiftRight: return ir::Opcode::shiftRight;
             case less: return ir::Opcode::less;
             case lessEqual: return ir::Opcode::lessEqual;
             case greater: return ir::Opcode::greater;
@@ -1235,6 +1500,9 @@ private:
 
     std::optional<ir::Value> lowerAssignment(
             const syntax::AssignmentExprSyntax::Ptr& expression) {
+        if (expression->op != nullptr && expression->op->kind != equal) {
+            return lowerCompoundAssignment(expression);
+        }
         auto target = expression->target;
         while (target != nullptr &&
                (target->kind == syntax::Kind::accessExpr ||
@@ -1254,9 +1522,11 @@ private:
                 return lowerDictionarySet(expression, subscript, *dictionaryType);
             }
         }
-        const auto address = lowerAddress(expression->target);
-        if (!address.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto deferredAddress = prepareAddress(expression->target);
+        if (!deferredAddress.has_value() || currentBlockTerminated()) return std::nullopt;
         auto value = lowerExpression(expression->value);
+        if (!value.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto address = (*deferredAddress)();
         if (address.has_value() && value.has_value()) {
             value = coerce(*value, address->type, expression->value->span);
             if (!value.has_value()) return std::nullopt;
@@ -1269,6 +1539,45 @@ private:
             return emitUnit(expression->span);
         }
         return std::nullopt;
+    }
+
+    // `target op= value`: any index is evaluated once, then the right side,
+    // and only then is the element address computed, the old value read,
+    // combined with the right side, and stored back.
+    std::optional<ir::Value> lowerCompoundAssignment(
+            const syntax::AssignmentExprSyntax::Ptr& expression) {
+        const auto deferredAddress = prepareAddress(expression->target);
+        if (!deferredAddress.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto right = lowerExpression(expression->value);
+        if (!right.has_value() || currentBlockTerminated()) return std::nullopt;
+        const auto address = (*deferredAddress)();
+        if (!address.has_value()) return std::nullopt;
+        const auto old = emitValue(
+                ir::Opcode::load,
+                address->type,
+                ir::ValueCategory::value,
+                { address->id },
+                expression->target->span);
+        const auto opcode = binaryOpcode(compoundBaseOperator(expression->op->kind));
+        if (!opcode.has_value()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                    "compound assignment operator is not supported by primitive IR lowering");
+            return std::nullopt;
+        }
+        auto result = emitValue(
+                *opcode,
+                address->type,
+                ir::ValueCategory::value,
+                { old.id, right->id },
+                expression->span);
+        if (requiresDestroy(address->type)) {
+            const auto owned = acquireOwned(result, expression->value->span);
+            if (!owned.has_value()) return std::nullopt;
+            result = *owned;
+            emitDestroyStorage(*address, expression->target->span);
+        }
+        emitRawStore(result, *address, expression->span);
+        return emitUnit(expression->span);
     }
 
     std::optional<ir::Value> lowerDictionarySet(
@@ -1348,6 +1657,71 @@ private:
         return std::nullopt;
     }
 
+    // An assignment target whose index operands are already evaluated but
+    // whose element address is not yet computed. Element addresses point into
+    // storage the right-hand side may reallocate (for example by appending to
+    // the same array), so they are taken only after the right side is lowered.
+    using DeferredAddress = std::function<std::optional<ir::Value>()>;
+
+    std::optional<DeferredAddress> prepareAddress(const syntax::ExprPtr& expression) {
+        if (expression == nullptr) return std::nullopt;
+        if (expression->kind == syntax::Kind::accessExpr) {
+            return prepareAddress(
+                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+        }
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return prepareAddress(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
+        }
+        if (expression->kind == syntax::Kind::subscriptExpr) {
+            const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(
+                    expression);
+            auto base = prepareAddress(subscript->base);
+            if (!base.has_value()) return std::nullopt;
+            const auto index = lowerExpression(subscript->index);
+            const auto type = model->typeOf(subscript);
+            if (!index.has_value() || !type.has_value()) return std::nullopt;
+            return DeferredAddress([this, base = std::move(*base), index = *index, type = *type,
+                                    span = subscript->span]() -> std::optional<ir::Value> {
+                const auto baseAddress = base();
+                if (!baseAddress.has_value()) return std::nullopt;
+                return emitValue(
+                        ir::Opcode::subscriptAddress,
+                        type,
+                        ir::ValueCategory::address,
+                        { baseAddress->id, index.id },
+                        span);
+            });
+        }
+        if (expression->kind == syntax::Kind::memberExpr) {
+            const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression);
+            const auto symbol = model->referencedSymbol(member);
+            const auto* semanticSymbol = symbol.has_value()
+                    ? model->semanticModel()->symbol(*symbol)
+                    : nullptr;
+            const auto type = model->typeOf(member);
+            if (semanticSymbol != nullptr &&
+                semanticSymbol->kind == semantic::SymbolKind::structureField &&
+                type.has_value()) {
+                auto base = prepareAddress(member->base);
+                if (!base.has_value()) return std::nullopt;
+                return DeferredAddress([this, base = std::move(*base), type = *type, symbol,
+                                        span = member->span]() -> std::optional<ir::Value> {
+                    const auto baseAddress = base();
+                    if (!baseAddress.has_value()) return std::nullopt;
+                    return emitValue(
+                            ir::Opcode::fieldAddress,
+                            type,
+                            ir::ValueCategory::address,
+                            { baseAddress->id },
+                            span,
+                            symbol);
+                });
+            }
+        }
+        return DeferredAddress([this, expression] { return lowerAddress(expression); });
+    }
+
     bool isAddressable(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return false;
         switch (expression->kind) {
@@ -1384,6 +1758,10 @@ private:
                     expression->span,
                     "member has no typed resolved symbol");
             return std::nullopt;
+        }
+        if (topLevelBindings.contains(*symbol)) {
+            if (!constantDeclarations.contains(*symbol)) return std::nullopt;
+            return lowerConstant(*symbol, expression->span);
         }
 
         if (semanticSymbol->kind == semantic::SymbolKind::structureField) {
@@ -1854,8 +2232,16 @@ private:
                 if (literal->literal == nullptr) return std::nullopt;
                 switch (literal->literal->kind) {
                     case decimalLiteral:
-                        result.kind = ir::PatternKind::integerLiteral;
+                        result.kind = typing::isFloating(model->types().type(*type)->kind)
+                                ? ir::PatternKind::floatingLiteral : ir::PatternKind::integerLiteral;
                         result.integerValue = literal->literal->intValue;
+                        if (result.kind == ir::PatternKind::floatingLiteral) {
+                            result.text = literal->literal->rawValue;
+                        }
+                        break;
+                    case floatLiteral:
+                        result.kind = ir::PatternKind::floatingLiteral;
+                        result.text = literal->literal->rawValue;
                         break;
                     case booleanLiteral:
                         result.kind = ir::PatternKind::booleanLiteral;
@@ -2669,6 +3055,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::missingReturn: return "ir-lowering.missing-return";
         case DiagnosticId::ownershipViolation: return "ir-lowering.ownership-violation";
         case DiagnosticId::verificationFailed: return "ir-lowering.verification-failed";
+        case DiagnosticId::invalidConstant: return "ir-lowering.invalid-constant";
     }
     return "ir-lowering.unknown";
 }

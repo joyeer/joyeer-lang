@@ -1,0 +1,169 @@
+import Compression
+
+func decimal(value: Int): String {
+    if value == 0 { return "0" }
+    var remaining = value
+    var text = ""
+    while remaining > 0 {
+        text = byteToString(value: "0123456789"[remaining % 10]) + text
+        remaining /= 10
+    }
+    return text
+}
+
+func describe(entry: Compression.ZipEntryInfo): String {
+    var kind = "file"
+    if entry.isDirectory { kind = "dir" }
+    return entry.name + " " + kind + " " + decimal(value: entry.size) + " " +
+        decimal(value: entry.compressedSize) + " " + decimal(value: entry.crc32 as Int)
+}
+
+func check(condition: Bool, message: String): Result<Void, String> {
+    if !condition { return .Err(message) }
+    return .Ok(())
+}
+
+func textOf(bytes: [UInt8], count: Int): String {
+    var text = ""
+    var index = 0
+    while index < count && index < bytes.count {
+        text += byteToString(value: bytes[index])
+        index += 1
+    }
+    return text
+}
+
+func openJar(limit: Int): Result<Compression.ZipArchive, String> {
+    return match Compression.openZipFile(path: "hello.jar", maximumFileBytes: limit,
+        maximumEntries: 100, maximumNameBytes: 10000) {
+        .Ok(archive) => .Ok(archive),
+        .Err(_) => .Err("open jar failed"),
+    }
+}
+
+func testOpenAndRead(): Result<Void, String> {
+    let archive = openJar(limit: 1048576)?
+    check(condition: archive.path == "hello.jar", message: "wrong path")?
+    check(condition: archive.entries.count == 6, message: "wrong entry count")?
+    var index = 0
+    while index < archive.entries.count {
+        print(value: describe(entry: archive.entries[index]))
+        index += 1
+    }
+
+    // Entry 3 is the real compiled class: it must start with the class-file magic number.
+    let classFile = match Compression.readZipArchiveEntry(archive: archive,
+        entry: archive.entries[3], maximumBytes: 437) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("read class failed") },
+    }
+    check(condition: classFile.count == 437, message: "wrong class size")?
+    check(condition: classFile[0] == 0xCA && classFile[1] == 0xFE && classFile[2] == 0xBA &&
+        classFile[3] == 0xBE, message: "class magic missing")?
+
+    let manifest = match Compression.readZipArchiveEntry(archive: archive,
+        entry: archive.entries[1], maximumBytes: 1000) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("read manifest failed") },
+    }
+    check(condition: textOf(bytes: manifest, count: 21) == "Manifest-Version: 1.0",
+        message: "wrong manifest")?
+    let empty = match Compression.readZipArchiveEntry(archive: archive,
+        entry: archive.entries[4], maximumBytes: 0) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("read empty failed") },
+    }
+    check(condition: empty.count == 0, message: "wrong empty entry")?
+    let directory = match Compression.readZipArchiveEntry(archive: archive,
+        entry: archive.entries[0], maximumBytes: 10) {
+        .Err(.UnsupportedArchive) => true,
+        _ => false,
+    }
+    return check(condition: directory, message: "directory was readable")
+}
+
+func testReadAll(): Result<Void, String> {
+    let entries = match Compression.readZipFile(path: "hello.jar", maximumFileBytes: 1132,
+        maximumEntries: 6, maximumNameBytes: 200, maximumEntryBytes: 437, maximumTotalBytes: 608) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("read all failed") },
+    }
+    check(condition: entries.count == 6, message: "wrong read-all count")?
+    var total = 0
+    var index = 0
+    while index < entries.count {
+        total += entries[index].contents.count
+        check(condition: entries[index].contents.count == entries[index].info.size,
+            message: "contents differ from metadata")?
+        index += 1
+    }
+    check(condition: total == 608, message: "wrong total")?
+    check(condition: textOf(bytes: entries[5].contents, count: 5) == "Hello", message: "wrong resource")?
+
+    let totalLimited = match Compression.readZipFile(path: "hello.jar", maximumFileBytes: 1132,
+        maximumEntries: 6, maximumNameBytes: 200, maximumEntryBytes: 437, maximumTotalBytes: 607) {
+        .Err(.Invalid(.LimitExceeded)) => true,
+        _ => false,
+    }
+    check(condition: totalLimited, message: "total limit ignored")?
+    let entryLimited = match Compression.readZipFile(path: "hello.jar", maximumFileBytes: 1132,
+        maximumEntries: 6, maximumNameBytes: 200, maximumEntryBytes: 436, maximumTotalBytes: 608) {
+        .Err(.Invalid(.LimitExceeded)) => true,
+        _ => false,
+    }
+    return check(condition: entryLimited, message: "entry limit ignored")
+}
+
+func testFailures(): Result<Void, String> {
+    let tooLarge = match Compression.openZipFile(path: "hello.jar", maximumFileBytes: 1131,
+        maximumEntries: 100, maximumNameBytes: 10000) {
+        .Err(.FileTooLarge) => true,
+        _ => false,
+    }
+    check(condition: tooLarge, message: "file size limit ignored")?
+    let missing = match Compression.openZipFile(path: "missing.jar", maximumFileBytes: 1000,
+        maximumEntries: 100, maximumNameBytes: 10000) {
+        .Err(.ReadFailed(.NotFound(_))) => true,
+        _ => false,
+    }
+    check(condition: missing, message: "missing file not reported")?
+    let notZip = match Compression.openZipFile(path: "not-a-zip.txt", maximumFileBytes: 1000,
+        maximumEntries: 100, maximumNameBytes: 10000) {
+        .Err(.Invalid(.InvalidArchive)) => true,
+        _ => false,
+    }
+    check(condition: notZip, message: "non-ZIP file accepted")?
+    let tooMany = match Compression.openZipFile(path: "hello.jar", maximumFileBytes: 1132,
+        maximumEntries: 5, maximumNameBytes: 10000) {
+        .Err(.Invalid(.LimitExceeded)) => true,
+        _ => false,
+    }
+    check(condition: tooMany, message: "entry count limit ignored")?
+    let negative = match Compression.openZipFile(path: "hello.jar", maximumFileBytes: -1,
+        maximumEntries: 5, maximumNameBytes: 10000) {
+        .Err(.Invalid(.InvalidArgument)) => true,
+        _ => false,
+    }
+    return check(condition: negative, message: "negative file limit accepted")
+}
+
+func runTests(): Result<Void, String> {
+    testOpenAndRead()?
+    testReadAll()?
+    testFailures()?
+    return .Ok(())
+}
+
+func main(args: [String]): Int {
+    if args.count != 0 { return 2 }
+    return match runTests() {
+        .Ok(_) => {
+            print(value: "Jar tests passed")
+            0
+        },
+        .Err(message) => {
+            print(value: message)
+            1
+        },
+    }
+}

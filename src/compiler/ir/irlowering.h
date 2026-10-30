@@ -18,6 +18,7 @@ enum class DiagnosticId {
     missingReturn,
     ownershipViolation,
     verificationFailed,
+    invalidConstant,
 };
 
 struct Diagnostic {

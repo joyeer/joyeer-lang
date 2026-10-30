@@ -17,7 +17,7 @@ typedef struct JoyeerString {
 ```
 
 Strings are not required to be NUL terminated. The count is authoritative, so
-embedded NUL bytes from `readFile(path:)` are preserved. The native runtime
+embedded NUL bytes from `readFile(path:)` are preserved. The runtime
 implementation is in `src/runtime/runtime.h` and
 `src/runtime/runtime.c`.
 
@@ -86,7 +86,7 @@ standard library rather than the core string layout.
 ## Validation
 
 ```pwsh
-ctest --test-dir build -L native-runtime --output-on-failure
+ctest --test-dir build -L runtime --output-on-failure
 ctest --test-dir build -L native --output-on-failure
 ctest --test-dir build -L file-io --output-on-failure
 ```

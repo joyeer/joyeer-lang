@@ -1,0 +1,39 @@
+import System
+
+func check(name: String, ok: Bool): Int {
+    if ok { return 0 }
+    print(value: "FAIL: " + name)
+    return 1
+}
+
+func main(args: [String]): Int {
+    var failures = 0
+
+    failures = failures + check(name: "separator slash", ok: isPathSeparator(byte: b'/', windows: false))
+    failures = failures + check(name: "backslash posix", ok: !isPathSeparator(byte: b'\\', windows: false))
+    failures = failures + check(name: "backslash windows", ok: isPathSeparator(byte: b'\\', windows: true))
+
+    failures = failures + check(name: "dir basic", ok: pathDirectory(path: "a/b/c", windows: false) == "a/b")
+    failures = failures + check(name: "dir bare", ok: pathDirectory(path: "file", windows: false) == ".")
+    failures = failures + check(name: "dir root child", ok: pathDirectory(path: "/file", windows: false) == "/")
+    failures = failures + check(name: "dir windows", ok: pathDirectory(path: "C:\\a\\b", windows: true) == "C:\\a")
+    failures = failures + check(name: "dir drive root", ok: pathDirectory(path: "C:\\file", windows: true) == "C:\\")
+    failures = failures + check(name: "dir drive relative", ok: pathDirectory(path: "C:file", windows: true) == "C:")
+    failures = failures + check(name: "dir posix drive text", ok: pathDirectory(path: "C:file", windows: false) == ".")
+
+    failures = failures + check(name: "trim trailing", ok: trimDirectoryPath(path: "a/b//", windows: false) == "a/b")
+    failures = failures + check(name: "trim root", ok: trimDirectoryPath(path: "///", windows: false) == "/")
+    failures = failures + check(name: "trim drive root", ok: trimDirectoryPath(path: "C:\\\\", windows: true) == "C:\\")
+
+    failures = failures + check(name: "fs message",
+        ok: fileSystemMessage(error: .NotFound(2)) == "not found (platform code 2)")
+    failures = failures + check(name: "process message",
+        ok: processMessage(error: .LaunchFailed(-7)) == "process launch failed (platform code -7)")
+    failures = failures + check(name: "exited status",
+        ok: processStatusMessage(status: .Exited(23)) == "exited with status 23")
+    failures = failures + check(name: "signaled status",
+        ok: processStatusMessage(status: .Signaled(9)) == "terminated by signal 9")
+
+    if failures == 0 { print(value: "System tests passed") }
+    return failures
+}

@@ -33,6 +33,11 @@ must wait for type information. The public model is in
 `src/compiler/frontend/semantic.h`; the resolver API is in
 `src/compiler/frontend/nameresolution.h`.
 
+For internal runtime compilation, each `ModuleInput.runtimeContext` is an
+explicit toolchain input. The semantic model records it by source identity
+for later C binding checks. Imports and module/path spellings do not grant
+or propagate that context; see [C binding coverage](c-interop.md).
+
 ---
 
 ## 2. Resolution order
@@ -93,7 +98,8 @@ ambiguous.
 
 The current prelude declares:
 
-- types: `Void`, `Never`, `Int`, `Bool`, `String`, `UInt8`, `Array`, `Dict`,
+- types: `Void`, `Never`, `Bool`, `String`, `Int`/`UInt`, signed/unsigned
+  8/16/32/64-bit integers, `Float`, `Double`, `Array`, `Dict`,
   `Optional`, `Result`, `IOError`, `FileSystemError`, `FileKind`,
   `ProcessStatus`, and `ProcessError`;
 - `String.count`, `Array.count`, and `Dict.count`;

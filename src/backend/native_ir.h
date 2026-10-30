@@ -42,6 +42,7 @@ private:
     llvm::BasicBlock* prologue = nullptr;
     llvm::DISubprogram* subprogram = nullptr;
     std::vector<Diagnostic> diagnostics;
+    std::optional<ir::DestructionAnalysis> destruction;
     std::unordered_map<ir::TypeId, const ir::TypeName*> types;
     std::unordered_map<ir::TypeId, const ir::StructureDefinition*> structures;
     std::unordered_map<ir::TypeId, const ir::EnumerationDefinition*> enumerations;
@@ -49,6 +50,7 @@ private:
     std::unordered_map<ir::TypeId, Layout> layouts;
     std::unordered_set<ir::TypeId> layoutStack;
     std::unordered_map<std::string, llvm::Value*> panicMessages;
+    std::unordered_map<ir::FunctionId, const ir::Function*> sourceFunctions;
     std::unordered_map<ir::FunctionId, llvm::Function*> functions;
     std::unordered_map<ir::ValueId, ir::Value> values;
     std::unordered_map<ir::ValueId, llvm::Value*> operands;
@@ -56,10 +58,13 @@ private:
     std::map<ir::TypeId, llvm::Function*> clones;
     std::map<ir::TypeId, llvm::Function*> destroys;
     std::vector<llvm::DIFile*> debugFiles;
+    std::unordered_map<ir::DebugScopeId, const ir::DebugScope*> sourceDebugScopes;
+    std::unordered_map<ir::DebugVariableId, const ir::DebugVariable*> sourceDebugVariables;
     std::unordered_map<ir::TypeId, llvm::DIType*> debugTypes;
     std::unordered_map<ir::DebugScopeId, llvm::DILocalScope*> debugScopes;
     std::unordered_map<ir::DebugVariableId, llvm::DILocalVariable*> debugVariables;
     std::map<std::pair<llvm::DILocalScope*, uint32_t>, llvm::DILocalScope*> debugFileScopes;
+    std::unordered_map<uint32_t, llvm::Constant*> constantArrays;
     size_t nextString = 0;
     size_t nextTemporary = 0;
 
@@ -82,8 +87,11 @@ private:
     std::vector<size_t> payloadOffsets(const ir::EnumCaseDefinition& definition);
     void defineTypes();
     llvm::Function* declareFunction(const ir::Function& function);
-    llvm::FunctionCallee runtime(std::string_view name, llvm::Type* result,
-            llvm::ArrayRef<llvm::Type*> parameters);
+    llvm::Function* declareNativeFunction(const ir::Function& function);
+    llvm::Function* declareCFunction(std::string_view name, llvm::Type* result,
+            llvm::ArrayRef<llvm::Type*> parameters,
+            llvm::ArrayRef<typing::TypeKind> parameterKinds = {},
+            typing::TypeKind resultKind = typing::TypeKind::error);
     llvm::CallInst* call(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Value*> arguments);
     llvm::Value* stack(llvm::Type* type, const llvm::Twine& name = "");
@@ -92,6 +100,8 @@ private:
     llvm::Value* payload(llvm::Type* type, llvm::Value* address, size_t offset = 0);
     llvm::Value* bytes(llvm::Value* address, llvm::Value* offset);
     llvm::Value* stringLiteral(std::string_view text, bool terminate = false);
+    llvm::Constant* constantArray(const ir::Constant& constant);
+    llvm::Constant* decodeConstant(ir::TypeId id, const std::string& data, size_t& offset);
     llvm::Value* helper(ir::TypeId id, bool clone);
     void emitOwnership();
     void emitClone(ir::TypeId id);
@@ -100,11 +110,17 @@ private:
 
     // Functions/instructions preserve SSA IDs while LLVM owns the actual values.
     void emitFunction(const ir::Function& function);
+    void emitNativeExport(const ir::Function& function);
     bool emitInstruction(const ir::Instruction& instruction);
     void emitEntry();
     void trap(llvm::Value* condition, std::string_view message);
     llvm::Value* arithmetic(const ir::Instruction& instruction);
-    llvm::Value* comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right);
+    llvm::Value* shift(const ir::Instruction& instruction);
+    llvm::Value* convert(const ir::Instruction& instruction);
+    llvm::Value* conversionOutOfRange(llvm::Value* value, typing::TypeKind sourceKind,
+            ir::TypeId targetId, llvm::Value*& converted);
+    llvm::Value* comparison(ir::Opcode opcode, llvm::Value* left, llvm::Value* right,
+            typing::TypeKind kind = typing::TypeKind::integer);
     llvm::Value* constructEnum(ir::TypeId id, size_t tag, llvm::ArrayRef<llvm::Value*> values);
     llvm::Value* extractPayload(ir::TypeId id, llvm::Value* value,
             semantic::SymbolId symbol, size_t index);

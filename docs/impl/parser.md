@@ -13,6 +13,8 @@ The parser converts the explicit token stream produced by the
 [lexer](lexer.md) into a syntax-only AST. Its current surface includes:
 
 - typed `func` declarations and mandatory call-site labels;
+- parenthesized declaration annotations with argument syntax, including
+  bodyless annotated functions for later C import/export validation;
 - file-leading dotted module imports (without aliases or wildcards);
 - `public`, `internal`, and `private` top-level declarations and stored fields;
 - `let` / `var` bindings;
@@ -22,7 +24,7 @@ The parser converts the explicit token stream produced by the
 - `inout` and `consuming` parameters plus mandatory `&` / `consume` call-site
   markers;
 - nominal, array, dictionary, optional, and built-in generic types;
-- byte, integer, string, Boolean, and `nil` literals;
+- byte, integer, floating, string, Boolean, and `nil` literals;
 - member access, calls, subscripts, arrays, dictionaries, `if`, `while`, and
   `return`;
 - unlabeled `break` and `continue` block statements;
@@ -46,14 +48,13 @@ it to a supplied module rather than traversing folders or implicit submodules.
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, `for-in`, extensions, explicit `init` / `deinit`, methods,
+- `class`, extensions, explicit `init` / `deinit`, methods,
   subscript declarations, or user-defined generics;
 - `mutating`, `indirect`,
   `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
-- postfix force unwrap `!`, `??`, `?.`, compound assignment, ranges, shifts,
-  bitwise expressions, or labeled loop control;
+- postfix force unwrap `!`, `??`, `?.`, ranges, or labeled loop control;
 - semicolons or multiple block items on one physical line;
 - a lossless concrete syntax tree. The current lexer does not retain trivia,
   so the parser produces a spanned AST rather than pretending to be lossless.
@@ -132,8 +133,10 @@ binding_decl       ::= binding_kind identifier
                        [ '=' expression ]
 binding_kind       ::= 'let' | 'var'
 
-func_decl          ::= 'func' identifier parameter_clause
-                       [ ':' type ] block
+func_decl          ::= attribute* [ visibility ] 'func' identifier parameter_clause
+                       [ ':' type ] [ block ]
+attribute          ::= '@' identifier argument_clause
+visibility         ::= 'public' | 'internal' | 'private'
 parameter_clause   ::= '(' [ parameter ( ',' parameter )* ','? ] ')'
 parameter          ::= identifier [ identifier ] ':' [ 'borrowing' | 'inout' | 'consuming' | 'initializing' ] type
 
@@ -151,6 +154,13 @@ associated_type    ::= [ identifier ':' ] type
 ```
 
 Rules and intentional restrictions:
+
+An omitted body is parsed only when annotations are present. Type checking
+admits it only for an authorized, valid `@c_extern` declaration; every other
+function requires a body. Annotation arguments reuse call-argument syntax
+for precise diagnostics, but C annotations admit only a `symbol:` string
+literal without access markers. `@spec`/`@property` shorthand/DSL syntax and
+parameter defaults remain unsupported. See [C binding coverage](c-interop.md).
 
 1. A top-level binding may infer its type; a stored field must declare one.
 2. A function parameter always has an external label. With one identifier it
@@ -300,8 +310,15 @@ a = b = value   => a = (b = value)
 a < b < c       => syntax error: comparison operators do not chain
 ```
 
-`&` is prefix-only in the current parser and produces an explicit access-marker
-node. The full language later also uses it as infix bitwise AND.
+Prefix `&` produces an explicit access-marker node. After an operand on the
+same line, `&` is infix bitwise AND. Bitwise operators follow the spec table:
+`<<` `>>` bind tighter than `&`, then `^`, then `|`, all tighter than
+comparisons, and looser than `+` `-`. `>>` is two adjacent `>` tokens joined
+in expression position, so nested generic arguments still close normally;
+`<<` is one token. Compound assignment tokens (`+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`)
+parse as right-associative assignments at the lowest precedence; `&&=` and `||=`
+remain unsupported. `>>=` is one token, so write `Array<Array<Int>> = …` with a
+space before `=`.
 
 An assignment target must have one of these syntactic shapes:
 
@@ -408,6 +425,7 @@ Implemented pattern rules:
 
 ```ebnf
 literal            ::= decimal_literal
+                     | float_literal
                      | string_literal
                      | byte_literal
                      | boolean_literal
@@ -655,3 +673,24 @@ ctest --test-dir build --output-on-failure -L parser
 
 A source file parsing successfully does not imply that it is fully typed or
 executable. Run the complete unfiltered CTest suite for the final gate.
+
+## for-in lowering
+
+`for x in source { body }` is rewritten by the parser into hidden bindings and a
+`while` loop, so name resolution, type checking, analysis and IR lowering see
+only constructs they already support. Hidden names start with `$for` and cannot
+be written in source. A sequence loop copies the source once into a hidden
+`let`, advances a hidden index at the top of each iteration (so `continue` is
+correct), and binds the loop variable to `$for1[$for1i]`. A range loop keeps
+hidden `next` and `end` variables; an inclusive range tracks a hidden `more`
+flag so the last value never computes `end + 1`. The type checker recognises the
+hidden `$for<N>` source binding and reports `type-checking.not-iterable` on the
+source expression when its type is not an array or `String` (for example
+`for x in 5` or a dictionary), then gives the binding the error type so the
+synthesized `.count` and subscript add no further errors.
+
+The hidden source is an ordinary value copy. Arrays and strings have no
+copy-on-write, so iterating a variable copies it once per loop even when the
+body never mutates it; iterate a literal or a call result to avoid the copy.
+Skipping the copy needs a proof that the body leaves the source unchanged and
+is not implemented.

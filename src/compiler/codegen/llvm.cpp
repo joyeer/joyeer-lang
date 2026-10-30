@@ -1,5 +1,5 @@
 #include "llvm.h"
-#include "backend/native_backend.h"
+#include "backend/backend.h"
 #include "backend/ir_wire.h"
 
 #include <sstream>
@@ -14,7 +14,7 @@ struct CallbackState {
 
 // Callback storage belongs to the compiler. Never let an allocation exception
 // unwind through the backend's C ABI or ask it to free compiler-owned strings.
-void collectDiagnostic(void* context, const JoyeerNativeBackendIRDiagnostic* diagnostic) noexcept {
+void collectDiagnostic(void* context, const JoyeerBackendIRDiagnostic* diagnostic) noexcept {
     auto& state = *static_cast<CallbackState*>(context);
     try {
         state.result.diagnostics.push_back({static_cast<DiagnosticId>(diagnostic->id),
@@ -51,29 +51,29 @@ Result Emitter::emit(const ir::Module& module, const EmitOptions& options) const
     // IRBuilder and DIBuilder live entirely inside joyeer-backend.
     wire::Writer writer;
     writer(module);
-    const JoyeerNativeBackendModuleOptions buildOptions {
-        JOYEER_NATIVE_BACKEND_ABI_VERSION, sizeof(JoyeerNativeBackendModuleOptions), 1,
+    const JoyeerBackendModuleOptions buildOptions {
+        JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendModuleOptions), wire::version,
         writer.bytes.data(), writer.bytes.size(),
-        static_cast<JoyeerNativeBackendOptimizationLevel>(options.optimizationLevel),
+        static_cast<JoyeerBackendOptimizationLevel>(options.optimizationLevel),
         options.emitLineTables, options.emitVariables, options.debugInfoFormat == DebugInfoFormat::codeView,
     };
-    JoyeerNativeBackendModule* nativeModule = nullptr;
+    JoyeerBackendModule* nativeModule = nullptr;
     CallbackState state {result};
-    const auto status = joyeer_native_backend_build_module(&buildOptions,
+    const auto status = joyeer_backend_build_module(&buildOptions,
             &nativeModule, collectDiagnostic, &state);
-    result.module = std::shared_ptr<JoyeerNativeBackendModule>(nativeModule, joyeer_native_backend_destroy_module);
-    if (status != JOYEER_NATIVE_BACKEND_SUCCESS || state.failed || nativeModule == nullptr) {
+    result.module = std::shared_ptr<JoyeerBackendModule>(nativeModule, joyeer_backend_destroy_module);
+    if (status != JOYEER_BACKEND_SUCCESS || state.failed || nativeModule == nullptr) {
         if (result.diagnostics.empty()) {
             result.diagnostics.push_back({DiagnosticId::invalidModule, {}, {}, {}, "native LLVM module construction failed"});
         }
         result.module.reset();
         return result;
     }
-    result.hasEntryPoint = joyeer_native_backend_module_has_entry(nativeModule) != 0;
+    result.hasEntryPoint = joyeer_backend_module_has_entry(nativeModule) != 0;
     // Text is an inspection artifact printed from LLVM objects. Native builds
     // retain the handle and do not parse this text back into another module.
         if (options.emitText &&
-            (joyeer_native_backend_print_module(nativeModule, collectText, &state) != JOYEER_NATIVE_BACKEND_SUCCESS || state.failed)) {
+            (joyeer_backend_print_module(nativeModule, collectText, &state) != JOYEER_BACKEND_SUCCESS || state.failed)) {
         result.diagnostics.push_back({DiagnosticId::invalidModule, {}, {}, {}, "native LLVM module serialization failed"});
         result.text.clear();
         result.module.reset();
@@ -88,6 +88,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::unsupportedInstruction: return "llvm.unsupported-instruction";
         case DiagnosticId::unsupportedExternal: return "llvm.unsupported-external";
         case DiagnosticId::invalidEntryPoint: return "llvm.invalid-entry-point";
+        case DiagnosticId::conflictingNativeSymbol: return "llvm.conflicting-native-symbol";
     }
     return "llvm.unknown";
 }

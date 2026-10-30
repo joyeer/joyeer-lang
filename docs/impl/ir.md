@@ -16,7 +16,8 @@ is in `src/compiler/ir/ir.h`; typed AST lowering is in
 
 A successful compilation stores the result in `SourceFile::joyeerIR`. The
 LLVM/native backend consumes it for
-`--emit-llvm` and `-o`; see the [compiler backend](backend.md).
+`--emit-llvm`, `-o`, and `--emit-runtime-object`; see the
+[compiler backend](backend.md).
 
 Named compilation lowers the entire reachable graph into one IR module.
 Each source-language module is an explicit source-file set with its own
@@ -53,11 +54,30 @@ symbols without evaluating module-name prefixes. `Function::isRootModule`
 records whether a function can be considered for executable entry selection;
 dependency declarations named `main` keep their source name.
 
+Restricted [C bindings](c-interop.md) add a `NativeBinding` record and
+per-function runtime context. Imports remain external declarations without
+invented bodies/debug scopes; exports keep normal Joyeer definitions plus
+explicit C linkage metadata. The shared verifier validates the complete
+scalar ABI, declaration/call authorization, and native representation agreement.
+Integer constants retain all 64 payload bits; floating constants retain their
+decimal spelling for direct target-precision rounding. Constant types/ranges
+and floating pattern literals are verified before LLVM construction.
+`Module::isRuntimeObject` requests isolated runtime-object emission without
+application startup; its defined root functions require runtime context.
+
 Debug locations are optional so hand-built/backend-only modules remain valid
 without source metadata and byte offset zero remains distinguishable from no
 location. Compiler-generated parameter plumbing and ownership cleanup retain a
 source anchor but are marked implicit, allowing a backend to avoid misleading
 source-level stepping stops.
+
+`DestructionAnalysis` snapshots destruction requirements once per type graph,
+including nested aggregate payloads. Typed AST lowering, verification, and
+LLVM emission each reuse their own snapshot instead of rebuilding type
+indexes for every ownership operation. Type definitions must be finalized
+before constructing it; changing them requires a fresh analysis. Function
+body construction does not invalidate the snapshot, and no cache crosses a
+module or the backend C ABI.
 
 Source-map offsets index the exact binary-preserved `SourceFile::content`
 buffer for the selected file. `Module::sourceFiles` is indexed directly by
@@ -166,7 +186,11 @@ IR. Borrowed values are cloned before entering owned storage, so ordinary
 binding initialization and assignment leave the source usable. Owned
 temporaries transfer directly. An overwrite first acquires the owned
 replacement, then destroys the previous value, then stores the replacement;
-this ordering keeps self-assignment valid. Scope exits destroy owned storage
+this ordering keeps self-assignment valid. For `=` and `op=`, index operands of
+the target are lowered first, then the right-hand side, and only then is the
+element address computed (`subscript_addr`, `field_addr`): a right side that
+reallocates the target's storage cannot leave a stale address behind.
+Scope exits destroy owned storage
 and live temporaries in reverse order.
 Early returns must clean every active scope, including pending temporaries,
 before transferring the result to the caller. A typed local declared without
@@ -217,7 +241,7 @@ temporaries remain live through lookup and are cleaned on every exit path.
 Patterns recursively represent:
 
 - wildcard and binding positions;
-- integer, Boolean, string, and byte literals;
+- integer, floating, Boolean, string, and byte literals;
 - enum cases with nested payload patterns.
 
 Each arm has its own basic block. Payload bindings use `extract_payload`, then

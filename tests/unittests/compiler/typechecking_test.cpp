@@ -633,7 +633,8 @@ let copy = integer
 
     TEST_F(TypeCheckingTest, RejectsNonByteConversionArguments) {
         check(R"JOYEER(func invalid() {
-    let integer = byteToInt(value: 1)
+    let nonByte: Int = 1
+    let integer = byteToInt(value: nonByte)
     let text = byteToString(value: "x")
     }
     )JOYEER");
@@ -728,7 +729,7 @@ return total
 
 TEST_F(TypeCheckingTest, RejectsM006WrongOperandTypes) {
     for (const auto* expression : { "!1", "true || 1", "1 || false",
-                                    "true / false", "1 % b'A'", "\"x\" / \"y\"" }) {
+                                    "true / false", "byteToInt(value: b'A') % b'A'", "\"x\" / \"y\"" }) {
         SCOPED_TRACE(expression);
         ASSERT_NO_FATAL_FAILURE(check(
                 "func run() { let value = " + std::string(expression) + "\n}\n"));
@@ -750,6 +751,164 @@ TEST_F(TypeCheckingTest, RejectsLoopControlOutsideCurrentFunctionLoop) {
                 << joyeer::typing::dump(checking.diagnostics);
         EXPECT_EQ(checking.diagnostics[0].id,
                 joyeer::typing::TypeCheckingDiagnosticId::invalidLoopControl);
+    }
+}
+
+TEST_F(TypeCheckingTest, AcceptsBitwiseOperatorsOnIntegers) {
+    check(R"JOYEER(func run(a: UInt32, b: UInt32, count: UInt8, signed: Int) {
+    let x: UInt32 = a & b | a ^ ~b
+    let y: UInt32 = a << count
+    let z: Int = signed >> 2
+    let w: Bool = (signed & 1) == 0
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsBitwiseOperatorsOnNonIntegersOrMixedTypes) {
+    for (const auto* expression : { "true & false", "1.5 | 2.5", "~1.5", "~true",
+                                    "1.5 << 1", "1 << 1.5", "narrow & wide", "\"x\" ^ \"y\"" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(narrow: UInt8, wide: UInt32) { let value = " +
+                std::string(expression) + "\n}\n"));
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id ==
+                            joyeer::typing::TypeCheckingDiagnosticId::invalidOperatorOperands;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AcceptsIntegerConversions) {
+    check(R"JOYEER(func run(a: Int, b: UInt8, c: Int8) {
+    let x: UInt32 = a as UInt32
+    let y: Int = b as Int
+    let z: UInt8 = c &as UInt8
+    let w: UInt8 = 255 as UInt8
+    let v: Int64 = a as Int64
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidConversions) {
+    for (const auto* expression : { "1.5 as Int", "true as Int", "a as Bool", "a as String",
+                                    "300 as UInt8", "-1 as UInt", "f as Int" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(a: Int, f: Double) { let value = " +
+                std::string(expression) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, AcceptsCompoundAssignments) {
+    check(R"JOYEER(struct Box { var total: Int }
+func run(count: UInt8) {
+    var n = 1
+    n += 2
+    n -= 1
+    n *= 3
+    n /= 2
+    n %= 4
+    var bits: UInt32 = 1
+    bits |= 2
+    bits &= 3
+    bits ^= 1
+    bits <<= count
+    bits >>= 1
+    var text = "a"
+    text += "b"
+    var box = Box(total: 1)
+    box.total += 1
+    var d = 1.5
+    d *= 2.0
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidCompoundAssignments) {
+    for (const auto* statement : { "flag += true", "text -= \"b\"", "bits <<= 1.5",
+                                   "n %= 1.5", "n += wide", "d %= 2.0", "n &= flag" }) {
+        SCOPED_TRACE(statement);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(wide: UInt32) {\n"
+                "var flag = true\nvar text = \"a\"\nvar bits: UInt32 = 1\n"
+                "var n = 1\nvar d = 1.5\n" + std::string(statement) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, RejectsCompoundAssignmentToDictionaryElements) {
+    check("func run() {\nvar d: [String: Int] = [\"a\": 1]\n&d[\"a\"] += 1\n}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, TypesTryConversionsAsResultsOfConversionError) {
+    check(R"JOYEER(func narrow(value: Int): Result<UInt8, ConversionError> {
+    let byte = (value as? UInt8)?
+    return .Ok(byte)
+}
+func run(small: Int8, big: UInt64) {
+    let a: Result<UInt32, ConversionError> = small as? UInt32
+    let b = big as? Int
+    let c: Result<Int8, ConversionError> = 300 as? Int8
+    match b {
+        .Ok(value) => { print(value: value) },
+        .Err(.OutOfRange) => { print(value: "range") },
+    }
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidTryConversions) {
+    for (const auto* expression : { "1.5 as? Int", "true as? Int", "a as? Bool", "a as? String",
+                                    "a as? UInt8 + 1", "f as? Int" }) {
+        SCOPED_TRACE(expression);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(a: Int, f: Double) { let value = " + std::string(expression) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, AcceptsForInOverArraysAndRanges) {
+    check(R"JOYEER(struct Box { let value: Int }
+func run(items: [String], limit: UInt8) {
+    var total = 0
+    for item in items { print(value: item) }
+    for box in [Box(value: 1)] { total += box.value }
+    for i in 0..<10 { total += i }
+    for i in 1...total { total += i }
+    for k in 0..<limit { print(value: k) }
+    for byte in "abc" { print(value: byte) }
+    for _ in 0..<3 { }
+}
+)JOYEER");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsInvalidForInUses) {
+    for (const auto* statement : { "for x in 5 { }", "for x in [1] { x = 2 }",
+                                   "for k in 0..<limit { let n: Int = k }",
+                                   "for s in \"a\"..<\"c\" { }", "for x in [1] { break }\nbreak" }) {
+        SCOPED_TRACE(statement);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run(limit: UInt8) {\n" + std::string(statement) + "\n}\n"));
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, ReportsOneNotIterableDiagnosticForNonSequenceSources) {
+    for (const auto* source : { "5", "true", "1.5", "[1: 2]" }) {
+        SCOPED_TRACE(source);
+        ASSERT_NO_FATAL_FAILURE(check(
+                "func run() {\nfor x in " + std::string(source) + " { }\n}\n"));
+        ASSERT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_EQ(checking.diagnostics[0].id,
+                  joyeer::typing::TypeCheckingDiagnosticId::notIterable);
     }
 }
 

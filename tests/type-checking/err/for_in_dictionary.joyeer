@@ -1,0 +1,4 @@
+func main() {
+    let table: [String: Int] = ["a": 1]
+    for entry in table { print(value: entry) }
+}

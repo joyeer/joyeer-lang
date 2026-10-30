@@ -26,7 +26,8 @@ kind, declaring type symbol, and concrete type arguments.
 
 The model covers:
 
-- `Void`, `Never`, `Any`, `Int`, `Bool`, `String`, and `UInt8`;
+- `Void`, `Never`, `Any`, `Bool`, `String`, `Int`/`UInt`,
+  signed/unsigned 8/16/32/64-bit integers, `Float`, and `Double`;
 - user `struct` and `enum` nominal types;
 - `[T]`, `[K: V]`, `T?`, and `Result<T, E>`;
 - a dedicated error type that suppresses cascading diagnostics.
@@ -44,6 +45,8 @@ collapsed to the name resolver's coarse `Result` symbol.
 - type-directed reference completions for deferred members and contextual
   enum cases/patterns;
 - call targets completed after receiver type inference.
+- validated runtime-only `NativeBinding` records for C imports/exports,
+  separate from their source-derived callable signatures.
 
 The underlying `SemanticModel` remains immutable. Type-directed completions
 are overlay relations queried through `TypeCheckedModel::referencedSymbol`
@@ -58,10 +61,11 @@ The checker uses deterministic passes:
 1. Register concrete prelude types and built-in signatures.
 2. Resolve all top-level declaration signatures, struct fields, enum payloads,
    and synthesized initializers.
-3. Check top-level initializers and function bodies in source order.
-4. Complete contextual/deferred references while expression and pattern types
+3. Validate normalized C symbol signatures and reject duplicate exports.
+4. Check top-level initializers and function bodies in source order.
+5. Complete contextual/deferred references while expression and pattern types
    become available.
-5. Verify that every `DeferredReference` was visited and either completed or
+6. Verify that every `DeferredReference` was visited and either completed or
    diagnosed.
 
 This ordering preserves forward function/type references while allowing local
@@ -73,12 +77,17 @@ bindings to infer from previously checked initializers.
 
 The current checker validates:
 
+- restricted C annotation arguments, body presence, explicit results,
+  runtime authorization at declarations and direct calls, admitted scalar
+  signatures, and symbol conflicts; see [C binding coverage](c-interop.md);
 - explicit and inferred binding types;
 - scalar, byte, array, dictionary, and `nil` literals;
 - explicit `byteToInt(value: UInt8) -> Int` and
   `byteToString(value: UInt8) -> String` built-in calls;
 - optional value promotion and `Never` as the bottom type;
-- checked `Int` arithmetic including `/` and `%`, string concatenation,
+- width-correct integer arithmetic including `/` and `%`, floating arithmetic,
+  contextual numeric literals with `type-checking.invalid-numeric-literal`
+  range diagnostics, string concatenation,
   comparison, and Boolean `!`, `&&`, and `||` operators;
 - `if`/`while` conditions, `if` branch unification, and return values;
 - unlabeled `break` / `continue` in the current function's nearest loop,

@@ -1,0 +1,59 @@
+import Foundation
+
+// Lexical path helpers. The host is not detected: callers pass `windows`
+// explicitly, so behavior is deterministic and testable on any platform.
+// Nothing here touches the filesystem, canonicalizes, or proves confinement.
+
+public func isPathSeparator(byte: UInt8, windows: Bool): Bool {
+    return byte == b'/' || (windows && byte == b'\\')
+}
+
+private func hasDrivePrefix(path: String, windows: Bool): Bool {
+    if !windows || path.count < 2 { return false }
+    let first = path[0]
+    return ((first >= b'a' && first <= b'z') ||
+        (first >= b'A' && first <= b'Z')) && path[1] == b':'
+}
+
+// Directory part of a path, preserving the caller's coordinates. Roots and
+// drive-relative paths keep their root; a path with no separator is ".".
+public func pathDirectory(path: String, windows: Bool): String {
+    var last = -1
+    var index = 0
+    while index < path.count {
+        if isPathSeparator(byte: path[index], windows: windows) { last = index }
+        index = index + 1
+    }
+    if last >= 0 {
+        if windows && last > 0 && path[last - 1] == b':' {
+            // Preserve both C:\ and extended \?\C:\ drive roots.
+            return substring(text: path, start: 0, end: last + 1)
+        }
+        var rootPrefix = true
+        index = 0
+        while index < last {
+            if !isPathSeparator(byte: path[index], windows: windows) { rootPrefix = false }
+            index = index + 1
+        }
+        if rootPrefix { return substring(text: path, start: 0, end: last + 1) }
+        return substring(text: path, start: 0, end: last)
+    }
+    if hasDrivePrefix(path: path, windows: windows) {
+        return substring(text: path, start: 0, end: 2)
+    }
+    return "."
+}
+
+// Removes trailing separators but never the root (`/`, or `C:\` on Windows).
+public func trimDirectoryPath(path: String, windows: Bool): String {
+    var minimum = 1
+    if hasDrivePrefix(path: path, windows: windows) && path.count >= 3 {
+        if isPathSeparator(byte: path[2], windows: windows) { minimum = 3 }
+    }
+    var end = path.count
+    while end > minimum {
+        if !isPathSeparator(byte: path[end - 1], windows: windows) { break }
+        end = end - 1
+    }
+    return substring(text: path, start: 0, end: end)
+}

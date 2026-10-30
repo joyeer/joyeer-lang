@@ -32,13 +32,14 @@ future work rather than becoming requirements through explanatory text.
 | 8 | Error Handling | [spec/08-error-handling.md](spec/08-error-handling.md) |
 | 9 | Contracts 🔬 | [spec/09-contracts.md](spec/09-contracts.md) |
 | 10 | General effect system — removed | [spec/10-effects.md](spec/10-effects.md) |
-| 11 | Property-Test & Spec Annotations 🔬 | [spec/11-annotations.md](spec/11-annotations.md) |
+| 11 | Declaration Annotations; Property-Test & Spec Proposals 🔬 | [spec/11-annotations.md](spec/11-annotations.md) |
 | 12 | Modules & Imports | [spec/12-modules.md](spec/12-modules.md) |
 | 13 | Naming Conventions | [spec/13-naming.md](spec/13-naming.md) |
 | 15 | Reserved for Future | [spec/15-reserved.md](spec/15-reserved.md) |
 | 16 | Worked Examples | [spec/16-examples.md](spec/16-examples.md) |
 | 17 | Grammar Appendix (EBNF) | [spec/17-grammar.md](spec/17-grammar.md) |
 | 18 | Portable Host Operations | [spec/18-host.md](spec/18-host.md) |
+| 19 | C Interoperation — restricted runtime bindings and scalar ABI | [spec/19-c-interop.md](spec/19-c-interop.md) |
 
 > Reading order for newcomers: §0 → §4 (the memory model is what makes Joyeer
 > different) → §3 → the rest as needed. §17 is the consolidated grammar.

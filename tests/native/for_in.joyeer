@@ -1,0 +1,59 @@
+struct Item {
+    let name: String
+    let weight: Int
+}
+
+func numbers(): [Int] {
+    return [10, 20, 30]
+}
+
+func main() {
+    var total = 0
+    for value in [1, 2, 3, 4] { total += value }
+    print(value: total)
+
+    for text in ["a", "bc"] { print(value: text) }
+
+    for item in [Item(name: "x", weight: 2), Item(name: "y", weight: 5)] {
+        print(value: item.name)
+        total += item.weight
+    }
+    print(value: total)
+
+    for i in 0..<3 { print(value: i) }
+    for i in 1...3 { print(value: i * 10) }
+    for i in 5..<5 { print(value: 999 + i) }
+    for i in 5...4 { print(value: 888 + i) }
+    for i in -2...(-1) { print(value: i) }
+
+    var last: UInt8 = 0
+    for k in 250...255 as UInt8 { last = k }
+    print(value: last)
+    let limit: UInt8 = 3
+    for k in 0..<limit { print(value: k) }
+
+    var odds = 0
+    for i in 0..<10 {
+        if i % 2 == 0 { continue }
+        if i > 7 { break }
+        odds += i
+    }
+    print(value: odds)
+
+    for _ in 0..<2 { print(value: "tick") }
+    for b in "hi" { print(value: b) }
+    for n in numbers() { print(value: n) }
+
+    var data = [1, 2, 3]
+    for x in data { &data.append(element: x * 100) }
+    print(value: data.count)
+
+    for outer in 0..<2 {
+        for inner in 0..<2 { print(value: outer * 10 + inner) }
+    }
+    var names = ["p", "q"]
+    var joined = ""
+    for name in names { joined += name }
+    &names.append(element: joined)
+    for name in names { print(value: name) }
+}

@@ -35,10 +35,29 @@ The optional `&` requests an `inout` iteration over the source collection
 inout view). A user-extensible iteration protocol is reserved for a future
 version (§15).
 
+**Implemented subset.** The pattern is a name or `_`. The source is an array,
+a `String` (iterating its bytes as `UInt8`), or an integer range:
+
 ```joyeer
-for x in arr      { print(value: x) }
-for &x in arr     { &x *= 2 }
+for x in arr       { print(value: x) }     // each element
+for b in "hi"      { print(value: b) }     // each byte
+for i in 0..<n     { print(value: i) }     // 0, 1, ... n - 1
+for i in 1...n     { print(value: i) }     // 1, 2, ... n
+for _ in 0..<3     { }
 ```
+
+- The loop variable is an immutable binding with the element type, copied from
+  the collection like `let x = arr[i]`.
+- The source is evaluated once and iterated as a snapshot. Changing the
+  original collection inside the body does not change the iteration. Iterating
+  a variable copies it first, as any `let` binding of it would; index with
+  `while` to avoid the copy.
+- A range `a..<b` or `a...b` is allowed only as a `for` source, not as a
+  value. Both bounds have the same integer type, and a bare literal bound takes
+  the other bound's type. `a..<b` is empty when `a >= b` and `a...b` is empty
+  when `a > b`. Neither computes `b + 1`, so `250...255` over `UInt8` is safe.
+- `break` and `continue` apply to the `for` loop. `for &x in` (inout
+  iteration), dictionary sources, and tuple patterns are not implemented.
 
 ### 6.4 return
 

@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "Foundation"
+kind = "source"
+sources = ["text.joyeer", "checksum.joyeer"]
+dependencies = []

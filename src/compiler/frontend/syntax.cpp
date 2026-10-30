@@ -110,6 +110,14 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
         case Kind::functionDecl: {
             const auto value = std::static_pointer_cast<FunctionDeclSyntax>(node);
             out << " name=" << tokenText(value->name) << '\n';
+            for (const auto& attribute : value->attributes) {
+                out << std::string((depth + 1) * 2, ' ')
+                    << "attribute@" << attribute.span.offset << ':' << attribute.span.length
+                    << " name=" << tokenText(attribute.name) << '\n';
+                for (const auto& argument : attribute.arguments) {
+                    appendNode(out, argument, depth + 2);
+                }
+            }
             for (const auto& parameter : value->parameters) appendNode(out, parameter, depth + 1);
             if (value->returnType != nullptr) appendNode(out, value->returnType, depth + 1);
             appendNode(out, value->body, depth + 1);

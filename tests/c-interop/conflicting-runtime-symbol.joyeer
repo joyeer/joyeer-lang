@@ -1,0 +1,5 @@
+@c_export(symbol: "joyeer_print_int")
+func conflictingPrint(): Int { return 7 }
+
+@c_export(symbol: "joyeer_fixture_conflict")
+func probe(): Void { print(value: 42) }

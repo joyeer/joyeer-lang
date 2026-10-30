@@ -15,8 +15,11 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand memory and ownership | [spec/04-memory.md](spec/04-memory.md) |
 | Understand parameter access | [Access effects](spec/04-memory.md#42-access-effects-on-parameters) |
 | Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
+| Read the C binding design and distinguish its implemented subset | [spec/19-c-interop.md](spec/19-c-interop.md) and [impl/c-interop.md](impl/c-interop.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
+| Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
+| Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
@@ -26,7 +29,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 The files under [spec/](spec/) contain the normative chapters:
 lexical structure, types, declarations, memory, expressions, statements,
 patterns, errors, contracts, modules, naming, examples, grammar, and portable
-host operations.
+host operations, and restricted C interoperation.
 [spec.md](spec.md) is their index and change log, not an assembled copy of
 the chapter text.
 
@@ -49,18 +52,11 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
+| [c-interop.md](impl/c-interop.md) | Authorized scalar and buffer C bindings, object generation, explicit native-library inputs, and acceptance gates |
+| [compression.md](impl/compression.md) | Optional miniz-backed ZIP module, limits, ownership, build and packaging |
 | [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
-| [joypm.md](impl/joypm.md) | Joyeer-written local workflow, strict manifest, bootstrap/self-build, and native ARM64 acceptance evidence |
+| [joypm.md](impl/joypm.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |
-
-The joypm 0.1.0 module/workspace workflow passes native Windows ARM64 Debug
-default build and unfiltered CTest (809/809, including all 15 tool gates).
-Exact limits, failures, concurrent generations, Debug/optimized self-build, and
-relocated product/Debug installation are verified. The implementation
-reference owns the evidence; the plan tracks other native platforms and
-future external dependencies/registries and a fresh full Release gate.
-No published release or universal
-platform acceptance is implied.
 
 ## Plans
 
@@ -69,6 +65,9 @@ work.
 
 | Document | Topic |
 |---|---|
+| [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
+| [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
+| [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, joypm management, and installed-library resolution gates |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
 ## Conventions

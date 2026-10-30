@@ -8,6 +8,8 @@
 
 namespace joyeer::llvmbackend::wire {
 
+inline constexpr uint32_t version = 7;
+
 // This private wire format carries Joyeer IR, not LLVM assembly. Both sides
 // allocate their own C++ objects; only borrowed bytes cross the backend C ABI.
 // Keep the field order synchronized through these shared archive visitors.
@@ -51,11 +53,14 @@ template<class Archive> void fields(Archive& archive, ir::Parameter& value) {
     archive(value.value, value.symbol, value.name, value.isMutable, value.span,
             value.acceptsAnyType, value.isConsuming, value.isInitializing, value.label);
 }
+template<class Archive> void fields(Archive& archive, NativeBinding& value) {
+    archive(value.kind, value.symbol, value.span);
+}
 template<class Archive> void fields(Archive& archive, ir::Function& value) {
     archive(value.id, value.symbol, value.name, value.parameters, value.resultType,
             value.returnsValue, value.isExternal, value.entry, value.blocks,
             value.debugLocation, value.debugScope, value.entryDebugVariableBindings,
-            value.isRootModule);
+            value.isRootModule, value.runtimeContext, value.nativeBinding);
 }
 template<class Archive> void fields(Archive& archive, ir::TypeName& value) {
     archive(value.id, value.name, value.kind, value.symbol, value.arguments, value.declarationSpan);
@@ -72,10 +77,13 @@ template<class Archive> void fields(Archive& archive, ir::EnumCaseDefinition& va
 template<class Archive> void fields(Archive& archive, ir::EnumerationDefinition& value) {
     archive(value.symbol, value.type, value.name, value.cases);
 }
+template<class Archive> void fields(Archive& archive, ir::Constant& value) {
+    archive(value.id, value.symbol, value.type, value.name, value.data);
+}
 template<class Archive> void fields(Archive& archive, ir::Module& value) {
     archive(value.sourceName, value.types, value.structures, value.enumerations,
-            value.functions, value.sourceInfo, value.debugScopes, value.debugVariables,
-            value.sourceFiles);
+            value.functions, value.constants, value.sourceInfo, value.debugScopes, value.debugVariables,
+            value.sourceFiles, value.isRuntimeObject);
 }
 
 class Writer {

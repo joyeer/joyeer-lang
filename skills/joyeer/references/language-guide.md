@@ -67,7 +67,11 @@ preserves separate module identities, file-local spans, and debug scopes.
 
 ## Scalars, strings, and bytes
 
-`Int` is signed 64-bit, `Bool` has `true` and `false`, and a byte literal such as
+`Int`/`UInt` are signed/unsigned 64-bit; explicit 8/16/32/64-bit integer types,
+`Float`, and `Double` are also supported. Decimal literals use contextual
+numeric types; without context integers default to `Int` and floating literals
+to `Double`. Numeric values do not implicitly convert between types.
+`Bool` has `true` and `false`, and a byte literal such as
 `b'A'` has type `UInt8`. Use `byteToInt(value: byte)` or
 `byteToString(value: byte)` for the implemented explicit byte conversions.
 Do not assume arbitrary numeric conversions or cast syntax exist.

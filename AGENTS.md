@@ -16,13 +16,13 @@ Write all documentation in English.
 
 ## Architecture
 
-The compiler uses C++20, the native runtime uses C11, and the build uses
+The compiler uses C++20, the runtime uses C11, and the build uses
 CMake + Ninja. The supported pipeline is:
 
 ```text
 source -> lexer -> parser -> name resolution -> type checking
       -> semantic analysis -> verified Joyeer IR -> LLVM IR objects
-  -> LLVM code generation + LLD + JoyeerNativeRuntime -> native executable
+  -> LLVM code generation + LLD + JoyeerRuntime -> native executable
 ```
 
 LLVM code generation and LLD linking run in-process behind the versioned
@@ -86,9 +86,10 @@ cross-directory includes use the path relative to `src/`.
 
 `JoyeerCompilerCore` is one non-installed CMake `OBJECT` target reused by
 `joyeer` and the compiler unit tests. Directories are responsibility groups,
-not separate libraries. Keep `JoyeerNativeBackend` shared and
-`JoyeerNativeRuntime` static: LLVM and Windows `/MT` objects stay in the backend,
-and generated programs link only the runtime. Compile the same IR verifier
+not separate libraries. Keep `JoyeerBackend` shared and
+`JoyeerRuntime` static: LLVM and Windows `/MT` objects stay in the backend,
+and generated programs link the runtime plus explicitly selected optional
+native libraries. Compile the same IR verifier
 source privately in the backend rather than reusing compiler-core objects.
 
 ## Joyeer source conventions
@@ -107,7 +108,7 @@ source privately in the backend rather than reusing compiler-core objects.
   spans; semantic annotations belong in `SemanticModel`/`TypeCheckedModel`.
 - User-visible frontend work normally requires changes through parser or
   semantic ownership, Joyeer IR lowering/verifier, LLVM emission, and the
-  native runtime only where the feature crosses those boundaries.
+  runtime only where the feature crosses those boundaries.
 - Report compiler failures through `Diagnostics` with stable IDs and
   `SourceSpan`; do not write ad hoc errors to `std::cerr`.
 - Add focused GoogleTests and at least one durable stage/native fixture for a
@@ -118,7 +119,7 @@ source privately in the backend rather than reusing compiler-core objects.
 ## Packaging and automation
 
 - Windows packages should contain only `joyeer.exe`, `joyeer-backend.dll`,
-  `JoyeerNativeRuntime.lib`, optional `joypm.exe` (enabled by default), and
+  `JoyeerRuntime.lib`, optional `joypm.exe` (enabled by default), and
   required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
   backend, runtime, and the current license use install component
   `JoyeerRuntime`; `joypm` uses `PRODUCT`. The Debug installer includes
@@ -134,7 +135,10 @@ source privately in the backend rather than reusing compiler-core objects.
   checked-in automation must not install or resolve the host compiler, platform
   SDK, CMake, Ninja, LLVM, Clang, or LLD.
 - CMake may acquire pinned project dependencies such as GoogleTest and the
-  static LibXml2 needed by the official Windows LLD libraries. LLVM and
+  static LibXml2 needed by the official Windows LLD libraries, and miniz when
+  `JOYEER_BUILD_COMPRESSION=ON`. The optional `Compression` library remains a
+  separate archive/source package, never a core-runtime dependency. Its
+  install component includes the miniz license. LLVM and
   platform toolchains remain developer-managed external prerequisites.
 - Write checked-in installation, packaging, and release automation in
   cross-platform Python 3.9+ using the standard library when scripting is
