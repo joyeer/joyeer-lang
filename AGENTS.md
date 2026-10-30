@@ -37,6 +37,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+- `python3 scripts/validate.py --llvm-root <sdk>` configures, builds, and runs
+  the unfiltered ctest and `joypm test` in Debug and Release, then prints one
+  platform x config x suite table. Use it, not ad-hoc shell scripts, to validate
+  a platform or to hand a validation to someone else. `--report FILE` saves the
+  table and `--tests-list DIR` saves the sorted ctest names so two platforms can
+  be diffed. It never installs a toolchain.
 - Source builders install CMake 3.20+, Ninja, a C++20 host compiler, and the
   platform SDK before configuring. See [docs/building.md](docs/building.md).
 - Native development on every platform requires LLVM/LLD 22.1.8 development
@@ -152,6 +158,24 @@ source privately in the backend rather than reusing compiler-core objects.
 
 ## Learnings
 
+- Text files are stored and checked out with LF on every platform
+  ([.gitattributes](.gitattributes)). Byte-exact fixtures and diagnostics
+  snapshots break if a tool rewrites them to CRLF, so move a tree between
+  machines with git, never by copying a Windows working tree to Linux.
+- On Linux the in-process Clang Driver only checks that an `ld.lld` file exists
+  for `-fuse-ld=lld`; put the SDK `bin` on `PATH` (or `ld.lld` in `/usr/bin`) or
+  the link step fails with `invalid linker name`. `validate.py` does this for
+  its child processes.
+- A CMake build tree records its source path. After a checkout moves, reusing
+  `out/build/<preset>` fails to regenerate; configure a new tree instead.
+- Writing Joyeer library code: `result` and the other words in
+  [spec §15](docs/spec/15-reserved.md) are reserved, and the compiler reports one
+  used as an identifier with a misleading "JSON-parser MVP" message, so rename
+  it. `&` marks assignment through `inout` storage and mutating calls only; using
+  it on a plain local `var` is `invalid-access-marker`. There is no Int to Double
+  conversion and no `Array.removeLast`; check
+  [supported features](docs/impl/supported-features.md) before relying on an
+  API.
 - Use [jp_write_bytes](tests/joypm/helpers.cmake) for byte-exact manifest
   fixtures, not CMake `file(WRITE)` directly. Windows text-mode writes insert
   CR before LF, changing CRLF and inclusive byte limits; the helper verifies
