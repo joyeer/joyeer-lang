@@ -1,0 +1,15 @@
+# Text is stored and checked out with LF on every platform, so byte-exact
+# fixtures and diagnostics snapshots compare equal on Windows, Linux, and macOS.
+* text=auto eol=lf
+
+# Binary inputs and outputs: never converted.
+*.class binary
+*.jar binary
+*.zip binary
+*.bin binary
+*.png binary
+*.ico binary
+*.a binary
+*.lib binary
+*.o binary
+*.obj binary
