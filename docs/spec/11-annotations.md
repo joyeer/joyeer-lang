@@ -1,19 +1,30 @@
-## §11 Property-Test & Spec Annotations 🔬
+## §11 Declaration Annotations
 
-**Implementation status:** proposed annotation design. The current MVP lexer
-rejects `@`; annotations are not yet parsed or stored. The generic production
-and shorthand examples below need a single agreed parser grammar before this
-surface is implemented.
+**Specification status:** C binding annotations have semantic rules in
+[§19](19-c-interop.md). The `@spec` and `@property` forms below remain
+independent proposals, not additional accepted annotation syntax.
+
+**Implementation status:** the runtime-only `Int`/`Void` C binding subset is
+parsed and checked. `@spec` and `@property` remain unsupported; their proposed
+tooling examples below are not currently compilable programs. See
+[current C binding coverage](../impl/c-interop.md).
 
 ```
-attribute       ::= '@' identifier [ '(' attribute_args ')' ]
-attribute_args  ::= string_literal | expression , ...
+attribute       ::= '@' identifier '(' [ attribute_arg , ... ] ')'
+attribute_arg   ::= identifier ':' expression
 ```
+
+This is the parenthesized, named-argument production used for C annotations
+in [§17](17-grammar.md). Attribute placement and arguments are checked
+against the named annotation's rules; this production does not authorize
+unknown annotations or silently ignored metadata. It does not include the
+proposed shorthand or quantifier DSL in §11.1 and §11.2.
 
 ### 11.1 `@spec`
 
-Free-form natural-language intent. Available to tooling (AI assistants,
-documentation generators).
+Proposed free-form natural-language intent for tooling (AI assistants,
+documentation generators). The shorthand below is not part of the accepted
+attribute production above.
 
 ```joyeer
 @spec "Returns the nth Fibonacci number, where fib(0) = 0 and fib(1) = 1."
@@ -22,8 +33,8 @@ func fib(n: Int): Int { ... }
 
 ### 11.2 `@property`
 
-Executable Bool expression that the value of `n` (or the function under
-test) should satisfy. Test runners may sample inputs.
+Proposed executable Bool expression that the value of `n` (or the function
+under test) should satisfy. A future test runner could sample inputs.
 
 ```joyeer
 @property fib(n: 0) == 0
@@ -38,8 +49,10 @@ grammar (§5). Its intended scope is `@property`, not ordinary expressions.
 
 ### 11.3 Proposed treatment and current scope
 
-- Proposed initial implementation: parse and store annotation metadata.
-- Current executable MVP: no annotation parser or property-test runner.
+- For `@spec`/`@property`, first settle the shorthand/DSL grammar, then parse
+  and store metadata; that proposal does not govern C annotation semantics.
+- No `@spec`/`@property` shorthand/DSL parser or property-test runner is
+  implemented.
 - A runner is follow-on work, not a delivered capability of the draft syntax.
 
 **Design rationale.** Natural-language intent and executable properties can
@@ -47,5 +60,14 @@ help reviewers and tooling check generated code. Sampling inputs is testing,
 not proof over every input, and storing an annotation does not verify it.
 These annotations do not imply an incremental compiler or formal-verification
 engine; see the [verification boundary](09-contracts.md#96-verification-boundary).
+
+### 11.4 C binding annotations
+
+`@c_extern(symbol: "...")` and `@c_export(symbol: "...")` use the named
+argument production above. Their authorization, declaration, symbol, type,
+and ABI rules have one normative source: [§19 C Interoperation](19-c-interop.md).
+They select C ABI without an `abi` argument and must not be ignored as
+tooling-only metadata. Implementing them does not require implementing
+`@spec`, `@property`, or the property quantifier DSL.
 
 ---

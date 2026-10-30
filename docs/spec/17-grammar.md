@@ -1,6 +1,11 @@
 ## §17 Grammar Appendix (EBNF)
 
 Compact reference. Whitespace and comments are skipped between tokens.
+This is the broader specification grammar, not a list of currently accepted
+parser features. The C annotation/bodyless import syntax is implemented for
+the restricted subset in [implementation coverage](../impl/c-interop.md).
+The `@spec`/`@property` shorthand and quantifier proposals in §11 are not
+included in this grammar.
 
 ```
 file              ::= import_decl* top_decl*
@@ -13,10 +18,10 @@ top_decl          ::= func_decl
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
-func_decl         ::= [ visibility ] [ method_effect ] 'func' identifier
+func_decl         ::= attribute* [ visibility ] [ method_effect ] 'func' identifier
                       '(' [ param , ... ] ')'
                       [ ':' type ]
-                      block
+                      [ block ]
 
 method_effect     ::= 'borrowing' | 'mutating' | 'consuming'
 param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expression ]
@@ -127,9 +132,18 @@ binary_op         ::= '+' | '-' | '*' | '/' | '%'
 assign_op         ::= '=' | '+=' | '-=' | '*=' | '/=' | '%='
                    |  '&=' | '|=' | '^=' | '<<=' | '>>='
 
-attribute         ::= '@' identifier [ '(' attribute_args ')' ]
-attribute_args    ::= string_literal | expression , ...
+attribute         ::= '@' identifier '(' [ attribute_arg , ... ] ')'
+attribute_arg     ::= identifier ':' expression
 ```
+
+**C declaration constraints (§19).** A missing function body is valid only
+for `@c_extern`, which must not have a body. Every other function, including
+`@c_export`, requires one. Both C annotations require an explicit result
+type and exactly one `symbol:` string-literal argument. Placement,
+authorization, allowed parameter effects, defaults, and scalar ABI types
+are checked by [§19](19-c-interop.md); the optional grammar components do
+not relax those rules. Parameter labels and optional internal names have
+the same production as [§3.2](03-declarations.md#32-function-declarations).
 
 > **Note on `??`.** The right operand of the coalescing operator `??` may be
 > an ordinary expression *or* a diverging expression (`return expr` /

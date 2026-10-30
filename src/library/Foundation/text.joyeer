@@ -1,0 +1,102 @@
+// Foundation text helpers. Strings are byte sequences; offsets are byte-based.
+
+// Returns the bytes in [start, end). Out-of-range endpoints are clamped, and
+// an empty or inverted range yields "". Never traps on arbitrary input.
+public func substring(text: String, start: Int, end: Int): String {
+    var cursor = start
+    if cursor < 0 { cursor = 0 }
+    var limit = end
+    if limit > text.count { limit = text.count }
+    if cursor >= limit { return "" }
+    // Bounded pieces, then pairwise concatenation, so long ranges avoid
+    // quadratic whole-prefix string rebuilding.
+    var pieces: [String] = []
+    while cursor < limit {
+        var piece = ""
+        var length = 0
+        while cursor < limit && length < 64 {
+            piece = piece + byteToString(value: text[cursor])
+            cursor = cursor + 1
+            length = length + 1
+        }
+        &pieces.append(element: piece)
+    }
+    var active = pieces.count
+    while active > 1 {
+        var source = 0
+        var destination = 0
+        while source < active {
+            let first = pieces[source]
+            var combined = first
+            if active - source > 1 {
+                let second = pieces[source + 1]
+                combined = first + second
+                source = source + 2
+            } else {
+                source = source + 1
+            }
+            &pieces[destination] = combined
+            destination = destination + 1
+        }
+        active = destination
+    }
+    return pieces[0]
+}
+
+// Base-10 text of any Int, including the minimum value. Linear in the digits.
+public func decimalString(value: Int): String {
+    if value == 0 { return "0" }
+    // Work with a non-positive magnitude: negating the minimum Int overflows.
+    var magnitude = value
+    if magnitude > 0 { magnitude = 0 - magnitude }
+    let digits = "0123456789"
+    var formatted = ""
+    while magnitude != 0 {
+        let digit = 0 - (magnitude % 10)
+        formatted = byteToString(value: digits[digit]) + formatted
+        magnitude = magnitude / 10
+    }
+    if value < 0 { return "-" + formatted }
+    return formatted
+}
+
+// True when the bytes are well-formed UTF-8: shortest-form encodings only, no
+// surrogates, and no scalar above U+10FFFF. Embedded NUL is valid.
+public func isValidUtf8(text: String): Bool {
+    var index = 0
+    while index < text.count {
+        let first = byteToInt(value: text[index])
+        if first < 128 {
+            index = index + 1
+        } else {
+            var length = 0
+            var secondMin = 128
+            var secondMax = 191
+            if first >= 194 && first <= 223 {
+                length = 2
+            } else if first >= 224 && first <= 239 {
+                length = 3
+                if first == 224 { secondMin = 160 }
+                if first == 237 { secondMax = 159 }
+            } else if first >= 240 && first <= 244 {
+                length = 4
+                if first == 240 { secondMin = 144 }
+                if first == 244 { secondMax = 143 }
+            } else {
+                return false
+            }
+            // Subtraction avoids an overflowing index + length check.
+            if text.count - index < length { return false }
+            let second = byteToInt(value: text[index + 1])
+            if second < secondMin || second > secondMax { return false }
+            var offset = 2
+            while offset < length {
+                let byte = byteToInt(value: text[index + offset])
+                if byte < 128 || byte > 191 { return false }
+                offset = offset + 1
+            }
+            index = index + length
+        }
+    }
+    return true
+}

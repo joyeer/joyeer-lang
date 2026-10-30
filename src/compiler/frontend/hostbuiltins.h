@@ -39,12 +39,16 @@ inline constexpr std::array<std::string_view, 5> processErrors {
 inline constexpr std::array<std::string_view, 1> stderrErrors {
     "WriteFailed",
 };
-inline constexpr std::array<Enumeration, 5> enumerations {{
+inline constexpr std::array<std::string_view, 1> conversionErrors {
+    "OutOfRange",
+};
+inline constexpr std::array<Enumeration, 6> enumerations {{
     { "FileSystemError", filesystemErrors, true, 1 },
     { "FileKind", fileKinds, false, 0 },
     { "ProcessStatus", processStatuses, true, 0 },
     { "ProcessError", processErrors, true, 1 },
     { "StderrError", stderrErrors, true, 1 },
+    { "ConversionError", conversionErrors, false, 0 },
 }};
 
 struct Parameter {

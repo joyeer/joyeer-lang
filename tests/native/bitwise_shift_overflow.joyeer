@@ -1,0 +1,4 @@
+func main() {
+    let counts = [64, 1]
+    print(value: 1 << counts[0])
+}

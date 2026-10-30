@@ -1,0 +1,23 @@
+func main() {
+    let big: Int = 300
+    print(value: big as Int64)
+    let small: UInt8 = 200
+    print(value: small as UInt32)
+    let signed: Int8 = -5
+    print(value: signed as Int)
+    print(value: signed &as UInt8)
+    print(value: signed &as UInt32)
+    let value: Int = 0x1_2345
+    print(value: value &as UInt8)
+    print(value: value &as UInt16)
+    print(value: value as UInt32)
+    let all: UInt64 = 0xFFFF_FFFF_FFFF_FFFF
+    print(value: all &as Int)
+    let negative: Int = -1
+    print(value: negative &as UInt)
+    let high: UInt8 = 0xAB
+    let word = high as UInt32 << 8 | 0xCD
+    print(value: word)
+    let literal = 255 as UInt8
+    print(value: literal)
+}

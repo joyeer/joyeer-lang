@@ -24,6 +24,8 @@ private:
 
     void parseIdentifier();
     void parseNumberLiteral();
+    void parseRadixLiteral(size_t start);
+    void emitIntegerLiteral(size_t start, const std::string& digits, int radix);
     void parseStringLiteral();
     void parseByteLiteral();
     void parseOperatorOrPunctuation();

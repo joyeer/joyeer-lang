@@ -94,6 +94,12 @@ joyeer_discover_tests(CompilerTypeCheckingTests
         PROPERTIES LABELS type-checking
 )
 
+add_executable(CompilerCInteropTests cinterop_test.cpp)
+target_link_libraries(CompilerCInteropTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerCInteropTests
+        PROPERTIES LABELS c-interop
+)
+
 add_executable(CompilerSemanticAnalysisTests
         semanticanalysis_test.cpp
 )
@@ -147,22 +153,22 @@ target_link_libraries(LLVMBackendTests
         JoyeerCompilerCore
 )
 target_compile_definitions(LLVMBackendTests PRIVATE
-        JOYEER_TEST_RUNTIME_LIBRARY="$<TARGET_FILE:JoyeerNativeRuntime>"
+        JOYEER_TEST_RUNTIME_LIBRARY="$<TARGET_FILE:JoyeerRuntime>"
 )
-add_dependencies(LLVMBackendTests JoyeerNativeRuntime)
+add_dependencies(LLVMBackendTests JoyeerRuntime)
 
 joyeer_discover_tests(LLVMBackendTests
         PROPERTIES LABELS llvm-backend
 )
 
-add_executable(NativeBackendAbiTests
-        native_backend_abi_test.c
+add_executable(BackendAbiTests
+        backend_abi_test.c
 )
-target_link_libraries(NativeBackendAbiTests
-        JoyeerNativeBackend
+target_link_libraries(BackendAbiTests
+        JoyeerBackend
 )
-add_test(NAME NativeBackendAbiTests COMMAND NativeBackendAbiTests)
-set_tests_properties(NativeBackendAbiTests PROPERTIES
+add_test(NAME BackendAbiTests COMMAND BackendAbiTests)
+set_tests_properties(BackendAbiTests PROPERTIES
         LABELS "llvm-backend;native;abi"
 )
 
@@ -323,7 +329,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableHello PROPERTIES
-            LABELS "native;llvm-backend;native-runtime"
+            LABELS "native;llvm-backend;runtime"
     )
 
     set(module_sources
@@ -375,7 +381,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableArchitecture PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;architecture"
+                LABELS "native;llvm-backend;runtime;architecture"
         )
     endif()
 
@@ -383,13 +389,14 @@ if(JOYEER_CLANG_EXECUTABLE)
             COMMAND ${CMAKE_COMMAND}
                     -DBUILD_DIR=${CMAKE_BINARY_DIR}
                     -DSTAGING_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-compiler
+                    -DRUNTIME_ARCHIVE_NAME=${CMAKE_STATIC_LIBRARY_PREFIX}JoyeerRuntime${CMAKE_STATIC_LIBRARY_SUFFIX}
                     -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
                     -DEXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstalledCompiler.cmake
     )
     set_tests_properties(InstalledCompilerNativeHello PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;packaging"
+            LABELS "native;llvm-backend;runtime;packaging"
     )
 
     add_test(NAME NativeExecutableNoDebugArtifact
@@ -403,7 +410,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableNoDebugArtifact PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+            LABELS "native;llvm-backend;runtime;debug-info;optimization"
     )
 
     add_test(NAME NativeExecutableMetacharacterPath
@@ -416,7 +423,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableMetacharacterPath PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;security"
+            LABELS "native;llvm-backend;runtime;security"
     )
 
     add_test(NAME NativeLinkerPreservesOutputDirectory
@@ -489,7 +496,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableCodeViewPdb PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;debug-info"
+                LABELS "native;llvm-backend;runtime;debug-info"
         )
 
         add_test(NAME NativeExecutableFullDebugPdb
@@ -508,7 +515,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableFullDebugPdb PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;debug-info"
+                LABELS "native;llvm-backend;runtime;debug-info"
         )
 
         add_test(NAME NativeLinkerPreservesPdbDirectory
@@ -607,7 +614,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+                LABELS "native;llvm-backend;runtime;debug-info;optimization"
         )
         elseif(APPLE AND JOYEER_LLVM_READOBJ_EXECUTABLE AND JOYEER_DSYMUTIL_EXECUTABLE)
         add_test(NAME NativeExecutableDwarfArtifact
@@ -623,7 +630,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+                LABELS "native;llvm-backend;runtime;debug-info;optimization"
         )
 
         add_test(NAME NativeLinkerRemovesStaleDsym
@@ -650,7 +657,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;debug-info;optimization"
+                LABELS "native;llvm-backend;runtime;debug-info;optimization"
         )
     endif()
 
@@ -663,7 +670,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableOwnership PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership"
+            LABELS "native;llvm-backend;runtime;ownership"
     )
 
     add_test(NAME NativeExecutableTrailingReturn
@@ -675,7 +682,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableTrailingReturn PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;semantic-analysis"
+            LABELS "native;llvm-backend;runtime;semantic-analysis"
     )
 
     function(joyeer_add_entry_case name fixture expected_output expected_exit)
@@ -690,7 +697,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(${name} PROPERTIES
-                LABELS "native;llvm-backend;native-runtime;entry"
+                LABELS "native;llvm-backend;runtime;entry"
                 TIMEOUT 60)
     endfunction()
 
@@ -769,7 +776,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableDeferredInitialization PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;semantic-analysis;ownership"
+            LABELS "native;llvm-backend;runtime;semantic-analysis;ownership"
     )
 
     add_test(NAME NativeExecutableReadFile
@@ -782,7 +789,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableReadFile PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;file-io"
+            LABELS "native;llvm-backend;runtime;ownership;file-io"
     )
 
     add_test(NAME NativeExecutableArrayAppend
@@ -794,7 +801,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableArrayAppend PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;array"
+            LABELS "native;llvm-backend;runtime;ownership;array"
     )
 
     set(dictionary_set_output
@@ -808,7 +815,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableDictionarySet PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;dictionary"
+            LABELS "native;llvm-backend;runtime;ownership;dictionary"
     )
 
     add_test(NAME NativeExecutableByteConversion
@@ -820,7 +827,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableByteConversion PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;byte-conversion"
+            LABELS "native;llvm-backend;runtime;ownership;byte-conversion"
     )
 
     add_test(NAME NativeExecutableStringUtf8
@@ -832,7 +839,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableStringUtf8 PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;string;utf8"
+            LABELS "native;llvm-backend;runtime;ownership;string;utf8"
     )
 
     add_test(NAME NativeExecutableJsonParser
@@ -845,7 +852,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableJsonParser PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;file-io;array;dictionary;byte-conversion;json-parser"
+            LABELS "native;llvm-backend;runtime;ownership;file-io;array;dictionary;byte-conversion;json-parser"
     )
 
     add_test(NAME NativeExecutableConsuming
@@ -857,7 +864,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableConsuming PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;consuming"
+            LABELS "native;llvm-backend;runtime;ownership;consuming"
     )
 
     add_test(NAME NativeExecutableInitializing
@@ -869,7 +876,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableInitializing PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;initializing"
+            LABELS "native;llvm-backend;runtime;ownership;initializing"
     )
 
     add_test(NAME NativeExecutableProjectionConsume
@@ -881,7 +888,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeExecutableProjectionConsume PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;consuming;projection-consume"
+            LABELS "native;llvm-backend;runtime;ownership;consuming;projection-consume"
     )
 
     function(add_joyeer_native_regression name fixture expected_output)
@@ -900,7 +907,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                             -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
             )
             set_tests_properties(${name}O${level} PROPERTIES
-                    LABELS "native;llvm-backend;native-runtime;ownership;safety;regression"
+                    LABELS "native;llvm-backend;runtime;ownership;safety;regression"
                     TIMEOUT 60
             )
         endforeach()
@@ -940,7 +947,7 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             NativePropagation propagation "${propagation_output}")
     set_tests_properties(NativePropagationO0 NativePropagationO2 PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;safety;regression;propagation")
+            LABELS "native;llvm-backend;runtime;ownership;safety;regression;propagation")
 
     add_test(NAME NativePropagationFullDebug
             COMMAND ${CMAKE_COMMAND}
@@ -952,7 +959,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativePropagationFullDebug PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;propagation;debug-info")
+            LABELS "native;llvm-backend;runtime;ownership;propagation;debug-info")
 
     add_test(NAME NativePropagationFile
             COMMAND ${CMAKE_COMMAND}
@@ -964,7 +971,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativePropagationFile PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;file-io;propagation")
+            LABELS "native;llvm-backend;runtime;ownership;file-io;propagation")
 
     set(unit_values_output
             "true\ntrue\n2\ntrue\nbranch!\ntrue\n3\ntemporary!\n4\ntemporary!\n3\ntrue\n5\n2\ntrue\n6\ntrue\nowned!\nevent\nsome\nnone\nunit error\n100\n")
@@ -984,7 +991,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeControlFlowArithmeticFullDebug PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;debug-info"
+            LABELS "native;llvm-backend;runtime;ownership;debug-info"
             TIMEOUT 60)
     add_test(NAME NativeDictionaryGetFullDebug
             COMMAND ${CMAKE_COMMAND}
@@ -996,7 +1003,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(NativeDictionaryGetFullDebug PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;ownership;debug-info"
+            LABELS "native;llvm-backend;runtime;ownership;debug-info"
             TIMEOUT 60)
     add_test(NAME NativeUnitValuesFullDebug
             COMMAND ${CMAKE_COMMAND}
@@ -1014,6 +1021,98 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             NativeCheckedArithmetic checked_arithmetic
             "9223372036854775807\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-9223372036854775808\n0\n21\n2\n49995000\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeBitwiseOperators bitwise_operators
+            "15728880
+4293984240
+4278255360
+252645135
+64
+2
+126
+-4
+-64
+8
+9223372036854775808
+252645135
+true
+6
+-1
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeIntegerConversions integer_conversions
+            "300
+200
+-5
+251
+4294967291
+69
+9029
+74565
+-1
+18446744073709551615
+43981
+255
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeConstantTables constant_tables
+            "3421780262
+256
+755167117
+17
+6
+beta
+6
+hello, constants
+true
+100000
+99
+2
+42
+3
+114
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeCompoundAssignment compound_assignment
+            "3
+680
+abcdabcd
+101
+1
+42
+255
+9
+3
+1099511627776
+"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeAssignmentOrder assignment_order
+            "2\n102\n11\n202\na!\n52\n6\n65\n30\n60\n7\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeForIn for_in
+            "10\na\nbc\nx\ny\n17\n0\n1\n2\n10\n20\n30\n-2\n-1\n255\n0\n1\n2\n16\ntick\ntick\n104\n105\n10\n20\n30\n6\n0\n1\n10\n11\np\nq\npq\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeTryConversions conversion_try
+            "true\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\ntrue\nfalse\n200\n-1\n-3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            NativeRadixLiterals radix_literals
+            "255
+3988292384
+165
+493
+18446744073709551615
+1000000
+-16
+1000.5
+"
             0 1 2 3)
     set(typed_array_output
             "2\n40\n50\n30\n122\nfalse\ntrue\ntrue\nsecond\nchanged\n2\n9\n121\n9\ntrue\n11\nowned\n2\ntrue\n")
@@ -1044,7 +1143,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                             -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
             )
             set_tests_properties(${name}O${level} PROPERTIES
-                    LABELS "native;llvm-backend;native-runtime;optimization;safety"
+                    LABELS "native;llvm-backend;runtime;optimization;safety"
                     TIMEOUT 60)
         endforeach()
     endfunction()
@@ -1065,6 +1164,20 @@ if(JOYEER_CLANG_EXECUTABLE)
             NativeCheckedMinMultiplyOverflow checked_min_multiply_overflow "integer multiplication overflow")
     add_joyeer_native_checked_trap(
             NativeCheckedDivideZero checked_divide_zero "integer division by zero")
+    add_joyeer_native_checked_trap(
+            NativeBitwiseShiftOverflow bitwise_shift_overflow "integer shift count out of range")
+    add_joyeer_native_checked_trap(
+            NativeBitwiseShiftNegative bitwise_shift_negative "integer shift count out of range")
+    add_joyeer_native_checked_trap(
+            NativeConversionNegative conversion_negative "integer conversion out of range")
+    add_joyeer_native_checked_trap(
+            NativeConversionNarrow conversion_narrow "integer conversion out of range")
+    add_joyeer_native_checked_trap(
+            NativeConversionUnsignedHigh conversion_unsigned_high "integer conversion out of range")
+    add_joyeer_native_checked_trap(
+            NativeCompoundOverflow compound_overflow "integer addition overflow")
+    add_joyeer_native_checked_trap(
+            NativeCompoundShiftRange compound_shift_range "integer shift count out of range")
     add_joyeer_native_checked_trap(
             NativeCheckedRemainderZero checked_remainder_zero "integer remainder by zero")
     add_joyeer_native_checked_trap(
@@ -1095,7 +1208,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
     )
     set_tests_properties(NativeOptimizedOverflowTrap PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;optimization;safety"
+            LABELS "native;llvm-backend;runtime;optimization;safety"
     )
 
     add_test(NAME NativeOptimizedBoundsTrap
@@ -1107,7 +1220,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
     )
     set_tests_properties(NativeOptimizedBoundsTrap PROPERTIES
-            LABELS "native;llvm-backend;native-runtime;optimization;safety"
+            LABELS "native;llvm-backend;runtime;optimization;safety"
     )
 endif()
 
@@ -1134,6 +1247,10 @@ add_joyeer_rejected_regression(TypeDictionaryGetArguments type-checking
         dictionary_get_arguments type-checking.invalid-call-arguments)
 add_joyeer_rejected_regression(TypeLoopControlOutside type-checking
         loop_control_outside type-checking.invalid-loop-control)
+add_joyeer_rejected_regression(TypeForInNotIterable type-checking
+        for_in_not_iterable type-checking.not-iterable)
+add_joyeer_rejected_regression(TypeForInDictionary type-checking
+        for_in_dictionary type-checking.not-iterable)
 add_joyeer_rejected_regression(TypeControlFlowOperands type-checking
         control_flow_operands type-checking.invalid-operator-operands)
 add_joyeer_rejected_regression(FlowLoopContinueConsumed semantic-analysis

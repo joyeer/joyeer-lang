@@ -8,6 +8,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace joyeer::ir {
@@ -66,6 +67,15 @@ enum class Opcode {
     equal,
     notEqual,
     logicalAnd,
+    bitAnd,
+    bitOr,
+    bitXor,
+    shiftLeft,
+    shiftRight,
+    convertChecked,
+    convertWrapping,
+    constantValue,
+    integerFits,
 
     call,
     constructStruct,
@@ -89,6 +99,7 @@ enum class Opcode {
     returnValue,
     returnVoid,
     unreachable,
+    floatingConstant,
 };
 
 enum class PatternKind {
@@ -98,6 +109,7 @@ enum class PatternKind {
     stringLiteral,
     byteLiteral,
     enumCase,
+    floatingLiteral,
 };
 
 struct Pattern {
@@ -212,6 +224,8 @@ struct Function {
     std::optional<DebugScopeId> debugScope;
     std::vector<DebugVariableBinding> entryDebugVariableBindings;
     bool isRootModule = true;
+    bool runtimeContext = false;
+    std::optional<NativeBinding> nativeBinding;
 };
 
 struct TypeName {
@@ -250,17 +264,30 @@ struct EnumerationDefinition {
     std::vector<EnumCaseDefinition> cases;
 };
 
+// Read-only array data shared by every use of one top-level constant. `data`
+// uses the compiler's constant encoding: little-endian scalars, and strings and
+// arrays prefixed by a 64-bit length, nested by the element type.
+struct Constant {
+    uint32_t id = 0;
+    semantic::SymbolId symbol = semantic::invalidSymbolId;
+    TypeId type = typing::invalidTypeId;
+    std::string name;
+    std::string data;
+};
+
 struct Module {
     std::string sourceName;
     std::vector<TypeName> types;
     std::vector<StructureDefinition> structures;
     std::vector<EnumerationDefinition> enumerations;
     std::vector<Function> functions;
+    std::vector<Constant> constants;
     std::optional<SourceInfo> sourceInfo;
     std::vector<DebugScope> debugScopes;
     std::vector<DebugVariable> debugVariables;
     // SourceSpan::sourceId indexes this table; sourceInfo is the legacy ID-zero fallback.
     std::vector<SourceInfo> sourceFiles;
+    bool isRuntimeObject = false;
 
     [[nodiscard]] const SourceInfo* sourceFile(uint32_t sourceId) const {
         if (!sourceFiles.empty()) {
@@ -300,6 +327,16 @@ struct VerificationResult {
 class Verifier {
 public:
     [[nodiscard]] VerificationResult verify(const Module& module) const;
+};
+
+// Snapshot of one module's type graph. Rebuild after changing type definitions.
+class DestructionAnalysis {
+public:
+    explicit DestructionAnalysis(const Module& module);
+    [[nodiscard]] bool requiresDestruction(TypeId type) const;
+
+private:
+    std::unordered_map<TypeId, bool> required;
 };
 
 [[nodiscard]] bool requiresDestruction(const Module& module, TypeId type);

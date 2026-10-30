@@ -1,0 +1,108 @@
+@c_extern(symbol: "c_scalar_boolean")
+func nativeBool(value: Bool): Bool
+@c_export(symbol: "joyeer_scalar_boolean")
+func roundtripBool(value: Bool): Bool { return nativeBool(value: value) }
+
+@c_extern(symbol: "c_scalar_s8")
+func nativeInt8(value: Int8): Int8
+@c_export(symbol: "joyeer_scalar_s8")
+func roundtripInt8(value: Int8): Int8 { return nativeInt8(value: value) }
+
+@c_extern(symbol: "c_scalar_u8")
+func nativeUInt8(value: UInt8): UInt8
+@c_export(symbol: "joyeer_scalar_u8")
+func roundtripUInt8(value: UInt8): UInt8 { return nativeUInt8(value: value) }
+
+@c_extern(symbol: "c_scalar_s16")
+func nativeInt16(value: Int16): Int16
+@c_export(symbol: "joyeer_scalar_s16")
+func roundtripInt16(value: Int16): Int16 { return nativeInt16(value: value) }
+
+@c_extern(symbol: "c_scalar_u16")
+func nativeUInt16(value: UInt16): UInt16
+@c_export(symbol: "joyeer_scalar_u16")
+func roundtripUInt16(value: UInt16): UInt16 { return nativeUInt16(value: value) }
+
+@c_extern(symbol: "c_scalar_s32")
+func nativeInt32(value: Int32): Int32
+@c_export(symbol: "joyeer_scalar_s32")
+func roundtripInt32(value: Int32): Int32 { return nativeInt32(value: value) }
+
+@c_extern(symbol: "c_scalar_u32")
+func nativeUInt32(value: UInt32): UInt32
+@c_export(symbol: "joyeer_scalar_u32")
+func roundtripUInt32(value: UInt32): UInt32 { return nativeUInt32(value: value) }
+
+@c_extern(symbol: "c_scalar_s64")
+func nativeInt64(value: Int64): Int64
+@c_export(symbol: "joyeer_scalar_s64")
+func roundtripInt64(value: Int64): Int64 { return nativeInt64(value: value) }
+
+@c_extern(symbol: "c_scalar_u64")
+func nativeUInt64(value: UInt64): UInt64
+@c_export(symbol: "joyeer_scalar_u64")
+func roundtripUInt64(value: UInt64): UInt64 { return nativeUInt64(value: value) }
+
+@c_extern(symbol: "c_scalar_word")
+func nativeInt(value: Int): Int
+@c_export(symbol: "joyeer_scalar_word")
+func roundtripInt(value: Int): Int { return nativeInt(value: value) }
+
+@c_extern(symbol: "c_scalar_uword")
+func nativeUInt(value: UInt): UInt
+@c_export(symbol: "joyeer_scalar_uword")
+func roundtripUInt(value: UInt): UInt { return nativeUInt(value: value) }
+
+@c_extern(symbol: "c_scalar_f32")
+func nativeFloat(value: Float): Float
+@c_export(symbol: "joyeer_scalar_f32")
+func roundtripFloat(value: Float): Float { return nativeFloat(value: value) }
+
+@c_extern(symbol: "c_scalar_f64")
+func nativeDouble(value: Double): Double
+@c_export(symbol: "joyeer_scalar_f64")
+func roundtripDouble(value: Double): Double { return nativeDouble(value: value) }
+
+@c_extern(symbol: "c_scalar_truth")
+func nativeTruth(value: Int32): Bool
+@c_export(symbol: "joyeer_scalar_truth")
+func roundtripTruth(value: Int32): Bool { return nativeTruth(value: value) }
+
+@c_extern(symbol: "c_scalar_mixed")
+func nativeMixed(a: Int8, f0: Float, b: UInt8, d0: Double,
+    c: Int16, f1: Float, d: UInt16, d1: Double, e: Int32, f2: Float,
+    f: UInt32, d2: Double, g: Int64, f3: Float, h: UInt64, d3: Double,
+    i: Int, f4: Float, j: UInt, d4: Double, flag: Bool): Bool
+
+@c_export(symbol: "joyeer_scalar_mixed")
+func roundtripMixed(a: Int8, f0: Float, b: UInt8, d0: Double,
+    c: Int16, f1: Float, d: UInt16, d1: Double, e: Int32, f2: Float,
+    f: UInt32, d2: Double, g: Int64, f3: Float, h: UInt64, d3: Double,
+    i: Int, f4: Float, j: UInt, d4: Double, flag: Bool): Bool {
+    return nativeMixed(a: a, f0: f0, b: b, d0: d0, c: c, f1: f1, d: d, d1: d1,
+        e: e, f2: f2, f: f, d2: d2, g: g, f3: f3, h: h, d3: d3,
+        i: i, f4: f4, j: j, d4: d4, flag: flag)
+}
+
+@c_export(symbol: "joyeer_scalar_minimum")
+func minimum(): Int64 { return -9223372036854775808 }
+@c_export(symbol: "joyeer_scalar_maximum")
+func maximum(): UInt64 { return 18446744073709551615 }
+@c_export(symbol: "joyeer_scalar_negative_zero")
+func negativeZero(): Float { return -0.0 }
+@c_export(symbol: "joyeer_scalar_float_literal")
+func floatLiteral(): Float { return 1.00000011920928955078125 }
+@c_export(symbol: "joyeer_scalar_double_literal")
+func doubleLiteral(): Double { return 1.0000000000000002220446049250313080847263336181640625 }
+
+@c_export(symbol: "joyeer_scalar_negate_float")
+func negateFloat(value: Float): Float { return -value }
+@c_export(symbol: "joyeer_scalar_divide_double")
+func divideDouble(a: Double, b: Double): Double { return a / b }
+@c_export(symbol: "joyeer_scalar_is_nan")
+func isNan(value: Double): Bool { return value != value }
+
+@c_export(symbol: "joyeer_scalar_choose_unsigned")
+func chooseUnsigned(flag: Bool): UInt64 {
+    return if flag { 18446744073709551615 } else { 0 }
+}

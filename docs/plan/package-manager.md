@@ -1,97 +1,78 @@
 # Joyeer Package Manager: Remaining Work
 
-> **Status:** unfinished work only. Current commands, manifest and execution
-> contracts, bootstrap behavior, and acceptance evidence belong in
-> [joypm](../impl/joypm.md). Remove items from this plan when they are complete.
+> **Status:** unfinished work only. Current behavior and validation evidence
+> belong in [joypm](../impl/joypm.md). Remove items when they are done.
 
-## 1. Remaining Package Phases
+## 1. Phases
 
-| Phase | Current status / prerequisites | Remaining deliverables and exit criteria |
-|---|---|---|
-| P4: External local modules | Deferred; current explicit workspaces plus physical filesystem identity | Path dependencies outside workspace members, bounded recursive loading and deduplication; reject cycles/conflicting logical identities without remote access |
-| P6: Rebuild avoidance and artifact lifecycle | Deferred; current module/workspace workflow plus hashing/identity/publication/cleanup contracts | Whole-module fingerprints, concurrent publication/cache checks and anchored `clean`; changed inputs invalidate, corrupt entries miss, deletion cannot follow links outside owned outputs |
-| P7: Remote package ecosystem | Deferred; P4 plus verified acquisition/publication contracts | Git/registry resolution, lockfiles/offline/frozen modes, integrity/publishing policy; pin/verify inputs and diagnose interrupted fetches/conflicts |
+| Phase | Deliverables and exit criteria |
+|---|---|
+| P4: External local modules | Path dependencies outside workspace members; bounded recursive loading and dedup; reject cycles and conflicting logical identities; no remote access |
+| P6: Rebuild avoidance | Whole-module fingerprints, concurrent publication/cache checks, anchored `clean`; changed inputs invalidate, corrupt entries miss, deletion never follows links outside owned outputs |
+| P7: Remote packages | Git/registry resolution, lockfiles, offline/frozen modes, integrity and publishing policy; pinned inputs, diagnosed interrupted fetches and conflicts |
 
-P6 and P7 are separate later workstreams; a registry need not wait for compiler
-incrementality, and workspace support need not fetch remote packages.
+P6 and P7 are independent later workstreams. A registry need not wait for
+incrementality; workspaces need not fetch remote packages.
 
-## 2. Design and Host/API Gates
+## 2. Design Gates
 
-- **P4:** define external module identity from canonical filesystem identity, not a
-  display name or lexical path. Require a globally unambiguous logical module
-  name across the compilation closure; no implicit module renaming or
-  side-by-side versions of the same module in the initial implementation.
-  Source paths remain relative to each owning single-module manifest.
-  Local paths are mutable inputs, not reproducibly locked content.
-- **P6:** distinguish a whole-target cache from compiler incremental
-  compilation. Fingerprints need source bytes, manifests/resolution graph,
-  compiler/backend/runtime and host SDK identity, profile/options, and target
-  platform. Current APIs do not supply all of these; add tested contracts first.
-- **P7:** settle full version semantics, source identity, checksums/pinned
+- **P4:** identity is canonical filesystem identity, not a display name or
+  lexical path. Logical module names must be unique across the closure; no
+  implicit renaming or side-by-side versions initially. Source paths stay
+  relative to the owning manifest. Local paths are mutable, not locked.
+- **P6:** this is a whole-target cache, not compiler incremental compilation.
+  Fingerprint inputs: source bytes, manifests and resolution graph,
+  compiler/backend/runtime/SDK identity, profile and options, target. Current
+  APIs do not supply all of these; add tested contracts first.
+- **P7:** settle version semantics, source identity, checksums or pinned
   revisions, lockfile versioning, credentials, archive traversal/link policy,
-  offline/frozen behavior, and interrupted-download publication before
-  downloading or executing external code. Lockfile publication itself needs
-  reliable replacement and concurrency behavior.
+  offline/frozen behavior, and interrupted-download publication before running
+  external code. Lockfile writes need reliable replacement and concurrency.
 
-Supporting host contracts still need specification and implementation:
+## 3. Host Contracts Still Needed
 
-- **Filesystem identity:** provide physical package identity for P4 rather
-  than treating lexical paths or display names as identity.
-- **Publication and cleanup:** define reliable replacement, concurrent and
-  crash-atomic publication, and anchored, non-link-following deletion before
-  P6 caching/`clean` or P7 acquisition/lockfile publication. Deletion must not
-  escape owned outputs through links or races.
-- **Compiler discovery:** define executable-location, current-directory, and
-  environment lookup before adding installed-sibling or PATH discovery.
-- **Additional interfaces:** streaming, process capture/cancellation/timeouts,
-  and general Unicode-aware diagnostics remain separately scoped work, not
-  prerequisites for local path packages.
+- **Filesystem identity** for P4.
+- **Publication and cleanup:** reliable, crash-atomic, concurrent-safe
+  replacement, and anchored non-link-following deletion (before P6/P7).
+- **Compiler discovery:** executable-location, current-directory, and
+  environment lookup, before adding sibling or PATH discovery.
 - **Dependency visibility:** if strict direct-import allowlists are adopted,
-  add a compiler interface instead of scanning Joyeer source text in joypm.
+  add a compiler interface; joypm must not scan source text.
+- Separately scoped, not prerequisites: streaming, process
+  capture/cancellation/timeouts, Unicode-aware diagnostics.
 
-Keep these extensions aligned with the
-[implemented surface](../impl/supported-features.md),
+New APIs must not present lexical path checks as confinement. Stay aligned with
+[supported features](../impl/supported-features.md),
 [compiler input contract](../impl/backend.md#2-cli), and
-[portable host operations](../spec/18-host.md). New APIs must not silently
-strengthen lexical path checks into confinement claims.
+[host operations](../spec/18-host.md).
 
-## 3. Native Platform Validation
+## 4. Native Platform Validation
 
-- Execute fresh native Windows x64, Linux, and macOS Debug/Release default
-  builds and unfiltered CTest with `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, and
-  `JOYEER_BUILD_UNITTESTS` enabled. Keep hardware, process, compiler, and SDK
-  target identities distinct from emulation.
-- Run the existing [acceptance gates](../../tests/joypm/CMakeLists.txt) on
-  each claimed platform/architecture. A tool-only run or another platform's
-  results do not replace its full gate.
-- Execute POSIX FIFO/device rejection, signal termination, and
-  execute-permission failures on native POSIX hosts. Preserve legacy
-  `readFile` compatibility and the explicit non-confinement boundary.
-- Verify macOS bootstrap with and without `dsymutil`, produced dSYM
-  byproducts, self-build, and second-stage execution.
-- Validate separate install components and relocated compiler/backend/runtime
-  lookup on each new platform. Exercise the
-  [local Debug installer](../building.md#local-debug-installation) and its
-  platform-specific symbols and PATH setup there.
+On each claimed platform and architecture (Linux, macOS), with
+`BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, `JOYEER_BUILD_UNITTESTS` on:
 
-Use the [building guide](../building.md#configure-build-and-test) for matching
-external SDKs and commands. Record platform/toolchain provenance and measured
-results in [implementation evidence](../impl/joypm.md#5-validation-evidence),
-not as completed checklists in this plan.
+- Fresh Debug and Release builds and unfiltered CTest.
+- The [joypm acceptance gates](../../tests/joypm/CMakeLists.txt); another
+  platform's or a tool-only run does not count.
+- POSIX FIFO/device rejection, signal termination, execute-permission failures;
+  keep legacy `readFile` behavior.
+- macOS bootstrap with and without `dsymutil`, dSYM byproducts, self-build,
+  second-stage run.
+- Separate install components and relocated compiler/backend/runtime lookup;
+  the [local Debug installer](../building.md#local-debug-installation).
 
-## 4. Release Gates
+Record provenance and results in
+[joypm evidence](../impl/joypm.md#5-validation-evidence), not here.
 
-- Assemble the required third-party licenses/notices for LLVM/LLD and
-  platform-specific support libraries before binary redistribution.
-- Audit SDK/runtime dependencies and product inventories on each release
-  platform. Exclude test SDKs and LLVM tools, and verify that packaged
-  compiler/backend/runtime/tool files work after relocation.
-- Add repeatable native CI and release staging for the supported platform
-  matrix before publishing a broader release.
-- Keep external compilers and SDKs developer-managed. Use cross-platform
-  standard-library Python 3.9+ when release scripting is needed, without
-  making Python a source-build or released-tool runtime prerequisite.
+## 5. Release Gates
 
-Release readiness requires the native gates above and the
-[release-staging requirements](../building.md#release-staging), not merely
-a version string or registered fixtures.
+- Third-party license/notice assembly for LLVM/LLD and platform libraries
+  before binary redistribution.
+- Per-platform audit of SDK/runtime dependencies and product inventory;
+  exclude test SDKs and LLVM tools; verify relocation.
+- Repeatable native CI and release staging for the supported platforms.
+- Release scripting uses standard-library Python 3.9+, never required to build
+  or run Joyeer.
+
+Readiness requires the native gates above and
+[release staging](../building.md#release-staging), not a version string.

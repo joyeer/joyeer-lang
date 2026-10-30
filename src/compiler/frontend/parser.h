@@ -85,8 +85,9 @@ private:
     };
 
     syntax::NodePtr parseTopLevelItem();
+    syntax::AttributeSyntax parseAttribute();
     syntax::BindingDeclSyntax::Ptr parseBindingDecl(bool requireType);
-    syntax::FunctionDeclSyntax::Ptr parseFunctionDecl();
+    syntax::FunctionDeclSyntax::Ptr parseFunctionDecl(bool hasAttributes = false);
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();
@@ -100,9 +101,11 @@ private:
     syntax::BlockExprSyntax::Ptr parseBlock();
     syntax::NodePtr parseBlockItem();
     syntax::WhileStmtSyntax::Ptr parseWhileStmt();
+    syntax::NodePtr parseForStmt();
 
     syntax::ExprPtr parseExpression();
     syntax::ExprPtr parsePrecedence(int minimumBindingPower);
+    syntax::ExprPtr parseCastExpr();
     syntax::ExprPtr parsePrefixExpr();
     syntax::ExprPtr parsePostfixExpr();
     syntax::ExprPtr parsePrimaryExpr();
@@ -151,6 +154,9 @@ private:
     TokenCursor cursor;
     std::vector<Diagnostic> diagnostics;
     std::vector<TokenKind> activeClosers;
+    // Declarations a for-in loop adds before its loop; the enclosing block takes them.
+    std::vector<syntax::NodePtr> pendingItems;
+    size_t forLoopCount = 0;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

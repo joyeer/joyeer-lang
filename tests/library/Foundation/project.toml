@@ -1,0 +1,8 @@
+schema-version = 1
+
+[module]
+name = "FoundationTests"
+kind = "test"
+output = "foundation-tests"
+sources = ["main.joyeer"]
+dependencies = ["Foundation"]

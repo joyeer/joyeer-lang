@@ -15,7 +15,7 @@ directories, and distinct modules can use distinct files from one directory.
 It runs the source graph through lexing,
 parsing, name resolution, type checking, semantic analysis, verified Joyeer
 IR, and LLVM object construction with optional textual IR export. Native executable output additionally
-generates machine code and links it with `JoyeerNativeRuntime`.
+generates machine code and links it with `JoyeerRuntime`.
 
 Named mode uses `--module-name <name>` with positional root files and repeatable
 `--module-source <name>=<file>` dependency inputs. Repeated dependency names
@@ -50,9 +50,9 @@ paths containing spaces are supported and require appropriate CLI quoting.
 |---|---|
 | Programs | Legacy single-file or named explicit compilation units; typed functions; recursion; one root `func main()` returning `Void` or `func main(args: [String]): Int` for executables |
 | Modules | Named source-file sets, file-local public short names and qualified imports, use-site ambiguity checks, `private` / `internal` / `public`, dependency-cycle and exposed-type checks, per-file source/debug locations |
-| Bindings and values | Function-local `let` and `var`; `Int` (signed 64-bit), `Bool`, `UInt8`, `String`, and unit `()` / `Void` |
-| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, checked integer `+`, `-`, `*`, `/`, `%`, comparisons, Boolean `!`, `&&`, `||`, and string concatenation |
-| Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, and exhaustive `match` |
+| Bindings and values | Function-local `let` and `var`; `Bool`, `Int`/`UInt` (64-bit), signed/unsigned 8/16/32/64-bit integers, `Float`, `Double`, `String`, and unit `()` / `Void` |
+| Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, string concatenation, compound assignment (`+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`; not on dictionary elements), and integer bitwise `&`, `\|`, `^`, `~`, `<<`, `>>` |
+| Control flow | `if`, `else if`, `else`, `while`, `for x in` over arrays, `String` bytes, and integer ranges (`a..<b`, `a...b`), unlabeled `break` / `continue`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
 | Containers | Compiler-known `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` |
@@ -63,10 +63,42 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
+| Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
+| Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
+| Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
 builtins. Their type arguments do not imply support for user-defined generic
 declarations.
+
+Decimal integer literals use their contextual numeric type, or default to
+`Int`; decimal floating literals (including exponents) default to `Double`.
+Literal range checking includes the minimum signed values and the full
+unsigned 64-bit range. Floating literals are rounded directly to the selected
+precision; overflow and underflow to an unrepresentable nonzero value are
+diagnosed. Integer literals may also be hexadecimal (`0x`), binary (`0b`), or
+octal (`0o`); a plain leading `0` is decimal. A single `_` may separate digits
+in any integer literal and in the integer part of a floating literal, but may
+not lead, trail, or repeat. Radix literals use the same range checks as decimal
+and take the sign from a preceding unary `-`. Values of different numeric types are not implicitly converted;
+`Int`/`Int64` and `UInt`/`UInt64` remain distinct source types despite matching
+C representations. `x as T` converts between integer types and traps when the
+value does not fit; `x &as T` truncates or extends without trapping; `x as? T` returns `Result<T, ConversionError>` (`.Err(.OutOfRange)` instead of a trap). Literal
+operands take the target type. Floating-point and non-numeric conversions
+remain outside this implementation.
+
+Signed integer arithmetic traps on overflow at every optimization level.
+Unsigned addition/subtraction/multiplication wrap modulo their width.
+Bitwise `&`, `|`, `^` require two integers of the same type; `~` takes one
+integer. `<<` and `>>` take an integer on the left and any integer type as the
+count; a negative count or one at least the left operand's bit width traps in
+every build. `>>` is arithmetic for signed and logical for unsigned types, and
+`<<` discards bits shifted out. Integer division/remainder trap on zero; signed minimum divided by `-1`
+also traps for either operation. Floating arithmetic uses IEEE 754 behavior,
+including signed zero, infinities, and unordered NaN comparisons, without
+fast-math assumptions. Floating remainder and unsigned unary minus are not
+supported. New scalars can be stored in arrays, fields, and enum/optional/result
+payloads; dictionary keys still support only `Int`, `Bool`, `UInt8`, and `String`.
 
 ## Source-implemented local project tool
 
@@ -98,19 +130,24 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   asynchronous/concurrent functions.
 - User-defined `init` / `deinit` bodies, explicit copy initializers, or
   user-defined accessors.
-- Top-level executable statements or global storage, import aliases,
+- Top-level executable statements, mutable global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.
-- `Float`, `Double`, general tuples, or tuple destructuring.
-- `for-in`, labeled loop exits, compound assignment, `is` / `as`,
+- General tuples or tuple destructuring.
+- `for &x in` (inout iteration), `for` over dictionaries, labeled loop exits, `&&=` / `||=`, `is`,
   match guards, range patterns, or alternative patterns.
 - Optional chaining `?.`, coalescing `??`, or force unwrap `!`. Optional
   types use `T?`; postfix `?` propagates only between the same `Result` error
   type or between `Optional` results. Other errors require explicit `match`.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
   aggregate printing, streaming file APIs, or a general standard library.
-- Source-language FFI, contracts or property annotations as executable
-  language features, incremental compilation, or formal verification.
+- General user FFI, raw native addresses, arbitrary output pointers, C
+  aggregates, callbacks, variadic calls, or signatures beyond the specified
+  scalar and restricted buffer-import boundary.
+  The [C binding implementation](c-interop.md) documents explicit runtime
+  authorization, buffer ownership, object output, and native linking.
+- Contracts or property annotations as executable language features,
+  incremental compilation, or formal verification.
 - Project-manager commands on the **compiler**, such as `joyeer build`, `run`,
   `test`, or `init`; use the separate source-implemented `joypm`. Toolchain
   installation, `doctor`, registries, local path packages, and workspaces

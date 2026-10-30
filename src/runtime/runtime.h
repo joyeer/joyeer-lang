@@ -1,5 +1,5 @@
-#ifndef __joyeer_native_runtime_h__
-#define __joyeer_native_runtime_h__
+#ifndef __joyeer_runtime_h__
+#define __joyeer_runtime_h__
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -62,6 +62,9 @@ int64_t joyeer_checked_div_int(int64_t left, int64_t right);
 int64_t joyeer_checked_rem_int(int64_t left, int64_t right);
 
 void joyeer_print_int(int64_t value);
+void joyeer_print_uint(uint64_t value);
+void joyeer_print_float(float value);
+void joyeer_print_double(double value);
 void joyeer_print_bool(bool value);
 void joyeer_print_byte(uint8_t value);
 void joyeer_print_string(JoyeerString value);

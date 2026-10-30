@@ -67,14 +67,14 @@ struct Diagnostics {
      * Lex error
      */
     DIAGNOSTICS_ERROR_MESSAGE(errorOctalNumberFormat,                           "Octal number only contains 0,1,2,3,4,5,6,7")
-    DIAGNOSTICS_ERROR_MESSAGE(errorIntegerLiteralOverflow,                      "Integer literal overflows when stored into 'Int'")
+    DIAGNOSTICS_ERROR_MESSAGE(errorIntegerLiteralOverflow,                      "Integer literal exceeds the unsigned 64-bit magnitude limit")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedCComment,                        "Unterminated '/*' comment")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedStringLiteral,                   "Unterminated string literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidStringEscape,                         "Invalid string escape sequence")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnterminatedByteLiteral,                     "Unterminated byte literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidByteLiteral,                          "A byte literal must contain exactly one ASCII byte")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidByteEscape,                           "Invalid byte escape sequence")
-    DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedNumericLiteral,                   "This numeric literal form is not supported")
+    DIAGNOSTICS_ERROR_MESSAGE(errorInvalidRadixLiteral,                         "Invalid digit or separator in hexadecimal, binary, or octal literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidNumericSuffix,                        "Invalid suffix on decimal integer literal")
     DIAGNOSTICS_ERROR_MESSAGE(errorInvalidSourceCharacter,                      "Invalid source character '%s'")
     DIAGNOSTICS_ERROR_MESSAGE(errorUnsupportedSyntax,                           "Syntax '%s' is not supported in the JSON-parser MVP")

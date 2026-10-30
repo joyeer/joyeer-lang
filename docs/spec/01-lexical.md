@@ -53,18 +53,18 @@ performs binding and exhaustiveness checks (§7).
 > `struct` for aggregates. The other reserved words are also rejected in
 > v0.1 (§15).
 
-> `as` is reserved for future import aliases and type casts (`x as T`).
-> Neither use is accepted by the implemented module/import grammar (§12).
+> `as` introduces an integer conversion (`x as T`, `x &as T`, §5.2.1). It is not
+> accepted in the module/import grammar (§12); import aliases remain reserved.
 > The `is` type-test operator is also deferred (§15).
 
 ### 1.5 Literals
 
 ```
 integer_literal  ::= decimal_lit | hex_lit | binary_lit | octal_lit
-decimal_lit      ::= digit ( digit | '_' )*
-hex_lit          ::= '0x' hex_digit ( hex_digit | '_' )*
-binary_lit       ::= '0b' ( '0' | '1' | '_' )+
-octal_lit        ::= '0o' ( '0'..'7' | '_' )+
+decimal_lit      ::= digit ( '_'? digit )*
+hex_lit          ::= ('0x'|'0X') hex_digit ( '_'? hex_digit )*
+binary_lit       ::= ('0b'|'0B') ('0'|'1') ( '_'? ('0'|'1') )*
+octal_lit        ::= ('0o'|'0O') ('0'..'7') ( '_'? ('0'..'7') )*
 
 float_literal    ::= decimal_lit '.' decimal_lit [ exponent ]
                   |  decimal_lit exponent
@@ -108,9 +108,17 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 | Postfix | `?` (Result / Optional propagation) `!` (force-unwrap) |
 | Member / call | `.` `(` `)` `[` `]` `{` `}` `,` `;` `:` `=>` `_` |
 | Memory marker | `&` (call-site inout marker) |
+| Declaration annotation | `@` (§11, §19) |
 
 `&` is both bitwise-AND (binary infix) and the inout call-site marker
 (prefix on argument). Disambiguated by syntactic position.
+
+`@` starts a declaration annotation. Annotation names such as `c_extern`
+and `c_export`, and argument labels such as `symbol`, are identifiers, not
+new keywords. The C annotation grammar is specified in [§17](17-grammar.md)
+and its semantics in [§19](19-c-interop.md). **Implementation status:** `@`
+and the restricted C annotation subset are accepted; the proposed
+`@spec`/`@property` shorthand and DSL remain unsupported.
 
 ### 1.7 String interpolation ⏳
 

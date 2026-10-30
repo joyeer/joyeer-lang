@@ -185,6 +185,146 @@ let invalid = (a + b) = c
     EXPECT_EQ(result.root->items.size(), 2u);
 }
 
+TEST_F(ParserTest, ParsesBitwiseOperatorsWithSpecPrecedence) {
+    parse("let value = a | b ^ c & d << e + f == g\nlet nested = x >> 2\nlet inverted = ~x\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    // Bitwise operators bind tighter than comparison: (a | ...) == g.
+    const auto equality = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(equality, nullptr);
+    EXPECT_EQ(equality->op->kind, equalEqual);
+    const auto bitOr = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(equality->left);
+    ASSERT_NE(bitOr, nullptr);
+    EXPECT_EQ(bitOr->op->kind, verticalBar);
+    const auto bitXor = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitOr->right);
+    ASSERT_NE(bitXor, nullptr);
+    EXPECT_EQ(bitXor->op->kind, caret);
+    const auto bitAnd = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitXor->right);
+    ASSERT_NE(bitAnd, nullptr);
+    EXPECT_EQ(bitAnd->op->kind, ampersand);
+    const auto shift = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(bitAnd->right);
+    ASSERT_NE(shift, nullptr);
+    EXPECT_EQ(shift->op->kind, shiftLeft);
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::BinaryExprSyntax>(shift->right)->op->kind, plus);
+
+    const auto right = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(result.root->items[1]);
+    const auto shiftRightExpression = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            right->initializer);
+    ASSERT_NE(shiftRightExpression, nullptr);
+    EXPECT_EQ(shiftRightExpression->op->kind, shiftRight);
+    const auto inverted = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(result.root->items[2]);
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::PrefixExprSyntax>(inverted->initializer)->op->kind, tilde);
+}
+
+TEST_F(ParserTest, ParsesCastsBetweenPrefixAndBinaryOperators) {
+    parse("let value = a + -b as UInt32 << 8\nlet wrapped = c &as UInt8 < d\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto binding = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[0]);
+    const auto shift = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            binding->initializer);
+    ASSERT_NE(shift, nullptr);
+    EXPECT_EQ(shift->op->kind, shiftLeft);
+    const auto sum = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(shift->left);
+    ASSERT_NE(sum, nullptr);
+    EXPECT_EQ(sum->op->kind, plus);
+    // The cast applies to the negated operand: (-b) as UInt32.
+    const auto cast = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(sum->right);
+    ASSERT_NE(cast, nullptr);
+    ASSERT_NE(cast->castTarget, nullptr);
+    EXPECT_EQ(cast->op->kind, kwAs);
+    EXPECT_EQ(cast->operand->kind, Kind::prefixExpr);
+
+    const auto second = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[1]);
+    const auto comparison = std::dynamic_pointer_cast<joyeer::syntax::BinaryExprSyntax>(
+            second->initializer);
+    ASSERT_NE(comparison, nullptr);
+    EXPECT_EQ(comparison->op->kind, less);
+    const auto wrapping = std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(comparison->left);
+    ASSERT_NE(wrapping, nullptr);
+    EXPECT_EQ(wrapping->op->rawValue, "&as");
+}
+
+TEST_F(ParserTest, ParsesCompoundAssignmentsAsRightAssociativeAssignments) {
+    parse("let x = a += b * c\nlet y = a <<= b = c\nlet z = &items[0] ^= 1\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 3u);
+    const auto initializer = [this](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                result.root->items[index])->initializer;
+    };
+    const auto first = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(initializer(0));
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(first->op->kind, plusEqual);
+    EXPECT_EQ(first->value->kind, Kind::binaryExpr);
+    const auto second = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(initializer(1));
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(second->op->kind, shiftLeftEqual);
+    EXPECT_EQ(second->value->kind, Kind::assignmentExpr);
+    const auto third = std::dynamic_pointer_cast<joyeer::syntax::AssignmentExprSyntax>(initializer(2));
+    ASSERT_NE(third, nullptr);
+    EXPECT_EQ(third->op->kind, caretEqual);
+    EXPECT_EQ(third->target->kind, Kind::accessExpr);
+}
+
+TEST_F(ParserTest, ParsesTryConversionAsACastWithAQuestionMark) {
+    parse("let a = x as? UInt8\nlet b = x as Int\nlet c = (x as? UInt8)?\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto cast = [this](size_t index) {
+        return std::dynamic_pointer_cast<joyeer::syntax::PrefixExprSyntax>(
+                std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+                        result.root->items[index])->initializer);
+    };
+    ASSERT_NE(cast(0), nullptr);
+    EXPECT_EQ(cast(0)->op->rawValue, "as?");
+    EXPECT_EQ(cast(0)->op->kind, kwAs);
+    ASSERT_NE(cast(1), nullptr);
+    EXPECT_EQ(cast(1)->op->rawValue, "as");
+    // The third form propagates the Result with postfix '?'.
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(
+            result.root->items[2])->initializer->kind, Kind::propagateExpr);
+}
+
+TEST_F(ParserTest, ParsesForInLoopsAsHiddenBindingsAndAWhile) {
+    parse("func run(items: [Int]) {\nfor x in items {\nprint(value: x)\n}\n"
+          "for i in 0..<3 { }\nfor _ in 1...2 { }\n}\n");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    const auto& items = function->body->items;
+    // Sequence loop: 2 hidden bindings + while. Exclusive range: 3 + while.
+    // Inclusive range: 4 + while.
+    ASSERT_EQ(items.size(), 2u + 1u + 3u + 1u + 4u + 1u);
+    EXPECT_EQ(items[0]->kind, Kind::bindingDecl);
+    EXPECT_EQ(items[2]->kind, Kind::whileStmt);
+    const auto loop = std::static_pointer_cast<joyeer::syntax::WhileStmtSyntax>(items[2]);
+    // counter advance, the loop variable, then the original body statement
+    ASSERT_EQ(loop->body->items.size(), 3u);
+    EXPECT_EQ(loop->body->items[0]->kind, Kind::assignmentExpr);
+    EXPECT_EQ(loop->body->items[1]->kind, Kind::bindingDecl);
+    EXPECT_EQ(loop->body->items[2]->kind, Kind::callExpr);
+    const auto name = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(loop->body->items[1]);
+    EXPECT_EQ(name->name->rawValue, "x");
+    const auto first = std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(items[0]);
+    EXPECT_EQ(first->name->rawValue, "$for1");
+}
+
+TEST_F(ParserTest, DiagnosesInvalidForInHeaders) {
+    for (const auto* header : { "for &x in a { }", "for 1 in a { }", "for x a { }" }) {
+        SCOPED_TRACE(header);
+        parse(std::string("func run(a: [Int]) {\n") + header + "\n}\n");
+        EXPECT_FALSE(result.succeeded());
+    }
+}
+
 TEST_F(ParserTest, ParsesLogicalOperatorsWithSpecPrecedence) {
     parse("let value = target = !a || b && c == d < e + f * g\n");
 

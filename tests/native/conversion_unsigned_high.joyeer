@@ -1,0 +1,4 @@
+func main() {
+    let value: UInt = 0xFFFF_FFFF_FFFF_FFFF
+    print(value: value as Int)
+}

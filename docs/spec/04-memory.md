@@ -259,25 +259,48 @@ var p = Point(x: 1, y: 2)
 
 #### 4.4.2 Index-level conservatism
 
-The compiler does **not** prove that two array indices are different:
+The compiler does **not** prove that two array indices are different. Two
+projections that are held at the same time, such as the arguments of one call,
+conflict when their paths differ only at `[index]` steps:
 
 ```joyeer
 var a = [1, 2, 3]
-&a[0] += a[1]        // ❌ error: cannot prove a[0] and a[1] are disjoint
+swap(first: &a[0], second: &a[1])   // ❌ error: cannot prove a[0] and a[1] are disjoint
 ```
 
-Workaround: introduce a `let` snapshot:
+Workaround: copy one side into a `let` snapshot, or use a standard-library
+subscript that takes both indices:
 
 ```joyeer
 let tmp = a[1]
-&a[0] += tmp         // ✅
+update(dst: &a[0], src: tmp)        // ✅
+&a.bumpAt(0, by: a[1])              // hypothetical: API takes care of disjointness
 ```
 
-Or use a standard-library subscript that takes both indices:
+#### 4.4.3 Assignment
+
+An assignment `&target = value` or `&target op= value` is not a held pair of
+projections. Its right-hand side produces a value, and the `inout` access to
+`target` begins only after that value exists:
+
+1. Index operands in `target` are evaluated, left to right.
+2. The right-hand side is evaluated.
+3. The `inout` access to `target` begins: bounds are checked, the old value is
+   read for `op=`, and the result is stored.
+
+So the right-hand side may read the destination or call anything that
+borrows or mutates the same root, and the store still lands in the storage
+that exists at step 3:
 
 ```joyeer
-&a.bumpAt(0, by: a[1])      // hypothetical: API takes care of disjointness
+var a = [1, 2, 3]
+&a[0] += a[1]             // ✅ a[1] is read as a value before a[0] is accessed
+&a[0] = a[0] + a[2]       // ✅
+&a[0] += grow(a: &a)      // ✅ grow may reallocate; a[0] is accessed afterwards
 ```
+
+Only the right-hand side's own calls are checked for exclusivity (§4.4), not
+against the assignment target.
 
 ### 4.5 Subscripts & projection
 
@@ -323,9 +346,12 @@ The lifetime of a yielded projection equals the smallest enclosing
 this is a deliberate simplicity choice for AI tooling.
 
 ```joyeer
-&a[0] += a[1]        // both projections established at start of this statement
-                     //   → conflict detected here
+swap(first: &a[0], second: &a[1])   // both projections established at the call
+                                    //   → conflict detected here
 ```
+
+Assignments are the exception: the `inout` access to the target starts after
+the right-hand side has been evaluated (§4.4.3).
 
 #### 4.5.4 Disjoint paths
 
@@ -420,9 +446,25 @@ and concurrency model.
 
 ### 4.9 Raw memory (FFI)
 
-Out of scope for v0.1. A future `unsafe` block will expose raw pointers
-for C interop. Until then, the standard library is the only producer of
-heap-backed types (`Array`, `String`, `Dict`).
+The restricted [C boundary](19-c-interop.md) specifies scalar native imports
+and exports for an explicitly authorized runtime compilation context.
+By-value scalar ABI adaptation does not introduce references, aliasing
+values, or a way for native code to mutate the caller's scalar storage.
+The initial `Int`/`Void` binding subset is implemented; broader ABI mappings
+remain design, as recorded in [implementation coverage](../impl/c-interop.md).
+
+Raw memory remains outside the accepted source surface. This revision adds
+no raw/opaque address type, address-taking or dereference syntax, nullable
+address representation, or public pointer API. `unsafe` remains reserved
+(§15); a future block or pointer spelling is not selected here.
+
+The [deferred memory-boundary proposal](../plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+must settle byte extents, read/write access, nullability, output
+initialization, retention, and allocator ownership before any address
+mechanism is admitted. Ordinary access effects, `Optional`, and managed
+aggregate layouts are not substitutes for those contracts. Internal runtime
+storage and existing compiler-known host operations do not grant ordinary
+source code native privileges.
 
 ### 4.10 Return values & ownership escape
 

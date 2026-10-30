@@ -234,6 +234,7 @@ public:
             for (const auto& file : modules[index].files) {
                 indexNode(file);
                 model->sourceModules_[file->span.sourceId] = activeModule;
+                model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;
@@ -413,9 +414,12 @@ private:
             case Kind::parenthesizedExpr:
                 indexNode(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(node)->expression);
                 break;
-            case Kind::prefixExpr:
-                indexNode(std::static_pointer_cast<syntax::PrefixExprSyntax>(node)->operand);
+            case Kind::prefixExpr: {
+                const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(node);
+                indexNode(prefix->operand);
+                if (prefix->castTarget != nullptr) indexNode(prefix->castTarget);
                 break;
+            }
             case Kind::accessExpr:
                 indexNode(std::static_pointer_cast<syntax::AccessExprSyntax>(node)->operand);
                 break;
@@ -824,6 +828,10 @@ private:
                     SymbolKind::builtinFunction, std::string(descriptor.name), {});
             symbol(function).declaredType = resultType;
             symbol(function).callable = std::move(signature);
+        }
+        for (const auto* name : {"Int8", "Int16", "Int32", "Int64", "UInt",
+                "UInt16", "UInt32", "UInt64", "Float", "Double"}) {
+            declareBuiltinType(name);
         }
     }
 
@@ -1442,11 +1450,12 @@ private:
                         std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression,
                         currentScope);
                 break;
-            case syntax::Kind::prefixExpr:
-                resolveExpression(
-                        std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
-                        currentScope);
+            case syntax::Kind::prefixExpr: {
+                const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(expression);
+                resolveExpression(prefix->operand, currentScope);
+                if (prefix->castTarget != nullptr) resolveType(prefix->castTarget, currentScope);
                 break;
+            }
             case syntax::Kind::accessExpr:
                 resolveExpression(
                         std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
@@ -1828,6 +1837,7 @@ private:
                 const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression);
                 switch (literal->literal->kind) {
                     case decimalLiteral: return lookupType(model->fileScope_, "Int").symbol;
+                    case floatLiteral: return lookupType(model->fileScope_, "Double").symbol;
                     case stringLiteral: return lookupType(model->fileScope_, "String").symbol;
                     case byteLiteral: return lookupType(model->fileScope_, "UInt8").symbol;
                     case booleanLiteral: return lookupType(model->fileScope_, "Bool").symbol;

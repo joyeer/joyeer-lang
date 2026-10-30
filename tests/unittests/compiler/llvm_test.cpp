@@ -1,6 +1,6 @@
 #include "compiler/codegen/llvm.h"
 #include "compiler/codegen/linker.h"
-#include "backend/native_backend.h"
+#include "backend/backend.h"
 #include "compiler/ir/irlowering.h"
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
@@ -94,10 +94,25 @@ protected:
     joyeer::llvmbackend::Result result;
 };
 
-TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
+class LLVMOwnedModuleTest : public LLVMBackendTest,
+        public testing::WithParamInterface<std::optional<joyeer::DebugInfoFormat>> {};
+
+TEST_P(LLVMOwnedModuleTest, CompilesWithoutTextAndPreservesPortableIR) {
+    const auto format = GetParam();
     joyeer::llvmbackend::EmitOptions options;
     options.emitText = false;
-    ASSERT_NO_FATAL_FAILURE(emit("func main() { print(value: 42) }\n", false, options));
+    options.emitLineTables = format.has_value();
+    options.emitVariables = format.has_value();
+    if (format.has_value()) options.debugInfoFormat = *format;
+    ASSERT_NO_FATAL_FAILURE(emit(
+            "func calculate(left: Int, right: Int): Int {\n"
+            "let sum = left + right\nreturn sum - left * right\n}\n"
+            "func main() {\nlet text = \"answer\"\n"
+            "var values = [calculate(left: 7, right: 6)]\n"
+            "&values.append(element: 2)\n"
+            "print(value: values[0])\n"
+            "print(value: text)\n}\n",
+            format.has_value(), options));
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     ASSERT_NE(result.module, nullptr);
     EXPECT_TRUE(result.text.empty());
@@ -118,11 +133,14 @@ TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
         }
     };
     Printed before;
-    ASSERT_EQ(joyeer_native_backend_print_module(module.get(), collect, &before),
-            JOYEER_NATIVE_BACKEND_SUCCESS);
+    ASSERT_EQ(joyeer_backend_print_module(module.get(), collect, &before),
+            JOYEER_BACKEND_SUCCESS);
     ASSERT_FALSE(before.failed);
     ASSERT_FALSE(before.text.empty());
     EXPECT_EQ(before.text.find("target triple"), std::string::npos);
+    if (format.has_value()) {
+        EXPECT_NE(before.text.find("@llvm.dbg.declare"), std::string::npos);
+    }
 
 #ifdef _WIN32
     const auto process = GetCurrentProcessId();
@@ -141,26 +159,35 @@ TEST_F(LLVMBackendTest, CompilesOwnedModuleWithoutTextAndPreservesPortableIR) {
             EXPECT_FALSE(error) << error.message();
         }
     } cleanup {directory};
-    for (const auto level : {JOYEER_NATIVE_BACKEND_O0, JOYEER_NATIVE_BACKEND_O1,
-                            JOYEER_NATIVE_BACKEND_O2, JOYEER_NATIVE_BACKEND_O3}) {
+    for (const auto level : {JOYEER_BACKEND_O0, JOYEER_BACKEND_O1,
+                            JOYEER_BACKEND_O2, JOYEER_BACKEND_O3}) {
         SCOPED_TRACE(level);
         const auto object = directory / ("object-" + std::to_string(level) + ".o");
         const auto encoded = object.u8string();
         const std::string path(encoded.begin(), encoded.end());
-        const JoyeerNativeBackendObjectOptions objectOptions {
-            JOYEER_NATIVE_BACKEND_ABI_VERSION, sizeof(JoyeerNativeBackendObjectOptions),
+        const JoyeerBackendObjectOptions objectOptions {
+            JOYEER_BACKEND_ABI_VERSION, sizeof(JoyeerBackendObjectOptions),
             "not LLVM assembly", 17, path.c_str(), static_cast<uint32_t>(level), module.get(),
         };
-        ASSERT_EQ(joyeer_native_backend_emit_object(&objectOptions, nullptr, nullptr),
-                JOYEER_NATIVE_BACKEND_SUCCESS);
+        ASSERT_EQ(joyeer_backend_emit_object(&objectOptions, nullptr, nullptr),
+                JOYEER_BACKEND_SUCCESS);
         EXPECT_GT(std::filesystem::file_size(object), 0u);
         Printed after;
-        ASSERT_EQ(joyeer_native_backend_print_module(module.get(), collect, &after),
-                JOYEER_NATIVE_BACKEND_SUCCESS);
+        ASSERT_EQ(joyeer_backend_print_module(module.get(), collect, &after),
+                JOYEER_BACKEND_SUCCESS);
         ASSERT_FALSE(after.failed);
         EXPECT_EQ(after.text, before.text);
     }
 }
+
+INSTANTIATE_TEST_SUITE_P(InMemory, LLVMOwnedModuleTest, testing::Values(
+        std::optional<joyeer::DebugInfoFormat> {},
+        std::optional {joyeer::DebugInfoFormat::dwarf},
+        std::optional {joyeer::DebugInfoFormat::codeView}),
+        [](const testing::TestParamInfo<std::optional<joyeer::DebugInfoFormat>>& info) {
+            if (!info.param.has_value()) return "NoDebug";
+            return *info.param == joyeer::DebugInfoFormat::dwarf ? "Dwarf" : "CodeView";
+        });
 
 TEST(LLVMModuleConstructionTest, DoesNotRequireBasicBlocksInDefinitionOrder) {
     joyeer::ir::Module module;
@@ -360,6 +387,58 @@ TEST_F(LLVMBackendTest, WrapsCrossFileInstructionScopesForLineTablesAndFullDebug
         ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
         EXPECT_NE(result.text.find("!DILexicalBlockFile(scope:"), std::string::npos);
         EXPECT_NE(result.text.find("!DILocation(line: 3, column: 1,"), std::string::npos);
+    }
+}
+
+TEST_F(LLVMBackendTest, ResolvesSparseReorderedFunctionAndDebugIdentities) {
+    auto lowered = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    const auto remap = [](uint32_t id) { return id * 7 + 11; };
+    const auto remapOptional = [&](std::optional<uint32_t>& id) {
+        if (id.has_value()) id = remap(*id);
+    };
+    for (auto& function : lowered.module->functions) {
+        function.id = remap(function.id);
+        remapOptional(function.debugScope);
+        if (function.debugLocation.has_value()) remapOptional(function.debugLocation->scope);
+        for (auto& binding : function.entryDebugVariableBindings) binding.variable = remap(binding.variable);
+        for (auto& block : function.blocks) {
+            for (auto& instruction : block.instructions) {
+                remapOptional(instruction.callee);
+                if (instruction.debugLocation.has_value()) remapOptional(instruction.debugLocation->scope);
+                for (auto& binding : instruction.debugVariableBindings) binding.variable = remap(binding.variable);
+            }
+        }
+    }
+    for (auto& scope : lowered.module->debugScopes) {
+        scope.id = remap(scope.id);
+        scope.function = remap(scope.function);
+        remapOptional(scope.parent);
+    }
+    for (auto& variable : lowered.module->debugVariables) {
+        variable.id = remap(variable.id);
+        variable.function = remap(variable.function);
+        variable.scope = remap(variable.scope);
+    }
+    std::reverse(lowered.module->functions.begin(), lowered.module->functions.end());
+    std::reverse(lowered.module->debugScopes.begin(), lowered.module->debugScopes.end());
+    std::reverse(lowered.module->debugVariables.begin(), lowered.module->debugVariables.end());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*lowered.module).succeeded());
+    for (const auto format : {joyeer::DebugInfoFormat::dwarf, joyeer::DebugInfoFormat::codeView}) {
+        result = joyeer::llvmbackend::Emitter().emit(*lowered.module, {
+            true, format, joyeer::OptimizationLevel::O0, true,
+        });
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        EXPECT_TRUE(result.hasEntryPoint);
+        EXPECT_NE(result.text.find("!DILocalVariable("), std::string::npos);
+        EXPECT_NE(result.text.find("!DILexicalBlock("), std::string::npos);
+        EXPECT_NE(result.text.find("!DIFile(filename: \"library.joyeer\""), std::string::npos);
+        for (const auto& function : lowered.module->functions) {
+            if (!function.isExternal) {
+                EXPECT_NE(result.text.find("@joyeer_fn_" + std::to_string(function.id) + "("),
+                          std::string::npos);
+            }
+        }
     }
 }
 
@@ -950,8 +1029,17 @@ print(value: "left" + "right")
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("%joyeer.string = type { ptr, i64 }"), std::string::npos);
     EXPECT_NE(result.text.find("declare void @joyeer_print_int(i64)"), std::string::npos);
+#if (defined(_M_ARM64) || defined(__aarch64__)) && !defined(__APPLE__)
     EXPECT_NE(result.text.find("declare void @joyeer_print_bool(i1)"), std::string::npos);
     EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8)"), std::string::npos);
+#else
+    EXPECT_NE(result.text.find("declare void @joyeer_print_bool(i1 zeroext)"), std::string::npos);
+#if defined(_WIN32)
+    EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8)"), std::string::npos);
+#else
+    EXPECT_NE(result.text.find("declare void @joyeer_print_byte(i8 zeroext)"), std::string::npos);
+#endif
+#endif
     EXPECT_NE(
             result.text.find("declare void @joyeer_print_string_abi(ptr, i64)"),
             std::string::npos);
@@ -1510,7 +1598,7 @@ return byteToString(value: value)
     ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
     EXPECT_NE(result.text.find("zext i8"), std::string::npos);
     EXPECT_NE(
-            result.text.find("declare void @joyeer_byte_to_string_abi(ptr, i8)"),
+            result.text.find("declare void @joyeer_byte_to_string_abi(ptr, i8"),
             std::string::npos);
     EXPECT_NE(
             result.text.find("call void @joyeer_byte_to_string_abi(ptr"),

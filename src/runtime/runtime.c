@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "native.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -152,6 +153,18 @@ int64_t joyeer_checked_rem_int(int64_t left, int64_t right) {
 
 void joyeer_print_int(int64_t value) {
     printf("%" PRId64 "\n", value);
+}
+
+void joyeer_print_uint(uint64_t value) {
+    printf("%" PRIu64 "\n", value);
+}
+
+void joyeer_print_float(float value) {
+    printf("%.9g\n", (double)value);
+}
+
+void joyeer_print_double(double value) {
+    printf("%.17g\n", value);
 }
 
 void joyeer_print_bool(bool value) {
@@ -471,6 +484,49 @@ static JoyeerArray arrayCreateOwned(
 
 JoyeerArray joyeer_array_create(const void* values, int64_t count, int64_t elementSize) {
     return arrayCreateOwned(values, count, elementSize, NULL, NULL, false);
+}
+
+static void nativeStringClone(void* destination, const void* source) {
+    const JoyeerString* value = (const JoyeerString*)source;
+    joyeer_string_clone_abi((JoyeerString*)destination, value->data, value->count);
+}
+
+static void nativeStringDestroy(void* value) {
+    joyeer_string_destroy_abi((JoyeerString*)value);
+}
+
+void joyeer_native_bytes_init(JoyeerArray* result) {
+    if (result == NULL) joyeer_panic("native byte output is null");
+    *result = arrayCreateOwned(NULL, 0, 1, NULL, NULL, false);
+}
+
+void joyeer_native_strings_init(JoyeerArray* result) {
+    if (result == NULL) joyeer_panic("native string-list output is null");
+    *result = arrayCreateOwned(NULL, 0, sizeof(JoyeerString),
+            nativeStringClone, nativeStringDestroy, false);
+}
+
+void joyeer_native_bytes_assign(JoyeerArray* result, const uint8_t* data, int64_t count) {
+    if (result == NULL) joyeer_panic("native byte output is null");
+    JoyeerArray copy = arrayCreateOwned(data, count, 1, NULL, NULL, false);
+    joyeer_array_destroy_abi(result);
+    *result = copy;
+}
+
+void joyeer_native_string_assign(JoyeerString* result, const uint8_t* data, int64_t count) {
+    if (result == NULL) joyeer_panic("native string output is null");
+    JoyeerString copy;
+    joyeer_string_clone_abi(&copy, data, count);
+    joyeer_string_destroy_abi(result);
+    *result = copy;
+}
+
+void joyeer_native_strings_assign(JoyeerArray* result, const JoyeerString* data, int64_t count) {
+    if (result == NULL) joyeer_panic("native string-list output is null");
+    JoyeerArray copy = arrayCreateOwned(data, count, sizeof(JoyeerString),
+            nativeStringClone, nativeStringDestroy, true);
+    joyeer_array_destroy_abi(result);
+    *result = copy;
 }
 
 void joyeer_array_create_owned_abi(

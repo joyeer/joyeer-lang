@@ -5,6 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cctype>
+#include <charconv>
+#include <cmath>
 #include <functional>
 #include <sstream>
 #include <unordered_set>
@@ -50,6 +53,16 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     registerGenericBuiltin("Optional", TypeKind::optional, 1);
     registerGenericBuiltin("Result", TypeKind::result, 2);
+    for (const auto& [name, kind] : {
+            std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
+            {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
+            {"UInt16", TypeKind::uint16}, {"UInt32", TypeKind::uint32},
+            {"UInt64", TypeKind::uint64}, {"UInt", TypeKind::unsignedInteger},
+            {"Float", TypeKind::float32}}) {
+        TypeId registeredType = invalidTypeId;
+        registerConcreteBuiltin(name, kind, registeredType);
+    }
+    registerConcreteBuiltin("Double", TypeKind::float64, doubleTypeId);
 }
 
 TypeId TypeContext::errorType() const {
@@ -82,6 +95,10 @@ TypeId TypeContext::stringType() const {
 
 TypeId TypeContext::uint8Type() const {
     return uint8TypeId;
+}
+
+TypeId TypeContext::doubleType() const {
+    return doubleTypeId;
 }
 
 TypeId TypeContext::ioErrorType() const {
@@ -299,6 +316,11 @@ const TypedCallableSignature* TypeCheckedModel::callable(
     return &found->second;
 }
 
+const NativeBinding* TypeCheckedModel::nativeBinding(semantic::SymbolId symbol) const {
+    const auto found = nativeBindings.find(symbol);
+    return found == nativeBindings.end() ? nullptr : &found->second;
+}
+
 std::optional<semantic::SymbolId> TypeCheckedModel::referencedSymbol(
         const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
@@ -329,6 +351,7 @@ public:
         const auto& root = semanticModel->root();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+            validateNativeSymbols();
             for (const auto& item : root->items) checkTopLevelBody(item);
         }
         validateDeferredReferences();
@@ -645,6 +668,146 @@ private:
 
         model->symbolTypes[*function] = signature.result;
         model->callables[*function] = std::move(signature);
+        resolveNativeBinding(declaration, *function);
+    }
+
+    void resolveNativeBinding(
+            const syntax::FunctionDeclSyntax::Ptr& declaration,
+            semantic::SymbolId function) {
+        if (declaration->attributes.empty()) return;
+        const auto diagnosticStart = diagnostics.size();
+        std::optional<NativeBinding> binding;
+        for (const auto& attribute : declaration->attributes) {
+            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if (name != "c_extern" && name != "c_export") {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "unknown annotation '@" + name + "'");
+                continue;
+            }
+            if (binding.has_value()) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "a function may have only one C binding annotation");
+                continue;
+            }
+            binding = NativeBinding {
+                name == "c_extern" ? NativeBindingKind::cImport : NativeBindingKind::cExport,
+                {},
+                attribute.span,
+            };
+            if (attribute.arguments.size() != 1) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "C annotations require exactly one 'symbol:' string-literal argument");
+                continue;
+            }
+            const auto& argument = attribute.arguments.front();
+            const auto literal = argument->value != nullptr &&
+                    argument->value->kind == syntax::Kind::literalExpr
+                    ? std::static_pointer_cast<syntax::LiteralExprSyntax>(argument->value)
+                    : nullptr;
+            if (argument->label == nullptr || argument->label->rawValue != "symbol" ||
+                argument->accessMarker != nullptr || literal == nullptr ||
+                literal->literal == nullptr || literal->literal->kind != stringLiteral) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, argument->span,
+                       "C annotations require 'symbol:' followed by a string literal");
+                continue;
+            }
+            binding->symbol = literal->literal->rawValue;
+            if (!isCIdentifier(binding->symbol)) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, argument->span,
+                       "native symbol must be a nonempty ASCII C identifier without linker decoration");
+            }
+        }
+        if (!binding.has_value()) return;
+        if (!model->semanticModelValue->isRuntimeSource(declaration->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, binding->span,
+                   "C bindings require an explicitly selected runtime compilation unit");
+        }
+        const bool importing = binding->kind == NativeBindingKind::cImport;
+        const bool hasBody = declaration->body != nullptr;
+        if ((importing && hasBody) || (!importing && !hasBody)) {
+            report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                   importing ? "@c_extern must not have a function body"
+                             : "@c_export requires a function body");
+        }
+        if (declaration->returnType == nullptr) {
+            report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                   "C bindings require an explicit result type, including Void");
+        }
+        const auto* symbol = model->semanticModelValue->symbol(function);
+        if ((symbol->isRootModule && symbol->name == "main") ||
+            (!importing && isCEntrySymbol(binding->symbol))) {
+            report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                   "C bindings must not replace a toolchain executable entry point");
+        }
+        const auto& signature = model->callables.at(function);
+        for (size_t index = 0; index < declaration->parameters.size(); ++index) {
+            const auto& parameter = declaration->parameters[index];
+            const auto effect = parameter->accessEffect();
+            const auto buffer = nativeBufferKind(signature.parameters[index],
+                    [&](TypeId id) { return model->typeContext.type(id); });
+            const bool scalar = effect == syntax::AccessEffect::borrowing &&
+                    isNativeScalar(model->typeContext.type(signature.parameters[index])->kind);
+            const bool nativeBuffer = importing && buffer != NativeBufferKind::none &&
+                    (effect == syntax::AccessEffect::borrowing ||
+                     (effect == syntax::AccessEffect::initializing &&
+                      buffer != NativeBufferKind::byteArrays));
+            if (!scalar && !nativeBuffer) {
+                report(TypeCheckingDiagnosticId::unsupportedNativeSignature, parameter->span,
+                       "C bindings require borrowing scalars; C imports also accept borrowing "
+                       "String, [UInt8], [String], [[UInt8]] and initializing String, [UInt8], [String]");
+            }
+        }
+        if (!isNativeScalar(model->typeContext.type(signature.result)->kind) &&
+            signature.result != model->typeContext.voidType()) {
+            report(TypeCheckingDiagnosticId::unsupportedNativeSignature,
+                   declaration->returnType == nullptr ? declaration->span : declaration->returnType->span,
+                   "C bindings require a scalar or Void result");
+        }
+        if (diagnostics.size() == diagnosticStart) {
+            model->nativeBindings.emplace(function, std::move(*binding));
+        }
+    }
+
+    void validateNativeSymbols() {
+        std::unordered_map<std::string, semantic::SymbolId> declarations;
+        std::unordered_set<std::string> exports;
+        for (const auto& symbol : model->semanticModelValue->symbols()) {
+            const auto* binding = model->nativeBinding(symbol.id);
+            if (binding == nullptr) continue;
+            const auto [previous, inserted] = declarations.emplace(binding->symbol, symbol.id);
+            if (!inserted) {
+                const auto& left = model->callables.at(previous->second);
+                const auto& right = model->callables.at(symbol.id);
+                const auto compatible = [&](TypeId a, TypeId b) {
+                    const auto lookup = [&](TypeId id) { return model->typeContext.type(id); };
+                    const auto leftBuffer = nativeBufferKind(a, lookup);
+                    const auto rightBuffer = nativeBufferKind(b, lookup);
+                    if (leftBuffer != NativeBufferKind::none || rightBuffer != NativeBufferKind::none) {
+                        return leftBuffer == rightBuffer;
+                    }
+                    return sameNativeRepresentation(model->typeContext.type(a)->kind,
+                            model->typeContext.type(b)->kind);
+                };
+                const auto* previousSymbol = model->semanticModelValue->symbol(previous->second);
+                bool sameEffects = previousSymbol->callable->parameters.size() == symbol.callable->parameters.size();
+                for (size_t index = 0; sameEffects && index < symbol.callable->parameters.size(); ++index) {
+                    sameEffects = previousSymbol->callable->parameters[index].access ==
+                            symbol.callable->parameters[index].access;
+                }
+                if (left.parameters.size() != right.parameters.size() ||
+                        !std::equal(left.parameters.begin(), left.parameters.end(),
+                                right.parameters.begin(), right.parameters.end(), compatible) ||
+                        !compatible(left.result, right.result) || !sameEffects) {
+                    report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                           "incompatible C signatures for native symbol '" + binding->symbol + "'");
+                }
+            }
+            if (binding->kind == NativeBindingKind::cExport &&
+                !exports.insert(binding->symbol).second) {
+                report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                       "duplicate C export for native symbol '" + binding->symbol + "'");
+            }
+        }
     }
 
     void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
@@ -750,9 +913,38 @@ private:
                     "binding requires a type annotation or an initializer");
         }
 
+        // The parser rewrites `for x in source` into a hidden `$for<N>` copy of the
+        // source that is later counted and subscripted. Reject a source that cannot
+        // be, and poison the binding so the rewrite adds no follow-on errors.
+        if (isForInSourceBinding(declaration) && initializer.has_value() &&
+            *initializer != model->typeContext.errorType()) {
+            const auto* sourceType = model->typeContext.type(*initializer);
+            if (sourceType == nullptr || (sourceType->kind != TypeKind::array &&
+                                          sourceType->kind != TypeKind::string)) {
+                report(
+                        TypeCheckingDiagnosticId::notIterable,
+                        declaration->initializer->span,
+                        "cannot iterate over a value of type '" +
+                                model->typeContext.displayName(*initializer) +
+                                "'; 'for' needs an array, a string, or an integer range "
+                                "('a..<b' or 'a...b')");
+                bindingType = model->typeContext.errorType();
+            }
+        }
+
         const auto symbol = model->semanticModelValue->declaredSymbol(declaration);
         if (symbol.has_value()) model->symbolTypes[*symbol] = bindingType;
         recordNodeType(declaration, bindingType);
+    }
+
+    // `$for<N>`: the hidden source copy made by the parser's for-in rewrite
+    // (`$for<N>i` and the range temporaries carry a suffix after the digits).
+    static bool isForInSourceBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
+        if (declaration->name == nullptr) return false;
+        const auto& name = declaration->name->rawValue;
+        if (name.size() <= 4 || name.compare(0, 4, "$for") != 0) return false;
+        return std::all_of(name.begin() + 4, name.end(),
+                [](unsigned char c) { return std::isdigit(c) != 0; });
     }
 
     void checkTopLevelBody(const syntax::NodePtr& node) {
@@ -799,18 +991,21 @@ private:
         }
     }
 
-    TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block) {
+    TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block,
+            std::optional<TypeId> expected = std::nullopt) {
         if (block == nullptr) return model->typeContext.errorType();
         TypeId result = model->typeContext.voidType();
-        for (const auto& item : block->items) {
-            const auto itemType = checkNode(item);
+        for (size_t index = 0; index < block->items.size(); ++index) {
+            const auto itemType = checkNode(block->items[index],
+                    index + 1 == block->items.size() ? expected : std::nullopt);
             if (result != model->typeContext.neverType()) result = itemType;
         }
         recordNodeType(block, result);
         return result;
     }
 
-    TypeId checkNode(const syntax::NodePtr& node) {
+    TypeId checkNode(const syntax::NodePtr& node,
+            std::optional<TypeId> expected = std::nullopt) {
         if (node == nullptr) return model->typeContext.errorType();
         if (node->kind == syntax::Kind::bindingDecl) {
             checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
@@ -844,7 +1039,7 @@ private:
             return model->typeContext.neverType();
         }
         if (isExpressionKind(node->kind)) {
-            return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node)).value_or(
+            return checkExpression(std::static_pointer_cast<syntax::ExprSyntax>(node), expected).value_or(
                     model->typeContext.errorType());
         }
         return model->typeContext.errorType();
@@ -907,7 +1102,7 @@ private:
                 break;
             case syntax::Kind::prefixExpr:
                 result = checkPrefix(
-                    std::static_pointer_cast<syntax::PrefixExprSyntax>(expression));
+                    std::static_pointer_cast<syntax::PrefixExprSyntax>(expression), expected);
                 break;
             case syntax::Kind::accessExpr:
                 if (std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
@@ -934,6 +1129,10 @@ private:
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
                 const auto target = checkExpression(assignment->target);
                 checkAssignmentAccess(assignment->target);
+                if (assignment->op != nullptr && assignment->op->kind != equal) {
+                    result = checkCompoundAssignment(assignment, target);
+                    break;
+                }
                 const auto value = checkExpression(assignment->value, target);
                 if (target.has_value() && value.has_value()) {
                     requireAssignable(*value, *target, assignment->value->span);
@@ -967,7 +1166,7 @@ private:
                 break;
             }
             case syntax::Kind::blockExpr:
-                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression));
+                result = checkBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), expected);
                 break;
             case syntax::Kind::ifExpr: {
                 const auto conditional = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
@@ -977,7 +1176,7 @@ private:
                     condition,
                     model->typeContext.boolType(),
                     conditional->condition->span);
-                const auto thenType = checkBlock(conditional->thenBranch);
+                const auto thenType = checkBlock(conditional->thenBranch, expected);
                 if (conditional->elseBranch == nullptr) {
                     result = model->typeContext.voidType();
                     break;
@@ -1009,7 +1208,7 @@ private:
             }
             case syntax::Kind::binaryExpr: {
                 result = checkBinary(
-                        std::static_pointer_cast<syntax::BinaryExprSyntax>(expression));
+                        std::static_pointer_cast<syntax::BinaryExprSyntax>(expression), expected);
                 break;
             }
             case syntax::Kind::subscriptExpr:
@@ -1024,12 +1223,52 @@ private:
         return result;
     }
 
+    TypeId checkNumericLiteral(const Token::Ptr& literal, std::optional<TypeId> expected,
+            bool negative = false) {
+        auto result = literal->kind == floatLiteral
+                ? model->typeContext.doubleType() : model->typeContext.intType();
+        if (expected.has_value()) {
+            auto* contextual = model->typeContext.type(*expected);
+            if (contextual != nullptr && contextual->kind == TypeKind::optional) {
+                expected = contextual->arguments.front();
+                contextual = model->typeContext.type(*expected);
+            }
+            if (contextual != nullptr && isNumeric(contextual->kind)) result = *expected;
+        }
+        const auto kind = model->typeContext.type(result)->kind;
+        bool valid = false;
+        if (isFloating(kind)) {
+            const auto& text = literal->rawValue;
+            const auto fits = [&text](auto value) {
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(),
+                        value, std::chars_format::general);
+                return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size() &&
+                        std::isfinite(value);
+            };
+            valid = kind == TypeKind::float32 ? fits(float{}) : fits(double{});
+        } else if (literal->kind == decimalLiteral && (!negative || isSignedInteger(kind))) {
+            const auto bits = scalarBitWidth(kind);
+            const auto maximum = isSignedInteger(kind)
+                    ? (uint64_t{1} << (bits - 1)) - (negative ? 0 : 1)
+                    : bits == 64 ? UINT64_MAX : (uint64_t{1} << bits) - 1;
+            valid = static_cast<uint64_t>(literal->intValue) <= maximum;
+        }
+        if (!valid) {
+            report(TypeCheckingDiagnosticId::invalidNumericLiteral, literal->span,
+                    "numeric literal is not representable as '" +
+                            model->typeContext.displayName(result) + "'");
+            return model->typeContext.errorType();
+        }
+        return result;
+    }
+
     TypeId checkLiteral(
             const syntax::LiteralExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
         if (expression->literal == nullptr) return model->typeContext.errorType();
         switch (expression->literal->kind) {
-            case decimalLiteral: return model->typeContext.intType();
+            case decimalLiteral:
+            case floatLiteral: return checkNumericLiteral(expression->literal, expected);
             case booleanLiteral: return model->typeContext.boolType();
             case stringLiteral: return model->typeContext.stringType();
             case byteLiteral: return model->typeContext.uint8Type();
@@ -1108,12 +1347,59 @@ private:
         return operandType->arguments[0];
     }
 
-    TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
-        const auto operand = checkExpression(expression->operand).value_or(
+    TypeId checkCast(const syntax::PrefixExprSyntax::Ptr& expression) {
+        const auto target = resolveType(expression->castTarget).value_or(
+                model->typeContext.errorType());
+        if (target == model->typeContext.errorType()) return target;
+        if (!isInteger(model->typeContext.type(target)->kind)) {
+            reportInvalidOperator(expression->op, { target }, expression->span);
+            return model->typeContext.errorType();
+        }
+        const bool tryCast = expression->op->rawValue == "as?";
+        // A literal operand takes the target type, so out-of-range literals
+        // are compile-time errors rather than run-time traps. `as?` accepts any
+        // value and reports a range failure in its Result, so literals stay Int.
+        const auto operand = isNumericLiteral(expression->operand) && !tryCast
+                ? checkExpression(expression->operand, target)
+                : checkExpression(expression->operand);
+        const auto operandType = operand.value_or(model->typeContext.errorType());
+        if (operandType == model->typeContext.errorType()) return operandType;
+        if (!isInteger(model->typeContext.type(operandType)->kind)) {
+            reportInvalidOperator(expression->op, { operandType, target }, expression->span);
+            return model->typeContext.errorType();
+        }
+        if (tryCast) {
+            const auto symbol = model->typeContext.builtinSymbol("ConversionError");
+            const auto failure = symbol.has_value()
+                    ? model->typeContext.typeForSymbol(*symbol) : std::nullopt;
+            if (!failure.has_value()) return model->typeContext.errorType();
+            return model->typeContext.resultType(target, *failure);
+        }
+        return target;
+    }
+
+    TypeId checkPrefix(const syntax::PrefixExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        if (expression->castTarget != nullptr) return checkCast(expression);
+        if (expression->op != nullptr && expression->op->kind == minus &&
+                expression->operand->kind == syntax::Kind::literalExpr) {
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression->operand);
+            if (literal->literal->kind == decimalLiteral) {
+                const auto result = checkNumericLiteral(literal->literal, expected, true);
+                recordNodeType(literal, result);
+                return result;
+            }
+        }
+        const auto operand = checkExpression(expression->operand, expected).value_or(
                 model->typeContext.errorType());
         if (operand == model->typeContext.errorType()) return operand;
         if (expression->op != nullptr && expression->op->kind == minus &&
-            operand == model->typeContext.intType()) {
+            (isSignedInteger(model->typeContext.type(operand)->kind) ||
+             isFloating(model->typeContext.type(operand)->kind))) {
+            return operand;
+        }
+        if (expression->op != nullptr && expression->op->kind == tilde &&
+            isInteger(model->typeContext.type(operand)->kind)) {
             return operand;
         }
         if (expression->op != nullptr && expression->op->kind == bang &&
@@ -1124,35 +1410,50 @@ private:
         return model->typeContext.errorType();
     }
 
-    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression) {
-        const auto left = checkExpression(expression->left).value_or(
-                model->typeContext.errorType());
-        const auto right = checkExpression(expression->right).value_or(
-                model->typeContext.errorType());
-        if (left == model->typeContext.errorType() ||
-            right == model->typeContext.errorType()) {
-            return model->typeContext.errorType();
+    bool isNumericLiteral(const syntax::ExprPtr& expression) const {
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isNumericLiteral(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
         }
+        if (expression->kind == syntax::Kind::prefixExpr) {
+            return isNumericLiteral(std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand);
+        }
+        if (expression->kind != syntax::Kind::literalExpr) return false;
+        const auto kind = std::static_pointer_cast<syntax::LiteralExprSyntax>(expression)->literal->kind;
+        return kind == decimalLiteral || kind == floatLiteral;
+    }
 
-        const auto op = expression->op == nullptr ? invalid : expression->op->kind;
+    // Result type of `left op right`, or nullopt if the operands are invalid.
+    std::optional<TypeId> binaryResult(TokenKind op, TypeId left, TypeId right) {
         switch (op) {
             case plus:
-                if (left == model->typeContext.intType() && left == right) return left;
+                if (isNumeric(model->typeContext.type(left)->kind) && left == right) return left;
                 if (left == model->typeContext.stringType() && left == right) return left;
                 break;
             case minus:
             case multiply:
             case divide:
+                if (isNumeric(model->typeContext.type(left)->kind) && left == right) return left;
+                break;
             case percentage:
-                if (left == model->typeContext.intType() && left == right) return left;
+            case ampersand:
+            case verticalBar:
+            case caret:
+                if (isInteger(model->typeContext.type(left)->kind) && left == right) return left;
+                break;
+            case shiftLeft:
+            case shiftRight:
+                if (isInteger(model->typeContext.type(left)->kind) &&
+                    isInteger(model->typeContext.type(right)->kind)) {
+                    return left;
+                }
                 break;
             case less:
             case lessEqual:
             case greater:
             case greaterEqual:
                 if (left == right &&
-                    (left == model->typeContext.intType() ||
-                     left == model->typeContext.uint8Type() ||
+                    (isNumeric(model->typeContext.type(left)->kind) ||
                      left == model->typeContext.stringType())) {
                     return model->typeContext.boolType();
                 }
@@ -1173,6 +1474,33 @@ private:
             default:
                 break;
         }
+        return std::nullopt;
+    }
+
+    TypeId checkBinary(const syntax::BinaryExprSyntax::Ptr& expression,
+            std::optional<TypeId> expected) {
+        TypeId left;
+        TypeId right;
+        const auto isShift = expression->op != nullptr &&
+                (expression->op->kind == shiftLeft || expression->op->kind == shiftRight);
+        if (isShift) {
+            // The shifted value takes the contextual type; the count is independent.
+            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
+            right = checkExpression(expression->right).value_or(model->typeContext.errorType());
+        } else if (isNumericLiteral(expression->left) && !isNumericLiteral(expression->right)) {
+            right = checkExpression(expression->right, expected).value_or(model->typeContext.errorType());
+            left = checkExpression(expression->left, right).value_or(model->typeContext.errorType());
+        } else {
+            left = checkExpression(expression->left, expected).value_or(model->typeContext.errorType());
+            right = checkExpression(expression->right, left).value_or(model->typeContext.errorType());
+        }
+        if (left == model->typeContext.errorType() ||
+            right == model->typeContext.errorType()) {
+            return model->typeContext.errorType();
+        }
+
+        const auto op = expression->op == nullptr ? invalid : expression->op->kind;
+        if (const auto result = binaryResult(op, left, right); result.has_value()) return *result;
 
         reportInvalidOperator(expression->op, { left, right }, expression->span);
         return model->typeContext.errorType();
@@ -1323,6 +1651,11 @@ private:
         }
 
         const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
+        if (target.has_value() && model->nativeBinding(*target) != nullptr &&
+            !model->semanticModelValue->isRuntimeSource(expression->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, expression->span,
+                   "direct calls to C bindings require a runtime compilation unit; use a checked Joyeer wrapper");
+        }
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
@@ -1805,6 +2138,44 @@ private:
         }
     }
 
+    // `target op= value` reads the target, applies the binary operator, and
+    // stores the result, so the operator's result type must be the target type.
+    TypeId checkCompoundAssignment(const syntax::AssignmentExprSyntax::Ptr& assignment,
+            std::optional<TypeId> target) {
+        auto path = assignment->target;
+        while (path != nullptr && (path->kind == syntax::Kind::accessExpr ||
+                                   path->kind == syntax::Kind::parenthesizedExpr)) {
+            path = path->kind == syntax::Kind::accessExpr
+                    ? std::static_pointer_cast<syntax::AccessExprSyntax>(path)->operand
+                    : std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(path)->expression;
+        }
+        if (path != nullptr && path->kind == syntax::Kind::subscriptExpr) {
+            const auto base = model->typeOf(
+                    std::static_pointer_cast<syntax::SubscriptExprSyntax>(path)->base);
+            const auto* baseType = base.has_value() ? model->typeContext.type(*base) : nullptr;
+            if (baseType != nullptr && baseType->kind == TypeKind::dictionary) {
+                report(TypeCheckingDiagnosticId::invalidOperatorOperands, assignment->span,
+                       "compound assignment to a dictionary element is not supported; "
+                       "read it with 'get' and assign the result");
+                return model->typeContext.voidType();
+            }
+        }
+        const auto op = compoundBaseOperator(assignment->op->kind);
+        const bool isShift = op == shiftLeft || op == shiftRight;
+        // Shift counts are independent of the target type; other operands share it.
+        const auto value = isShift ? checkExpression(assignment->value)
+                                   : checkExpression(assignment->value, target);
+        if (target.has_value() && value.has_value() &&
+            *target != model->typeContext.errorType() &&
+            *value != model->typeContext.errorType()) {
+            const auto result = binaryResult(op, *target, *value);
+            if (!result.has_value() || *result != *target) {
+                reportInvalidOperator(assignment->op, { *target, *value }, assignment->span);
+            }
+        }
+        return model->typeContext.voidType();
+    }
+
     void checkAssignmentAccess(const syntax::ExprPtr& target) {
         const auto hasMarker = target != nullptr && target->kind == syntax::Kind::accessExpr;
         const auto storage = analyzeStorage(target);
@@ -2267,10 +2638,11 @@ private:
         return coverage;
     }
 
-    TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) const {
+    TypeId patternLiteralType(const Token::Ptr& literal, TypeId expected) {
         if (literal == nullptr) return model->typeContext.errorType();
         switch (literal->kind) {
-            case decimalLiteral: return model->typeContext.intType();
+            case decimalLiteral:
+            case floatLiteral: return checkNumericLiteral(literal, expected);
             case booleanLiteral: return model->typeContext.boolType();
             case stringLiteral: return model->typeContext.stringType();
             case byteLiteral: return model->typeContext.uint8Type();
@@ -2570,6 +2942,16 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::dictionary: return "dictionary";
         case TypeKind::optional: return "optional";
         case TypeKind::result: return "result";
+        case TypeKind::int8: return "int8";
+        case TypeKind::int16: return "int16";
+        case TypeKind::int32: return "int32";
+        case TypeKind::int64: return "int64";
+        case TypeKind::uint16: return "uint16";
+        case TypeKind::uint32: return "uint32";
+        case TypeKind::uint64: return "uint64";
+        case TypeKind::unsignedInteger: return "uint";
+        case TypeKind::float32: return "float32";
+        case TypeKind::float64: return "float64";
     }
     return "unknown";
 }
@@ -2620,8 +3002,22 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-call-arguments";
         case TypeCheckingDiagnosticId::invalidLoopControl:
             return "type-checking.invalid-loop-control";
+        case TypeCheckingDiagnosticId::notIterable:
+            return "type-checking.not-iterable";
         case TypeCheckingDiagnosticId::unresolvedReference:
             return "type-checking.unresolved-reference";
+        case TypeCheckingDiagnosticId::invalidAnnotation:
+            return "type-checking.invalid-annotation";
+        case TypeCheckingDiagnosticId::invalidNativeDeclaration:
+            return "type-checking.invalid-native-declaration";
+        case TypeCheckingDiagnosticId::unsupportedNativeSignature:
+            return "type-checking.unsupported-native-signature";
+        case TypeCheckingDiagnosticId::unauthorizedNativeBinding:
+            return "type-checking.unauthorized-native-binding";
+        case TypeCheckingDiagnosticId::conflictingNativeSymbol:
+            return "type-checking.conflicting-native-symbol";
+        case TypeCheckingDiagnosticId::invalidNumericLiteral:
+            return "type-checking.invalid-numeric-literal";
     }
     return "type-checking.unknown";
 }
