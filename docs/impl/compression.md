@@ -111,16 +111,20 @@ public enum ZipFileError { ReadFailed(FileSystemError), FileTooLarge, Invalid(Co
 public struct ZipArchive { public let path: String; public let entries: [ZipEntryInfo] /* + bytes */ }
 public struct ZipFileEntry { public let info: ZipEntryInfo; public let contents: [UInt8] }
 
-public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
-    maximumNameBytes: Int): Result<ZipArchive, ZipFileError>
+extension String {
+    public func openZipFile(maximumFileBytes: Int, maximumEntries: Int,
+        maximumNameBytes: Int): Result<ZipArchive, ZipFileError>
+}
 
 extension ZipArchive {
     public func readEntry(entry: ZipEntryInfo, maximumBytes: Int): Result<[UInt8], CompressionError>
 }
 
-public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
-    maximumNameBytes: Int, maximumEntryBytes: Int,
-    maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError>
+extension String {
+    public func readZipFile(maximumFileBytes: Int, maximumEntries: Int,
+        maximumNameBytes: Int, maximumEntryBytes: Int,
+        maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError>
+}
 ```
 
 `openZipFile` reads at most `maximumFileBytes + 1` bytes, so an oversized file

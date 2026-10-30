@@ -109,17 +109,19 @@ extension [UInt8] {
     }
 }
 
-// One little-endian 64-bit field of the native metadata table (seven per entry).
-private func tableField(table: [UInt8], entry: Int, field: Int): Int {
-    let start = entry * 56 + field * 8
-    var value: UInt64 = 0
-    var shift = 0
-    while shift < 64 {
-        value |= (table[start + shift / 8] as UInt64) << shift
-        shift += 8
+extension [UInt8] {
+    // One little-endian 64-bit field of the native metadata table (seven per entry).
+    private func tableField(entry: Int, field: Int): Int {
+        let start = entry * 56 + field * 8
+        var value: UInt64 = 0
+        var shift = 0
+        while shift < 64 {
+            value |= (self[start + shift / 8] as UInt64) << shift
+            shift += 8
+        }
+        // Zip64 is rejected, so every stored value fits in 32 bits.
+        return value as Int
     }
-    // Zip64 is rejected, so every stored value fits in 32 bits.
-    return value as Int
 }
 
 extension [UInt8] {
@@ -135,17 +137,17 @@ extension [UInt8] {
         var entries: [ZipEntryInfo] = []
         var index = 0
         while index < names.count {
-            let attributes = tableField(table: table, entry: index, field: 6)
+            let attributes = table.tableField(entry: index, field: 6)
             &entries.append(element: ZipEntryInfo(
                 name: names[index],
                 isDirectory: (attributes & 1) != 0,
-                size: tableField(table: table, entry: index, field: 2),
-                compressedSize: tableField(table: table, entry: index, field: 1),
-                crc32: tableField(table: table, entry: index, field: 3) as UInt32,
+                size: table.tableField(entry: index, field: 2),
+                compressedSize: table.tableField(entry: index, field: 1),
+                crc32: table.tableField(entry: index, field: 3) as UInt32,
                 isSupported: (attributes & 2) != 0,
-                headerOffset: tableField(table: table, entry: index, field: 0),
-                method: tableField(table: table, entry: index, field: 4),
-                flags: tableField(table: table, entry: index, field: 5)))
+                headerOffset: table.tableField(entry: index, field: 0),
+                method: table.tableField(entry: index, field: 4),
+                flags: table.tableField(entry: index, field: 5)))
             index += 1
         }
         return .Ok(entries)
@@ -191,27 +193,28 @@ public struct ZipFileEntry {
     public let contents: [UInt8]
 }
 
-// Reads the whole file at `path` and lists its entries. Reading stops one byte
-// past `maximumFileBytes`, so an oversized file fails with FileTooLarge instead of
-// being loaded. The file is held in memory (twice, briefly, while it is copied
-// to bytes). Entry limits are inclusive, as for zipEntries.
-public func openZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
-    maximumNameBytes: Int): Result<ZipArchive, ZipFileError> {
-    if maximumFileBytes < 0 { return .Err(.Invalid(.InvalidArgument)) }
-    var readLimit = maximumFileBytes
-    if readLimit < 9223372036854775807 { readLimit += 1 }
-    let text = match readFilePrefix(path: path, maximumBytes: readLimit) {
-        .Ok(value) => value,
-        .Err(error) => { return .Err(.ReadFailed(error)) },
+extension String {
+    // Reads the whole file at `path` and lists its entries. Reading stops one byte
+    // past `maximumFileBytes`, so an oversized file fails with FileTooLarge instead of
+    // being loaded. The file is held in memory (twice, briefly, while it is copied
+    // to bytes). Entry limits are inclusive, as for zipEntries.
+    public func openZipFile(maximumFileBytes: Int, maximumEntries: Int, maximumNameBytes: Int): Result<ZipArchive, ZipFileError> {
+        if maximumFileBytes < 0 { return .Err(.Invalid(.InvalidArgument)) }
+        var readLimit = maximumFileBytes
+        if readLimit < 9223372036854775807 { readLimit += 1 }
+        let text = match readFilePrefix(path: self, maximumBytes: readLimit) {
+            .Ok(value) => value,
+            .Err(error) => { return .Err(.ReadFailed(error)) },
+        }
+        if text.count > maximumFileBytes { return .Err(.FileTooLarge) }
+        let bytes = text.utf8()
+        let entries = match bytes.zipEntries(maximumEntries: maximumEntries,
+            maximumNameBytes: maximumNameBytes) {
+            .Ok(value) => value,
+            .Err(error) => { return .Err(.Invalid(error)) },
+        }
+        return .Ok(ZipArchive(path: self, entries: entries, bytes: bytes))
     }
-    if text.count > maximumFileBytes { return .Err(.FileTooLarge) }
-    let bytes = text.utf8()
-    let entries = match bytes.zipEntries(maximumEntries: maximumEntries,
-        maximumNameBytes: maximumNameBytes) {
-        .Ok(value) => value,
-        .Err(error) => { return .Err(.Invalid(error)) },
-    }
-    return .Ok(ZipArchive(path: path, entries: entries, bytes: bytes))
 }
 
 extension ZipArchive {
@@ -221,32 +224,32 @@ extension ZipArchive {
     }
 }
 
-// Opens a ZIP or JAR file and reads every entry, in central-directory order.
-// `maximumEntryBytes` limits each entry and `maximumTotalBytes` limits the sum
-// of all contents. An entry that cannot be read (encrypted, unsupported method,
-// symbolic link, or damaged) fails the whole call.
-public func readZipFile(path: String, maximumFileBytes: Int, maximumEntries: Int,
-    maximumNameBytes: Int, maximumEntryBytes: Int,
-    maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError> {
-    let archive = openZipFile(path: path, maximumFileBytes: maximumFileBytes,
-        maximumEntries: maximumEntries, maximumNameBytes: maximumNameBytes)?
-    var collected: [ZipFileEntry] = []
-    var remaining = maximumTotalBytes
-    var index = 0
-    while index < archive.entries.count {
-        let info = archive.entries[index]
-        var contents: [UInt8] = []
-        if !info.isDirectory {
-            var limit = maximumEntryBytes
-            if remaining < limit { limit = remaining }
-            contents = match archive.readEntry(entry: info, maximumBytes: limit) {
-                .Ok(value) => value,
-                .Err(error) => { return .Err(.Invalid(error)) },
+extension String {
+    // Opens a ZIP or JAR file and reads every entry, in central-directory order.
+    // `maximumEntryBytes` limits each entry and `maximumTotalBytes` limits the sum
+    // of all contents. An entry that cannot be read (encrypted, unsupported method,
+    // symbolic link, or damaged) fails the whole call.
+    public func readZipFile(maximumFileBytes: Int, maximumEntries: Int, maximumNameBytes: Int, maximumEntryBytes: Int, maximumTotalBytes: Int): Result<[ZipFileEntry], ZipFileError> {
+        let archive = self.openZipFile(maximumFileBytes: maximumFileBytes,
+            maximumEntries: maximumEntries, maximumNameBytes: maximumNameBytes)?
+        var collected: [ZipFileEntry] = []
+        var remaining = maximumTotalBytes
+        var index = 0
+        while index < archive.entries.count {
+            let info = archive.entries[index]
+            var contents: [UInt8] = []
+            if !info.isDirectory {
+                var limit = maximumEntryBytes
+                if remaining < limit { limit = remaining }
+                contents = match archive.readEntry(entry: info, maximumBytes: limit) {
+                    .Ok(value) => value,
+                    .Err(error) => { return .Err(.Invalid(error)) },
+                }
+                remaining -= contents.count
             }
-            remaining -= contents.count
+            &collected.append(element: ZipFileEntry(info: info, contents: contents))
+            index += 1
         }
-        &collected.append(element: ZipFileEntry(info: info, contents: contents))
-        index += 1
+        return .Ok(collected)
     }
-    return .Ok(collected)
 }

@@ -34,7 +34,7 @@ func textOf(bytes: [UInt8], count: Int): String {
 }
 
 func openJar(limit: Int): Result<Compression.ZipArchive, String> {
-    return match Compression.openZipFile(path: "hello.jar", maximumFileBytes: limit,
+    return match "hello.jar".openZipFile(maximumFileBytes: limit,
         maximumEntries: 100, maximumNameBytes: 10000) {
         .Ok(archive) => .Ok(archive),
         .Err(_) => .Err("open jar failed"),
@@ -79,7 +79,7 @@ func testOpenAndRead(): Result<Void, String> {
 }
 
 func testReadAll(): Result<Void, String> {
-    let entries = match Compression.readZipFile(path: "hello.jar", maximumFileBytes: 1132,
+    let entries = match "hello.jar".readZipFile(maximumFileBytes: 1132,
         maximumEntries: 6, maximumNameBytes: 200, maximumEntryBytes: 437, maximumTotalBytes: 608) {
         .Ok(value) => value,
         .Err(_) => { return .Err("read all failed") },
@@ -96,13 +96,13 @@ func testReadAll(): Result<Void, String> {
     check(condition: total == 608, message: "wrong total")?
     check(condition: textOf(bytes: entries[5].contents, count: 5) == "Hello", message: "wrong resource")?
 
-    let totalLimited = match Compression.readZipFile(path: "hello.jar", maximumFileBytes: 1132,
+    let totalLimited = match "hello.jar".readZipFile(maximumFileBytes: 1132,
         maximumEntries: 6, maximumNameBytes: 200, maximumEntryBytes: 437, maximumTotalBytes: 607) {
         .Err(.Invalid(.LimitExceeded)) => true,
         _ => false,
     }
     check(condition: totalLimited, message: "total limit ignored")?
-    let entryLimited = match Compression.readZipFile(path: "hello.jar", maximumFileBytes: 1132,
+    let entryLimited = match "hello.jar".readZipFile(maximumFileBytes: 1132,
         maximumEntries: 6, maximumNameBytes: 200, maximumEntryBytes: 436, maximumTotalBytes: 608) {
         .Err(.Invalid(.LimitExceeded)) => true,
         _ => false,
@@ -111,31 +111,31 @@ func testReadAll(): Result<Void, String> {
 }
 
 func testFailures(): Result<Void, String> {
-    let tooLarge = match Compression.openZipFile(path: "hello.jar", maximumFileBytes: 1131,
+    let tooLarge = match "hello.jar".openZipFile(maximumFileBytes: 1131,
         maximumEntries: 100, maximumNameBytes: 10000) {
         .Err(.FileTooLarge) => true,
         _ => false,
     }
     check(condition: tooLarge, message: "file size limit ignored")?
-    let missing = match Compression.openZipFile(path: "missing.jar", maximumFileBytes: 1000,
+    let missing = match "missing.jar".openZipFile(maximumFileBytes: 1000,
         maximumEntries: 100, maximumNameBytes: 10000) {
         .Err(.ReadFailed(.NotFound(_))) => true,
         _ => false,
     }
     check(condition: missing, message: "missing file not reported")?
-    let notZip = match Compression.openZipFile(path: "not-a-zip.txt", maximumFileBytes: 1000,
+    let notZip = match "not-a-zip.txt".openZipFile(maximumFileBytes: 1000,
         maximumEntries: 100, maximumNameBytes: 10000) {
         .Err(.Invalid(.InvalidArchive)) => true,
         _ => false,
     }
     check(condition: notZip, message: "non-ZIP file accepted")?
-    let tooMany = match Compression.openZipFile(path: "hello.jar", maximumFileBytes: 1132,
+    let tooMany = match "hello.jar".openZipFile(maximumFileBytes: 1132,
         maximumEntries: 5, maximumNameBytes: 10000) {
         .Err(.Invalid(.LimitExceeded)) => true,
         _ => false,
     }
     check(condition: tooMany, message: "entry count limit ignored")?
-    let negative = match Compression.openZipFile(path: "hello.jar", maximumFileBytes: -1,
+    let negative = match "hello.jar".openZipFile(maximumFileBytes: -1,
         maximumEntries: 5, maximumNameBytes: 10000) {
         .Err(.Invalid(.InvalidArgument)) => true,
         _ => false,
