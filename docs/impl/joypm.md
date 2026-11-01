@@ -282,6 +282,18 @@ unchanged; see [building](../building.md#joypm-bootstrap-and-acceptance).
 
 ## 5. Validation evidence
 
+On 2026-11-01, native macOS ARM64 `main` based on `3a09bb7` with the macOS
+fixes passed fresh Debug/Release builds and unfiltered eight-worker CTest:
+**949 passed, one filesystem-dependent skip, and no failures per profile**,
+without retries. All 15 joypm acceptance gates passed, including bootstrap
+regeneration, Debug/optimized self-build, second-stage execution, POSIX
+failure cases, Unicode paths, concurrency, exact component inventories, and
+relocated workflows. The root Foundation/System workspace passed `joypm test`
+**2/2 per profile**. Isolated local Debug installs passed with and without
+dsymutil support. Provenance, temporary-file fixes, the skip, and SDK/package
+limits are recorded in
+[macOS main acceptance](../building.md#macos-arm64-acceptance-on-main).
+
 On native Windows x64 on 2026-10-19, fresh default Debug and Release builds
 with unit tests and joypm enabled each passed unfiltered serial CTest
 **846/846**, with no skips, including all 15 joypm gates. Bootstrap,
@@ -322,7 +334,9 @@ Previous-layout native Debug/Release acceptance recorded 789/789 each.
 Despite retaining version 0.1.0, those historical Release results are not
 a new full native ARM64 Release CTest run for the module/workspace layout;
 optimized tool/workspace self-builds are a narrower gate.
-Linux and macOS still need their own complete native Debug/Release acceptance.
+These historical Windows results do not establish acceptance on other
+architectures. Current macOS ARM64 acceptance is recorded above; other
+unrecorded native targets still require complete Debug/Release gates.
 
 External local dependencies, registries/version resolution, lockfiles,
 cache/clean, process capture/timeouts, nested workspaces, and remote acquisition

@@ -2,12 +2,14 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -86,12 +88,25 @@ std::string streamMask() {
 class TemporaryDirectory {
 public:
     TemporaryDirectory() {
+#ifdef _WIN32
+        const auto processId = GetCurrentProcessId();
+#else
+        const auto processId = getpid();
+#endif
+        static std::atomic<unsigned> sequence {0};
         auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
         path = std::filesystem::temp_directory_path() /
-               ("joyeer-process-" + std::to_string(stamp));
-        std::filesystem::create_directories(path);
+               ("joyeer-process-" + std::to_string(processId) + "-" +
+                std::to_string(stamp) + "-" + std::to_string(sequence++));
+        if (!std::filesystem::create_directory(path)) {
+            throw std::runtime_error("temporary process-test directory already exists");
+        }
     }
-    ~TemporaryDirectory() { std::filesystem::remove_all(path); }
+    ~TemporaryDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+        EXPECT_FALSE(error) << error.message();
+    }
     std::filesystem::path path;
 };
 

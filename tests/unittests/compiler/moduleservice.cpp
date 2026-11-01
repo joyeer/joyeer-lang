@@ -12,6 +12,12 @@
 #include <string>
 #include <utility>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
 
 class ModuleServiceTest : public ::testing::Test {
@@ -19,14 +25,22 @@ protected:
     void SetUp() override {
         static std::atomic<unsigned> sequence {0};
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+#ifdef _WIN32
+        const auto processId = _getpid();
+#else
+        const auto processId = getpid();
+#endif
         directory = std::filesystem::current_path() /
-                ("module-service-test-" + std::to_string(stamp) + "-" + std::to_string(sequence++));
-        ASSERT_TRUE(std::filesystem::create_directory(directory));
+                ("module-service-test-" + std::to_string(processId) + "-" +
+                 std::to_string(stamp) + "-" + std::to_string(sequence++));
+        ownsDirectory = std::filesystem::create_directory(directory);
+        ASSERT_TRUE(ownsDirectory);
         options.workingDirectory = directory;
         options.moduleName = "project.app";
     }
 
     void TearDown() override {
+        if (!ownsDirectory) return;
         std::error_code error;
         std::filesystem::remove_all(directory, error);
         EXPECT_FALSE(error) << error.message();
@@ -67,6 +81,7 @@ protected:
     }
 
     std::filesystem::path directory;
+    bool ownsDirectory = false;
     joyeer::CompileOptions options;
     Diagnostics diagnostics;
 };

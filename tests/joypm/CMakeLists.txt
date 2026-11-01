@@ -74,6 +74,7 @@ function(joypm_add_acceptance name script labels timeout)
             "-DSELF_BUILD_PROJECT=${JOYEER_JOYPM_PROJECT_DIRECTORY}"
             "-DBUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
             "-DTEST_CONFIGURATION=$<CONFIG>"
+            "-DDSYMUTIL_EXECUTABLE=${JOYEER_DSYMUTIL_EXECUTABLE}"
             "-DCOMPILER_FILE_NAME=$<TARGET_FILE_NAME:joyeer>"
             "-DRUNTIME_FILE_NAMES=$<TARGET_FILE_NAME:joyeer>;$<TARGET_FILE_NAME:JoyeerBackend>;$<TARGET_FILE_NAME:JoyeerRuntime>"
             "-DLICENSE_SOURCE=${JOYEER_SOURCE_DIR}/LICENSE"
@@ -100,7 +101,5 @@ joypm_add_acceptance(Concurrent verifyConcurrent.cmake "compiler;filesystem;proc
 joypm_add_acceptance(HostFailures verifyHostFailures.cmake "compiler;filesystem;process" 240)
 joypm_add_acceptance(SelfBuild verifySelfBuild.cmake "compiler;self-build" 300)
 joypm_add_acceptance(Installed verifyInstalled.cmake "compiler;packaging" 300)
-if(WIN32)
-    joypm_add_acceptance(Bootstrap verifyBootstrap.cmake "bootstrap;debug-info" 180)
-    set_tests_properties(Joypm.Bootstrap PROPERTIES RUN_SERIAL TRUE)
-endif()
+joypm_add_acceptance(Bootstrap verifyBootstrap.cmake "bootstrap;debug-info" 180)
+set_tests_properties(Joypm.Bootstrap PROPERTIES RUN_SERIAL TRUE)

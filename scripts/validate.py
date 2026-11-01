@@ -96,6 +96,17 @@ def safe_remove(directory: Path) -> None:
     shutil.rmtree(resolved, ignore_errors=True)
 
 
+def ctest_skipped(output: str) -> list[str]:
+    return re.findall(r"^\s*\d+ - (\S+) \(Skipped\)", output, re.MULTILINE)
+
+
+def ctest_summary(total: int, failed: int, skipped: list[str]) -> str:
+    summary = f"{total - failed - len(skipped)} / {total} passed"
+    if skipped:
+        summary += f"; {len(skipped)} skipped"
+    return summary
+
+
 def parse_ctest(output: str) -> tuple[bool, str, list[str]]:
     # Some CMake versions omit ", N tests failed" when everything passed.
     found = re.search(r"(\d+)% tests passed(?:, (\d+) tests? failed)? out of (\d+)", output)
@@ -113,7 +124,8 @@ def parse_ctest(output: str) -> tuple[bool, str, list[str]]:
                 names.append(f"{match.group(1)} ({match.group(2)})")
             elif line.strip() == "":
                 capture = False
-    return failed == 0 and total > 0, f"{total - failed} / {total} passed", names
+    skipped = ctest_skipped(output)
+    return failed == 0 and total > len(skipped), ctest_summary(total, failed, skipped), names
 
 
 def parse_joypm(output: str) -> tuple[bool, str]:
@@ -176,10 +188,11 @@ def validate_config(config: str, args: argparse.Namespace, sdk: Path, env: dict[
             again, rerun = run(["ctest", "--test-dir", str(build_dir), "--rerun-failed", "--output-on-failure"],
                                logs / "ctest-rerun.log", env)
             rerun_ok, _, still_failed = parse_ctest(rerun)
-            if rerun_ok and again == 0:
+            if rerun_ok and again == 0 and not ctest_skipped(rerun):
                 total = re.search(r"out of (\d+)", output)
-                count = total.group(1) if total else "?"
-                summary = f"{count} / {count} passed; {len(failed)} passed only on rerun: " + ", ".join(name.split(" (")[0] for name in failed[:8])
+                count = int(total.group(1)) if total else 0
+                summary = ctest_summary(count, 0, ctest_skipped(output))
+                summary += f"; {len(failed)} passed only on rerun: " + ", ".join(name.split(" (")[0] for name in failed[:8])
                 failed, ok, code = [], True, 0
             else:
                 failed = still_failed or failed

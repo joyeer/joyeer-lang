@@ -21,6 +21,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace joyeer::native {
@@ -504,19 +506,42 @@ LinkResult Linker::link(
     }
 #endif
 
-    const auto nonce = static_cast<uint64_t>(
-            std::chrono::high_resolution_clock::now().time_since_epoch().count()) +
-            nextTemporary.fetch_add(1);
     filesystemError.clear();
-    const auto temporaryDirectory = std::filesystem::temp_directory_path(filesystemError);
+    const auto temporaryRoot = std::filesystem::temp_directory_path(filesystemError);
     if (filesystemError) {
         report(
                 LinkDiagnosticId::fileError,
                 "cannot locate the temporary directory: " + filesystemError.message());
         return result;
     }
-    const auto base = temporaryDirectory /
-            ("joyeer-native-" + std::to_string(nonce));
+#if defined(_WIN32)
+    const auto processId = GetCurrentProcessId();
+#else
+    const auto processId = getpid();
+#endif
+    const auto nonce = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    const auto temporaryDirectory = temporaryRoot /
+            ("joyeer-native-" + std::to_string(processId) + "-" +
+             std::to_string(nonce) + "-" + std::to_string(nextTemporary.fetch_add(1)));
+    if (!std::filesystem::create_directory(temporaryDirectory, filesystemError)) {
+        report(
+                LinkDiagnosticId::fileError,
+                "cannot exclusively create native temporary directory '" +
+                        utf8Path(temporaryDirectory) + "': " +
+                        (filesystemError ? filesystemError.message() : "already exists"));
+        return result;
+    }
+    const auto cleanupTemporary = [&]() {
+        std::error_code error;
+        std::filesystem::remove_all(temporaryDirectory, error);
+        if (error) {
+            report(
+                    LinkDiagnosticId::fileError,
+                    "cannot remove native temporary directory '" +
+                            utf8Path(temporaryDirectory) + "': " + error.message());
+        }
+    };
+    const auto base = temporaryDirectory / "module";
     auto objectFile = base;
 #if defined(_WIN32)
     objectFile += ".obj";
@@ -530,7 +555,11 @@ LinkResult Linker::link(
     auto objectOptions = options;
     objectOptions.outputFile = objectFile;
     auto emission = emitObject(llvmIR, objectOptions);
-    if (!emission.succeeded()) return emission;
+    if (!emission.succeeded()) {
+        result.diagnostics = std::move(emission.diagnostics);
+        cleanupTemporary();
+        return result;
+    }
     BackendDiagnostic backendDiagnostic;
 
 #if defined(_WIN32)
@@ -665,13 +694,11 @@ LinkResult Linker::link(
                         (backendDiagnostic.message.empty()
                                 ? std::string()
                                 : ":\n" + backendDiagnostic.message));
-        filesystemError.clear();
-        std::filesystem::remove(objectFile, filesystemError);
+        cleanupTemporary();
         return result;
     }
 #if defined(_WIN32)
-    filesystemError.clear();
-    std::filesystem::remove(objectFile, filesystemError);
+    cleanupTemporary();
     if (options.debugInfo.emitLineTables &&
         options.debugInfo.format == DebugInfoFormat::codeView) {
         if (!isNonemptyRegularFile(pdbFile)) {
@@ -708,8 +735,7 @@ LinkResult Linker::link(
         if (process.exitCode != 0 || !process.launchError.empty() ||
             !isNonemptyRegularFile(dsymBinary)) {
             cleanupFailedOutput();
-            filesystemError.clear();
-            std::filesystem::remove(objectFile, filesystemError);
+            cleanupTemporary();
             report(
                     LinkDiagnosticId::toolFailure,
                     "dsymutil failed to create the expected dSYM bundle '" +
@@ -722,11 +748,9 @@ LinkResult Linker::link(
         }
         result.debugArtifact = dsymDirectory;
     }
-    filesystemError.clear();
-    std::filesystem::remove(objectFile, filesystemError);
+    cleanupTemporary();
 #else
-    filesystemError.clear();
-    std::filesystem::remove(objectFile, filesystemError);
+    cleanupTemporary();
     if (options.debugInfo.emitLineTables) {
         result.debugArtifact = options.outputFile;
     }

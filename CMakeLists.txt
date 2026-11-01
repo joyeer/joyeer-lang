@@ -197,25 +197,35 @@ if(APPLE)
                 "Minimum macOS version for Joyeer native executables"
                 FORCE)
     endif()
-    execute_process(
-            COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --find dsymutil
-            RESULT_VARIABLE JOYEER_XCRUN_DSYMUTIL_RESULT
-            OUTPUT_VARIABLE JOYEER_XCRUN_DSYMUTIL
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
+    if(NOT DEFINED JOYEER_DSYMUTIL_EXECUTABLE)
+        execute_process(
+                COMMAND "${JOYEER_XCRUN_EXECUTABLE}" --find dsymutil
+                RESULT_VARIABLE JOYEER_XCRUN_DSYMUTIL_RESULT
+                OUTPUT_VARIABLE JOYEER_XCRUN_DSYMUTIL
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(JOYEER_XCRUN_DSYMUTIL_RESULT EQUAL 0 AND
+           EXISTS "${JOYEER_XCRUN_DSYMUTIL}")
+            set(JOYEER_DSYMUTIL_EXECUTABLE "${JOYEER_XCRUN_DSYMUTIL}" CACHE FILEPATH
+                "Tool used to create macOS dSYM bundles; empty disables bundles")
+        else()
+            set(JOYEER_DSYMUTIL_EXECUTABLE "" CACHE FILEPATH
+                "Tool used to create macOS dSYM bundles; empty disables bundles")
+        endif()
+    endif()
     if(NOT JOYEER_MACOS_SDK_PATH OR
        NOT JOYEER_MACOS_SDK_VERSION OR
            NOT JOYEER_MACOS_DEPLOYMENT_TARGET)
         message(FATAL_ERROR
             "Joyeer requires an active macOS SDK from Xcode Command Line Tools")
-        endif()
-        if(JOYEER_XCRUN_DSYMUTIL_RESULT EQUAL 0 AND
-           EXISTS "${JOYEER_XCRUN_DSYMUTIL}")
-        set(JOYEER_DSYMUTIL_EXECUTABLE "${JOYEER_XCRUN_DSYMUTIL}" CACHE FILEPATH
-            "Tool used to create macOS dSYM bundles" FORCE)
-        else()
-        set(JOYEER_DSYMUTIL_EXECUTABLE "" CACHE FILEPATH
-            "Tool used to create macOS dSYM bundles" FORCE)
+    endif()
+    if(JOYEER_DSYMUTIL_EXECUTABLE AND
+       (NOT EXISTS "${JOYEER_DSYMUTIL_EXECUTABLE}" OR
+        IS_DIRECTORY "${JOYEER_DSYMUTIL_EXECUTABLE}"))
+        message(FATAL_ERROR
+            "JOYEER_DSYMUTIL_EXECUTABLE must name a dsymutil file, or be empty to disable bundles")
+    endif()
+    if(NOT JOYEER_DSYMUTIL_EXECUTABLE)
         message(STATUS
             "Joyeer dsymutil not found; macOS native output remains available but -g debug bundles are unavailable")
     endif()

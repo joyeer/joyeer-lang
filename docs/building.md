@@ -215,6 +215,27 @@ select an already installed compatible SDK with `CMAKE_OSX_SYSROOT`,
 `JOYEER_MACOS_SDK_VERSION`, and `JOYEER_MACOS_DEPLOYMENT_TARGET` consistently.
 Do not bypass the embedded linker or silently substitute another SDK.
 
+LLVM/LLD 22.1.8 cannot read the `arm64e.x1` TAPI entries in the tested macOS
+27.0 and 27.2 SDKs. With the already installed macOS 26.5 SDK at the path
+below, the full native Debug/Release gate is:
+
+```text
+python3 scripts/validate.py --fresh --llvm-root /opt/homebrew/opt/llvm --jobs 8 --no-retry \
+  --define BUILD_TESTING=ON --define JOYEER_BUILD_JOYPM=ON --define INSTALL_GTEST=OFF \
+  --define CMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+  --define CMAKE_OSX_DEPLOYMENT_TARGET=26.5 \
+  --define JOYEER_MACOS_SDK_PATH=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
+  --define JOYEER_MACOS_SDK_VERSION=26.5 \
+  --define JOYEER_MACOS_DEPLOYMENT_TARGET=26.5
+```
+
+Use paths and versions matching the installed SDK. This does not install
+tools or change the globally active Xcode. The validator enables unit tests
+and Compression, runs unfiltered CTest and the root workspace's `joypm test`,
+and reports skipped tests separately from passes. `--fresh` replaces only
+its Debug/Release validation build trees; `--no-retry` does not hide flaky
+failures behind a successful rerun.
+
 ## joypm bootstrap and acceptance
 
 `JOYEER_BUILD_JOYPM=ON` is the default. The `joypm` `ALL` target invokes the
@@ -230,6 +251,15 @@ preinstalled `joypm` or Python. Configure also creates the explicit self-build
 project under `out/build/<preset>/src/tools/joypm/project/`; the
 [self-build gate](../tests/joypm/verifySelfBuild.cmake) builds and executes both
 profiles and a second-stage tool through joypm itself.
+
+`Joypm.Bootstrap` verifies regeneration of a missing Debug PDB/dSYM, or
+the executable when no sidecar is expected, on all native platforms.
+On macOS, `-DJOYEER_DSYMUTIL_EXECUTABLE:FILEPATH=` explicitly disables
+dSYM generation without modifying installed tools. Debug bootstrap then
+uses `-g0`; ordinary native output works, while an explicit `-gfull` request
+reports `linker.missing-tool`. This is a narrower fallback gate, not a full
+debug-information configuration. Use `-UJOYEER_DSYMUTIL_EXECUTABLE` when
+reconfiguring to rediscover the active tool.
 
 For a compiler-only configuration, for example on x64:
 
@@ -266,6 +296,49 @@ and PE headers were independently recorded. See the
 [remaining platform gates](plan/package-manager.md#4-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh
 Debug/Release trees; registration or another target's pass is not acceptance.
+
+### macOS ARM64 acceptance on main
+
+On 2026-11-01, `main` based on `3a09bb7`, with the macOS fixes described here,
+completed fresh Debug and Release default builds and unfiltered eight-worker
+CTest without retries. The host was macOS 27.0.1 ARM64 (build 26A434), using
+AppleClang 21.0.0 (clang-2100.4.1.1), CMake 4.4.2, Ninja 1.13.2, Homebrew
+LLVM/LLD 22.1.8, and the installed macOS 26.5 SDK/deployment target.
+
+| Configuration | Default build | CTest | Root workspace `joypm test` |
+|---|---|---|---|
+| Debug | Passed | 949 passed, 1 skipped, 0 failed | 2/2 passed |
+| Release | Passed | 949 passed, 1 skipped, 0 failed | 2/2 passed |
+
+Both configurations registered identical sets of 950 tests, including
+15 joypm acceptance gates, 55 C interop tests, and six Compression gates
+(including the independent Python ZIP oracle). The one skipped case,
+`FileSystemTest.RejectsNonUtf8DirectoryEntriesWithoutLeakingPartialResults`,
+cannot create its invalid-UTF-8 filename on this filesystem; it is not a
+passed test or a disabled suite.
+
+The initial fresh Debug run on unmodified `main` exposed two process-test
+failures caused by shared timestamp-only temporary directories. Process,
+filesystem, and module fixtures now include process identity, claim their
+directories exclusively, and never clean up an unclaimed path. Native
+linking likewise uses an exclusively claimed process-identified directory.
+The focused concurrent suites completed 20 repeated runs without failures;
+`Joypm.Concurrent` also verifies distinct simultaneous source outputs and
+temporary cleanup without modifying an unrelated sentinel file.
+
+Compiler, backend, and joypm headers identify ARM64 Mach-O. Generated joypm
+records SDK/deployment version 26.5 and depends only on system `libSystem`.
+Self-build, second-stage execution, Unicode paths, component inventories,
+and relocated workflows pass. The local Debug installer was exercised with
+and without dSYM support using isolated destinations and without changing
+shell profiles or installed agent skills. Debug executable/dSYM UUIDs match.
+
+A separate native probe with the active macOS 27.2 SDK reproduced the TAPI
+link failure; compatible SDK selection was explicit, not a silent fallback.
+This establishes functional acceptance of the implemented `main` surface,
+not the separate struct-methods branch, Intel macOS, performance parity, or
+a standalone redistribution package. Homebrew dependency packaging remains
+the release limitation below.
 
 ## Release staging
 
@@ -349,8 +422,18 @@ still requires the host libc/platform SDK startup objects and system
 libraries, but not an external LLVM, Clang, or LLD executable.
 The installed joypm still requires `--compiler <explicit path>`; it does not
 discover the compiler beside itself or search PATH. Package staging and use
-of the tool through a relocated package are validated on Windows ARM64;
-Linux/macOS still require native acceptance.
+of the tool through a relocated package are validated on Windows ARM64 and
+macOS ARM64; relocation on a development host does not establish independence
+from the development SDK's shared libraries.
+
+**Homebrew macOS dependency boundary:** the tested LLVM/LLD 22.1.8 packages
+provide shared `lldMachO` and `lldCommon` libraries that load `libLLVM.dylib`.
+The backend also depends on Homebrew Z3 and zstd. The current install does
+not bundle or relocate these libraries, so it is a local-development payload,
+not a standalone compiler package. Before redistribution, supply and validate
+an appropriate static SDK or implement dependency bundling/relocation and
+the required notices. Generated Joyeer programs do not inherit LLVM/LLD
+dependencies.
 
 ## Local Debug installation
 
@@ -535,7 +618,9 @@ On Linux:
 The same command works on macOS when `dsymutil` is available; use `-g0`
 otherwise. Native compilation still requires MSVC Build Tools and a Windows
 SDK on Windows, or the host libc/platform SDK linker inputs on Linux/macOS.
-An external LLVM installation is not needed to use the installed compiler.
+Self-contained backends do not need an external LLVM installation.
+Homebrew-backed macOS local installs retain the shared-library requirements
+described in [release staging](#release-staging).
 
 ## Non-Windows tool discovery
 
