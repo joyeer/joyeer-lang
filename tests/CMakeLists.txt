@@ -1,4 +1,11 @@
 if(BUILD_TESTING)
+    find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME ValidationScriptTests
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_validate.py")
+        set_tests_properties(ValidationScriptTests PROPERTIES LABELS "tooling" TIMEOUT 30)
+    endif()
+
     set(joyeer_skill_examples "${JOYEER_SOURCE_DIR}/skills/joyeer/examples")
     set(joyeer_skill_output "${CMAKE_CURRENT_BINARY_DIR}/skill")
     file(MAKE_DIRECTORY "${joyeer_skill_output}")

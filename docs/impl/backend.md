@@ -153,6 +153,12 @@ entry point has global process state. LLVM/LLD remain private backend
 dependencies; the compiler never launches Clang or an LLD executable for
 native output.
 
+Native linking exclusively claims a process-identified temporary directory
+for its object and, on macOS, its dsymutil log. A timestamp alone is not a
+cross-process identity. Success and returning failure paths remove only
+that claimed directory and report cleanup errors; concurrent compiler
+processes cannot overwrite or remove one another's intermediate objects.
+
 The C object-emission API still accepts textual LLVM IR when no module handle
 is supplied, for standalone tests and explicit IR tooling. Only this fallback
 uses LLVM's assembly parser; it is not the compiler's native build path.
@@ -187,6 +193,11 @@ Driver library discovers the host ABI inputs and returns an ELF linker command
 that embedded LLD executes without spawning a process. Supported build SDK
 versions and platform prerequisites are documented in
 [Building Joyeer](../building.md).
+
+Homebrew macOS links LLD and some support libraries dynamically. Their C++
+types remain private to the backend, but in-process linking does not make
+the compiler package independent of those dylibs. See
+[macOS main acceptance and packaging limits](../building.md#macos-arm64-acceptance-on-main).
 
 ---
 
