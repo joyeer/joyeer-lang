@@ -263,32 +263,28 @@ establish acceptance on other platforms or a complete implementation of §19.
 
 ### Native validation evidence
 
-The macOS ARM64 and Windows x64 records below describe the historical
-`Int`/`Void` slice. Complete scalar validation is recorded separately for
-Windows ARM64.
+The current macOS ARM64 record covers scalars and buffers. The Windows x64
+record below describes the historical `Int`/`Void` slice; complete scalar
+validation is recorded separately for Windows ARM64.
 
 #### macOS ARM64
 
-On native macOS ARM64 with AppleClang 21.0.0.21000334, LLVM/LLD 22.1.8,
-and the already installed macOS 26.5 SDK/deployment target:
+On 2026-11-01, native macOS ARM64 `main` based on `3a09bb7` with its macOS
+fixes passed all **55 `c-interop`-labeled tests in both Debug and Release**.
+The toolchain was AppleClang 21.0.0 (clang-2100.4.1.1), LLVM/LLD 22.1.8, and
+the installed macOS 26.5 SDK/deployment target. Static/shared scalar round
+trips, target-derived representations, narrow-integer attributes, mixed
+register/stack arguments, buffer ownership, symbol inspection, and failure
+paths pass in both Joyeer optimization profiles.
 
-- The compiler-only/native fixture targets built and ran before a Joyeer
-  runtime archive had been constructed.
-- The complete Debug default build passed with unit tests and joypm enabled;
-  an incremental build required only product staging.
-- All 30 `c-interop`-labeled tests passed, including static/shared providers
-  and both Joyeer optimization profiles.
-- Final unfiltered serial CTest completed 818 registered tests: 817 passed
-  and one existing non-UTF-8 directory-entry test was skipped by its platform
-  guard.
-
-The active macOS 27.0 SDK's `arm64e.x1` TAPI entries are not readable by this
-LLVM/LLD version; that configuration failed native linking before selecting
-the installed 26.5 SDK. A parallel unfiltered run also exposed an existing
-filesystem-test temporary-directory collision: those tests do not include
-process identity in their directory names. No unrelated runtime/test code
-was changed; the final unfiltered acceptance above used `-j 1`.
-A full native macOS Release compiler build remains a separate gate.
+Fresh default builds and unfiltered eight-worker CTest each completed
+**949 passed, one filesystem-dependent skip, and zero failures**, with no
+retry. Native and test temporary directories have process-identified
+exclusive ownership. See
+[macOS main acceptance](../building.md#macos-arm64-acceptance-on-main) for
+full coverage, the macOS 27.2 SDK incompatibility, and Homebrew package
+dependency limits. The earlier 817-pass/one-skip Debug result covered only
+the initial `Int`/`Void` slice and is not the current acceptance boundary.
 
 #### Windows x64
 

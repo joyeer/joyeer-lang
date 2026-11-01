@@ -57,14 +57,21 @@ class FileSystemTest : public testing::Test {
 protected:
     void SetUp() override {
         static std::atomic<unsigned> serial { 0 };
+#ifdef _WIN32
+        const auto processId = GetCurrentProcessId();
+#else
+        const auto processId = getpid();
+#endif
         root_ = std::filesystem::temp_directory_path() /
-                ("joyeer-fs-" +
+                ("joyeer-fs-" + std::to_string(processId) + "-" +
                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
                  "-" + std::to_string(serial++));
-        ASSERT_TRUE(std::filesystem::create_directory(root_));
+        ownsRoot_ = std::filesystem::create_directory(root_);
+        ASSERT_TRUE(ownsRoot_);
     }
 
     void TearDown() override {
+        if (!ownsRoot_) return;
         for (auto it = paths_.rbegin(); it != paths_.rend(); ++it) {
             std::error_code error;
             std::filesystem::remove(*it, error);
@@ -83,6 +90,7 @@ protected:
 
     std::filesystem::path root_;
     std::vector<std::filesystem::path> paths_;
+    bool ownsRoot_ = false;
 };
 
 TEST_F(FileSystemTest, WritesReadsBinaryAndPreservesExistingFiles) {

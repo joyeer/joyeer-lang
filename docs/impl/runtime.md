@@ -220,10 +220,12 @@ The host descriptor declares concrete `String`/`Int` parameters and a
 `Result<String, FileSystemError>` result. `ValueKind::integer` maps to `Int`
 in name resolution and type checking. LLVM's flat host-call lowering matches
 an integer and emits one `i64` operand, rather than a string/array data-count
-pair. Those scalar branches are integrated and compiled in the Windows x64
-Debug build. Ordinary Joyeer IR host-call collection consumes the descriptor;
+pair. Ordinary Joyeer IR host-call collection consumes the descriptor;
 this needs no new IR opcode, source-language FFI, or user-defined generic
-support. The added compiler/runtime regressions have not executed under CTest.
+support. Native macOS ARM64 Debug/Release acceptance covers zero, partial,
+exact, past-EOF and manifest-sentinel reads, negative limits, error paths,
+and allocation balance; see
+[macOS main acceptance](../building.md#macos-arm64-acceptance-on-main).
 
 The shared native reader keeps `readFileUtf8`'s unbounded growth and final-copy
 behavior unchanged. Prefix reads use the same strict UTF-8 path conversion,

@@ -48,7 +48,11 @@ New APIs must not present lexical path checks as confinement. Stay aligned with
 
 ## 4. Native Platform Validation
 
-On each claimed platform and architecture (Linux, macOS), with
+macOS ARM64 functional acceptance is recorded in
+[joypm evidence](../impl/joypm.md#5-validation-evidence). Intel macOS and
+standalone Homebrew dependency packaging remain separate gates.
+
+For each additional or unrecorded claimed platform/architecture, with
 `BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, `JOYEER_BUILD_UNITTESTS` on:
 
 - Fresh Debug and Release builds and unfiltered CTest.

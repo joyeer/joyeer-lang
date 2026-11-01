@@ -110,18 +110,18 @@ explicit member directories. Per-module source paths and dependencies,
 schemas and `--target` return migration errors. Compiler module semantics
 are unchanged; no library ABI is implied.
 
-CMake bootstraps the default `ALL` tool and registers 14 portable gates plus
-Windows bootstrap acceptance, independently of `JOYEER_BUILD_UNITTESTS`.
-Native ARM64 Debug default build and unfiltered CTest pass 809/809, including
-all 15 joypm gates; Debug/optimized self-build and migrated Moss workflows
-pass. The prior-layout full Release 789/789 is historical, not fresh acceptance
-of the new layout despite the unchanged 0.1.0 version. Every document is
+CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
+gates, including bootstrap regeneration, independently of
+`JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
+including self-build and relocated workflows; platform-specific evidence
+and packaging limits are recorded in [joypm](joypm.md#5-validation-evidence).
+Every document is
 bounded to 65536 bytes with a sentinel
 read after regular-file classification. Outputs use module-qualified fresh
 generations with 128 claims per module/profile. The tool does not scan
 upward, search PATH, delete/cache outputs, fetch external dependencies, or
 nested workspaces. These are not streaming or confinement guarantees.
-Other native platforms and publication remain open.
+Unrecorded native targets and publication remain open.
 See [joypm](joypm.md) for current contracts, parser limits, and validation status.
 
 ## Not implemented
