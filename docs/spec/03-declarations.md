@@ -76,6 +76,10 @@ support is tracked in [the implementation boundary](../impl/c-interop.md).
 (methods declared inside a `struct`, `enum`, or `extension`). Free functions
 may not carry it. See §3.2.4.
 
+**Implementation status:** methods and extensions are implemented as described
+in [methods](../impl/methods.md). The `borrowing` keyword before `func` is
+accepted as an explicit spelling of the default receiver effect.
+
 #### 3.2.1 Parameters: labels
 
 Argument labels are mandatory at every call site; there is no positional /
@@ -420,5 +424,63 @@ unit; it does not select a directory or imply parent/submodule relationships.
 Only public declarations are accessible from another module, through the
 qualified name. Import aliases (`as`), wildcard imports, and re-exports are
 not supported. See §12 for module rules.
+
+### 3.9 `self` and `Self`
+
+**Implementation status:** implemented for non-generic methods of structs and
+enums and for extensions of such types in the same module. Implicit-`self` field
+access is not implemented: write `self.field`. See
+[methods](../impl/methods.md).
+
+`self` and `Self` are keywords (§1.4) and cannot be declared as identifiers.
+They name two different things:
+
+| Word | Meaning | Namespace |
+|------|---------|-----------|
+| `self` | The receiver **value** inside a method, `init`, or `deinit` | value |
+| `Self` | The **type** of the enclosing declaration | type |
+
+**`self`.** The receiver's access is set by the method effect (§3.2.4) and
+follows the ordinary rules of §4. `init` initializes `self` field by field
+(§3.7). A free function has no receiver; `self` there is an error.
+
+**`Self`.** `Self` is a type name, not a value. It is in scope only inside the
+body of a `struct`, `enum`, `extension`, or `protocol` declaration:
+
+- in a `struct` or `enum` it is an alias for the declared type;
+- in an `extension` it is an alias for the extended type, including a
+  concrete builtin instantiation such as `Array<Int>`;
+- in a `protocol` it denotes the conforming type, which is not yet known
+  (§20.2).
+
+`Self` introduces no new type. Where it is an alias, it is the same type as the
+spelled name, and the two are interchangeable in every position. It can appear
+anywhere that name could appear in a type position, including parameter and
+result types, `Self?`, `[Self]`, `Result<Self, E>`, and an `indirect` enum
+payload. It can also be used as a constructor or qualified base, with the same
+meaning as the spelled name:
+
+```joyeer
+struct Square {
+    let side: Int
+    func scaled(by factor: Int): Self {     // Self is Square
+        Self(side: side * factor)           // same as Square(side: ...)
+    }
+}
+
+enum Light {
+    Red, Green
+    func other(): Self { Self.Green }       // same as Light.Green
+}
+```
+
+`Self` outside those bodies, including in a free function or a generic
+function (§20.4), is an error (`name-resolution.self-outside-type`). A bare
+`Self` used as a value, as in `let x = Self`, is also an error. The value is
+`self`.
+
+**Design rationale.** An alias keeps signatures explicit and reviewable while
+making renames and protocol requirements (§20) easier to write. Because it is
+only an alias, it adds no subtyping, no dynamic type, and no runtime cost.
 
 ---

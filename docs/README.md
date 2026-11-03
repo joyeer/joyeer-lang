@@ -48,6 +48,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [parser.md](impl/parser.md) | Parser grammar, syntax AST, and recovery contract |
 | [name-resolution.md](impl/name-resolution.md) | Scopes, symbols, references, and diagnostics |
 | [type-checking.md](impl/type-checking.md) | Canonical compile-time types and typed overlays |
+| [methods.md](impl/methods.md) | Methods, extensions, `self` and `Self`: receiver model, per-stage behavior, and limits |
 | [semantic-analysis.md](impl/semantic-analysis.md) | Return, reachability, initialization, and warning analysis |
 | [diagnostics.md](impl/diagnostics.md) | Stable IDs, source rendering, fix-its, and notes |
 | [ir.md](impl/ir.md) | Typed backend-neutral IR, verifier, ownership, and lowering |

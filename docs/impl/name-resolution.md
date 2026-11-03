@@ -158,6 +158,8 @@ The pass resolves and records:
 - fields when the base type follows from a declaration signature;
 - qualified enum cases such as `JsonValue.Bool`;
 - ordinary function calls and synthesized struct initializer calls;
+- methods as `SymbolKind::method` members of their type, including those added
+  by an `extension`, and `Self` as the enclosing type (see [methods](methods.md));
 - argument labels/order for known functions, initializers, and enum cases;
 - qualified enum patterns and their payload bindings;
 - one independent scope for every match arm.

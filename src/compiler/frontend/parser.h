@@ -88,6 +88,10 @@ private:
     syntax::AttributeSyntax parseAttribute();
     syntax::BindingDeclSyntax::Ptr parseBindingDecl(bool requireType);
     syntax::FunctionDeclSyntax::Ptr parseFunctionDecl(bool hasAttributes = false);
+    syntax::FunctionDeclSyntax::Ptr parseMethodDecl();
+    syntax::ParameterDeclSyntax::Ptr makeReceiverParameter(
+            const Token::Ptr& effect, const Token::Ptr& anchor);
+    syntax::ExtensionDeclSyntax::Ptr parseExtensionDecl();
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();
@@ -125,6 +129,15 @@ private:
     [[nodiscard]] bool isLiteral(TokenKind kind) const;
     [[nodiscard]] bool isExpressionStart(const Token::Ptr& token) const;
     [[nodiscard]] bool isTopLevelStart(const Token::Ptr& token) const;
+    // At `[visibility] [mutating|consuming|borrowing] func`, i.e. a member method.
+    [[nodiscard]] bool isMethodStart() const;
+    // A method start that belongs to a body whose declaration began at
+    // `declarationColumn`. A line-leading `func` at or left of that column
+    // is the next top-level item of a body missing its `}`, not a member.
+    [[nodiscard]] bool isNestedMethodStart(uint32_t declarationColumn) const;
+    // Column of the first token of the declaration whose keyword is at `keyword`,
+    // including a preceding same-line visibility modifier.
+    [[nodiscard]] uint32_t declarationColumn(size_t keyword) const;
     [[nodiscard]] bool isBlockItemStart(const Token::Ptr& token) const;
     [[nodiscard]] bool isAssignmentTarget(const syntax::ExprPtr& expression) const;
     [[nodiscard]] bool shouldParseReturnValue() const;

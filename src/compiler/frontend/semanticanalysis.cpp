@@ -10,6 +10,40 @@ namespace joyeer::analysis {
 
 namespace {
 
+// Visits every function with a body: top-level functions, then the methods of
+// structs, enums, and extensions. A method is an ordinary function whose first
+// parameter is the implicit receiver, so each analysis treats it like any other.
+template<class Visitor>
+void forEachFunction(const syntax::SourceFileSyntax::Ptr& root, Visitor&& visit) {
+    for (const auto& item : root->items) {
+        switch (item->kind) {
+            case syntax::Kind::functionDecl:
+                visit(std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
+                break;
+            case syntax::Kind::structDecl:
+                for (const auto& method :
+                     std::static_pointer_cast<syntax::StructDeclSyntax>(item)->methods) {
+                    visit(method);
+                }
+                break;
+            case syntax::Kind::enumDecl:
+                for (const auto& method :
+                     std::static_pointer_cast<syntax::EnumDeclSyntax>(item)->methods) {
+                    visit(method);
+                }
+                break;
+            case syntax::Kind::extensionDecl:
+                for (const auto& method :
+                     std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item)->methods) {
+                    visit(method);
+                }
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 class ControlFlowBuilder {
 public:
     Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
@@ -17,12 +51,9 @@ public:
         model = checkedModel;
         const auto& root = model->semanticModel()->root();
         if (root != nullptr) {
-            for (const auto& item : root->items) {
-                if (item->kind == syntax::Kind::functionDecl) {
-                    analyzeFunction(
-                            std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
-                }
-            }
+            forEachFunction(root, [this](const syntax::FunctionDeclSyntax::Ptr& function) {
+                analyzeFunction(function);
+            });
         }
         return Result { std::move(diagnostics) };
     }
@@ -293,12 +324,9 @@ public:
         model = checkedModel;
         const auto& root = model->semanticModel()->root();
         if (root != nullptr) {
-            for (const auto& item : root->items) {
-                if (item->kind == syntax::Kind::functionDecl) {
-                    analyzeFunction(
-                            std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
-                }
-            }
+            forEachFunction(root, [this](const syntax::FunctionDeclSyntax::Ptr& function) {
+                analyzeFunction(function);
+            });
         }
         return Result { std::move(diagnostics) };
     }
@@ -495,13 +523,35 @@ private:
                 break;
             case syntax::Kind::callExpr: {
                 const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(expression);
-                analyzeExpression(call->callee, state);
                 const auto target = model->callTarget(call);
                 const auto* callableSymbol = target.has_value()
                         ? model->semanticModel()->symbol(*target)
                         : nullptr;
                 std::vector<semantic::SymbolId> initializedArguments;
                 std::vector<semantic::SymbolId> mutatedArguments;
+                // A user method's receiver follows the access convention of its
+                // `self` parameter: consuming it consumes the receiver storage.
+                const auto receiverEffect = callableSymbol != nullptr &&
+                        callableSymbol->kind == semantic::SymbolKind::method &&
+                        callableSymbol->callable.has_value() &&
+                        callableSymbol->callable->receiver.has_value() &&
+                        call->callee->kind == syntax::Kind::memberExpr
+                        ? std::optional<syntax::AccessEffect>(
+                                callableSymbol->callable->receiver->access)
+                        : std::nullopt;
+                if (receiverEffect == syntax::AccessEffect::consuming) {
+                    analyzeConsume(
+                            std::static_pointer_cast<syntax::MemberExprSyntax>(call->callee)->base,
+                            state);
+                } else {
+                    analyzeExpression(call->callee, state);
+                    if (receiverEffect == syntax::AccessEffect::inout) {
+                        const auto path = storagePath(
+                                std::static_pointer_cast<syntax::MemberExprSyntax>(call->callee)
+                                        ->base);
+                        if (path.has_value()) mutatedArguments.push_back(path->root);
+                    }
+                }
                 for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
                     const auto effect = callableSymbol != nullptr &&
@@ -1131,12 +1181,9 @@ public:
         model = checkedModel;
         const auto& root = model->semanticModel()->root();
         if (root != nullptr) {
-            for (const auto& item : root->items) {
-                if (item->kind == syntax::Kind::functionDecl) {
-                    analyzeFunction(
-                            std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
-                }
-            }
+            forEachFunction(root, [this](const syntax::FunctionDeclSyntax::Ptr& function) {
+                analyzeFunction(function);
+            });
         }
         return Result { std::move(diagnostics) };
     }

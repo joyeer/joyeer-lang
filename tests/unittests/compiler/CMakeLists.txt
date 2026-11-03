@@ -942,6 +942,28 @@ if(JOYEER_CLANG_EXECUTABLE)
     add_joyeer_native_regression(
             NativeRegressionFlowReinitialization regression_flow_reinitialization
             "ready\nready\nold\nnew\niteration\niteration\n")
+    set(methods_output "1\n7\n14\ntrue\n0\n15\n1000\n2\n8\n")
+    add_joyeer_native_regression(NativeMethods methods "${methods_output}")
+    add_joyeer_native_regression(
+            NativeMethodsOwnership methods_ownership
+            "abcd\nabcdef\n3\n2\n6\nabcdef\n5\n9\nxyz\nxyxyzz\n")
+    set_tests_properties(
+            NativeMethodsO0 NativeMethodsO2
+            NativeMethodsOwnershipO0 NativeMethodsOwnershipO2
+            PROPERTIES LABELS "native;llvm-backend;runtime;ownership;safety;regression;methods")
+    add_test(NAME NativeMethodsFullDebug
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/methods.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/methods-debug${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DCOMPILER_ARGS=-O0;-gfull"
+                    "-DEXPECTED_OUTPUT=${methods_output}"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeMethodsFullDebug PROPERTIES
+            LABELS "native;llvm-backend;runtime;ownership;debug-info;methods"
+            TIMEOUT 60)
+
     set(propagation_output
             "local!\nready!\nok\n1\nlocal!\nfailed!\n2\nfailed!\n3\nfirst!\nready!\n4\nheld!\npresent!\nheld!\nmissing\nunit some\nunit none\n7\nunit!\nscope!\n9\narray ok\narray!\nouter\ninner\n42\nouter\ninner\n42\nkept!\nkept!\nborrowed error!\nborrowed error!\n3\nnever success\n9\nnever none\nfalse\n0\ntrue\n1\nguard failed\n2\n")
     add_joyeer_native_regression(

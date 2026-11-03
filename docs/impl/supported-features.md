@@ -54,6 +54,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Expressions | Calls with mandatory labels, member access, subscripts, postfix `?` propagation, assignment, signed checked/unsigned wrapping integer arithmetic, floating `+`, `-`, `*`, `/`, comparisons, Boolean `!`, `&&`, `||`, string concatenation, compound assignment (`+=` `-=` `*=` `/=` `%=` `&=` `|=` `^=` `<<=` `>>=`; not on dictionary elements), and integer bitwise `&`, `\|`, `^`, `~`, `<<`, `>>` |
 | Control flow | `if`, `else if`, `else`, `while`, `for x in` over arrays, `String` bytes, and integer ranges (`a..<b`, `a...b`), unlabeled `break` / `continue`, `return`, and exhaustive `match` |
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
+| Methods and extensions | Non-generic methods in `struct` and `enum` bodies and in `extension Type { ... }` of a struct or enum declared in the same module; `borrowing` (default), `mutating`, and `consuming` receivers; `self` and `Self`; receiver markers `&recv.m()` and `consume recv.m()`. Fields must be written `self.field`. See [methods](methods.md) |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
 | Containers | Compiler-known `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` |
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
@@ -130,6 +131,9 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
   asynchronous/concurrent functions.
 - User-defined `init` / `deinit` bodies, explicit copy initializers, or
   user-defined accessors.
+- Implicit-`self` field access (write `self.count`, not `count`), extensions of
+  builtin types or of a type from another module, generic methods, stored
+  properties in extensions, and methods on protocols (there are no protocols).
 - Top-level executable statements, mutable global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.

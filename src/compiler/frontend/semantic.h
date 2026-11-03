@@ -50,6 +50,7 @@ enum class SymbolKind {
     enumeration,
     enumCase,
     patternBinding,
+    method,
 };
 
 enum class CallableKind {
@@ -74,10 +75,21 @@ struct CallableParameter {
     syntax::AccessEffect access = syntax::AccessEffect::borrowing;
 };
 
+// The implicit `self` of a method. It is deliberately not part of
+// `CallableSignature::parameters`: call arguments never name it, so label
+// matching and argument access checks see only the written parameters.
+struct CallableReceiver {
+    std::optional<NodeId> declaration;
+    // `inout` is a `mutating` receiver.
+    syntax::AccessEffect access = syntax::AccessEffect::borrowing;
+    std::optional<SymbolId> type;
+};
+
 struct CallableSignature {
     CallableKind kind;
     bool acceptsArgumentClause = true;
     std::vector<CallableParameter> parameters;
+    std::optional<CallableReceiver> receiver;
 };
 
 struct Symbol {

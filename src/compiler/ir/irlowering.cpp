@@ -551,7 +551,39 @@ private:
                 collectConstant(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
             }
         }
+        // Methods are functions whose first parameter is the implicit receiver.
+        forEachMethod(*root, [this](const syntax::FunctionDeclSyntax::Ptr& method) {
+            collectFunction(method);
+        });
         evaluateConstants();
+    }
+
+    template<class Visitor>
+    static void forEachMethod(const syntax::SourceFileSyntax& root, Visitor&& visit) {
+        for (const auto& item : root.items) {
+            switch (item->kind) {
+                case syntax::Kind::structDecl:
+                    for (const auto& method :
+                         std::static_pointer_cast<syntax::StructDeclSyntax>(item)->methods) {
+                        visit(method);
+                    }
+                    break;
+                case syntax::Kind::enumDecl:
+                    for (const auto& method :
+                         std::static_pointer_cast<syntax::EnumDeclSyntax>(item)->methods) {
+                        visit(method);
+                    }
+                    break;
+                case syntax::Kind::extensionDecl:
+                    for (const auto& method :
+                         std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item)->methods) {
+                        visit(method);
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 
     bool isConstantType(typing::TypeId id) const {
@@ -810,6 +842,12 @@ private:
         function.symbol = symbol;
         const auto* semanticSymbol = semanticModel.symbol(*symbol);
         function.name = semanticSymbol == nullptr ? std::string() : semanticSymbol->name;
+        if (semanticSymbol != nullptr && semanticSymbol->kind == semantic::SymbolKind::method &&
+            semanticSymbol->containingSymbol.has_value()) {
+            // Qualified, so a method can never be mistaken for the entry `main`.
+            const auto* owner = semanticModel.symbol(*semanticSymbol->containingSymbol);
+            if (owner != nullptr) function.name = owner->name + "." + function.name;
+        }
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
         function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
         if (const auto* binding = model->nativeBinding(*symbol)) {
@@ -895,6 +933,12 @@ private:
                 lowerFunction(declaration, found->second);
             }
         }
+        forEachMethod(*root, [this, &semanticModel](const syntax::FunctionDeclSyntax::Ptr& method) {
+            const auto symbol = semanticModel.declaredSymbol(method);
+            if (!symbol.has_value()) return;
+            const auto found = functions.find(*symbol);
+            if (found != functions.end()) lowerFunction(method, found->second);
+        });
     }
 
     void lowerFunction(
@@ -2549,30 +2593,53 @@ private:
             return std::nullopt;
         }
 
+        // A method's receiver is the callee's first IR parameter, ahead of the
+        // written arguments, and follows the same access convention as any other.
+        struct Operand {
+            syntax::ExprPtr value;
+            SourceSpan span;
+        };
+        std::vector<Operand> operands;
+        if (targetSymbol != nullptr && targetSymbol->kind == semantic::SymbolKind::method) {
+            if (expression->callee->kind != syntax::Kind::memberExpr) {
+                report(
+                        DiagnosticId::unsupportedSyntax,
+                        expression->span,
+                        "a method call requires a receiver expression");
+                return std::nullopt;
+            }
+            const auto member =
+                    std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+            operands.push_back({member->base, member->base->span});
+        }
+        for (const auto& argument : expression->arguments) {
+            operands.push_back({argument->value, argument->span});
+        }
+
         std::vector<ir::ValueId> arguments;
         std::vector<ir::Value> consumedArguments;
         const auto& callee = module->functions[functions.at(*target)];
-        for (size_t index = 0; index < expression->arguments.size(); ++index) {
-            const auto& argument = expression->arguments[index];
+        for (size_t index = 0; index < operands.size(); ++index) {
+            const auto& operand = operands[index];
             const auto expectsAddress = index < callee.parameters.size() &&
                 callee.parameters[index].value.category == ir::ValueCategory::address;
             const auto consumesValue = index < callee.parameters.size() &&
                     callee.parameters[index].isConsuming;
             std::optional<ir::Value> value;
             if (expectsAddress) {
-                value = lowerAddress(argument->value);
-            } else if (consumesValue && isAddressable(argument->value)) {
-                const auto address = lowerAddress(argument->value);
+                value = lowerAddress(operand.value);
+            } else if (consumesValue && isAddressable(operand.value)) {
+                const auto address = lowerAddress(operand.value);
                 if (address.has_value()) {
                     value = emitValue(
                             ir::Opcode::take,
                             address->type,
                             ir::ValueCategory::value,
                             { address->id },
-                            argument->span);
+                            operand.span);
                 }
             } else {
-                value = lowerExpression(argument->value);
+                value = lowerExpression(operand.value);
             }
             if (!value.has_value()) return std::nullopt;
             if (!expectsAddress && index < callee.parameters.size() &&
@@ -2580,11 +2647,11 @@ private:
                 value = coerce(
                         *value,
                         callee.parameters[index].value.type,
-                        argument->value->span);
+                        operand.value->span);
                 if (!value.has_value()) return std::nullopt;
             }
             if (consumesValue && requiresDestroy(value->type)) {
-                value = prepareOwned(*value, argument->span);
+                value = prepareOwned(*value, operand.span);
                 if (!value.has_value()) return std::nullopt;
                 consumedArguments.push_back(*value);
             }

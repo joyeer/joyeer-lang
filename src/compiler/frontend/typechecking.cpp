@@ -21,6 +21,14 @@ void combineHash(size_t& seed, size_t value) {
     seed ^= value + 0x9e3779b9U + (seed << 6U) + (seed >> 2U);
 }
 
+// The marker written before a method call: `&receiver.method()` or
+// `consume receiver.method()`.
+enum class ReceiverMarker {
+    none,
+    inout,
+    consume,
+};
+
 } // namespace
 
 size_t TypeContext::TypeKeyHash::operator()(const TypeKey& key) const noexcept {
@@ -628,11 +636,23 @@ private:
             case syntax::Kind::functionDecl:
                 resolveFunction(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node));
                 break;
-            case syntax::Kind::structDecl:
-                resolveStructure(std::static_pointer_cast<syntax::StructDeclSyntax>(node));
+            case syntax::Kind::structDecl: {
+                const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                resolveStructure(declaration);
+                for (const auto& method : declaration->methods) resolveFunction(method);
                 break;
-            case syntax::Kind::enumDecl:
-                resolveEnumeration(std::static_pointer_cast<syntax::EnumDeclSyntax>(node));
+            }
+            case syntax::Kind::enumDecl: {
+                const auto declaration = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
+                resolveEnumeration(declaration);
+                for (const auto& method : declaration->methods) resolveFunction(method);
+                break;
+            }
+            case syntax::Kind::extensionDecl:
+                for (const auto& method :
+                     std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node)->methods) {
+                    resolveFunction(method);
+                }
                 break;
             default:
                 break;
@@ -659,6 +679,10 @@ private:
             const auto type = resolveType(parameter->type).value_or(
                     model->typeContext.errorType());
             recordDeclaredType(parameter, type);
+            if (parameter->isReceiver) {
+                signature.receiverType = type;
+                continue;
+            }
             signature.parameters.push_back(type);
         }
         if (declaration->returnType != nullptr) {
@@ -954,25 +978,23 @@ private:
                 checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
                 break;
             case syntax::Kind::functionDecl:
-                {
-                const auto function = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
-                const auto functionSymbol = model->semanticModelValue->declaredSymbol(function);
-                const auto* signature = functionSymbol.has_value()
-                    ? model->callable(*functionSymbol)
-                    : nullptr;
-                const auto previousReturnType = currentReturnType;
-                const auto previousLoopDepth = loopDepth;
-                loopDepth = 0;
-                currentReturnType = signature == nullptr
-                    ? model->typeContext.errorType()
-                    : signature->result;
-                checkBlock(function->body);
-                currentReturnType = previousReturnType;
-                loopDepth = previousLoopDepth;
+                checkFunctionBody(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node));
                 break;
+            case syntax::Kind::enumDecl:
+                for (const auto& method :
+                     std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->methods) {
+                    checkFunctionBody(method);
                 }
+                break;
+            case syntax::Kind::extensionDecl:
+                for (const auto& method :
+                     std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node)->methods) {
+                    checkFunctionBody(method);
+                }
+                break;
             case syntax::Kind::structDecl: {
                 const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                for (const auto& method : structure->methods) checkFunctionBody(method);
                 for (const auto& field : structure->fields) {
                     if (field->initializer == nullptr) continue;
                     const auto symbol = model->semanticModelValue->declaredSymbol(field);
@@ -989,6 +1011,22 @@ private:
             default:
                 break;
         }
+    }
+
+    void checkFunctionBody(const syntax::FunctionDeclSyntax::Ptr& function) {
+        const auto functionSymbol = model->semanticModelValue->declaredSymbol(function);
+        const auto* signature = functionSymbol.has_value()
+            ? model->callable(*functionSymbol)
+            : nullptr;
+        const auto previousReturnType = currentReturnType;
+        const auto previousLoopDepth = loopDepth;
+        loopDepth = 0;
+        currentReturnType = signature == nullptr
+            ? model->typeContext.errorType()
+            : signature->result;
+        checkBlock(function->body);
+        currentReturnType = previousReturnType;
+        loopDepth = previousLoopDepth;
     }
 
     TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block,
@@ -1076,7 +1114,7 @@ private:
     std::optional<TypeId> checkExpression(
             const syntax::ExprPtr& expression,
             std::optional<TypeId> expected = std::nullopt,
-            bool hasReceiverAccessMarker = false) {
+            ReceiverMarker receiverMarker = ReceiverMarker::none) {
         if (expression == nullptr) return std::nullopt;
         markDeferredReferenceHandled(expression);
 
@@ -1104,21 +1142,24 @@ private:
                 result = checkPrefix(
                     std::static_pointer_cast<syntax::PrefixExprSyntax>(expression), expected);
                 break;
-            case syntax::Kind::accessExpr:
-                if (std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
-                        ->marker != nullptr &&
-                    std::static_pointer_cast<syntax::AccessExprSyntax>(expression)
-                        ->marker->kind == kwConsume) {
+            case syntax::Kind::accessExpr: {
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+                const auto consumes = access->marker != nullptr &&
+                        access->marker->kind == kwConsume;
+                if (consumes && !isMemberCall(access->operand)) {
                     report(
                         TypeCheckingDiagnosticId::invalidConsumeArgument,
                         expression->span,
-                        "'consume' is only valid on an argument to a consuming parameter");
+                        "'consume' is only valid on an argument to a consuming parameter "
+                        "or the receiver of a consuming method call");
                 }
                 result = checkExpression(
-                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
+                        access->operand,
                         expected,
-                        true).value_or(model->typeContext.errorType());
+                        consumes ? ReceiverMarker::consume : ReceiverMarker::inout)
+                        .value_or(model->typeContext.errorType());
                 break;
+            }
             case syntax::Kind::propagateExpr:
                 result = checkPropagation(
                         std::static_pointer_cast<syntax::PropagateExprSyntax>(expression),
@@ -1147,7 +1188,7 @@ private:
             case syntax::Kind::callExpr:
                 result = checkCall(
                         std::static_pointer_cast<syntax::CallExprSyntax>(expression),
-                        hasReceiverAccessMarker);
+                        receiverMarker);
                 break;
             case syntax::Kind::arrayExpr:
                 result = checkArray(
@@ -1618,9 +1659,38 @@ private:
         bool sustained = true;
     };
 
+    // True for `receiver.name(...)`, ignoring parentheses.
+    bool isMemberCall(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        if (expression->kind == syntax::Kind::parenthesizedExpr) {
+            return isMemberCall(
+                    std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                            ->expression);
+        }
+        return expression->kind == syntax::Kind::callExpr &&
+                std::static_pointer_cast<syntax::CallExprSyntax>(expression)
+                        ->callee->kind == syntax::Kind::memberExpr;
+    }
+
+    // How a call accesses its receiver: builtin members by their mutability,
+    // user methods by their declared receiver effect.
+    std::optional<syntax::AccessEffect> receiverEffectOf(const semantic::Symbol* target) const {
+        if (target == nullptr) return std::nullopt;
+        if (target->kind == semantic::SymbolKind::builtinMember) {
+            return target->isMutable
+                    ? syntax::AccessEffect::inout
+                    : syntax::AccessEffect::borrowing;
+        }
+        if (target->kind == semantic::SymbolKind::method && target->callable.has_value() &&
+            target->callable->receiver.has_value()) {
+            return target->callable->receiver->access;
+        }
+        return std::nullopt;
+    }
+
     TypeId checkCall(
             const syntax::CallExprSyntax::Ptr& expression,
-            bool hasReceiverAccessMarker = false) {
+            ReceiverMarker receiverMarker = ReceiverMarker::none) {
         const auto calleeType = checkExpression(expression->callee).value_or(
                 model->typeContext.errorType());
         auto target = model->callTarget(expression);
@@ -1659,29 +1729,72 @@ private:
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
-        const auto mutatingReceiver = semanticTarget != nullptr &&
-                semanticTarget->kind == semantic::SymbolKind::builtinMember &&
-                semanticTarget->isMutable;
-        if (mutatingReceiver != hasReceiverAccessMarker) {
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::method) {
+            // A method needs a receiver value; `Type.method(...)` has none.
+            const auto base = expression->callee->kind == syntax::Kind::memberExpr
+                    ? std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base
+                    : syntax::ExprPtr();
+            const auto baseSymbol = base == nullptr
+                    ? std::optional<semantic::SymbolId>()
+                    : model->semanticModelValue->referencedSymbol(base);
+            const auto* baseDeclaration = baseSymbol.has_value()
+                    ? model->semanticModelValue->symbol(*baseSymbol)
+                    : nullptr;
+            if (base == nullptr ||
+                (baseDeclaration != nullptr &&
+                 (baseDeclaration->kind == semantic::SymbolKind::structure ||
+                  baseDeclaration->kind == semantic::SymbolKind::enumeration ||
+                  baseDeclaration->kind == semantic::SymbolKind::builtinType))) {
+                report(
+                        TypeCheckingDiagnosticId::invalidCallArguments,
+                        expression->callee->span,
+                        "method '" + semanticTarget->name + "' must be called on a value");
+            }
+        }
+
+        const auto receiverEffect = receiverEffectOf(semanticTarget);
+        const auto requiredReceiver = receiverEffect.value_or(syntax::AccessEffect::borrowing);
+        const auto suppliedReceiver = receiverMarker == ReceiverMarker::inout
+                ? syntax::AccessEffect::inout
+                : receiverMarker == ReceiverMarker::consume
+                        ? syntax::AccessEffect::consuming
+                        : syntax::AccessEffect::borrowing;
+        if (requiredReceiver != suppliedReceiver) {
+            const bool consumeInvolved = requiredReceiver == syntax::AccessEffect::consuming ||
+                    suppliedReceiver == syntax::AccessEffect::consuming;
             report(
-                    TypeCheckingDiagnosticId::invalidAccessMarker,
+                    consumeInvolved
+                            ? TypeCheckingDiagnosticId::invalidConsumeArgument
+                            : TypeCheckingDiagnosticId::invalidAccessMarker,
                     expression->callee->span,
-                    mutatingReceiver
+                    requiredReceiver == syntax::AccessEffect::inout
                             ? "mutating method call requires '&' on the receiver"
-                            : "non-mutating call must not use '&' on the receiver");
+                            : requiredReceiver == syntax::AccessEffect::consuming
+                                    ? "consuming method call requires 'consume' on the receiver"
+                                    : suppliedReceiver == syntax::AccessEffect::inout
+                                            ? "non-mutating call must not use '&' on the receiver"
+                                            : "non-consuming call must not use 'consume' on the receiver");
         }
 
         std::vector<CallAccess> accesses;
-        if (mutatingReceiver && expression->callee->kind == syntax::Kind::memberExpr) {
+        if (receiverEffect.has_value() && expression->callee->kind == syntax::Kind::memberExpr) {
             const auto member =
                     std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-            const auto storage = analyzeStorage(member->base);
-            if (!storage.writable) {
+            if (requiredReceiver == syntax::AccessEffect::inout) {
+                const auto storage = analyzeStorage(member->base);
+                if (!storage.writable) {
+                    report(
+                            TypeCheckingDiagnosticId::assignmentToImmutable,
+                            member->base->span,
+                            "cannot call mutating method through immutable binding '" +
+                                    storage.immutableName + "'");
+                }
+            } else if (requiredReceiver == syntax::AccessEffect::consuming &&
+                       !isConsumable(member->base)) {
                 report(
-                        TypeCheckingDiagnosticId::assignmentToImmutable,
+                        TypeCheckingDiagnosticId::invalidConsumeArgument,
                         member->base->span,
-                        "cannot call mutating method through immutable binding '" +
-                                storage.immutableName + "'");
+                        "consuming receiver must be an owning local, consuming parameter, or temporary");
             }
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);
@@ -1754,7 +1867,8 @@ private:
             const semantic::Symbol* target,
             std::vector<CallAccess>& accesses,
             bool sustained = true) const {
-        if (target == nullptr || target->kind != semantic::SymbolKind::builtinMember ||
+        const auto receiverEffect = receiverEffectOf(target);
+        if (!receiverEffect.has_value() ||
             expression->callee->kind != syntax::Kind::memberExpr) {
             collectEvaluationAccesses(expression->callee, accesses);
             return;
@@ -1767,9 +1881,7 @@ private:
             collectSubscriptIndexAccesses(member->base, accesses);
             accesses.push_back(CallAccess {
                 *path,
-                target->isMutable
-                        ? syntax::AccessEffect::inout
-                        : syntax::AccessEffect::borrowing,
+                *receiverEffect,
                 member->base->span,
                 sustained,
             });

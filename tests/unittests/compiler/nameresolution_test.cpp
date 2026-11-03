@@ -569,6 +569,154 @@ return box.missing
     EXPECT_EQ(resolution.model->deferredReference(returned->value), nullptr);
 }
 
+const joyeer::semantic::Symbol* findSymbol(
+        const joyeer::semantic::SemanticModel& model, SymbolKind kind, const std::string& name) {
+    for (const auto& symbol : model.symbols()) {
+        if (symbol.kind == kind && symbol.name == name) return &symbol;
+    }
+    return nullptr;
+}
+
+TEST_F(NameResolutionTest, MethodsAreMembersWithAReceiverOutsideTheCallParameters) {
+    resolve("struct Counter {\n"
+            "    var count: Int\n"
+            "    func read(): Int { return self.count }\n"
+            "    mutating func add(by amount: Int, twice: Bool) { &self.count += amount }\n"
+            "    consuming func done(): Int { return self.count }\n"
+            "}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto& model = *resolution.model;
+
+    const auto* counter = findSymbol(model, SymbolKind::structure, "Counter");
+    ASSERT_NE(counter, nullptr);
+    ASSERT_TRUE(counter->memberScope.has_value());
+    const auto& members = model.scope(*counter->memberScope)->values;
+    ASSERT_TRUE(members.contains("read"));
+    ASSERT_TRUE(members.contains("add"));
+    ASSERT_TRUE(members.contains("done"));
+
+    const auto& read = *model.symbol(members.at("read"));
+    EXPECT_EQ(read.kind, SymbolKind::method);
+    EXPECT_EQ(read.containingSymbol, counter->id);
+    ASSERT_TRUE(read.callable.has_value());
+    ASSERT_TRUE(read.callable->receiver.has_value());
+    EXPECT_TRUE(read.callable->parameters.empty());
+    EXPECT_EQ(read.callable->receiver->access, joyeer::syntax::AccessEffect::borrowing);
+    EXPECT_EQ(read.callable->receiver->type, counter->id);
+
+    const auto& add = *model.symbol(members.at("add"));
+    EXPECT_EQ(add.callable->receiver->access, joyeer::syntax::AccessEffect::inout);
+    ASSERT_EQ(add.callable->parameters.size(), 2u);
+    EXPECT_EQ(add.callable->parameters[0].label, std::optional<std::string>("by"));
+    EXPECT_EQ(add.callable->parameters[1].label, std::optional<std::string>("twice"));
+    EXPECT_EQ(model.symbol(members.at("done"))->callable->receiver->access,
+              joyeer::syntax::AccessEffect::consuming);
+}
+
+TEST_F(NameResolutionTest, ExtensionAddsMethodsToATypeDeclaredLater) {
+    resolve("extension Counter {\n"
+            "    func isZero(): Bool { return self.count == 0 }\n"
+            "}\n"
+            "struct Counter { var count: Int }\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto* counter = findSymbol(*resolution.model, SymbolKind::structure, "Counter");
+    ASSERT_NE(counter, nullptr);
+    const auto& members = resolution.model->scope(*counter->memberScope)->values;
+    ASSERT_TRUE(members.contains("isZero"));
+    EXPECT_EQ(resolution.model->symbol(members.at("isZero"))->kind, SymbolKind::method);
+}
+
+TEST_F(NameResolutionTest, SelfDenotesTheEnclosingTypeInSignaturesBodiesAndEnums) {
+    resolve("struct Square {\n"
+            "    let side: Int\n"
+            "    func scaled(by factor: Int): Self { return Self(side: self.side * factor) }\n"
+            "}\n"
+            "enum Light {\n"
+            "    Red,\n"
+            "    Green\n"
+            "    func other(): Self { return Self.Green }\n"
+            "}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto& model = *resolution.model;
+    const auto* square = findSymbol(model, SymbolKind::structure, "Square");
+    const auto* light = findSymbol(model, SymbolKind::enumeration, "Light");
+    ASSERT_NE(square, nullptr);
+    ASSERT_NE(light, nullptr);
+
+    const auto* scaled = findSymbol(model, SymbolKind::method, "scaled");
+    ASSERT_NE(scaled, nullptr);
+    EXPECT_EQ(scaled->declaredType, square->id);
+    const auto* other = findSymbol(model, SymbolKind::method, "other");
+    ASSERT_NE(other, nullptr);
+    EXPECT_EQ(other->declaredType, light->id);
+
+    // `Self(...)` calls the synthesized initializer of the enclosing struct.
+    const auto scaledDeclaration = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            model.node(*scaled->declaration));
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            scaledDeclaration->body->items[0]);
+    const auto target = model.callTarget(returned->value);
+    ASSERT_TRUE(target.has_value());
+    EXPECT_EQ(model.symbol(*target)->kind, SymbolKind::synthesizedInitializer);
+}
+
+TEST_F(NameResolutionTest, MethodCallResolvesThroughTheReceiversDeclaredType) {
+    resolve("struct Counter {\n"
+            "    var count: Int\n"
+            "    func read(): Int { return self.count }\n"
+            "}\n"
+            "func run(counter: Counter): Int { return counter.read() }\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[1]);
+    const auto returned = std::static_pointer_cast<joyeer::syntax::ReturnExprSyntax>(
+            function->body->items[0]);
+    const auto target = resolution.model->callTarget(returned->value);
+    ASSERT_TRUE(target.has_value());
+    EXPECT_EQ(resolution.model->symbol(*target)->kind, SymbolKind::method);
+}
+
+TEST_F(NameResolutionTest, RejectsSelfOutsideATypeAndTypesNamedSelf) {
+    resolve("func free(value: Self) { }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::selfOutsideType));
+
+    resolve("func free(): Int { return Self(side: 1) }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::selfOutsideType));
+
+    resolve("struct Self { var n: Int }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::reservedName));
+}
+
+TEST_F(NameResolutionTest, RejectsInvalidExtensionTargetsAndDuplicateMembers) {
+    resolve("extension Int { func twice(): Int { return 2 } }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::invalidExtensionTarget));
+
+    resolve("extension Missing { func twice(): Int { return 2 } }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+
+    resolve("struct C {\n"
+            "    var n: Int\n"
+            "    func a() { }\n"
+            "    func a() { }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::duplicateDeclaration));
+
+    resolve("struct C {\n"
+            "    var n: Int\n"
+            "    func n() { }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::duplicateDeclaration));
+}
+
+TEST_F(NameResolutionTest, MethodsCannotExposeLessAccessibleTypesThanTheirOwner) {
+    resolve("struct Hidden { var n: Int }\n"
+            "public struct Shown {\n"
+            "    var n: Int\n"
+            "    public func leak(): Hidden { return Hidden(n: 1) }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
+}
+
 TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
     resolve(readFixture("parser/ok/json_mvp.joyeer"));
 

@@ -1096,6 +1096,124 @@ TEST_F(ParserTest, AstDumpIsDeterministicAndContainsRoles) {
     EXPECT_NE(first.find("op=*"), std::string::npos);
 }
 
+TEST_F(ParserTest, ParsesStructMethodsWithImplicitReceiver) {
+    parse("struct Counter {\n"
+          "    var count: Int\n"
+          "    func read(): Int { return self.count }\n"
+          "    mutating func bump(by amount: Int) { &self.count += amount }\n"
+          "    consuming func finish(): Int { return self.count }\n"
+          "    public func peek(): Int { return self.count }\n"
+          "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 1u);
+    const auto structure = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(structure->fields.size(), 1u);
+    ASSERT_EQ(structure->methods.size(), 4u);
+
+    const auto receiver = [&](size_t index) {
+        const auto& method = structure->methods[index];
+        EXPECT_TRUE(method->isMethod());
+        EXPECT_TRUE(method->parameters.front()->isReceiver);
+        EXPECT_EQ(method->parameters.front()->name->rawValue, "self");
+        return method->parameters.front()->accessEffect();
+    };
+    EXPECT_EQ(receiver(0), joyeer::syntax::AccessEffect::borrowing);
+    EXPECT_EQ(receiver(1), joyeer::syntax::AccessEffect::inout);
+    EXPECT_EQ(receiver(2), joyeer::syntax::AccessEffect::consuming);
+    EXPECT_EQ(receiver(3), joyeer::syntax::AccessEffect::borrowing);
+
+    // The receiver precedes the written parameters and keeps their order.
+    ASSERT_EQ(structure->methods[1]->parameters.size(), 2u);
+    EXPECT_EQ(structure->methods[1]->parameters[1]->label->rawValue, "by");
+    EXPECT_EQ(structure->methods[3]->visibility, joyeer::syntax::Visibility::public_);
+    EXPECT_TRUE(structure->methods[3]->explicitVisibility);
+}
+
+TEST_F(ParserTest, ParsesEnumMethodsAfterCases) {
+    parse("enum Light {\n"
+          "    Red,\n"
+          "    Green\n"
+          "    func other(): Self { return .Green }\n"
+          "}\n"
+          "enum Trailing {\n"
+          "    A,\n"
+          "    B,\n"
+          "    func name(): Int { return 1 }\n"
+          "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 2u);
+    const auto light = std::static_pointer_cast<joyeer::syntax::EnumDeclSyntax>(
+            result.root->items[0]);
+    EXPECT_EQ(light->cases.size(), 2u);
+    ASSERT_EQ(light->methods.size(), 1u);
+    EXPECT_TRUE(light->methods[0]->isMethod());
+    const auto trailing = std::static_pointer_cast<joyeer::syntax::EnumDeclSyntax>(
+            result.root->items[1]);
+    EXPECT_EQ(trailing->cases.size(), 2u);
+    EXPECT_EQ(trailing->methods.size(), 1u);
+}
+
+TEST_F(ParserTest, ParsesExtensionMethods) {
+    parse("struct Square { let side: Int }\n"
+          "extension Square {\n"
+          "    func area(): Int { return self.side * self.side }\n"
+          "    mutating func reset() { }\n"
+          "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 2u);
+    ASSERT_EQ(result.root->items[1]->kind, Kind::extensionDecl);
+    const auto extension = std::static_pointer_cast<joyeer::syntax::ExtensionDeclSyntax>(
+            result.root->items[1]);
+    EXPECT_EQ(extension->extendedType->kind, Kind::nominalType);
+    EXPECT_EQ(extension->methods.size(), 2u);
+    const auto tree = joyeer::syntax::dump(result.root);
+    EXPECT_NE(tree.find("extension_decl"), std::string::npos);
+    EXPECT_NE(tree.find("receiver=yes"), std::string::npos);
+}
+
+TEST_F(ParserTest, ExtensionRejectsNonMethodMembersAndVisibility) {
+    parse("extension Square {\n"
+          "    let extra: Int\n"
+          "}\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::unsupportedSyntax));
+
+    parse("public extension Square {\n"
+          "    func area(): Int { return 1 }\n"
+          "}\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::unexpectedToken));
+}
+
+TEST_F(ParserTest, MethodsDoNotSwallowLaterTopLevelFunctionsAfterMissingCloser) {
+    parse("struct Broken {\n"
+          "    var value: Int\n"
+          "    func kept(): Int { return 1 }\n"
+          "func later(): Int { return 2 }\n");
+    ASSERT_FALSE(result.succeeded());
+    ASSERT_EQ(result.root->items.size(), 2u);
+    EXPECT_EQ(result.root->items[0]->kind, Kind::structDecl);
+    EXPECT_EQ(result.root->items[1]->kind, Kind::functionDecl);
+    const auto broken = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            result.root->items[0]);
+    EXPECT_EQ(broken->methods.size(), 1u);
+}
+
+TEST_F(ParserTest, SelfIsAnExpressionAndFreeFunctionsHaveNoReceiver) {
+    parse("func free(value: Int): Int { return value }\n");
+    ASSERT_TRUE(result.succeeded());
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    EXPECT_FALSE(function->isMethod());
+    EXPECT_EQ(function->parameters.size(), 1u);
+
+    parse("struct S {\n"
+          "    var n: Int\n"
+          "    func f(): Int { let copy = self\n"
+          "        return copy.n }\n"
+          "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
 TEST_F(ParserTest, ErrorCorpusMatchesDiagnosticSnapshot) {
         parse(readFixture("parser/err/recovery.joyeer"));
 

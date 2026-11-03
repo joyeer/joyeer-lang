@@ -195,6 +195,7 @@ public:
         }
 
         collectTopLevelDeclarations(root);
+        collectMembers(root);
         for (const auto& item : root->items) {
             resolveTopLevelSignature(item);
         }
@@ -281,6 +282,11 @@ public:
         for (const auto& file : files) {
             activeModule = file.module;
             model->fileScope_ = file.scope;
+            collectMembers(file.file);
+        }
+        for (const auto& file : files) {
+            activeModule = file.module;
+            model->fileScope_ = file.scope;
             for (const auto& item : file.file->items) resolveTopLevelSignature(item);
         }
         validateExposedTypes();
@@ -302,6 +308,8 @@ private:
     SemanticModel::Ptr model;
     std::vector<NameResolutionDiagnostic> diagnostics;
     uint32_t activeModule = 0;
+    // The type `Self` denotes while resolving the signature or body of a member.
+    std::optional<SymbolId> selfType;
     std::unordered_map<std::string, ScopeId> namedModules;
     std::unordered_map<ScopeId, std::unordered_map<std::string, ScopeId>> fileImports;
 
@@ -371,6 +379,13 @@ private:
             case Kind::structDecl: {
                 const auto value = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 for (const auto& field : value->fields) indexNode(field);
+                for (const auto& method : value->methods) indexNode(method);
+                break;
+            }
+            case Kind::extensionDecl: {
+                const auto value = std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
+                indexNode(value->extendedType);
+                for (const auto& method : value->methods) indexNode(method);
                 break;
             }
             case Kind::structFieldDecl: {
@@ -382,6 +397,7 @@ private:
             case Kind::enumDecl: {
                 const auto value = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
                 for (const auto& enumCase : value->cases) indexNode(enumCase);
+                for (const auto& method : value->methods) indexNode(method);
                 break;
             }
             case Kind::enumCaseDecl: {
@@ -858,6 +874,89 @@ private:
         }
     }
 
+    // Runs after every file's types are declared and imports are known, so an
+    // extension may precede, or live in another file of the module than, its type.
+    void collectMembers(const syntax::SourceFileSyntax::Ptr& root) {
+        for (const auto& item : root->items) {
+            switch (item->kind) {
+                case syntax::Kind::structDecl: {
+                    const auto declaration =
+                            std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                    const auto type = declaredSymbolId(declaration);
+                    if (type.has_value()) collectMethods(*type, declaration->methods);
+                    break;
+                }
+                case syntax::Kind::enumDecl: {
+                    const auto declaration =
+                            std::static_pointer_cast<syntax::EnumDeclSyntax>(item);
+                    const auto type = declaredSymbolId(declaration);
+                    if (type.has_value()) collectMethods(*type, declaration->methods);
+                    break;
+                }
+                case syntax::Kind::extensionDecl:
+                    collectExtension(std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item));
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    void collectExtension(const syntax::ExtensionDeclSyntax::Ptr& extension) {
+        setContainingScope(extension, model->fileScope_);
+        const auto target = resolveType(extension->extendedType, model->fileScope_);
+        if (!target.has_value()) return;
+        const auto& type = symbol(*target);
+        const auto isUserType = type.kind == SymbolKind::structure ||
+                type.kind == SymbolKind::enumeration;
+        if (extension->extendedType->kind != syntax::Kind::nominalType ||
+            !isUserType || !type.memberScope.has_value() || type.moduleId != activeModule) {
+            report(NameResolutionDiagnosticId::invalidExtensionTarget,
+                   extension->extendedType->span,
+                   "an extension must extend a struct or enum declared in the same module");
+            return;
+        }
+        collectMethods(*target, extension->methods);
+    }
+
+    void collectMethods(
+            SymbolId type,
+            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods) {
+        if (!symbol(type).memberScope.has_value()) return;
+        const auto members = *symbol(type).memberScope;
+        for (const auto& method : methods) {
+            CallableSignature signature { CallableKind::function, true, {}, std::nullopt };
+            for (const auto& parameter : method->parameters) {
+                if (parameter->isReceiver) {
+                    signature.receiver = CallableReceiver {
+                        nodeId(parameter),
+                        parameter->accessEffect(),
+                        std::nullopt,
+                    };
+                    continue;
+                }
+                signature.parameters.push_back(CallableParameter {
+                    tokenText(parameter->label),
+                    true,
+                    nodeId(parameter),
+                    nodeId(parameter->type),
+                    std::nullopt,
+                    parameter->accessEffect(),
+                });
+            }
+            const auto id = declareSymbol(
+                    members,
+                    SymbolNamespace::value,
+                    SymbolKind::method,
+                    tokenText(method->name),
+                    tokenSpan(method->name, method->span),
+                    nodeId(method),
+                    true,
+                    type);
+            symbol(id).callable = std::move(signature);
+        }
+    }
+
     void collectTopLevelBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
         const auto id = declareSymbol(
                 model->fileScope_,
@@ -892,7 +991,14 @@ private:
         symbol(id).callable = std::move(signature);
     }
 
+    void rejectReservedTypeName(const Token::Ptr& name, SourceSpan fallback) {
+        if (tokenText(name) != "Self") return;
+        report(NameResolutionDiagnosticId::reservedName, tokenSpan(name, fallback),
+               "'Self' is reserved and cannot name a declaration");
+    }
+
     void collectStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
+        rejectReservedTypeName(declaration->name, declaration->span);
         const auto type = declareSymbol(
                 model->fileScope_,
                 SymbolNamespace::type,
@@ -953,6 +1059,7 @@ private:
     }
 
     void collectEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
+        rejectReservedTypeName(declaration->name, declaration->span);
         const auto type = declareSymbol(
                 model->fileScope_,
                 SymbolNamespace::type,
@@ -1045,6 +1152,18 @@ private:
                 validateExposedType(function->returnType, declaration);
                 for (const auto& parameter : function->parameters) {
                     validateExposedType(parameter->type, declaration);
+                }
+            } else if (declaration.kind == SymbolKind::method) {
+                // A member is never more accessible than the type that owns it.
+                auto exposed = declaration;
+                if (declaration.containingSymbol.has_value()) {
+                    exposed.visibility = std::min(exposed.visibility,
+                            symbol(*declaration.containingSymbol).visibility);
+                }
+                const auto function = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+                validateExposedType(function->returnType, exposed);
+                for (const auto& parameter : function->parameters) {
+                    validateExposedType(parameter->type, exposed);
                 }
             } else if (declaration.kind == SymbolKind::structureField) {
                 auto exposed = declaration;
@@ -1153,17 +1272,50 @@ private:
                 resolveFunctionSignature(
                         std::static_pointer_cast<syntax::FunctionDeclSyntax>(node));
                 break;
-            case syntax::Kind::structDecl:
-                resolveStructureSignature(
-                        std::static_pointer_cast<syntax::StructDeclSyntax>(node));
+            case syntax::Kind::structDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                resolveStructureSignature(declaration);
+                resolveMethodSignatures(declaredSymbolId(declaration), declaration->methods);
                 break;
-            case syntax::Kind::enumDecl:
-                resolveEnumerationSignature(
-                        std::static_pointer_cast<syntax::EnumDeclSyntax>(node));
+            }
+            case syntax::Kind::enumDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
+                resolveEnumerationSignature(declaration);
+                resolveMethodSignatures(declaredSymbolId(declaration), declaration->methods);
                 break;
+            }
+            case syntax::Kind::extensionDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
+                resolveMethodSignatures(
+                        referencedSymbol(declaration->extendedType), declaration->methods);
+                break;
+            }
             default:
                 break;
         }
+    }
+
+    void resolveMethodSignatures(
+            std::optional<SymbolId> owner,
+            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods) {
+        if (!owner.has_value()) return;
+        for (const auto& method : methods) resolveFunctionSignature(method, owner);
+    }
+
+    void resolveMethodBodies(
+            std::optional<SymbolId> owner,
+            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods) {
+        if (!owner.has_value()) return;
+        const auto previous = selfType;
+        selfType = owner;
+        for (const auto& method : methods) {
+            const auto functionScope = introducedScopeId(method);
+            if (functionScope.has_value()) resolveBlock(method->body, *functionScope);
+        }
+        selfType = previous;
     }
 
     void resolveTopLevelBody(const syntax::NodePtr& node) {
@@ -1192,6 +1344,20 @@ private:
                 for (const auto& field : declaration->fields) {
                     resolveExpression(field->initializer, memberScope);
                 }
+                resolveMethodBodies(structure, declaration->methods);
+                break;
+            }
+            case syntax::Kind::enumDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
+                resolveMethodBodies(declaredSymbolId(declaration), declaration->methods);
+                break;
+            }
+            case syntax::Kind::extensionDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
+                resolveMethodBodies(
+                        referencedSymbol(declaration->extendedType), declaration->methods);
                 break;
             }
             default:
@@ -1220,6 +1386,15 @@ private:
     }
 
     void resolveFunctionSignature(
+            const syntax::FunctionDeclSyntax::Ptr& declaration,
+            std::optional<SymbolId> owner = std::nullopt) {
+        const auto previousSelf = selfType;
+        selfType = owner;
+        resolveFunctionSignatureInSelfContext(declaration);
+        selfType = previousSelf;
+    }
+
+    void resolveFunctionSignatureInSelfContext(
             const syntax::FunctionDeclSyntax::Ptr& declaration) {
         setContainingScope(declaration, model->fileScope_);
         const auto functionSymbol = declaredSymbolId(declaration);
@@ -1230,6 +1405,8 @@ private:
                 nodeId(declaration));
         model->introducedScopes_[nodeId(declaration)] = functionScope;
 
+        // The receiver is not a call parameter; the rest keep their written order.
+        size_t callableIndex = 0;
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
             const auto& parameter = declaration->parameters[index];
             setContainingScope(parameter, functionScope);
@@ -1248,9 +1425,14 @@ private:
             symbol(parameterSymbol).declaredType = parameterType;
 
             auto& callable = *symbol(*functionSymbol).callable;
-            if (index < callable.parameters.size()) {
-                callable.parameters[index].type = parameterType;
+            if (parameter->isReceiver) {
+                if (callable.receiver.has_value()) callable.receiver->type = parameterType;
+                continue;
             }
+            if (callableIndex < callable.parameters.size()) {
+                callable.parameters[callableIndex].type = parameterType;
+            }
+            ++callableIndex;
         }
 
         auto returnType = resolveType(declaration->returnType, functionScope);
@@ -1316,6 +1498,15 @@ private:
                 const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(type);
                 for (const auto& argument : nominal->arguments) {
                     resolveType(argument, currentScope);
+                }
+                if (tokenText(nominal->name) == "Self") {
+                    if (!selfType.has_value()) {
+                        report(NameResolutionDiagnosticId::selfOutsideType, type->span,
+                               "'Self' is valid only inside a struct, enum, or extension");
+                        return std::nullopt;
+                    }
+                    model->referenceSymbols_[nodeId(type)] = *selfType;
+                    return selfType;
                 }
                 const auto lookup = lookupType(currentScope, tokenText(nominal->name));
                 if (!lookup.symbol.has_value()) {
@@ -1534,6 +1725,15 @@ private:
 
     void resolveName(const syntax::NameExprSyntax::Ptr& expression, ScopeId currentScope) {
         const auto name = tokenText(expression->name);
+        if (name == "Self") {
+            if (!selfType.has_value()) {
+                report(NameResolutionDiagnosticId::selfOutsideType, expression->span,
+                       "'Self' is valid only inside a struct, enum, or extension");
+                return;
+            }
+            model->referenceSymbols_[nodeId(expression)] = *selfType;
+            return;
+        }
         const auto lookup = lookupUnqualified(currentScope, name, false);
         if (!lookup.symbol.has_value()) {
             reportLookupFailure(lookup, name,
@@ -2007,6 +2207,12 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.unknown-import";
         case NameResolutionDiagnosticId::ambiguousImport:
             return "name-resolution.ambiguous-import";
+        case NameResolutionDiagnosticId::invalidExtensionTarget:
+            return "name-resolution.invalid-extension-target";
+        case NameResolutionDiagnosticId::selfOutsideType:
+            return "name-resolution.self-outside-type";
+        case NameResolutionDiagnosticId::reservedName:
+            return "name-resolution.reserved-name";
     }
     return "name-resolution.unknown";
 }

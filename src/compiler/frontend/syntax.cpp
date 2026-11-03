@@ -18,6 +18,7 @@ const char* kindName(Kind kind) {
         case Kind::enumDecl: return "enum_decl";
         case Kind::enumCaseDecl: return "enum_case_decl";
         case Kind::associatedType: return "associated_type";
+        case Kind::extensionDecl: return "extension_decl";
         case Kind::errorType: return "error_type";
         case Kind::unitType: return "unit_type";
         case Kind::nominalType: return "nominal_type";
@@ -130,6 +131,7 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
                 << " access=" << (value->accessKeyword == nullptr
                         ? "borrowing"
                         : tokenText(value->accessKeyword))
+                << (value->isReceiver ? " receiver=yes" : "")
                 << '\n';
             appendNode(out, value->type, depth + 1);
             return;
@@ -138,6 +140,14 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
             const auto value = std::static_pointer_cast<StructDeclSyntax>(node);
             out << " name=" << tokenText(value->name) << '\n';
             for (const auto& field : value->fields) appendNode(out, field, depth + 1);
+            for (const auto& method : value->methods) appendNode(out, method, depth + 1);
+            return;
+        }
+        case Kind::extensionDecl: {
+            const auto value = std::static_pointer_cast<ExtensionDeclSyntax>(node);
+            out << '\n';
+            appendNode(out, value->extendedType, depth + 1);
+            for (const auto& method : value->methods) appendNode(out, method, depth + 1);
             return;
         }
         case Kind::structFieldDecl: {
@@ -152,6 +162,7 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
             const auto value = std::static_pointer_cast<EnumDeclSyntax>(node);
             out << " name=" << tokenText(value->name) << '\n';
             for (const auto& enumCase : value->cases) appendNode(out, enumCase, depth + 1);
+            for (const auto& method : value->methods) appendNode(out, method, depth + 1);
             return;
         }
         case Kind::enumCaseDecl: {

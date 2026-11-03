@@ -48,10 +48,9 @@ it to a supplied module rather than traversing folders or implicit submodules.
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, extensions, explicit `init` / `deinit`, methods,
+- `class`, explicit `init` / `deinit`,
   subscript declarations, or user-defined generics;
-- `mutating`, `indirect`,
-  `where`, or `yield`;
+- `indirect`, `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
   patterns, or recursive direct-payload enums;
 - postfix force unwrap `!`, `??`, `?.`, ranges, or labeled loop control;
@@ -169,11 +168,13 @@ parameter defaults remain unsupported. See [C binding coverage](c-interop.md).
 3. All four parameter access effects are implemented; borrowing is also
   the implicit default. Calls spell `&` for inout/initializing and `consume`
   for consuming; borrowing has no marker.
-4. A parsed `struct` contains stored fields only. Explicit initializers,
-   methods, and subscripts are later syntax phases; construction resolves to a
+4. A parsed `struct` contains stored fields and methods. Explicit initializers
+   and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.
-5. A parsed `enum` contains one or more cases only. Cases do not use a
-   `case` keyword.
+5. A parsed `enum` contains one or more cases, followed by methods. Cases do not
+   use a `case` keyword. Methods are also accepted in `extension Type { ... }`;
+   an extension holds methods only and takes no visibility modifier.
+   A method gets an implicit first `self` parameter. See [methods](methods.md).
 6. An associated type may be positional (`Bool(Bool)`) or labeled
    (`Unexpected(UInt8, at: Int)`). Construction and patterns must reproduce
    labels declared on labeled positions; the type checker enforces this.

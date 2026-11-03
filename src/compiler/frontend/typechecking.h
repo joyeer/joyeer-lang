@@ -220,6 +220,8 @@ struct TypedCallableSignature {
     bool acceptsArgumentClause = true;
     std::vector<TypeId> parameters;
     TypeId result = invalidTypeId;
+    // Set for a method: the type of its implicit `self`, which is not in `parameters`.
+    std::optional<TypeId> receiverType;
 };
 
 enum class TypeCheckingDiagnosticId {
