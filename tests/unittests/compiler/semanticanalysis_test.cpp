@@ -44,6 +44,51 @@ protected:
     joyeer::analysis::Result result;
 };
 
+TEST_F(SemanticAnalysisTest, ConsumingReceiverEndsTheReceiversOwnership) {
+    analyze("struct C {\n"
+            "    var n: Int\n"
+            "    func read(): Int { return self.n }\n"
+            "    consuming func done(): Int { return self.n }\n"
+            "}\n"
+            "func run(): Int {\n"
+            "    var c = C(n: 1)\n"
+            "    let total = consume c.done()\n"
+            "    return c.read() + total\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ReinitializingAConsumedReceiverAllowsLaterUse) {
+    analyze("struct C {\n"
+            "    var n: Int\n"
+            "    func read(): Int { return self.n }\n"
+            "    consuming func done(): Int { return self.n }\n"
+            "}\n"
+            "func run(): Int {\n"
+            "    var c = C(n: 1)\n"
+            "    let total = consume c.done()\n"
+            "    c = C(n: total)\n"
+            "    return c.read()\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnalyzesMethodBodiesLikeFunctions) {
+    analyze("struct C {\n"
+            "    var n: Int\n"
+            "    func missing(): Int { }\n"
+            "}\n"
+            "enum E {\n"
+            "    A\n"
+            "    func code(): Int { return 1\n"
+            "        let late = 2 }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::missingReturn));
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::unreachableCode));
+}
+
 TEST_F(SemanticAnalysisTest, AcceptsExplicitAndTrailingExpressionReturns) {
     analyze(R"JOYEER(func square(value: Int): Int {
 value * value

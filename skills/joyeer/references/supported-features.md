@@ -37,6 +37,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Values | `Bool`, `Int`/`UInt` (64-bit), signed/unsigned 8/16/32/64-bit integers, `Float`, `Double`, `String`, unit `()` / `Void`; local `let` and `var` |
 | Control flow | `if`, `else if`, `else`, `while`, unlabeled `break` / `continue`, `return`, Boolean `!`, short-circuit `&&` / `||`, exhaustive `match` |
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
+| Methods and extensions | Non-generic methods in `struct`/`enum` bodies and in `extension Type { ... }` for a struct or enum of the same module; `borrowing` (default), `mutating`, `consuming` receivers; `self` and `Self`; call markers `&value.m()` and `consume value.m()`; fields are written `self.field` |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
 | Dictionary lookup | `get(key:)` returns an owned `Optional<V>`; absence is `.None`, while strict subscripts still trap |
@@ -108,6 +109,8 @@ See [CLI usage](cli.md#local-projects-with-joypm).
 - User-defined generics, traits/protocols/interfaces, classes, closures,
   concurrency, or async functions.
 - User-defined `init` / `deinit` bodies or explicit copy initializers.
+- Implicit-`self` field access (write `self.count`), extensions of builtin
+  types or of a type from another module, and generic methods.
 - General user FFI, native pointer/unsafe syntax, output pointers, callbacks,
   C aggregates/varargs, or C binding types beyond the runtime-only `Int`/`Void`
   subset. `@spec`/`@property` shorthand and DSLs are also unsupported.

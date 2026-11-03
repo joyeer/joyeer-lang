@@ -101,6 +101,22 @@ Use `struct Counter { var value: Int }` and named field construction
 require an access marker, for example `&counter.value = counter.value + 1`.
 Do not introduce user-defined constructors or destructors.
 
+Declare methods inside the type or in `extension Counter { ... }` (same module,
+structs and enums only). A method receives an implicit `self` and may name its
+own type `Self`. Its receiver is `borrowing` by default, or written
+`mutating func` or `consuming func`. Always spell fields as `self.value`.
+Mark the receiver at the call like an argument: `counter.read()`,
+`&counter.bump()`, and `let n = consume counter.finish()`.
+
+```joyeer
+struct Counter {
+    var value: Int
+    func read(): Int { return self.value }
+    mutating func bump() { &self.value += 1 }
+    consuming func finish(): Int { return self.value }
+}
+```
+
 A concrete payload enum can be written as
 `enum Status { Empty, Value(Int), Failure(String) }`. Construct a case such as
 `.Value(42)` where its enum type is known from context. `match` arms use `=>`,

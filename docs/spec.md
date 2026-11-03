@@ -40,6 +40,7 @@ future work rather than becoming requirements through explanatory text.
 | 17 | Grammar Appendix (EBNF) | [spec/17-grammar.md](spec/17-grammar.md) |
 | 18 | Portable Host Operations | [spec/18-host.md](spec/18-host.md) |
 | 19 | C Interoperation — restricted runtime bindings and scalar ABI | [spec/19-c-interop.md](spec/19-c-interop.md) |
+| 20 | Protocols and Bounded Generic Functions ⏳ (proposed) | [spec/20-protocols.md](spec/20-protocols.md) |
 
 > Reading order for newcomers: §0 → §4 (the memory model is what makes Joyeer
 > different) → §3 → the rest as needed. §17 is the consolidated grammar.
