@@ -1,0 +1,66 @@
+struct Buffer {
+    var text: String
+    var parts: [String]
+
+    func length(): Int {
+        return self.text.count
+    }
+
+    mutating func append(piece: String) {
+        &self.text = self.text + piece
+        &self.parts.append(element: piece)
+    }
+
+    func snapshot(): Self {
+        return Self(text: self.text, parts: self.parts)
+    }
+
+    consuming func build(): String {
+        return self.text
+    }
+}
+
+extension Buffer {
+    func pieces(): Int {
+        return self.parts.count
+    }
+}
+
+struct Pair {
+    var left: Buffer
+    var right: Buffer
+
+    mutating func fill(piece: String) {
+        &self.left.append(piece: piece)
+        &self.right.append(piece: piece + piece)
+    }
+
+    func total(): Int {
+        return self.left.length() + self.right.length()
+    }
+}
+
+func main() {
+    var buffer = Buffer(text: "", parts: [])
+    &buffer.append(piece: "ab")
+    &buffer.append(piece: "cd")
+    let copy = buffer.snapshot()
+    &buffer.append(piece: "ef")
+    print(value: copy.text)
+    print(value: buffer.text)
+    print(value: buffer.pieces())
+    print(value: copy.pieces())
+    print(value: buffer.length())
+
+    let built = consume buffer.build()
+    print(value: built)
+    buffer = Buffer(text: "again", parts: [])
+    print(value: buffer.length())
+
+    var pair = Pair(left: Buffer(text: "", parts: []), right: Buffer(text: "", parts: []))
+    &pair.fill(piece: "xy")
+    &pair.fill(piece: "z")
+    print(value: pair.total())
+    print(value: pair.left.text)
+    print(value: pair.right.text)
+}

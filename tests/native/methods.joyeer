@@ -1,0 +1,81 @@
+struct Counter {
+    var count: Int
+    let step: Int
+
+    func read(): Int {
+        return self.count
+    }
+
+    mutating func bump() {
+        &self.count += self.step
+    }
+
+    func doubled(): Self {
+        return Self(count: self.count * 2, step: self.step)
+    }
+
+    consuming func finish(): Int {
+        return self.count + 1000
+    }
+}
+
+extension Counter {
+    func isAbove(limit: Int): Bool {
+        return self.count > limit
+    }
+
+    mutating func reset() {
+        &self.count = 0
+    }
+}
+
+struct Box {
+    var inner: Counter
+
+    mutating func bumpInner() {
+        &self.inner.bump()
+    }
+}
+
+enum Light {
+    Red,
+    Green
+
+    func other(): Self {
+        return match self {
+            .Red => .Green,
+            .Green => .Red,
+        }
+    }
+
+    func code(): Int {
+        return match self {
+            .Red => 1,
+            .Green => 2,
+        }
+    }
+}
+
+func main() {
+    var c = Counter(count: 1, step: 3)
+    print(value: c.read())
+    &c.bump()
+    &c.bump()
+    print(value: c.read())
+    let d = c.doubled()
+    print(value: d.read())
+    print(value: c.isAbove(limit: 5))
+    &c.reset()
+    print(value: c.read())
+
+    var box = Box(inner: Counter(count: 10, step: 5))
+    &box.bumpInner()
+    print(value: box.inner.read())
+
+    let total = consume c.finish()
+    print(value: total)
+
+    let light = Light.Red
+    print(value: light.other().code())
+    print(value: Counter(count: 4, step: 1).doubled().read())
+}

@@ -87,6 +87,8 @@ std::unordered_set<std::string> initKeywordMap() {
     map.insert("public");
     map.insert("internal");
     map.insert("private");
+    map.insert("mutating");
+    map.insert("extension");
     map.insert("as");
 
     return map;
@@ -126,6 +128,8 @@ TokenKind keywordKind(std::string_view value) {
     {"public", kwPublic},
     {"internal", kwInternal},
     {"private", kwPrivate},
+    {"mutating", kwMutating},
+    {"extension", kwExtension},
     {"as", kwAs},
   };
 
@@ -135,8 +139,7 @@ TokenKind keywordKind(std::string_view value) {
 
 bool isDeferredKeyword(std::string_view value) {
   static const std::unordered_set<std::string_view> words = {
-    "extension", "subscript", "deinit", "typealias", "indirect",
-    "mutating",
+    "subscript", "deinit", "typealias", "indirect",
     "yield", "where",
     "async", "await", "actor", "throws", "catch", "defer",
     "is", "protocol", "trait", "macro", "invariant",

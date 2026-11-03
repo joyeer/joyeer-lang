@@ -156,6 +156,12 @@ The current checker validates:
   is bounded to 4096 specializations and depth 256; an otherwise unproved
   pathological matrix conservatively requires a catch-all arm.
 
+A method call checks its receiver like an argument: the written marker
+(`&` or `consume`, or none) must match the method's receiver effect, a
+mutating receiver must be writable, a consuming receiver must be consumable,
+and the receiver joins the call's access set so it conflicts with an
+overlapping argument. See [methods](methods.md).
+
 Ordinary call labels, ordering, required/default argument presence, and
 lexical declaration binding are checked during name resolution when the call
 target is known. If a target is deferred until its receiver type is available,

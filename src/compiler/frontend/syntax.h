@@ -35,6 +35,7 @@ enum class Kind {
     enumDecl,
     enumCaseDecl,
     associatedType,
+    extensionDecl,
 
     errorType,
     unitType,
@@ -265,6 +266,9 @@ struct ParameterDeclSyntax final : Node {
     Token::Ptr name;
     Token::Ptr accessKeyword;
     TypePtr type;
+    // True only for the implicit `self` parameter the parser inserts first in
+    // every method. Its access effect is the method's receiver effect.
+    bool isReceiver = false;
 
     ParameterDeclSyntax(SourceSpan span,
                         Token::Ptr label,
@@ -309,6 +313,12 @@ struct FunctionDeclSyntax final : DeclSyntax {
             parameters(std::move(parameters)),
             returnType(std::move(returnType)),
             body(std::move(body)) {}
+
+    // A method has the implicit receiver as its first parameter; see
+    // ParameterDeclSyntax::isReceiver.
+    [[nodiscard]] bool isMethod() const {
+        return !parameters.empty() && parameters.front()->isReceiver;
+    }
 };
 
 struct StructFieldDeclSyntax final : Node {
@@ -336,6 +346,7 @@ struct StructDeclSyntax final : DeclSyntax {
 
     Token::Ptr name;
     std::vector<StructFieldDeclSyntax::Ptr> fields;
+    std::vector<FunctionDeclSyntax::Ptr> methods;
 
     StructDeclSyntax(SourceSpan span,
                      Token::Ptr name,
@@ -379,6 +390,7 @@ struct EnumDeclSyntax final : DeclSyntax {
 
     Token::Ptr name;
     std::vector<EnumCaseDeclSyntax::Ptr> cases;
+    std::vector<FunctionDeclSyntax::Ptr> methods;
 
     EnumDeclSyntax(SourceSpan span,
                    Token::Ptr name,
@@ -386,6 +398,20 @@ struct EnumDeclSyntax final : DeclSyntax {
             DeclSyntax(Kind::enumDecl, span),
             name(std::move(name)),
             cases(std::move(cases)) {}
+};
+
+struct ExtensionDeclSyntax final : DeclSyntax {
+    using Ptr = std::shared_ptr<ExtensionDeclSyntax>;
+
+    TypePtr extendedType;
+    std::vector<FunctionDeclSyntax::Ptr> methods;
+
+    ExtensionDeclSyntax(SourceSpan span,
+                        TypePtr extendedType,
+                        std::vector<FunctionDeclSyntax::Ptr> methods):
+            DeclSyntax(Kind::extensionDecl, span),
+            extendedType(std::move(extendedType)),
+            methods(std::move(methods)) {}
 };
 
 struct NameExprSyntax final : ExprSyntax {
