@@ -136,12 +136,152 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         return type.value_or(joyeer::typing::invalidTypeId);
         }
 
+        bool hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId id) const {
+        return std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [id](const auto& diagnostic) { return diagnostic.id == id; });
+        }
+
         Diagnostics lexerDiagnostics;
         SourceFile::Ptr source;
         joyeer::parser::ParseResult parseResult;
         joyeer::semantic::NameResolutionResult resolution;
         joyeer::typing::TypeCheckingResult checking;
     };
+
+    TEST_F(TypeCheckingTest, TypesMethodsReceiversAndCalls) {
+        check("struct Counter {\n"
+              "    var count: Int\n"
+              "    func read(): Int { return self.count }\n"
+              "    mutating func bump(by amount: Int) { &self.count += amount }\n"
+              "    consuming func finish(): Int { return self.count }\n"
+              "    func doubled(): Self { return Self(count: self.count * 2) }\n"
+              "}\n"
+              "extension Counter {\n"
+              "    func isAbove(limit: Int): Bool { return self.count > limit }\n"
+              "}\n"
+              "func run() {\n"
+              "    var c = Counter(count: 1)\n"
+              "    let a: Int = c.read()\n"
+              "    &c.bump(by: 2)\n"
+              "    let d: Counter = c.doubled()\n"
+              "    let big: Bool = c.isAbove(limit: 1)\n"
+              "    let total: Int = consume c.finish()\n"
+              "}\n");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+
+        const auto& model = *resolution.model;
+        const auto counter = [&]() {
+            for (const auto& symbol : model.symbols()) {
+                if (symbol.kind == joyeer::semantic::SymbolKind::structure &&
+                    symbol.name == "Counter") {
+                    return *checking.model->typeOf(symbol.id);
+                }
+            }
+            return joyeer::typing::invalidTypeId;
+        }();
+        for (const auto& symbol : model.symbols()) {
+            if (symbol.kind != joyeer::semantic::SymbolKind::method) continue;
+            const auto* signature = checking.model->callable(symbol.id);
+            ASSERT_NE(signature, nullptr) << symbol.name;
+            EXPECT_EQ(signature->receiverType, std::optional<joyeer::typing::TypeId>(counter))
+                    << symbol.name;
+        }
+        for (const auto& symbol : model.symbols()) {
+            if (symbol.kind != joyeer::semantic::SymbolKind::method) continue;
+            const auto* signature = checking.model->callable(symbol.id);
+            if (symbol.name == "bump") EXPECT_EQ(signature->parameters.size(), 1u);
+            if (symbol.name == "read") EXPECT_TRUE(signature->parameters.empty());
+            if (symbol.name == "doubled") EXPECT_EQ(signature->result, counter);
+        }
+    }
+
+    TEST_F(TypeCheckingTest, RequiresTheReceiverMarkerMatchingTheMethodEffect) {
+        const std::string prelude =
+                "struct C {\n"
+                "    var n: Int\n"
+                "    func read(): Int { return self.n }\n"
+                "    mutating func bump() { &self.n += 1 }\n"
+                "    consuming func done(): Int { return self.n }\n"
+                "}\n";
+        using Id = joyeer::typing::TypeCheckingDiagnosticId;
+
+        check(prelude + "func run() { var c = C(n: 1)\n c.bump() }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::invalidAccessMarker));
+
+        check(prelude + "func run() { var c = C(n: 1)\n let x = &c.read() }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::invalidAccessMarker));
+
+        check(prelude + "func run() { var c = C(n: 1)\n let x = c.done() }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::invalidConsumeArgument));
+
+        check(prelude + "func run() { var c = C(n: 1)\n let x = consume c.read() }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::invalidConsumeArgument));
+
+        check(prelude + "func run() { let c = C(n: 1)\n &c.bump() }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::assignmentToImmutable));
+    }
+
+    TEST_F(TypeCheckingTest, MethodCallsNeedAValueReceiverAndMatchingLabels) {
+        using Id = joyeer::typing::TypeCheckingDiagnosticId;
+        check("struct C {\n"
+              "    var n: Int\n"
+              "    func read(): Int { return self.n }\n"
+              "}\n"
+              "func run() { let x = C.read() }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::invalidCallArguments));
+    }
+
+    TEST_F(TypeCheckingTest, ReceiverAccessParticipatesInCallExclusivity) {
+        using Id = joyeer::typing::TypeCheckingDiagnosticId;
+        const std::string prelude =
+                "struct C {\n"
+                "    var n: Int\n"
+                "    func read(): Int { return self.n }\n"
+                "    mutating func add(by v: Int) { &self.n += v }\n"
+                "    mutating func merge(other: C) { &self.n += other.n }\n"
+                "    func plus(other: C): Int { return self.n + other.n }\n"
+                "}\n";
+
+        check(prelude + "func run() { var c = C(n: 1)\n &c.add(by: c.read()) }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::overlappingAccess));
+
+        check(prelude + "func run() { var c = C(n: 1)\n &c.merge(other: c) }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::overlappingAccess));
+
+        // Two borrows of one value, and a mutation of a distinct value, are fine.
+        check(prelude + "func run(): Int { let c = C(n: 1)\n return c.plus(other: c) }\n");
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+        check(prelude + "func run() { var a = C(n: 1)\n let b = C(n: 2)\n &a.merge(other: b) }\n");
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    TEST_F(TypeCheckingTest, BorrowingReceiversAreImmutableInsideTheMethod) {
+        using Id = joyeer::typing::TypeCheckingDiagnosticId;
+        check("struct C {\n"
+              "    var n: Int\n"
+              "    func set() { &self.n = 1 }\n"
+              "}\n");
+        EXPECT_TRUE(hasMethodDiagnostic(Id::assignmentToImmutable));
+    }
+
+    TEST_F(TypeCheckingTest, MethodsOnEnumsAndChainedTemporaries) {
+        check("struct C {\n"
+              "    var n: Int\n"
+              "    func doubled(): Self { return Self(n: self.n * 2) }\n"
+              "    func read(): Int { return self.n }\n"
+              "}\n"
+              "enum Light {\n"
+              "    Red,\n"
+              "    Green\n"
+              "    func other(): Self { return Self.Green }\n"
+              "}\n"
+              "func run(): Int {\n"
+              "    let light: Light = Light.Red\n"
+              "    let next: Light = light.other()\n"
+              "    return C(n: 4).doubled().read()\n"
+              "}\n");
+        ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
 
     TEST_F(TypeCheckingTest, DictionaryGetInfersExactOptionalFromReceiver) {
         check("func lookup(values: [String: Int?], units: [UInt8: Void], flags: [Bool: Int]) {\n"

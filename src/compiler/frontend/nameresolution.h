@@ -25,6 +25,9 @@ enum class NameResolutionDiagnosticId {
     importCollision,
     unknownImport,
     ambiguousImport,
+    invalidExtensionTarget,
+    selfOutsideType,
+    reservedName,
 };
 
 struct ModuleInput {

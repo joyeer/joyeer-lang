@@ -264,6 +264,11 @@ syntax::NodePtr Parser::parseTopLevelItem() {
                 report(DiagnosticId::unexpectedToken, modifier->span,
                        "a declaration may have only one visibility modifier");
             }
+            if (declaration->kind == syntax::Kind::extensionDecl) {
+                report(DiagnosticId::unexpectedToken, modifier->span,
+                       "an extension cannot have a visibility modifier; "
+                       "annotate its methods instead");
+            }
             declaration->visibility = visibilityFor(modifier->kind);
             declaration->explicitVisibility = true;
             declaration->span = coveringSpan(modifier->span, declaration->span);
@@ -285,6 +290,8 @@ syntax::NodePtr Parser::parseTopLevelItem() {
             return parseStructDecl();
         case kwEnum:
             return parseEnumDecl();
+        case kwExtension:
+            return parseExtensionDecl();
         default:
             reportExpected(DiagnosticId::expectedDeclaration, "a top-level declaration");
             {
@@ -414,8 +421,120 @@ syntax::ParameterDeclSyntax::Ptr Parser::parseParameter() {
             std::move(type));
 }
 
+bool Parser::isMethodStart() const {
+    size_t offset = 0;
+    if (isVisibility(cursor.peek()->kind)) ++offset;
+    if (cursor.at(kwMutating, offset) || cursor.at(kwConsuming, offset) ||
+        cursor.at(kwBorrowing, offset)) {
+        ++offset;
+    }
+    return cursor.at(kwFunc, offset);
+}
+
+bool Parser::isNestedMethodStart(uint32_t declarationColumn) const {
+    return isMethodStart() &&
+           !(cursor.peek()->startsLine && cursor.peek()->columnAt <= declarationColumn);
+}
+
+uint32_t Parser::declarationColumn(size_t keyword) const {
+    const auto token = cursor.tokenAt(keyword);
+    if (keyword > 0 && !token->startsLine) {
+        const auto before = cursor.tokenAt(keyword - 1);
+        if (isVisibility(before->kind)) return before->columnAt;
+    }
+    return token->columnAt;
+}
+
+syntax::FunctionDeclSyntax::Ptr Parser::parseMethodDecl() {
+    const size_t start = cursor.position();
+    Token::Ptr visibility;
+    if (isVisibility(cursor.peek()->kind)) visibility = cursor.advance();
+    Token::Ptr effect;
+    if (cursor.at(kwMutating) || cursor.at(kwConsuming) || cursor.at(kwBorrowing)) {
+        effect = cursor.advance();
+    }
+
+    auto declaration = parseFunctionDecl();
+    declaration->parameters.insert(
+            declaration->parameters.begin(),
+            makeReceiverParameter(effect, declaration->name));
+    if (visibility != nullptr) {
+        declaration->visibility = visibilityFor(visibility->kind);
+        declaration->explicitVisibility = true;
+    }
+    declaration->span = spanFrom(start);
+    return declaration;
+}
+
+// Desugars the receiver into an ordinary leading `self: <effect> Self`
+// parameter, so later stages need no separate receiver representation:
+// `mutating` is `inout`, `consuming` is `consuming`, the default is borrowing.
+syntax::ParameterDeclSyntax::Ptr Parser::makeReceiverParameter(
+        const Token::Ptr& effect, const Token::Ptr& anchor) {
+    const auto& position = anchor != nullptr ? anchor : cursor.peek();
+    const auto span = position->span;
+    const auto line = position->lineNumber;
+    const auto column = position->columnAt;
+
+    auto self = std::make_shared<Token>(kwSelf, "self", span, line, column, false);
+    Token::Ptr access;
+    if (effect != nullptr && effect->kind == kwMutating) {
+        access = std::make_shared<Token>(kwInout, "inout", effect->span, line, column, false);
+    } else {
+        access = effect;
+    }
+    auto selfName = std::make_shared<Token>(identifier, "Self", span, line, column, false);
+    auto type = std::make_shared<syntax::NominalTypeSyntax>(
+            span, std::move(selfName), std::vector<syntax::TypePtr> {});
+    auto receiver = std::make_shared<syntax::ParameterDeclSyntax>(
+            span, self, self, std::move(access), std::move(type));
+    receiver->isReceiver = true;
+    return receiver;
+}
+
+syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
+    const size_t start = cursor.position();
+    const auto column = declarationColumn(start);
+    cursor.advance();
+    auto extended = parseType();
+
+    std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
+    if (cursor.eat(leftCurly) == nullptr) {
+        reportExpected(DiagnosticId::expectedBlock, "'{' to begin the extension body");
+        return std::make_shared<syntax::ExtensionDeclSyntax>(
+                spanFrom(start), std::move(extended), std::move(methods));
+    }
+    DelimiterScope delimiter(activeClosers, rightCurly);
+
+    while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        if (cursor.peek()->startsLine && cursor.peek()->columnAt <= column &&
+            isTopLevelStart(cursor.peek())) {
+            break;
+        }
+        const size_t before = cursor.position();
+        if (isNestedMethodStart(column)) {
+            methods.push_back(parseMethodDecl());
+        } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
+            cursor.advance();
+        } else {
+            report(DiagnosticId::unsupportedSyntax,
+                   tokenSpan(cursor.peek()),
+                   "only methods are supported in an extension");
+            cursor.advance();
+            synchronizeBlock();
+        }
+        if (cursor.position() == before) cursor.advance();
+        enforceItemBoundary(false);
+    }
+    expect(rightCurly, "'}' to close the extension body");
+
+    return std::make_shared<syntax::ExtensionDeclSyntax>(
+            spanFrom(start), std::move(extended), std::move(methods));
+}
+
 syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     const size_t start = cursor.position();
+    const auto column = declarationColumn(start);
     cursor.advance();
     auto name = expect(identifier, "a struct name");
 
@@ -427,12 +546,20 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     DelimiterScope delimiter(activeClosers, rightCurly);
 
     std::vector<syntax::StructFieldDeclSyntax::Ptr> fields;
+    std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        const size_t before = cursor.position();
+        if (isNestedMethodStart(column)) {
+            methods.push_back(parseMethodDecl());
+            if (cursor.position() == before) cursor.advance();
+            enforceItemBoundary(false);
+            continue;
+        }
         if (cursor.peek()->startsLine &&
-            (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum))) {
+            (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum) ||
+             cursor.at(kwExtension))) {
             break;
         }
-        const size_t before = cursor.position();
         Token::Ptr modifier;
         if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
         if (cursor.at(kwLet) || cursor.at(kwVar)) {
@@ -456,8 +583,10 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     }
     expect(rightCurly, "'}' to close the struct body");
 
-    return std::make_shared<syntax::StructDeclSyntax>(
+    auto declaration = std::make_shared<syntax::StructDeclSyntax>(
             spanFrom(start), std::move(name), std::move(fields));
+    declaration->methods = std::move(methods);
+    return declaration;
 }
 
 syntax::StructFieldDeclSyntax::Ptr Parser::parseStructField() {
@@ -486,6 +615,7 @@ syntax::StructFieldDeclSyntax::Ptr Parser::parseStructField() {
 
 syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
     const size_t start = cursor.position();
+    const auto column = declarationColumn(start);
     cursor.advance();
     auto name = expect(identifier, "an enum name");
     if (cursor.eat(leftCurly) == nullptr) {
@@ -503,6 +633,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
     }
 
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        if (isNestedMethodStart(column)) break;
         if (cursor.peek()->startsLine && isTopLevelStart(cursor.peek())) {
             break;
         }
@@ -522,7 +653,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
             if (cursor.at(rightCurly)) break;
             continue;
         }
-        if (cursor.at(rightCurly) || cursor.atEnd()) break;
+        if (cursor.at(rightCurly) || cursor.atEnd() || isNestedMethodStart(column)) break;
 
         reportMissingComma("expected ',' between enum cases");
         if (!cursor.at(identifier) || !cursor.peek()->startsLine) {
@@ -530,10 +661,35 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
             cursor.eat(comma);
         }
     }
+
+    // Methods follow the cases.
+    std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
+    while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        if (cursor.peek()->startsLine && cursor.peek()->columnAt <= column &&
+            isTopLevelStart(cursor.peek())) {
+            break;
+        }
+        const size_t before = cursor.position();
+        if (isNestedMethodStart(column)) {
+            methods.push_back(parseMethodDecl());
+        } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
+            cursor.advance();
+        } else {
+            report(DiagnosticId::unsupportedSyntax,
+                   tokenSpan(cursor.peek()),
+                   "only methods may follow the cases of an enum");
+            cursor.advance();
+            synchronizeBlock();
+        }
+        if (cursor.position() == before) cursor.advance();
+        enforceItemBoundary(false);
+    }
     expect(rightCurly, "'}' to close the enum body");
 
-    return std::make_shared<syntax::EnumDeclSyntax>(
+    auto declaration = std::make_shared<syntax::EnumDeclSyntax>(
             spanFrom(start), std::move(name), std::move(cases));
+    declaration->methods = std::move(methods);
+    return declaration;
 }
 
 syntax::EnumCaseDeclSyntax::Ptr Parser::parseEnumCaseDecl() {
@@ -687,7 +843,8 @@ syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
     std::vector<syntax::NodePtr> items;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         if (cursor.peek()->startsLine &&
-            (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum))) {
+            (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum) ||
+             cursor.at(kwExtension) || cursor.at(kwMutating))) {
             break;
         }
         const size_t before = cursor.position();
@@ -1099,7 +1256,7 @@ syntax::ExprPtr Parser::parsePrimaryExpr() {
         auto literal = cursor.advance();
         return std::make_shared<syntax::LiteralExprSyntax>(tokenSpan(literal), std::move(literal));
     }
-    if (cursor.at(identifier)) {
+    if (cursor.at(identifier) || cursor.at(kwSelf)) {
         auto name = cursor.advance();
         return std::make_shared<syntax::NameExprSyntax>(tokenSpan(name), std::move(name));
     }
@@ -1476,6 +1633,7 @@ bool Parser::isLiteral(TokenKind kind) const {
 bool Parser::isExpressionStart(const Token::Ptr& token) const {
     return token != nullptr &&
            (isLiteral(token->kind) || token->kind == identifier ||
+            token->kind == kwSelf ||
             token->kind == leftParen || token->kind == leftSquare ||
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
@@ -1488,6 +1646,7 @@ bool Parser::isTopLevelStart(const Token::Ptr& token) const {
     return token->kind == kwLet || token->kind == kwVar ||
            token->kind == kwFunc || token->kind == kwStruct ||
            token->kind == kwEnum || token->kind == kwImport ||
+           token->kind == kwExtension ||
            token->kind == atSign || isVisibility(token->kind);
 }
 

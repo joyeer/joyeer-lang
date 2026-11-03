@@ -87,6 +87,63 @@ protected:
     joyeer::lowering::Result result;
 };
 
+TEST_F(IRLoweringTest, LowersMethodsAsFunctionsWithALeadingReceiverParameter) {
+    lower("struct Counter {\n"
+          "    var count: Int\n"
+          "    func read(): Int { return self.count }\n"
+          "    mutating func bump(by amount: Int) { &self.count += amount }\n"
+          "    consuming func finish(): Int { return self.count }\n"
+          "}\n"
+          "extension Counter {\n"
+          "    func main(): Int { return self.count }\n"
+          "}\n"
+          "func run(): Int {\n"
+          "    var c = Counter(count: 1)\n"
+          "    &c.bump(by: 2)\n"
+          "    let a = c.read()\n"
+          "    let b = c.main()\n"
+          "    return a + b + consume c.finish()\n"
+          "}\n");
+    ASSERT_NE(result.module, nullptr);
+    ASSERT_TRUE(result.succeeded());
+
+    const auto& read = function("Counter.read");
+    ASSERT_EQ(read.parameters.size(), 1u);
+    EXPECT_EQ(read.parameters[0].name, "self");
+    EXPECT_EQ(read.parameters[0].value.category, joyeer::ir::ValueCategory::value);
+    EXPECT_FALSE(read.parameters[0].isMutable);
+
+    // A mutating receiver is an address projection, like any inout parameter.
+    const auto& bump = function("Counter.bump");
+    ASSERT_EQ(bump.parameters.size(), 2u);
+    EXPECT_EQ(bump.parameters[0].value.category, joyeer::ir::ValueCategory::address);
+    EXPECT_TRUE(bump.parameters[0].isMutable);
+    EXPECT_EQ(bump.parameters[1].name, "amount");
+
+    EXPECT_TRUE(function("Counter.finish").parameters[0].isConsuming);
+
+    // The call passes the receiver first, then the written arguments.
+    const auto& run = function("run");
+    size_t bumpCalls = 0;
+    for (const auto& block : run.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee) continue;
+            if (result.module->functions[*instruction.callee].name == "Counter.bump") {
+                ++bumpCalls;
+                EXPECT_EQ(instruction.operands.size(), 2u);
+            }
+        }
+    }
+    EXPECT_EQ(bumpCalls, 1u);
+
+    // A method named `main` is qualified and never becomes the program entry.
+    EXPECT_EQ(function("Counter.main").isRootModule, true);
+    const auto entries = std::count_if(
+            result.module->functions.begin(), result.module->functions.end(),
+            [](const auto& candidate) { return candidate.name == "main"; });
+    EXPECT_EQ(entries, 0);
+}
+
 TEST_F(IRLoweringTest, LowersParametersOperatorsAndReturns) {
     lower(R"JOYEER(func add(left: Int, right: Int): Int {
 return left + right

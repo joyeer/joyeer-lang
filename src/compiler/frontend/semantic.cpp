@@ -164,6 +164,7 @@ const char* symbolKindName(SymbolKind kind) {
         case SymbolKind::enumeration: return "enum";
         case SymbolKind::enumCase: return "enum-case";
         case SymbolKind::patternBinding: return "pattern-binding";
+        case SymbolKind::method: return "method";
     }
     return "unknown";
 }
