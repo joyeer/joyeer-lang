@@ -26,7 +26,7 @@ class DebugBuild:
     directory: Path
     artifacts: dict[str, Path]
     symbols: dict[str, Path]
-    install_joypm: bool
+    install_fern: bool
 
 
 def native_windows_architecture() -> str:
@@ -114,7 +114,7 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
 
     binary_dir = output_dir / "bin"
     library_dir = output_dir / "lib"
-    install_joypm = cache.get("JOYEER_BUILD_JOYPM", "").upper() in {"1", "ON", "YES", "TRUE", "Y"}
+    install_fern = cache.get("JOYEER_BUILD_FERN", "").upper() in {"1", "ON", "YES", "TRUE", "Y"}
     symbols = {}
     if system == "Windows":
         artifacts = {
@@ -123,9 +123,9 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
             "JoyeerRuntime.lib": library_dir / "JoyeerRuntime.lib",
         }
         symbols = {name: binary_dir / name for name in ("joyeer.pdb", "joyeer-backend.pdb")}
-        if install_joypm:
-            artifacts["joypm.exe"] = binary_dir / "joypm.exe"
-            symbols["joypm.pdb"] = binary_dir / "joypm.pdb"
+        if install_fern:
+            artifacts["fern.exe"] = binary_dir / "fern.exe"
+            symbols["fern.pdb"] = binary_dir / "fern.pdb"
     elif system in {"Darwin", "Linux"}:
         backend_name = "libjoyeer-backend.dylib" if system == "Darwin" else "libjoyeer-backend.so"
         artifacts = {
@@ -133,15 +133,15 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
             backend_name: library_dir / backend_name,
             "libJoyeerRuntime.a": library_dir / "libJoyeerRuntime.a",
         }
-        if install_joypm:
-            artifacts["joypm"] = binary_dir / "joypm"
+        if install_fern:
+            artifacts["fern"] = binary_dir / "fern"
         if system == "Darwin":
             for name, artifact in artifacts.items():
                 if name == "libJoyeerRuntime.a":
                     continue
                 bundle = artifact.with_name(name + ".dSYM")
                 dsymutil = cache.get("JOYEER_DSYMUTIL_EXECUTABLE", "")
-                required = name == "joypm" and bool(dsymutil) and Path(dsymutil).is_file()
+                required = name == "fern" and bool(dsymutil) and Path(dsymutil).is_file()
                 if required or bundle.exists():
                     require_dsym(bundle)
                     symbols[bundle.name] = bundle
@@ -155,7 +155,7 @@ def inspect_debug_build(build_dir: Path, source_dir: Path, system: str) -> Debug
             require_file(symbol, "Debug artifact")
     if not (build_dir / "cmake_install.cmake").is_file():
         raise InstallError("Missing cmake_install.cmake; reconfigure the build first.")
-    return DebugBuild(build_dir, artifacts, symbols, install_joypm)
+    return DebugBuild(build_dir, artifacts, symbols, install_fern)
 
 
 def require_directory_path(path: Path, description: str) -> None:
@@ -358,7 +358,7 @@ def install_debug(args: argparse.Namespace, source_dir: Path, system: str) -> No
     if cmake is None:
         raise InstallError("CMake is not on PATH; install CMake before running this script.")
     components = ["JoyeerRuntime"]
-    if build.install_joypm:
+    if build.install_fern:
         components.append("PRODUCT")
     for component in components:
         subprocess.run(

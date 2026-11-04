@@ -33,9 +33,9 @@ python3 scripts/install-debug.py
 ```
 
 The installer uses an existing Debug build and requires Python 3.9+ and CMake.
-It installs the compiler, joypm when enabled, and the Joyeer agent skill, and
+It installs the compiler, fern when enabled, and the Joyeer agent skill, and
 adds the tools to PATH. **Open a new terminal or restart your IDE afterward.**
-You can then invoke `joyeer` and `joypm` directly; no build-directory paths
+You can then invoke `joyeer` and `fern` directly; no build-directory paths
 are needed.
 
 Using the installed compiler or running compiled programs does not require
@@ -91,22 +91,22 @@ The program prints `42`.
 Use `hello` instead of `hello.exe` on macOS and Linux. See the
 [compiler command reference](docs/impl/backend.md#2-cli) for more options.
 
-## Local projects with joypm
+## Local projects with fern
 
-Use `joypm` to create, check, build, run, and test projects. Each `project.toml`
+Use `fern` to create, check, build, run, and test projects. Each `project.toml`
 defines one module and owns its sources and dependencies.
 
 PowerShell example, using a new `hello-project` directory:
 
 ```powershell
-joypm init hello-project --name hello.app
+fern init hello-project --name hello.app
 Set-Location hello-project
 $compiler = (Get-Command joyeer -CommandType Application -ErrorAction Stop).Source
-joypm check --compiler $compiler
-joypm run --compiler $compiler
+fern check --compiler $compiler
+fern run --compiler $compiler
 ```
 
-joypm takes an explicit compiler path. The example resolves the installed
+`fern` takes an explicit compiler path. The example resolves the installed
 `joyeer` from PATH once, so no machine-specific path is needed. In Bash or
 Zsh, use `--compiler "$(command -v joyeer)"`.
 
@@ -114,12 +114,12 @@ From the module directory:
 
 | Command | Purpose |
 |---|---|
-| `joypm build --compiler $compiler --release` | Build an optimized executable |
-| `joypm test --compiler $compiler` | Build and run test modules |
+| `fern build --compiler $compiler --release` | Build an optimized executable |
+| `fern test --compiler $compiler` | Build and run test modules |
 
 For multiple modules, list their directories in `workspace.toml` and pass
 `--workspace workspace.toml`. Add `--module <name>` to select one member.
-See the [module and workspace guide](docs/impl/joypm.md) for manifest examples,
+See the [module and workspace guide](docs/impl/fern.md) for manifest examples,
 test setup, and output locations.
 
 ## AI-assisted development

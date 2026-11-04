@@ -215,7 +215,7 @@ scalar LLVM lowering, and compiled in the Windows x64 Debug build; boundary
 and error regressions have not run. Check provenance before targeting older
 binaries. This is synchronous bounded input, not generic streaming.
 
-joypm first uses `fileKind` to accept only `.File`, rejecting final symlinks,
+Fern first uses `fileKind` to accept only `.File`, rejecting final symlinks,
 devices/FIFOs, and other nonregular manifests, then reads at most 65537 bytes
 per module/workspace document to detect input exceeding 65536.
 Classification is not race-free confinement.
@@ -252,14 +252,14 @@ There are no implicit shell scripts, capture, timeout, or async APIs.
 
 ## Project configuration is not language syntax
 
-The separate source-implemented joypm consumes a strict TOML profile with
+The separate source-implemented fern consumes a strict TOML profile with
 explicit modules/files and `bin`/`test` targets; it does not add Joyeer imports,
 test attributes, compiler subcommands, or user-defined generics. Manifest
 basic strings support `\uXXXX`/`\UXXXXXXXX` scalar escapes, unlike current
 Joyeer source strings. Manifest limits are 65536 input bytes, 4096 decoded
 bytes/string, 256 modules/targets each, and 1024 entries/string array.
 
-See [local project CLI](cli.md#local-projects-with-joypm) for explicit compiler
+See [local project CLI](cli.md#local-projects-with-fern) for explicit compiler
 paths, profiles, serial rebuilds, and trust limits. Windows x64 Debug bootstrap
 and local-project smoke validation succeeded; bounded acquisition and Windows
 UTF-8 compiler/linker-path fixes are integrated and compiled. CTest has not run:

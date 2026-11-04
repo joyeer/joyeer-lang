@@ -46,13 +46,13 @@ include(CTest)
 enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
-option(JOYEER_BUILD_JOYPM "Bootstrap the Joyeer-written joypm project tool" ON)
+option(JOYEER_BUILD_FERN "Bootstrap the Joyeer-written fern project tool" ON)
 option(JOYEER_BUILD_COMPRESSION "Build the optional miniz-backed Compression library" OFF)
 
-if(JOYEER_BUILD_JOYPM AND CMAKE_CROSSCOMPILING)
+if(JOYEER_BUILD_FERN AND CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR
-        "joypm bootstrapping must execute the newly built Joyeer compiler. "
-        "Cross-compiling builds must set JOYEER_BUILD_JOYPM=OFF.")
+        "fern bootstrapping must execute the newly built Joyeer compiler. "
+        "Cross-compiling builds must set JOYEER_BUILD_FERN=OFF.")
 endif()
 
 set(JOYEER_LLVM_ROOT "$ENV{LLVM_HOME}" CACHE PATH
@@ -252,6 +252,9 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 
 add_subdirectory(src)
+if(JOYEER_BUILD_FERN)
+    add_subdirectory(tools/fern)
+endif()
 add_subdirectory(tests)
 
 include(GNUInstallDirs)

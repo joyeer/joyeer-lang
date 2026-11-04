@@ -1,8 +1,8 @@
-# Library Modules and joypm Plan
+# Library Modules and fern Plan
 
 > **Status:** unfinished work only. Remove items when they are done.
 >
-> **Done (see [joypm](../impl/joypm.md), [Compression](../impl/compression.md)):**
+> **Done (see [fern](../impl/fern.md), [Compression](../impl/compression.md)):**
 > `Foundation` (text helpers and `crc32`, + `FoundationTests`), root `workspace.toml`, part of `System`
 > (lexical path helpers, host error/status formatters, `SystemTests`), and the
 > optional `Compression` module.
@@ -38,23 +38,23 @@ Rules:
 - **Testing:** add only for a concrete consumer; then use it in test modules.
 - Use ordinary public functions until methods/protocols exist.
 
-## 3. joypm Adoption
+## 3. Fern Adoption
 
 Replace duplicated helpers in
-[joypm common.joyeer](../../src/tools/joypm/common.joyeer) with library calls,
+[fern common.joyeer](../../tools/fern/common.joyeer) with library calls,
 after defining public input, error, and complexity contracts. Do it
 incrementally, using explicit local source mappings. Update bootstrap source
-mappings and staged self-build manifests together. joypm must not depend on a
+mappings and staged self-build manifests together. Fern must not depend on a
 previously installed tool.
 
 ## 4. Installed Libraries (separate gate)
 
-joypm resolves only inside an explicitly loaded workspace. Before offering
+Fern resolves only inside an explicitly loaded workspace. Before offering
 `import Foundation` from an external project, define:
 
 - A toolchain-matched source-module catalog and relocatable install layout;
   missing sources or version mismatches are explicit errors.
-- joypm resolution that combines project dependencies with selected bundled
+- Fern resolution that combines project dependencies with selected bundled
   modules and passes complete source mappings to the compiler. Do not weaken
   workspace path validation.
 - Reserved official names and workspace/SDK collision rules. Reject ambiguity;

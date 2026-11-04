@@ -72,5 +72,5 @@ Prefer an internal scoped region mechanism over exposing pointer arithmetic.
 |---|---|
 | C-specific source aliases? | Decide separately; today use fixed-width types or C shims |
 | Any public native capability? | Separate user-FFI/unsafe proposal |
-| Who supplies link metadata? | CMake for bootstrap; joypm design is in [native-link-inputs](native-link-inputs.md) |
+| Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](native-link-inputs.md) |
 | Complex ABI features | Separate gates: aggregates by value, unions/bit-fields, callbacks, varargs, `long double` |

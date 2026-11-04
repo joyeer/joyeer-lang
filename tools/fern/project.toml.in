@@ -1,0 +1,10 @@
+schema-version = 1
+
+[module]
+name = 'fern.app'
+kind = 'bin'
+output = 'fern'
+sources = [
+@JOYEER_FERN_PROJECT_SOURCES@
+]
+dependencies = []
