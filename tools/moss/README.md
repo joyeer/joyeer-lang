@@ -60,10 +60,10 @@ ctest --test-dir build -L moss --output-on-failure
 
 `Moss.FernTests` runs the four native test modules with `fern test` and
 `Moss.JavapGoldens` compares `moss disasm` of each checked-in class with its
-`javap` golden byte for byte. CMake stages `src/`, `tests/`, and the generated
-`Compression` package into `<build>/tools/moss/workspace` because fern rejects
-parent-traversing member paths; do not run fern against this directory's
-[workspace.toml](workspace.toml) directly.
+`javap` golden byte for byte. CMake stages `src/` and `tests/` into
+`<build>/tools/moss/workspace` so fern's `target/` generations stay out of the
+source tree. `Compression` is not a member: modules declare it as a dependency
+and the compiler resolves it from its standard library.
 
 To keep disassembly in a file, give `--output` a new destination; it must not
 already exist. File publication is fallible and exclusive, not crash-atomic.

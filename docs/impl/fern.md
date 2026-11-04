@@ -51,8 +51,13 @@ their own manifests and entries, not extra units hidden inside one manifest.
 
 The [library plan](../plan/library.md) applies this source-module model to
 the proposed `Foundation`, `System`, `Collections`, and `Testing` modules.
-Local library development can use the existing workspace workflow; automatic
-installed-library resolution remains planned. Compiler/runtime construction
+Local library development can use the existing workspace workflow.
+Standard modules that ship with the compiler (`Foundation`, `System`, and
+`Compression` when built) need no workspace member: fern reads
+`<compiler directory>/lib/index.toml`, lets a module list them in
+`dependencies`, and the compiler resolves them when imported. A member with a
+standard module's name is rejected. fern does not honor a compiler-side
+`--sysroot` override. Compiler/runtime construction
 and the first fern bootstrap remain CMake responsibilities, not new fern
 module kinds.
 Native-backed source modules can additionally declare:

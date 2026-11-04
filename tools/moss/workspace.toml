@@ -10,7 +10,6 @@ members = [
     "src/model",
     "src/jvm",
     "src/output",
-    "Compression",
     "tests",
     "tests/archive",
     "tests/binary",

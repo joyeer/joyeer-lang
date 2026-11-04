@@ -129,7 +129,9 @@ source privately in the backend rather than reusing compiler-core objects.
   `JoyeerRuntime.lib`, optional `fern.exe` (enabled by default), and
   required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
   backend, runtime, and the current license use install component
-  `JoyeerRuntime`; `fern` uses `PRODUCT`. The Debug installer includes
+  `JoyeerRuntime`; `fern` uses `PRODUCT`. The standard modules and
+  `lib/index.toml` use `StandardLibrary` and install to `<prefix>/lib`, beside
+  the compiler, which finds them from its own location. The Debug installer includes
   `fern` and its PDB when enabled. Current local installs stage only Joyeer's
   own license. Third-party license/notice assembly is deferred and must be
   completed before redistributing toolchain binaries.

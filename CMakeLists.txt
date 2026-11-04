@@ -252,7 +252,52 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${JOYEER_LIB_OUTPUT_INTDIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 
+# Build stamp shared by the compiler and the standard library's lib/index.toml.
+string(TOLOWER "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}" JOYEER_TOOLCHAIN_TARGET)
+set(JOYEER_TOOLCHAIN_VERSION "${PROJECT_VERSION}")
+
 add_subdirectory(src)
+
+# Standard modules live in <toolchain>/lib, found by the compiler relative to
+# its own executable. Stage them (and lib/index.toml) next to the build tree's
+# compiler so a development build resolves its own library.
+file(GLOB_RECURSE JOYEER_STDLIB_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/library/Foundation/*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/library/System/*")
+set(JOYEER_STDLIB_DIRECTORY "$<TARGET_FILE_DIR:joyeer>/lib")
+set(JOYEER_STDLIB_STAMP "${CMAKE_CURRENT_BINARY_DIR}/stdlib.stamp")
+set(JOYEER_STDLIB_COMPRESSION "")
+set(JOYEER_STDLIB_EXTRA_DEPENDS "")
+set(JOYEER_STDLIB_DEPENDS joyeer)
+if(JOYEER_BUILD_COMPRESSION)
+    set(JOYEER_STDLIB_COMPRESSION
+        "${CMAKE_BINARY_DIR}/src/library/Compression/package/$<CONFIG>/Compression")
+    list(APPEND JOYEER_STDLIB_DEPENDS JoyeerCompression)
+    set(JOYEER_STDLIB_EXTRA_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/library/Compression/compression.joyeer")
+endif()
+add_custom_command(
+    OUTPUT "${JOYEER_STDLIB_STAMP}"
+    COMMAND "${CMAKE_COMMAND}"
+        "-DDESTINATION=${JOYEER_STDLIB_DIRECTORY}"
+        "-DLIBRARY_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/library"
+        "-DCOMPRESSION_PACKAGE=${JOYEER_STDLIB_COMPRESSION}"
+        "-DVERSION=${JOYEER_TOOLCHAIN_VERSION}"
+        "-DTARGET=${JOYEER_TOOLCHAIN_TARGET}"
+        "-DCONFIG=$<CONFIG>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cmake/stageStandardLibrary.cmake"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${JOYEER_STDLIB_STAMP}"
+    DEPENDS ${JOYEER_STDLIB_DEPENDS} ${JOYEER_STDLIB_SOURCES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cmake/stageStandardLibrary.cmake"
+        ${JOYEER_STDLIB_EXTRA_DEPENDS}
+    COMMENT "Staging the standard library next to the compiler"
+    VERBATIM)
+add_custom_target(JoyeerStandardLibrary ALL DEPENDS "${JOYEER_STDLIB_STAMP}")
+# <prefix>/lib sits beside the installed compiler, where it looks for it. The
+# index lists every staged module, so the library installs as one component.
+install(DIRECTORY "${JOYEER_STDLIB_DIRECTORY}/"
+    DESTINATION lib COMPONENT StandardLibrary)
+
 if(JOYEER_BUILD_FERN)
     add_subdirectory(tools/fern)
     if(JOYEER_BUILD_MOSS AND JOYEER_BUILD_COMPRESSION)

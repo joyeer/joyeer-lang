@@ -2,8 +2,8 @@
 # It needs the optional Compression module (ZIP/JAR input), so it is built
 # only when JOYEER_BUILD_COMPRESSION is ON.
 #
-# fern rejects parent-traversing member paths, so the build stages the Moss
-# workspace and the generated Compression package side by side in the build tree.
+# The build stages the Moss workspace in the build tree so fern target/
+# generations stay out of the source tree. Compression comes from the compiler.
 file(GLOB_RECURSE JOYEER_MOSS_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.joyeer"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.toml"
@@ -15,8 +15,6 @@ list(APPEND JOYEER_MOSS_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/workspace.toml")
 
 set(JOYEER_MOSS_WORKSPACE "${CMAKE_CURRENT_BINARY_DIR}/workspace")
-set(JOYEER_MOSS_COMPRESSION_PACKAGE
-    "${CMAKE_BINARY_DIR}/src/library/Compression/package/$<CONFIG>")
 if(CMAKE_CONFIGURATION_TYPES)
     set(JOYEER_MOSS_EXECUTABLE
         "${CMAKE_BINARY_DIR}/$<CONFIG>/bin/moss${CMAKE_EXECUTABLE_SUFFIX}")
@@ -33,13 +31,12 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}"
         "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
         "-DWORKSPACE_DIR=${JOYEER_MOSS_WORKSPACE}"
-        "-DCOMPRESSION_PACKAGE=${JOYEER_MOSS_COMPRESSION_PACKAGE}"
         "-DFERN=${JOYEER_FERN_EXECUTABLE}"
         "-DCOMPILER=$<TARGET_FILE:joyeer>"
         "-DPROFILE=${JOYEER_MOSS_PROFILE}"
         "-DOUTPUT=${JOYEER_MOSS_EXECUTABLE}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/buildMoss.cmake"
-    DEPENDS fern joyeer JoyeerBackend JoyeerRuntime JoyeerCompression
+    DEPENDS fern joyeer JoyeerBackend JoyeerRuntime JoyeerStandardLibrary
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/buildMoss.cmake"
         ${JOYEER_MOSS_SOURCES}
     COMMENT "Building moss with the build-tree fern"
@@ -49,7 +46,7 @@ add_custom_target(moss ALL
     SOURCES ${JOYEER_MOSS_SOURCES})
 
 install(PROGRAMS "${JOYEER_MOSS_EXECUTABLE}"
-    DESTINATION . COMPONENT PRODUCT)
+    DESTINATION . COMPONENT Moss)
 
 set(JOYEER_MOSS_EXECUTABLE "${JOYEER_MOSS_EXECUTABLE}" PARENT_SCOPE)
 set(JOYEER_MOSS_WORKSPACE "${JOYEER_MOSS_WORKSPACE}" PARENT_SCOPE)
@@ -60,7 +57,6 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             "-DWORKSPACE_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-workspace"
-            "-DCOMPRESSION_PACKAGE=${JOYEER_MOSS_COMPRESSION_PACKAGE}"
             "-DFERN=${JOYEER_FERN_EXECUTABLE}"
             "-DCOMPILER=$<TARGET_FILE:joyeer>"
             "-DPROFILE=${JOYEER_MOSS_PROFILE}"

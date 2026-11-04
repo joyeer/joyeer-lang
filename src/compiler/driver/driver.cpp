@@ -1,5 +1,6 @@
 #include "driver.h"
 #include "compiler/codegen/linker.h"
+#include "toolchain.h"
 
 #include <filesystem>
 
@@ -12,6 +13,7 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <vector>
 
 #ifndef JOYEER_RUNTIME_PATH
@@ -36,52 +38,10 @@
 
 namespace {
 
-std::filesystem::path executableDirectory() {
-#if defined(_WIN32)
-    std::wstring executablePath(32768, L'\0');
-    const auto length = GetModuleFileNameW(
-            nullptr,
-            executablePath.data(),
-            static_cast<DWORD>(executablePath.size()));
-    if (length > 0 && length < executablePath.size()) {
-        executablePath.resize(length);
-        return std::filesystem::path(executablePath).parent_path();
-    }
-#elif defined(__APPLE__)
-    uint32_t size = 0;
-    static_cast<void>(_NSGetExecutablePath(nullptr, &size));
-    std::vector<char> executablePath(size);
-    if (size != 0 && _NSGetExecutablePath(executablePath.data(), &size) == 0) {
-        std::error_code error;
-        const auto resolved = std::filesystem::weakly_canonical(
-                executablePath.data(),
-                error);
-        return (error ? std::filesystem::path(executablePath.data()) : resolved)
-                .parent_path();
-    }
-#elif defined(__linux__)
-    std::vector<char> executablePath(4096);
-    while (true) {
-    const auto length = readlink(
-                "/proc/self/exe",
-                executablePath.data(),
-                executablePath.size());
-        if (length < 0) break;
-        if (static_cast<size_t>(length) < executablePath.size()) {
-            return std::filesystem::path(
-                    std::string(executablePath.data(), static_cast<size_t>(length)))
-                    .parent_path();
-        }
-        executablePath.resize(executablePath.size() * 2);
-    }
-#endif
-    return {};
-}
-
 std::filesystem::path runtimePath() {
     const auto configuredPath = std::filesystem::u8path(JOYEER_RUNTIME_PATH);
     if (configuredPath.is_relative()) {
-        const auto directory = executableDirectory();
+        const auto directory = joyeer::executableDirectory();
         if (!directory.empty()) return directory / configuredPath;
     }
     return configuredPath;
@@ -104,6 +64,8 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->modules,
                 arguments->runtimeModules,
                 arguments->nativeLibraries,
+                joyeer::StandardLibrary::libraryDirectoryFor(arguments->sysroot),
+                arguments->standardLibrary,
             });
 }
 
@@ -122,6 +84,13 @@ int Driver::run() {
                     "driver.missing-source-result",
                     "compiler produced no source result");
         } else {
+            // Standard modules that were actually imported bring their native archives.
+            auto linkLibraries = arguments->nativeLibraries;
+            for (const auto& library : compiler->implicitNativeLibraries()) {
+                if (std::find(linkLibraries.begin(), linkLibraries.end(), library) == linkLibraries.end()) {
+                    linkLibraries.push_back(library);
+                }
+            }
             const joyeer::native::LinkOptions options {
                         runtimePath(),
                         std::filesystem::u8path(JOYEER_SDK_ROOT_PATH),
@@ -133,7 +102,7 @@ int Driver::run() {
                         arguments->debugInfo,
                         source->getAbstractPath(),
                         source->llvmModule,
-                        arguments->nativeLibraries,
+                        linkLibraries,
                     };
             const auto linking = arguments->outputMode == joyeer::OutputMode::runtimeObject
                     ? joyeer::native::Linker().emitObject(source->llvmIR, options)

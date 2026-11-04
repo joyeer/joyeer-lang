@@ -18,9 +18,9 @@ cmake --build build --target moss
 ctest --test-dir build -L moss --output-on-failure
 ```
 
-- ZIP support uses the repository's `Compression` module
-  (`JOYEER_BUILD_COMPRESSION=ON`); CMake stages it beside the Moss sources. Do
-  not vendor a copy.
+- ZIP support uses the toolchain's standard `Compression` module
+  (`JOYEER_BUILD_COMPRESSION=ON`), resolved by the compiler from `lib/`. Do not
+  vendor or stage a copy.
 - Optional JDK gates (need an explicit JDK, never a dependency of the product):
   `integration.cjs <moss> --javap <javap>` and
   `tests/jvm/corpus.cjs <moss> <javap> <class-root>` over real javac classes.

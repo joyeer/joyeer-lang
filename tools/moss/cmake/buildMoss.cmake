@@ -1,9 +1,10 @@
-# Stage the Moss workspace beside the Compression package, build moss.app
-# with fern, and copy the executable to OUTPUT.
+# Stage the Moss workspace in the build tree (fern writes target/ next to the
+# workspace), build moss.app with fern, and copy the executable to OUTPUT.
+# Compression comes from the compiler's own standard library.
 #
-# Required: SOURCE_DIR WORKSPACE_DIR COMPRESSION_PACKAGE FERN COMPILER PROFILE
+# Required: SOURCE_DIR WORKSPACE_DIR FERN COMPILER PROFILE
 # OUTPUT. Optional: ACTION=build|test (default build).
-foreach(name IN ITEMS SOURCE_DIR WORKSPACE_DIR COMPRESSION_PACKAGE FERN COMPILER PROFILE OUTPUT)
+foreach(name IN ITEMS SOURCE_DIR WORKSPACE_DIR FERN COMPILER PROFILE OUTPUT)
     if(NOT DEFINED ${name})
         message(FATAL_ERROR "buildMoss.cmake: ${name} is required")
     endif()
@@ -19,7 +20,6 @@ file(MAKE_DIRECTORY "${WORKSPACE_DIR}")
 foreach(entry IN ITEMS src tests project.toml workspace.toml)
     file(COPY "${SOURCE_DIR}/${entry}" DESTINATION "${WORKSPACE_DIR}")
 endforeach()
-file(COPY "${COMPRESSION_PACKAGE}/Compression" DESTINATION "${WORKSPACE_DIR}")
 
 set(fern_args "${ACTION}" --compiler "${COMPILER}"
     --workspace "${WORKSPACE_DIR}/workspace.toml")

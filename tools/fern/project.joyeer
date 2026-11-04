@@ -85,27 +85,71 @@ private func projectModuleIndex(modules: borrowing [LoadedModule], name: String)
     return -1
 }
 
+private func projectIsStandard(standard: borrowing [String], name: String): Bool {
+    var index = 0
+    while index < standard.count {
+        if standard[index] == name { return true }
+        index = index + 1
+    }
+    return false
+}
+
+// Standard modules ship with the compiler and are resolved by it, so they
+// contribute no workspace edge and never appear in the loaded project. A
+// compiler without lib/index.toml has no standard modules.
+private func projectStandardModules(compiler: String): Result<[String], ProjectError> {
+    var directory = pathDirectory(path: compiler)
+    if directory.count == 0 { directory = "." }
+    let libraryDirectory = match toolJoin(base: directory, path: "lib") {
+        .Ok(joined) => joined,
+        .Err(_) => { return .Ok([]) },
+    }
+    let path = match toolJoin(base: libraryDirectory, path: "index.toml") {
+        .Ok(joined) => joined,
+        .Err(_) => { return .Ok([]) },
+    }
+    let present = match fileKind(path: path) {
+        .Ok(kind) => match kind {
+            .File => true,
+            .Directory => false,
+            .Symlink => false,
+            .Other => false,
+        },
+        .Err(_) => false,
+    }
+    if !present { return .Ok([]) }
+    let contents = projectDocument(path: path)?
+    return match parseStandardIndex(contents: contents) {
+        .Ok(names) => .Ok(names),
+        .Err(error) => .Err(ProjectError(error: error, path: path, contents: contents)),
+    }
+}
+
 private func projectModuleEdges(spec: borrowing ModuleSpec, modules: borrowing [LoadedModule],
-    owner: Int): Result<[Int], GraphError> {
+    standard: borrowing [String], owner: Int): Result<[Int], GraphError> {
     var edges: [Int] = []
     var index = 0
     while index < spec.dependencies.count {
         let name = spec.dependencies[index]
         let destination = projectModuleIndex(modules: modules, name: name)
-        if destination < 0 {
+        if destination < 0 && !projectIsStandard(standard: standard, name: name) {
             return .Err(GraphError(moduleIndex: owner, message: "module '" + spec.name +
                 "' has unknown dependency '" + name + "' in the loaded project"))
         }
-        &edges.append(element: destination)
+        if destination >= 0 { &edges.append(element: destination) }
         index = index + 1
     }
     return .Ok(edges)
 }
 
-private func projectGraph(modules: borrowing [LoadedModule]): Result<[[Int]], GraphError> {
+private func projectGraph(modules: borrowing [LoadedModule], standard: borrowing [String]): Result<[[Int]], GraphError> {
     var index = 0
     while index < modules.count {
         let name = modules[index].spec.name
+        if projectIsStandard(standard: standard, name: name) {
+            return .Err(GraphError(moduleIndex: index,
+                message: "module '" + name + "' has the name of a standard module of this toolchain"))
+        }
         if projectModuleIndex(modules: modules, name: name) != index {
             return .Err(GraphError(moduleIndex: index, message: "duplicate logical module name: " + name))
         }
@@ -127,7 +171,7 @@ private func projectGraph(modules: borrowing [LoadedModule]): Result<[[Int]], Gr
     var stack: [Int] = []
     index = 0
     while index < modules.count {
-        let destinations = projectModuleEdges(spec: modules[index].spec, modules: modules, owner: index)?
+        let destinations = projectModuleEdges(spec: modules[index].spec, modules: modules, standard: standard, owner: index)?
         &edges.append(element: destinations)
         &colors.append(element: 0)
         &offsets.append(element: 0)
@@ -212,7 +256,8 @@ func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
             index = index + 1
         }
     }
-    let edges = match projectGraph(modules: loaded) {
+    let standard = projectStandardModules(compiler: options.compiler)?
+    let edges = match projectGraph(modules: loaded, standard: standard) {
         .Ok(dependencies) => dependencies,
         .Err(error) => {
             let owner = error.moduleIndex

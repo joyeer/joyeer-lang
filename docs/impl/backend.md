@@ -293,6 +293,15 @@ the root directory with `--module-name` plus explicit positional source files,
 and each dependency directory with one `--module-source name=file` per file.
 They are not aliases for the new options.
 
+Imports that no supplied source set provides resolve against the compiler's
+standard library, `<sysroot>/lib` described by `lib/index.toml`, where the
+sysroot is the compiler executable's directory unless `--sysroot <dir>`
+overrides it. Standard modules are loaded only when imported, may import each
+other, and bring their native archives into the link only then. `--print-sysroot`
+prints the root, and `--no-stdlib` disables the lookup (needed to compile a
+module that has a standard module's name). See
+[toolchain library resolution](../plan/toolchain-libraries.md).
+
 CLI source paths resolve against the process working directory, including
 dependency paths, not against the first source file or another module.
 In the service API, `CompileOptions.moduleName` names the root unit,
