@@ -89,7 +89,7 @@ cross-directory includes use the path relative to `src/`.
 | LLVM objects / optimization / embedded LLD / C ABI | [src/backend/](src/backend/) |
 | C11 program runtime | [src/runtime/](src/runtime/) |
 | Local project manager | [tools/fern/](tools/fern/); behavior and validation in [docs/impl/fern.md](docs/impl/fern.md) |
-| JVM class/JAR inspector (Joyeer-written, built by fern) | [tools/moss/](tools/moss/); see its [README](tools/moss/README.md) and [AGENTS.md](tools/moss/AGENTS.md). Built only with `JOYEER_BUILD_COMPRESSION=ON`; ctest label `moss` |
+| JVM class/JAR inspector (Joyeer-written, built by fern) | [tools/moss/](tools/moss/); see its [README](tools/moss/README.md) and [AGENTS.md](tools/moss/AGENTS.md). Members of the root `workspace.toml`; needs `JOYEER_BUILD_COMPRESSION` (default `ON`); ctest label `moss` |
 
 `JoyeerCompilerCore` is one non-installed CMake `OBJECT` target reused by
 `joyeer` and the compiler unit tests. Directories are responsibility groups,
@@ -145,8 +145,10 @@ source privately in the backend rather than reusing compiler-core objects.
   SDK, CMake, Ninja, LLVM, Clang, or LLD.
 - CMake may acquire pinned project dependencies such as GoogleTest and the
   static LibXml2 needed by the official Windows LLD libraries, and miniz when
-  `JOYEER_BUILD_COMPRESSION=ON`. The optional `Compression` library remains a
-  separate archive/source package, never a core-runtime dependency. Its
+  `JOYEER_BUILD_COMPRESSION` (default `ON`). `Compression` remains a separate
+  archive/standard module, never a core-runtime dependency. The root workspace
+  includes `moss`, which needs it, so turning the option `OFF` limits fern to
+  the library modules. Its
   install component includes the miniz license. LLVM and
   platform toolchains remain developer-managed external prerequisites.
 - Write checked-in installation, packaging, and release automation in

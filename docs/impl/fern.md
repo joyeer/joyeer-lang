@@ -55,8 +55,9 @@ Local library development can use the existing workspace workflow.
 Standard modules that ship with the compiler (`Foundation`, `System`, and
 `Compression` when built) need no workspace member: fern reads
 `<compiler directory>/lib/index.toml`, lets a module list them in
-`dependencies`, and the compiler resolves them when imported. A member with a
-standard module's name is rejected. fern does not honor a compiler-side
+`dependencies`, and the compiler resolves them when imported. A workspace
+member with a standard module's name takes precedence, which is how the library
+modules in this repository's root workspace are developed. fern does not honor a compiler-side
 `--sysroot` override. Compiler/runtime construction
 and the first fern bootstrap remain CMake responsibilities, not new fern
 module kinds.
@@ -249,6 +250,13 @@ Compiler cwd remains caller `"."`. Child cwd is the workspace directory for
 workspace commands or the module directory for standalone commands. This
 preserves workspace-level test resources without adding a per-module run-cwd
 configuration.
+
+`build --bin-dir <directory>` instead writes each built executable to
+`<directory>/<output><host suffix>`, creating one missing directory level. There
+is no generation: the file is replaced in place by the compiler, so a failed
+build can leave a partial file, and the repository build uses it to place `moss`
+beside the compiler. It is valid once and only for `build`; `run` and `test`
+keep their generations.
 
 Debug is `-O0 -gfull`; release is `-O2 -g0`. Native generations are exclusively
 claimed at `target/<profile>/<logical-module>/build-1` through `build-128`.

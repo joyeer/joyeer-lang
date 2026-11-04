@@ -114,12 +114,24 @@ private func displayInvocation(module: String, invocation: borrowing CompilerInv
 
 private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptions): Result<BuildOutcome, ToolError> {
     var output = ""
-    if plan.native { output = allocateArtifact(plan: plan)? }
+    var inPlace = false
+    if plan.native {
+        if options.binDir.count != 0 {
+            // --bin-dir publishes straight into one directory; there is no
+            // fresh generation, so a failed build can leave a partial file.
+            ensureDirectory(path: options.binDir)?
+            output = toolJoin(base: options.binDir, path: plan.outputName + executableSuffix())?
+            inPlace = true
+        } else {
+            output = allocateArtifact(plan: plan)?
+        }
+    }
     let invocation = compilerInvocation(plan: plan, compiler: options.compiler, output: output)?
     var action = "checking"
     if plan.native { action = "building" }
     var incomplete = ""
-    if plan.native { incomplete = "; incomplete generation left at '" + pathDirectory(path: output) + "'" }
+    if plan.native && inPlace { incomplete = "; output may be incomplete at '" + output + "'" }
+    else if plan.native { incomplete = "; incomplete generation left at '" + pathDirectory(path: output) + "'" }
     toolStderr(contents: "fern: " + action + " module '" + plan.moduleName + "' (" + plan.profile + ")\n")?
     if options.verbose { displayInvocation(module: plan.moduleName, invocation: invocation)? }
     let status = match runProcess(executable: invocation.executable,
@@ -146,8 +158,12 @@ private func executeBuild(plan: borrowing BuildPlan, options: borrowing CliOptio
     }
     if plan.native {
         requireArtifact(plan: plan, executable: output)?
-        toolStderr(contents: "fern: built module '" + plan.moduleName + "' at '" + output +
-            "' (generation retained; no automatic cleanup)\n")?
+        if inPlace {
+            toolStderr(contents: "fern: built module '" + plan.moduleName + "' at '" + output + "'\n")?
+        } else {
+            toolStderr(contents: "fern: built module '" + plan.moduleName + "' at '" + output +
+                "' (generation retained; no automatic cleanup)\n")?
+        }
     }
     return .Ok(.Built(BuildResult(moduleName: plan.moduleName, executable: output,
         workingDirectory: plan.workingDirectory)))

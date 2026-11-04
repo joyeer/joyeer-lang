@@ -38,9 +38,9 @@ The build stages the module into the compiler's standard library,
 module's `native/` archive is linked only for programs that import it. In a
 fern workspace, declare `dependencies = ["Compression"]` without a member.
 Nothing is copied, and the library always matches the compiler that finds it.
-A workspace or `--module-source` module named `Compression` is rejected
-(`module.shadows-standard`); pass `--no-stdlib` to compile the module's own
-sources, as the module tests do.
+A workspace or `--module-source` module named `Compression` takes precedence
+over the toolchain's copy, which is how the module's own sources are developed;
+the module tests also pass `--no-stdlib`.
 
 `cmake --install` with component `StandardLibrary` installs the whole
 `lib/` directory (including the miniz MIT license and the Joyeer license under

@@ -22,12 +22,14 @@ platform, `JOYEER_BUILD_UNITTESTS=ON` also fetches GoogleTest 1.15.2. The first
 configuration that needs these dependencies requires network access. Neither
 dependency adds a runtime DLL to the Joyeer package.
 
-`JOYEER_BUILD_COMPRESSION=ON` additionally acquires the pinned miniz 3.1.0
-source using Git and builds a separate optional `JoyeerCompression` static
-archive. The default is `OFF`. Neither the compiler/backend nor the core
-runtime links miniz. See [Compression](impl/compression.md) for its generated
-Fern workspace and the `Compression` install component, which includes
-miniz's MIT license. Python 3.9+ enables an optional independent ZIP oracle
+`JOYEER_BUILD_COMPRESSION` (default `ON`) additionally acquires the pinned
+miniz 3.1.0 source using Git and builds a separate `JoyeerCompression` static
+archive, staged as the `Compression` standard module. Neither the
+compiler/backend nor the core runtime links miniz. The root `workspace.toml`
+includes `moss`, which imports `Compression`, so a build with this option `OFF`
+cannot run the whole root workspace (`validate.py --no-compression` tests only
+the library modules). See [Compression](impl/compression.md) for the module and
+the `StandardLibrary` install component, which includes miniz's MIT license. Python 3.9+ enables an optional independent ZIP oracle
 when already available; it is not required to build or use the library.
 
 ## Source-build prerequisites

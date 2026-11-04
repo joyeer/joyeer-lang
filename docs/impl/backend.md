@@ -298,8 +298,8 @@ standard library, `<sysroot>/lib` described by `lib/index.toml`, where the
 sysroot is the compiler executable's directory unless `--sysroot <dir>`
 overrides it. Standard modules are loaded only when imported, may import each
 other, and bring their native archives into the link only then. `--print-sysroot`
-prints the root, and `--no-stdlib` disables the lookup (needed to compile a
-module that has a standard module's name). See
+prints the root, and `--no-stdlib` disables the lookup. A supplied module with a
+standard module's name takes precedence over the toolchain's copy. See
 [toolchain library resolution](../plan/toolchain-libraries.md).
 
 CLI source paths resolve against the process working directory, including

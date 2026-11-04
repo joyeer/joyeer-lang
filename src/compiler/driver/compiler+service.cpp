@@ -238,15 +238,6 @@ void CompilerService::compileModules(const std::filesystem::path& singleFile) {
             standardInvalid = true;
         }
     }
-    if (standard) {
-        for (const auto& sourceSet : sourceSets) {
-            if (standard->contains(sourceSet.name)) {
-                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.shadows-standard",
-                        "module '" + sourceSet.name + "' has the name of a standard module of this toolchain");
-                return;
-            }
-        }
-    }
     std::unordered_set<std::string> runtimeModules;
     for (const auto& name : options.runtimeModules) {
         if (!runtimeModules.insert(name).second ||

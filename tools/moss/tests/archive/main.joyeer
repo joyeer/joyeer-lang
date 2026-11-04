@@ -32,7 +32,7 @@ func main(args: borrowing [String]): Int {
         return 1
     }
     var state = State(checks: 0, failures: 0)
-    let jar = load(path: "tests/fixtures/jvm/Fixtures.jar")
+    let jar = load(path: "tools/moss/tests/fixtures/jvm/Fixtures.jar")
     expect(state: &state, condition: jar.count > 0, name: "fixture jar is readable")
     let archive = jar.utf8()
 
@@ -48,8 +48,8 @@ func main(args: borrowing [String]): Int {
     expect(state: &state, condition: names[4] == "pkg/Unicode.class", name: "last entry is Unicode.class")
 
     // DEFLATE and STORE members must round-trip to the exact original class bytes.
-    let deflated = load(path: "tests/fixtures/jvm/Example8.class")
-    let stored = load(path: "tests/fixtures/jvm/Example21.class")
+    let deflated = load(path: "tools/moss/tests/fixtures/jvm/Example8.class")
+    let stored = load(path: "tools/moss/tests/fixtures/jvm/Example21.class")
     match extractEntry(archive: archive, name: "pkg/Example8.class") {
         .Ok(bytes) => expect(state: &state, condition: bytes == deflated, name: "deflated entry is byte-exact"),
         .Err(error) => expect(state: &state, condition: false, name: "deflated: " + error.code),

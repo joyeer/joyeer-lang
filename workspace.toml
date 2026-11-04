@@ -6,4 +6,17 @@ members = [
     "src/library/System",
     "tests/library/Foundation",
     "tests/library/System",
+    # Moss needs the Compression standard module (JOYEER_BUILD_COMPRESSION=ON).
+    "tools/moss",
+    "tools/moss/src",
+    "tools/moss/src/analysis",
+    "tools/moss/src/archive",
+    "tools/moss/src/binary",
+    "tools/moss/src/jvm",
+    "tools/moss/src/model",
+    "tools/moss/src/output",
+    "tools/moss/tests",
+    "tools/moss/tests/archive",
+    "tools/moss/tests/binary",
+    "tools/moss/tests/jvm",
 ]

@@ -47,7 +47,7 @@ enable_language(CXX)
 
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
 option(JOYEER_BUILD_FERN "Bootstrap the Joyeer-written fern project tool" ON)
-option(JOYEER_BUILD_COMPRESSION "Build the optional miniz-backed Compression library" OFF)
+option(JOYEER_BUILD_COMPRESSION "Build the miniz-backed Compression standard module (needed by the root workspace for moss)" ON)
 option(JOYEER_BUILD_MOSS "Build the Joyeer-written moss JVM inspection tool (needs fern and Compression)" ON)
 
 if(JOYEER_BUILD_FERN AND CMAKE_CROSSCOMPILING)

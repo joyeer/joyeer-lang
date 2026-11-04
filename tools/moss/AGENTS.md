@@ -13,13 +13,13 @@ Write all documentation in English.
 Moss is built from the repository root; see the README for the commands.
 
 ```text
-cmake -S . -B build -G Ninja -DJOYEER_BUILD_COMPRESSION=ON
+cmake -S . -B build -G Ninja
 cmake --build build --target moss
 ctest --test-dir build -L moss --output-on-failure
 ```
 
 - ZIP support uses the toolchain's standard `Compression` module
-  (`JOYEER_BUILD_COMPRESSION=ON`), resolved by the compiler from `lib/`. Do not
+  (`JOYEER_BUILD_COMPRESSION`, on by default), resolved by the compiler from `lib/`. Do not
   vendor or stage a copy.
 - Optional JDK gates (need an explicit JDK, never a dependency of the product):
   `integration.cjs <moss> --javap <javap>` and

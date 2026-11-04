@@ -18,7 +18,7 @@ private func expect(state: inout State, condition: Bool, name: borrowing String)
 }
 
 private func fixture(name: borrowing String): Result<String, String> {
-    let tests = match joinPath(base: "tests", path: "fixtures") {
+    let tests = match joinPath(base: "tools/moss/tests", path: "fixtures") {
         .Ok(path) => path,
         .Err(_) => { return .Err("cannot locate test fixtures") },
     }

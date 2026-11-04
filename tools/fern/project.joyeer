@@ -146,10 +146,6 @@ private func projectGraph(modules: borrowing [LoadedModule], standard: borrowing
     var index = 0
     while index < modules.count {
         let name = modules[index].spec.name
-        if projectIsStandard(standard: standard, name: name) {
-            return .Err(GraphError(moduleIndex: index,
-                message: "module '" + name + "' has the name of a standard module of this toolchain"))
-        }
         if projectModuleIndex(modules: modules, name: name) != index {
             return .Err(GraphError(moduleIndex: index, message: "duplicate logical module name: " + name))
         }

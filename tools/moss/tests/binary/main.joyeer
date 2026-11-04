@@ -9,7 +9,7 @@ func main(args: borrowing [String]): Int {
         return 1
     }
     var state = TestState(checks: 0, failures: 0)
-    let fixtureDirectory = match joinPath(base: "tests", path: "fixtures") {
+    let fixtureDirectory = match joinPath(base: "tools/moss/tests", path: "fixtures") {
         .Ok(path) => path,
         .Err(_) => {
             print(value: "moss-binary-tests: cannot resolve fixture directory")

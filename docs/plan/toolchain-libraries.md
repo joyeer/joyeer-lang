@@ -56,7 +56,8 @@ from its own (`toolchain.library-mismatch`).
   `--no-stdlib`. No environment variable and no `PATH` search.
 - Import resolution order: supplied modules (`--module-name` /
   `--module-source`), then `lib/`. A supplied module with a standard module's
-  name is `module.shadows-standard`. Unknown names stay `module.unknown-import`.
+  name takes precedence, which lets the repository's root workspace develop the
+  library modules. Unknown names stay `module.unknown-import`.
 - Standard modules are read from their `project.toml` and loaded lazily, only
   when imported, with their own imports resolved the same way. A single source
   file can import them too.
@@ -71,8 +72,7 @@ from its own (`toolchain.library-mismatch`).
 
 A module may list a standard module in `dependencies` without a workspace
 member. fern reads `<compiler directory>/lib/index.toml` for the names and
-leaves resolution to the compiler. A member with a standard module's name is an
-error. Workspace validation is unchanged.
+leaves resolution to the compiler. Workspace validation is unchanged.
 
 ## 3. Remaining work
 

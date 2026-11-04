@@ -549,14 +549,15 @@ TEST_F(StandardLibraryTest, SuppliedModulesAreSearchedBeforeTheToolchain) {
     EXPECT_FALSE(diagnostics.hasFailure()) << errors();
 }
 
-TEST_F(StandardLibraryTest, RejectsASuppliedModuleThatShadowsAStandardModule) {
+TEST_F(StandardLibraryTest, ASuppliedModuleOverridesAStandardModuleOfTheSameName) {
     index("\"Answer\"");
-    module("Answer", "public func answer(): Int { return 42 }\n");
+    // The toolchain copy is invalid; only the supplied module may be loaded.
+    module("Answer", "this is not valid source\n");
     root("main.joyeer", "import Answer\nfunc main() { print(value: Answer.answer()) }\n");
     dependency("Answer", "mine.joyeer", "public func answer(): Int { return 1 }\n");
     CompilerService compiler(&diagnostics, options);
     compiler.compile();
-    EXPECT_TRUE(hasCode("module.shadows-standard")) << errors();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
 }
 
 TEST_F(StandardLibraryTest, RejectsALibraryStampedByAnotherCompiler) {

@@ -49,21 +49,29 @@ semantic results.
 Moss lives in the Joyeer repository and is built by the build-tree
 [fern](../../docs/impl/fern.md) with the build-tree compiler. It needs the
 optional `Compression` module for ZIP/JAR input, so configure with
-`JOYEER_BUILD_COMPRESSION=ON` (and keep the defaults `JOYEER_BUILD_FERN=ON` and
-`JOYEER_BUILD_MOSS=ON`):
+`JOYEER_BUILD_COMPRESSION` (on by default; keep the defaults
+`JOYEER_BUILD_FERN=ON` and `JOYEER_BUILD_MOSS=ON`):
 
 ```text
-cmake -S . -B build -G Ninja -DJOYEER_BUILD_COMPRESSION=ON
+cmake -S . -B build -G Ninja
 cmake --build build --target moss        # build/bin/moss
 ctest --test-dir build -L moss --output-on-failure
 ```
 
+Moss is an ordinary fern project, so once the compiler and fern exist you can
+build it directly; `--bin-dir` places the executable in a bin folder:
+
+```text
+build/bin/fern build --compiler build/bin/joyeer --workspace workspace.toml     --module moss.app --bin-dir build/bin
+build/bin/fern test  --compiler build/bin/joyeer --workspace workspace.toml --module moss.tests
+```
+
 `Moss.FernTests` runs the four native test modules with `fern test` and
 `Moss.JavapGoldens` compares `moss disasm` of each checked-in class with its
-`javap` golden byte for byte. CMake stages `src/` and `tests/` into
-`<build>/tools/moss/workspace` so fern's `target/` generations stay out of the
-source tree. `Compression` is not a member: modules declare it as a dependency
-and the compiler resolves it from its standard library.
+`javap` golden byte for byte. Moss's modules are members of the repository's
+root [workspace.toml](../../workspace.toml), so fern runs from the repository root
+and test generations go to the root `target/` directory. `Compression` is not a member: modules declare it as a
+dependency and the compiler resolves it from its standard library.
 
 To keep disassembly in a file, give `--output` a new destination; it must not
 already exist. File publication is fallible and exclusive, not crash-atomic.
