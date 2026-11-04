@@ -1,0 +1,39 @@
+import moss.model
+
+func entryKind(name: borrowing String): String {
+    if name.count > 0 && name[name.count - 1] == 47 { return "directory" }
+    if name.count >= 6 && substringEquals(text: name, start: name.count - 6, expected: ".class") { return "class" }
+    return "other"
+}
+
+func substringEquals(text: borrowing String, start: Int, expected: borrowing String): Bool {
+    var index = 0
+    while index < expected.count {
+        if text[start + index] != expected[index] { return false }
+        index = index + 1
+    }
+    return true
+}
+
+// One archive entry name per line, in archive order. matches holds the ascending archive
+// indices of the selected entries; the page indexes into matches.
+public func renderEntries(names: borrowing [String], matches: borrowing [Int],
+    page: borrowing Page): Result<String, Diagnostic> {
+    if page.first < 0 || page.end < page.first || page.end > matches.count {
+        return .Err(Diagnostic(code: "output.invalid-query", offset: -1,
+            context: "output", message: "invalid entries page"))
+    }
+    var output = buffer()
+    var index = page.first
+    while index < page.end {
+        append(buffer: &output, text: names[matches[index]] + "\n")?
+        index = index + 1
+    }
+    match page.nextOffset {
+        .Some(next) => {
+            append(buffer: &output, text: "// more: continue with --offset " + number(value: next) + "\n")?
+        },
+        .None => {},
+    }
+    return .Ok(finish(buffer: consume output))
+}

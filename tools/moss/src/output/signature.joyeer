@@ -1,0 +1,233 @@
+import moss.model
+
+// Generic signatures (JVMS 4.7.9.1) rendered as javap prints them, for example
+// `java.util.Map<K, java.util.List<? extends V>>`. Malformed input never traps: parsing stops at the end.
+
+func primitiveText(code: Int): String {
+    return match code {
+        66 => "byte",
+        67 => "char",
+        68 => "double",
+        70 => "float",
+        73 => "int",
+        74 => "long",
+        83 => "short",
+        86 => "void",
+        90 => "boolean",
+        _ => "?",
+    }
+}
+
+private func at(units: borrowing [Int], position: Int): Int {
+    if position < 0 || position >= units.count { return -1 }
+    return units[position]
+}
+
+// Reads an identifier or package path up to one of the terminator characters.
+private func name(units: borrowing [Int], position: inout Int, stopOne: Int, stopTwo: Int, stopThree: Int): [Int] {
+    var collected: [Int] = []
+    while position < units.count && units[position] != stopOne && units[position] != stopTwo &&
+        units[position] != stopThree {
+        &collected.append(element: units[position])
+        &position = position + 1
+    }
+    return collected
+}
+
+func signatureType(units: borrowing [Int], position: inout Int): String {
+    let kind = at(units: units, position: position)
+    if kind == 91 {
+        &position = position + 1
+        return signatureType(units: units, position: &position) + "[]"
+    }
+    if kind == 84 {
+        &position = position + 1
+        let variable = name(units: units, position: &position, stopOne: 59, stopTwo: 59, stopThree: 59)
+        &position = position + 1
+        return plain(units: variable)
+    }
+    if kind == 76 {
+        &position = position + 1
+        return classType(units: units, position: &position)
+    }
+    if kind < 0 { return "?" }
+    &position = position + 1
+    return primitiveText(code: kind)
+}
+
+private func typeArgument(units: borrowing [Int], position: inout Int): String {
+    let mark = at(units: units, position: position)
+    if mark == 42 {
+        &position = position + 1
+        return "?"
+    }
+    if mark == 43 {
+        &position = position + 1
+        return "? extends " + signatureType(units: units, position: &position)
+    }
+    if mark == 45 {
+        &position = position + 1
+        return "? super " + signatureType(units: units, position: &position)
+    }
+    return signatureType(units: units, position: &position)
+}
+
+private func typeArguments(units: borrowing [Int], position: inout Int): String {
+    &position = position + 1
+    var text = "<"
+    var first = true
+    while position < units.count && units[position] != 62 {
+        if !first { text = text + ", " }
+        first = false
+        let before = position
+        text = text + typeArgument(units: units, position: &position)
+        if position == before { &position = position + 1 }
+    }
+    &position = position + 1
+    return text + ">"
+}
+
+// Positioned just after the leading `L`; consumes through the closing `;`.
+private func classType(units: borrowing [Int], position: inout Int): String {
+    var text = dotted(units: name(units: units, position: &position, stopOne: 60, stopTwo: 59, stopThree: 46))
+    while position < units.count && units[position] != 59 {
+        if units[position] == 60 {
+            text = text + typeArguments(units: units, position: &position)
+        } else {
+            &position = position + 1
+            text = text + "." + dotted(units: name(units: units, position: &position,
+                stopOne: 60, stopTwo: 59, stopThree: 46))
+        }
+    }
+    &position = position + 1
+    return text
+}
+
+// Positioned at `<`; returns `<T extends X & Y, U>` and consumes the closing `>`.
+func typeParameters(units: borrowing [Int], position: inout Int): String {
+    &position = position + 1
+    var text = "<"
+    var first = true
+    while position < units.count && units[position] != 62 {
+        if !first { text = text + ", " }
+        first = false
+        let before = position
+        text = text + plain(units: name(units: units, position: &position, stopOne: 58, stopTwo: 58, stopThree: 58))
+        // javap leaves out an `Object` bound, also when interface bounds follow it.
+        var bounds: [String] = []
+        while position < units.count && units[position] == 58 {
+            &position = position + 1
+            if at(units: units, position: position) != 58 && at(units: units, position: position) != 62 {
+                let bound = signatureType(units: units, position: &position)
+                if bound != "java.lang.Object" { &bounds.append(element: bound) }
+            }
+        }
+        if bounds.count > 0 {
+            text = text + " extends "
+            var index = 0
+            while index < bounds.count {
+                if index != 0 { text = text + " & " }
+                text = text + bounds[index]
+                index = index + 1
+            }
+        }
+        if position == before { &position = position + 1 }
+    }
+    &position = position + 1
+    return text + ">"
+}
+
+struct ClassSignature {
+    let typeParameters: String
+    let superclass: String
+    let interfaces: [String]
+}
+
+func parseClassSignature(units: borrowing [Int]): ClassSignature {
+    var position = 0
+    var parameters = ""
+    if at(units: units, position: 0) == 60 { parameters = typeParameters(units: units, position: &position) }
+    let superclass = signatureType(units: units, position: &position)
+    var interfaces: [String] = []
+    while position < units.count {
+        let before = position
+        &interfaces.append(element: signatureType(units: units, position: &position))
+        if position == before { position = position + 1 }
+    }
+    return ClassSignature(typeParameters: parameters, superclass: superclass, interfaces: interfaces)
+}
+
+struct MethodSignature {
+    let typeParameters: String
+    let parameters: [String]
+    let returnType: String
+    let thrown: [String]
+}
+
+func parseMethodSignature(units: borrowing [Int]): MethodSignature {
+    var position = 0
+    var parameters = ""
+    if at(units: units, position: 0) == 60 { parameters = typeParameters(units: units, position: &position) }
+    var types: [String] = []
+    if at(units: units, position: position) == 40 {
+        position = position + 1
+        while position < units.count && units[position] != 41 {
+            let before = position
+            &types.append(element: signatureType(units: units, position: &position))
+            if position == before { position = position + 1 }
+        }
+        position = position + 1
+    }
+    let returnType = signatureType(units: units, position: &position)
+    var thrown: [String] = []
+    while at(units: units, position: position) == 94 {
+        position = position + 1
+        let before = position
+        &thrown.append(element: signatureType(units: units, position: &position))
+        if position == before { position = position + 1 }
+    }
+    return MethodSignature(typeParameters: parameters, parameters: types, returnType: returnType, thrown: thrown)
+}
+
+// One field-type signature as javap prints it.
+public func genericTypeText(units: borrowing [Int]): String {
+    var position = 0
+    return signatureType(units: units, position: &position)
+}
+
+// `<T extends X> R name(P1, P2...) throws E` for a method signature.
+public func genericMethodText(units: borrowing [Int], name: borrowing String, varargs: Bool): String {
+    let parsed = parseMethodSignature(units: units)
+    var types = parsed.parameters
+    &types.append(element: parsed.returnType)
+    var text = ""
+    if parsed.typeParameters.count > 0 { text = parsed.typeParameters + " " }
+    text = text + parsed.returnType + " " + name + "(" + parameterList(types: types, varargs: varargs) + ")"
+    var index = 0
+    while index < parsed.thrown.count {
+        if index == 0 {
+            text = text + " throws "
+        } else {
+            text = text + ", "
+        }
+        text = text + parsed.thrown[index]
+        index = index + 1
+    }
+    return text
+}
+
+public func genericClassText(units: borrowing [Int]): String {
+    let parsed = parseClassSignature(units: units)
+    var text = parsed.typeParameters + " extends " + parsed.superclass
+    var index = 0
+    while index < parsed.interfaces.count {
+        if index == 0 {
+            text = text + " implements "
+        } else {
+            text = text + ", "
+        }
+        text = text + parsed.interfaces[index]
+        index = index + 1
+    }
+    return text
+}

@@ -19,6 +19,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
+| Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
 | Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |

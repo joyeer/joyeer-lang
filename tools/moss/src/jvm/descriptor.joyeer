@@ -1,0 +1,139 @@
+import moss.model
+
+struct DescriptorInfo {
+    let parameters: Int
+    let slots: Int
+    let returnType: Int
+    let dimensions: Int
+}
+
+private func fieldType(units: borrowing [Int], position: inout Int,
+    allowVoid: Bool, offset: Int): Result<DescriptorInfo, Diagnostic> {
+    var dimensions = 0
+    while position < units.count && units[position] == 91 {
+        dimensions = dimensions + 1
+        &position = position + 1
+    }
+    if dimensions > 255 || position >= units.count {
+        return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+            context: "descriptor", message: "invalid array or missing type"))
+    }
+    let kind = units[position]
+    &position = position + 1
+    var slots = 1
+    if kind == 76 {
+        let start = position
+        while position < units.count && units[position] != 59 {
+            &position = position + 1
+        }
+        if position >= units.count || position == start ||
+            !validInternalRange(units: units, start: start, end: position) {
+            return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+                context: "descriptor", message: "invalid object type"))
+        }
+        &position = position + 1
+    } else if kind == 74 || kind == 68 {
+        slots = 2
+    } else if kind == 86 {
+        if !allowVoid || dimensions != 0 {
+            return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+                context: "descriptor", message: "void is only a method return type"))
+        }
+        slots = 0
+    } else if kind != 66 && kind != 67 && kind != 70 && kind != 73 && kind != 83 && kind != 90 {
+        return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+            context: "descriptor", message: "unknown descriptor type"))
+    }
+    var returnType = kind
+    if dimensions != 0 {
+        slots = 1
+        returnType = 91
+    }
+    return .Ok(DescriptorInfo(parameters: 0, slots: slots, returnType: returnType, dimensions: dimensions))
+}
+
+func descriptor(units: borrowing [Int], method: Bool, offset: Int): Result<DescriptorInfo, Diagnostic> {
+    var position = 0
+    var parameters = 0
+    var slots = 0
+    if method {
+        if units.count == 0 || units[0] != 40 {
+            return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+                context: "method descriptor", message: "expected '('"))
+        }
+        position = 1
+        while position < units.count && units[position] != 41 {
+            let item = fieldType(units: units, position: &position, allowVoid: false, offset: offset)?
+            parameters = parameters + 1
+            slots = slots + item.slots
+            if slots > 255 {
+                return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+                    context: "method descriptor", message: "parameters exceed 255 slots"))
+            }
+        }
+        if position >= units.count {
+            return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+                context: "method descriptor", message: "missing ')'"))
+        }
+        position = position + 1
+    }
+    let value = fieldType(units: units, position: &position, allowVoid: method, offset: offset)?
+    if position != units.count {
+        return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+            context: "descriptor", message: "trailing descriptor bytes"))
+    }
+    if !method { slots = value.slots }
+    return .Ok(DescriptorInfo(parameters: parameters, slots: slots,
+        returnType: value.returnType, dimensions: value.dimensions))
+}
+
+func validInternalRange(units: borrowing [Int], start: Int, end: Int): Bool {
+    if start == end { return false }
+    var index = start
+    var component = false
+    while index < end {
+        let value = units[index]
+        if value == 47 {
+            if !component { return false }
+            component = false
+        } else {
+            if value == 46 || value == 59 || value == 91 { return false }
+            component = true
+        }
+        index = index + 1
+    }
+    return component
+}
+
+func validName(units: borrowing [Int], method: Bool): Bool {
+    if method && (unitsEqualAscii(units: units, text: "<init>") ||
+        unitsEqualAscii(units: units, text: "<clinit>")) { return true }
+    if units.count == 0 { return false }
+    var index = 0
+    while index < units.count {
+        let value = units[index]
+        if value == 46 || value == 59 || value == 91 || value == 47 ||
+            (method && (value == 60 || value == 62)) { return false }
+        index = index + 1
+    }
+    return true
+}
+
+func classConstant(pool: borrowing [Constant], index: Int, arrayAllowed: Bool,
+    offset: Int, context: borrowing String): Result<Void, Diagnostic> {
+    requireTag(pool: pool, index: index, tag: 7, offset: offset, context: context)?
+    let nameIndex = pool[index].first
+    requireTag(pool: pool, index: nameIndex, tag: 1, offset: offset, context: context)?
+    if pool[nameIndex].text.count > 0 && pool[nameIndex].text[0] == 91 {
+        if !arrayAllowed {
+            return .Err(diagnostic(code: "jvm.invalid-class-name", offset: offset,
+                context: context, message: "array class is not allowed here"))
+        }
+        descriptor(units: pool[nameIndex].text, method: false, offset: offset)?
+        ()
+    } else if !validInternalRange(units: pool[nameIndex].text, start: 0, end: pool[nameIndex].text.count) {
+        return .Err(diagnostic(code: "jvm.invalid-class-name", offset: offset,
+            context: context, message: "invalid internal class name"))
+    }
+    return .Ok(())
+}

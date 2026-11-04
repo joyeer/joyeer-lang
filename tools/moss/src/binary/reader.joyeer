@@ -1,0 +1,149 @@
+public struct Span {
+    public let offset: Int
+    public let length: Int
+}
+
+public struct Cursor {
+    public let start: Int
+    public let end: Int
+    public var position: Int
+}
+
+public struct Bits64 {
+    public let high: Int
+    public let low: Int
+}
+
+public enum BinaryErrorKind {
+    InvalidRange,
+    InvalidCursor,
+    InvalidWidth,
+    Truncated,
+}
+
+public struct BinaryError {
+    public let kind: BinaryErrorKind
+    public let offset: Int
+    public let requested: Int
+    public let available: Int
+    public let context: String
+}
+
+public func binaryErrorCode(error: borrowing BinaryError): String {
+    return match error.kind {
+        .InvalidRange => "binary.invalid-range",
+        .InvalidCursor => "binary.invalid-cursor",
+        .InvalidWidth => "binary.invalid-width",
+        .Truncated => "binary.truncated",
+    }
+}
+
+public func span(input: borrowing String, offset: Int, length: Int, context: borrowing String): Result<Span, BinaryError> {
+    var available = 0
+    if offset >= 0 && offset <= input.count {
+        available = input.count - offset
+    }
+    if offset < 0 || offset > input.count || length < 0 || length > available {
+        return .Err(BinaryError(kind: .InvalidRange, offset: offset, requested: length,
+            available: available, context: context))
+    }
+    return .Ok(Span(offset: offset, length: length))
+}
+
+public func fullCursor(input: borrowing String): Cursor {
+    return Cursor(start: 0, end: input.count, position: 0)
+}
+
+public func boundedCursor(input: borrowing String, region: borrowing Span, context: borrowing String): Result<Cursor, BinaryError> {
+    let checked = span(input: input, offset: region.offset, length: region.length, context: context)?
+    return .Ok(Cursor(start: checked.offset, end: checked.offset + checked.length,
+        position: checked.offset))
+}
+
+private func validateCursor(input: borrowing String, cursor: borrowing Cursor, context: borrowing String): Result<Void, BinaryError> {
+    if cursor.start < 0 || cursor.end < cursor.start || cursor.end > input.count ||
+        cursor.position < cursor.start || cursor.position > cursor.end {
+        return .Err(BinaryError(kind: .InvalidCursor, offset: cursor.position, requested: 0,
+            available: 0, context: context))
+    }
+    return .Ok(())
+}
+
+public func remaining(input: borrowing String, cursor: borrowing Cursor, context: borrowing String): Result<Int, BinaryError> {
+    validateCursor(input: input, cursor: cursor, context: context)?
+    return .Ok(cursor.end - cursor.position)
+}
+
+private func requireBytes(input: borrowing String, cursor: borrowing Cursor, count: Int,
+    context: borrowing String): Result<Void, BinaryError> {
+    let available = remaining(input: input, cursor: cursor, context: context)?
+    if count < 0 {
+        return .Err(BinaryError(kind: .InvalidRange, offset: cursor.position, requested: count,
+            available: available, context: context))
+    }
+    if count > available {
+        return .Err(BinaryError(kind: .Truncated, offset: cursor.position, requested: count,
+            available: available, context: context))
+    }
+    return .Ok(())
+}
+
+public func takeSpan(input: borrowing String, cursor: inout Cursor, length: Int,
+    context: borrowing String): Result<Span, BinaryError> {
+    requireBytes(input: input, cursor: cursor, count: length, context: context)?
+    let region = Span(offset: cursor.position, length: length)
+    &cursor.position = cursor.position + length
+    return .Ok(region)
+}
+
+public func skip(input: borrowing String, cursor: inout Cursor, count: Int,
+    context: borrowing String): Result<Void, BinaryError> {
+    takeSpan(input: input, cursor: &cursor, length: count, context: context)?
+    return .Ok(())
+}
+
+public func seek(input: borrowing String, cursor: inout Cursor, offset: Int,
+    context: borrowing String): Result<Void, BinaryError> {
+    validateCursor(input: input, cursor: cursor, context: context)?
+    if offset < cursor.start || offset > cursor.end {
+        return .Err(BinaryError(kind: .InvalidRange, offset: offset, requested: 0,
+            available: 0, context: context))
+    }
+    &cursor.position = offset
+    return .Ok(())
+}
+
+public func readUnsigned(input: borrowing String, cursor: inout Cursor, width: Int,
+    context: borrowing String): Result<Int, BinaryError> {
+    if width != 1 && width != 2 && width != 4 {
+        return .Err(BinaryError(kind: .InvalidWidth, offset: cursor.position, requested: width,
+            available: 0, context: context))
+    }
+    requireBytes(input: input, cursor: cursor, count: width, context: context)?
+    var value = 0
+    var index = 0
+    while index < width {
+        value = value * 256 + byteToInt(value: input[cursor.position + index])
+        index = index + 1
+    }
+    &cursor.position = cursor.position + width
+    return .Ok(value)
+}
+
+public func readSigned(input: borrowing String, cursor: inout Cursor, width: Int,
+    context: borrowing String): Result<Int, BinaryError> {
+    let value = readUnsigned(input: input, cursor: &cursor, width: width, context: context)?
+    if width == 1 && value >= 128 { return .Ok(value - 256) }
+    if width == 2 && value >= 32768 { return .Ok(value - 65536) }
+    if width == 4 && value >= 2147483648 { return .Ok(value - 4294967296) }
+    return .Ok(value)
+}
+
+public func readBits64(input: borrowing String, cursor: inout Cursor,
+    context: borrowing String): Result<Bits64, BinaryError> {
+    // Preflight both halves so a truncated read cannot advance the cursor.
+    requireBytes(input: input, cursor: cursor, count: 8, context: context)?
+    let high = readUnsigned(input: input, cursor: &cursor, width: 4, context: context)?
+    let low = readUnsigned(input: input, cursor: &cursor, width: 4, context: context)?
+    return .Ok(Bits64(high: high, low: low))
+}

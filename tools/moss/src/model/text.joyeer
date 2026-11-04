@@ -1,0 +1,168 @@
+public func decimal(value: Int): String {
+    if value == 0 { return "0" }
+    var magnitude = value
+    if magnitude > 0 { magnitude = 0 - magnitude }
+    let digits = "0123456789"
+    var text = ""
+    while magnitude != 0 {
+        let digit = 0 - magnitude % 10
+        text = byteToString(value: digits[digit]) + text
+        magnitude = magnitude / 10
+    }
+    if value < 0 { return "-" + text }
+    return text
+}
+
+public func joined(parts: consuming [String]): String {
+    var active = parts.count
+    while active > 1 {
+        var source = 0
+        var destination = 0
+        while source < active {
+            var combined = parts[source]
+            if active - source > 1 {
+                combined = combined + parts[source + 1]
+                source = source + 2
+            } else {
+                source = source + 1
+            }
+            &parts[destination] = combined
+            destination = destination + 1
+        }
+        active = destination
+    }
+    if active == 0 { return "" }
+    return parts[0]
+}
+
+public func hex(value: Int, digits: Int): String {
+    let alphabet = "0123456789abcdef"
+    var text = ""
+    var remaining = value
+    var index = 0
+    while index < digits {
+        text = byteToString(value: alphabet[remaining % 16]) + text
+        remaining = remaining / 16
+        index = index + 1
+    }
+    return text
+}
+
+public func compareUnits(first: borrowing [Int], second: borrowing [Int]): Int {
+    var index = 0
+    while index < first.count && index < second.count {
+        if first[index] < second[index] { return -1 }
+        if first[index] > second[index] { return 1 }
+        index = index + 1
+    }
+    if first.count < second.count { return -1 }
+    if first.count > second.count { return 1 }
+    return 0
+}
+
+public func asciiUnits(text: borrowing String): [Int] {
+    var units: [Int] = []
+    var index = 0
+    while index < text.count {
+        &units.append(element: byteToInt(value: text[index]))
+        index = index + 1
+    }
+    return units
+}
+
+public func unitsEqualAscii(units: borrowing [Int], text: borrowing String): Bool {
+    if units.count != text.count { return false }
+    var index = 0
+    while index < units.count {
+        if units[index] != byteToInt(value: text[index]) { return false }
+        index = index + 1
+    }
+    return true
+}
+
+public func unitKey(units: borrowing [Int]): String {
+    var parts: [String] = []
+    var index = 0
+    while index < units.count {
+        var piece = ""
+        var count = 0
+        while index < units.count && count < 32 {
+            piece = piece + hex(value: units[index], digits: 4)
+            index = index + 1
+            count = count + 1
+        }
+        &parts.append(element: piece)
+    }
+    return joined(parts: consume parts)
+}
+
+public func flag(value: Int, mask: Int): Bool {
+    return (value / mask) % 2 == 1
+}
+
+public func className(file: borrowing ClassFile): [Int] {
+    return file.pool[file.pool[file.thisClass].first].text
+}
+
+public func artifactId(file: borrowing ClassFile): String {
+    return "jvm:" + unitKey(units: className(file: file))
+}
+
+public func methodId(file: borrowing ClassFile, method: borrowing Member): String {
+    return artifactId(file: file) + ":" + unitKey(units: file.pool[method.nameIndex].text) +
+        ":" + unitKey(units: file.pool[method.descriptorIndex].text)
+}
+
+public func utf8Units(text: borrowing String): Result<[Int], Diagnostic> {
+    var units: [Int] = []
+    var index = 0
+    while index < text.count {
+        let start = index
+        let first = byteToInt(value: text[index])
+        var length = 1
+        var value = first
+        var minimum = 0
+        if first >= 194 && first <= 223 {
+            length = 2
+            value = first - 192
+            minimum = 128
+        } else if first >= 224 && first <= 239 {
+            length = 3
+            value = first - 224
+            minimum = 2048
+        } else if first >= 240 && first <= 244 {
+            length = 4
+            value = first - 240
+            minimum = 65536
+        } else if first >= 128 {
+            return .Err(Diagnostic(code: "text.invalid-utf8", offset: start,
+                context: "UTF-8", message: "invalid leading byte"))
+        }
+        if text.count - index < length {
+            return .Err(Diagnostic(code: "text.invalid-utf8", offset: start,
+                context: "UTF-8", message: "truncated code point"))
+        }
+        var continuation = 1
+        while continuation < length {
+            let byte = byteToInt(value: text[index + continuation])
+            if byte < 128 || byte > 191 {
+                return .Err(Diagnostic(code: "text.invalid-utf8", offset: start,
+                    context: "UTF-8", message: "invalid continuation byte"))
+            }
+            value = value * 64 + byte - 128
+            continuation = continuation + 1
+        }
+        if value < minimum || value > 1114111 || (value >= 55296 && value <= 57343) {
+            return .Err(Diagnostic(code: "text.invalid-utf8", offset: start,
+                context: "UTF-8", message: "invalid Unicode scalar"))
+        }
+        if value < 65536 {
+            &units.append(element: value)
+        } else {
+            &units.append(element: 55296 + (value - 65536) / 1024)
+            &units.append(element: 56320 + (value - 65536) % 1024)
+        }
+        index = index + length
+    }
+    return .Ok(units)
+}

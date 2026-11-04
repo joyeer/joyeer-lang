@@ -1,0 +1,96 @@
+import moss.cli
+
+private func isHelp(args: borrowing [String]): Bool {
+    return match parse(args: args) {
+        .Ok(command) => match command {
+            .Help => true,
+            .Version => false,
+            .Analyze(_) => false,
+        },
+        .Err(_) => false,
+    }
+}
+
+private func isVersion(args: borrowing [String]): Bool {
+    return match parse(args: args) {
+        .Ok(command) => match command {
+            .Help => false,
+            .Version => true,
+            .Analyze(_) => false,
+        },
+        .Err(_) => false,
+    }
+}
+
+private func isRejected(args: borrowing [String]): Bool {
+    return match parse(args: args) {
+        .Ok(_) => false,
+        .Err(error) => error.message.count != 0 && error.code == "cli.usage",
+    }
+}
+
+private func isAnalyze(args: borrowing [String]): Bool {
+    return match parse(args: args) {
+        .Ok(command) => match command {
+            .Analyze(_) => true,
+            _ => false,
+        },
+        .Err(_) => false,
+    }
+}
+
+private func classEntryOf(args: borrowing [String]): String {
+    return match parse(args: args) {
+        .Ok(command) => match command {
+            .Analyze(options) => options.entry,
+            _ => "",
+        },
+        .Err(_) => "",
+    }
+}
+
+private func failed(name: borrowing String): Int {
+    print(value: "FAIL: " + name)
+    return 1
+}
+
+func main(args: borrowing [String]): Int {
+    if args.count != 0 { return failed(name: "test runner expects no arguments") }
+    if !isHelp(args: []) { return failed(name: "empty arguments show help") }
+    if !isHelp(args: ["--help"]) { return failed(name: "explicit help") }
+    if !isVersion(args: ["--version"]) { return failed(name: "explicit version") }
+    if !isRejected(args: ["disasm"]) { return failed(name: "missing analysis input") }
+    if !isRejected(args: ["--unknown"]) { return failed(name: "unknown option") }
+    if !isRejected(args: [""]) { return failed(name: "empty argument") }
+    if !isRejected(args: ["--help", "extra"]) { return failed(name: "help used alone") }
+    if !isRejected(args: ["--version", "extra"]) { return failed(name: "version used alone") }
+    if versionText() != "moss 0.5.0 (JVM disassembler in javap -c -p layout, JAR/ZIP input, CFG)" {
+        return failed(name: "version identifies current capabilities")
+    }
+    if !isRejected(args: ["entries"]) { return failed(name: "entries requires an archive path") }
+    if !isRejected(args: ["entries", "a.jar", "--entry", "x.class"]) { return failed(name: "entries rejects --entry") }
+    if !isRejected(args: ["entries", "a.jar", "--method", "m"]) { return failed(name: "entries rejects method selectors") }
+    if !isRejected(args: ["inspect", "a.jar", "--entry", "a", "--entry", "b"]) { return failed(name: "duplicate --entry") }
+    if !isRejected(args: ["inspect", "a.jar", "--entry"]) { return failed(name: "--entry needs a value") }
+    if !isRejected(args: ["entries", "a.jar", "--class", "a.B"]) { return failed(name: "entries rejects --class") }
+    if !isRejected(args: ["inspect", "a.jar", "--entry", "a.class", "--class", "a.B"]) { return failed(name: "entry and class conflict") }
+    if !isRejected(args: ["inspect", "a.class", "--prefix", "a/"]) { return failed(name: "--prefix is entries only") }
+    if !isRejected(args: ["entries", "a.jar", "--prefix", "a/", "--prefix", "b/"]) { return failed(name: "duplicate --prefix") }
+    if !isRejected(args: ["disasm", "a.class", "--descriptor", "()V"]) { return failed(name: "descriptor needs a method") }
+    if !isAnalyze(args: ["disasm", "a.class"]) { return failed(name: "disasm without selector prints the class") }
+    if !isAnalyze(args: ["disasm", "a.jar", "--class", "com.acme.Foo", "--output", "x"]) { return failed(name: "--class accepted") }
+    if !isAnalyze(args: ["entries", "a.jar", "--prefix", "com/", "--limit", "5"]) { return failed(name: "entries --prefix accepted") }
+    if classEntryOf(args: ["inspect", "a.jar", "--class", "com.acme.Foo"]) != "com/acme/Foo.class" { return failed(name: "dotted class name") }
+    if classEntryOf(args: ["inspect", "a.jar", "--class", "com/acme/Foo$Inner.class"]) != "com/acme/Foo$Inner.class" { return failed(name: "slash class name with suffix") }
+    if classEntryOf(args: ["inspect", "a.jar", "--class", "Foo"]) != "Foo.class" { return failed(name: "default-package class") }
+    if !isRejected(args: ["cfg", "a.class"]) { return failed(name: "cfg requires a method selector") }
+    if !isRejected(args: ["cfg", "a.class", "--method", "m", "--method-index", "1"]) { return failed(name: "cfg selector conflict") }
+    if !isAnalyze(args: ["cfg", "a.class", "--method", "m", "--descriptor", "()V"]) { return failed(name: "cfg by name") }
+    if !isAnalyze(args: ["cfg", "a.jar", "--class", "a.B", "--method-index", "2", "--output", "x"]) { return failed(name: "cfg in a jar") }
+    if !isRejected(args: ["inspect", "a.class", "--method", "m"]) { return failed(name: "inspect rejects selectors") }
+    if !isRejected(args: ["disasm", "a.class", "--format", "json"]) { return failed(name: "--format is gone") }
+    if !isRejected(args: ["disasm", "a.class", "--unchecked-stdout"]) { return failed(name: "--unchecked-stdout is gone") }
+    if helpText().count == 0 { return failed(name: "help is nonempty") }
+    print(value: "moss-tests: 33 checks passed")
+    return 0
+}

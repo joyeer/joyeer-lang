@@ -1,0 +1,102 @@
+import moss.binary
+import moss.model
+
+struct ParseBudget {
+    var records: Int
+    var textBytes: Int
+}
+
+func diagnostic(code: borrowing String, offset: Int, context: borrowing String, message: borrowing String): Diagnostic {
+    return Diagnostic(code: code, offset: offset, context: context, message: message)
+}
+
+func binaryDiagnostic(error: borrowing BinaryError): Diagnostic {
+    return diagnostic(code: binaryErrorCode(error: error), offset: error.offset,
+        context: error.context, message: "requested " + decimal(value: error.requested) +
+        " bytes; available " + decimal(value: error.available))
+}
+
+func u(input: borrowing String, cursor: inout Cursor, width: Int,
+    context: borrowing String): Result<Int, Diagnostic> {
+    return match readUnsigned(input: input, cursor: &cursor, width: width, context: context) {
+        .Ok(value) => .Ok(value),
+        .Err(error) => .Err(binaryDiagnostic(error: error)),
+    }
+}
+
+func s(input: borrowing String, cursor: inout Cursor, width: Int,
+    context: borrowing String): Result<Int, Diagnostic> {
+    return match readSigned(input: input, cursor: &cursor, width: width, context: context) {
+        .Ok(value) => .Ok(value),
+        .Err(error) => .Err(binaryDiagnostic(error: error)),
+    }
+}
+
+func take(input: borrowing String, cursor: inout Cursor, length: Int,
+    context: borrowing String): Result<ByteRange, Diagnostic> {
+    return match takeSpan(input: input, cursor: &cursor, length: length, context: context) {
+        .Ok(region) => .Ok(ByteRange(offset: region.offset, length: region.length)),
+        .Err(error) => .Err(binaryDiagnostic(error: error)),
+    }
+}
+
+func bounded(input: borrowing String, region: borrowing ByteRange,
+    context: borrowing String): Result<Cursor, Diagnostic> {
+    return match boundedCursor(input: input,
+        region: Span(offset: region.offset, length: region.length), context: context) {
+        .Ok(cursor) => .Ok(cursor),
+        .Err(error) => .Err(binaryDiagnostic(error: error)),
+    }
+}
+
+func finished(cursor: borrowing Cursor, context: borrowing String): Result<Void, Diagnostic> {
+    if cursor.position != cursor.end {
+        return .Err(diagnostic(code: "jvm.trailing-bytes", offset: cursor.position,
+            context: context, message: "unconsumed bytes in declared region"))
+    }
+    return .Ok(())
+}
+
+func charge(budget: inout ParseBudget, count: Int, offset: Int): Result<Void, Diagnostic> {
+    if count > 262144 - budget.records {
+        return .Err(diagnostic(code: "jvm.resource-limit", offset: offset,
+            context: "metadata", message: "metadata exceeds 262144 records"))
+    }
+    &budget.records = budget.records + count
+    return .Ok(())
+}
+
+func count16(input: borrowing String, cursor: inout Cursor, minimumBytes: Int,
+    budget: inout ParseBudget, context: borrowing String): Result<Int, Diagnostic> {
+    let count = u(input: input, cursor: &cursor, width: 2, context: context)?
+    if count > (cursor.end - cursor.position) / minimumBytes {
+        return .Err(diagnostic(code: "binary.truncated", offset: cursor.position,
+            context: context, message: "count exceeds remaining byte budget"))
+    }
+    charge(budget: &budget, count: count, offset: cursor.position - 2)?
+    return .Ok(count)
+}
+
+func requireTag(pool: borrowing [Constant], index: Int, tag: Int,
+    offset: Int, context: borrowing String): Result<Void, Diagnostic> {
+    if index <= 0 || index >= pool.count || pool[index].tag == 0 {
+        return .Err(diagnostic(code: "jvm.invalid-constant-index", offset: offset,
+            context: context, message: "constant pool index is absent or unusable"))
+    }
+    if tag != 0 && pool[index].tag != tag {
+        return .Err(diagnostic(code: "jvm.invalid-constant-tag", offset: offset,
+            context: context, message: "unexpected constant pool tag"))
+    }
+    return .Ok(())
+}
+
+func utf8(pool: borrowing [Constant], index: Int,
+    offset: Int, context: borrowing String): Result<[Int], Diagnostic> {
+    requireTag(pool: pool, index: index, tag: 1, offset: offset, context: context)?
+    return .Ok(pool[index].text)
+}
+
+func named(pool: borrowing [Constant], index: Int, name: borrowing String): Bool {
+    return index > 0 && index < pool.count && pool[index].tag == 1 &&
+        unitsEqualAscii(units: pool[index].text, text: name)
+}

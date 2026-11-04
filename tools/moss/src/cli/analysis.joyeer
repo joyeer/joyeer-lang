@@ -1,0 +1,241 @@
+import moss.analysis
+import moss.archive
+import moss.binary
+import moss.jvm
+import moss.model
+import moss.output
+
+public func selectMethod(file: borrowing ClassFile, name: borrowing String,
+    type: borrowing String): Result<Int, Diagnostic> {
+    let wanted = utf8Units(text: name)?
+    let descriptor = utf8Units(text: type)?
+    var found = -1
+    var index = 0
+    while index < file.methods.count {
+        if compareUnits(first: wanted, second: file.pool[file.methods[index].nameIndex].text) == 0 &&
+            (type.count == 0 || compareUnits(first: descriptor,
+                second: file.pool[file.methods[index].descriptorIndex].text) == 0) {
+            if found >= 0 {
+                return .Err(Diagnostic(code: "query.ambiguous-method", offset: -1,
+                    context: "method selector", message: "multiple overloads match; supply --descriptor"))
+            }
+            found = index
+        }
+        index = index + 1
+    }
+    if found < 0 {
+        return .Err(Diagnostic(code: "query.method-not-found", offset: -1,
+            context: "method selector", message: "no method matches the exact name and descriptor"))
+    }
+    return .Ok(found)
+}
+
+public func instructionPage(instructions: borrowing [Instruction], codeLength: Int,
+    offset: Int, limit: Int): Result<Page, Diagnostic> {
+    if limit < 1 || limit > 10000 || offset < 0 || offset > codeLength {
+        return .Err(Diagnostic(code: "query.invalid-offset", offset: -1,
+            context: "page", message: "offset or page limit lies outside the method"))
+    }
+    var first = instructions.count
+    if offset != codeLength {
+        first = match instructionIndex(instructions: instructions, offset: offset) {
+            .Some(index) => index,
+            .None => {
+                return .Err(Diagnostic(code: "query.invalid-offset", offset: -1,
+                    context: "page", message: "offset must be an instruction start, not an operand byte"))
+            },
+        }
+    }
+    var count = instructions.count - first
+    if count > limit { count = limit }
+    let end = first + count
+    var next: Int? = .None
+    if end < instructions.count { next = .Some(instructions[end].methodOffset) }
+    return .Ok(Page(first: first, end: end, nextOffset: next))
+}
+
+private func analyzeClassDisasm(options: borrowing Options, input: borrowing String,
+    file: borrowing ClassFile): Result<String, Diagnostic> {
+    if options.offset > file.methods.count {
+        return .Err(Diagnostic(code: "query.invalid-offset", offset: -1,
+            context: "methods", message: "offset exceeds the method inventory"))
+    }
+    var count = file.methods.count - options.offset
+    if count > options.limit { count = options.limit }
+    let end = options.offset + count
+    var next: Int? = .None
+    if end < file.methods.count { next = .Some(end) }
+    var groups: [[Instruction]] = []
+    var index = options.offset
+    while index < end {
+        &groups.append(element: decodeMethod(input: input, file: file, methodIndex: index)?)
+        index = index + 1
+    }
+    let page = Page(first: options.offset, end: end, nextOffset: next)
+    let rendered = renderClassDisasm(input: input, file: file, groups: groups, page: page)?
+    return checkedOutput(contents: consume rendered)
+}
+
+private func analyzeCfg(options: borrowing Options, input: borrowing String,
+    file: borrowing ClassFile): Result<String, Diagnostic> {
+    var method = options.methodIndex
+    if method >= 0 {
+        if method >= file.methods.count {
+            return .Err(Diagnostic(code: "query.method-not-found", offset: -1,
+                context: "method selector", message: "method index exceeds the inventory"))
+        }
+    } else {
+        method = selectMethod(file: file, name: options.method, type: options.descriptor)?
+    }
+    let code = match file.methods[method].code {
+        .Some(value) => value,
+        .None => {
+            return .Err(Diagnostic(code: "query.no-code", offset: -1, context: "method selector",
+                message: "the selected method is abstract or native and has no bytecode"))
+        },
+    }
+    let instructions = decodeMethod(input: input, file: file, methodIndex: method)?
+    let cfg = buildCfg(instructions: instructions, code: code)?
+    let dominance = analyzeDominance(cfg: cfg)?
+    if options.offset > cfg.blocks.count {
+        return .Err(Diagnostic(code: "query.invalid-offset", offset: -1,
+            context: "blocks", message: "offset exceeds the block count"))
+    }
+    var count = cfg.blocks.count - options.offset
+    if count > options.limit { count = options.limit }
+    let end = options.offset + count
+    var next: Int? = .None
+    if end < cfg.blocks.count { next = .Some(end) }
+    let page = Page(first: options.offset, end: end, nextOffset: next)
+    let rendered = renderCfg(file: file, methodIndex: method, cfg: cfg, dominance: dominance, page: page)?
+    return checkedOutput(contents: consume rendered)
+}
+
+public func analyzeBytes(options: borrowing Options, input: borrowing String): Result<String, Diagnostic> {
+    let file = parseClass(input: input, allowPreview: options.allowPreview)?
+    if options.command == "cfg" {
+        return analyzeCfg(options: options, input: input, file: file)
+    }
+    if options.command == "disasm" && options.method.count == 0 && options.methodIndex < 0 {
+        return analyzeClassDisasm(options: options, input: input, file: file)
+    }
+    var method = -1
+    var instructions: [Instruction] = []
+    var page = Page(first: 0, end: file.methods.count, nextOffset: .None)
+    if options.command == "disasm" {
+        if options.methodIndex >= 0 {
+            if options.methodIndex >= file.methods.count {
+                return .Err(Diagnostic(code: "query.method-not-found", offset: -1,
+                    context: "method selector", message: "method index exceeds the inventory"))
+            }
+            method = options.methodIndex
+        } else {
+            method = selectMethod(file: file, name: options.method, type: options.descriptor)?
+        }
+        instructions = decodeMethod(input: input, file: file, methodIndex: method)?
+        let length = match file.methods[method].code {
+            .Some(code) => code.bytes.length,
+            .None => 0,
+        }
+        page = instructionPage(instructions: instructions, codeLength: length,
+            offset: options.offset, limit: options.limit)?
+    } else if options.command == "methods" {
+        if options.offset > file.methods.count {
+            return .Err(Diagnostic(code: "query.invalid-offset", offset: -1,
+                context: "methods", message: "offset exceeds the method inventory"))
+        }
+        var count = file.methods.count - options.offset
+        if count > options.limit { count = options.limit }
+        let end = options.offset + count
+        var next: Int? = .None
+        if end < file.methods.count { next = .Some(end) }
+        page = Page(first: options.offset, end: end, nextOffset: next)
+    }
+    var rendered = ""
+    if options.command == "inspect" {
+        rendered = renderInspect(input: input, file: file)?
+    } else if options.command == "methods" {
+        rendered = renderMethods(input: input, file: file, page: page)?
+    } else {
+        rendered = renderMethodDisasm(input: input, file: file, methodIndex: method,
+            instructions: instructions, page: page)?
+    }
+    return checkedOutput(contents: consume rendered)
+}
+
+private func withPath(options: borrowing Options, path: borrowing String): Options {
+    return Options(command: options.command, path: path,
+        method: options.method, methodIndex: options.methodIndex, descriptor: options.descriptor,
+        offset: options.offset, limit: options.limit, output: options.output, entry: options.entry,
+        prefix: options.prefix,
+        allowPreview: options.allowPreview)
+}
+
+private func checkedOutput(contents: consuming String): Result<String, Diagnostic> {
+    // Both print and file output add exactly one final newline.
+    let trimmed = withoutFinalNewline(text: consume contents)
+    if trimmed.count >= maximumOutputBytes() {
+        return .Err(Diagnostic(code: "output.budget-exceeded", offset: -1,
+            context: "output", message: "final newline would exceed the inclusive 8 MiB ceiling"))
+    }
+    return .Ok(trimmed)
+}
+
+private func hasPrefix(name: borrowing String, prefix: borrowing String): Bool {
+    if prefix.count > name.count { return false }
+    var index = 0
+    while index < prefix.count {
+        if name[index] != prefix[index] { return false }
+        index = index + 1
+    }
+    return true
+}
+
+public func analyzeEntries(options: borrowing Options, input: borrowing String): Result<String, Diagnostic> {
+    let names = listEntries(archive: input.utf8())?
+    var matches: [Int] = []
+    var position = 0
+    while position < names.count {
+        if hasPrefix(name: names[position], prefix: options.prefix) { &matches.append(element: position) }
+        position = position + 1
+    }
+    if options.offset > matches.count {
+        return .Err(Diagnostic(code: "query.invalid-offset", offset: -1,
+            context: "entries", message: "offset exceeds the selected archive entries"))
+    }
+    var count = matches.count - options.offset
+    if count > options.limit { count = options.limit }
+    let end = options.offset + count
+    var next: Int? = .None
+    if end < matches.count { next = .Some(end) }
+    let page = Page(first: options.offset, end: end, nextOffset: next)
+    let rendered = renderEntries(names: names, matches: matches, page: page)?
+    return checkedOutput(contents: consume rendered)
+}
+
+public func analyze(options: borrowing Options): Result<String, Diagnostic> {
+    let input = match readInput(path: options.path) {
+        .Ok(bytes) => bytes,
+        .Err(error) => {
+            var message = "cannot acquire input '" + options.path + "'"
+            match inputHostCode(error: error) {
+                .Some(code) => { message = message + " (native code " + decimal(value: code) + ")" },
+                .None => {},
+            }
+            return .Err(Diagnostic(code: inputErrorCode(error: error),
+                offset: -1, context: "input", message: message))
+        },
+    }
+    if options.command == "entries" { return analyzeEntries(options: options, input: input) }
+    if options.entry.count != 0 {
+        let member = extractEntry(archive: input.utf8(), name: options.entry)?
+        return analyzeBytes(options: withPath(options: options, path: options.path + "!/" + options.entry),
+            input: member)
+    }
+    if input.count >= 4 && byteToInt(value: input[0]) == 80 && byteToInt(value: input[1]) == 75 &&
+        byteToInt(value: input[2]) == 3 && byteToInt(value: input[3]) == 4 {
+        return .Err(Diagnostic(code: "input.archive-needs-entry", offset: -1, context: "input",
+            message: "input is a ZIP/JAR archive; list names with moss entries and select one with --entry"))
+    }
+    return analyzeBytes(options: options, input: input)
+}

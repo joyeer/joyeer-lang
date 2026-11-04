@@ -48,6 +48,7 @@ enable_language(CXX)
 option(JOYEER_BUILD_UNITTESTS "Build Joyeer C++ unit tests" ON)
 option(JOYEER_BUILD_FERN "Bootstrap the Joyeer-written fern project tool" ON)
 option(JOYEER_BUILD_COMPRESSION "Build the optional miniz-backed Compression library" OFF)
+option(JOYEER_BUILD_MOSS "Build the Joyeer-written moss JVM inspection tool (needs fern and Compression)" ON)
 
 if(JOYEER_BUILD_FERN AND CMAKE_CROSSCOMPILING)
     message(FATAL_ERROR
@@ -254,6 +255,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 add_subdirectory(src)
 if(JOYEER_BUILD_FERN)
     add_subdirectory(tools/fern)
+    if(JOYEER_BUILD_MOSS AND JOYEER_BUILD_COMPRESSION)
+        add_subdirectory(tools/moss)
+    endif()
 endif()
 add_subdirectory(tests)
 

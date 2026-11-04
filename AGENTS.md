@@ -89,6 +89,7 @@ cross-directory includes use the path relative to `src/`.
 | LLVM objects / optimization / embedded LLD / C ABI | [src/backend/](src/backend/) |
 | C11 program runtime | [src/runtime/](src/runtime/) |
 | Local project manager | [tools/fern/](tools/fern/); behavior and validation in [docs/impl/fern.md](docs/impl/fern.md) |
+| JVM class/JAR inspector (Joyeer-written, built by fern) | [tools/moss/](tools/moss/); see its [README](tools/moss/README.md) and [AGENTS.md](tools/moss/AGENTS.md). Built only with `JOYEER_BUILD_COMPRESSION=ON`; ctest label `moss` |
 
 `JoyeerCompilerCore` is one non-installed CMake `OBJECT` target reused by
 `joyeer` and the compiler unit tests. Directories are responsibility groups,

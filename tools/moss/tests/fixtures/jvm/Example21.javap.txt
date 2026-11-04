@@ -1,0 +1,93 @@
+Compiled from "Example.java"
+public abstract class Example {
+  public static final int value;
+
+  public Example();
+    Code:
+         0: aload_0
+         1: invokespecial #10                 // Method java/lang/Object."<init>":()V
+         4: return
+
+  public static int sum(int, int);
+    Code:
+         0: iload_0
+         1: iload_1
+         2: iadd
+         3: ireturn
+
+  public static int sum(int);
+    Code:
+         0: iload_0
+         1: ireturn
+
+  public static int wide();
+    Code:
+         0: sipush        1000
+         3: istore_w      300
+         7: iinc_w        300, -32768
+        13: iload_w       300
+        17: ireturn
+
+  public static int loop(int);
+    Code:
+         0: iload_0
+         1: ifle          10
+         4: iinc          0, -1
+         7: goto          0
+        10: iconst_0
+        11: ireturn
+
+  public static int dense(int);
+    Code:
+         0: iload_0
+         1: tableswitch   { // -1 to 1
+                      -1: 28
+                       0: 30
+                       1: 32
+                 default: 34
+            }
+        28: iconst_1
+        29: ireturn
+        30: iconst_2
+        31: ireturn
+        32: iconst_3
+        33: ireturn
+        34: iconst_4
+        35: ireturn
+
+  public static int sparse(int);
+    Code:
+         0: iload_0
+         1: lookupswitch  { // 2
+                    -100: 28
+                    1000: 30
+                 default: 32
+            }
+        28: iconst_1
+        29: ireturn
+        30: iconst_2
+        31: ireturn
+        32: iconst_4
+        33: ireturn
+
+  public static native int nativeValue();
+
+  public abstract int abstractValue();
+
+  public static int caught(int);
+    Code:
+         0: iload_0
+         1: ireturn
+         2: pop
+         3: iconst_m1
+         4: ireturn
+      Exception table:
+         from    to  target type
+             0     2     2   Class java/lang/RuntimeException
+      LineNumberTable:
+        line 10: 0
+        line 12: 2
+      LocalVariableTable:
+        Start  Length  Slot  Name   Signature
+            0       5     0 number   I
+}
