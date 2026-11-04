@@ -38,7 +38,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 - `python3 scripts/validate.py --llvm-root <sdk>` configures, builds, and runs
-  the unfiltered ctest and `joypm test` in Debug and Release, then prints one
+  the unfiltered ctest and `fern test` in Debug and Release, then prints one
   platform x config x suite table. Use it, not ad-hoc shell scripts, to validate
   a platform or to hand a validation to someone else. `--report FILE` saves the
   table and `--tests-list DIR` saves the sorted ctest names so two platforms can
@@ -58,15 +58,15 @@ ctest --test-dir build --output-on-failure
   presets use `out/build/<preset>/bin/`.
 - Enable `JOYEER_BUILD_UNITTESTS` for the full acceptance gate and run
   unfiltered CTest. Label filters are for focused iteration only.
-- `JOYEER_BUILD_JOYPM` defaults to `ON`: CMake bootstraps the Joyeer-written
-  `joypm` as an `ALL` target using the build-tree compiler. Set it to `OFF`
+- `JOYEER_BUILD_FERN` defaults to `ON`: CMake bootstraps the Joyeer-written
+  `fern` as an `ALL` target using the build-tree compiler. Set it to `OFF`
   for a compiler-only build. Its acceptance gates require `BUILD_TESTING`
-  and `JOYEER_BUILD_JOYPM`, independently of `JOYEER_BUILD_UNITTESTS`.
+  and `JOYEER_BUILD_FERN`, independently of `JOYEER_BUILD_UNITTESTS`.
 - Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release; macOS Debug
   falls back to `-g0` when `dsymutil` is unavailable. Debug PDB/dSYM sidecars
-  are CMake byproducts when produced; Windows Debug installs the joypm PDB
+  are CMake byproducts when produced; Windows Debug installs the fern PDB
   with component `PRODUCT`. CMake stages an explicit self-build project under
-  `out/build/<preset>/src/tools/joypm/project/`.
+  `out/build/<preset>/tools/fern/project/`.
 - Re-run CMake configure after adding or removing registered fixtures or test
   targets.
 - C++ unit tests live under [tests/unittests/](tests/unittests/). Durable
@@ -88,7 +88,7 @@ cross-directory includes use the path relative to `src/`.
 | Compiler-side backend adapter / link orchestration | [src/compiler/codegen/](src/compiler/codegen/) |
 | LLVM objects / optimization / embedded LLD / C ABI | [src/backend/](src/backend/) |
 | C11 program runtime | [src/runtime/](src/runtime/) |
-| Local project manager | [src/tools/joypm/](src/tools/joypm/); behavior and validation in [docs/impl/joypm.md](docs/impl/joypm.md) |
+| Local project manager | [tools/fern/](tools/fern/); behavior and validation in [docs/impl/fern.md](docs/impl/fern.md) |
 
 `JoyeerCompilerCore` is one non-installed CMake `OBJECT` target reused by
 `joyeer` and the compiler unit tests. Directories are responsibility groups,
@@ -125,11 +125,11 @@ source privately in the backend rather than reusing compiler-core objects.
 ## Packaging and automation
 
 - Windows packages should contain only `joyeer.exe`, `joyeer-backend.dll`,
-  `JoyeerRuntime.lib`, optional `joypm.exe` (enabled by default), and
+  `JoyeerRuntime.lib`, optional `fern.exe` (enabled by default), and
   required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
   backend, runtime, and the current license use install component
-  `JoyeerRuntime`; `joypm` uses `PRODUCT`. The Debug installer includes
-  `joypm` and its PDB when enabled. Current local installs stage only Joyeer's
+  `JoyeerRuntime`; `fern` uses `PRODUCT`. The Debug installer includes
+  `fern` and its PDB when enabled. Current local installs stage only Joyeer's
   own license. Third-party license/notice assembly is deferred and must be
   completed before redistributing toolchain binaries.
   See [docs/building.md](docs/building.md#release-staging).
@@ -176,7 +176,7 @@ source privately in the backend rather than reusing compiler-core objects.
   conversion and no `Array.removeLast`; check
   [supported features](docs/impl/supported-features.md) before relying on an
   API.
-- Use [jp_write_bytes](tests/joypm/helpers.cmake) for byte-exact manifest
+- Use [jp_write_bytes](tests/fern/helpers.cmake) for byte-exact manifest
   fixtures, not CMake `file(WRITE)` directly. Windows text-mode writes insert
   CR before LF, changing CRLF and inclusive byte limits; the helper verifies
   size and SHA-256 after a Joyeer binary write.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Configure, build, and test Joyeer, then print one platform x config x suite table.
 
-This replaces the hand-run "configure, build, ctest, joypm test" handoff on each
+This replaces the hand-run "configure, build, ctest, fern test" handoff on each
 platform. It never installs or resolves a toolchain: CMake, Ninja, a C++20
 compiler (a Developer shell on Windows), and the LLVM/LLD/Clang 22.1.8 SDK
 (--llvm-root, JOYEER_LLVM_ROOT, or LLVM_HOME) must already exist. See
@@ -128,10 +128,10 @@ def parse_ctest(output: str) -> tuple[bool, str, list[str]]:
     return failed == 0 and total > len(skipped), ctest_summary(total, failed, skipped), names
 
 
-def parse_joypm(output: str) -> tuple[bool, str]:
+def parse_fern(output: str) -> tuple[bool, str]:
     found = re.search(r"(\d+) tests?: (\d+) passed, (\d+) build-fail, (\d+) run-fail", output)
     if not found:
-        return False, "no joypm summary"
+        return False, "no fern summary"
     total, passed, build_fail, run_fail = (int(found.group(i)) for i in range(1, 5))
     detail = f"{passed} / {total} passed"
     if build_fail or run_fail:
@@ -200,19 +200,19 @@ def validate_config(config: str, args: argparse.Namespace, sdk: Path, env: dict[
             summary += "; failed: " + ", ".join(failed[:12]) + (" ..." if len(failed) > 12 else "")
         record("ctest", ok and code == 0, summary, started)
 
-    if not args.skip_joypm:
-        joypm = build_dir / "bin" / f"joypm{EXE}"
+    if not args.skip_fern:
+        fern = build_dir / "bin" / f"fern{EXE}"
         compiler = build_dir / "bin" / f"joyeer{EXE}"
         started = time.monotonic()
-        if not joypm.exists():
-            record("joypm test", False, f"{joypm} was not built (JOYEER_BUILD_JOYPM=OFF?)", started)
+        if not fern.exists():
+            record("fern test", False, f"{fern} was not built (JOYEER_BUILD_FERN=OFF?)", started)
         else:
-            command = [str(joypm), "test", "--compiler", str(compiler), "--workspace", str(ROOT / "workspace.toml")]
+            command = [str(fern), "test", "--compiler", str(compiler), "--workspace", str(ROOT / "workspace.toml")]
             if config.lower() == "release":
                 command.append("--release")
-            code, output = run(command, logs / "joypm.log", env)
-            ok, summary = parse_joypm(output)
-            record("joypm test", ok and code == 0, summary, started)
+            code, output = run(command, logs / "fern.log", env)
+            ok, summary = parse_fern(output)
+            record("fern test", ok and code == 0, summary, started)
     return rows
 
 
@@ -245,7 +245,7 @@ def main() -> int:
                         help="extra CMake cache entry, for example FETCHCONTENT_SOURCE_DIR_MINIZ=/path (repeatable)")
     parser.add_argument("--no-retry", action="store_true", help="do not rerun failed ctest tests once")
     parser.add_argument("--skip-ctest", action="store_true")
-    parser.add_argument("--skip-joypm", action="store_true")
+    parser.add_argument("--skip-fern", action="store_true")
     parser.add_argument("--fresh", action="store_true", help=f"delete the build tree under {BUILD_ROOT} first")
     parser.add_argument("--tests-list", metavar="DIR", help="write the sorted ctest test names to DIR, to diff platforms")
     parser.add_argument("--report", metavar="FILE", help="also write the table (Markdown) to FILE")

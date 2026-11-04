@@ -47,7 +47,7 @@ class ValidationSummaryTests(unittest.TestCase):
     def run_with_retry(self, initial, rerun):
         args = SimpleNamespace(
             fresh=False, no_compression=False, define=[], tests_list=None,
-            skip_ctest=False, jobs=2, no_retry=False, skip_joypm=True,
+            skip_ctest=False, jobs=2, no_retry=False, skip_fern=True,
         )
         with patch.object(validate, "run", side_effect=[
             (0, ""), (0, ""), (8, initial), (0, rerun),
@@ -77,15 +77,15 @@ class ValidationSummaryTests(unittest.TestCase):
         self.assertIn("Broken (Failed)", row.summary)
         self.assertNotIn("passed only on rerun", row.summary)
 
-    def test_joypm_counts_must_agree(self):
-        self.assertEqual(validate.parse_joypm("2 tests: 2 passed, 0 build-fail, 0 run-fail"),
+    def test_fern_counts_must_agree(self):
+        self.assertEqual(validate.parse_fern("2 tests: 2 passed, 0 build-fail, 0 run-fail"),
                          (True, "2 / 2 passed"))
         for output in ("2 tests: 1 passed, 0 build-fail, 0 run-fail",
                        "2 tests: 1 passed, 1 build-fail, 0 run-fail",
                        "0 tests: 0 passed, 0 build-fail, 0 run-fail",
                        ""):
             with self.subTest(output=output):
-                self.assertFalse(validate.parse_joypm(output)[0])
+                self.assertFalse(validate.parse_fern(output)[0])
 
 
 if __name__ == "__main__":

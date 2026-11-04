@@ -154,11 +154,11 @@ search or shell flags are inferred. COFF/Mach-O receive explicit inputs;
 ELF groups the native archives and runtime to resolve inter-archive references.
 Files are checked in validation/text/object modes too, but linking occurs only
 for executable output. Native provider deployment remains the caller's job.
-joypm's optional module fields are described in [its manifest contract](joypm.md).
+Fern's optional module fields are described in [its manifest contract](fern.md).
 
 This is ordinary link-time selection of a dynamic dependency. It does not
 implement `dlopen`, `LoadLibrary`, function-address lookup, header import,
-or native dependency fetching/building in joypm. Missing required native
+or native dependency fetching/building in fern. Missing required native
 definitions fail at the native link; source checking cannot prove a native
 library's actual prototype agrees.
 
@@ -217,7 +217,7 @@ newer default OS version inferred from the host running LLVM.
 
 The `joyeer` target builds the C++ compiler/backend without waiting for
 `JoyeerRuntime`. The `JoyeerToolchain` `ALL` target separately stages
-the archive beside the compiler. joypm bootstrap depends on that staged
+the archive beside the compiler. Fern bootstrap depends on that staged
 product. This supplies an acyclic foundation for a future mixed runtime;
 the production archive still contains only its existing C implementation.
 
@@ -257,7 +257,7 @@ overflow/division traps in both Joyeer optimization profiles. Unit tests also
 reject out-of-range literals, implicit numeric conversions, malformed floating
 IR, and conflicting native representations.
 
-Full acceptance uses unit tests and joypm enabled and unfiltered CTest;
+Full acceptance uses unit tests and fern enabled and unfiltered CTest;
 focused labels do not replace that gate. Native results for one host do not
 establish acceptance on other platforms or a complete implementation of §19.
 
@@ -295,26 +295,26 @@ LLVM/LLD 22.1.8, CMake 4.4.4, and Ninja
 
 - Fresh build trees at `out\build\c-interop-x64-debug` and
   `out\build\c-interop-x64-release` used the x64 presets with `BUILD_TESTING`,
-  `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_JOYPM` enabled, and
+  `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN` enabled, and
   `INSTALL_GTEST=OFF`.
 - Before building a runtime archive in the Debug tree, the compiler,
   C interop unit tests, and static/shared round-trip targets built, and all
   30 `c-interop` tests passed, including both Joyeer optimization profiles.
-- Both complete default `ALL` builds passed, including joypm bootstrap.
+- Both complete default `ALL` builds passed, including fern bootstrap.
   Subsequent incremental builds required only product staging.
 - Unfiltered serial CTest passed **846/846 in Debug** and
   **846/846 in Release**, with no skipped tests. Each run included all
-  30 C interop tests and all 15 joypm gates, including self-build and
+  30 C interop tests and all 15 fern gates, including self-build and
   relocated component installation.
 - The in-memory module regression covers no debug information, full DWARF,
   and full CodeView, each generating objects at `-O0` through `-O3` while
   preserving the original printed module. Before the fix, both full-debug
   cases reproduced the `0xc0000005` object-generation failure with managed
   locals. Normalizing debug records only in the code-generation clone fixes
-  those cases and the real Debug joypm bootstrap without serializing LLVM IR.
-- PE headers independently identify the compiler, backend, and joypm as
+  those cases and the real Debug fern bootstrap without serializing LLVM IR.
+- PE headers independently identify the compiler, backend, and fern as
   `IMAGE_FILE_MACHINE_AMD64` in both configurations. Debug bootstrap also
-  produced the joypm PDB.
+  produced the fern PDB.
 
 These results validate the initial `Int`/`Void` slice, not the subsequent
 complete scalar implementation or runtime migration.
@@ -325,12 +325,12 @@ On native Windows ARM64 on 2026-10-20, using MSVC 19.51.36260,
 Windows SDK 10.0.28000.0, and LLVM/LLD 22.1.8:
 
 - Both `arm64-debug` and `arm64-release` complete default builds passed,
-  including runtime staging and direct joypm bootstrap, with unit tests and
-  joypm enabled. The Release tree used the installed SDK and existing pinned
+  including runtime staging and direct fern bootstrap, with unit tests and
+  fern enabled. The Release tree used the installed SDK and existing pinned
   dependency sources, not a downloaded host toolchain.
 - Final unfiltered serial CTest passed **871/871 in Debug** and
   **871/871 in Release**, with no skipped tests. Each run included all
-  **50 C interop gates** and all **15 joypm gates**, including self-build
+  **50 C interop gates** and all **15 fern gates**, including self-build
   and relocated installation.
 - Both static and shared providers passed the complete scalar round trips
   at `-O0 -gfull` and `-O2 -g0`, in each host build configuration.

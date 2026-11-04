@@ -220,7 +220,7 @@ owned values and qualified disambiguation.
 
 On native Windows ARM64 Debug on 2026-10-11, the default build and unfiltered
 CTest passed **809/809**, including the new short-name module/native tests,
-the existing qualified-import regressions, and all 15 joypm gates. All nine
+the existing qualified-import regressions, and all 15 fern gates. All nine
 unchanged Moss workspace modules also passed frontend checks with this
 compiler. Full Release and other native-platform acceptance were not rerun
 for this change.
