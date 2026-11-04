@@ -189,6 +189,15 @@ source privately in the backend rather than reusing compiler-core objects.
   claimed exclusively. Cleanup must only remove directories the current
   test successfully created, never another process's collided path.
 
+## Feature workflow and review
+
+User-visible features follow the workflow in
+[docs/decisions/README.md](docs/decisions/README.md): record contested design
+decisions, change the spec, add failing tests first, implement, then review with
+the role agents in `.claude/agents/` (language-designer, type-system-reviewer,
+ir-backend-reviewer, adversarial-tester). Run reviewers separately from the
+author, and finish with `scripts/validate.py`.
+
 ## When in doubt
 
 - Language design and rationale: [docs/spec.md](docs/spec.md), starting with
