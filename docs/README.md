@@ -17,7 +17,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
 | Read the C binding design and distinguish its implemented subset | [spec/19-c-interop.md](spec/19-c-interop.md) and [impl/c-interop.md](impl/c-interop.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
-| Use the first local project-manager version | [impl/joypm.md](impl/joypm.md) |
+| Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
 | Build from source | [building.md](building.md) |
@@ -56,7 +56,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [c-interop.md](impl/c-interop.md) | Authorized scalar and buffer C bindings, object generation, explicit native-library inputs, and acceptance gates |
 | [compression.md](impl/compression.md) | Optional miniz-backed ZIP module, limits, ownership, build and packaging |
 | [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
-| [joypm.md](impl/joypm.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
+| [fern.md](impl/fern.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |
 
 ## Plans
@@ -68,7 +68,7 @@ work.
 |---|---|
 | [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
 | [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
-| [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, joypm management, and installed-library resolution gates |
+| [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, fern management, and installed-library resolution gates |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
 ## Conventions

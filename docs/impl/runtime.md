@@ -14,7 +14,7 @@ freestanding, kernel, embedded, and no-libc profiles are not supported.
 The [hybrid runtime plan](../plan/hybrid-runtime.md) proposes incremental
 Joyeer implementations behind the existing runtime interfaces; this document
 describes the current C implementation. Public library modules and their
-separate joypm workflow are tracked in the [library plan](../plan/library.md).
+separate fern workflow are tracked in the [library plan](../plan/library.md).
 The [C binding implementation](c-interop.md) supports the restricted
 by-value scalar runtime-source boundary of [§19](../spec/19-c-interop.md).
 It does not replace any production C algorithm or compiler-known runtime
@@ -235,7 +235,7 @@ requested bytes without querying a file size, reading the tail, or probing
 another byte after the cap. Contents are not decoded or UTF-8 validated; a
 prefix can cut a multibyte sequence. A zero limit still opens and closes the
 path before returning an owned empty string. The prefix reader does not itself
-require a regular file; joypm's loader classifies the manifest first and
+require a regular file; fern's loader classifies the manifest first and
 rejects final symlinks and other nonregular entries. Negative limits return the
 existing `Other` tag with `ERROR_INVALID_PARAMETER` or `EINVAL` before path
 conversion, deliberately bypassing the invalid-path error mapper.

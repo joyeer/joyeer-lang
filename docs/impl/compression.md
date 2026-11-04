@@ -15,7 +15,7 @@ For example, from a matching Windows ARM64 Developer shell:
 ```powershell
 cmake --preset arm64-debug -DJOYEER_BUILD_COMPRESSION=ON
 cmake --build --preset arm64-debug
-& .\out\build\arm64-debug\bin\joypm.exe test `
+& .\out\build\arm64-debug\bin\fern.exe test `
     --compiler .\out\build\arm64-debug\bin\joyeer.exe `
     --workspace .\out\build\arm64-debug\src\library\Compression\package\Debug\workspace.toml
 ```
@@ -25,7 +25,7 @@ defaults to `OFF`; enabling it fetches the pinned miniz source. CMake produces
 a configuration-specific package containing the `Compression` module, its
 native archive, a test module, and their workspace. Its generated
 `project.toml` has an explicit source list, `native-bindings = true`, and a
-relative `native-libraries` path. CMake, not joypm, builds that native archive.
+relative `native-libraries` path. CMake, not fern, builds that native archive.
 The repository-root source-only workspace remains independent of this build.
 
 Copy the built `Compression` directory, including `native` and `licenses`,
@@ -197,7 +197,7 @@ are never installed into a Joyeer array or disguised as integer handles.
 Durable Joyeer fixtures exercise binary and empty entries, both methods,
 archive/list/extraction boundaries, invalid names/archives, duplicates, and
 actual compression of repetitive input. Both debug and optimized native
-programs and the generated joypm workspace have acceptance gates.
+programs and the generated fern workspace have acceptance gates.
 
 When a Python 3.9+ interpreter is available, CMake additionally registers an
 independent `zipfile` interoperability oracle covering both directions,

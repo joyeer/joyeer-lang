@@ -63,7 +63,7 @@ Needs a separate design (see [c-interop §3.2](c-interop.md)) before H3/H4:
 ```text
 compiler + backend -> joyeer -> runtime Joyeer objects --+
 C compiler -----------------> substrate objects ---------+-> runtime archive
-runtime archive + compiler/backend -> product staging -> joypm / acceptance
+runtime archive + compiler/backend -> product staging -> fern / acceptance
 ```
 
 - Use the newly built compiler, not an installed one.
@@ -79,14 +79,14 @@ runtime archive + compiler/backend -> product staging -> joypm / acceptance
 | H0: Baseline | Binding/object foundation | Inventory migrated entry points and their dependencies; record behavior, allocation, and failure baselines |
 | H3: Byte access, equality, ordering | H0, storage design | Borrowed byte access; Joyeer equality and ordering replace C; C algorithms compiled out; no allocation, exact `-1/0/1`, no recursive dependency |
 | H4: Concatenation | H3 | Checked length, one tracked allocation, bulk copy; layout and C clone/destroy compatible; independence and boundary tests pass |
-| H5: Product acceptance | H4 | Clean and incremental builds, install/relocation, joypm bootstrap, Debug/Release, native acceptance per claimed platform; evidence added to impl docs |
+| H5: Product acceptance | H4 | Clean and incremental builds, install/relocation, fern bootstrap, Debug/Release, native acceptance per claimed platform; evidence added to impl docs |
 
 The milestone ends at H5.
 
 ## 7. Acceptance
 
 Extend existing [tests](../../tests/); final gate is default builds plus
-unfiltered CTest with unit tests and joypm enabled ([building](../building.md)).
+unfiltered CTest with unit tests and fern enabled ([building](../building.md)).
 
 **Compiler/artifact**
 - Accepted/rejected bindings, export names, signatures, malformed IR; ordinary
@@ -109,7 +109,7 @@ unfiltered CTest with unit tests and joypm enabled ([building](../building.md)).
   baseline before accepting.
 
 **Host/product**
-- Existing runtime, file-I/O, filesystem, process, host, and joypm gates pass;
+- Existing runtime, file-I/O, filesystem, process, host, and fern gates pass;
   Unicode paths, native error codes, stderr bytes, exclusive create, process
   statuses preserved. Legacy `readFile` unchanged.
 - No LLVM/Python dependency in generated programs; packaging unchanged.

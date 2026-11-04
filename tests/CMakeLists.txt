@@ -38,8 +38,8 @@ if(BUILD_TESTING)
         "read failed\n" "${joyeer_skill_output}/missing-input")
 endif()
 
-if(BUILD_TESTING AND JOYEER_BUILD_JOYPM)
-    add_subdirectory(joypm)
+if(BUILD_TESTING AND JOYEER_BUILD_FERN)
+    add_subdirectory(fern)
 endif()
 
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)

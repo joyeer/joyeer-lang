@@ -38,10 +38,10 @@ foreach(profile IN ITEMS Debug Optimized)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("Compression.Jar${profile}" PROPERTIES LABELS "compression;native" TIMEOUT 90)
 endforeach()
-if(JOYEER_BUILD_JOYPM)
-    add_test(NAME Compression.Joypm
-        COMMAND "${JOYEER_JOYPM_EXECUTABLE}" test
+if(JOYEER_BUILD_FERN)
+    add_test(NAME Compression.Fern
+        COMMAND "${JOYEER_FERN_EXECUTABLE}" test
             --compiler "$<TARGET_FILE:joyeer>"
             --workspace "${compression_package}/workspace.toml")
-    set_tests_properties(Compression.Joypm PROPERTIES LABELS "compression;native;joypm" TIMEOUT 90)
+    set_tests_properties(Compression.Fern PROPERTIES LABELS "compression;native;fern" TIMEOUT 90)
 endif()

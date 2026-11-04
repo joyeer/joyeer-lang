@@ -103,8 +103,8 @@ payloads; dictionary keys still support only `Int`, `Bool`, `UInt8`, and `String
 
 ## Source-implemented local project tool
 
-The separate Joyeer-written `joypm 0.1.0` implements `init/check/build/run/test`
-under [src/tools/joypm/](../../src/tools/joypm/). Each schema-1 `project.toml`
+The separate Joyeer-written `fern 0.1.0` implements `init/check/build/run/test`
+under [tools/fern/](../../tools/fern/). Each schema-1 `project.toml`
 defines exactly one source/bin/test module; schema-1 `workspace.toml` lists
 explicit member directories. Per-module source paths and dependencies,
 `--workspace`, and exact `--module` selection are implemented. Legacy project
@@ -115,7 +115,7 @@ CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
 gates, including bootstrap regeneration, independently of
 `JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
 including self-build and relocated workflows; platform-specific evidence
-and packaging limits are recorded in [joypm](joypm.md#5-validation-evidence).
+and packaging limits are recorded in [fern](fern.md#5-validation-evidence).
 Every document is
 bounded to 65536 bytes with a sentinel
 read after regular-file classification. Outputs use module-qualified fresh
@@ -123,7 +123,7 @@ generations with 128 claims per module/profile. The tool does not scan
 upward, search PATH, delete/cache outputs, fetch external dependencies, or
 nested workspaces. These are not streaming or confinement guarantees.
 Unrecorded native targets and publication remain open.
-See [joypm](joypm.md) for current contracts, parser limits, and validation status.
+See [fern](fern.md) for current contracts, parser limits, and validation status.
 
 ## Not implemented
 
@@ -153,7 +153,7 @@ See [joypm](joypm.md) for current contracts, parser limits, and validation statu
 - Contracts or property annotations as executable language features,
   incremental compilation, or formal verification.
 - Project-manager commands on the **compiler**, such as `joyeer build`, `run`,
-  `test`, or `init`; use the separate source-implemented `joypm`. Toolchain
+  `test`, or `init`; use the separate source-implemented `fern`. Toolchain
   installation, `doctor`, registries, local path packages, and workspaces
   remain deferred.
 
@@ -196,7 +196,7 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   a runtime error rather than truncation. The compiler's Windows `wmain`
   UTF-8 conversion and native/UTF-8 linker-path preservation are integrated
   and pass their native Windows ARM64 Debug/Release regressions, including the
-  joypm Unicode gate. This is not general Unicode-aware diagnostic rendering
+  fern Unicode gate. This is not general Unicode-aware diagnostic rendering
   or evidence for other native targets.
   Existing Windows legacy `readFile` handling remains narrow and unchanged.
   New host operations require strict UTF-8 paths/arguments and use wide
