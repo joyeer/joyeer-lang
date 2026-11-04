@@ -12,7 +12,7 @@ without an input produces usage/error output, not a successful version query.
 Use release metadata or source/build provenance as described in
 [supported features](supported-features.md).
 
-The separate joypm tool has its own help/version commands. `joypm 0.1.0`
+The separate fern tool has its own help/version commands. `fern 0.1.0`
 implements single-module manifests and explicit workspaces, with native
 ARM64 acceptance. Its version does not identify the compiler or establish
 a published release; check the selected binary's provenance.
@@ -38,7 +38,7 @@ Internal runtime construction additionally supports
 `--module-name runtime.core --runtime-module runtime.core --emit-runtime-object runtime.o bindings.joyeer`.
 It requires an explicitly authorized named root and does not link or generate
 application startup. This narrow `Int`/`Void` C binding path is not an ordinary
-application or joypm workflow; library selection and static/shared deployment
+application or fern workflow; library selection and static/shared deployment
 belong to the native build target. See the
 [compatibility boundary](supported-features.md).
 
@@ -144,10 +144,10 @@ Prefer `-O0 -gfull` when investigating source behavior. `--emit-llvm` writes
 pre-optimization text after frontend and Joyeer IR checks; it is not equivalent
 to native LLVM verification/linking or program execution.
 
-## Local projects with joypm
+## Local projects with fern
 
-`joypm 0.1.0` is a separate Joyeer-written module/workspace manager.
-CMake bootstraps the default `ALL` tool without preinstalled joypm or Python.
+`fern 0.1.0` is a separate Joyeer-written module/workspace manager.
+CMake bootstraps the default `ALL` tool without preinstalled fern or Python.
 Native Windows ARM64 Debug build/unfiltered CTest pass 790/790, including
 15 tool gates. Debug/optimized self-build and relocated workflows pass;
 a fresh full Release CTest and other native platforms remain open.
@@ -181,15 +181,15 @@ and `--target` reject with migration help.
 Select matching explicit binaries before running examples:
 
 ```powershell
-$joypm = "C:\path with spaces\joypm.exe"
+$fern = "C:\path with spaces\fern.exe"
 $compiler = "C:\path with spaces\joyeer.exe"
-& $joypm --help
-& $joypm --version
-& $joypm init .\hello --name hello
-& $joypm check --compiler $compiler --manifest-path .\hello\project.toml
-& $joypm build --compiler $compiler --manifest-path .\hello\project.toml --release
-& $joypm run --compiler $compiler --manifest-path .\hello\project.toml -- "two words" ""
-& $joypm test --compiler $compiler --manifest-path .\hello\project.toml
+& $fern --help
+& $fern --version
+& $fern init .\hello --name hello
+& $fern check --compiler $compiler --manifest-path .\hello\project.toml
+& $fern build --compiler $compiler --manifest-path .\hello\project.toml --release
+& $fern run --compiler $compiler --manifest-path .\hello\project.toml -- "two words" ""
+& $fern test --compiler $compiler --manifest-path .\hello\project.toml
 ```
 
 These paths are illustrative, not installation defaults. Check each status
@@ -244,7 +244,7 @@ A packaged Windows compiler can locate installed platform libraries without a
 Developer Prompt.
 
 Compiler/backend/runtime/current license use install component `JoyeerRuntime`;
-optional joypm uses `PRODUCT` and is included by default when enabled, along
+optional fern uses `PRODUCT` and is included by default when enabled, along
 with its PDB on Windows Debug installs. Package/Debug-installer validation and
 required third-party notice staging remain open. Windows compiler `wmain`
 UTF-8 conversion and native/linker-path fixes are compiled, with scoped Windows

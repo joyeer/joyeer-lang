@@ -3,7 +3,7 @@
 > **Status:** partly implemented. Explicit library files are done:
 > compiler `--link-library <file>` ([impl/c-interop](../impl/c-interop.md)) and
 > the manifest fields `native-bindings` / `native-libraries`
-> ([impl/joypm](../impl/joypm.md)). This plan covers only what is missing.
+> ([impl/fern](../impl/fern.md)). This plan covers only what is missing.
 > Remove items when done.
 
 ## 1. Gap
@@ -58,7 +58,7 @@ libs = ["m", "pthread"]
   `source`. Native requirements do not propagate through dependencies; the
   executable declares everything its closure needs. Check how this fits the
   current `native-libraries` behavior before changing it.
-- joypm lowers these to `--link-path` / `--link-lib` in manifest order, common
+- Fern lowers these to `--link-path` / `--link-lib` in manifest order, common
   table first, then the active platform. The compiler diagnoses missing inputs.
 - Out of scope: building C code, downloading libraries, copying DLLs.
 
@@ -68,14 +68,14 @@ libs = ["m", "pthread"]
   per-platform linker arguments.
 - Native fixture: the existing `CInteropNative*` fixtures linked by name via
   `--link-path` / `--link-lib`, same results as today.
-- joypm: a project with platform tables builds and runs; `source` module with
+- Fern: a project with platform tables builds and runs; `source` module with
   native fields fails; an escaping path fails.
 - Update spec §19.7, [impl/c-interop](../impl/c-interop.md),
-  [impl/joypm](../impl/joypm.md), and `supported-features.md` on acceptance.
+  [impl/fern](../impl/fern.md), and `supported-features.md` on acceptance.
 
 ## 5. Open Questions
 
 1. Is `--link-lib` / `--link-path` the right spelling versus `-l` / `-L`?
 2. Per-platform tables, or per target triple?
 3. Should native requirements ever propagate through source dependencies?
-4. Should joypm copy shared libraries beside the output (opt-in `deploy` list)?
+4. Should fern copy shared libraries beside the output (opt-in `deploy` list)?

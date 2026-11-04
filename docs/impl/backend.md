@@ -230,7 +230,7 @@ UTF-8 at the C ABI boundary. Native Windows ARM64 Debug/Release regressions
 pass for wide CLI conversion, source/output/temporary paths, failure paths,
 and relocated product linking. This is not general Unicode-aware rendering
 or acceptance evidence for other architectures.
-Detailed evidence belongs in [joypm](joypm.md#5-validation-evidence).
+Detailed evidence belongs in [fern](fern.md#5-validation-evidence).
 Diagnostic argument/path text is UTF-8, but OS-provided error messages and
 console rendering remain host-dependent.
 Legacy source-language `readFile` narrow CRT behavior is unchanged.
@@ -413,7 +413,7 @@ array, so user paths are not subject to shell expansion.
 UTF-8 at the backend boundary does not imply end-to-end Windows Unicode path
 support for every path or failure mode. The wide compiler entry and native
 artifact/temporary-path preservation are integrated and compiled, with scoped
-Windows x64 joypm smoke evidence. Registered source/output/temporary-path and
+Windows x64 fern smoke evidence. Registered source/output/temporary-path and
 backend regressions still need execution; the smoke workflow is not full
 Unicode, native-platform, or release acceptance.
 
@@ -627,8 +627,8 @@ that every allocation, copy, or check disappears.
 ### Module lookup timing sample
 
 On native Windows x64 on 2026-10-20, the Release compiler built with MSVC
-19.51.36260 and LLVM/LLD 22.1.8 compiled the seven joypm sources and generated
-platform source as `joypm.app`, using `-O0 -gfull --emit-llvm`.
+19.51.36260 and LLVM/LLD 22.1.8 compiled the seven fern sources and generated
+platform source as `fern.app`, using `-O0 -gfull --emit-llvm`.
 After one warm-up invocation, five sequential process-wall-time measurements
 had medians of 210.1 ms at `8c0e905` and 142.8 ms with the module-local
 destruction analysis and source-identity indexes, approximately 32% lower.

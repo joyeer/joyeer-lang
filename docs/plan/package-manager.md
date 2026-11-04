@@ -1,7 +1,7 @@
 # Joyeer Package Manager: Remaining Work
 
 > **Status:** unfinished work only. Current behavior and validation evidence
-> belong in [joypm](../impl/joypm.md). Remove items when they are done.
+> belong in [fern](../impl/fern.md). Remove items when they are done.
 
 ## 1. Phases
 
@@ -37,7 +37,7 @@ incrementality; workspaces need not fetch remote packages.
 - **Compiler discovery:** executable-location, current-directory, and
   environment lookup, before adding sibling or PATH discovery.
 - **Dependency visibility:** if strict direct-import allowlists are adopted,
-  add a compiler interface; joypm must not scan source text.
+  add a compiler interface; fern must not scan source text.
 - Separately scoped, not prerequisites: streaming, process
   capture/cancellation/timeouts, Unicode-aware diagnostics.
 
@@ -49,14 +49,14 @@ New APIs must not present lexical path checks as confinement. Stay aligned with
 ## 4. Native Platform Validation
 
 macOS ARM64 functional acceptance is recorded in
-[joypm evidence](../impl/joypm.md#5-validation-evidence). Intel macOS and
+[fern evidence](../impl/fern.md#5-validation-evidence). Intel macOS and
 standalone Homebrew dependency packaging remain separate gates.
 
 For each additional or unrecorded claimed platform/architecture, with
-`BUILD_TESTING`, `JOYEER_BUILD_JOYPM`, `JOYEER_BUILD_UNITTESTS` on:
+`BUILD_TESTING`, `JOYEER_BUILD_FERN`, `JOYEER_BUILD_UNITTESTS` on:
 
 - Fresh Debug and Release builds and unfiltered CTest.
-- The [joypm acceptance gates](../../tests/joypm/CMakeLists.txt); another
+- The [fern acceptance gates](../../tests/fern/CMakeLists.txt); another
   platform's or a tool-only run does not count.
 - POSIX FIFO/device rejection, signal termination, execute-permission failures;
   keep legacy `readFile` behavior.
@@ -66,7 +66,7 @@ For each additional or unrecorded claimed platform/architecture, with
   the [local Debug installer](../building.md#local-debug-installation).
 
 Record provenance and results in
-[joypm evidence](../impl/joypm.md#5-validation-evidence), not here.
+[fern evidence](../impl/fern.md#5-validation-evidence), not here.
 
 ## 5. Release Gates
 

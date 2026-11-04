@@ -26,7 +26,7 @@ dependency adds a runtime DLL to the Joyeer package.
 source using Git and builds a separate optional `JoyeerCompression` static
 archive. The default is `OFF`. Neither the compiler/backend nor the core
 runtime links miniz. See [Compression](impl/compression.md) for its generated
-joypm workspace and the `Compression` install component, which includes
+Fern workspace and the `Compression` install component, which includes
 miniz's MIT license. Python 3.9+ enables an optional independent ZIP oracle
 when already available; it is not required to build or use the library.
 
@@ -201,7 +201,7 @@ focused iteration.
 The `joyeer` target builds the compiler/backend independently of the program
 runtime. Internal [runtime-object generation](impl/c-interop.md) can therefore
 run before a completed runtime archive exists. The `JoyeerToolchain` `ALL`
-target separately copies `JoyeerRuntime` beside the compiler, and joypm
+target separately copies `JoyeerRuntime` beside the compiler, and fern
 bootstrap waits for that staged product. Use the default build, or explicitly
 build `JoyeerToolchain`, for a compiler ready to link ordinary executables;
 `--target joyeer` alone is a compiler-construction step, not full staging.
@@ -221,7 +221,7 @@ below, the full native Debug/Release gate is:
 
 ```text
 python3 scripts/validate.py --fresh --llvm-root /opt/homebrew/opt/llvm --jobs 8 --no-retry \
-  --define BUILD_TESTING=ON --define JOYEER_BUILD_JOYPM=ON --define INSTALL_GTEST=OFF \
+  --define BUILD_TESTING=ON --define JOYEER_BUILD_FERN=ON --define INSTALL_GTEST=OFF \
   --define CMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
   --define CMAKE_OSX_DEPLOYMENT_TARGET=26.5 \
   --define JOYEER_MACOS_SDK_PATH=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
@@ -231,28 +231,28 @@ python3 scripts/validate.py --fresh --llvm-root /opt/homebrew/opt/llvm --jobs 8 
 
 Use paths and versions matching the installed SDK. This does not install
 tools or change the globally active Xcode. The validator enables unit tests
-and Compression, runs unfiltered CTest and the root workspace's `joypm test`,
+and Compression, runs unfiltered CTest and the root workspace's `fern test`,
 and reports skipped tests separately from passes. `--fresh` replaces only
 its Debug/Release validation build trees; `--no-retry` does not hide flaky
 failures behind a successful rerun.
 
-## joypm bootstrap and acceptance
+## Fern bootstrap and acceptance
 
-`JOYEER_BUILD_JOYPM=ON` is the default. The `joypm` `ALL` target invokes the
+`JOYEER_BUILD_FERN=ON` is the default. The `fern` `ALL` target invokes the
 newly built compiler with an explicit list of seven sources from
-[src/tools/joypm/](../src/tools/joypm/) and a generated platform source. It
-depends on the compiler, backend, and runtime and produces `joypm` next
+[tools/fern/](../tools/fern/) and a generated platform source. It
+depends on the compiler, backend, and runtime and produces `fern` next
 to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
 (and other non-Debug configurations). On macOS, Debug falls back to `-g0`
 when `dsymutil` is unavailable, so ordinary native output remains possible.
 Debug PDBs on Windows and dSYM bundles on macOS, when produced, are declared
 CMake `BYPRODUCTS`; Release does not claim Debug sidecars. Bootstrap needs no
-preinstalled `joypm` or Python. Configure also creates the explicit self-build
-project under `out/build/<preset>/src/tools/joypm/project/`; the
-[self-build gate](../tests/joypm/verifySelfBuild.cmake) builds and executes both
-profiles and a second-stage tool through joypm itself.
+preinstalled `fern` or Python. Configure also creates the explicit self-build
+project under `out/build/<preset>/tools/fern/project/`; the
+[self-build gate](../tests/fern/verifySelfBuild.cmake) builds and executes both
+profiles and a second-stage tool through fern itself.
 
-`Joypm.Bootstrap` verifies regeneration of a missing Debug PDB/dSYM, or
+`Fern.Bootstrap` verifies regeneration of a missing Debug PDB/dSYM, or
 the executable when no sidecar is expected, on all native platforms.
 On macOS, `-DJOYEER_DSYMUTIL_EXECUTABLE:FILEPATH=` explicitly disables
 dSYM generation without modifying installed tools. Debug bootstrap then
@@ -264,35 +264,35 @@ reconfiguring to rediscover the active tool.
 For a compiler-only configuration, for example on x64:
 
 ```powershell
-cmake --preset x64-debug -DJOYEER_BUILD_JOYPM=OFF
+cmake --preset x64-debug -DJOYEER_BUILD_FERN=OFF
 cmake --build --preset x64-debug
 ```
 
 The same option works with the other native presets. Cross-compiling
-configurations must disable joypm because the bootstrap runs the new compiler.
+configurations must disable fern because the bootstrap runs the new compiler.
 `JOYEER_BUILD_UNITTESTS` independently controls the C++/GoogleTest suite.
-The gates in [tests/joypm/CMakeLists.txt](../tests/joypm/CMakeLists.txt),
+The gates in [tests/fern/CMakeLists.txt](../tests/fern/CMakeLists.txt),
 including module/workspace rules, limits, concurrency, host failures, self-build, and product installation,
-require `BUILD_TESTING` and `JOYEER_BUILD_JOYPM`, not `JOYEER_BUILD_UNITTESTS`.
-When enabled, `JoypmAcceptanceTools` also builds native fixtures as an `ALL`
+require `BUILD_TESTING` and `JOYEER_BUILD_FERN`, not `JOYEER_BUILD_UNITTESTS`.
+When enabled, `FernAcceptanceTools` also builds native fixtures as an `ALL`
 target. The full acceptance configuration enables all three options and runs
-unfiltered CTest; turning off C++ tests does not remove joypm gates.
+unfiltered CTest; turning off C++ tests does not remove fern gates.
 
 **Validation status:** fresh native Windows x64 Debug and Release default
 `ALL` builds and unfiltered serial CTest each pass 846/846, including all
-15 joypm gates. Toolchain provenance, C interop coverage, and the in-memory
+15 fern gates. Toolchain provenance, C interop coverage, and the in-memory
 debug-information regression are recorded in
 [C interop acceptance](impl/c-interop.md#windows-x64).
 
 Earlier native Windows ARM64 Debug default `ALL` and unfiltered
-CTest pass 790/790, including all 15 joypm gates for the module/workspace
+CTest pass 790/790, including all 15 fern gates for the module/workspace
 organization. Debug/optimized self-build and relocated product workflows
 pass. The previous 0.1.0 full Release 789/789 is historical; a fresh full
 native ARM64 Release gate for the new layout is open despite the retained
 0.1.0 version.
 Hardware, process, MSVC/LLVM architecture,
 and PE headers were independently recorded. See the
-[implementation evidence](impl/joypm.md#5-validation-evidence) and
+[implementation evidence](impl/fern.md#5-validation-evidence) and
 [remaining platform gates](plan/package-manager.md#4-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh
 Debug/Release trees; registration or another target's pass is not acceptance.
@@ -305,13 +305,13 @@ CTest without retries. The host was macOS 27.0.1 ARM64 (build 26A434), using
 AppleClang 21.0.0 (clang-2100.4.1.1), CMake 4.4.2, Ninja 1.13.2, Homebrew
 LLVM/LLD 22.1.8, and the installed macOS 26.5 SDK/deployment target.
 
-| Configuration | Default build | CTest | Root workspace `joypm test` |
+| Configuration | Default build | CTest | Root workspace `fern test` |
 |---|---|---|---|
 | Debug | Passed | 949 passed, 1 skipped, 0 failed | 2/2 passed |
 | Release | Passed | 949 passed, 1 skipped, 0 failed | 2/2 passed |
 
 Both configurations registered identical sets of 950 tests, including
-15 joypm acceptance gates, 55 C interop tests, and six Compression gates
+15 fern acceptance gates, 55 C interop tests, and six Compression gates
 (including the independent Python ZIP oracle). The one skipped case,
 `FileSystemTest.RejectsNonUtf8DirectoryEntriesWithoutLeakingPartialResults`,
 cannot create its invalid-UTF-8 filename on this filesystem; it is not a
@@ -323,10 +323,10 @@ filesystem, and module fixtures now include process identity, claim their
 directories exclusively, and never clean up an unclaimed path. Native
 linking likewise uses an exclusively claimed process-identified directory.
 The focused concurrent suites completed 20 repeated runs without failures;
-`Joypm.Concurrent` also verifies distinct simultaneous source outputs and
+`Fern.Concurrent` also verifies distinct simultaneous source outputs and
 temporary cleanup without modifying an unrelated sentinel file.
 
-Compiler, backend, and joypm headers identify ARM64 Mach-O. Generated joypm
+Compiler, backend, and fern headers identify ARM64 Mach-O. Generated fern
 records SDK/deployment version 26.5 and depends only on system `libSystem`.
 Self-build, second-stage execution, Unicode paths, component inventories,
 and relocated workflows pass. The local Debug installer was exercised with
@@ -369,21 +369,21 @@ With that setting, the Joyeer package contains:
 joyeer.exe
 joyeer-backend.dll
 JoyeerRuntime.lib
-joypm.exe                 # when JOYEER_BUILD_JOYPM=ON (default)
+fern.exe                 # when JOYEER_BUILD_FERN=ON (default)
 licenses/LICENSE         # Joyeer's own license; third-party notices deferred
 ```
 
 Compiler, backend, runtime, and the current Joyeer license use install
-component `JoyeerRuntime`; optional `joypm` uses `PRODUCT`. Optional
+component `JoyeerRuntime`; optional `fern` uses `PRODUCT`. Optional
 `Compression` and `NativeDevelopment` components contain the native-backed
 ZIP source package and C buffer-adapter headers respectively; keep them
 separate from compiler-only product staging. An unfiltered install includes
 all enabled product components; `NativeDevelopment` must be selected
-explicitly. The Windows Debug joypm PDB is
-also installed by `PRODUCT`; Release has no joypm Debug-PDB install rule.
+explicitly. The Windows Debug fern PDB is
+also installed by `PRODUCT`; Release has no fern Debug-PDB install rule.
 An install limited to
-`JoyeerRuntime` does not install joypm; select `PRODUCT` as well when staging
-the tool. With `JOYEER_BUILD_JOYPM=OFF`, no joypm binary is built or installed.
+`JoyeerRuntime` does not install fern; select `PRODUCT` as well when staging
+the tool. With `JOYEER_BUILD_FERN=OFF`, no fern binary is built or installed.
 Keep GoogleTest and LLVM development tools/SDKs out of the product inventory.
 
 The top-level install stages only the repository's own [LICENSE](../LICENSE).
@@ -415,12 +415,12 @@ cmake --install out/build/linux-release --prefix out/package/joyeer
 
 Replace `linux-release` with `macos-release` on macOS. The installed package
 keeps the `joyeer` executable, `joyeer-backend` shared library,
-`JoyeerRuntime` archive, optional `joypm`, and licenses together. Linux
+`JoyeerRuntime` archive, optional `fern`, and licenses together. Linux
 uses an `$ORIGIN` runtime search path and macOS uses `@loader_path`; the compiler also resolves
 the runtime archive relative to its own executable. Building Joyeer programs
 still requires the host libc/platform SDK startup objects and system
 libraries, but not an external LLVM, Clang, or LLD executable.
-The installed joypm still requires `--compiler <explicit path>`; it does not
+The installed fern still requires `--compiler <explicit path>`; it does not
 discover the compiler beside itself or search PATH. Package staging and use
 of the tool through a relocated package are validated on Windows ARM64 and
 macOS ARM64; relocation on a development host does not establish independence
@@ -544,7 +544,7 @@ python3 scripts/install-debug.py --skill-dir "~/.claude/skills/joyeer"
 ```
 
 Only the selected skill destination is used. Pass `--skip-skill-install` to
-install only the binaries, including joypm when enabled. For isolated
+install only the binaries, including fern when enabled. For isolated
 installations, override both `--install-dir` and `--skill-dir` (or skip the
 skill), and use `--skip-path-update`.
 
@@ -577,20 +577,20 @@ Debug symbols must exist before installation.
 
 | Platform | Runtime products |
 |---|---|
-| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerRuntime.lib`, optional `joypm.exe` |
-| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerRuntime.a`, optional `joypm` |
-| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerRuntime.a`, optional `joypm` |
+| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerRuntime.lib`, optional `fern.exe` |
+| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerRuntime.a`, optional `fern` |
+| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerRuntime.a`, optional `fern` |
 
 All platforms install these files together directly in the selected directory,
 along with Joyeer's own `licenses/LICENSE`. Windows also requires and copies
-`joyeer.pdb`, `joyeer-backend.pdb`, and `joypm.pdb` when the tool is enabled.
+`joyeer.pdb`, `joyeer-backend.pdb`, and `fern.pdb` when the tool is enabled.
 Linux Debug information stays embedded in the installed binaries. On macOS,
-existing compiler/backend dSYM bundles are copied when present; the joypm
+existing compiler/backend dSYM bundles are copied when present; the fern
 dSYM is required when the configured `dsymutil` is available. A build using
 the documented macOS `-g0` bootstrap fallback does not require that bundle.
 
-`--skip-skill-install` skips only the agent skill; it does not disable joypm.
-Use `JOYEER_BUILD_JOYPM=OFF` for compiler-only installation.
+`--skip-skill-install` skips only the agent skill; it does not disable fern.
+Use `JOYEER_BUILD_FERN=OFF` for compiler-only installation.
 
 After rebuilding, rerun the same command to update the installation. Close
 running compiler/tool processes or debugger sessions first to release file
