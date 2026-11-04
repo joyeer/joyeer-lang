@@ -94,10 +94,19 @@ schema-version = 1
 members = [".", "core", "tests"]
 ```
 
+A member directory that contains a `workspace.toml` is a nested workspace: it
+expands to that file's members, whose paths are relative to its directory and
+must not leave it. Any other member directory is one module. The member `"."`
+is always the workspace's own module, so a workspace can include the module that
+sits beside its `workspace.toml`. Nesting is limited to depth 8, and the whole
+project to 256 modules. Logical names must stay unique across all nested
+workspaces. The repository's root `workspace.toml` lists `tools/moss`, which is a
+workspace of its own.
+
 Each member has a `project.toml`. `"."` includes a root module; directory
 nesting does not imply logical submodules or automatic membership.
 The workspace has no own sources, module name, or merged dependency list.
-There is no nested-workspace traversal or upward discovery.
+There is no upward discovery; nesting is only through listed member directories.
 
 Member dependencies resolve by exact logical module name within the loaded
 workspace. Membership does not make all members available to every compiler
@@ -352,7 +361,7 @@ architectures. Current macOS ARM64 acceptance is recorded above; other
 unrecorded native targets still require complete Debug/Release gates.
 
 External local dependencies, registries/version resolution, lockfiles,
-cache/clean, process capture/timeouts, nested workspaces, and remote acquisition
+cache/clean, process capture/timeouts, and remote acquisition
 are not implemented. Physical filesystem identity, atomic publication,
 release notices, and general Unicode diagnostic rendering remain separate
 contracts in the [remaining plan](../plan/package-manager.md).

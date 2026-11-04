@@ -227,6 +227,60 @@ private func projectGraph(modules: borrowing [LoadedModule], standard: borrowing
     return .Ok(edges)
 }
 
+private func projectHasWorkspace(directory: String): Result<String, ProjectError> {
+    let path = projectJoin(base: directory, path: "workspace.toml")?
+    let present = match fileKind(path: path) {
+        .Ok(kind) => match kind {
+            .File => true,
+            .Directory => false,
+            .Symlink => false,
+            .Other => false,
+        },
+        .Err(_) => false,
+    }
+    if present { return .Ok(path) }
+    return .Ok("")
+}
+
+// A member directory holding a workspace.toml is a nested workspace whose
+// members are relative to it; any other member directory is one module. The
+// member "." is always the workspace's own module, so a workspace can contain
+// the module that sits beside its workspace.toml.
+private func projectLoadWorkspace(path: String, directory: String, depth: Int,
+    loaded: inout [LoadedModule]): Result<Void, ProjectError> {
+    if depth > 8 {
+        return .Err(ProjectError(error: ToolError(message: "nested workspaces exceed depth 8", pos: -1),
+            path: path, contents: ""))
+    }
+    let text = projectDocument(path: path)?
+    let members = match parseWorkspace(contents: text) {
+        .Ok(entries) => entries,
+        .Err(error) => {
+            return .Err(ProjectError(error: error, path: path, contents: text))
+        },
+    }
+    let ordered = sortedStrings(values: members)
+    var index = 0
+    while index < ordered.count {
+        let memberDirectory = projectJoin(base: directory, path: ordered[index])?
+        var nested = ""
+        if ordered[index] != "." { nested = projectHasWorkspace(directory: memberDirectory)? }
+        if nested.count != 0 {
+            projectLoadWorkspace(path: nested, directory: memberDirectory, depth: depth + 1, loaded: &loaded)?
+        } else {
+            if loaded.count >= 256 {
+                return .Err(ProjectError(error: ToolError(message: "workspace exceeds 256 modules", pos: -1),
+                    path: path, contents: text))
+            }
+            let modulePath = projectJoin(base: memberDirectory, path: "project.toml")?
+            let module = projectModule(path: modulePath, directory: memberDirectory)?
+            &loaded.append(element: module)
+        }
+        index = index + 1
+    }
+    return .Ok(())
+}
+
 func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
     var loaded: [LoadedModule] = []
     var directory = pathDirectory(path: options.manifestPath)
@@ -234,23 +288,8 @@ func loadProject(options: borrowing CliOptions): Result<Project, ProjectError> {
         let module = projectModule(path: options.manifestPath, directory: directory)?
         &loaded.append(element: module)
     } else {
-        let text = projectDocument(path: options.workspacePath)?
-        let members = match parseWorkspace(contents: text) {
-            .Ok(entries) => entries,
-            .Err(error) => {
-                return .Err(ProjectError(error: error, path: options.workspacePath, contents: text))
-            },
-        }
         directory = pathDirectory(path: options.workspacePath)
-        let ordered = sortedStrings(values: members)
-        var index = 0
-        while index < ordered.count {
-            let memberDirectory = projectJoin(base: directory, path: ordered[index])?
-            let path = projectJoin(base: memberDirectory, path: "project.toml")?
-            let module = projectModule(path: path, directory: memberDirectory)?
-            &loaded.append(element: module)
-            index = index + 1
-        }
+        projectLoadWorkspace(path: options.workspacePath, directory: directory, depth: 0, loaded: &loaded)?
     }
     let standard = projectStandardModules(compiler: options.compiler)?
     let edges = match projectGraph(modules: loaded, standard: standard) {

@@ -11,7 +11,7 @@ file(GLOB_RECURSE JOYEER_MOSS_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/*")
 list(APPEND JOYEER_MOSS_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/project.toml"
-    "${JOYEER_SOURCE_DIR}/workspace.toml")
+    "${CMAKE_CURRENT_SOURCE_DIR}/workspace.toml")
 
 # The executable goes to the same bin folder as joyeer and fern.
 set(JOYEER_MOSS_BIN_DIR "$<TARGET_FILE_DIR:joyeer>")

@@ -847,7 +847,7 @@ func parseWorkspace(contents: String): Result<[String], ToolError> {
     let members = manifestWorkspaceBody(p: &p, pos: table.pos)?
     manifestTrivia(p: &p)?
     if p.pos != contents.count {
-        return .Err(ToolError(message: "only one [workspace] table is allowed; nested workspaces are unsupported", pos: p.pos))
+        return .Err(ToolError(message: "only one [workspace] table is allowed per file; list a nested workspace's directory as a member", pos: p.pos))
     }
     return .Ok(members)
 }
