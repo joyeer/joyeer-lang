@@ -24,5 +24,4 @@ diagnostics the feature needs.
 
 ## Evidence
 
-Prior art (Swift, Rust, C++, ...), benchmarks, or AI-authoring failures that
-motivated the choice.
+Prior art, benchmarks, or AI-authoring failures that motivated the choice.

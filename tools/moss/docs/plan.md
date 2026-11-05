@@ -15,9 +15,9 @@ javac-compiled JDK 25 `java.base` classes (see the JVM contract's validation
 section). Other native platforms, licensing, and release packaging remain open.
 No decompiler exists yet. See [binary](binary.md) and [JVM/CLI contracts](jvm.md).
 
-This plan intentionally does not start a full Swift-to-Joyeer translation
-or require Joyeer to implement the entire Swift language. Implementation
-uses the [current Joyeer subset](../../../docs/impl/supported-features.md).
+This plan does not require a full port of an existing implementation or
+support for another language's entire feature set. Implementation uses the
+[current Joyeer subset](../../../docs/impl/supported-features.md).
 
 ## 2. First product: JVM disassembler v0
 
@@ -276,7 +276,7 @@ Test executables return nonzero on failures.
 JDK tools are development/test prerequisites, not dependencies of a released
 Moss executable. Tests must use explicit tool paths and argument arrays.
 Prefer self-authored javac fixtures; inventory provenance and permissions
-before copying existing Swift-package fixtures or third-party corpora.
+before copying fixtures from other projects or third-party corpora.
 
 The earlier research probe demonstrated a real class header and a small
 raw-bytecode subset in 24 cases at both optimization levels. It is not

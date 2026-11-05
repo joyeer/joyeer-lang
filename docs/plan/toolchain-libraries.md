@@ -16,9 +16,7 @@ workspace, and fern rejected member paths outside the workspace root.
 
 ## 2. Design (implemented)
 
-Every mainstream toolchain (Rust sysroots, Go `GOROOT`, Zig `lib/`, Swift
-resource dirs, Python prefixes) finds its standard library relative to the
-compiler's own executable. Joyeer does the same.
+Joyeer finds its standard library relative to the compiler's own executable.
 
 ### 2.1 Layout
 

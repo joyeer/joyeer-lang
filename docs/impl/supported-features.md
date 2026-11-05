@@ -161,6 +161,20 @@ Lexical or specification coverage alone does not make a feature executable.
 New source-visible features must pass through every applicable frontend,
 Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 
+### Common authoring pitfalls
+
+- `result` and the other [reserved words](../spec/15-reserved.md) cannot be
+  identifiers. The current unsupported-syntax diagnostic still mentions
+  "JSON-parser MVP"; rename the binding rather than treating it as a module
+  or file-format requirement.
+- `&` is an access marker, not a general marker for mutable bindings.
+  Ordinary local reassignment has no `&`; adding it reports
+  `type-checking.invalid-access-marker`. Calls, access parameters, and mutable
+  field/subscript projections have their own marker requirements; see
+  [ownership and access](../../skills/joyeer/references/language-guide.md#ownership-and-access).
+- `Array.removeLast` and integer-to-floating-point conversions such as
+  `Int` to `Double` are not implemented. Do not infer APIs from familiar names.
+
 ## Semantic and runtime limits
 
 - `String.count` and `String[i]` operate on bytes, not characters. Strings and

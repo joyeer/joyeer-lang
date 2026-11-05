@@ -45,14 +45,14 @@ The compiler has no user-defined generics or classes, and dictionary keys are
 limited to `Int`, `Bool`, `UInt8` and `String`. The design follows:
 
 - **Concrete IR with index arenas.** Blocks, values and regions live in arrays and
-  refer to each other by integer index, not by reference. The Swift engine's
-  dialect-generic carriers (`TypedMIRFunction<Dialect>`) become one JVM-specific
-  value model; a DEX frontend later gets its own lowering into the same arena shape.
+  refer to each other by integer index, not by reference. Use one JVM-specific
+  value model rather than dialect-generic carriers; a DEX frontend later gets
+  its own lowering into the same arena shape.
 - **Explicit sums.** Joyeer payload enums model instruction and region kinds.
 - **Bounded work.** Every stage has an input-size budget (blocks, values, nesting
   depth) and fails with a diagnostic rather than running unbounded.
 - **No hidden defaults.** Policies such as the maximum nesting depth are explicit
-  parameters, as in the Swift `MossManaged` design.
+  parameters.
 
 ## Order of work
 
@@ -75,7 +75,7 @@ limited to `Int`, `Bool`, `UInt8` and `String`. The design follows:
 
 ## Reference
 
-The Swift engine in `decompify/Packages/Moss` (`MossIR`, `MossPipeline`,
+The engine in `decompify/Packages/Moss` (`MossIR`, `MossPipeline`,
 `MossManaged`, `JavaAnalyzer`) is design reference only: its stage split, strict
 audit, and "attributions never suppress members" rule carry over. No code or
 fixtures are translated, and licensing is not assumed to transfer.

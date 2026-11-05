@@ -24,8 +24,10 @@ ctest --test-dir build -L moss --output-on-failure
 - Optional JDK gates (need an explicit JDK, never a dependency of the product):
   `integration.cjs <moss> --javap <javap>` and
   `tests/jvm/corpus.cjs <moss> <javap> <class-root>` over real javac classes.
-- Run Debug and Release before claiming a change works. Do not call a gate
-  complete that was not executed.
+- For code or behavior changes, run Debug and Release before claiming
+  acceptance. Documentation-only edits follow the
+  [root verification policy](../../AGENTS.md#verification-workflow).
+  Do not call a gate complete that was not executed.
 
 ## Layout and rules
 
@@ -42,7 +44,8 @@ ctest --test-dir build -L moss --output-on-failure
   parameters `borrowing`.
 - Treat the checked-in `.class` fixtures and `tests/fixtures/jvm/Fixtures.jar` as
   durable data; do not regenerate them casually.
-- Windows files may be CRLF. Preserve each file's existing line endings.
+- Follow the root [.gitattributes](../../.gitattributes): text files use LF
+  on every platform; preserve byte-exact binary fixtures.
 - Output is plain text, bounded (8 MiB), and follows `javap -c -p -l` of JDK 25
   byte for byte; there is no JSON or NDJSON. Changing the layout is a contract
   change: update [docs/jvm.md](docs/jvm.md), the `*.javap.txt` goldens, the

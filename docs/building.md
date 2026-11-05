@@ -198,6 +198,23 @@ The build is out-of-source only. Preset builds write the executable under
 `build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
 focused iteration.
 
+### Full platform validation
+
+Use the shared validator rather than ad-hoc scripts to validate a platform or
+hand validation work to another contributor:
+
+```text
+python3 scripts/validate.py --llvm-root <sdk>
+```
+
+It configures, builds, and runs unfiltered CTest and `fern test` in Debug and
+Release, then prints a platform x configuration x suite table. Keep
+`BUILD_TESTING`, `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN` enabled.
+The default root-workspace gate also needs `JOYEER_BUILD_COMPRESSION`;
+`--no-compression` covers only the library modules, not the full workspace.
+`--report FILE` saves the table, and `--tests-list DIR` saves sorted CTest
+names for cross-platform comparison. The validator never installs a toolchain.
+
 ### Compiler construction and product staging
 
 The `joyeer` target builds the compiler/backend independently of the program
@@ -365,7 +382,7 @@ ARM64 compiler, backend, or runtime files in one package.
 tests. Without this setting, a unit-test-enabled build also installs
 `include/gtest`, GoogleTest libraries, and CMake/pkg-config metadata.
 
-With that setting, the Joyeer package contains:
+With that setting, the compiler and fern artifacts are:
 
 ```text
 joyeer.exe
@@ -376,12 +393,14 @@ licenses/LICENSE         # Joyeer's own license; third-party notices deferred
 ```
 
 Compiler, backend, runtime, and the current Joyeer license use install
-component `JoyeerRuntime`; optional `fern` uses `PRODUCT`. Optional
-`Compression` and `NativeDevelopment` components contain the native-backed
-ZIP source package and C buffer-adapter headers respectively; keep them
-separate from compiler-only product staging. An unfiltered install includes
-all enabled product components; `NativeDevelopment` must be selected
-explicitly. The Windows Debug fern PDB is
+component `JoyeerRuntime`; optional `fern` uses `PRODUCT`. The `StandardLibrary`
+component installs the standard modules and `lib/index.toml` to `<prefix>/lib`,
+beside the compiler. When enabled, `Compression` is part of that component,
+including its native archive and miniz license. The optional `NativeDevelopment`
+component contains C buffer-adapter headers. Keep both separate from
+compiler-only product staging. An unfiltered install includes the enabled
+standard modules; `NativeDevelopment` must be selected explicitly.
+The Windows Debug fern PDB is
 also installed by `PRODUCT`; Release has no fern Debug-PDB install rule.
 An install limited to
 `JoyeerRuntime` does not install fern; select `PRODUCT` as well when staging
@@ -647,6 +666,9 @@ building a native executable.
 
 ## Troubleshooting
 
+- **CMake regeneration fails after moving a checkout:** build trees record the
+  source path. Configure a new build tree rather than reusing one from the old
+  location.
 - **LLVM or LLD package is not found:** use the full Windows development
   archive, a full Linux LLVM/LLD/Clang development SDK, or install both `llvm`
   and `lld` with Homebrew on macOS; clear the build directory or use
@@ -675,7 +697,8 @@ building a native executable.
 - **Linux linking fails with `invalid linker name in argument '-fuse-ld=lld'`:**
   the in-process Clang Driver checks that an `ld.lld` file exists even though it
   never runs it. Put the SDK's `bin` directory on `PATH`, or install `ld.lld`
-  where the driver looks (`/usr/bin`).
+  where the driver looks (`/usr/bin`). `scripts/validate.py` adds the SDK's
+  `bin` to its child processes' `PATH` when needed.
 - **Linux native linking cannot find startup objects or libc:** install the
   distribution's libc and GCC runtime development packages; embedded LLD does
   not replace those platform ABI inputs.

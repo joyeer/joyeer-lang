@@ -1,17 +1,8 @@
 # Joyeer
 
-Joyeer is an **AI-era systems programming language** for native software.
-It combines Swift-like syntax, strong typing, and value semantics with
-deterministic resource cleanup and no garbage collector. It is designed for
-a workflow where AI writes code and humans review and refine it.
-
-- **Readable code:** explicit declarations and named arguments make intent
-  easy to follow.
-- **Predictable resource lifetimes:** ownership and value types keep resource
-  management visible.
-- **Explicit error handling:** use `Optional` for absence and `Result` for
-  recoverable failures.
-- **Native executables:** compile programs for the host platform.
+Joyeer is a **general-purpose programming language for the AI era**.
+AI writes code; humans review it. No GC. Zero-cost abstractions.
+Built to create modern replacements for legacy software.
 
 ## Getting started
 
