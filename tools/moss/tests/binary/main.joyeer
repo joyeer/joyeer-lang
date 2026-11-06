@@ -1,0 +1,56 @@
+import moss.binary
+
+func main(args: borrowing [String]): Int {
+    if args.count == 3 && args[0] == "--expect-input-error" {
+        return expectInputError(path: args[1], code: args[2])
+    }
+    if args.count != 0 {
+        print(value: "moss-binary-tests: use no arguments or --expect-input-error <path> <code>")
+        return 1
+    }
+    var state = TestState(checks: 0, failures: 0)
+    let fixtureDirectory = match joinPath(base: "tools/moss/tests", path: "fixtures") {
+        .Ok(path) => path,
+        .Err(_) => {
+            print(value: "moss-binary-tests: cannot resolve fixture directory")
+            return 1
+        },
+    }
+    let fixturePath = match joinPath(base: fixtureDirectory, path: "octets.bin") {
+        .Ok(path) => path,
+        .Err(_) => {
+            print(value: "moss-binary-tests: cannot resolve fixture path")
+            return 1
+        },
+    }
+    let octets = match readInput(path: fixturePath) {
+        .Ok(bytes) => bytes,
+        .Err(error) => {
+            print(value: "moss-binary-tests: fixture load failed: " +
+                inputErrorCode(error: error))
+            return 1
+        },
+    }
+    expect(state: &state, condition: octets.count == 256, name: "octet fixture length")
+    if state.failures != 0 { return 1 }
+    var index = 0
+    while index < 256 {
+        expect(state: &state, condition: byteToInt(value: octets[index]) == index,
+            name: "octet fixture value " + decimal(value: index))
+        index = index + 1
+    }
+    if state.failures != 0 { return 1 }
+    testNumbers(state: &state, octets: octets)
+    testTruncation(state: &state)
+    testSpans(state: &state)
+    testInvalidCursors(state: &state)
+    testBitPatterns(state: &state, octets: octets)
+    testInput(state: &state, octets: octets)
+    if state.failures != 0 {
+        print(value: "moss-binary-tests: " + decimal(value: state.failures) +
+            " failures in " + decimal(value: state.checks) + " checks")
+        return 1
+    }
+    print(value: "moss-binary-tests: " + decimal(value: state.checks) + " checks passed")
+    return 0
+}

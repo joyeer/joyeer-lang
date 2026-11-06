@@ -1,0 +1,14 @@
+schema-version = 1
+
+[module]
+name = "moss.jvm"
+kind = "source"
+sources = [
+    "common.joyeer",
+    "descriptor.joyeer",
+    "pool.joyeer",
+    "attributes.joyeer",
+    "classfile.joyeer",
+    "decoder.joyeer",
+]
+dependencies = ["moss.binary", "moss.model"]

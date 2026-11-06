@@ -1,0 +1,211 @@
+import moss.model
+
+public struct Options {
+    public let command: String
+    public let path: String
+    public let method: String
+    public let methodIndex: Int
+    public let descriptor: String
+    public let offset: Int
+    public let limit: Int
+    public let output: String
+    public let entry: String
+    public let prefix: String
+    public let allowPreview: Bool
+}
+
+public enum Command {
+    Help,
+    Version,
+    Analyze(Options),
+    Serve,
+}
+
+private func usage(message: borrowing String): Diagnostic {
+    return Diagnostic(code: "cli.usage", offset: -1, context: "arguments", message: message)
+}
+
+private func value(args: borrowing [String], index: Int): Result<String, Diagnostic> {
+    if index >= args.count || args[index].count == 0 {
+        return .Err(usage(message: "missing nonempty option value"))
+    }
+    return .Ok(args[index])
+}
+
+// "com.acme.Foo", "com/acme/Foo" and "com/acme/Foo.class" all select entry "com/acme/Foo.class".
+private func classEntry(text: borrowing String): String {
+    var end = text.count
+    if end > 6 && text[end - 6] == 46 && text[end - 5] == 99 && text[end - 4] == 108 &&
+        text[end - 3] == 97 && text[end - 2] == 115 && text[end - 1] == 115 {
+        end = end - 6
+    }
+    var name = ""
+    var index = 0
+    while index < end {
+        if text[index] == 46 {
+            name = name + "/"
+        } else {
+            name = name + byteToString(value: text[index])
+        }
+        index = index + 1
+    }
+    return name + ".class"
+}
+
+private func integer(text: borrowing String, maximum: Int): Result<Int, Diagnostic> {
+    var number = 0
+    var index = 0
+    while index < text.count {
+        let digit = byteToInt(value: text[index]) - 48
+        if digit < 0 || digit > 9 || number > (maximum - digit) / 10 {
+            return .Err(usage(message: "numeric option is not a decimal value within its limit"))
+        }
+        number = number * 10 + digit
+        index = index + 1
+    }
+    return .Ok(number)
+}
+
+public func parse(args: borrowing [String]): Result<Command, Diagnostic> {
+    if args.count == 0 { return .Ok(.Help) }
+    if args[0] == "--help" || args[0] == "--version" {
+        if args.count != 1 { return .Err(usage(message: "help/version must be used alone")) }
+        if args[0] == "--help" { return .Ok(.Help) }
+        return .Ok(.Version)
+    }
+    if args[0] == "serve" {
+        if args.count != 1 { return .Err(usage(message: "serve takes no arguments; send requests on stdin")) }
+        return .Ok(.Serve)
+    }
+    let command = args[0]
+    if command != "inspect" && command != "methods" && command != "disasm" && command != "entries" && command != "cfg" {
+        return .Err(usage(message: "unknown command; use moss --help"))
+    }
+    if args.count < 2 || args[1].count == 0 {
+        return .Err(usage(message: "expected a .class, .jar, or .zip input path after the command"))
+    }
+    var method = ""
+    var methodIndex = -1
+    var type = ""
+    var offset = 0
+    var limit = 1000
+    var output = ""
+    var entry = ""
+    var prefix = ""
+    var preview = false
+    var hasMethod = false
+    var hasMethodIndex = false
+    var hasType = false
+    var hasOffset = false
+    var hasLimit = false
+    var hasOutput = false
+    var hasEntry = false
+    var hasPrefix = false
+    var index = 2
+    while index < args.count {
+        let option = args[index]
+        if option == "--allow-preview" {
+            if preview { return .Err(usage(message: "duplicate --allow-preview")) }
+            preview = true
+            index = index + 1
+        } else if option == "--method" || option == "--method-index" || option == "--descriptor" ||
+            option == "--offset" || option == "--limit" || option == "--output" || option == "--entry" ||
+            option == "--class" || option == "--prefix" {
+            let text = value(args: args, index: index + 1)?
+            if option == "--method" {
+                if hasMethod { return .Err(usage(message: "duplicate --method")) }
+                hasMethod = true
+                method = text
+            } else if option == "--method-index" {
+                if hasMethodIndex { return .Err(usage(message: "duplicate --method-index")) }
+                hasMethodIndex = true
+                methodIndex = integer(text: text, maximum: 65535)?
+            } else if option == "--descriptor" {
+                if hasType { return .Err(usage(message: "duplicate --descriptor")) }
+                hasType = true
+                type = text
+            } else if option == "--offset" {
+                if hasOffset { return .Err(usage(message: "duplicate --offset")) }
+                hasOffset = true
+                offset = integer(text: text, maximum: 65535)?
+            } else if option == "--limit" {
+                if hasLimit { return .Err(usage(message: "duplicate --limit")) }
+                hasLimit = true
+                limit = integer(text: text, maximum: 10000)?
+                if limit == 0 { return .Err(usage(message: "limit must be in 1..10000")) }
+            } else if option == "--entry" || option == "--class" {
+                if hasEntry { return .Err(usage(message: "use one --entry or --class, not both or repeated")) }
+                hasEntry = true
+                entry = text
+                if option == "--class" { entry = classEntry(text: text) }
+            } else if option == "--prefix" {
+                if hasPrefix { return .Err(usage(message: "duplicate --prefix")) }
+                hasPrefix = true
+                prefix = text
+            } else {
+                if hasOutput { return .Err(usage(message: "duplicate --output")) }
+                hasOutput = true
+                output = text
+            }
+            index = index + 2
+        } else {
+            return .Err(usage(message: "unknown option or extra positional argument"))
+        }
+    }
+    if command == "entries" && (hasMethod || hasMethodIndex || hasType || hasEntry || preview) {
+        return .Err(usage(message: "entries lists archive names; method, --entry/--class, and preview options do not apply"))
+    }
+    if command == "cfg" && !hasMethod && !hasMethodIndex {
+        return .Err(usage(message: "cfg requires --method or --method-index"))
+    }
+    if command != "entries" && hasPrefix {
+        return .Err(usage(message: "--prefix only filters moss entries"))
+    }
+    if (hasMethod && hasMethodIndex) || (hasType && !hasMethod) {
+        return .Err(usage(message: "use a name with optional descriptor, or a method index, not both"))
+    }
+    if command != "disasm" && command != "cfg" && (hasMethod || hasMethodIndex || hasType) {
+        return .Err(usage(message: "method selectors are only valid for disasm and cfg"))
+    }
+    if command == "inspect" && (hasOffset || hasLimit) {
+        return .Err(usage(message: "inspect is a complete inventory; use methods/disasm for paging"))
+    }
+    return .Ok(.Analyze(Options(command: command, path: args[1],
+        method: method, methodIndex: methodIndex, descriptor: type, offset: offset, limit: limit, output: output, entry: entry, prefix: prefix,
+        allowPreview: preview)))
+}
+
+public func versionText(): String {
+    return "moss 0.6.0 (JVM disassembler in javap -c -p layout, JAR/ZIP input, CFG, serve session)"
+}
+
+public func helpText(): String {
+    return "Moss - JVM class inspection and bytecode disassembly in javap -c -p layout\n\n" +
+        "Usage:\n" +
+        "  moss --help\n" +
+        "  moss --version\n" +
+        "  moss serve                  Read one request per line on stdin; keep the input in memory\n" +
+        "  moss entries <file.jar|file.zip> [--prefix <path>] [--offset <n>] [--limit <count>] [options]\n" +
+        "  moss cfg <input> (--method <name> [--descriptor <descriptor>] | --method-index <index>)\n" +
+        "       [--offset <block>] [--limit <count>] [options]\n" +
+        "  moss inspect <input> [options]\n" +
+        "  moss methods <input> [--offset <index>] [--limit <count>] [options]\n" +
+        "  moss disasm <input> [--method <name> [--descriptor <descriptor>] | --method-index <index>]\n" +
+        "       [--offset <n>] [--limit <count>] [options]\n\n" +
+        "<input> is file.class, or file.jar with --entry <entry-name> or --class <class-name>.\n" +
+        "disasm with a method selector pages instructions (offset = instruction start); without one it\n" +
+        "prints every method, paged by method index.\n\n" +
+        "Options:\n" +
+        "  --output <new-file>         Write to a new file instead of stdout; never overwrites\n" +
+        "  --entry <name>              Exact archive entry (from moss entries) holding the .class\n" +
+        "  --class <name>              com.acme.Foo or com/acme/Foo; same as --entry com/acme/Foo.class\n" +
+        "  --prefix <path>             entries only: keep names starting with this exact path prefix\n" +
+        "  --allow-preview             Allow Java 25 preview (69.65535)\n\n" +
+        "Supports Java 8..25 (52..69), minor 0. Input and entry: 16 MiB; output: 8 MiB.\n" +
+        "Page limit: 1..10000, default 1000.\n" +
+        "serve: each stdin line is a request in the arguments above without 'moss' (quote with \"...\"),\n" +
+        "or reset / quit. Each reply is 'moss: ok N' or 'moss: error N' followed by N lines. --output is not\n" +
+        "available. The latest input stays in memory; 'reset' drops it after the file changes on disk.\n" +
+        "Classic ZIP/JAR (STORE/DEFLATE) only. No DEX, native binaries, execution, or Java source decompilation.\n" +
+        "Output is plain text. Stdout cannot report write failures; use --output when delivery must be certain."
+}

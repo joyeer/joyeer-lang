@@ -1,0 +1,8 @@
+schema-version = 1
+
+[module]
+name = "moss.binary.tests"
+kind = "test"
+output = "moss-binary-tests"
+sources = ["main.joyeer", "support.joyeer", "reader.joyeer", "input.joyeer"]
+dependencies = ["moss.binary"]

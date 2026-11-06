@@ -372,3 +372,39 @@ the zero-allocation-balance check. Many native executable tests are registered
 only when `JOYEER_CLANG_EXECUTABLE` was found during CMake configuration; see
 [backend validation](backend.md#6-validation) before treating a label
 run as the complete acceptance suite.
+
+## Standard-input line boundary
+
+`readStdinLine(maximumBytes: Int): Result<String, StdinError>` is described by
+the same host builtin table as the other host operations; no dedicated IR
+instruction or error conversion path exists. `StdinError` has the
+`EndOfInput(Int)`, `LineTooLong(Int)` and `ReadFailed(Int)` cases (ABI tags 1, 2
+and 3, mapped to the source enum by case name). The contract is
+[spec §18.5](../spec/18-host.md#185-standard-input).
+
+The stable C ABI is
+`int32_t joyeer_read_stdin_line_abi(JoyeerString* result, int64_t* errorCode, int64_t maximumBytes)`.
+It returns `0` with an owned `String` (one tracked allocation, balanced by the
+ordinary destructor) and `*errorCode = 0`, or a nonzero tag and an untouched
+`*result`. Null result or error storage panics as ABI misuse; a negative limit
+is `ReadFailed(EINVAL)` before any byte is consumed.
+
+The implementation reads with `getc` into a temporary runtime-tracked buffer
+capped at `maximumBytes + 1` bytes, so a hostile peer cannot grow memory past
+the limit. Beyond the cap it only counts and discards until the terminator, so a
+`LineTooLong` result leaves the stream at the next line. One `\r` before `\n` is
+removed after the cap check, which is why the extra byte is held. On Windows,
+stdin is switched once to `_O_BINARY` (reusing the stderr descriptor
+validation, with the thread's invalid-parameter handler guarded) and never
+restored, so CRLF and `0x1A` are untranslated. The flag is not thread-safe.
+Unit tests run against redirected scratch files and check allocation balance;
+a native fixture (`NativeExecutableStdinLinesO0`/`O2`) feeds stdin to a compiled
+program.
+
+`joyeer_read_stdin_line_abi` calls `fflush(stdout)` before it blocks (after the
+negative-limit and Windows stdin setup checks), ignoring the result, so a client
+on the other end of a pipe sees earlier `print` output. `StdinLineTest` points
+descriptor 1 at a fully buffered scratch file to prove the bytes arrive during
+the read. Moss's `Moss.Serve` test and the live-pipe check in
+[the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
+depend on it.

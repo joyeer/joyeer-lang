@@ -1,0 +1,66 @@
+import moss.binary
+
+struct TestState {
+    var checks: Int
+    var failures: Int
+}
+
+func decimal(value: Int): String {
+    if value == 0 { return "0" }
+    var magnitude = value
+    if magnitude > 0 { magnitude = 0 - magnitude }
+    let digits = "0123456789"
+    var text = ""
+    while magnitude != 0 {
+        let digit = 0 - magnitude % 10
+        text = byteToString(value: digits[digit]) + text
+        magnitude = magnitude / 10
+    }
+    if value < 0 { return "-" + text }
+    return text
+}
+
+func expect(state: inout TestState, condition: Bool, name: borrowing String) {
+    &state.checks = state.checks + 1
+    if !condition {
+        &state.failures = state.failures + 1
+        print(value: "FAIL: " + name)
+    }
+}
+
+func fixtureBytes(octets: borrowing String, values: borrowing [Int]): String {
+    var bytes = ""
+    var index = 0
+    while index < values.count {
+        bytes = bytes + byteToString(value: octets[values[index]])
+        index = index + 1
+    }
+    return bytes
+}
+
+func integerEquals(outcome: borrowing Result<Int, BinaryError>, expected: Int): Bool {
+    return match outcome {
+        .Ok(value) => value == expected,
+        .Err(error) => {
+            print(value: "unexpected reader error: " + binaryErrorCode(error: error) +
+                " at " + decimal(value: error.offset) + " in " + error.context)
+            return false
+        },
+    }
+}
+
+func errorMatches(error: borrowing BinaryError, code: borrowing String, offset: Int,
+    requested: Int, available: Int, context: borrowing String): Bool {
+    return binaryErrorCode(error: error) == code &&
+        error.offset == offset && error.requested == requested &&
+        error.available == available && error.context == context
+}
+
+func integerError(outcome: borrowing Result<Int, BinaryError>, code: borrowing String,
+    offset: Int, requested: Int, available: Int): Bool {
+    return match outcome {
+        .Ok(_) => false,
+        .Err(error) => errorMatches(error: error, code: code, offset: offset,
+            requested: requested, available: available, context: "test"),
+    }
+}

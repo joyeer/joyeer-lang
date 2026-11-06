@@ -1,7 +1,7 @@
 ## §18 Portable host operations
 
-This chapter defines the accepted first filesystem, synchronous-process, and
-standard-error contracts. See [the implemented surface](../impl/supported-features.md) for
+This chapter defines the accepted first filesystem, synchronous-process,
+standard-error, and standard-input contracts. See [the implemented surface](../impl/supported-features.md) for
 implementation status. These compiler-known operations do not introduce
 source-language FFI or user-defined generic functions.
 
@@ -202,3 +202,54 @@ Postfix `?` propagates only the same error type; adapters must explicitly match
 and wrap errors. This operation does not change `print` or the compatibility
 `readFile` interface. Concurrent foreign code that changes the CRT stream mode
 or reopens standard error is outside this first interface's guarantees.
+
+### 18.5 Standard input
+
+```joyeer
+enum StdinError {
+    EndOfInput(Int),
+    LineTooLong(Int),
+    ReadFailed(Int),
+}
+
+func readStdinLine(maximumBytes: Int): Result<String, StdinError>
+```
+
+`readStdinLine` blocks until one complete line, the end of the standard-input
+stream, or a read failure. It is a compiler-known operation with an owned
+`String` result.
+
+- A line ends at `\n`. The terminator is not part of the result. One `\r`
+  immediately before the `\n` is also removed. All other bytes, including NUL
+  and invalid UTF-8, are returned unchanged.
+- Stream end after at least one byte is a final unterminated line, returned as
+  a success and not stripped of a trailing `\r`. Stream end with no bytes
+  before it returns `.Err(.EndOfInput(0))`, and every later call does too. An
+  empty line terminated by `\n` is a successful empty `String`, distinct from
+  `EndOfInput`.
+- `maximumBytes` bounds the returned line after terminator removal. It must be
+  at least zero. The runtime never holds more than `maximumBytes` plus one
+  byte of the line, whatever the peer sends.
+- A longer line returns `.Err(.LineTooLong(0))`. The runtime first discards the
+  rest of that line through its terminator (or the stream end), so the next
+  call starts at the following line.
+- A negative limit, or an underlying read failure, returns
+  `.Err(.ReadFailed(code))`, where `code` is the native C-runtime `errno`
+  (`EINVAL` for a negative limit, or `EIO` if the failed read supplies none). A
+  failed read discards any partial line.
+- `StdinError` payloads are `Int` like the other host errors; `EndOfInput` and
+  `LineTooLong` carry 0.
+
+On Windows the process's standard input is switched to binary mode on first
+use, so CRLF, `0x1A`, and other bytes are not translated and `0x1A` does not
+end the stream. The change is process-wide and is not restored. Reads are not
+atomic across threads, there is no timeout or cancellation, and mixing this
+operation with `runProcess` children that read the same standard input is
+unspecified.
+
+Before blocking for input, `readStdinLine` flushes standard output, so a peer
+waiting for a prompt or response sees everything printed so far. A flush
+failure is ignored, because `print` has no error path. The flush also happens
+before a read that ends in `EndOfInput`. A negative limit, or a failure to set
+up standard input, returns before any flush. Output is not flushed at any other
+point.

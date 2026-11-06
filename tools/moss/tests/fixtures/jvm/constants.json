@@ -1,0 +1,16 @@
+{
+  "stringText": 6,
+  "string": 7,
+  "integer": 8,
+  "float": 9,
+  "long": 10,
+  "double": 12,
+  "klass": 15,
+  "field": 20,
+  "method": 25,
+  "iface": 30,
+  "handle": 31,
+  "type": 32,
+  "dynamic": 35,
+  "invoke": 38
+}

@@ -37,11 +37,5 @@ file(GENERATE OUTPUT "${package}/CompressionTests/main.joyeer"
 file(GENERATE OUTPUT "${package}/CompressionTests/project.toml"
     CONTENT "schema-version = 1\n[module]\nname = 'CompressionTests'\nkind = 'test'\noutput = 'compression-tests'\nsources = ['main.joyeer']\ndependencies = ['Compression']\n")
 file(GENERATE OUTPUT "${package}/workspace.toml"
-    CONTENT "schema-version = 1\n[workspace]\nmembers = ['Compression', 'CompressionTests']\n")
-install(TARGETS JoyeerCompression ARCHIVE DESTINATION library/Compression/native COMPONENT Compression)
-install(FILES "${package}/Compression/project.toml" compression.joyeer
-    DESTINATION library/Compression COMPONENT Compression)
-install(FILES "${joyeer_miniz_SOURCE_DIR}/LICENSE"
-    DESTINATION library/Compression/licenses RENAME miniz-LICENSE COMPONENT Compression)
-install(FILES "${JOYEER_SOURCE_DIR}/LICENSE"
-    DESTINATION library/Compression/licenses RENAME Joyeer-LICENSE COMPONENT Compression)
+    CONTENT "schema-version = 1\n[workspace]\nmembers = ['CompressionTests']\n")
+# The staged toolchain lib/ (see the top-level CMakeLists.txt) installs this module.

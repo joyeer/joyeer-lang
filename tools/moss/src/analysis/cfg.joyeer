@@ -1,0 +1,247 @@
+import moss.model
+
+// Control-flow graph of one method's decoded bytecode. Blocks are maximal runs of instructions
+// with a single entry (the first instruction) and a single exit (the last). Exception edges
+// connect every block inside a protected range to its handler, in exception-table order.
+
+public struct Block {
+    public let index: Int
+    public let start: Int
+    public let end: Int
+    public let first: Int
+    public let count: Int
+    public let terminator: String
+    public let reachable: Bool
+    public let firstEdge: Int
+    public let edgeCount: Int
+}
+
+public struct Edge {
+    public let from: Int
+    public let to: Int
+    public let kind: String
+    public let key: Int
+}
+
+public struct Cfg {
+    public let blocks: [Block]
+    public let edges: [Edge]
+    public let unreachable: Int
+}
+
+private func isConditional(mnemonic: borrowing String): Bool {
+    return mnemonic.count >= 2 && mnemonic[0] == 105 && mnemonic[1] == 102
+}
+
+private func isReturn(mnemonic: borrowing String): Bool {
+    return mnemonic == "return" || mnemonic == "ireturn" || mnemonic == "lreturn" ||
+        mnemonic == "freturn" || mnemonic == "dreturn" || mnemonic == "areturn"
+}
+
+// The control-flow role of an instruction's mnemonic.
+func flowKind(mnemonic: borrowing String): String {
+    if mnemonic == "goto" || mnemonic == "goto_w" { return "goto" }
+    if mnemonic == "tableswitch" || mnemonic == "lookupswitch" { return "switch" }
+    if mnemonic == "athrow" { return "throw" }
+    if isReturn(mnemonic: mnemonic) { return "return" }
+    if isConditional(mnemonic: mnemonic) { return "conditional" }
+    return "fallthrough"
+}
+
+private func invalid(message: borrowing String, offset: Int): Diagnostic {
+    return Diagnostic(code: "cfg.invalid", offset: -1, context: "control flow",
+        message: message + " at method offset " + decimal(value: offset))
+}
+
+private func markLeader(leader: inout [Bool], offset: Int, length: Int): Result<Void, Diagnostic> {
+    if offset < 0 || offset >= length {
+        return .Err(invalid(message: "branch or handler target lies outside the code", offset: offset))
+    }
+    &leader[offset] = true
+    return .Ok(())
+}
+
+public func buildCfg(instructions: borrowing [Instruction], code: borrowing Code): Result<Cfg, Diagnostic> {
+    let length = code.bytes.length
+    if instructions.count == 0 || length < 1 {
+        return .Err(invalid(message: "method has no bytecode", offset: 0))
+    }
+
+    var leader: [Bool] = []
+    var position = 0
+    while position <= length {
+        &leader.append(element: false)
+        position = position + 1
+    }
+    &leader[0] = true
+
+    var index = 0
+    while index < instructions.count {
+        let item = instructions[index]
+        let flow = flowKind(mnemonic: item.mnemonic)
+        var operand = 0
+        while operand < item.operands.count {
+            match item.operands[operand] {
+                .Target(target) => { markLeader(leader: &leader, offset: target, length: length)? },
+                .DefaultTarget(target) => { markLeader(leader: &leader, offset: target, length: length)? },
+                .SwitchTarget(_, target) => { markLeader(leader: &leader, offset: target, length: length)? },
+                _ => {},
+            }
+            operand = operand + 1
+        }
+        let next = item.methodOffset + item.size
+        if flow != "fallthrough" && next < length { &leader[next] = true }
+        index = index + 1
+    }
+    var region = 0
+    while region < code.exceptions.count {
+        let item = code.exceptions[region]
+        markLeader(leader: &leader, offset: item.start, length: length)?
+        markLeader(leader: &leader, offset: item.handler, length: length)?
+        if item.end < length { &leader[item.end] = true }
+        region = region + 1
+    }
+
+    // Partition instructions into blocks at the leaders.
+    var blockOf: [Int] = []
+    position = 0
+    while position <= length {
+        &blockOf.append(element: -1)
+        position = position + 1
+    }
+    var starts: [Int] = []
+    var firsts: [Int] = []
+    index = 0
+    while index < instructions.count {
+        let offset = instructions[index].methodOffset
+        if leader[offset] {
+            &blockOf[offset] = starts.count
+            &starts.append(element: offset)
+            &firsts.append(element: index)
+        }
+        index = index + 1
+    }
+    if starts.count == 0 || starts[0] != 0 {
+        return .Err(invalid(message: "first instruction does not start at offset 0", offset: 0))
+    }
+
+    var edges: [Edge] = []
+    var firstEdge: [Int] = []
+    var terminators: [String] = []
+    var block = 0
+    while block < starts.count {
+        var lastInstruction = instructions.count - 1
+        var end = length
+        if block + 1 < starts.count {
+            lastInstruction = firsts[block + 1] - 1
+            end = starts[block + 1]
+        }
+        &firstEdge.append(element: edges.count)
+        let last = instructions[lastInstruction]
+        let flow = flowKind(mnemonic: last.mnemonic)
+        &terminators.append(element: flow)
+
+        var operand = 0
+        while operand < last.operands.count {
+            match last.operands[operand] {
+                .Target(target) => {
+                    var kind = "jump"
+                    if flow == "conditional" { kind = "branch" }
+                    &edges.append(element: Edge(from: block, to: blockOf[target], kind: kind, key: -1))
+                },
+                .SwitchTarget(key, target) => {
+                    &edges.append(element: Edge(from: block, to: blockOf[target], kind: "case", key: key))
+                },
+                .DefaultTarget(target) => {
+                    &edges.append(element: Edge(from: block, to: blockOf[target], kind: "default", key: -1))
+                },
+                _ => {},
+            }
+            operand = operand + 1
+        }
+        if flow == "conditional" || flow == "fallthrough" {
+            if block + 1 >= starts.count {
+                return .Err(invalid(message: "control falls off the end of the code", offset: end))
+            }
+            &edges.append(element: Edge(from: block, to: block + 1, kind: "fallthrough", key: -1))
+        }
+        region = 0
+        while region < code.exceptions.count {
+            let item = code.exceptions[region]
+            if starts[block] >= item.start && starts[block] < item.end {
+                &edges.append(element: Edge(from: block, to: blockOf[item.handler], kind: "exception",
+                    key: item.catchType))
+            }
+            region = region + 1
+        }
+        block = block + 1
+    }
+    &firstEdge.append(element: edges.count)
+
+    // Reachability from the entry block, following normal and exception edges.
+    var reached: [Bool] = []
+    block = 0
+    while block < starts.count {
+        &reached.append(element: false)
+        block = block + 1
+    }
+    // Each block is pushed at most once, so a fixed-size stack with a top counter suffices.
+    var stack: [Int] = []
+    block = 0
+    while block < starts.count {
+        &stack.append(element: 0)
+        block = block + 1
+    }
+    var top = 1
+    &reached[0] = true
+    while top > 0 {
+        top = top - 1
+        let current = stack[top]
+        var edge = firstEdge[current]
+        while edge < firstEdge[current + 1] {
+            let target = edges[edge].to
+            if !reached[target] {
+                &reached[target] = true
+                &stack[top] = target
+                top = top + 1
+            }
+            edge = edge + 1
+        }
+    }
+
+    var blocks: [Block] = []
+    var unreachable = 0
+    block = 0
+    while block < starts.count {
+        var count = instructions.count - firsts[block]
+        var end = length
+        if block + 1 < starts.count {
+            count = firsts[block + 1] - firsts[block]
+            end = starts[block + 1]
+        }
+        if !reached[block] { unreachable = unreachable + 1 }
+        &blocks.append(element: Block(index: block, start: starts[block], end: end, first: firsts[block],
+            count: count, terminator: terminators[block], reachable: reached[block],
+            firstEdge: firstEdge[block], edgeCount: firstEdge[block + 1] - firstEdge[block]))
+        block = block + 1
+    }
+    return .Ok(Cfg(blocks: blocks, edges: edges, unreachable: unreachable))
+}
+
+// Distinct predecessor block indices of a block, ascending.
+public func predecessors(cfg: borrowing Cfg, block: Int): [Int] {
+    var sources: [Int] = []
+    var source = 0
+    while source < cfg.blocks.count {
+        var edge = cfg.blocks[source].firstEdge
+        let end = edge + cfg.blocks[source].edgeCount
+        var found = false
+        while edge < end {
+            if cfg.edges[edge].to == block { found = true }
+            edge = edge + 1
+        }
+        if found { &sources.append(element: source) }
+        source = source + 1
+    }
+    return sources
+}

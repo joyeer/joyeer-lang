@@ -74,6 +74,9 @@ struct CompileOptions {
     std::vector<ModuleSources> modules;
     std::vector<std::string> runtimeModules;
     std::vector<std::filesystem::path> nativeLibraries;
+    // <root>/lib of the running toolchain; used only when standardLibrary is set.
+    std::filesystem::path libraryDirectory;
+    bool standardLibrary = false;
 };
 
 } // namespace joyeer

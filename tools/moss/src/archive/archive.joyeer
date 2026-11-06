@@ -1,0 +1,80 @@
+import Compression
+import moss.model
+
+public struct ArchiveEntry {
+    public let index: Int
+    public let name: String
+}
+
+public func maximumArchiveEntries(): Int {
+    return 65535
+}
+
+public func maximumArchiveNameBytes(): Int {
+    return 4194304
+}
+
+public func maximumEntryBytes(): Int {
+    return 16777216
+}
+
+private func archiveDiagnostic(error: borrowing CompressionError): Diagnostic {
+    return match error {
+        .InvalidArgument => Diagnostic(code: "archive.invalid-argument", offset: -1, context: "archive",
+            message: "invalid archive query"),
+        .InvalidArchive => Diagnostic(code: "archive.invalid", offset: -1, context: "archive",
+            message: "input is not a valid ZIP/JAR archive"),
+        .UnsupportedArchive => Diagnostic(code: "archive.unsupported", offset: -1, context: "archive",
+            message: "unsupported ZIP feature (ZIP64, encryption, or a method other than STORE/DEFLATE)"),
+        .LimitExceeded => Diagnostic(code: "archive.limit-exceeded", offset: -1, context: "archive",
+            message: "archive entry count, name bytes, or entry size exceeds the Moss limit"),
+        .EntryNotFound => Diagnostic(code: "archive.entry-not-found", offset: -1, context: "archive",
+            message: "archive entry index is absent"),
+        .DuplicateEntry => Diagnostic(code: "archive.duplicate-entry", offset: -1, context: "archive",
+            message: "archive contains duplicate entries"),
+        .NativeFailure(code) => Diagnostic(code: "archive.native-failure", offset: -1, context: "archive",
+            message: "native ZIP failure code " + decimal(value: code)),
+    }
+}
+
+// Divide-and-conquer so a large entry costs O(n log n) byte copies, not O(n^2).
+private func bytesText(bytes: borrowing [UInt8], first: Int, end: Int): String {
+    if end == first { return "" }
+    if end - first == 1 { return byteToString(value: bytes[first]) }
+    let middle = first + (end - first) / 2
+    return bytesText(bytes: bytes, first: first, end: middle) + bytesText(bytes: bytes, first: middle, end: end)
+}
+
+public func listEntries(archive: borrowing [UInt8]): Result<[String], Diagnostic> {
+    return match listZip(archive: archive, maximumEntries: maximumArchiveEntries(),
+        maximumNameBytes: maximumArchiveNameBytes()) {
+        .Ok(names) => .Ok(names),
+        .Err(error) => .Err(archiveDiagnostic(error: error)),
+    }
+}
+
+// Exact, case-sensitive name match; a duplicate name is ambiguous and rejected.
+public func extractEntry(archive: borrowing [UInt8], name: borrowing String): Result<String, Diagnostic> {
+    let names = listEntries(archive: archive)?
+    var found = -1
+    var index = 0
+    while index < names.count {
+        if names[index] == name {
+            if found >= 0 {
+                return .Err(Diagnostic(code: "archive.ambiguous-entry", offset: -1, context: "entry selector",
+                    message: "multiple archive entries have this exact name"))
+            }
+            found = index
+        }
+        index = index + 1
+    }
+    if found < 0 {
+        return .Err(Diagnostic(code: "archive.entry-not-found", offset: -1, context: "entry selector",
+            message: "no archive entry has this exact name; list names with moss entries"))
+    }
+    let bytes = match extractZipEntry(archive: archive, index: found, maximumBytes: maximumEntryBytes()) {
+        .Ok(value) => value,
+        .Err(error) => { return .Err(archiveDiagnostic(error: error)) },
+    }
+    return .Ok(bytesText(bytes: bytes, first: 0, end: bytes.count))
+}

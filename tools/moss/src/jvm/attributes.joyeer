@@ -1,0 +1,283 @@
+import moss.binary
+import moss.model
+
+func readAttributes(input: borrowing String, cursor: inout Cursor,
+    pool: borrowing [Constant], budget: inout ParseBudget): Result<[Attribute], Diagnostic> {
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 6,
+        budget: &budget, context: "attributes_count")?
+    var attributes: [Attribute] = []
+    var index = 0
+    while index < count {
+        let start = cursor.position
+        let name = u(input: input, cursor: &cursor, width: 2, context: "attribute.name_index")?
+        requireTag(pool: pool, index: name, tag: 1, offset: start, context: "attribute name")?
+        let length = u(input: input, cursor: &cursor, width: 4, context: "attribute.length")?
+        let body = take(input: input, cursor: &cursor, length: length, context: "attribute body")?
+        &attributes.append(element: Attribute(nameIndex: name, headerOffset: start, body: body))
+        index = index + 1
+    }
+    return .Ok(attributes)
+}
+
+private func readLines(input: borrowing String, attribute: borrowing Attribute, codeLength: Int,
+    lines: inout [LineNumber], budget: inout ParseBudget): Result<Void, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "LineNumberTable")?
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 4,
+        budget: &budget, context: "LineNumberTable.count")?
+    var index = 0
+    while index < count {
+        let start = cursor.position
+        let pc = u(input: input, cursor: &cursor, width: 2, context: "line.start_pc")?
+        let line = u(input: input, cursor: &cursor, width: 2, context: "line.number")?
+        if pc >= codeLength {
+            return .Err(diagnostic(code: "jvm.invalid-debug-range", offset: start,
+                context: "LineNumberTable", message: "line starts outside method code"))
+        }
+        &lines.append(element: LineNumber(offset: pc, line: line, fileOffset: start))
+        index = index + 1
+    }
+    return finished(cursor: cursor, context: "LineNumberTable")
+}
+
+private func readLocals(input: borrowing String, attribute: borrowing Attribute,
+    pool: borrowing [Constant], codeLength: Int, maxLocals: Int, generic: Bool,
+    locals: inout [LocalVariable], budget: inout ParseBudget): Result<Void, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "local variables")?
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 10,
+        budget: &budget, context: "local variables count")?
+    var index = 0
+    while index < count {
+        let start = cursor.position
+        let pc = u(input: input, cursor: &cursor, width: 2, context: "local.start_pc")?
+        let length = u(input: input, cursor: &cursor, width: 2, context: "local.length")?
+        let nameIndex = u(input: input, cursor: &cursor, width: 2, context: "local.name_index")?
+        let typeIndex = u(input: input, cursor: &cursor, width: 2, context: "local.descriptor_index")?
+        let slot = u(input: input, cursor: &cursor, width: 2, context: "local.index")?
+        requireTag(pool: pool, index: nameIndex, tag: 1, offset: start + 4, context: "local name")?
+        requireTag(pool: pool, index: typeIndex, tag: 1, offset: start + 6, context: "local type")?
+        var slots = 1
+        if !generic {
+            let info = descriptor(units: pool[typeIndex].text, method: false, offset: start + 6)?
+            slots = info.slots
+        }
+        if pc >= codeLength || length > codeLength - pc || slot >= maxLocals ||
+            slots > maxLocals - slot {
+            return .Err(diagnostic(code: "jvm.invalid-debug-range", offset: start,
+                context: "local variables", message: "local range or slot is outside method bounds"))
+        }
+        &locals.append(element: LocalVariable(start: pc, length: length, slot: slot,
+            nameIndex: nameIndex, descriptorIndex: typeIndex, generic: generic, fileOffset: start))
+        index = index + 1
+    }
+    return finished(cursor: cursor, context: "local variables")
+}
+
+func readCode(input: borrowing String, attribute: borrowing Attribute, pool: borrowing [Constant],
+    parameterSlots: Int, budget: inout ParseBudget): Result<Code, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "Code")?
+    let maxStack = u(input: input, cursor: &cursor, width: 2, context: "Code.max_stack")?
+    let maxLocals = u(input: input, cursor: &cursor, width: 2, context: "Code.max_locals")?
+    let length = u(input: input, cursor: &cursor, width: 4, context: "Code.code_length")?
+    if length == 0 || length >= 65536 {
+        return .Err(diagnostic(code: "jvm.invalid-code-length", offset: cursor.position - 4,
+            context: "Code", message: "code length must be in 1..65535"))
+    }
+    if maxLocals < parameterSlots {
+        return .Err(diagnostic(code: "jvm.invalid-local-index", offset: attribute.body.offset + 2,
+            context: "Code.max_locals", message: "not enough local slots for method parameters"))
+    }
+    let bytes = take(input: input, cursor: &cursor, length: length, context: "Code.bytes")?
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 8,
+        budget: &budget, context: "Code.exception_table_length")?
+    var exceptions: [ExceptionRegion] = []
+    var index = 0
+    while index < count {
+        let start = cursor.position
+        let from = u(input: input, cursor: &cursor, width: 2, context: "exception.start_pc")?
+        let end = u(input: input, cursor: &cursor, width: 2, context: "exception.end_pc")?
+        let handler = u(input: input, cursor: &cursor, width: 2, context: "exception.handler_pc")?
+        let catchType = u(input: input, cursor: &cursor, width: 2, context: "exception.catch_type")?
+        if from >= end || end > length || handler >= length {
+            return .Err(diagnostic(code: "jvm.invalid-exception-range", offset: start,
+                context: "Code.exception_table", message: "invalid exclusive exception range or handler"))
+        }
+        if catchType != 0 {
+            classConstant(pool: pool, index: catchType, arrayAllowed: false,
+                offset: start + 6, context: "exception.catch_type")?
+        }
+        &exceptions.append(element: ExceptionRegion(start: from, end: end,
+            handler: handler, catchType: catchType, fileOffset: start))
+        index = index + 1
+    }
+    let attributes = readAttributes(input: input, cursor: &cursor, pool: pool, budget: &budget)?
+    finished(cursor: cursor, context: "Code")?
+    var lines: [LineNumber] = []
+    var locals: [LocalVariable] = []
+    index = 0
+    while index < attributes.count {
+        if named(pool: pool, index: attributes[index].nameIndex, name: "LineNumberTable") {
+            readLines(input: input, attribute: attributes[index], codeLength: length,
+                lines: &lines, budget: &budget)?
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "LocalVariableTable") ||
+            named(pool: pool, index: attributes[index].nameIndex, name: "LocalVariableTypeTable") {
+            let generic = named(pool: pool, index: attributes[index].nameIndex, name: "LocalVariableTypeTable")
+            readLocals(input: input, attribute: attributes[index], pool: pool, codeLength: length,
+                maxLocals: maxLocals, generic: generic, locals: &locals, budget: &budget)?
+        }
+        index = index + 1
+    }
+    return .Ok(Code(attributeOffset: attribute.headerOffset, maxStack: maxStack,
+        maxLocals: maxLocals, bytes: bytes, exceptions: exceptions,
+        attributes: attributes, lines: lines, locals: locals))
+}
+
+func checkExceptions(input: borrowing String, attribute: borrowing Attribute, pool: borrowing [Constant],
+    budget: inout ParseBudget): Result<Void, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "Exceptions")?
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 2, budget: &budget, context: "Exceptions")?
+    var index = 0
+    while index < count {
+        let offset = cursor.position
+        let type = u(input: input, cursor: &cursor, width: 2, context: "Exceptions.class")?
+        classConstant(pool: pool, index: type, arrayAllowed: false, offset: offset, context: "Exceptions")?
+        index = index + 1
+    }
+    return finished(cursor: cursor, context: "Exceptions")
+}
+
+func readBootstraps(input: borrowing String, attribute: borrowing Attribute, pool: borrowing [Constant],
+    budget: inout ParseBudget): Result<Int, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "BootstrapMethods")?
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 4,
+        budget: &budget, context: "BootstrapMethods.count")?
+    var index = 0
+    while index < count {
+        let offset = cursor.position
+        let handle = u(input: input, cursor: &cursor, width: 2, context: "bootstrap.method_ref")?
+        requireTag(pool: pool, index: handle, tag: 15, offset: offset, context: "bootstrap method")?
+        if pool[handle].first != 6 && pool[handle].first != 8 {
+            return .Err(diagnostic(code: "jvm.invalid-bootstrap", offset: offset,
+                context: "BootstrapMethods", message: "bootstrap handle must be static or a constructor"))
+        }
+        let arguments = count16(input: input, cursor: &cursor, minimumBytes: 2,
+            budget: &budget, context: "bootstrap.arguments")?
+        var argument = 0
+        while argument < arguments {
+            let at = cursor.position
+            let constant = u(input: input, cursor: &cursor, width: 2, context: "bootstrap.argument")?
+            requireTag(pool: pool, index: constant, tag: 0, offset: at, context: "bootstrap argument")?
+            let tag = pool[constant].tag
+            if tag != 3 && tag != 4 && tag != 5 && tag != 6 && tag != 7 && tag != 8 &&
+                tag != 15 && tag != 16 && tag != 17 {
+                return .Err(diagnostic(code: "jvm.invalid-bootstrap", offset: at,
+                    context: "BootstrapMethods", message: "argument is not a loadable constant"))
+            }
+            argument = argument + 1
+        }
+        index = index + 1
+    }
+    finished(cursor: cursor, context: "BootstrapMethods")?
+    return .Ok(count)
+}
+
+private func moduleTargets(input: borrowing String, cursor: inout Cursor,
+    pool: borrowing [Constant], budget: inout ParseBudget): Result<Void, Diagnostic> {
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 2,
+        budget: &budget, context: "Module.target_count")?
+    var index = 0
+    while index < count {
+        let offset = cursor.position
+        let target = u(input: input, cursor: &cursor, width: 2, context: "Module.target")?
+        requireTag(pool: pool, index: target, tag: 19, offset: offset, context: "Module.target")?
+        index = index + 1
+    }
+    return .Ok(())
+}
+
+func checkModule(input: borrowing String, attribute: borrowing Attribute, pool: borrowing [Constant],
+    budget: inout ParseBudget): Result<Void, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "Module")?
+    let module = u(input: input, cursor: &cursor, width: 2, context: "Module.name")?
+    requireTag(pool: pool, index: module, tag: 19, offset: attribute.body.offset, context: "Module.name")?
+    u(input: input, cursor: &cursor, width: 2, context: "Module.flags")?
+    let version = u(input: input, cursor: &cursor, width: 2, context: "Module.version")?
+    if version != 0 {
+        requireTag(pool: pool, index: version, tag: 1, offset: cursor.position - 2, context: "Module.version")?
+    }
+    let requires = count16(input: input, cursor: &cursor, minimumBytes: 6,
+        budget: &budget, context: "Module.requires")?
+    var index = 0
+    while index < requires {
+        let offset = cursor.position
+        let target = u(input: input, cursor: &cursor, width: 2, context: "Module.requires_index")?
+        requireTag(pool: pool, index: target, tag: 19, offset: offset, context: "Module.requires")?
+        u(input: input, cursor: &cursor, width: 2, context: "Module.requires_flags")?
+        let version = u(input: input, cursor: &cursor, width: 2, context: "Module.requires_version")?
+        if version != 0 {
+            requireTag(pool: pool, index: version, tag: 1, offset: cursor.position - 2, context: "Module.requires_version")?
+        }
+        index = index + 1
+    }
+    var section = 0
+    while section < 2 {
+        let count = count16(input: input, cursor: &cursor, minimumBytes: 6,
+            budget: &budget, context: "Module.exports/opens")?
+        index = 0
+        while index < count {
+            let offset = cursor.position
+            let packageIndex = u(input: input, cursor: &cursor, width: 2, context: "Module.package")?
+            requireTag(pool: pool, index: packageIndex, tag: 20, offset: offset, context: "Module.package")?
+            u(input: input, cursor: &cursor, width: 2, context: "Module.package_flags")?
+            moduleTargets(input: input, cursor: &cursor, pool: pool, budget: &budget)?
+            index = index + 1
+        }
+        section = section + 1
+    }
+    let uses = count16(input: input, cursor: &cursor, minimumBytes: 2,
+        budget: &budget, context: "Module.uses")?
+    index = 0
+    while index < uses {
+        let offset = cursor.position
+        let type = u(input: input, cursor: &cursor, width: 2, context: "Module.uses_index")?
+        classConstant(pool: pool, index: type, arrayAllowed: false, offset: offset, context: "Module.uses")?
+        index = index + 1
+    }
+    let provides = count16(input: input, cursor: &cursor, minimumBytes: 4,
+        budget: &budget, context: "Module.provides")?
+    index = 0
+    while index < provides {
+        let offset = cursor.position
+        let type = u(input: input, cursor: &cursor, width: 2, context: "Module.provides_index")?
+        classConstant(pool: pool, index: type, arrayAllowed: false, offset: offset, context: "Module.provides")?
+        let implementations = count16(input: input, cursor: &cursor, minimumBytes: 2,
+            budget: &budget, context: "Module.provides_with")?
+        if implementations == 0 {
+            return .Err(diagnostic(code: "jvm.invalid-module", offset: cursor.position - 2,
+                context: "Module.provides", message: "service requires at least one implementation"))
+        }
+        var implementation = 0
+        while implementation < implementations {
+            let at = cursor.position
+            let type = u(input: input, cursor: &cursor, width: 2, context: "Module.implementation")?
+            classConstant(pool: pool, index: type, arrayAllowed: false, offset: at, context: "Module.implementation")?
+            implementation = implementation + 1
+        }
+        index = index + 1
+    }
+    return finished(cursor: cursor, context: "Module")
+}
+
+func checkModulePackages(input: borrowing String, attribute: borrowing Attribute, pool: borrowing [Constant],
+    budget: inout ParseBudget): Result<Void, Diagnostic> {
+    var cursor = bounded(input: input, region: attribute.body, context: "ModulePackages")?
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 2,
+        budget: &budget, context: "ModulePackages.count")?
+    var index = 0
+    while index < count {
+        let offset = cursor.position
+        let packageIndex = u(input: input, cursor: &cursor, width: 2, context: "ModulePackages.package")?
+        requireTag(pool: pool, index: packageIndex, tag: 20, offset: offset, context: "ModulePackages")?
+        index = index + 1
+    }
+    return finished(cursor: cursor, context: "ModulePackages")
+}

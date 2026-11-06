@@ -10,9 +10,11 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <deque>
 #include <fstream>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <unordered_set>
 #include <utility>
@@ -124,6 +126,7 @@ CompilerService::CompilerService(Diagnostics* diagnostics, joyeer::CompileOption
 void CompilerService::compile(const std::filesystem::path& inputFile) {
     sourceFiles.clear();
     compilationSources.clear();
+    implicitLibraries.clear();
     lastCompiledSourceFile.reset();
     if ((!options.runtimeModules.empty() || options.outputMode == joyeer::OutputMode::runtimeObject) &&
         options.moduleName.empty()) {
@@ -150,6 +153,23 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     if (!protectInputs({sourcefile->getAbstractPath()})) return;
     auto root = parse(sourcefile);
     if (root == nullptr) return;
+    if (options.standardLibrary && !root->imports.empty()) {
+        // A single file may import the toolchain's standard modules.
+        joyeer::StandardLibrary standard(options.libraryDirectory);
+        std::string problem;
+        const auto status = standard.load(problem);
+        if (status == joyeer::StandardLibrary::Status::invalid) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "toolchain.library-mismatch",
+                    "standard library under '" + pathUtf8(options.libraryDirectory) + "' cannot be used: " + problem);
+            return;
+        }
+        if (status == joyeer::StandardLibrary::Status::ready &&
+            std::any_of(root->imports.begin(), root->imports.end(),
+                        [&](const auto& import) { return standard.contains(import.name); })) {
+            compileModules(inputFile);
+            return;
+        }
+    }
     for (const auto& import : root->imports) {
         reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
                 "module.unknown-import", "unknown module '" + import.name + "'; use --module-name and --module-source");
@@ -188,18 +208,36 @@ bool CompilerService::protectInputs(const std::vector<std::filesystem::path>& in
     return true;
 }
 
-void CompilerService::compileModules() {
+void CompilerService::compileModules(const std::filesystem::path& singleFile) {
     struct Module {
         std::string name;
         std::vector<std::filesystem::path> files;
         joyeer::semantic::ModuleInput syntax;
         enum State { unseen, visiting, done } state = unseen;
     };
-    std::vector<Module> graph;
+    std::deque<Module> graph; // stable references while standard modules are appended
     std::vector<std::filesystem::path> allInputs;
     std::unordered_map<std::string, size_t> names;
-    auto sourceSets = options.modules;
-    sourceSets.insert(sourceSets.begin(), {options.moduleName, options.sourceFiles});
+    // A single-file compile is an unnamed root whose imports resolve to standard modules.
+    std::vector<joyeer::ModuleSources> sourceSets;
+    if (singleFile.empty()) {
+        sourceSets = options.modules;
+        sourceSets.insert(sourceSets.begin(), {options.moduleName, options.sourceFiles});
+    } else {
+        sourceSets.push_back({"", {singleFile}});
+    }
+    std::optional<joyeer::StandardLibrary> standard;
+    std::string standardProblem;
+    bool standardInvalid = false;
+    if (options.standardLibrary) {
+        joyeer::StandardLibrary library(options.libraryDirectory);
+        const auto status = library.load(standardProblem);
+        if (status == joyeer::StandardLibrary::Status::ready) {
+            standard = std::move(library);
+        } else if (status == joyeer::StandardLibrary::Status::invalid) {
+            standardInvalid = true;
+        }
+    }
     std::unordered_set<std::string> runtimeModules;
     for (const auto& name : options.runtimeModules) {
         if (!runtimeModules.insert(name).second ||
@@ -217,7 +255,7 @@ void CompilerService::compileModules() {
         return;
     }
     for (const auto& sourceSet : sourceSets) {
-        if (!joyeer::isModuleName(sourceSet.name)) {
+        if (!(!singleFile.empty() && sourceSet.name.empty()) && !joyeer::isModuleName(sourceSet.name)) {
             diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-name",
                     "invalid logical module name '" + sourceSet.name + "'");
             return;
@@ -272,6 +310,60 @@ void CompilerService::compileModules() {
     }
     if (!protectInputs(allInputs)) return;
 
+    // Resolve an import that no supplied source set provides against the toolchain.
+    const auto addStandard = [&](const auto& import) -> bool {
+        if (standardInvalid) {
+            reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
+                    "toolchain.library-mismatch",
+                    "standard library under '" + pathUtf8(options.libraryDirectory) + "' cannot be used: " + standardProblem);
+            return false;
+        }
+        if (!standard || !standard->contains(import.name)) {
+            reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
+                    "module.unknown-import", "unknown module '" + import.name + "'; provide --module-source name=file inputs");
+            return false;
+        }
+        joyeer::StandardModule found;
+        std::string problem;
+        if (!standard->resolve(import.name, found, problem)) {
+            reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
+                    "toolchain.library-invalid", problem);
+            return false;
+        }
+        Module module {found.name, {}, {found.name, {}}};
+        // The toolchain, not the importer, authorizes a standard module's native bindings.
+        module.syntax.runtimeContext = found.nativeBindings;
+        for (const auto& source : found.sources) {
+            std::error_code error;
+            const auto file = std::filesystem::canonical(source, error);
+            if (error || !std::filesystem::is_regular_file(file, error) || error) {
+                reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
+                        "toolchain.library-invalid",
+                        "standard module '" + found.name + "' source is missing: '" + pathUtf8(source) + "'");
+                return false;
+            }
+            module.files.push_back(file);
+        }
+        std::sort(module.files.begin(), module.files.end());
+        for (const auto& library : found.nativeLibraries) {
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(library, error) || error) {
+                reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
+                        "toolchain.library-invalid",
+                        "standard module '" + found.name + "' native library is missing: '" + pathUtf8(library) + "'");
+                return false;
+            }
+            const auto canonicalLibrary = std::filesystem::canonical(library, error);
+            if (std::find(implicitLibraries.begin(), implicitLibraries.end(), canonicalLibrary) ==
+                implicitLibraries.end()) {
+                implicitLibraries.push_back(canonicalLibrary);
+            }
+        }
+        names.emplace(found.name, graph.size());
+        graph.push_back(std::move(module));
+        return true;
+    };
+
     std::vector<size_t> stack;
     std::vector<joyeer::semantic::ModuleInput> inputs;
     std::function<bool(size_t)> visit = [&](size_t index) {
@@ -290,11 +382,10 @@ void CompilerService::compileModules() {
         inputs.push_back(module.syntax);
         for (const auto& file : module.syntax.files) {
             for (const auto& import : file->imports) {
-                const auto found = names.find(import.name);
+                auto found = names.find(import.name);
                 if (found == names.end()) {
-                    reportSpannedDiagnostic(diagnostics, compilationSources, import.span, ErrorLevel::failure,
-                            "module.unknown-import", "unknown module '" + import.name + "'; provide --module-source name=file inputs");
-                    return false;
+                    if (!addStandard(import)) return false;
+                    found = names.find(import.name);
                 }
                 if (graph[found->second].state == Module::visiting) {
                     std::ostringstream cycle;

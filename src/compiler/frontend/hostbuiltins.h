@@ -39,15 +39,19 @@ inline constexpr std::array<std::string_view, 5> processErrors {
 inline constexpr std::array<std::string_view, 1> stderrErrors {
     "WriteFailed",
 };
+inline constexpr std::array<std::string_view, 3> stdinErrors {
+    "EndOfInput", "LineTooLong", "ReadFailed",
+};
 inline constexpr std::array<std::string_view, 1> conversionErrors {
     "OutOfRange",
 };
-inline constexpr std::array<Enumeration, 6> enumerations {{
+inline constexpr std::array<Enumeration, 7> enumerations {{
     { "FileSystemError", filesystemErrors, true, 1 },
     { "FileKind", fileKinds, false, 0 },
     { "ProcessStatus", processStatuses, true, 0 },
     { "ProcessError", processErrors, true, 1 },
     { "StderrError", stderrErrors, true, 1 },
+    { "StdinError", stdinErrors, true, 1 },
     { "ConversionError", conversionErrors, false, 0 },
 }};
 
@@ -68,6 +72,9 @@ inline constexpr std::array<Parameter, 2> writeParameters {{
 inline constexpr std::array<Parameter, 1> stderrParameters {{
     { "contents", ValueKind::string },
 }};
+inline constexpr std::array<Parameter, 1> stdinLineParameters {{
+    { "maximumBytes", ValueKind::integer },
+}};
 inline constexpr std::array<Parameter, 2> joinParameters {{
     { "base", ValueKind::string }, { "path", ValueKind::string },
 }};
@@ -85,7 +92,7 @@ struct Function {
     std::span<const Parameter> parameters;
 };
 
-inline constexpr std::array<Function, 11> functions {{
+inline constexpr std::array<Function, 12> functions {{
     { "readFileUtf8", "joyeer_fs_read_file_abi", ValueKind::string,
       "FileSystemError", pathParameters },
         { "readFilePrefix", "joyeer_fs_read_file_prefix_abi", ValueKind::string,
@@ -108,6 +115,8 @@ inline constexpr std::array<Function, 11> functions {{
       "ProcessError", processParameters },
         { "writeStderr", "joyeer_write_stderr_abi", ValueKind::unit,
             "StderrError", stderrParameters },
+    { "readStdinLine", "joyeer_read_stdin_line_abi", ValueKind::string,
+      "StdinError", stdinLineParameters },
 }};
 
 inline const Function* findFunction(std::string_view name) {

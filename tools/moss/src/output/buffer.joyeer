@@ -1,0 +1,48 @@
+import moss.model
+
+public struct Buffer {
+    public var parts: [String]
+    public var bytes: Int
+}
+
+public func maximumOutputBytes(): Int {
+    return 8388608
+}
+
+public func buffer(): Buffer {
+    return Buffer(parts: [], bytes: 0)
+}
+
+public func append(buffer: inout Buffer, text: borrowing String): Result<Void, Diagnostic> {
+    if buffer.bytes < 0 || buffer.bytes > maximumOutputBytes() ||
+        text.count > maximumOutputBytes() - buffer.bytes {
+        return .Err(Diagnostic(code: "output.budget-exceeded", offset: -1,
+            context: "output", message: "output exceeds the inclusive 8 MiB ceiling"))
+    }
+    &buffer.parts.append(element: text)
+    &buffer.bytes = buffer.bytes + text.count
+    return .Ok(())
+}
+
+public func finish(buffer: consuming Buffer): String {
+    return joined(parts: consume buffer.parts)
+}
+
+// Printing and file output each add one newline, so rendered text ends without its own.
+public func withoutFinalNewline(text: consuming String): String {
+    if text.count == 0 || text[text.count - 1] != 10 { return text }
+    let end = text.count - 1
+    var parts: [String] = []
+    var index = 0
+    while index < end {
+        var piece = ""
+        var count = 0
+        while index < end && count < 256 {
+            piece = piece + byteToString(value: text[index])
+            index = index + 1
+            count = count + 1
+        }
+        &parts.append(element: piece)
+    }
+    return joined(parts: consume parts)
+}

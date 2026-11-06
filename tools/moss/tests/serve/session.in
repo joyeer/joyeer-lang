@@ -1,0 +1,7 @@
+disasm Example8.class
+bogus
+
+inspect Nope.class
+disasm Example8.class
+quit
+methods never-reached

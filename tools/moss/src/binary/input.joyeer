@@ -1,0 +1,65 @@
+public enum InputError {
+    InspectFailed(String, FileSystemError),
+    NotRegular(String, FileKind),
+    ReadFailed(String, FileSystemError),
+    TooLarge(String, Int),
+}
+
+public func maximumInputBytes(): Int {
+    return 16777216
+}
+
+public func inputErrorCode(error: borrowing InputError): String {
+    return match error {
+        .InspectFailed(_, _) => "input.inspect-failed",
+        .NotRegular(_, _) => "input.not-regular",
+        .ReadFailed(_, _) => "input.read-failed",
+        .TooLarge(_, _) => "input.too-large",
+    }
+}
+
+public func fileSystemCode(error: borrowing FileSystemError): Int {
+    return match error {
+        .InvalidPath(code) => code,
+        .NotFound(code) => code,
+        .PermissionDenied(code) => code,
+        .AlreadyExists(code) => code,
+        .NotDirectory(code) => code,
+        .IsDirectory(code) => code,
+        .Other(code) => code,
+    }
+}
+
+public func inputHostCode(error: borrowing InputError): Int? {
+    return match error {
+        .InspectFailed(_, host) => .Some(fileSystemCode(error: host)),
+        .ReadFailed(_, host) => .Some(fileSystemCode(error: host)),
+        .NotRegular(_, _) => .None,
+        .TooLarge(_, _) => .None,
+    }
+}
+
+public func readInput(path: borrowing String): Result<String, InputError> {
+    let kind = match fileKind(path: path) {
+        .Ok(value) => value,
+        .Err(error) => { return .Err(.InspectFailed(path, error)) },
+    }
+    let regular = match kind {
+        .File => true,
+        .Directory => false,
+        .Symlink => false,
+        .Other => false,
+    }
+    if !regular {
+        return .Err(.NotRegular(path, kind))
+    }
+    let limit = maximumInputBytes()
+    let bytes = match readFilePrefix(path: path, maximumBytes: limit + 1) {
+        .Ok(value) => value,
+        .Err(error) => { return .Err(.ReadFailed(path, error)) },
+    }
+    if bytes.count > limit {
+        return .Err(.TooLarge(path, limit))
+    }
+    return .Ok(bytes)
+}

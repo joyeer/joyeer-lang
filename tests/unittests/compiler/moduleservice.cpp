@@ -1,4 +1,5 @@
 #include "compiler/driver/compiler+service.h"
+#include "compiler/driver/toolchain.h"
 #include "compiler/ir/ir.h"
 
 #include <gtest/gtest.h>
@@ -466,5 +467,156 @@ TEST_F(ModuleServiceTest, RejectsDependenciesWithoutARootCompilationUnit) {
     compiler.compile();
     EXPECT_TRUE(hasCode("module.missing-root")) << errors();
 }
+
+// Writes <directory>/toolchain/lib with an index stamped for this compiler.
+class StandardLibraryTest : public ModuleServiceTest {
+protected:
+    void SetUp() override {
+        ModuleServiceTest::SetUp();
+        library = directory / "toolchain" / "lib";
+        options.libraryDirectory = library;
+        options.standardLibrary = true;
+    }
+
+    void index(const std::string& modules, const std::string& version = std::string()) {
+        const auto stamp = joyeer::expectedToolchainStamp();
+        write("toolchain/lib/index.toml",
+              "schema-version = 1\n"
+              "compiler-version = \"" + (version.empty() ? stamp.version : version) + "\"\n"
+              "target = \"" + stamp.target + "\"\n"
+              "configuration = \"" + stamp.configuration + "\"\n"
+              "modules = [" + modules + "]\n");
+    }
+
+    void module(const std::string& name, const std::string& source, const std::string& extra = std::string()) {
+        write("toolchain/lib/" + name + "/project.toml",
+              "schema-version = 1\n[module]\nname = \"" + name + "\"\nkind = \"source\"\n"
+              "sources = [\"" + name + ".joyeer\"]\ndependencies = []\n" + extra);
+        write("toolchain/lib/" + name + "/" + name + ".joyeer", source);
+    }
+
+    std::filesystem::path library;
+};
+
+TEST_F(StandardLibraryTest, ResolvesAnImportedStandardModuleWithoutSuppliedSources) {
+    index("\"Answer\"");
+    module("Answer", "public func answer(): Int { return 42 }\n");
+    root("main.joyeer", "import Answer\nfunc main() { print(value: Answer.answer()) }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+    EXPECT_TRUE(compiler.getLastCompiledSourceFile()->llvmHasEntryPoint);
+}
+
+TEST_F(StandardLibraryTest, ResolvesStandardModulesForASingleFile) {
+    index("\"Answer\"");
+    module("Answer", "public func answer(): Int { return 42 }\n");
+    options.moduleName.clear();
+    const auto file = write("single.joyeer", "import Answer\nfunc main() { print(value: Answer.answer()) }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile(file);
+    ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+    EXPECT_TRUE(compiler.getLastCompiledSourceFile()->llvmHasEntryPoint);
+}
+
+TEST_F(StandardLibraryTest, LoadsOnlyTheImportedStandardModules) {
+    index("\"Answer\", \"Broken\"");
+    module("Answer", "public func answer(): Int { return 42 }\n");
+    module("Broken", "this is not valid source\n");
+    root("main.joyeer", "import Answer\nfunc main() { print(value: Answer.answer()) }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(StandardLibraryTest, ResolvesStandardDependenciesOfStandardModules) {
+    index("\"Outer\", \"Inner\"");
+    module("Inner", "public func inner(): Int { return 7 }\n");
+    module("Outer", "import Inner\npublic func outer(): Int { return Inner.inner() }\n");
+    root("main.joyeer", "import Outer\nfunc main() { print(value: Outer.outer()) }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(StandardLibraryTest, SuppliedModulesAreSearchedBeforeTheToolchain) {
+    index("\"Answer\"");
+    module("Answer", "public func answer(): Int { return 42 }\n");
+    root("main.joyeer", "import Other\nfunc main() { print(value: Other.other()) }\n");
+    dependency("Other", "other.joyeer", "public func other(): Int { return 1 }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(StandardLibraryTest, ASuppliedModuleOverridesAStandardModuleOfTheSameName) {
+    index("\"Answer\"");
+    // The toolchain copy is invalid; only the supplied module may be loaded.
+    module("Answer", "this is not valid source\n");
+    root("main.joyeer", "import Answer\nfunc main() { print(value: Answer.answer()) }\n");
+    dependency("Answer", "mine.joyeer", "public func answer(): Int { return 1 }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(StandardLibraryTest, RejectsALibraryStampedByAnotherCompiler) {
+    index("\"Answer\"", "9.9.9");
+    module("Answer", "public func answer(): Int { return 42 }\n");
+    root("main.joyeer", "import Answer\nfunc main() { print(value: Answer.answer()) }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_TRUE(hasCode("toolchain.library-mismatch")) << errors();
+}
+
+TEST_F(StandardLibraryTest, ReportsUnknownImportsAndDisabledLibraries) {
+    index("\"Answer\"");
+    module("Answer", "public func answer(): Int { return 42 }\n");
+    root("main.joyeer", "import Answer\nimport Missing\nfunc main() {}\n");
+    {
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        EXPECT_TRUE(hasCode("module.unknown-import")) << errors();
+    }
+    diagnostics.errors.clear();
+    options.standardLibrary = false;
+    CompilerService disabled(&diagnostics, options);
+    disabled.compile();
+    EXPECT_TRUE(hasCode("module.unknown-import")) << errors();
+}
+
+TEST_F(StandardLibraryTest, ToolchainAuthorizesNativeArchivesOnlyForImportedModules) {
+    index("\"Native\", \"Plain\"");
+    module("Native", "public func value(): Int { return 3 }\n",
+           "native-bindings = false\nnative-libraries = [\"native/archive.a\"]\n");
+    module("Plain", "public func plain(): Int { return 4 }\n");
+    write("toolchain/lib/Native/native/archive.a", "archive");
+    {
+        root("main.joyeer", "import Native\nfunc main() { print(value: Native.value()) }\n");
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+        ASSERT_EQ(compiler.implicitNativeLibraries().size(), 1u);
+        EXPECT_EQ(compiler.implicitNativeLibraries()[0].filename(), "archive.a");
+    }
+    options.sourceFiles.clear();
+    root("other.joyeer", "import Plain\nfunc main() { print(value: Plain.plain()) }\n");
+    CompilerService plain(&diagnostics, options);
+    plain.compile();
+    ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+    EXPECT_TRUE(plain.implicitNativeLibraries().empty());
+}
+
+TEST_F(StandardLibraryTest, RejectsUnsafeStandardModulePaths) {
+    index("\"Answer\"");
+    write("toolchain/lib/Answer/project.toml",
+          "schema-version = 1\n[module]\nname = \"Answer\"\nkind = \"source\"\n"
+          "sources = [\"../escape.joyeer\"]\ndependencies = []\n");
+    root("main.joyeer", "import Answer\nfunc main() {}\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_TRUE(hasCode("toolchain.library-invalid")) << errors();
+}
+
 
 } // namespace

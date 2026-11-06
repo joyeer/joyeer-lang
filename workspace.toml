@@ -6,4 +6,6 @@ members = [
     "src/library/System",
     "tests/library/Foundation",
     "tests/library/System",
+    # Moss is a workspace of its own; it needs the Compression standard module.
+    "tools/moss",
 ]

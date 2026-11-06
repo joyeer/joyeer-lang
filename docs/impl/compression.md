@@ -20,6 +20,9 @@ cmake --build --preset arm64-debug
     --workspace .\out\build\arm64-debug\src\library\Compression\package\Debug\workspace.toml
 ```
 
+The test module imports `Compression` from the compiler's standard library,
+so that run exercises the staged toolchain, not a copy.
+
 The same CMake option applies to the other supported presets. The option
 defaults to `OFF`; enabling it fetches the pinned miniz source. CMake produces
 a configuration-specific package containing the `Compression` module, its
@@ -28,17 +31,23 @@ native archive, a test module, and their workspace. Its generated
 relative `native-libraries` path. CMake, not fern, builds that native archive.
 The repository-root source-only workspace remains independent of this build.
 
-Copy the built `Compression` directory, including `native` and `licenses`,
-into a workspace, add it to the workspace members, and declare
-`dependencies = ["Compression"]` in the consuming module. Use a matching
-compiler/runtime, platform, and architecture. There is no automatic installed
-module discovery or binary compatibility promise across toolchain revisions.
+The build stages the module into the compiler's standard library,
+`<compiler directory>/lib/Compression` (see
+[toolchain library resolution](../plan/toolchain-libraries.md)), and lists it in
+`lib/index.toml`. `import Compression` then resolves with no flags, and the
+module's `native/` archive is linked only for programs that import it. In a
+fern workspace, declare `dependencies = ["Compression"]` without a member.
+Nothing is copied, and the library always matches the compiler that finds it.
+A workspace or `--module-source` module named `Compression` takes precedence
+over the toolchain's copy, which is how the module's own sources are developed;
+the module tests also pass `--no-stdlib`.
 
-Alternatively, `cmake --install` with component `Compression` installs the
-module under `library/Compression`, including the miniz MIT license and the
-Joyeer license. Component `NativeDevelopment` separately installs the
-runtime-owned buffer adapter headers under `include/joyeer`; applications
-using only the Joyeer module do not need those C headers.
+`cmake --install` with component `StandardLibrary` installs the whole
+`lib/` directory (including the miniz MIT license and the Joyeer license under
+`lib/Compression/licenses`) beside the installed compiler. Component
+`NativeDevelopment` separately installs the runtime-owned buffer adapter
+headers under `include/joyeer`; applications using only the Joyeer module do
+not need those C headers.
 
 ## API
 

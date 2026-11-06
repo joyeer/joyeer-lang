@@ -1,0 +1,1118 @@
+public class OpcodeMatrix {
+  public static void op0();
+    Code:
+         0: nop
+         1: return
+
+  public static void op1();
+    Code:
+         0: aconst_null
+         1: return
+
+  public static void op2();
+    Code:
+         0: iconst_m1
+         1: return
+
+  public static void op3();
+    Code:
+         0: iconst_0
+         1: return
+
+  public static void op4();
+    Code:
+         0: iconst_1
+         1: return
+
+  public static void op5();
+    Code:
+         0: iconst_2
+         1: return
+
+  public static void op6();
+    Code:
+         0: iconst_3
+         1: return
+
+  public static void op7();
+    Code:
+         0: iconst_4
+         1: return
+
+  public static void op8();
+    Code:
+         0: iconst_5
+         1: return
+
+  public static void op9();
+    Code:
+         0: lconst_0
+         1: return
+
+  public static void op10();
+    Code:
+         0: lconst_1
+         1: return
+
+  public static void op11();
+    Code:
+         0: fconst_0
+         1: return
+
+  public static void op12();
+    Code:
+         0: fconst_1
+         1: return
+
+  public static void op13();
+    Code:
+         0: fconst_2
+         1: return
+
+  public static void op14();
+    Code:
+         0: dconst_0
+         1: return
+
+  public static void op15();
+    Code:
+         0: dconst_1
+         1: return
+
+  public static void op16();
+    Code:
+         0: bipush        -128
+         2: return
+
+  public static void op17();
+    Code:
+         0: sipush        -32768
+         3: return
+
+  public static void op18();
+    Code:
+         0: ldc           #6                  // int 1
+         2: return
+
+  public static void op19();
+    Code:
+         0: ldc_w         #6                  // int 1
+         3: return
+
+  public static void op20();
+    Code:
+         0: ldc2_w        #7                  // long 0l
+         3: return
+
+  public static void op21();
+    Code:
+         0: iload         255
+         2: return
+
+  public static void op22();
+    Code:
+         0: lload         255
+         2: return
+
+  public static void op23();
+    Code:
+         0: fload         255
+         2: return
+
+  public static void op24();
+    Code:
+         0: dload         255
+         2: return
+
+  public static void op25();
+    Code:
+         0: aload         255
+         2: return
+
+  public static void op26();
+    Code:
+         0: iload_0
+         1: return
+
+  public static void op27();
+    Code:
+         0: iload_1
+         1: return
+
+  public static void op28();
+    Code:
+         0: iload_2
+         1: return
+
+  public static void op29();
+    Code:
+         0: iload_3
+         1: return
+
+  public static void op30();
+    Code:
+         0: lload_0
+         1: return
+
+  public static void op31();
+    Code:
+         0: lload_1
+         1: return
+
+  public static void op32();
+    Code:
+         0: lload_2
+         1: return
+
+  public static void op33();
+    Code:
+         0: lload_3
+         1: return
+
+  public static void op34();
+    Code:
+         0: fload_0
+         1: return
+
+  public static void op35();
+    Code:
+         0: fload_1
+         1: return
+
+  public static void op36();
+    Code:
+         0: fload_2
+         1: return
+
+  public static void op37();
+    Code:
+         0: fload_3
+         1: return
+
+  public static void op38();
+    Code:
+         0: dload_0
+         1: return
+
+  public static void op39();
+    Code:
+         0: dload_1
+         1: return
+
+  public static void op40();
+    Code:
+         0: dload_2
+         1: return
+
+  public static void op41();
+    Code:
+         0: dload_3
+         1: return
+
+  public static void op42();
+    Code:
+         0: aload_0
+         1: return
+
+  public static void op43();
+    Code:
+         0: aload_1
+         1: return
+
+  public static void op44();
+    Code:
+         0: aload_2
+         1: return
+
+  public static void op45();
+    Code:
+         0: aload_3
+         1: return
+
+  public static void op46();
+    Code:
+         0: iaload
+         1: return
+
+  public static void op47();
+    Code:
+         0: laload
+         1: return
+
+  public static void op48();
+    Code:
+         0: faload
+         1: return
+
+  public static void op49();
+    Code:
+         0: daload
+         1: return
+
+  public static void op50();
+    Code:
+         0: aaload
+         1: return
+
+  public static void op51();
+    Code:
+         0: baload
+         1: return
+
+  public static void op52();
+    Code:
+         0: caload
+         1: return
+
+  public static void op53();
+    Code:
+         0: saload
+         1: return
+
+  public static void op54();
+    Code:
+         0: istore        255
+         2: return
+
+  public static void op55();
+    Code:
+         0: lstore        255
+         2: return
+
+  public static void op56();
+    Code:
+         0: fstore        255
+         2: return
+
+  public static void op57();
+    Code:
+         0: dstore        255
+         2: return
+
+  public static void op58();
+    Code:
+         0: astore        255
+         2: return
+
+  public static void op59();
+    Code:
+         0: istore_0
+         1: return
+
+  public static void op60();
+    Code:
+         0: istore_1
+         1: return
+
+  public static void op61();
+    Code:
+         0: istore_2
+         1: return
+
+  public static void op62();
+    Code:
+         0: istore_3
+         1: return
+
+  public static void op63();
+    Code:
+         0: lstore_0
+         1: return
+
+  public static void op64();
+    Code:
+         0: lstore_1
+         1: return
+
+  public static void op65();
+    Code:
+         0: lstore_2
+         1: return
+
+  public static void op66();
+    Code:
+         0: lstore_3
+         1: return
+
+  public static void op67();
+    Code:
+         0: fstore_0
+         1: return
+
+  public static void op68();
+    Code:
+         0: fstore_1
+         1: return
+
+  public static void op69();
+    Code:
+         0: fstore_2
+         1: return
+
+  public static void op70();
+    Code:
+         0: fstore_3
+         1: return
+
+  public static void op71();
+    Code:
+         0: dstore_0
+         1: return
+
+  public static void op72();
+    Code:
+         0: dstore_1
+         1: return
+
+  public static void op73();
+    Code:
+         0: dstore_2
+         1: return
+
+  public static void op74();
+    Code:
+         0: dstore_3
+         1: return
+
+  public static void op75();
+    Code:
+         0: astore_0
+         1: return
+
+  public static void op76();
+    Code:
+         0: astore_1
+         1: return
+
+  public static void op77();
+    Code:
+         0: astore_2
+         1: return
+
+  public static void op78();
+    Code:
+         0: astore_3
+         1: return
+
+  public static void op79();
+    Code:
+         0: iastore
+         1: return
+
+  public static void op80();
+    Code:
+         0: lastore
+         1: return
+
+  public static void op81();
+    Code:
+         0: fastore
+         1: return
+
+  public static void op82();
+    Code:
+         0: dastore
+         1: return
+
+  public static void op83();
+    Code:
+         0: aastore
+         1: return
+
+  public static void op84();
+    Code:
+         0: bastore
+         1: return
+
+  public static void op85();
+    Code:
+         0: castore
+         1: return
+
+  public static void op86();
+    Code:
+         0: sastore
+         1: return
+
+  public static void op87();
+    Code:
+         0: pop
+         1: return
+
+  public static void op88();
+    Code:
+         0: pop2
+         1: return
+
+  public static void op89();
+    Code:
+         0: dup
+         1: return
+
+  public static void op90();
+    Code:
+         0: dup_x1
+         1: return
+
+  public static void op91();
+    Code:
+         0: dup_x2
+         1: return
+
+  public static void op92();
+    Code:
+         0: dup2
+         1: return
+
+  public static void op93();
+    Code:
+         0: dup2_x1
+         1: return
+
+  public static void op94();
+    Code:
+         0: dup2_x2
+         1: return
+
+  public static void op95();
+    Code:
+         0: swap
+         1: return
+
+  public static void op96();
+    Code:
+         0: iadd
+         1: return
+
+  public static void op97();
+    Code:
+         0: ladd
+         1: return
+
+  public static void op98();
+    Code:
+         0: fadd
+         1: return
+
+  public static void op99();
+    Code:
+         0: dadd
+         1: return
+
+  public static void op100();
+    Code:
+         0: isub
+         1: return
+
+  public static void op101();
+    Code:
+         0: lsub
+         1: return
+
+  public static void op102();
+    Code:
+         0: fsub
+         1: return
+
+  public static void op103();
+    Code:
+         0: dsub
+         1: return
+
+  public static void op104();
+    Code:
+         0: imul
+         1: return
+
+  public static void op105();
+    Code:
+         0: lmul
+         1: return
+
+  public static void op106();
+    Code:
+         0: fmul
+         1: return
+
+  public static void op107();
+    Code:
+         0: dmul
+         1: return
+
+  public static void op108();
+    Code:
+         0: idiv
+         1: return
+
+  public static void op109();
+    Code:
+         0: ldiv
+         1: return
+
+  public static void op110();
+    Code:
+         0: fdiv
+         1: return
+
+  public static void op111();
+    Code:
+         0: ddiv
+         1: return
+
+  public static void op112();
+    Code:
+         0: irem
+         1: return
+
+  public static void op113();
+    Code:
+         0: lrem
+         1: return
+
+  public static void op114();
+    Code:
+         0: frem
+         1: return
+
+  public static void op115();
+    Code:
+         0: drem
+         1: return
+
+  public static void op116();
+    Code:
+         0: ineg
+         1: return
+
+  public static void op117();
+    Code:
+         0: lneg
+         1: return
+
+  public static void op118();
+    Code:
+         0: fneg
+         1: return
+
+  public static void op119();
+    Code:
+         0: dneg
+         1: return
+
+  public static void op120();
+    Code:
+         0: ishl
+         1: return
+
+  public static void op121();
+    Code:
+         0: lshl
+         1: return
+
+  public static void op122();
+    Code:
+         0: ishr
+         1: return
+
+  public static void op123();
+    Code:
+         0: lshr
+         1: return
+
+  public static void op124();
+    Code:
+         0: iushr
+         1: return
+
+  public static void op125();
+    Code:
+         0: lushr
+         1: return
+
+  public static void op126();
+    Code:
+         0: iand
+         1: return
+
+  public static void op127();
+    Code:
+         0: land
+         1: return
+
+  public static void op128();
+    Code:
+         0: ior
+         1: return
+
+  public static void op129();
+    Code:
+         0: lor
+         1: return
+
+  public static void op130();
+    Code:
+         0: ixor
+         1: return
+
+  public static void op131();
+    Code:
+         0: lxor
+         1: return
+
+  public static void op132();
+    Code:
+         0: iinc          255, -128
+         3: return
+
+  public static void op133();
+    Code:
+         0: i2l
+         1: return
+
+  public static void op134();
+    Code:
+         0: i2f
+         1: return
+
+  public static void op135();
+    Code:
+         0: i2d
+         1: return
+
+  public static void op136();
+    Code:
+         0: l2i
+         1: return
+
+  public static void op137();
+    Code:
+         0: l2f
+         1: return
+
+  public static void op138();
+    Code:
+         0: l2d
+         1: return
+
+  public static void op139();
+    Code:
+         0: f2i
+         1: return
+
+  public static void op140();
+    Code:
+         0: f2l
+         1: return
+
+  public static void op141();
+    Code:
+         0: f2d
+         1: return
+
+  public static void op142();
+    Code:
+         0: d2i
+         1: return
+
+  public static void op143();
+    Code:
+         0: d2l
+         1: return
+
+  public static void op144();
+    Code:
+         0: d2f
+         1: return
+
+  public static void op145();
+    Code:
+         0: i2b
+         1: return
+
+  public static void op146();
+    Code:
+         0: i2c
+         1: return
+
+  public static void op147();
+    Code:
+         0: i2s
+         1: return
+
+  public static void op148();
+    Code:
+         0: lcmp
+         1: return
+
+  public static void op149();
+    Code:
+         0: fcmpl
+         1: return
+
+  public static void op150();
+    Code:
+         0: fcmpg
+         1: return
+
+  public static void op151();
+    Code:
+         0: dcmpl
+         1: return
+
+  public static void op152();
+    Code:
+         0: dcmpg
+         1: return
+
+  public static void op153();
+    Code:
+         0: ifeq          0
+         3: return
+
+  public static void op154();
+    Code:
+         0: ifne          0
+         3: return
+
+  public static void op155();
+    Code:
+         0: iflt          0
+         3: return
+
+  public static void op156();
+    Code:
+         0: ifge          0
+         3: return
+
+  public static void op157();
+    Code:
+         0: ifgt          0
+         3: return
+
+  public static void op158();
+    Code:
+         0: ifle          0
+         3: return
+
+  public static void op159();
+    Code:
+         0: if_icmpeq     0
+         3: return
+
+  public static void op160();
+    Code:
+         0: if_icmpne     0
+         3: return
+
+  public static void op161();
+    Code:
+         0: if_icmplt     0
+         3: return
+
+  public static void op162();
+    Code:
+         0: if_icmpge     0
+         3: return
+
+  public static void op163();
+    Code:
+         0: if_icmpgt     0
+         3: return
+
+  public static void op164();
+    Code:
+         0: if_icmple     0
+         3: return
+
+  public static void op165();
+    Code:
+         0: if_acmpeq     0
+         3: return
+
+  public static void op166();
+    Code:
+         0: if_acmpne     0
+         3: return
+
+  public static void op167();
+    Code:
+         0: goto          0
+         3: return
+
+  public static void op170();
+    Code:
+         0: tableswitch   { // -1 to -1
+                      -1: 0
+                 default: 0
+            }
+        20: return
+
+  public static void op171();
+    Code:
+         0: lookupswitch  { // 1
+                     -10: 0
+                 default: 0
+            }
+        20: return
+
+  public static int op172();
+    Code:
+         0: ireturn
+
+  public static long op173();
+    Code:
+         0: lreturn
+
+  public static float op174();
+    Code:
+         0: freturn
+
+  public static double op175();
+    Code:
+         0: dreturn
+
+  public static java.lang.Object op176();
+    Code:
+         0: areturn
+
+  public static void op177();
+    Code:
+         0: return
+
+  public static void op178();
+    Code:
+         0: getstatic     #13                 // Field OpcodeMatrix.field:I
+         3: return
+
+  public static void op179();
+    Code:
+         0: putstatic     #13                 // Field OpcodeMatrix.field:I
+         3: return
+
+  public static void op180();
+    Code:
+         0: getfield      #13                 // Field OpcodeMatrix.field:I
+         3: return
+
+  public static void op181();
+    Code:
+         0: putfield      #13                 // Field OpcodeMatrix.field:I
+         3: return
+
+  public static void op182();
+    Code:
+         0: invokevirtual #18                 // Method java/lang/Object.hashCode:()I
+         3: return
+
+  public static void op183();
+    Code:
+         0: invokespecial #23                 // Method java/lang/Object."<init>":()V
+         3: return
+
+  public static void op184();
+    Code:
+         0: invokestatic  #27                 // Method OpcodeMatrix.helper:()V
+         3: return
+
+  public static void op185();
+    Code:
+         0: invokeinterface #32,  1           // InterfaceMethod java/util/List.size:()I
+         5: return
+
+  public static void op186();
+    Code:
+         0: invokedynamic #36,  0             // InvokeDynamic #0:call:()I
+         5: return
+
+  public static void op187();
+    Code:
+         0: new           #37                 // class java/lang/Object
+         3: return
+
+  public static void op188();
+    Code:
+         0: newarray       long
+         2: return
+
+  public static void op189();
+    Code:
+         0: anewarray     #37                 // class java/lang/Object
+         3: return
+
+  public static void op190();
+    Code:
+         0: arraylength
+         1: return
+
+  public static void op191();
+    Code:
+         0: athrow
+         1: return
+
+  public static void op192();
+    Code:
+         0: checkcast     #37                 // class java/lang/Object
+         3: return
+
+  public static void op193();
+    Code:
+         0: instanceof    #37                 // class java/lang/Object
+         3: return
+
+  public static void op194();
+    Code:
+         0: monitorenter
+         1: return
+
+  public static void op195();
+    Code:
+         0: monitorexit
+         1: return
+
+  public static void op197();
+    Code:
+         0: multianewarray #39,  2            // class "[[I"
+         4: return
+
+  public static void op198();
+    Code:
+         0: ifnull        0
+         3: return
+
+  public static void op199();
+    Code:
+         0: ifnonnull     0
+         3: return
+
+  public static void op200();
+    Code:
+         0: goto_w        0
+         5: return
+
+  public static void wide21();
+    Code:
+         0: iload_w       300
+         4: return
+
+  public static void wide22();
+    Code:
+         0: lload_w       300
+         4: return
+
+  public static void wide23();
+    Code:
+         0: fload_w       300
+         4: return
+
+  public static void wide24();
+    Code:
+         0: dload_w       300
+         4: return
+
+  public static void wide25();
+    Code:
+         0: aload_w       300
+         4: return
+
+  public static void wide54();
+    Code:
+         0: istore_w      300
+         4: return
+
+  public static void wide55();
+    Code:
+         0: lstore_w      300
+         4: return
+
+  public static void wide56();
+    Code:
+         0: fstore_w      300
+         4: return
+
+  public static void wide57();
+    Code:
+         0: dstore_w      300
+         4: return
+
+  public static void wide58();
+    Code:
+         0: astore_w      300
+         4: return
+
+  public static void wide132();
+    Code:
+         0: iinc_w        300, -32768
+         6: return
+
+  public static void align170_0();
+    Code:
+         0: tableswitch   { // 0 to 0
+                       0: 0
+                 default: 0
+            }
+        20: return
+
+  public static void align170_1();
+    Code:
+         0: nop
+         1: tableswitch   { // 0 to 0
+                       0: 1
+                 default: 1
+            }
+        20: return
+
+  public static void align170_2();
+    Code:
+         0: nop
+         1: nop
+         2: tableswitch   { // 0 to 0
+                       0: 2
+                 default: 2
+            }
+        20: return
+
+  public static void align170_3();
+    Code:
+         0: nop
+         1: nop
+         2: nop
+         3: tableswitch   { // 0 to 0
+                       0: 3
+                 default: 3
+            }
+        20: return
+
+  public static void align171_0();
+    Code:
+         0: lookupswitch  { // 0
+                 default: 0
+            }
+        12: return
+
+  public static void align171_1();
+    Code:
+         0: nop
+         1: lookupswitch  { // 0
+                 default: 1
+            }
+        12: return
+
+  public static void align171_2();
+    Code:
+         0: nop
+         1: nop
+         2: lookupswitch  { // 0
+                 default: 2
+            }
+        12: return
+
+  public static void align171_3();
+    Code:
+         0: nop
+         1: nop
+         2: nop
+         3: lookupswitch  { // 0
+                 default: 3
+            }
+        12: return
+}

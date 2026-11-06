@@ -1,0 +1,21 @@
+func main() {
+    var running = true
+    while running {
+        match readStdinLine(maximumBytes: 8) {
+            .Ok(line) => print(value: "[" + line + "]"),
+            .Err(error) => match error {
+                .EndOfInput(_) => {
+                    print(value: "end")
+                    running = false
+                }
+                .LineTooLong(_) => {
+                    print(value: "too long")
+                }
+                .ReadFailed(_) => {
+                    print(value: "failed")
+                    running = false
+                }
+            },
+        }
+    }
+}

@@ -1,0 +1,18 @@
+schema-version = 1
+
+[workspace]
+members = [
+    ".",
+    "src",
+    "src/analysis",
+    "src/archive",
+    "src/binary",
+    "src/jvm",
+    "src/model",
+    "src/output",
+    "tests",
+    "tests/archive",
+    "tests/binary",
+    "tests/golden",
+    "tests/jvm",
+]

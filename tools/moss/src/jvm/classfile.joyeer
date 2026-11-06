@@ -1,0 +1,304 @@
+import moss.binary
+import moss.model
+
+private func readMember(input: borrowing String, cursor: inout Cursor,
+    pool: borrowing [Constant], method: Bool, inventoryIndex: Int,
+    budget: inout ParseBudget): Result<Member, Diagnostic> {
+    let start = cursor.position
+    let flags = u(input: input, cursor: &cursor, width: 2, context: "member.flags")?
+    let visibility = flags % 8
+    if (visibility != 0 && visibility != 1 && visibility != 2 && visibility != 4) ||
+        (!method && flag(value: flags, mask: 16) && flag(value: flags, mask: 64)) {
+        return .Err(diagnostic(code: "jvm.invalid-member-flags", offset: start,
+            context: "member flags", message: "incompatible visibility or final/volatile field flags"))
+    }
+    let nameIndex = u(input: input, cursor: &cursor, width: 2, context: "member.name")?
+    let typeIndex = u(input: input, cursor: &cursor, width: 2, context: "member.descriptor")?
+    let name = utf8(pool: pool, index: nameIndex, offset: start + 2, context: "member name")?
+    if !validName(units: name, method: method) {
+        return .Err(diagnostic(code: "jvm.invalid-member-name", offset: start + 2,
+            context: "member", message: "invalid unqualified name"))
+    }
+    let type = utf8(pool: pool, index: typeIndex, offset: start + 4, context: "member descriptor")?
+    let info = descriptor(units: type, method: method, offset: start + 4)?
+    var parameterSlots = info.slots
+    let static = flag(value: flags, mask: 8)
+    if method && !static { parameterSlots = parameterSlots + 1 }
+    if method && parameterSlots > 255 {
+        return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: start + 4,
+            context: "method", message: "parameters and receiver exceed 255 slots"))
+    }
+    if method && named(pool: pool, index: nameIndex, name: "<init>") &&
+        (static || info.returnType != 86 || flag(value: flags, mask: 256) ||
+            flag(value: flags, mask: 1024) || flag(value: flags, mask: 16) ||
+            flag(value: flags, mask: 32)) {
+        return .Err(diagnostic(code: "jvm.invalid-method", offset: start,
+            context: "<init>", message: "constructor must be nonstatic and return void"))
+    }
+    if method && named(pool: pool, index: nameIndex, name: "<clinit>") &&
+        (!static || !unitsEqualAscii(units: type, text: "()V")) {
+        return .Err(diagnostic(code: "jvm.invalid-method", offset: start,
+            context: "<clinit>", message: "class initializer must be static ()V"))
+    }
+    let attributes = readAttributes(input: input, cursor: &cursor, pool: pool, budget: &budget)?
+    var code: Code? = .None
+    var codeCount = 0
+    var constantCount = 0
+    var exceptionCount = 0
+    var index = 0
+    while index < attributes.count {
+        if named(pool: pool, index: attributes[index].nameIndex, name: "Code") {
+            codeCount = codeCount + 1
+            if !method || codeCount > 1 {
+                return .Err(diagnostic(code: "jvm.invalid-attribute", offset: attributes[index].headerOffset,
+                    context: "Code", message: "Code belongs to a method and may occur only once"))
+            }
+            code = .Some(readCode(input: input, attribute: attributes[index], pool: pool,
+                parameterSlots: parameterSlots, budget: &budget)?)
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "ConstantValue") {
+            constantCount = constantCount + 1
+            if method || constantCount > 1 {
+                return .Err(diagnostic(code: "jvm.invalid-attribute", offset: attributes[index].headerOffset,
+                    context: "ConstantValue", message: "invalid ConstantValue placement or duplicate"))
+            }
+            var body = bounded(input: input, region: attributes[index].body, context: "ConstantValue")?
+            let constant = u(input: input, cursor: &body, width: 2, context: "ConstantValue.index")?
+            requireTag(pool: pool, index: constant, tag: 0, offset: attributes[index].body.offset,
+                context: "ConstantValue")?
+            var expected = 3
+            if info.returnType == 70 { expected = 4 }
+            if info.returnType == 74 { expected = 5 }
+            if info.returnType == 68 { expected = 6 }
+            if unitsEqualAscii(units: type, text: "Ljava/lang/String;") { expected = 8 }
+            if info.returnType == 91 || (info.returnType == 76 && expected != 8) ||
+                pool[constant].tag != expected {
+                return .Err(diagnostic(code: "jvm.invalid-constant-tag", offset: attributes[index].body.offset,
+                    context: "ConstantValue", message: "constant does not match field descriptor"))
+            }
+            finished(cursor: body, context: "ConstantValue")?
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "Exceptions") {
+            exceptionCount = exceptionCount + 1
+            if !method || exceptionCount > 1 {
+                return .Err(diagnostic(code: "jvm.invalid-attribute", offset: attributes[index].headerOffset,
+                    context: "Exceptions", message: "invalid Exceptions placement or duplicate"))
+            }
+            checkExceptions(input: input, attribute: attributes[index], pool: pool, budget: &budget)?
+        }
+        index = index + 1
+    }
+    if method {
+        let absent = flag(value: flags, mask: 256) || flag(value: flags, mask: 1024)
+        if flag(value: flags, mask: 1024) &&
+            (flag(value: flags, mask: 2) || static || flag(value: flags, mask: 16) ||
+                flag(value: flags, mask: 32) || flag(value: flags, mask: 256)) {
+            return .Err(diagnostic(code: "jvm.invalid-method", offset: start,
+                context: "method flags", message: "abstract method has incompatible access flags"))
+        }
+        if (absent && codeCount != 0) || (!absent && codeCount != 1) {
+            return .Err(diagnostic(code: "jvm.invalid-method-code", offset: start,
+                context: "method", message: "native/abstract methods have no Code; other methods require Code"))
+        }
+    }
+    return .Ok(Member(index: inventoryIndex, fileOffset: start, flags: flags, nameIndex: nameIndex,
+        descriptorIndex: typeIndex, attributes: attributes, code: code))
+}
+
+private func memberOrder(first: borrowing Member, second: borrowing Member,
+    pool: borrowing [Constant]): Int {
+    if first.nameIndex == second.nameIndex && first.descriptorIndex == second.descriptorIndex { return 0 }
+    var name = 0
+    if first.nameIndex != second.nameIndex {
+        name = compareUnits(first: pool[first.nameIndex].text, second: pool[second.nameIndex].text)
+    }
+    if name != 0 { return name }
+    return compareUnits(first: pool[first.descriptorIndex].text, second: pool[second.descriptorIndex].text)
+}
+
+private func uniqueMembers(members: borrowing [Member],
+    pool: borrowing [Constant]): Result<Void, Diagnostic> {
+    if members.count < 2 { return .Ok(()) }
+    var order: [Int] = []
+    var scratch: [Int] = []
+    var index = 0
+    while index < members.count {
+        &order.append(element: index)
+        &scratch.append(element: 0)
+        index = index + 1
+    }
+    var width = 1
+    while width < members.count {
+        var start = 0
+        while start < members.count {
+            var middle = start + width
+            if middle > members.count { middle = members.count }
+            var end = middle + width
+            if end > members.count { end = members.count }
+            var left = start
+            var right = middle
+            var destination = start
+            while destination < end {
+                if right == end || (left < middle &&
+                    memberOrder(first: members[order[left]], second: members[order[right]], pool: pool) <= 0) {
+                    &scratch[destination] = order[left]
+                    left = left + 1
+                } else {
+                    &scratch[destination] = order[right]
+                    right = right + 1
+                }
+                destination = destination + 1
+            }
+            start = end
+        }
+        index = 0
+        while index < members.count {
+            &order[index] = scratch[index]
+            index = index + 1
+        }
+        width = width * 2
+    }
+    index = 1
+    while index < order.count {
+        if memberOrder(first: members[order[index - 1]], second: members[order[index]], pool: pool) == 0 {
+            return .Err(diagnostic(code: "jvm.duplicate-member", offset: members[order[index]].fileOffset,
+                context: "members", message: "duplicate name and descriptor"))
+        }
+        index = index + 1
+    }
+    return .Ok(())
+}
+
+private func readMembers(input: borrowing String, cursor: inout Cursor,
+    pool: borrowing [Constant], method: Bool, budget: inout ParseBudget): Result<[Member], Diagnostic> {
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 8, budget: &budget, context: "members_count")?
+    var members: [Member] = []
+    var index = 0
+    while index < count {
+        &members.append(element: readMember(input: input, cursor: &cursor, pool: pool,
+            method: method, inventoryIndex: index, budget: &budget)?)
+        index = index + 1
+    }
+    uniqueMembers(members: members, pool: pool)?
+    return .Ok(members)
+}
+
+public func parseClass(input: borrowing String, allowPreview: Bool): Result<ClassFile, Diagnostic> {
+    if input.count > maximumInputBytes() {
+        return .Err(diagnostic(code: "input.too-large", offset: 0,
+            context: "classfile", message: "input exceeds the 16 MiB ceiling"))
+    }
+    var cursor = fullCursor(input: input)
+    let magic = u(input: input, cursor: &cursor, width: 4, context: "class.magic")?
+    if magic != 3405691582 {
+        return .Err(diagnostic(code: "jvm.invalid-magic", offset: 0,
+            context: "classfile", message: "expected CAFEBABE"))
+    }
+    let minor = u(input: input, cursor: &cursor, width: 2, context: "class.minor")?
+    let major = u(input: input, cursor: &cursor, width: 2, context: "class.major")?
+    if major < 52 || major > 69 || (minor != 0 && !(major == 69 && minor == 65535 && allowPreview)) {
+        return .Err(diagnostic(code: "jvm.unsupported-version", offset: 4,
+            context: "classfile", message: "supported: Java 8..25, minor 0; Java 25 preview requires --allow-preview"))
+    }
+    var budget = ParseBudget(records: 0, textBytes: 0)
+    let pool = readPool(input: input, cursor: &cursor, major: major, budget: &budget)?
+    let flags = u(input: input, cursor: &cursor, width: 2, context: "class.flags")?
+    let thisClass = u(input: input, cursor: &cursor, width: 2, context: "class.this_class")?
+    let superClass = u(input: input, cursor: &cursor, width: 2, context: "class.super_class")?
+    classConstant(pool: pool, index: thisClass, arrayAllowed: false, offset: cursor.position - 4, context: "this_class")?
+    let module = flag(value: flags, mask: 32768)
+    if (flag(value: flags, mask: 16) && flag(value: flags, mask: 1024)) ||
+        (flag(value: flags, mask: 512) && !flag(value: flags, mask: 1024)) ||
+        (flag(value: flags, mask: 8192) && !flag(value: flags, mask: 512)) {
+        return .Err(diagnostic(code: "jvm.invalid-class-flags", offset: cursor.position - 6,
+            context: "class flags", message: "incompatible class/interface/annotation flags"))
+    }
+    if superClass != 0 {
+        classConstant(pool: pool, index: superClass, arrayAllowed: false,
+            offset: cursor.position - 2, context: "super_class")?
+        if named(pool: pool, index: pool[thisClass].first, name: "java/lang/Object") ||
+            (flag(value: flags, mask: 512) &&
+                !named(pool: pool, index: pool[superClass].first, name: "java/lang/Object")) {
+            return .Err(diagnostic(code: "jvm.invalid-super-class", offset: cursor.position - 2,
+                context: "classfile", message: "Object has no superclass and interfaces extend Object"))
+        }
+    } else if !module && !named(pool: pool, index: pool[thisClass].first, name: "java/lang/Object") {
+        return .Err(diagnostic(code: "jvm.invalid-super-class", offset: cursor.position - 2,
+            context: "classfile", message: "only Object and module-info have no superclass"))
+    }
+    let count = count16(input: input, cursor: &cursor, minimumBytes: 2, budget: &budget, context: "interfaces_count")?
+    var interfaces: [Int] = []
+    var index = 0
+    while index < count {
+        let offset = cursor.position
+        let type = u(input: input, cursor: &cursor, width: 2, context: "interface")?
+        classConstant(pool: pool, index: type, arrayAllowed: false, offset: offset, context: "interface")?
+        &interfaces.append(element: type)
+        index = index + 1
+    }
+    let fields = readMembers(input: input, cursor: &cursor, pool: pool, method: false, budget: &budget)?
+    let methods = readMembers(input: input, cursor: &cursor, pool: pool, method: true, budget: &budget)?
+    let attributes = readAttributes(input: input, cursor: &cursor, pool: pool, budget: &budget)?
+    finished(cursor: cursor, context: "classfile")?
+    var bootstrapCount = -1
+    var sourceCount = 0
+    var moduleCount = 0
+    index = 0
+    while index < attributes.count {
+        if named(pool: pool, index: attributes[index].nameIndex, name: "BootstrapMethods") {
+            if bootstrapCount >= 0 {
+                return .Err(diagnostic(code: "jvm.invalid-attribute", offset: attributes[index].headerOffset,
+                    context: "BootstrapMethods", message: "duplicate attribute"))
+            }
+            bootstrapCount = readBootstraps(input: input, attribute: attributes[index],
+                pool: pool, budget: &budget)?
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "SourceFile") {
+            sourceCount = sourceCount + 1
+            var body = bounded(input: input, region: attributes[index].body, context: "SourceFile")?
+            let source = u(input: input, cursor: &body, width: 2, context: "SourceFile.index")?
+            requireTag(pool: pool, index: source, tag: 1, offset: attributes[index].body.offset, context: "SourceFile")?
+            finished(cursor: body, context: "SourceFile")?
+            if sourceCount > 1 {
+                return .Err(diagnostic(code: "jvm.invalid-attribute", offset: attributes[index].headerOffset,
+                    context: "SourceFile", message: "duplicate attribute"))
+            }
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "Module") {
+            moduleCount = moduleCount + 1
+            checkModule(input: input, attribute: attributes[index], pool: pool, budget: &budget)?
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "ModulePackages") {
+            if !module {
+                return .Err(diagnostic(code: "jvm.invalid-module", offset: attributes[index].headerOffset,
+                    context: "ModulePackages", message: "attribute requires ACC_MODULE"))
+            }
+            checkModulePackages(input: input, attribute: attributes[index], pool: pool, budget: &budget)?
+        } else if named(pool: pool, index: attributes[index].nameIndex, name: "Code") ||
+            named(pool: pool, index: attributes[index].nameIndex, name: "ConstantValue") {
+            return .Err(diagnostic(code: "jvm.invalid-attribute", offset: attributes[index].headerOffset,
+                context: "class attributes", message: "attribute belongs to a member, not the class"))
+        }
+        index = index + 1
+    }
+    if module && (major < 53 || flags != 32768 || superClass != 0 || interfaces.count != 0 ||
+        fields.count != 0 || methods.count != 0 || moduleCount != 1 ||
+        !named(pool: pool, index: pool[thisClass].first, name: "module-info")) {
+        return .Err(diagnostic(code: "jvm.invalid-module", offset: 0,
+            context: "module-info", message: "invalid module-info class shape"))
+    }
+    if !module && moduleCount != 0 {
+        return .Err(diagnostic(code: "jvm.invalid-module", offset: 0,
+            context: "Module", message: "Module attribute requires ACC_MODULE"))
+    }
+    index = 1
+    while index < pool.count {
+        if (pool[index].tag == 17 || pool[index].tag == 18) && pool[index].first >= bootstrapCount {
+            return .Err(diagnostic(code: "jvm.invalid-bootstrap", offset: pool[index].bytes.offset,
+                context: "dynamic constant", message: "bootstrap method index is absent"))
+        }
+        if (pool[index].tag == 19 || pool[index].tag == 20) && !module {
+            return .Err(diagnostic(code: "jvm.invalid-module", offset: pool[index].bytes.offset,
+                context: "constant_pool", message: "module/package constants require ACC_MODULE"))
+        }
+        index = index + 1
+    }
+    return .Ok(ClassFile(byteCount: input.count, minor: minor, major: major,
+        flags: flags, thisClass: thisClass, superClass: superClass, interfaces: interfaces,
+        pool: pool, fields: fields, methods: methods, attributes: attributes, bootstrapCount: bootstrapCount))
+}

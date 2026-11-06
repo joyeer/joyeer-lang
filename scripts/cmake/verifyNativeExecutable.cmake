@@ -164,6 +164,13 @@ if(DEFINED PROGRAM_WORKING_DIRECTORY)
         WORKING_DIRECTORY "${PROGRAM_WORKING_DIRECTORY}")
 endif()
 
+if(DEFINED PROGRAM_STDIN_FILE)
+    if(NOT EXISTS "${PROGRAM_STDIN_FILE}")
+        fail_native_validation("PROGRAM_STDIN_FILE does not exist: ${PROGRAM_STDIN_FILE}")
+    endif()
+    list(APPEND program_working_directory_arguments INPUT_FILE "${PROGRAM_STDIN_FILE}")
+endif()
+
 if(PROGRAM_ARGUMENT_1_NON_UTF8)
     if(DEFINED PROGRAM_ARGUMENT_1)
         fail_native_validation("PROGRAM_ARGUMENT_1_NON_UTF8 conflicts with PROGRAM_ARGUMENT_1")

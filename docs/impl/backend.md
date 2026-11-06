@@ -230,7 +230,6 @@ UTF-8 at the C ABI boundary. Native Windows ARM64 Debug/Release regressions
 pass for wide CLI conversion, source/output/temporary paths, failure paths,
 and relocated product linking. This is not general Unicode-aware rendering
 or acceptance evidence for other architectures.
-Detailed evidence belongs in [fern](fern.md#5-validation-evidence).
 Diagnostic argument/path text is UTF-8, but OS-provided error messages and
 console rendering remain host-dependent.
 Legacy source-language `readFile` narrow CRT behavior is unchanged.
@@ -292,6 +291,15 @@ early-development interface change. They produce migration errors: replace
 the root directory with `--module-name` plus explicit positional source files,
 and each dependency directory with one `--module-source name=file` per file.
 They are not aliases for the new options.
+
+Imports that no supplied source set provides resolve against the compiler's
+standard library, `<sysroot>/lib` described by `lib/index.toml`, where the
+sysroot is the compiler executable's directory unless `--sysroot <dir>`
+overrides it. Standard modules are loaded only when imported, may import each
+other, and bring their native archives into the link only then. `--print-sysroot`
+prints the root, and `--no-stdlib` disables the lookup. A supplied module with a
+standard module's name takes precedence over the toolchain's copy. See
+[toolchain library resolution](../plan/toolchain-libraries.md).
 
 CLI source paths resolve against the process working directory, including
 dependency paths, not against the first source file or another module.

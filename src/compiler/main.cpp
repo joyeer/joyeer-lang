@@ -1,4 +1,8 @@
 #include "compiler/driver/driver.h"
+#include "compiler/driver/toolchain.h"
+
+#include <iostream>
+#include <string>
 
 #if defined(_WIN32)
 int wmain(int argc, wchar_t** argv) {
@@ -13,6 +17,12 @@ int main(int argc, char** argv) {
     if (diagnostics->hasFailure()) {
         diagnostics->printErrors();
         return 1;
+    }
+    if (options->printSysroot) {
+        const auto root = options->sysroot.empty() ? joyeer::executableDirectory() : options->sysroot;
+        const auto text = root.u8string();
+        std::cout << std::string(text.begin(), text.end()) << std::endl;
+        return 0;
     }
     if(!options->accepted) {
         options->printUsage();

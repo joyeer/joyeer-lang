@@ -49,7 +49,7 @@ New APIs must not present lexical path checks as confinement. Stay aligned with
 ## 4. Native Platform Validation
 
 macOS ARM64 functional acceptance is recorded in
-[fern evidence](../impl/fern.md#5-validation-evidence). Intel macOS and
+[macOS acceptance](../building.md#macos-arm64-acceptance-on-main). Intel macOS and
 standalone Homebrew dependency packaging remain separate gates.
 
 For each additional or unrecorded claimed platform/architecture, with
@@ -66,7 +66,7 @@ For each additional or unrecorded claimed platform/architecture, with
   the [local Debug installer](../building.md#local-debug-installation).
 
 Record provenance and results in
-[fern evidence](../impl/fern.md#5-validation-evidence), not here.
+[building](../building.md), not here.
 
 ## 5. Release Gates
 

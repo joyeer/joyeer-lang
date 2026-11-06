@@ -1,0 +1,106 @@
+import moss.archive
+import moss.binary
+import moss.model
+import moss.output
+
+struct State {
+    var checks: Int
+    var failures: Int
+}
+
+private func expect(state: inout State, condition: Bool, name: borrowing String) {
+    &state.checks = state.checks + 1
+    if !condition {
+        &state.failures = state.failures + 1
+        print(value: "FAIL: " + name)
+    }
+}
+
+private func load(path: borrowing String): String {
+    return match readInput(path: path) {
+        .Ok(bytes) => bytes,
+        .Err(error) => {
+            print(value: "cannot read fixture " + path + ": " + inputErrorCode(error: error))
+            return ""
+        },
+    }
+}
+
+func main(args: borrowing [String]): Int {
+    if args.count != 0 {
+        print(value: "moss-archive-tests: no arguments are accepted")
+        return 1
+    }
+    var state = State(checks: 0, failures: 0)
+    let jar = load(path: "tools/moss/tests/fixtures/jvm/Fixtures.jar")
+    expect(state: &state, condition: jar.count > 0, name: "fixture jar is readable")
+    let archive = jar.utf8()
+
+    let names = match listEntries(archive: archive) {
+        .Ok(value) => value,
+        .Err(error) => {
+            expect(state: &state, condition: false, name: "list: " + error.code)
+            return 1
+        },
+    }
+    expect(state: &state, condition: names.count == 5, name: "five entries in central-directory order")
+    expect(state: &state, condition: names[0] == "META-INF/MANIFEST.MF", name: "first entry is the manifest")
+    expect(state: &state, condition: names[4] == "pkg/Unicode.class", name: "last entry is Unicode.class")
+
+    // DEFLATE and STORE members must round-trip to the exact original class bytes.
+    let deflated = load(path: "tools/moss/tests/fixtures/jvm/Example8.class")
+    let stored = load(path: "tools/moss/tests/fixtures/jvm/Example21.class")
+    match extractEntry(archive: archive, name: "pkg/Example8.class") {
+        .Ok(bytes) => expect(state: &state, condition: bytes == deflated, name: "deflated entry is byte-exact"),
+        .Err(error) => expect(state: &state, condition: false, name: "deflated: " + error.code),
+    }
+    match extractEntry(archive: archive, name: "pkg/Example21.class") {
+        .Ok(bytes) => expect(state: &state, condition: bytes == stored, name: "stored entry is byte-exact"),
+        .Err(error) => expect(state: &state, condition: false, name: "stored: " + error.code),
+    }
+
+    match extractEntry(archive: archive, name: "pkg/missing.class") {
+        .Ok(_) => expect(state: &state, condition: false, name: "missing entry must fail"),
+        .Err(error) => expect(state: &state, condition: error.code == "archive.entry-not-found", name: "missing entry code"),
+    }
+    match extractEntry(archive: archive, name: "pkg/example8.class") {
+        .Ok(_) => expect(state: &state, condition: false, name: "entry match is case-sensitive"),
+        .Err(error) => expect(state: &state, condition: error.code == "archive.entry-not-found", name: "case-sensitive match"),
+    }
+    match listEntries(archive: deflated.utf8()) {
+        .Ok(_) => expect(state: &state, condition: false, name: "class bytes are not an archive"),
+        .Err(error) => expect(state: &state, condition: error.code == "archive.invalid", name: "non-archive code"),
+    }
+
+    // Entries rendering: one name per line in archive order, plus a continuation note.
+    let matches = [0, 1, 2, 3, 4]
+    let page = Page(first: 1, end: 3, nextOffset: .Some(3))
+    match renderEntries(names: names, matches: matches, page: page) {
+        .Ok(text) => expect(state: &state, condition: text ==
+            "pkg/\npkg/Example8.class\n// more: continue with --offset 3\n", name: "entries text"),
+        .Err(error) => expect(state: &state, condition: false, name: "render: " + error.code),
+    }
+    let filtered = [3, 4]
+    match renderEntries(names: names, matches: filtered, page: Page(first: 0, end: 1, nextOffset: .Some(1))) {
+        .Ok(text) => expect(state: &state, condition: text ==
+            "pkg/Example21.class\n// more: continue with --offset 1\n", name: "filtered entries keep archive order"),
+        .Err(error) => expect(state: &state, condition: false, name: "filtered: " + error.code),
+    }
+    match renderEntries(names: names, matches: filtered, page: Page(first: 0, end: 2, nextOffset: .None)) {
+        .Ok(text) => expect(state: &state, condition: text == "pkg/Example21.class\npkg/Unicode.class\n",
+            name: "last page has no continuation note"),
+        .Err(error) => expect(state: &state, condition: false, name: "last page: " + error.code),
+    }
+    match renderEntries(names: names, matches: matches, page: Page(first: 2, end: 9, nextOffset: .None)) {
+        .Ok(_) => expect(state: &state, condition: false, name: "page past the matches must fail"),
+        .Err(error) => expect(state: &state, condition: error.code == "output.invalid-query", name: "page code"),
+    }
+
+    if state.failures != 0 {
+        print(value: "moss-archive-tests: " + decimal(value: state.failures) +
+            " failures in " + decimal(value: state.checks) + " checks")
+        return 1
+    }
+    print(value: "moss-archive-tests: " + decimal(value: state.checks) + " checks passed")
+    return 0
+}

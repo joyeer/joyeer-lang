@@ -1,0 +1,341 @@
+import moss.model
+
+// Java's Float.toString / Double.toString: the shortest decimal that reads back as the same
+// value, computed exactly with big integers (Burger and Dybvig, "Printing Floating-Point
+// Numbers Quickly and Accurately"). The language has no Int <-> Double conversion, so the
+// value is handled as mantissa * 2^exponent and never as a Double.
+
+struct Shortest {
+    let found: Bool
+    let digits: Int
+    let scale: Int
+}
+
+// ---- big integers: little-endian limbs in base 10^9 ----
+
+private func limbBase(): Int {
+    return 1000000000
+}
+
+private func bigOf(value: Int): [Int] {
+    var limbs: [Int] = []
+    var rest = value
+    while rest > 0 {
+        &limbs.append(element: rest % limbBase())
+        rest = rest / limbBase()
+    }
+    return limbs
+}
+
+// factor must stay below 2^31 so limb * factor + carry fits in 64 bits.
+private func bigMultiply(value: borrowing [Int], factor: Int): [Int] {
+    var limbs: [Int] = []
+    var carry = 0
+    var index = 0
+    while index < value.count {
+        let product = value[index] * factor + carry
+        &limbs.append(element: product % limbBase())
+        carry = product / limbBase()
+        index = index + 1
+    }
+    while carry > 0 {
+        &limbs.append(element: carry % limbBase())
+        carry = carry / limbBase()
+    }
+    return limbs
+}
+
+private func bigAdd(first: borrowing [Int], second: borrowing [Int]): [Int] {
+    var limbs: [Int] = []
+    var carry = 0
+    var index = 0
+    while index < first.count || index < second.count || carry > 0 {
+        var sum = carry
+        if index < first.count { sum = sum + first[index] }
+        if index < second.count { sum = sum + second[index] }
+        &limbs.append(element: sum % limbBase())
+        carry = sum / limbBase()
+        index = index + 1
+    }
+    return limbs
+}
+
+// first >= second.
+private func bigSubtract(first: borrowing [Int], second: borrowing [Int]): [Int] {
+    var limbs: [Int] = []
+    var borrow = 0
+    var index = 0
+    while index < first.count {
+        var difference = first[index] - borrow
+        if index < second.count { difference = difference - second[index] }
+        if difference < 0 {
+            difference = difference + limbBase()
+            borrow = 1
+        } else {
+            borrow = 0
+        }
+        &limbs.append(element: difference)
+        index = index + 1
+    }
+    var top = limbs.count
+    while top > 0 && limbs[top - 1] == 0 { top = top - 1 }
+    if top == limbs.count { return limbs }
+    var trimmed: [Int] = []
+    index = 0
+    while index < top {
+        &trimmed.append(element: limbs[index])
+        index = index + 1
+    }
+    return trimmed
+}
+
+private func bigCompare(first: borrowing [Int], second: borrowing [Int]): Int {
+    if first.count != second.count {
+        if first.count < second.count { return -1 }
+        return 1
+    }
+    var index = first.count - 1
+    while index >= 0 {
+        if first[index] != second[index] {
+            if first[index] < second[index] { return -1 }
+            return 1
+        }
+        index = index - 1
+    }
+    return 0
+}
+
+private func bigScaled(value: borrowing [Int], base: Int, exponent: Int): [Int] {
+    var limbs = value
+    var count = 0
+    if base == 2 {
+        // 2^30 per step keeps every product within 64 bits.
+        var remaining = exponent
+        while remaining >= 30 {
+            limbs = bigMultiply(value: limbs, factor: 1073741824)
+            remaining = remaining - 30
+        }
+        var rest = 1
+        while count < remaining {
+            rest = rest * 2
+            count = count + 1
+        }
+        if rest > 1 { limbs = bigMultiply(value: limbs, factor: rest) }
+        return limbs
+    }
+    while count < exponent {
+        limbs = bigMultiply(value: limbs, factor: base)
+        count = count + 1
+    }
+    return limbs
+}
+
+// ---- shortest digits ----
+
+private func bitLength(value: Int): Int {
+    var length = 0
+    var rest = value
+    while rest > 0 {
+        length = length + 1
+        rest = rest / 2
+    }
+    return length
+}
+
+private func floorDivide(numerator: Int, denominator: Int): Int {
+    if numerator >= 0 { return numerator / denominator }
+    return 0 - ((0 - numerator + denominator - 1) / denominator)
+}
+
+private func isLow(sum: borrowing [Int], limit: borrowing [Int], inclusive: Bool): Bool {
+    let order = bigCompare(first: sum, second: limit)
+    if inclusive { return order >= 0 }
+    return order > 0
+}
+
+// value = mantissa * 2^exponent with `precision` mantissa bits and smallest exponent minimum.
+private func shortest(mantissa: Int, exponent: Int, precision: Int, minimum: Int): Shortest {
+    var leading = 1
+    var count = 1
+    while count < precision {
+        leading = leading * 2
+        count = count + 1
+    }
+    let even = mantissa % 2 == 0
+    var r: [Int] = []
+    var s: [Int] = []
+    var plus: [Int] = []
+    var minus: [Int] = []
+    let unequal = mantissa == leading && exponent > minimum
+    if exponent >= 0 {
+        let power = bigScaled(value: bigOf(value: 1), base: 2, exponent: exponent)
+        if !unequal {
+            r = bigMultiply(value: bigMultiplyBig(value: power, factor: bigOf(value: mantissa)), factor: 2)
+            s = bigOf(value: 2)
+            plus = power
+            minus = power
+        } else {
+            let upper = bigMultiply(value: power, factor: 2)
+            r = bigMultiply(value: bigMultiplyBig(value: upper, factor: bigOf(value: mantissa)), factor: 2)
+            s = bigOf(value: 4)
+            plus = upper
+            minus = power
+        }
+    } else {
+        let power = bigScaled(value: bigOf(value: 1), base: 2, exponent: 0 - exponent)
+        if !unequal {
+            r = bigMultiply(value: bigOf(value: mantissa), factor: 2)
+            s = bigMultiply(value: power, factor: 2)
+            plus = bigOf(value: 1)
+            minus = bigOf(value: 1)
+        } else {
+            r = bigMultiply(value: bigOf(value: mantissa), factor: 4)
+            s = bigMultiply(value: power, factor: 4)
+            plus = bigOf(value: 2)
+            minus = bigOf(value: 1)
+        }
+    }
+    // Estimate k = ceil(log10 v) from the bit length, then correct upward until v < 10^k.
+    var k = floorDivide(numerator: (bitLength(value: mantissa) - 1 + exponent) * 30102999566, denominator: 100000000000) + 1
+    if k >= 0 {
+        s = bigScaled(value: s, base: 10, exponent: k)
+    } else {
+        let factor = bigScaled(value: bigOf(value: 1), base: 10, exponent: 0 - k)
+        r = bigMultiplyBig(value: r, factor: factor)
+        plus = bigMultiplyBig(value: plus, factor: factor)
+        minus = bigMultiplyBig(value: minus, factor: factor)
+    }
+    while isLow(sum: bigAdd(first: r, second: plus), limit: s, inclusive: even) {
+        s = bigMultiply(value: s, factor: 10)
+        k = k + 1
+    }
+    r = bigMultiply(value: r, factor: 10)
+    plus = bigMultiply(value: plus, factor: 10)
+    minus = bigMultiply(value: minus, factor: 10)
+    var digits = 0
+    var length = 0
+    while length < 20 {
+        var digit = 0
+        while bigCompare(first: r, second: s) >= 0 {
+            r = bigSubtract(first: r, second: s)
+            digit = digit + 1
+        }
+        var lowStop = bigCompare(first: r, second: minus) < 0
+        if even { lowStop = bigCompare(first: r, second: minus) <= 0 }
+        let highStop = isLow(sum: bigAdd(first: r, second: plus), limit: s, inclusive: even)
+        if !lowStop && !highStop {
+            digits = digits * 10 + digit
+            length = length + 1
+            r = bigMultiply(value: r, factor: 10)
+            plus = bigMultiply(value: plus, factor: 10)
+            minus = bigMultiply(value: minus, factor: 10)
+        } else {
+            if length == 0 {
+                // Java never prints a single digit: take the closest two-digit decimal instead.
+                var tens = bigMultiply(value: r, factor: 10)
+                var second = 0
+                while bigCompare(first: tens, second: s) >= 0 {
+                    tens = bigSubtract(first: tens, second: s)
+                    second = second + 1
+                }
+                var two = digit * 10 + second
+                if bigCompare(first: bigMultiply(value: tens, factor: 2), second: s) >= 0 { two = two + 1 }
+                return Shortest(found: true, digits: two, scale: 2 - k)
+            }
+            var last = digit
+            if lowStop && highStop {
+                if bigCompare(first: bigMultiply(value: r, factor: 2), second: s) >= 0 { last = digit + 1 }
+            } else if highStop {
+                last = digit + 1
+            }
+            digits = digits * 10 + last
+            length = length + 1
+            return Shortest(found: true, digits: digits, scale: length - k)
+        }
+    }
+    return Shortest(found: false, digits: 0, scale: 0)
+}
+
+private func bigMultiplyBig(value: borrowing [Int], factor: borrowing [Int]): [Int] {
+    var total: [Int] = []
+    var index = 0
+    while index < factor.count {
+        var partial = bigMultiply(value: value, factor: factor[index])
+        var shift = 0
+        while shift < index {
+            partial = bigMultiply(value: partial, factor: limbBase())
+            shift = shift + 1
+        }
+        total = bigAdd(first: total, second: partial)
+        index = index + 1
+    }
+    return total
+}
+
+func shortestDouble(mantissa: Int, exponent: Int): Shortest {
+    return shortest(mantissa: mantissa, exponent: exponent, precision: 53, minimum: 0 - 1074)
+}
+
+func shortestFloat(mantissa: Int, exponent: Int): Shortest {
+    return shortest(mantissa: mantissa, exponent: exponent, precision: 24, minimum: 0 - 149)
+}
+
+private func zeroes(count: Int): String {
+    var text = ""
+    var index = 0
+    while index < count {
+        text = text + "0"
+        index = index + 1
+    }
+    return text
+}
+
+private func digitCount(value: Int): Int {
+    var count = 0
+    var rest = value
+    while rest > 0 {
+        count = count + 1
+        rest = rest / 10
+    }
+    return count
+}
+
+// Java's layout: plain notation for 1e-3 <= v < 1e7, otherwise d.dddE+n.
+func javaDecimalText(found: borrowing Shortest): String {
+    var digits = found.digits
+    var scale = found.scale
+    while digits % 10 == 0 && digits > 0 {
+        digits = digits / 10
+        scale = scale - 1
+    }
+    let text = decimal(value: digits)
+    let scientific = digitCount(value: digits) - 1 - scale
+    if scientific >= -3 && scientific < 7 {
+        if scientific >= 0 {
+            var whole = ""
+            var fraction = ""
+            var index = 0
+            while index < text.count || index <= scientific {
+                var digit = "0"
+                if index < text.count { digit = byteToString(value: text[index]) }
+                if index <= scientific {
+                    whole = whole + digit
+                } else {
+                    fraction = fraction + digit
+                }
+                index = index + 1
+            }
+            if fraction.count == 0 { fraction = "0" }
+            return whole + "." + fraction
+        }
+        return "0." + zeroes(count: 0 - scientific - 1) + text
+    }
+    var rest = ""
+    var index = 1
+    while index < text.count {
+        rest = rest + byteToString(value: text[index])
+        index = index + 1
+    }
+    if rest.count == 0 { rest = "0" }
+    return byteToString(value: text[0]) + "." + rest + "E" + decimal(value: scientific)
+}

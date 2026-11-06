@@ -1,0 +1,8 @@
+schema-version = 1
+
+[module]
+name = "moss.tests"
+kind = "test"
+output = "moss-tests"
+sources = ["main.joyeer"]
+dependencies = ["moss.cli"]

@@ -792,6 +792,23 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;runtime;ownership;file-io"
     )
 
+    foreach(level IN ITEMS 0 2)
+        add_test(NAME NativeExecutableStdinLinesO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/stdin_lines.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-stdin-lines-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        -DCOMPILER_ARGS=-O${level}
+                        -DPROGRAM_STDIN_FILE=${JOYEER_TESTS_DIR}/native/stdin_lines_input.txt
+                        "-DEXPECTED_OUTPUT=[alpha]\ntoo long\n[]\ntoo long\n[ok]\n[last]\nend\n"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableStdinLinesO${level} PROPERTIES
+                LABELS "native;llvm-backend;runtime;ownership;stdin"
+                TIMEOUT 60
+        )
+    endforeach()
+
     add_test(NAME NativeExecutableArrayAppend
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1244,6 +1261,33 @@ abcdabcd
     set_tests_properties(NativeOptimizedBoundsTrap PROPERTIES
             LABELS "native;llvm-backend;runtime;optimization;safety"
     )
+
+    # Differential check: every self-contained native fixture must behave the
+    # same (exit status, stdout, stderr) at -O0 through -O3. Fixtures that need
+    # program arguments, a working directory, input files, or that are meant to
+    # fail compilation are excluded.
+    file(GLOB joyeer_native_fixtures "${JOYEER_TESTS_DIR}/native/*.joyeer")
+    set(joyeer_equivalence_excluded
+            entry_argument_bytes entry_arguments entry_exit_status
+            filesystem file-kind-device process read_file propagation_file
+            json_parser missing_main full_debug)
+    foreach(fixture_path IN LISTS joyeer_native_fixtures)
+        get_filename_component(fixture "${fixture_path}" NAME_WE)
+        if(fixture IN_LIST joyeer_equivalence_excluded)
+            continue()
+        endif()
+        add_test(NAME NativeOptimizationEquivalence_${fixture}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${fixture_path}
+                        -DOUTPUT_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/equivalence-${fixture}
+                        -DCMAKE_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizationEquivalence.cmake
+        )
+        set_tests_properties(NativeOptimizationEquivalence_${fixture} PROPERTIES
+                LABELS "native;llvm-backend;optimization;differential"
+                TIMEOUT 240)
+    endforeach()
 endif()
 
 function(add_joyeer_rejected_regression name stage fixture diagnostic)

@@ -10,6 +10,7 @@ struct CliOptions {
     let name: String
     let kind: String
     let output: String
+    let binDir: String
     let childArgs: [String]
 }
 
@@ -54,6 +55,7 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
     var kind = "bin"
     var hasKind = false
     var output = ""
+    var binDir = ""
     var childArgs: [String] = []
     var index = 1
     while index < args.count {
@@ -102,6 +104,16 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
             if !validModuleName(name: module) {
                 return .Err(ToolError(message: "--module requires an exact logical module name", pos: -1))
             }
+            index = index + 2
+        } else if argument == "--bin-dir" {
+            if command != "build" || binDir.count != 0 {
+                return .Err(ToolError(message: "--bin-dir is only valid once, for build", pos: -1))
+            }
+            let value = cliValue(args: args, index: index + 1, option: argument)?
+            if !validHostText(text: value) {
+                return .Err(ToolError(message: "--bin-dir requires a valid directory path", pos: -1))
+            }
+            binDir = value
             index = index + 2
         } else if argument == "--target" {
             return .Err(ToolError(message: "--target is removed; use --module <logical module name>", pos: -1))
@@ -165,7 +177,7 @@ func parseCli(args: [String]): Result<CliOptions, ToolError> {
     }
     return .Ok(CliOptions(command: command, compiler: compiler, manifestPath: manifestPath,
         workspacePath: workspacePath, release: release, verbose: verbose, module: module,
-        directory: directory, name: name, kind: kind, output: output, childArgs: childArgs))
+        directory: directory, name: name, kind: kind, output: output, binDir: binDir, childArgs: childArgs))
 }
 
 func printHelp() {
@@ -176,6 +188,7 @@ func printHelp() {
         "  fern init <directory> --name <module> [--kind source|bin|test] [--output <name>]\n" +
         "  fern check|build|run|test --compiler <path> [project options] [--module <name>]\n" +
         "Project options: --manifest-path <project.toml> OR --workspace <workspace.toml>, --release, --verbose\n" +
+        "build --bin-dir <dir>: write each built executable to <dir>/<output> in place (no build-N generation).\n" +
         "Default input: project.toml in the current directory; no upward discovery.\n" +
         "Module schema 1: one [module], explicit sources/dependencies, kind, and bin/test output.\n" +
         "Workspace schema 1: one [workspace] with explicit member directories.\n" +

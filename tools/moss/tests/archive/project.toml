@@ -1,0 +1,8 @@
+schema-version = 1
+
+[module]
+name = "moss.archive.tests"
+kind = "test"
+output = "moss-archive-tests"
+sources = ["main.joyeer"]
+dependencies = ["moss.archive", "moss.binary", "moss.model", "moss.output"]
