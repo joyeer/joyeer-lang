@@ -792,6 +792,23 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;runtime;ownership;file-io"
     )
 
+    foreach(level IN ITEMS 0 2)
+        add_test(NAME NativeExecutableStdinLinesO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/stdin_lines.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-stdin-lines-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        -DCOMPILER_ARGS=-O${level}
+                        -DPROGRAM_STDIN_FILE=${JOYEER_TESTS_DIR}/native/stdin_lines_input.txt
+                        "-DEXPECTED_OUTPUT=[alpha]\ntoo long\n[]\ntoo long\n[ok]\n[last]\nend\n"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(NativeExecutableStdinLinesO${level} PROPERTIES
+                LABELS "native;llvm-backend;runtime;ownership;stdin"
+                TIMEOUT 60
+        )
+    endforeach()
+
     add_test(NAME NativeExecutableArrayAppend
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>

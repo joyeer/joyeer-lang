@@ -200,6 +200,7 @@ func removeFile(path: String): Result<Void, FileSystemError>
 func removeDirectory(path: String): Result<Void, FileSystemError>
 func joinPath(base: String, path: String): Result<String, FileSystemError>
 func runProcess(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError>
+func readStdinLine(maximumBytes: Int): Result<String, StdinError>
 ```
 
 These lines document signatures; do not redeclare the built-ins in a program.

@@ -60,7 +60,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
-| Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
+| Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, bounded line-oriented `readStdinLine(maximumBytes:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
 | Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
@@ -204,6 +204,14 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   maps through name resolution/type checking to a scalar LLVM `i64` input;
   exact boundary/error and allocation-balance tests pass on that target,
   and no streaming API is implied.
+- `readStdinLine(maximumBytes: Int): Result<String, StdinError>` reads one
+  line from standard input (LF or CRLF stripped, final unterminated line
+  returned). `StdinError` has `EndOfInput(Int)`, `LineTooLong(Int)` and
+  `ReadFailed(Int)`; a longer line is consumed through its terminator so the
+  next call resynchronizes. The bound is required. Windows switches stdin to
+  binary mode on first use, and stdout is flushed before the read blocks. See [spec §18.5](../spec/18-host.md#185-standard-input).
+  Runtime ABI, compiler signature, and native `-O0`/`-O2` regressions pass on
+  Windows ARM64 Debug; no streaming, timeout, or partial-line API exists.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original
   bytes. The entry return status must be in `0..255`; other values produce
