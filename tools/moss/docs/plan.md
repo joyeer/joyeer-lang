@@ -54,6 +54,12 @@ validation is still pending.
   of analyzed binaries.
 - Cross-platform or performance claims without recorded native evidence.
 
+A line-protocol session (`moss serve`, see [JVM contract](jvm.md#persistent-session-moss-serve))
+was added after v0 so repeated queries on one large input avoid re-parsing. It
+does not change this exclusion: there is still no MCP server, network service,
+or JSON output, and it depends on the host `readStdinLine` operation
+([decision 0001](../../../docs/decisions/0001-stdin-line-reading.md)).
+
 Disassembly is structural decoding, not decompilation. Parsing and static
 reference/boundary checks do not constitute full JVM verification.
 

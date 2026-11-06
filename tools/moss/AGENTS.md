@@ -58,3 +58,14 @@ ctest --test-dir build -L moss --output-on-failure
 guidance. [scripts/install.py](scripts/install.py) copies the binary into a skill
 folder and can generate an AGENTS.md / Copilot-instructions section from it.
 Keep SKILL.md accurate whenever commands or limits change.
+
+## Session mode
+
+`moss serve` ([docs/jvm.md](docs/jvm.md#persistent-session-moss-serve)) is a plain-text
+line protocol, not MCP and not JSON. Its request tokenizer, reply framing, and
+cache live in `src/cli/serve.joyeer` (`moss.cli`); `src/main.joyeer` only owns the
+stdin loop. Replies count lines, not bytes, because Windows stdout converts LF to
+CRLF. Keep the cache observable (`Session.reads`/`parses`) and covered by
+`tests/main.joyeer`, and keep `Moss.Serve` (a real process fed from `tests/serve/`)
+passing. Changing the request or reply format is a contract change: update
+docs/jvm.md, the tests, and `skills/moss/SKILL.md` together.

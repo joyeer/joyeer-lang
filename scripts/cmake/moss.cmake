@@ -70,6 +70,14 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
             ${JOYEER_MOSS_PROFILE_ARGS}
             -- --moss "${JOYEER_MOSS_EXECUTABLE}")
     list(APPEND moss_fern_tests Moss.Fern.moss.golden.tests)
+    # `moss serve` end to end: a real process with stdin from a file, so the
+    # framing, caching path and clean exit are checked as a client sees them.
+    add_test(NAME Moss.Serve
+        COMMAND "${CMAKE_COMMAND}"
+            "-DMOSS_EXECUTABLE=${JOYEER_MOSS_EXECUTABLE}"
+            "-DFIXTURE_DIR=${JOYEER_MOSS_DIR}/tests"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyMossServe.cmake")
+    list(APPEND moss_fern_tests Moss.Serve)
     set_tests_properties(${moss_fern_tests} PROPERTIES
         LABELS "moss;native" TIMEOUT 900)
     set_tests_properties(${moss_fern_tests} PROPERTIES RUN_SERIAL ON)

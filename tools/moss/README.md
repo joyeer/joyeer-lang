@@ -31,6 +31,8 @@ See the [CLI and schema contract](docs/jvm.md), the
 - Explicit ordinary-file output that never overwrites an existing destination.
 - Control-flow graphs (`moss cfg`): basic blocks, labelled edges including exception
   edges, reachability, immediate dominators, natural loops, irreducibility. Structural only; the foundation for later decompilation.
+- Persistent session (`moss serve`): one request per stdin line, framed replies, and the
+  latest input and parsed class kept in memory between queries (see [docs/jvm.md](docs/jvm.md)).
 - Whole-class disassembly (`disasm` without a method selector), `--class` lookup by
   class name, and `entries --prefix`.
 - Classic ZIP/JAR input (STORE and DEFLATE): `moss entries app.jar` lists names,

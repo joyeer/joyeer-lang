@@ -25,6 +25,7 @@ reconstruct Java source, or interpret every optional attribute.
 ```text
 moss --help
 moss --version
+moss serve
 moss entries <archive.jar|.zip> [--prefix <path>] [--offset <n>] [--limit <count>] [options]
 moss cfg <input> (--method <name> [--descriptor <descriptor>] | --method-index <index>) [--offset <block>] [--limit <count>] [options]
 moss inspect <input> [options]
@@ -153,6 +154,54 @@ reached the end. A paged single-method listing omits the exception, line-number,
 and local-variable tables, which belong to the complete method. All selected
 method bytecode is decoded/checked before a page is printed, so a malformed
 instruction after the page boundary still fails.
+
+## Persistent session (`moss serve`)
+
+`moss serve` reads requests from stdin until `quit`, `exit`, or end of input
+and keeps the most recent input in memory. It exists so an agent that asks many
+questions about one large JAR or class does not re-read and re-parse it for
+each question. It is a line protocol over stdin/stdout, not MCP and not JSON.
+
+Request: one line, the ordinary arguments without the program name, for example
+`disasm app.jar --class com.acme.Foo --method run`. Arguments split on spaces
+and tabs. Double quotes group text, including spaces and empty arguments; inside
+quotes a backslash escapes the next byte. Blank lines are ignored. A line may
+hold at most 8192 bytes; a longer one gets an error reply and is skipped.
+Besides the analysis commands, `--help`, `--version`, `reset`, `quit`, and `exit`
+are accepted. `--output` is rejected (`serve.output-unsupported`) and a nested
+`serve` is rejected (`serve.nested`).
+
+Reply: a header line, then exactly that many lines.
+
+```text
+moss: ok <lines>
+<lines of the same text the command line prints>
+```
+
+```text
+moss: error <lines>
+<code> [<context>]: <message>
+```
+
+The body of an `ok` reply equals the command's stdout without its final newline.
+The header counts lines, not bytes, so a reader stays in step where stdout turns
+LF into CRLF (Windows); strip a trailing CR from each line. An error reply never
+ends the session, and a failed request leaves the cached input unchanged.
+Errors are replies on stdout (not stderr) so one stream carries the whole
+conversation. Stdin failure or a nonzero exit before the loop still reports on
+stderr.
+
+Cache: one input at a time, keyed by path. The first query on a path reads the
+file (16 MiB limit); later queries on it do not read it again. The parsed class
+is also kept for the same `--entry`/`--class` and `--allow-preview`; asking for
+another entry or a different preview setting parses again without rereading.
+Asking about a different path replaces the cache. Moss does not watch the file:
+send `reset` after the file changes on disk. Peak memory is the input, the
+selected entry, and one parsed class.
+
+Replies are flushed before the next request is awaited. `readStdinLine` flushes
+stdout first (spec §18.5), and `print` has no error path, so a write failure to
+stdout is still undetectable.
 
 ## Parser and decoder behavior
 

@@ -29,6 +29,34 @@ For a standalone class, drop the archive and selector: `moss disasm Foo.class`.
 `moss inspect <class>` adds the version, the constant pool, fields, and method
 declarations without bytecode.
 
+
+## Many questions about one input: `moss serve`
+
+Each `moss` call re-reads and re-parses its input. For a large JAR you will query
+repeatedly, start one session and keep it open: `moss serve`. Write one request
+per line to its stdin (the same arguments as above, without `moss`), and read the
+reply from stdout. Do not start a new process per question.
+
+```text
+> entries app.jar --prefix com/acme/
+< moss: ok 3
+< com/acme/Foo.class
+< com/acme/Bar.class
+< com/acme/Baz.class
+> disasm app.jar --class com.acme.Foo --method run
+< moss: ok 14
+< ...14 lines of javap text...
+> quit
+< moss: ok 1
+< bye
+```
+
+- A reply is `moss: ok N` or `moss: error N`, then exactly N lines. Read N lines
+  and stop; do not wait for end of file. An error does not end the session.
+- Quote an argument that holds spaces with `"..."`. `--output` is not allowed.
+- The latest input stays in memory. If the file changes on disk, send `reset`.
+- If you cannot keep a process open, use one-shot `moss` calls.
+
 ## Output format
 
 The output is plain text in the same layout as `javap -c -p -l` (JDK 25): a

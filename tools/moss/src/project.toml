@@ -3,5 +3,5 @@ schema-version = 1
 [module]
 name = "moss.cli"
 kind = "source"
-sources = ["cli.joyeer", "cli/analysis.joyeer"]
+sources = ["cli.joyeer", "cli/analysis.joyeer", "cli/serve.joyeer"]
 dependencies = ["moss.analysis", "moss.archive", "moss.binary", "moss.jvm", "moss.model", "moss.output"]

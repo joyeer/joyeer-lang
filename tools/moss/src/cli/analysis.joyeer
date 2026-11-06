@@ -113,6 +113,12 @@ private func analyzeCfg(options: borrowing Options, input: borrowing String,
 
 public func analyzeBytes(options: borrowing Options, input: borrowing String): Result<String, Diagnostic> {
     let file = parseClass(input: input, allowPreview: options.allowPreview)?
+    return analyzeParsed(options: options, input: input, file: file)
+}
+
+// Runs one query against an already parsed class, so a session can parse once.
+public func analyzeParsed(options: borrowing Options, input: borrowing String,
+    file: borrowing ClassFile): Result<String, Diagnostic> {
     if options.command == "cfg" {
         return analyzeCfg(options: options, input: input, file: file)
     }
@@ -213,18 +219,19 @@ public func analyzeEntries(options: borrowing Options, input: borrowing String):
     return checkedOutput(contents: consume rendered)
 }
 
+public func inputDiagnostic(path: borrowing String, error: borrowing InputError): Diagnostic {
+    var message = "cannot acquire input '" + path + "'"
+    match inputHostCode(error: error) {
+        .Some(code) => { message = message + " (native code " + decimal(value: code) + ")" },
+        .None => {},
+    }
+    return Diagnostic(code: inputErrorCode(error: error), offset: -1, context: "input", message: message)
+}
+
 public func analyze(options: borrowing Options): Result<String, Diagnostic> {
     let input = match readInput(path: options.path) {
         .Ok(bytes) => bytes,
-        .Err(error) => {
-            var message = "cannot acquire input '" + options.path + "'"
-            match inputHostCode(error: error) {
-                .Some(code) => { message = message + " (native code " + decimal(value: code) + ")" },
-                .None => {},
-            }
-            return .Err(Diagnostic(code: inputErrorCode(error: error),
-                offset: -1, context: "input", message: message))
-        },
+        .Err(error) => { return .Err(inputDiagnostic(path: options.path, error: error)) },
     }
     if options.command == "entries" { return analyzeEntries(options: options, input: input) }
     if options.entry.count != 0 {

@@ -18,6 +18,7 @@ public enum Command {
     Help,
     Version,
     Analyze(Options),
+    Serve,
 }
 
 private func usage(message: borrowing String): Diagnostic {
@@ -71,6 +72,10 @@ public func parse(args: borrowing [String]): Result<Command, Diagnostic> {
         if args.count != 1 { return .Err(usage(message: "help/version must be used alone")) }
         if args[0] == "--help" { return .Ok(.Help) }
         return .Ok(.Version)
+    }
+    if args[0] == "serve" {
+        if args.count != 1 { return .Err(usage(message: "serve takes no arguments; send requests on stdin")) }
+        return .Ok(.Serve)
     }
     let command = args[0]
     if command != "inspect" && command != "methods" && command != "disasm" && command != "entries" && command != "cfg" {
@@ -171,7 +176,7 @@ public func parse(args: borrowing [String]): Result<Command, Diagnostic> {
 }
 
 public func versionText(): String {
-    return "moss 0.5.0 (JVM disassembler in javap -c -p layout, JAR/ZIP input, CFG)"
+    return "moss 0.6.0 (JVM disassembler in javap -c -p layout, JAR/ZIP input, CFG, serve session)"
 }
 
 public func helpText(): String {
@@ -179,6 +184,7 @@ public func helpText(): String {
         "Usage:\n" +
         "  moss --help\n" +
         "  moss --version\n" +
+        "  moss serve                  Read one request per line on stdin; keep the input in memory\n" +
         "  moss entries <file.jar|file.zip> [--prefix <path>] [--offset <n>] [--limit <count>] [options]\n" +
         "  moss cfg <input> (--method <name> [--descriptor <descriptor>] | --method-index <index>)\n" +
         "       [--offset <block>] [--limit <count>] [options]\n" +
@@ -197,6 +203,9 @@ public func helpText(): String {
         "  --allow-preview             Allow Java 25 preview (69.65535)\n\n" +
         "Supports Java 8..25 (52..69), minor 0. Input and entry: 16 MiB; output: 8 MiB.\n" +
         "Page limit: 1..10000, default 1000.\n" +
+        "serve: each stdin line is a request in the arguments above without 'moss' (quote with \"...\"),\n" +
+        "or reset / quit. Each reply is 'moss: ok N' or 'moss: error N' followed by N lines. --output is not\n" +
+        "available. The latest input stays in memory; 'reset' drops it after the file changes on disk.\n" +
         "Classic ZIP/JAR (STORE/DEFLATE) only. No DEX, native binaries, execution, or Java source decompilation.\n" +
         "Output is plain text. Stdout cannot report write failures; use --output when delivery must be certain."
 }
