@@ -1,6 +1,8 @@
 #ifndef __joyeer_compiler_options_h__
 #define __joyeer_compiler_options_h__
 
+#include "compiler/frontend/platform.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -77,6 +79,9 @@ struct CompileOptions {
     // <root>/lib of the running toolchain; used only when standardLibrary is set.
     std::filesystem::path libraryDirectory;
     bool standardLibrary = false;
+    // Selects `@platform` functions. The backend generates code only for the
+    // host, so a different target is for front-end validation and tests.
+    semantic::TargetPlatform targetPlatform = semantic::hostPlatform();
 };
 
 } // namespace joyeer

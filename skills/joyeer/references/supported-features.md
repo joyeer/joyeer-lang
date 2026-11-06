@@ -46,6 +46,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Strings | Concatenation, comparisons, byte count/indexing, owned `utf8()` byte array |
 | Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, byte conversions, legacy `readFile(path:)`, portable filesystem functions, synchronous `runProcess` |
 | Output | Frontend validation, textual LLVM IR, native executables, optimization and debug flags |
+| Platform selection | `@platform(windows, linux, macos, posix)` on top-level functions picks the variant for the host; same-named variants need identical signatures and disjoint platforms. Variants for other platforms must parse but are not type-checked |
 | Internal runtime bindings | Explicitly authorized named units only: `@c_extern`/`@c_export`, borrowing `Int`/C `int64_t` parameters, explicit `Int` or `Void`/`()` results, and object-only output |
 
 This is an implemented subset with regression coverage, not a claim that every

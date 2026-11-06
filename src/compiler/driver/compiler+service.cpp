@@ -3,6 +3,7 @@
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
 #include "compiler/frontend/parser.h"
+#include "compiler/frontend/platform.h"
 #include "compiler/frontend/typechecking.h"
 #include "compiler/ir/irlowering.h"
 #include "compiler/frontend/semanticanalysis.h"
@@ -128,6 +129,16 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     compilationSources.clear();
     implicitLibraries.clear();
     lastCompiledSourceFile.reset();
+    if (options.targetPlatform != joyeer::semantic::hostPlatform() &&
+        options.outputMode != joyeer::OutputMode::validate) {
+        // The backend generates code for the host only; other targets would
+        // silently emit host code built from another platform's variants.
+        diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.unsupported-target-platform",
+                std::string("target platform '") + joyeer::semantic::platformName(options.targetPlatform) +
+                "' can only be used for validation on a " +
+                joyeer::semantic::platformName(joyeer::semantic::hostPlatform()) + " host");
+        return;
+    }
     if ((!options.runtimeModules.empty() || options.outputMode == joyeer::OutputMode::runtimeObject) &&
         options.moduleName.empty()) {
         diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
@@ -480,6 +491,35 @@ joyeer::syntax::SourceFileSyntax::Ptr CompilerService::parse(const SourceFile::P
 
 void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& modules) {
     const auto& sourcefile = lastCompiledSourceFile;
+    const auto selection = joyeer::semantic::selectPlatformDeclarations(modules, options.targetPlatform);
+    for (const auto& diagnostic : selection) {
+        auto message = diagnostic.message;
+        std::vector<DiagnosticSourceNote> notes;
+        if (diagnostic.related.has_value()) {
+            if (diagnostic.related->sourceId == diagnostic.span.sourceId) {
+                notes.push_back({diagnostic.related->offset, diagnostic.related->length,
+                                 diagnostic.relatedMessage});
+            } else {
+                // Notes share their diagnostic's file, so name the other one.
+                message += " (" + diagnostic.relatedMessage + " in '" +
+                        compilationSources.at(diagnostic.related->sourceId)->getLocation() + "')";
+            }
+        }
+        reportSpannedDiagnostic(
+                diagnostics,
+                compilationSources,
+                diagnostic.span,
+                ErrorLevel::failure,
+                joyeer::semantic::diagnosticName(diagnostic.id),
+                message,
+                diagnostic.help.empty() ? std::nullopt : std::optional<std::string>(diagnostic.help),
+                std::nullopt,
+                std::move(notes));
+    }
+    if (!selection.empty()) {
+        return;
+    }
+
     const auto resolution = joyeer::semantic::NameResolver().resolve(modules);
     sourcefile->semanticModel = resolution.model;
     for (const auto& diagnostic : resolution.diagnostics) {

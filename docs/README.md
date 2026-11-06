@@ -70,6 +70,7 @@ work.
 |---|---|
 | [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
 | [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
+| [filesystem.md](plan/filesystem.md) | Proposed pure-Joyeer filesystem: required generic FFI extensions, per-OS primitive layers, behavior to preserve, phases, and acceptance gates |
 | [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, fern management, and installed-library resolution gates |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 

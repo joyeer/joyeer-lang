@@ -166,8 +166,10 @@ library's actual prototype agrees.
 
 The parser stores spanned annotation names and arguments on function syntax.
 It permits an omitted body on an annotated declaration so semantic checking
-can diagnose the actual import/export rule. Ordinary declarations still
-require bodies. This parser support does not implement the proposed
+can diagnose the actual import/export rule. (The `@platform` selection pass
+runs before name resolution and checks body presence itself for functions it
+strips; see [§11.5](../spec/11-annotations.md#115-platform).) Ordinary
+declarations still require bodies. This parser support does not implement the proposed
 `@spec`/`@property` shorthand or DSL.
 
 Type checking validates annotation arguments, explicit results, authorized

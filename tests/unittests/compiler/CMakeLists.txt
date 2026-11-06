@@ -100,6 +100,12 @@ joyeer_discover_tests(CompilerCInteropTests
         PROPERTIES LABELS c-interop
 )
 
+add_executable(CompilerPlatformTests platform_test.cpp)
+target_link_libraries(CompilerPlatformTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerPlatformTests
+        PROPERTIES LABELS platform
+)
+
 add_executable(CompilerSemanticAnalysisTests
         semanticanalysis_test.cpp
 )
@@ -845,6 +851,26 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
     set_tests_properties(NativeExecutableByteConversion PROPERTIES
             LABELS "native;llvm-backend;runtime;ownership;byte-conversion"
+    )
+
+    # The compiler targets its host, so each host expects its own variants.
+    if(WIN32)
+        set(platform_selection_output "windows\n\\\n")
+    elseif(APPLE)
+        set(platform_selection_output "macos\n/\n")
+    else()
+        set(platform_selection_output "linux\n/\n")
+    endif()
+    add_test(NAME NativeExecutablePlatformSelection
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/platform_selection.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-platform-selection${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_OUTPUT=${platform_selection_output}"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutablePlatformSelection PROPERTIES
+            LABELS "native;llvm-backend;platform"
     )
 
     add_test(NAME NativeExecutableStringUtf8

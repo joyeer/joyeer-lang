@@ -119,6 +119,7 @@ unfiltered CTest with unit tests and fern enabled ([building](../building.md)).
 ## 8. Follow-ups (not first milestone)
 
 - More leaf algorithms: UTF-8 validation, lexical paths, numeric formatting.
+  Filesystem migration: [filesystem](filesystem.md).
 - String clone/destroy, after allocator provenance and bootstrap-safe cleanup.
 - Containers, after generics or an internal type-operation mechanism.
 - Owned OS resources, after custom destruction and noncopyability.
