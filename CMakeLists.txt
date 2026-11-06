@@ -301,7 +301,7 @@ install(DIRECTORY "${JOYEER_STDLIB_DIRECTORY}/"
 if(JOYEER_BUILD_FERN)
     add_subdirectory(tools/fern)
     if(JOYEER_BUILD_MOSS AND JOYEER_BUILD_COMPRESSION)
-        add_subdirectory(tools/moss)
+        include(scripts/cmake/moss.cmake)
     endif()
 endif()
 add_subdirectory(tests)

@@ -1,22 +1,24 @@
+set(JOYEER_MOSS_DIR "${JOYEER_SOURCE_DIR}/tools/moss")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/tools/moss")
 # moss is a Joyeer-written JVM inspection CLI. It is an ordinary fern project:
 # once the compiler and fern exist, fern builds and tests it as members of the
-# root workspace.toml. This file only hooks that into the repository build. Moss
+# root workspace.toml. This module only hooks that into the repository build. Moss
 # needs the Compression standard module (ZIP/JAR input), so it is configured only
 # with JOYEER_BUILD_COMPRESSION (on by default).
 file(GLOB_RECURSE JOYEER_MOSS_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.joyeer"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.toml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.joyeer"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.toml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/*")
+    "${JOYEER_MOSS_DIR}/src/*.joyeer"
+    "${JOYEER_MOSS_DIR}/src/*.toml"
+    "${JOYEER_MOSS_DIR}/tests/*.joyeer"
+    "${JOYEER_MOSS_DIR}/tests/*.toml"
+    "${JOYEER_MOSS_DIR}/tests/fixtures/*")
 list(APPEND JOYEER_MOSS_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/project.toml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/workspace.toml")
+    "${JOYEER_MOSS_DIR}/project.toml"
+    "${JOYEER_MOSS_DIR}/workspace.toml")
 
 # The executable goes to the same bin folder as joyeer and fern.
 set(JOYEER_MOSS_BIN_DIR "$<TARGET_FILE_DIR:joyeer>")
 set(JOYEER_MOSS_EXECUTABLE "${JOYEER_MOSS_BIN_DIR}/moss${CMAKE_EXECUTABLE_SUFFIX}")
-set(JOYEER_MOSS_STAMP "${CMAKE_CURRENT_BINARY_DIR}/moss.stamp")
+set(JOYEER_MOSS_STAMP "${CMAKE_BINARY_DIR}/tools/moss/moss.stamp")
 # Debug uses fern's default profile; every other build type is --release. A
 # generator expression would pass an empty argument to fern in Debug, so the
 # profile is fixed at configure time (single-config generators, as in the presets).
