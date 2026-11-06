@@ -1,0 +1,233 @@
+import moss.model
+
+// End-to-end javap goldens: run the built `moss disasm` executable on every
+// checked-in class that has a `*.javap.txt` golden and require byte-identical
+// output. The suite only reads checked-in fixtures; it needs no JDK.
+//
+// Arguments (all optional):
+//   --moss <path>      executable under test (default: target/bin/moss[.exe],
+//                      where `fern build ... --module moss.app --bin-dir target/bin`
+//                      places it)
+//   --fixtures <dir>   directory of <Name>.class / <Name>.javap.txt pairs
+//
+// moss writes into a new file under a directory this run claims exclusively,
+// because Joyeer processes cannot capture standard output yet. Only the files
+// and the directory created by this run are removed.
+
+struct Options {
+    var moss: String
+    var fixtures: String
+}
+
+private let goldenSuffix: String = ".javap.txt"
+private let defaultFixtures: String = "tools/moss/tests/fixtures/jvm"
+
+private func parseOptions(args: borrowing [String]): Result<Options, String> {
+    var options = Options(moss: "", fixtures: defaultFixtures)
+    var index = 0
+    while index < args.count {
+        if index + 1 >= args.count { return .Err("missing value for " + args[index]) }
+        if args[index] == "--moss" {
+            options.moss = args[index + 1]
+        } else if args[index] == "--fixtures" {
+            options.fixtures = args[index + 1]
+        } else {
+            return .Err("unknown argument " + args[index])
+        }
+        index = index + 2
+    }
+    return .Ok(options)
+}
+
+private func isFile(path: borrowing String): Bool {
+    return match fileKind(path: path) {
+        .Ok(kind) => match kind {
+            .File => true,
+            _ => false,
+        },
+        .Err(_) => false,
+    }
+}
+
+private func join(base: borrowing String, path: borrowing String): Result<String, String> {
+    return match joinPath(base: base, path: path) {
+        .Ok(value) => .Ok(value),
+        .Err(_) => .Err("cannot join path " + base + " and " + path),
+    }
+}
+
+private func locateMoss(requested: borrowing String): Result<String, String> {
+    if requested.count != 0 {
+        if isFile(path: requested) { return .Ok(requested) }
+        return .Err("moss executable not found: " + requested)
+    }
+    let candidates = ["target/bin/moss.exe", "target/bin/moss"]
+    for candidate in candidates {
+        if isFile(path: candidate) { return .Ok(candidate) }
+    }
+    return .Err("no moss executable at target/bin; build it with `fern build --module moss.app " +
+        "--bin-dir target/bin` or pass --moss <path>")
+}
+
+private func hasSuffix(name: borrowing String, suffix: borrowing String): Bool {
+    if suffix.count > name.count { return false }
+    let offset = name.count - suffix.count
+    var index = 0
+    while index < suffix.count {
+        if name[offset + index] != suffix[index] { return false }
+        index = index + 1
+    }
+    return true
+}
+
+private func stem(name: borrowing String): String {
+    var piece = ""
+    var index = 0
+    while index < name.count - goldenSuffix.count {
+        piece = piece + byteToString(value: name[index])
+        index = index + 1
+    }
+    return piece
+}
+
+private func goldenNames(directory: borrowing String): Result<[String], String> {
+    let entries = match listDirectory(path: directory) {
+        .Ok(names) => names,
+        .Err(_) => { return .Err("cannot list fixtures directory " + directory) },
+    }
+    var goldens: [String] = []
+    for name in entries {
+        if name.count > goldenSuffix.count && hasSuffix(name: name, suffix: goldenSuffix) {
+            &goldens.append(element: name)
+        }
+    }
+    if goldens.count == 0 { return .Err("no *.javap.txt goldens under " + directory) }
+    return .Ok(goldens)
+}
+
+private func claimDirectory(): Result<String, String> {
+    match createDirectory(path: "target") {
+        .Ok(_) => {},
+        .Err(error) => match error {
+            .AlreadyExists(_) => {},
+            _ => { return .Err("cannot create target directory") },
+        },
+    }
+    var id = 1
+    while id <= 64 {
+        let directory = join(base: "target", path: "moss-golden-" + decimal(value: id))?
+        match createDirectory(path: directory) {
+            .Ok(_) => { return .Ok(directory) },
+            .Err(error) => match error {
+                .AlreadyExists(_) => {},
+                _ => { return .Err("cannot claim scratch directory " + directory) },
+            },
+        }
+        id = id + 1
+    }
+    return .Err("all scratch directory claims collided under target")
+}
+
+private func mismatch(actual: borrowing String, expected: borrowing String): String {
+    var index = 0
+    while index < actual.count && index < expected.count && actual[index] == expected[index] {
+        index = index + 1
+    }
+    return "first difference at byte " + decimal(value: index) + " (actual " +
+        decimal(value: actual.count) + " bytes, expected " + decimal(value: expected.count) + " bytes)"
+}
+
+private func check(moss: borrowing String, fixtures: borrowing String, scratch: borrowing String,
+    golden: borrowing String): Result<Void, String> {
+    let name = stem(name: golden)
+    let classPath = join(base: fixtures, path: name + ".class")?
+    let goldenPath = join(base: fixtures, path: golden)?
+    let output = join(base: scratch, path: golden)?
+    match runProcess(executable: moss, arguments: ["disasm", classPath, "--output", output],
+        workingDirectory: ".") {
+        .Ok(status) => match status {
+            .Exited(code) => {
+                if code != 0 { return .Err(name + ".class: moss disasm exited with " + decimal(value: code)) }
+            },
+            .Signaled(signal) => {
+                return .Err(name + ".class: moss disasm was killed by signal " + decimal(value: signal))
+            },
+        },
+        .Err(_) => { return .Err(name + ".class: cannot run " + moss) },
+    }
+    let actual = match readFileUtf8(path: output) {
+        .Ok(text) => text,
+        .Err(_) => { return .Err(name + ".class: moss produced no readable output") },
+    }
+    let expected = match readFileUtf8(path: goldenPath) {
+        .Ok(text) => text,
+        .Err(_) => { return .Err("cannot read golden " + golden) },
+    }
+    if actual != expected {
+        return .Err(name + ".class: output differs from " + golden + ": " + mismatch(actual: actual, expected: expected))
+    }
+    return .Ok(())
+}
+
+private func cleanup(scratch: borrowing String, goldens: borrowing [String]): Bool {
+    var clean = true
+    for golden in goldens {
+        match join(base: scratch, path: golden) {
+            .Ok(path) => {
+                if isFile(path: path) {
+                    match removeFile(path: path) {
+                        .Ok(_) => {},
+                        .Err(_) => { clean = false },
+                    }
+                }
+            },
+            .Err(_) => { clean = false },
+        }
+    }
+    match removeDirectory(path: scratch) {
+        .Ok(_) => {},
+        .Err(_) => { clean = false },
+    }
+    return clean
+}
+
+private func fail(message: borrowing String): Int {
+    print(value: "FAIL: " + message)
+    return 1
+}
+
+func main(args: borrowing [String]): Int {
+    let options = match parseOptions(args: args) {
+        .Ok(value) => value,
+        .Err(message) => { return fail(message: message) },
+    }
+    let moss = match locateMoss(requested: options.moss) {
+        .Ok(path) => path,
+        .Err(message) => { return fail(message: message) },
+    }
+    let goldens = match goldenNames(directory: options.fixtures) {
+        .Ok(names) => names,
+        .Err(message) => { return fail(message: message) },
+    }
+    let scratch = match claimDirectory() {
+        .Ok(path) => path,
+        .Err(message) => { return fail(message: message) },
+    }
+    var failures = 0
+    for golden in goldens {
+        match check(moss: moss, fixtures: options.fixtures, scratch: scratch, golden: golden) {
+            .Ok(_) => {},
+            .Err(message) => {
+                failures = failures + 1
+                print(value: "FAIL: " + message)
+            },
+        }
+    }
+    if !cleanup(scratch: scratch, goldens: goldens) {
+        failures = failures + 1
+        print(value: "FAIL: could not remove scratch directory " + scratch)
+    }
+    if failures != 0 { return 1 }
+    print(value: "moss matched " + decimal(value: goldens.count) + " javap goldens")
+    return 0
+}

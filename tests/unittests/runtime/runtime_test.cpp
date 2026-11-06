@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -1054,6 +1055,184 @@ TEST(RuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
     joyeer_dictionary_destroy_abi(&first);
     EXPECT_EQ(destroyCount, 4);
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+// Standard input is redirected from a scratch file so each case controls the
+// exact bytes. The file is removed only after stdin is detached from it.
+class StdinLineTest : public testing::Test {
+protected:
+    void feed(const std::string& bytes) {
+        path = std::filesystem::temp_directory_path() /
+               ("joyeer-stdin-" + std::to_string(counter++) + "-" +
+                std::to_string(reinterpret_cast<uintptr_t>(this)) + ".bin");
+        {
+            std::ofstream out(path, std::ios::binary);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            ASSERT_TRUE(out.good());
+        }
+        ASSERT_NE(std::freopen(path.string().c_str(), "rb", stdin), nullptr);
+        baseline = joyeer_runtime_active_allocations();
+    }
+
+    void TearDown() override {
+#if defined(_WIN32)
+        std::freopen("NUL", "rb", stdin);
+#else
+        std::freopen("/dev/null", "rb", stdin);
+#endif
+        std::error_code ignored;
+        if (!path.empty()) std::filesystem::remove(path, ignored);
+        EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+    }
+
+    // Returns the line, or "<kind:code>" for a failure.
+    std::string next(int64_t maximumBytes) {
+        JoyeerString line {};
+        int64_t code = -1;
+        const auto kind = joyeer_read_stdin_line_abi(&line, &code, maximumBytes);
+        if (kind != JOYEER_STDIN_ERROR_NONE) {
+            EXPECT_EQ(line.data, nullptr);
+            return "<" + std::to_string(kind) + ":" + std::to_string(code) + ">";
+        }
+        std::string text(reinterpret_cast<const char*>(line.data),
+                         static_cast<size_t>(line.count));
+        joyeer_string_destroy_abi(&line);
+        return text;
+    }
+
+    std::filesystem::path path;
+    int64_t baseline = 0;
+    static inline int counter = 0;
+};
+
+TEST_F(StdinLineTest, SplitsLinesAndStripsLfAndCrLf) {
+    ASSERT_NO_FATAL_FAILURE(feed("one\ntwo\r\n\nthree\r\r\n"));
+    EXPECT_EQ(next(64), "one");
+    EXPECT_EQ(next(64), "two");
+    EXPECT_EQ(next(64), "");
+    EXPECT_EQ(next(64), "three\r");
+}
+
+TEST_F(StdinLineTest, ReturnsFinalUnterminatedLineThenEndOfInputForever) {
+    ASSERT_NO_FATAL_FAILURE(feed("a\nlast\r"));
+    EXPECT_EQ(next(64), "a");
+    EXPECT_EQ(next(64), "last\r");
+    EXPECT_EQ(next(64), "<1:0>");
+    EXPECT_EQ(next(64), "<1:0>");
+}
+
+TEST_F(StdinLineTest, EmptyStreamIsEndOfInputAndEmptyLineIsNot) {
+    ASSERT_NO_FATAL_FAILURE(feed(""));
+    EXPECT_EQ(next(8), "<1:0>");
+    ASSERT_NO_FATAL_FAILURE(feed("\n"));
+    EXPECT_EQ(next(8), "");
+    EXPECT_EQ(next(8), "<1:0>");
+}
+
+TEST_F(StdinLineTest, PreservesNulHighBytesAndControlZ) {
+    ASSERT_NO_FATAL_FAILURE(feed(std::string("a\0\xff\x1a" "b\nnext\n", 11)));
+    EXPECT_EQ(next(64), std::string("a\0\xff\x1a" "b", 5));
+    EXPECT_EQ(next(64), "next");
+}
+
+TEST_F(StdinLineTest, EnforcesLimitAfterTerminatorRemovalAndResynchronizes) {
+    ASSERT_NO_FATAL_FAILURE(feed("12345\n12345\r\n123456\n1234567890123456789\nok\n"));
+    EXPECT_EQ(next(5), "12345");
+    EXPECT_EQ(next(5), "12345");
+    EXPECT_EQ(next(5), "<2:0>");
+    EXPECT_EQ(next(5), "<2:0>");
+    EXPECT_EQ(next(5), "ok");
+}
+
+TEST_F(StdinLineTest, ZeroLimitAcceptsOnlyEmptyLines) {
+    ASSERT_NO_FATAL_FAILURE(feed("\nx\n\r\ny"));
+    EXPECT_EQ(next(0), "");
+    EXPECT_EQ(next(0), "<2:0>");
+    EXPECT_EQ(next(0), "");
+    EXPECT_EQ(next(0), "<2:0>");
+    EXPECT_EQ(next(0), "<1:0>");
+}
+
+TEST_F(StdinLineTest, OversizedUnterminatedFinalLineIsTooLongThenEnd) {
+    ASSERT_NO_FATAL_FAILURE(feed("abcdef"));
+    EXPECT_EQ(next(3), "<2:0>");
+    EXPECT_EQ(next(3), "<1:0>");
+}
+
+TEST_F(StdinLineTest, ReadsLargeLinesAcrossBufferGrowth) {
+    const std::string big(200000, 'x');
+    ASSERT_NO_FATAL_FAILURE(feed(big + "\n" + big + "\n"));
+    EXPECT_EQ(next(200000), big);
+    EXPECT_EQ(next(199999), "<2:0>");
+    EXPECT_EQ(next(200000), "<1:0>");
+}
+
+TEST_F(StdinLineTest, NegativeLimitIsReadFailedWithEinvalAndConsumesNothing) {
+    ASSERT_NO_FATAL_FAILURE(feed("keep\n"));
+    EXPECT_EQ(next(-1), "<3:" + std::to_string(EINVAL) + ">");
+    EXPECT_EQ(next(std::numeric_limits<int64_t>::max()), "keep");
+}
+
+// A peer waiting for a response must see earlier output before the read blocks.
+// stdout (descriptor 1) is pointed at a scratch file with full buffering, so
+// the bytes can only appear there if the read flushed them.
+TEST_F(StdinLineTest, FlushesPendingStdoutBeforeReading) {
+    ASSERT_NO_FATAL_FAILURE(feed("go\n"));
+    const auto outPath = path.parent_path() / (path.filename().string() + ".out");
+    std::fflush(stdout);
+#if defined(_WIN32)
+    const int saved = _dup(1);
+    const int file = _open(outPath.string().c_str(), _O_WRONLY | _O_CREAT | _O_BINARY, 0600);
+#else
+    const int saved = dup(1);
+    const int file = open(outPath.string().c_str(), O_WRONLY | O_CREAT, 0600);
+#endif
+    ASSERT_GE(saved, 0);
+    ASSERT_GE(file, 0);
+#if defined(_WIN32)
+    ASSERT_NE(_dup2(file, 1), -1);
+    _close(file);
+#else
+    ASSERT_NE(dup2(file, 1), -1);
+    close(file);
+#endif
+    ASSERT_EQ(std::setvbuf(stdout, nullptr, _IOFBF, 4096), 0);
+    std::fputs("prompt>", stdout);
+    const auto line = next(8);
+    // Read the destination while stdout still points at it and is unflushed.
+    std::ifstream probe(outPath, std::ios::binary);
+    const std::string seen((std::istreambuf_iterator<char>(probe)), std::istreambuf_iterator<char>());
+    std::fflush(stdout);
+#if defined(_WIN32)
+    _dup2(saved, 1);
+    _close(saved);
+#else
+    dup2(saved, 1);
+    close(saved);
+#endif
+    std::clearerr(stdout);
+    std::error_code ignored;
+    std::filesystem::remove(outPath, ignored);
+    EXPECT_EQ(line, "go");
+    EXPECT_EQ(seen, "prompt>");
+}
+
+TEST_F(StdinLineTest, ResetsErrorStorageOnSuccess) {
+    ASSERT_NO_FATAL_FAILURE(feed("x\n"));
+    JoyeerString line {};
+    int64_t code = 77;
+    ASSERT_EQ(joyeer_read_stdin_line_abi(&line, &code, 8), JOYEER_STDIN_ERROR_NONE);
+    EXPECT_EQ(code, 0);
+    joyeer_string_destroy_abi(&line);
+}
+
+TEST(RuntimeDeathTest, TrapsNullStdinAbiStorage) {
+    JoyeerString line {};
+    int64_t code = 0;
+    EXPECT_DEATH(static_cast<void>(joyeer_read_stdin_line_abi(nullptr, &code, 1)),
+                 "stdin result output is null");
+    EXPECT_DEATH(static_cast<void>(joyeer_read_stdin_line_abi(&line, nullptr, 1)),
+                 "stdin error output is null");
 }
 
 } // namespace

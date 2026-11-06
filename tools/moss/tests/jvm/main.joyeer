@@ -1,0 +1,537 @@
+import moss.binary
+import moss.cli
+import moss.jvm
+import moss.model
+import moss.output
+
+struct State {
+    var checks: Int
+    var failures: Int
+}
+
+private func expect(state: inout State, condition: Bool, name: borrowing String) {
+    &state.checks = state.checks + 1
+    if !condition {
+        &state.failures = state.failures + 1
+        print(value: "FAIL: " + name)
+    }
+}
+
+private func fixture(name: borrowing String): Result<String, String> {
+    let tests = match joinPath(base: "tools/moss/tests", path: "fixtures") {
+        .Ok(path) => path,
+        .Err(_) => { return .Err("cannot locate test fixtures") },
+    }
+    let directory = match joinPath(base: tests, path: "jvm") {
+        .Ok(path) => path,
+        .Err(_) => { return .Err("cannot locate JVM fixtures") },
+    }
+    let path = match joinPath(base: directory, path: name) {
+        .Ok(value) => value,
+        .Err(_) => { return .Err("cannot locate JVM fixture") },
+    }
+    return match readInput(path: path) {
+        .Ok(bytes) => .Ok(bytes),
+        .Err(error) => .Err("fixture acquisition: " + inputErrorCode(error: error)),
+    }
+}
+
+private func load(name: borrowing String): Result<ClassFile, String> {
+    let bytes = fixture(name: name)?
+    return match parseClass(input: bytes, allowPreview: false) {
+        .Ok(file) => .Ok(file),
+        .Err(error) => .Err(error.code + " at " + decimal(value: error.offset)),
+    }
+}
+
+private func versions(state: inout State) {
+    let names = ["Example8.class", "Example17.class", "Example21.class", "Example25.class"]
+    let majors = [52, 61, 65, 69]
+    var index = 0
+    while index < names.count {
+        match load(name: names[index]) {
+            .Ok(file) => {
+                expect(state: &state, condition: file.major == majors[index] && file.minor == 0 &&
+                    file.methods.count == 10 && file.fields.count == 1 && file.pool.count == 34,
+                    name: "classfile version/inventory " + names[index])
+                expect(state: &state, condition: unitsEqualAscii(
+                    units: className(file: file), text: "Example"),
+                    name: "class internal name " + names[index])
+            },
+            .Err(message) => expect(state: &state, condition: false, name: message),
+        }
+        index = index + 1
+    }
+    let preview = match fixture(name: "Preview.class") {
+        .Ok(bytes) => bytes,
+        .Err(message) => {
+            expect(state: &state, condition: false, name: message)
+            return
+        },
+    }
+    let rejected = match parseClass(input: preview, allowPreview: false) {
+        .Ok(_) => false,
+        .Err(error) => error.code == "jvm.unsupported-version" && error.offset == 4,
+    }
+    expect(state: &state, condition: rejected, name: "preview is opt-in")
+    let accepted = match parseClass(input: preview, allowPreview: true) {
+        .Ok(file) => file.minor == 65535 && file.major == 69,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: accepted, name: "Java 25 preview opt-in")
+}
+
+private func classAndDecode(state: inout State, bytes: borrowing String, file: borrowing ClassFile) {
+    var index = 0
+    while index < file.methods.count {
+        match decodeMethod(input: bytes, file: file, methodIndex: index) {
+            .Ok(instructions) => {
+                let hasCode = match file.methods[index].code {
+                    .Some(_) => true,
+                    .None => false,
+                }
+                expect(state: &state, condition: (instructions.count != 0) == hasCode,
+                    name: "preserved Code presence for method " + decimal(value: index))
+            },
+            .Err(error) => expect(state: &state, condition: false, name: error.code),
+        }
+        index = index + 1
+    }
+    let ambiguous = match selectMethod(file: file, name: "sum", type: "") {
+        .Ok(_) => false,
+        .Err(error) => error.code == "query.ambiguous-method",
+    }
+    expect(state: &state, condition: ambiguous, name: "overloads are not guessed")
+    let exact = match selectMethod(file: file, name: "sum", type: "(II)I") {
+        .Ok(value) => value == 1,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: exact, name: "exact descriptor selects overload")
+    let missing = match selectMethod(file: file, name: "missing", type: "") {
+        .Ok(_) => false,
+        .Err(error) => error.code == "query.method-not-found",
+    }
+    expect(state: &state, condition: missing, name: "missing method is explicit")
+    let instructions = match decodeMethod(input: bytes, file: file, methodIndex: 3) {
+        .Ok(value) => value,
+        .Err(error) => {
+            expect(state: &state, condition: false, name: error.code)
+            return
+        },
+    }
+    expect(state: &state, condition: instructions.count == 5, name: "wide instruction count")
+    if instructions.count != 5 { return }
+    let increment = match instructions[2].operands[1] {
+        .Immediate(value) => value == -32768,
+        _ => false,
+    }
+    expect(state: &state, condition: instructions[2].rawOpcode == 196 &&
+        instructions[2].opcode == 132 && instructions[2].size == 6 && instructions[2].wide && increment,
+        name: "wide iinc retains 16-bit signed increment")
+    let page = match instructionPage(instructions: instructions, codeLength: 18, offset: 3, limit: 2) {
+        .Ok(value) => value.first == 1 && value.end == 3 &&
+            match value.nextOffset { .Some(next) => next == 13, .None => false },
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: page, name: "page continuation is a byte offset")
+    let inside = match instructionPage(instructions: instructions, codeLength: 18, offset: 4, limit: 2) {
+        .Ok(_) => false,
+        .Err(error) => error.code == "query.invalid-offset",
+    }
+    expect(state: &state, condition: inside, name: "operand-byte offset is rejected")
+    let eof = match instructionPage(instructions: instructions, codeLength: 18, offset: 18, limit: 2) {
+        .Ok(value) => value.first == 5 && value.end == 5 &&
+            match value.nextOffset { .Some(_) => false, .None => true },
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: eof, name: "terminal method offset yields an empty complete page")
+    match file.methods[9].code {
+        .Some(code) => expect(state: &state, condition: code.exceptions.count == 1 &&
+            code.lines.count == 2 && code.locals.count == 1, name: "exception/debug inventories"),
+        .None => expect(state: &state, condition: false, name: "caught method has Code"),
+    }
+}
+
+private func truncations(state: inout State, bytes: borrowing String) {
+    var prefix = ""
+    var index = 0
+    while index < bytes.count {
+        let rejected = match parseClass(input: prefix, allowPreview: false) {
+            .Ok(_) => false,
+            .Err(error) => error.code.count != 0 && error.context.count != 0 && error.offset >= 0,
+        }
+        expect(state: &state, condition: rejected, name: "class truncation " + decimal(value: index))
+        prefix = prefix + byteToString(value: bytes[index])
+        index = index + 1
+    }
+    let trailing = match parseClass(input: bytes + "\0", allowPreview: false) {
+        .Ok(_) => false,
+        .Err(error) => error.code == "jvm.trailing-bytes" && error.offset == bytes.count,
+    }
+    expect(state: &state, condition: trailing, name: "trailing class bytes are not ignored")
+}
+
+private func constants(state: inout State) {
+    match load(name: "ConstantKinds.class") {
+        .Ok(file) => {
+            var seen: [Bool] = []
+            var index = 0
+            while index < 21 {
+                &seen.append(element: false)
+                index = index + 1
+            }
+            index = 1
+            while index < file.pool.count {
+                let tag = file.pool[index].tag
+                &seen[tag] = true
+                if tag == 5 || tag == 6 {
+                    expect(state: &state, condition: file.pool[index + 1].tag == 0,
+                        name: "unusable 64-bit constant slot")
+                }
+                index = index + 1
+            }
+            let tags = [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18]
+            index = 0
+            while index < tags.count {
+                expect(state: &state, condition: seen[tags[index]],
+                    name: "constant tag " + decimal(value: tags[index]))
+                index = index + 1
+            }
+        },
+        .Err(message) => expect(state: &state, condition: false, name: message),
+    }
+    match load(name: "Module.class") {
+        .Ok(file) => expect(state: &state, condition: file.flags == 32768 && file.methods.count == 0 &&
+            file.superClass == 0 && file.attributes.count == 2, name: "module-info metadata"),
+        .Err(message) => expect(state: &state, condition: false, name: message),
+    }
+}
+
+private func outputBudget(state: inout State) {
+    expect(state: &state, condition: escaped(units: [0, 34, 92, 39, 10, 55296, 20013]) ==
+        "\\u0000\\\"\\\\\\'\\n\\ud800\\u4e2d", name: "lossless string-constant escaping")
+    expect(state: &state, condition: plain(units: [72, 105, 47, 20013]) == "Hi/\\u4e2d" &&
+        dotted(units: [97, 47, 98]) == "a.b", name: "name text keeps slashes and escapes non-ASCII")
+    let invalidText = match utf8Units(text: "\0") {
+        .Ok(units) => units.count == 1 && units[0] == 0,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: invalidText, name: "UTF-8 decoding preserves NUL")
+    var block = "X"
+    while block.count < 1048576 { block = block + block }
+    var output = buffer()
+    var index = 0
+    while index < 8 {
+        let appended = match append(buffer: &output, text: block) {
+            .Ok(_) => true,
+            .Err(_) => false,
+        }
+        expect(state: &state, condition: appended, name: "bounded output append")
+        index = index + 1
+    }
+    let rejected = match append(buffer: &output, text: "X") {
+        .Ok(_) => false,
+        .Err(error) => error.code == "output.budget-exceeded",
+    }
+    expect(state: &state, condition: rejected && output.bytes == 8388608 && output.parts.count == 8,
+        name: "exact 8 MiB accepted; one extra byte fails atomically")
+    let contents = finish(buffer: consume output)
+    expect(state: &state, condition: contents.count == 8388608, name: "balanced output assembly preserves bytes")
+}
+
+private func digits(units: borrowing [Int], start: Int, end: Int): Int {
+    var value = 0
+    var index = start
+    while index < end {
+        value = value * 10 + units[index] - 48
+        index = index + 1
+    }
+    return value
+}
+
+private func opcodeMatrix(state: inout State) {
+    let bytes = match fixture(name: "OpcodeMatrix.class") {
+        .Ok(value) => value,
+        .Err(message) => {
+            expect(state: &state, condition: false, name: message)
+            return
+        },
+    }
+    let file = match parseClass(input: bytes, allowPreview: false) {
+        .Ok(value) => value,
+        .Err(error) => {
+            expect(state: &state, condition: false, name: error.code)
+            return
+        },
+    }
+    expect(state: &state, condition: file.methods.count == 217, name: "complete opcode/encoding fixture inventory")
+    var index = 0
+    while index < file.methods.count {
+        let name = file.pool[file.methods[index].nameIndex].text
+        var opcode = 0
+        var selected = 0
+        var wide = false
+        if name[0] == 111 {
+            opcode = digits(units: name, start: 2, end: name.count)
+        } else if name[0] == 119 {
+            opcode = digits(units: name, start: 4, end: name.count)
+            wide = true
+        } else {
+            opcode = digits(units: name, start: 5, end: 8)
+            selected = name[name.count - 1] - 48
+        }
+        match decodeMethod(input: bytes, file: file, methodIndex: index) {
+            .Ok(instructions) => {
+                expect(state: &state, condition: selected < instructions.count,
+                    name: "opcode record exists " + decimal(value: index))
+                if selected < instructions.count {
+                    let item = instructions[selected]
+                    var raw = opcode
+                    if wide { raw = 196 }
+                    expect(state: &state, condition: item.opcode == opcode && item.rawOpcode == raw &&
+                        item.wide == wide && item.methodOffset == selected,
+                        name: "opcode/offset/wide identity " + decimal(value: index))
+                    let encoded = item.size > 0 && item.fileOffset + item.size <= bytes.count &&
+                        byteToInt(value: bytes[item.fileOffset]) == raw
+                    expect(state: &state, condition: encoded, name: "exact raw instruction bytes")
+                    if wide && opcode == 132 {
+                        let increment = match item.operands[1] {
+                            .Immediate(value) => value == -32768,
+                            _ => false,
+                        }
+                        expect(state: &state, condition: increment && item.size == 6,
+                            name: "wide signed extrema in full matrix")
+                    }
+                }
+            },
+            .Err(error) => expect(state: &state, condition: false, name: error.code +
+                " opcode " + decimal(value: opcode)),
+        }
+        index = index + 1
+    }
+}
+
+struct DoubleCase {
+    let high: Int
+    let low: Int
+    let text: String
+}
+
+struct FloatCase {
+    let bits: Int
+    let text: String
+}
+
+private func floatingText(state: inout State) {
+    let doubles: [DoubleCase] = [
+        DoubleCase(high: 1069128089, low: 2576980378, text: "0.1"),
+        DoubleCase(high: 1070176665, low: 2576980378, text: "0.2"),
+        DoubleCase(high: 1070805811, low: 858993459, text: "0.3"),
+        DoubleCase(high: 1073532108, low: 3435973837, text: "1.8"),
+        DoubleCase(high: 1074340345, low: 4028335726, text: "3.14159"),
+        DoubleCase(high: 1074340347, low: 1413754136, text: "3.141592653589793"),
+        DoubleCase(high: 1074118410, low: 2333366121, text: "2.718281828459045"),
+        DoubleCase(high: 1107468383, low: 536870912, text: "1.0E10"),
+        DoubleCase(high: 1055880464, low: 1297423721, text: "1.5E-5"),
+        DoubleCase(high: 1079574528, low: 0, text: "100.0"),
+        DoubleCase(high: 1097305129, low: 3704409293, text: "1.23456789E7"),
+        DoubleCase(high: 1062232653, low: 3539053052, text: "0.001"),
+        DoubleCase(high: 1058682594, low: 3944497965, text: "1.0E-4"),
+        DoubleCase(high: 1097011919, low: 3758096384, text: "9999999.0"),
+        DoubleCase(high: 1097011920, low: 0, text: "1.0E7"),
+        DoubleCase(high: 1121718817, low: 2205670976, text: "1.23456789012345E14"),
+        DoubleCase(high: 0, low: 1, text: "4.9E-324"),
+        DoubleCase(high: 2146435071, low: 4294967295, text: "1.7976931348623157E308"),
+        DoubleCase(high: 1149300943, low: 105764242, text: "1.0E22"),
+        DoubleCase(high: 1152724226, low: 3353430774, text: "1.0E23"),
+        DoubleCase(high: 1070805811, low: 858993460, text: "0.30000000000000004"),
+        DoubleCase(high: 3221487616, low: 0, text: "-2.5"),
+        DoubleCase(high: 1089470472, low: 0, text: "65536.5"),
+        DoubleCase(high: 1093850759, low: 536870912, text: "1234567.125"),
+        DoubleCase(high: 2146959360, low: 0, text: "NaN"),
+        DoubleCase(high: 2146435072, low: 0, text: "Infinity"),
+        DoubleCase(high: 4293918720, low: 0, text: "-Infinity"),
+        DoubleCase(high: 1048238066, low: 2596056904, text: "1.0E-7"),
+        DoubleCase(high: 1057634018, low: 3944497965, text: "5.0E-5"),
+        DoubleCase(high: 1048576, low: 0, text: "2.2250738585072014E-308"),
+        DoubleCase(high: 1074882150, low: 1717986918, text: "4.35"),
+        DoubleCase(high: 1055193269, low: 2296604913, text: "1.0E-5"),
+        DoubleCase(high: 1152724226, low: 3353430774, text: "1.0E23"),
+        DoubleCase(high: 1071644672, low: 0, text: "0.5"),
+        DoubleCase(high: 1073741824, low: 0, text: "2.0"),
+        DoubleCase(high: 2147483648, low: 0, text: "-0.0"),
+        DoubleCase(high: 0, low: 0, text: "0.0"),
+    ]
+    var index = 0
+    while index < doubles.count {
+        expect(state: &state, condition: javaDoubleText(high: doubles[index].high, low: doubles[index].low) == doubles[index].text,
+            name: "Double.toString " + doubles[index].text + " got " + javaDoubleText(high: doubles[index].high, low: doubles[index].low))
+        index = index + 1
+    }
+    let floats: [FloatCase] = [
+        FloatCase(bits: 1036831949, text: "0.1"),
+        FloatCase(bits: 1045220557, text: "0.2"),
+        FloatCase(bits: 1072064102, text: "1.8"),
+        FloatCase(bits: 1078530000, text: "3.14159"),
+        FloatCase(bits: 1343554297, text: "1.0E10"),
+        FloatCase(bits: 930850946, text: "1.5E-5"),
+        FloatCase(bits: 1120403456, text: "100.0"),
+        FloatCase(bits: 1266679808, text: "1.6777216E7"),
+        FloatCase(bits: 981668463, text: "0.001"),
+        FloatCase(bits: 953267991, text: "1.0E-4"),
+        FloatCase(bits: 1259902591, text: "9999999.0"),
+        FloatCase(bits: 1259902592, text: "1.0E7"),
+        FloatCase(bits: 2139095039, text: "3.4028235E38"),
+        FloatCase(bits: 1, text: "1.4E-45"),
+        FloatCase(bits: 8388608, text: "1.1754944E-38"),
+        FloatCase(bits: 1056964608, text: "0.5"),
+        FloatCase(bits: 3223322624, text: "-2.5"),
+        FloatCase(bits: 1206984805, text: "123456.79"),
+        FloatCase(bits: 1107645781, text: "33.333332"),
+        FloatCase(bits: 2143289344, text: "NaN"),
+        FloatCase(bits: 2139095040, text: "Infinity"),
+        FloatCase(bits: 2147483648, text: "-0.0"),
+        FloatCase(bits: 0, text: "0.0"),
+        FloatCase(bits: 1007371158, text: "0.0085"),
+    ]
+    index = 0
+    while index < floats.count {
+        expect(state: &state, condition: javaFloatText(bits: floats[index].bits) == floats[index].text,
+            name: "Float.toString " + floats[index].text + " got " + javaFloatText(bits: floats[index].bits))
+        index = index + 1
+    }
+}
+
+private func javapLayout(state: inout State) {
+    let bytes = match fixture(name: "Example21.class") {
+        .Ok(value) => value,
+        .Err(message) => {
+            expect(state: &state, condition: false, name: message)
+            return
+        },
+    }
+    let file = match parseClass(input: bytes, allowPreview: false) {
+        .Ok(value) => value,
+        .Err(error) => {
+            expect(state: &state, condition: false, name: error.code)
+            return
+        },
+    }
+    let method = match selectMethod(file: file, name: "dense", type: "") {
+        .Ok(value) => value,
+        .Err(error) => {
+            expect(state: &state, condition: false, name: error.code)
+            return
+        },
+    }
+    let instructions = match decodeMethod(input: bytes, file: file, methodIndex: method) {
+        .Ok(value) => value,
+        .Err(error) => {
+            expect(state: &state, condition: false, name: error.code)
+            return
+        },
+    }
+    // Byte-for-byte what `javap -c -p` prints for this method (JDK 25), minus the other members.
+    let expected = "Compiled from \"Example.java\"\n" +
+        "public abstract class Example {\n" +
+        "  public static int dense(int);\n" +
+        "    Code:\n" +
+        "         0: iload_0\n" +
+        "         1: tableswitch   { // -1 to 1\n" +
+        "                      -1: 28\n" +
+        "                       0: 30\n" +
+        "                       1: 32\n" +
+        "                 default: 34\n" +
+        "            }\n" +
+        "        28: iconst_1\n" +
+        "        29: ireturn\n" +
+        "        30: iconst_2\n" +
+        "        31: ireturn\n" +
+        "        32: iconst_3\n" +
+        "        33: ireturn\n" +
+        "        34: iconst_4\n" +
+        "        35: ireturn\n" +
+        "}\n"
+    let page = Page(first: 0, end: instructions.count, nextOffset: .None)
+    match renderMethodDisasm(input: bytes, file: file, methodIndex: method, instructions: instructions, page: page) {
+        .Ok(text) => expect(state: &state, condition: text == expected, name: "javap -c layout of a tableswitch method"),
+        .Err(error) => expect(state: &state, condition: false, name: error.code),
+    }
+    let partial = Page(first: 0, end: 2, nextOffset: .Some(28))
+    match renderMethodDisasm(input: bytes, file: file, methodIndex: method, instructions: instructions, page: partial) {
+        .Ok(text) => expect(state: &state, condition: text ==
+            "Compiled from \"Example.java\"\npublic abstract class Example {\n" +
+            "  public static int dense(int);\n    Code:\n         0: iload_0\n" +
+            "         1: tableswitch   { // -1 to 1\n                      -1: 28\n" +
+            "                       0: 30\n                       1: 32\n                 default: 34\n" +
+            "            }\n}\n// more: continue with --offset 28\n", name: "paged listing ends with a continuation note"),
+        .Err(error) => expect(state: &state, condition: false, name: error.code),
+    }
+}
+
+private func descriptorsAndSignatures(state: inout State) {
+    let types = methodTypes(units: asciiUnits(text: "(I[JLjava/lang/String;[[Z)Ljava/util/List;"))
+    expect(state: &state, condition: parameterList(types: types, varargs: false) ==
+        "int, long[], java.lang.String, boolean[][]" && types[types.count - 1] == "java.util.List",
+        name: "descriptor types in source form")
+    expect(state: &state, condition: parameterList(types: methodTypes(units: asciiUnits(text: "([Ljava/lang/String;)V")),
+        varargs: true) == "java.lang.String...", name: "varargs prints as ...")
+    expect(state: &state, condition: genericTypeText(units: asciiUnits(
+        text: "Ljava/util/Map<Ljava/lang/String;+[TT;>;")) == "java.util.Map<java.lang.String, ? extends T[]>",
+        name: "generic type arguments")
+    expect(state: &state, condition: genericTypeText(units: asciiUnits(
+        text: "Lpkg/Outer<TT;>.Inner<*>;")) == "pkg.Outer<T>.Inner<?>", name: "inner class signature")
+    expect(state: &state, condition: genericMethodText(units: asciiUnits(
+        text: "<V::Ljava/nio/file/attribute/FileAttributeView;>(Ljava/lang/Class<TV;>;[Ljava/nio/file/LinkOption;)TV;^Ljava/io/IOException;"),
+        name: "get", varargs: true) ==
+        "<V extends java.nio.file.attribute.FileAttributeView> V get(java.lang.Class<V>, java.nio.file.LinkOption...) throws java.io.IOException",
+        name: "generic method with bound, varargs, and throws")
+    expect(state: &state, condition: genericMethodText(units: asciiUnits(text: "<T:Ljava/lang/Object;>(TT;)TT;"),
+        name: "id", varargs: false) == "<T> T id(T)", name: "Object bound is omitted")
+    expect(state: &state, condition: genericMethodText(units: asciiUnits(
+        text: "<T:Ljava/lang/Object;:Ljava/lang/Comparable<-TT;>;>(TT;TT;)I"),
+        name: "compare", varargs: false) == "<T extends java.lang.Comparable<? super T>> int compare(T, T)",
+        name: "an Object class bound is dropped when interface bounds follow")
+    expect(state: &state, condition: genericMethodText(units: asciiUnits(
+        text: "<T::Ljava/lang/Comparable<TT;>;:Ljava/io/Serializable;>(TT;)V"),
+        name: "both", varargs: false) == "<T extends java.lang.Comparable<T> & java.io.Serializable> void both(T)",
+        name: "several interface bounds are joined with &")
+    expect(state: &state, condition: genericClassText(units: asciiUnits(
+        text: "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;Ljava/util/RandomAccess;")) ==
+        "<E> extends java.util.AbstractList<E> implements java.util.List<E>, java.util.RandomAccess",
+        name: "generic class signature")
+}
+
+func main(args: borrowing [String]): Int {
+    if args.count != 0 {
+        print(value: "moss-jvm-tests: no arguments are accepted")
+        return 1
+    }
+    var state = State(checks: 0, failures: 0)
+    versions(state: &state)
+    let bytes = match fixture(name: "Example25.class") {
+        .Ok(value) => value,
+        .Err(message) => {
+            print(value: message)
+            return 1
+        },
+    }
+    match parseClass(input: bytes, allowPreview: false) {
+        .Ok(file) => classAndDecode(state: &state, bytes: bytes, file: file),
+        .Err(error) => expect(state: &state, condition: false, name: error.code),
+    }
+    truncations(state: &state, bytes: bytes)
+    constants(state: &state)
+    opcodeMatrix(state: &state)
+    outputBudget(state: &state)
+    floatingText(state: &state)
+    javapLayout(state: &state)
+    descriptorsAndSignatures(state: &state)
+    if state.failures != 0 {
+        print(value: "moss-jvm-tests: " + decimal(value: state.failures) +
+            " failures in " + decimal(value: state.checks) + " checks")
+        return 1
+    }
+    print(value: "moss-jvm-tests: " + decimal(value: state.checks) + " checks passed")
+    return 0
+}

@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "moss.binary"
+kind = "source"
+sources = ["reader.joyeer", "input.joyeer"]
+dependencies = []

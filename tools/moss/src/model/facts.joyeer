@@ -1,0 +1,115 @@
+public struct Diagnostic {
+    public let code: String
+    public let offset: Int
+    public let context: String
+    public let message: String
+}
+
+public struct ByteRange {
+    public let offset: Int
+    public let length: Int
+}
+
+public struct Constant {
+    public let index: Int
+    public let tag: Int
+    public let bytes: ByteRange
+    public let first: Int
+    public let second: Int
+    public let text: [Int]
+}
+
+public struct Attribute {
+    public let nameIndex: Int
+    public let headerOffset: Int
+    public let body: ByteRange
+}
+
+public struct ExceptionRegion {
+    public let start: Int
+    public let end: Int
+    public let handler: Int
+    public let catchType: Int
+    public let fileOffset: Int
+}
+
+public struct LineNumber {
+    public let offset: Int
+    public let line: Int
+    public let fileOffset: Int
+}
+
+public struct LocalVariable {
+    public let start: Int
+    public let length: Int
+    public let slot: Int
+    public let nameIndex: Int
+    public let descriptorIndex: Int
+    public let generic: Bool
+    public let fileOffset: Int
+}
+
+public struct Code {
+    public let attributeOffset: Int
+    public let maxStack: Int
+    public let maxLocals: Int
+    public let bytes: ByteRange
+    public let exceptions: [ExceptionRegion]
+    public let attributes: [Attribute]
+    public let lines: [LineNumber]
+    public let locals: [LocalVariable]
+}
+
+public struct Member {
+    public let index: Int
+    public let fileOffset: Int
+    public let flags: Int
+    public let nameIndex: Int
+    public let descriptorIndex: Int
+    public let attributes: [Attribute]
+    public let code: Code?
+}
+
+public struct ClassFile {
+    public let byteCount: Int
+    public let minor: Int
+    public let major: Int
+    public let flags: Int
+    public let thisClass: Int
+    public let superClass: Int
+    public let interfaces: [Int]
+    public let pool: [Constant]
+    public let fields: [Member]
+    public let methods: [Member]
+    public let attributes: [Attribute]
+    public let bootstrapCount: Int
+}
+
+public enum Operand {
+    Immediate(Int),
+    Local(Int),
+    Constant(Int),
+    Target(Int),
+    ArrayType(Int),
+    Dimensions(Int),
+    Count(Int),
+    DefaultTarget(Int),
+    SwitchTarget(Int, Int),
+}
+
+public struct Instruction {
+    public let methodOffset: Int
+    public let fileOffset: Int
+    public let size: Int
+    public let rawOpcode: Int
+    public let opcode: Int
+    public let mnemonic: String
+    public let wide: Bool
+    public let operands: [Operand]
+}
+
+public struct Page {
+    public let first: Int
+    public let end: Int
+    public let nextOffset: Int?
+}

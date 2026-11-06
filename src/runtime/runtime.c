@@ -277,6 +277,97 @@ int32_t joyeer_write_stderr_abi(
     return code == 0 ? JOYEER_STDERR_ERROR_NONE : JOYEER_STDERR_ERROR_WRITE_FAILED;
 }
 
+#if defined(_WIN32)
+// Process-wide and never restored: spec 18.5 documents the binary-mode switch.
+static bool stdinIsBinary = false;
+#endif
+
+int32_t joyeer_read_stdin_line_abi(
+        JoyeerString* result,
+        int64_t* errorCode,
+        int64_t maximumBytes) {
+    if (result == NULL) joyeer_panic("stdin result output is null");
+    if (errorCode == NULL) joyeer_panic("stdin error output is null");
+    *errorCode = 0;
+    if (maximumBytes < 0) {
+        *errorCode = EINVAL;
+        return JOYEER_STDIN_ERROR_READ_FAILED;
+    }
+
+#if defined(_WIN32)
+    if (!stdinIsBinary) {
+        const int descriptor = _fileno(stdin);
+        if (!stderrDescriptorIsValid(descriptor)) {
+            *errorCode = errno;
+            return JOYEER_STDIN_ERROR_READ_FAILED;
+        }
+        if (setStderrMode(descriptor, _O_BINARY) == -1) {
+            *errorCode = errno == 0 ? EIO : errno;
+            return JOYEER_STDIN_ERROR_READ_FAILED;
+        }
+        stdinIsBinary = true;
+    }
+#endif
+
+    // A request/response peer is waiting for earlier output, and C stdio does
+    // not flush a pipe or file before a read. Failure cannot be reported here
+    // (print has no error path), so it is ignored by design (spec 18.5).
+    (void)fflush(stdout);
+
+    // Hold at most maximumBytes + 1 bytes: the extra byte lets a maximal line
+    // end in CR before LF. Anything beyond that is counted as overflow and
+    // discarded through the terminator so the stream stays line-aligned.
+    const uint64_t cap = maximumBytes == INT64_MAX
+            ? (uint64_t)INT64_MAX : (uint64_t)maximumBytes + 1;
+    uint8_t* buffer = NULL;
+    size_t count = 0;
+    size_t capacity = 0;
+    bool overflow = false;
+    bool sawByte = false;
+    bool terminated = false;
+    for (;;) {
+        const int next = getc(stdin);
+        if (next == EOF) break;
+        sawByte = true;
+        if (next == '\n') {
+            terminated = true;
+            break;
+        }
+        if (overflow) continue;
+        if ((uint64_t)count == cap) {
+            overflow = true;
+            continue;
+        }
+        if (count == capacity) {
+            uint64_t grown = capacity < 256 ? 256 : (uint64_t)capacity * 2;
+            if (grown > cap) grown = cap;
+            buffer = (uint8_t*)checkedReallocate(buffer, (size_t)grown);
+            capacity = (size_t)grown;
+        }
+        buffer[count++] = (uint8_t)next;
+    }
+
+    if (!terminated && ferror(stdin)) {
+        const int code = errno == 0 ? EIO : errno;
+        clearerr(stdin);
+        checkedFree(buffer);
+        *errorCode = code;
+        return JOYEER_STDIN_ERROR_READ_FAILED;
+    }
+    if (!sawByte) {
+        checkedFree(buffer);
+        return JOYEER_STDIN_ERROR_END_OF_INPUT;
+    }
+    if (terminated && !overflow && count != 0 && buffer[count - 1] == '\r') count--;
+    if (overflow || (uint64_t)count > (uint64_t)maximumBytes) {
+        checkedFree(buffer);
+        return JOYEER_STDIN_ERROR_LINE_TOO_LONG;
+    }
+    joyeer_string_clone_abi(result, buffer, (int64_t)count);
+    checkedFree(buffer);
+    return JOYEER_STDIN_ERROR_NONE;
+}
+
 JoyeerString joyeer_string_concat(JoyeerString left, JoyeerString right) {
     if (left.count < 0 || right.count < 0 ||
         (left.count != 0 && left.data == NULL) ||

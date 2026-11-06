@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "moss.output"
+kind = "source"
+sources = ["buffer.joyeer", "cfg.joyeer", "classtext.joyeer", "entries.joyeer", "floatformat.joyeer", "javap.joyeer", "signature.joyeer"]
+dependencies = ["moss.analysis", "moss.model"]

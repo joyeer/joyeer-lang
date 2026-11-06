@@ -1,0 +1,84 @@
+import moss.cli
+import moss.model
+import moss.binary
+
+private func failure(error: borrowing Diagnostic, status: Int): Int {
+    var location = ""
+    if error.offset >= 0 { location = " at byte " + decimal(value: error.offset) }
+    return match writeStderr(contents: "moss: " + error.code + location + " [" +
+        error.context + "]: " + error.message + "\n") {
+        .Ok(_) => status,
+        .Err(_) => 1,
+    }
+}
+
+private func writeOutput(path: borrowing String, contents: borrowing String): Int {
+    return match writeFileNew(path: path, contents: contents + "\n") {
+        .Ok(_) => 0,
+        .Err(error) => failure(error: Diagnostic(code: "output.write-failed", offset: -1,
+            context: "output", message: "cannot write new output file '" + path +
+            "' (native code " + decimal(value: fileSystemCode(error: error)) +
+            "); existing files are never replaced and failed writes may leave a partial file"), status: 1),
+    }
+}
+
+private func execute(options: borrowing Options): Int {
+    let contents = match analyze(options: options) {
+        .Ok(text) => text,
+        .Err(error) => { return failure(error: error, status: 1) },
+    }
+    if options.output.count != 0 { return writeOutput(path: options.output, contents: contents) }
+    print(value: contents)
+    return 0
+}
+
+private func reply(value: borrowing Reply) {
+    print(value: frame(reply: value))
+}
+
+// readStdinLine flushes stdout first, so each reply reaches a waiting client
+// before the next request is awaited.
+private func serve(): Int {
+    var session = newSession()
+    while true {
+        match readStdinLine(maximumBytes: maximumRequestBytes()) {
+            .Ok(line) => {
+                if line.count != 0 {
+                    let answer = respond(session: &session, line: line)
+                    reply(value: answer)
+                    if answer.quit { return 0 }
+                }
+            }
+            .Err(error) => match error {
+                .EndOfInput(_) => { return 0 }
+                .LineTooLong(_) => {
+                    reply(value: Reply(ok: false, text: "serve.line-too-long [request]: " +
+                        "a request line exceeds " + decimal(value: maximumRequestBytes()) + " bytes", quit: false))
+                }
+                .ReadFailed(code) => {
+                    return failure(error: Diagnostic(code: "serve.stdin-failed", offset: -1, context: "stdin",
+                        message: "cannot read standard input (native code " + decimal(value: code) + ")"), status: 1)
+                }
+            },
+        }
+    }
+    return 0
+}
+
+func main(args: borrowing [String]): Int {
+    return match parse(args: args) {
+        .Ok(command) => match command {
+            .Help => {
+                print(value: helpText())
+                return 0
+            },
+            .Version => {
+                print(value: versionText())
+                return 0
+            },
+            .Analyze(options) => execute(options: options),
+            .Serve => serve(),
+        },
+        .Err(error) => failure(error: error, status: 2),
+    }
+}

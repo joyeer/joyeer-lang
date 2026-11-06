@@ -1,194 +1,116 @@
 # AGENTS.md - Joyeer Language
 
-> Joyeer is an AI-era systems language: AI writes most code, humans review and
-> assist. Goal: replace C++ for new code. No GC. Zero-cost abstractions.
-> Swift-like syntax with value semantics and deterministic destruction.
+> Joyeer is a general-purpose programming language for the AI era.
+> AI writes code; humans review it. No GC. Zero-cost abstractions.
+> Built to create modern replacements for legacy software.
 
-The normative language definition is [docs/spec.md](docs/spec.md). Design
-explanations live alongside the rules in its chapters; implementation details
-belong in [docs/impl/](docs/impl/). The documentation index is
-[docs/README.md](docs/README.md).
+Value semantics and deterministic destruction are core design constraints.
+Read any directory-specific `AGENTS.md` before changing that area.
 
-Keep this file focused on current development rules. Remove completed
-one-off tasks and migration history instead of retaining them as instructions.
+## Essential commands
 
-Write all documentation in English.
-
-## Architecture
-
-The compiler uses C++20, the runtime uses C11, and the build uses
-CMake + Ninja. The supported pipeline is:
+Install the prerequisites in [docs/building.md](docs/building.md) first.
+On Windows, use an MSVC Developer shell matching the target architecture.
 
 ```text
-source -> lexer -> parser -> name resolution -> type checking
-      -> semantic analysis -> verified Joyeer IR -> LLVM IR objects
-  -> LLVM code generation + LLD + JoyeerRuntime -> native executable
-```
-
-LLVM code generation and LLD linking run in-process behind the versioned
-`joyeer-backend` C ABI. Do not expose LLVM/Clang C++ types, exceptions,
-allocators, or ownership across that boundary.
-
-## Build and test
-
-```text
-cmake -S . -B build -G Ninja
+cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DJOYEER_BUILD_UNITTESTS=ON
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-- `python3 scripts/validate.py --llvm-root <sdk>` configures, builds, and runs
-  the unfiltered ctest and `fern test` in Debug and Release, then prints one
-  platform x config x suite table. Use it, not ad-hoc shell scripts, to validate
-  a platform or to hand a validation to someone else. `--report FILE` saves the
-  table and `--tests-list DIR` saves the sorted ctest names so two platforms can
-  be diffed. It never installs a toolchain.
-- Source builders install CMake 3.20+, Ninja, a C++20 host compiler, and the
-  platform SDK before configuring. See [docs/building.md](docs/building.md).
-- Native development on every platform requires LLVM/LLD 22.1.8 development
-  libraries; Linux also requires the matching Clang Driver library. Set
-  `LLVM_HOME` or `JOYEER_LLVM_ROOT` for a nonstandard SDK.
-  CMake must not download or build LLVM itself.
-- Windows builds require Visual Studio's MSVC compiler, a Windows SDK,
-  compatible `/MT` static LLVM/LLD libraries, and the MSVC DIA SDK, all matching
-  the x64 or ARM64 target. Configure from a matching Developer shell; Ninja
-  does not select the toolchain. Keep separate build trees for each architecture.
-- The build is out-of-source only. Never run `cmake .` at the repository root.
-- Manual `-B build` configurations place the executable under `build/bin/`;
-  presets use `out/build/<preset>/bin/`.
-- Enable `JOYEER_BUILD_UNITTESTS` for the full acceptance gate and run
-  unfiltered CTest. Label filters are for focused iteration only.
-- `JOYEER_BUILD_FERN` defaults to `ON`: CMake bootstraps the Joyeer-written
-  `fern` as an `ALL` target using the build-tree compiler. Set it to `OFF`
-  for a compiler-only build. Its acceptance gates require `BUILD_TESTING`
-  and `JOYEER_BUILD_FERN`, independently of `JOYEER_BUILD_UNITTESTS`.
-- Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release; macOS Debug
-  falls back to `-g0` when `dsymutil` is unavailable. Debug PDB/dSYM sidecars
-  are CMake byproducts when produced; Windows Debug installs the fern PDB
-  with component `PRODUCT`. CMake stages an explicit self-build project under
-  `out/build/<preset>/tools/fern/project/`.
-- Re-run CMake configure after adding or removing registered fixtures or test
-  targets.
-- C++ unit tests live under [tests/unittests/](tests/unittests/). Durable
-  Joyeer sources live under stage-specific directories in [tests/](tests/).
+- Build out of source; never run `cmake .` at the repository root. Keep
+  separate build trees for each architecture.
+- Reconfigure after adding or removing registered fixtures or test targets.
+- Toolchains are developer-managed. Automation must not install or resolve
+  host compilers, platform SDKs, CMake, Ninja, LLVM, Clang, or LLD. CMake may
+  acquire pinned project dependencies under the documented
+  [dependency policy](docs/building.md#dependency-policy).
 
-## Source layout
+## Architectural constraints
 
-Headers and implementations live together under `src/`; they are internal
-interfaces, not an installed C++ SDK. Same-directory includes use the filename;
-cross-directory includes use the path relative to `src/`.
+The compiler is C++20, the runtime is C11, and the build uses CMake + Ninja.
 
-| Area | Sources |
-|---|---|
-| Program entry | [src/compiler/main.cpp](src/compiler/main.cpp) |
-| CLI / compilation service / driver | [src/compiler/driver/](src/compiler/driver/) |
-| Lexer / parser / AST / name, type, and flow analysis | [src/compiler/frontend/](src/compiler/frontend/) |
-| Joyeer IR / verifier / typed AST lowering | [src/compiler/ir/](src/compiler/ir/) |
-| Diagnostics | [src/compiler/diagnostics/](src/compiler/diagnostics/) |
-| Compiler-side backend adapter / link orchestration | [src/compiler/codegen/](src/compiler/codegen/) |
-| LLVM objects / optimization / embedded LLD / C ABI | [src/backend/](src/backend/) |
-| C11 program runtime | [src/runtime/](src/runtime/) |
-| Local project manager | [tools/fern/](tools/fern/); behavior and validation in [docs/impl/fern.md](docs/impl/fern.md) |
+```text
+source -> lexer -> parser -> name resolution -> type checking
+       -> semantic analysis -> verified Joyeer IR -> LLVM IR objects
+       -> LLVM code generation + LLD + JoyeerRuntime -> native executable
+```
 
-`JoyeerCompilerCore` is one non-installed CMake `OBJECT` target reused by
-`joyeer` and the compiler unit tests. Directories are responsibility groups,
-not separate libraries. Keep `JoyeerBackend` shared and
-`JoyeerRuntime` static: LLVM and Windows `/MT` objects stay in the backend,
-and generated programs link the runtime plus explicitly selected optional
-native libraries. Compile the same IR verifier
-source privately in the backend rather than reusing compiler-core objects.
-
-## Joyeer source conventions
-
-- Prefer `let`; use `var` only for mutation.
-- Use `struct` for aggregates. `class` is outside the implemented surface.
-- Put explicit types on public function signatures.
-- Use `Optional` for absence and `Result` for recoverable failure.
-- Named calls use the syntax accepted by current parser fixtures, for example
-  `print(value: result)`.
-
-## Compiler and runtime conventions
-
-- C++20, four-space indentation, and surrounding header/source naming.
+- LLVM code generation and LLD linking run in-process behind the versioned
+  `joyeer-backend` C ABI. Never expose LLVM/Clang C++ types, exceptions,
+  allocators, or ownership across that boundary.
+- Keep `JoyeerCompilerCore` a private `OBJECT` target shared by the compiler
+  and unit tests, `JoyeerBackend` shared, and `JoyeerRuntime` static. Compile
+  the same IR verifier privately in the backend; do not reuse compiler-core
+  objects there. LLVM and Windows `/MT` objects stay behind the backend ABI.
 - Keep syntax, semantic, type, and IR models separate. Syntax nodes carry
   spans; semantic annotations belong in `SemanticModel`/`TypeCheckedModel`.
-- User-visible frontend work normally requires changes through parser or
-  semantic ownership, Joyeer IR lowering/verifier, LLVM emission, and the
-  runtime only where the feature crosses those boundaries.
+- Preserve source locations and debug scopes when changing IR operations.
+- Keep `Compression` a separate archive/standard module, not a core-runtime
+  dependency. Generated programs link only explicitly selected optional
+  native libraries.
+
+## Coding rules
+
+- Use four-space indentation and surrounding C++ naming conventions. Headers
+  and implementations live together under `src/`; same-directory includes use
+  the filename, cross-directory includes use paths relative to `src/`.
 - Report compiler failures through `Diagnostics` with stable IDs and
   `SourceSpan`; do not write ad hoc errors to `std::cerr`.
-- Add focused GoogleTests and at least one durable stage/native fixture for a
-  user-visible feature.
-- Preserve source locations and debug scopes when adding or expanding IR
-  operations.
+- In Joyeer, prefer `let`, use `var` for mutation, and use `struct` for
+  aggregates. Put explicit types on public signatures. Use `Optional` for
+  absence and `Result` for recoverable failure; use named calls such as
+  `print(value: answer)`. Check the
+  [implemented surface](docs/impl/supported-features.md) before assuming an API.
+- Write documentation in English. Follow [.gitattributes](.gitattributes):
+  text uses LF on every platform. Transfer checkouts with Git rather than
+  copying platform-modified working trees.
+- Write reusable installation, packaging, and release scripts in
+  cross-platform Python 3.9+ with the standard library. Use `subprocess.run`
+  with argument arrays, never `shell=True` or shell command strings; do not
+  maintain parallel `.sh` and `.ps1` implementations. Python must not become
+  a source-build or released-program requirement.
+- Keep test SDKs and LLVM tools out of product packages. Required third-party
+  notices must be assembled before redistribution; follow
+  [release staging](docs/building.md#release-staging).
 
-## Packaging and automation
+## Verification workflow
 
-- Windows packages should contain only `joyeer.exe`, `joyeer-backend.dll`,
-  `JoyeerRuntime.lib`, optional `fern.exe` (enabled by default), and
-  required licenses/notices, not test SDKs or LLVM tools/DLLs. Compiler,
-  backend, runtime, and the current license use install component
-  `JoyeerRuntime`; `fern` uses `PRODUCT`. The Debug installer includes
-  `fern` and its PDB when enabled. Current local installs stage only Joyeer's
-  own license. Third-party license/notice assembly is deferred and must be
-  completed before redistributing toolchain binaries.
-  See [docs/building.md](docs/building.md#release-staging).
-- Packaged native linking needs MSVC Build Tools and a Windows SDK, but not
-  an LLVM installation. Clang executables are test/inspection tools, not
-  product linkers.
-
-- Keep external tool prerequisites in [docs/building.md](docs/building.md);
-  checked-in automation must not install or resolve the host compiler, platform
-  SDK, CMake, Ninja, LLVM, Clang, or LLD.
-- CMake may acquire pinned project dependencies such as GoogleTest and the
-  static LibXml2 needed by the official Windows LLD libraries, and miniz when
-  `JOYEER_BUILD_COMPRESSION=ON`. The optional `Compression` library remains a
-  separate archive/source package, never a core-runtime dependency. Its
-  install component includes the miniz license. LLVM and
-  platform toolchains remain developer-managed external prerequisites.
-- Write checked-in installation, packaging, and release automation in
-  cross-platform Python 3.9+ using the standard library when scripting is
-  necessary.
-- Do not maintain parallel `.sh` and `.ps1` implementations. Command examples
-  may use the host shell, but reusable workflow logic belongs in Python.
-- Launch tools with argument arrays and `subprocess.run`; do not use
-  `shell=True` or construct shell command strings.
-- Python is not a source-build requirement. Released Joyeer compiler binaries
-  and programs must not require Python.
-
-## Learnings
-
-- Text files are stored and checked out with LF on every platform
-  ([.gitattributes](.gitattributes)). Byte-exact fixtures and diagnostics
-  snapshots break if a tool rewrites them to CRLF, so move a tree between
-  machines with git, never by copying a Windows working tree to Linux.
-- On Linux the in-process Clang Driver only checks that an `ld.lld` file exists
-  for `-fuse-ld=lld`; put the SDK `bin` on `PATH` (or `ld.lld` in `/usr/bin`) or
-  the link step fails with `invalid linker name`. `validate.py` does this for
-  its child processes.
-- A CMake build tree records its source path. After a checkout moves, reusing
-  `out/build/<preset>` fails to regenerate; configure a new tree instead.
-- Writing Joyeer library code: `result` and the other words in
-  [spec §15](docs/spec/15-reserved.md) are reserved, and the compiler reports one
-  used as an identifier with a misleading "JSON-parser MVP" message, so rename
-  it. `&` marks assignment through `inout` storage and mutating calls only; using
-  it on a plain local `var` is `invalid-access-marker`. There is no Int to Double
-  conversion and no `Array.removeLast`; check
-  [supported features](docs/impl/supported-features.md) before relying on an
-  API.
+- **Documentation only:** check wording, links, examples, and consistency.
+  Builds and runtime tests are unnecessary unless executable behavior changes
+  or a documentation test covers the edit.
+- **Implementation changes:** start with focused tests. C++ unit tests live in
+  [tests/unittests/](tests/unittests/); durable Joyeer fixtures live in the
+  stage-specific [tests/](tests/) directories. Label filters are for iteration,
+  not full acceptance.
+- **User-visible features:** follow the
+  [feature workflow](docs/decisions/README.md). Record contested decisions,
+  update the spec, add failing GoogleTests and a durable stage/native fixture,
+  implement through every affected pipeline boundary, and run the role
+  reviewers separately from the author before full acceptance.
+- **Full feature/platform acceptance:** use
+  `python3 scripts/validate.py --llvm-root <sdk>`, not ad-hoc scripts. It runs
+  unfiltered CTest and `fern test` in Debug and Release. Keep `BUILD_TESTING`,
+  `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN` enabled; the full root
+  workspace also needs `JOYEER_BUILD_COMPRESSION`. Report unrun or blocked
+  gates explicitly. See [validation details](docs/building.md#full-platform-validation).
 - Use [jp_write_bytes](tests/fern/helpers.cmake) for byte-exact manifest
-  fixtures, not CMake `file(WRITE)` directly. Windows text-mode writes insert
-  CR before LF, changing CRLF and inclusive byte limits; the helper verifies
-  size and SHA-256 after a Joyeer binary write.
-- Parallel native test directories must include process identity and be
-  claimed exclusively. Cleanup must only remove directories the current
-  test successfully created, never another process's collided path.
+  fixtures, not CMake `file(WRITE)`: Windows text writes can change byte counts.
+- Claim parallel test directories exclusively with process-specific names.
+  Cleanup may remove only paths the current test successfully created.
 
-## When in doubt
+## Documentation map
 
-- Language design and rationale: [docs/spec.md](docs/spec.md), starting with
-  [the preamble](docs/spec/00-preamble.md)
-- Implemented language surface:
-  [docs/impl/supported-features.md](docs/impl/supported-features.md)
-- Backend ABI/debug behavior: [docs/impl/backend.md](docs/impl/backend.md)
-- Program startup and runtime: [docs/impl/runtime.md](docs/impl/runtime.md)
+| Topic | Source of truth |
+|---|---|
+| Language rules and design rationale | [Spec](docs/spec.md), starting with the [preamble](docs/spec/00-preamble.md) |
+| Current compiler support and authoring pitfalls | [Implemented surface](docs/impl/supported-features.md) |
+| Toolchains, bootstrap, packaging, troubleshooting | [Building](docs/building.md) |
+| Compiler layout, backend ABI, debug behavior | [Backend](docs/impl/backend.md), [IR](docs/impl/ir.md), [runtime](docs/impl/runtime.md) |
+| Local project manager | [Fern](docs/impl/fern.md) |
+| JVM inspection tool | [Moss README](tools/moss/README.md) and [instructions](tools/moss/AGENTS.md) |
+| All documentation | [Index](docs/README.md) |
+
+Keep this file focused on current development rules. Put implementation detail
+in the linked docs; remove completed tasks and migration history rather than
+accumulating them here.

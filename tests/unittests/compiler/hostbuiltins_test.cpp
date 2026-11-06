@@ -58,6 +58,16 @@ func stderr(contents: String): Result<Void, StderrError> {
 func stderrCode(error: StderrError): Int {
     return match error { .WriteFailed(code) => code }
 }
+func stdinLine(maximumBytes: Int): Result<String, StdinError> {
+    return readStdinLine(maximumBytes: maximumBytes)
+}
+func stdinCode(error: StdinError): Int {
+    return match error {
+        .EndOfInput(code) => code,
+        .LineTooLong(code) => code,
+        .ReadFailed(code) => code,
+    }
+}
 func describe(kind: FileKind): Int {
     return match kind {
         .File => 0,
@@ -164,6 +174,71 @@ TEST_F(HostBuiltinTest, ProvidesConcretePrefixSignatureAndPreservesFilesystemCas
     EXPECT_EQ(filesystem->firstAbiTag, 1);
 }
 
+TEST_F(HostBuiltinTest, ProvidesConcreteStdinLineSignatureAndErrorPayload) {
+    ASSERT_NO_FATAL_FAILURE(check(
+            "func f(limit: Int): Result<String, StdinError> {\n"
+            "return readStdinLine(maximumBytes: limit)\n}\n"
+            "func g(limit: Int): Result<String, StdinError> {\n"
+            "let line = readStdinLine(maximumBytes: limit)?\n"
+            "return .Ok(line)\n}\n"
+            "func failed(code: Int): Result<String, StdinError> {\n"
+            "return .Err(.ReadFailed(code))\n}\n"));
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto* prelude = resolution.model->scope(resolution.model->preludeScope());
+    ASSERT_NE(prelude, nullptr);
+    const auto found = prelude->values.find("readStdinLine");
+    ASSERT_NE(found, prelude->values.end());
+    const auto* callable = checking.model->callable(found->second);
+    ASSERT_NE(callable, nullptr);
+    EXPECT_EQ(callable->parameters,
+              (std::vector<joyeer::typing::TypeId> { checking.model->types().intType() }));
+    EXPECT_EQ(checking.model->types().displayName(callable->result),
+              "Result<String, StdinError>");
+    const auto* descriptor = joyeer::hostbuiltins::findEnumeration("StdinError");
+    ASSERT_NE(descriptor, nullptr);
+    ASSERT_EQ(descriptor->cases.size(), 3u);
+    EXPECT_EQ(descriptor->cases[0], "EndOfInput");
+    EXPECT_EQ(descriptor->cases[1], "LineTooLong");
+    EXPECT_EQ(descriptor->cases[2], "ReadFailed");
+    EXPECT_TRUE(descriptor->integerPayload);
+    EXPECT_EQ(descriptor->firstAbiTag, 1);
+}
+
+TEST_F(HostBuiltinTest, RejectsInvalidStdinLineUse) {
+    for (const auto* text : {
+            "func f() { readStdinLine(maximumBytes: \"1\") }\n",
+            "func f() { readStdinLine(maximumBytes: b'a') }\n",
+            "func f(): Result<Int, StdinError> { return readStdinLine(maximumBytes: 1) }\n",
+            "func f(): Result<String, StderrError> { return readStdinLine(maximumBytes: 1) }\n",
+            "func f(): Result<String, IOError> { return readStdinLine(maximumBytes: 1) }\n",
+            "func f(): Result<String, FileSystemError> {\nreadStdinLine(maximumBytes: 1)?\nreturn .Ok(\"\")\n}\n",
+            "func f(): StdinError { return .EndOfInput(\"not an Int\") }\n",
+        }) {
+        SCOPED_TRACE(text);
+        ASSERT_NO_FATAL_FAILURE(check(text));
+        EXPECT_FALSE(checking.succeeded());
+    }
+    // These are already rejected by name resolution (wrong arity, label, or
+    // case name), so the shared check() helper cannot be used.
+    for (const auto* text : {
+            "func f() { readStdinLine() }\n",
+            "func f() { readStdinLine(limit: 1) }\n",
+            "func f(): StdinError { return .Other(1) }\n",
+        }) {
+        SCOPED_TRACE(text);
+        diagnostics.errors.clear();
+        source = std::make_shared<SourceFile>(text);
+        LexParser(&diagnostics).parse(source);
+        const auto parsed = joyeer::parser::Parser(source->tokens).parse();
+        ASSERT_TRUE(parsed.succeeded());
+        const auto resolved = joyeer::semantic::NameResolver().resolve(parsed.root);
+        if (!resolved.succeeded()) continue;
+        const auto typed = joyeer::typing::TypeChecker().check(resolved.model);
+        ASSERT_NE(typed.model, nullptr);
+        EXPECT_FALSE(typed.succeeded());
+    }
+}
+
 TEST_F(HostBuiltinTest, ProvidesConcreteStderrSignatureAndErrorPayload) {
     ASSERT_NO_FATAL_FAILURE(check(
             "func f(contents: String): Result<Void, StderrError> {\n"
@@ -240,7 +315,7 @@ TEST_F(HostBuiltinTest, EmitsEveryStableHostAbiAndFullDebugLocations) {
             EXPECT_NE(emitted.text.find("call i32 @" + std::string(descriptor.runtimeName) + "("),
                       std::string::npos) << descriptor.name;
         }
-        for (const auto signature : std::array<std::string_view, 7> {
+        for (const auto signature : std::array<std::string_view, 8> {
                 "declare i32 @joyeer_fs_read_file_abi(ptr, ptr, ptr, i64)",
                 "declare i32 @joyeer_fs_read_file_prefix_abi(ptr, ptr, ptr, i64, i64)",
                 "declare i32 @joyeer_fs_write_file_new_abi(ptr, ptr, i64, ptr, i64)",
@@ -248,6 +323,7 @@ TEST_F(HostBuiltinTest, EmitsEveryStableHostAbiAndFullDebugLocations) {
                 "declare i32 @joyeer_fs_create_directory_abi(ptr, ptr, i64)",
                 "declare i32 @joyeer_run_process_abi(ptr, ptr, ptr, ptr, i64, ptr, i64, ptr, i64)",
                 "declare i32 @joyeer_write_stderr_abi(ptr, ptr, i64)",
+                "declare i32 @joyeer_read_stdin_line_abi(ptr, ptr, i64)",
              }) {
             EXPECT_NE(emitted.text.find(signature), std::string::npos) << signature;
         }

@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "moss.analysis"
+kind = "source"
+sources = ["cfg.joyeer", "dominance.joyeer"]
+dependencies = ["moss.model"]

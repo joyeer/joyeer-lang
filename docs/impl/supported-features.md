@@ -60,7 +60,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
-| Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
+| Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, bounded line-oriented `readStdinLine(maximumBytes:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
 | Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
 | Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
@@ -115,7 +115,7 @@ CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
 gates, including bootstrap regeneration, independently of
 `JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
 including self-build and relocated workflows; platform-specific evidence
-and packaging limits are recorded in [fern](fern.md#5-validation-evidence).
+and packaging limits are recorded in [building](../building.md#macos-arm64-acceptance-on-main).
 Every document is
 bounded to 65536 bytes with a sentinel
 read after regular-file classification. Outputs use module-qualified fresh
@@ -123,7 +123,7 @@ generations with 128 claims per module/profile. The tool does not scan
 upward, search PATH, delete/cache outputs, fetch external dependencies, or
 nested workspaces. These are not streaming or confinement guarantees.
 Unrecorded native targets and publication remain open.
-See [fern](fern.md) for current contracts, parser limits, and validation status.
+See [fern](fern.md) for current contracts and parser limits.
 
 ## Not implemented
 
@@ -161,6 +161,20 @@ Lexical or specification coverage alone does not make a feature executable.
 New source-visible features must pass through every applicable frontend,
 Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 
+### Common authoring pitfalls
+
+- `result` and the other [reserved words](../spec/15-reserved.md) cannot be
+  identifiers. The current unsupported-syntax diagnostic still mentions
+  "JSON-parser MVP"; rename the binding rather than treating it as a module
+  or file-format requirement.
+- `&` is an access marker, not a general marker for mutable bindings.
+  Ordinary local reassignment has no `&`; adding it reports
+  `type-checking.invalid-access-marker`. Calls, access parameters, and mutable
+  field/subscript projections have their own marker requirements; see
+  [ownership and access](../../skills/joyeer/references/language-guide.md#ownership-and-access).
+- `Array.removeLast` and integer-to-floating-point conversions such as
+  `Int` to `Double` are not implemented. Do not infer APIs from familiar names.
+
 ## Semantic and runtime limits
 
 - `String.count` and `String[i]` operate on bytes, not characters. Strings and
@@ -190,6 +204,14 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   maps through name resolution/type checking to a scalar LLVM `i64` input;
   exact boundary/error and allocation-balance tests pass on that target,
   and no streaming API is implied.
+- `readStdinLine(maximumBytes: Int): Result<String, StdinError>` reads one
+  line from standard input (LF or CRLF stripped, final unterminated line
+  returned). `StdinError` has `EndOfInput(Int)`, `LineTooLong(Int)` and
+  `ReadFailed(Int)`; a longer line is consumed through its terminator so the
+  next call resynchronizes. The bound is required. Windows switches stdin to
+  binary mode on first use, and stdout is flushed before the read blocks. See [spec §18.5](../spec/18-host.md#185-standard-input).
+  Runtime ABI, compiler signature, and native `-O0`/`-O2` regressions pass on
+  Windows ARM64 Debug; no streaming, timeout, or partial-line API exists.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original
   bytes. The entry return status must be in `0..255`; other values produce

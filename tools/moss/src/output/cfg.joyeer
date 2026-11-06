@@ -1,0 +1,100 @@
+import moss.analysis
+import moss.model
+
+private func intList(values: borrowing [Int]): String {
+    var text = "["
+    var index = 0
+    while index < values.count {
+        if index != 0 { text = text + "," }
+        text = text + number(value: values[index])
+        index = index + 1
+    }
+    return text + "]"
+}
+
+private func nullable(value: Int): String {
+    if value < 0 { return "none" }
+    return number(value: value)
+}
+
+private func edgeList(cfg: borrowing Cfg, edges: borrowing [Int]): String {
+    var text = "["
+    var index = 0
+    while index < edges.count {
+        if index != 0 { text = text + "," }
+        let item = cfg.edges[edges[index]]
+        text = text + number(value: item.from) + "->" + number(value: item.to)
+        index = index + 1
+    }
+    return text + "]"
+}
+
+private func blockText(file: borrowing ClassFile, cfg: borrowing Cfg, dominance: borrowing Dominance,
+    block: borrowing Block): String {
+    var reach = "reachable"
+    if !block.reachable { reach = "UNREACHABLE" }
+    var text = "Block " + number(value: block.index) + " [" + number(value: block.start) + "," +
+        number(value: block.end) + ") instructions " + number(value: block.first) + "+" +
+        number(value: block.count) + " " + reach + " terminator=" + block.terminator +
+        " preds=" + intList(values: predecessors(cfg: cfg, block: block.index)) +
+        " idom=" + nullable(value: dominance.idom[block.index]) +
+        " loopDepth=" + number(value: dominance.loopDepth[block.index]) + "\n"
+    var edge = 0
+    while edge < block.edgeCount {
+        let item = cfg.edges[block.firstEdge + edge]
+        text = text + "  -> " + number(value: item.to) + " " + item.kind
+        if item.kind == "case" { text = text + " key=" + number(value: item.key) }
+        if item.kind == "exception" {
+            if item.key == 0 {
+                text = text + " catch=any"
+            } else {
+                text = text + " catch=" + classRef(file: file, index: item.key)
+            }
+        }
+        text = text + "\n"
+        edge = edge + 1
+    }
+    return text
+}
+
+public func renderCfg(file: borrowing ClassFile, methodIndex: Int, cfg: borrowing Cfg,
+    dominance: borrowing Dominance, page: borrowing Page): Result<String, Diagnostic> {
+    if page.first < 0 || page.end < page.first || page.end > cfg.blocks.count ||
+        methodIndex < 0 || methodIndex >= file.methods.count {
+        return .Err(Diagnostic(code: "output.invalid-query", offset: -1,
+            context: "output", message: "invalid control-flow page or method"))
+    }
+    var output = buffer()
+    append(buffer: &output, text: "Class " + dotted(units: className(file: file)) + "\n")?
+    append(buffer: &output, text: "Method " + plain(units: file.pool[file.methods[methodIndex].nameIndex].text) + " " +
+        plain(units: file.pool[file.methods[methodIndex].descriptorIndex].text) + "\n")?
+    append(buffer: &output, text: "Cfg blocks " + number(value: cfg.blocks.count) + " edges " +
+        number(value: cfg.edges.count) + " unreachable " + number(value: cfg.unreachable) +
+        " loops " + number(value: dominance.loops.count) + " irreducible-edges " +
+        number(value: dominance.irreducibleEdges.count) + "\n")?
+    var index = page.first
+    while index < page.end {
+        append(buffer: &output, text: blockText(file: file, cfg: cfg, dominance: dominance,
+            block: cfg.blocks[index]))?
+        index = index + 1
+    }
+    var loop = 0
+    while loop < dominance.loops.count {
+        let item = dominance.loops[loop]
+        append(buffer: &output, text: "Loop header=" + number(value: item.header) + " latches=" +
+            intList(values: item.latches) + " blocks=" + intList(values: item.blocks) +
+            " depth=" + number(value: item.depth) + "\n")?
+        loop = loop + 1
+    }
+    if dominance.irreducibleEdges.count > 0 {
+        append(buffer: &output, text: "Irreducible edges " +
+            edgeList(cfg: cfg, edges: dominance.irreducibleEdges) + "\n")?
+    }
+    match page.nextOffset {
+        .Some(next) => {
+            append(buffer: &output, text: "// more: continue with --offset " + number(value: next) + "\n")?
+        },
+        .None => {},
+    }
+    return .Ok(finish(buffer: consume output))
+}

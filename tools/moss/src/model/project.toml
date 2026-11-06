@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "moss.model"
+kind = "source"
+sources = ["facts.joyeer", "text.joyeer"]
+dependencies = []

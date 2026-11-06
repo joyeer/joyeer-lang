@@ -65,7 +65,7 @@ reject_workspace(parent "${prefix}members = ['../a']\n" "without parent traversa
 reject_workspace(absolute "${prefix}members = ['/a']\n" "relative directory")
 reject_workspace(drive "${prefix}members = ['C:a']\n" "relative directory")
 reject_workspace(unknown "${prefix}modules = []\n" "unknown workspace key")
-reject_workspace(nested "${prefix}members = ['a']\n[workspace]\nmembers = ['b']\n" "nested workspaces")
+reject_workspace(nested "${prefix}members = ['a']\n[workspace]\nmembers = ['b']\n" "only one [workspace] table")
 reject_workspace(missing-schema "[workspace]\nmembers = ['a']\n" "schema-version")
 
 set(invalid "${work}/unselected invalid graph")
@@ -156,3 +156,25 @@ if(NOT status STREQUAL "0" OR NOT output STREQUAL "project ok: modules=256\n" OR
 endif()
 jp_no_outputs("${large}")
 message(STATUS "fern module/workspace selection, dependencies, collisions and diagnostics passed")
+
+# A member directory that holds a workspace.toml is a nested workspace; "." is
+# always the nested workspace's own module.
+set(nested "${work}/nested workspace")
+file(MAKE_DIRECTORY "${nested}/suite/core")
+jp_write_bytes("${nested}/suite/core/main.joyeer" "public func answer(): Int { return 42 }
+")
+jp_write_bytes("${nested}/suite/main.joyeer" "${app}")
+jp_write_module("${nested}/suite/core" acme.core source "" "'main.joyeer'" "")
+jp_write_module("${nested}/suite" acme.a bin app "'main.joyeer'" "'acme.core'")
+jp_write_workspace("${nested}/suite" "'.', 'core'")
+jp_write_workspace("${nested}" "'suite'")
+jp_call(0 "${outside}" check --compiler "${JOYEER_EXECUTABLE}" --workspace "${nested}/workspace.toml")
+jp_call(0 "${outside}" run --compiler "${JOYEER_EXECUTABLE}" --workspace "${nested}/workspace.toml" --module acme.a)
+if(NOT jp_out STREQUAL "42
+")
+    jp_fail("Nested workspace module did not execute")
+endif()
+# The nested workspace's members stay relative to its own directory.
+jp_write_workspace("${nested}/suite" "'.', '../core'")
+jp_call(1 "${outside}" check --compiler "${COMPILER_SPY}" --workspace "${nested}/workspace.toml")
+jp_contains("${jp_err}" "without parent traversal")

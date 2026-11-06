@@ -285,6 +285,23 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             if (parseUtf8Path(diagnostics, *iterator, path, "driver.native-library-error")) {
                 nativeLibraries.push_back(absoluteNormalized(path));
             }
+        } else if (parseOptions && *iterator == "--print-sysroot") {
+            printSysroot = true;
+        } else if (parseOptions && *iterator == "--no-stdlib") {
+            standardLibrary = false;
+        } else if (parseOptions && *iterator == "--sysroot") {
+            ++iterator;
+            if (iterator == arguments.end() || iterator->empty() || iterator->starts_with('-')) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.sysroot-error",
+                        "--sysroot requires a toolchain root directory");
+                if (iterator == arguments.end()) break;
+                if (!iterator->empty()) --iterator;
+                continue;
+            }
+            std::filesystem::path path;
+            if (parseUtf8Path(diagnostics, *iterator, path, "driver.sysroot-error")) {
+                sysroot = absoluteNormalized(path);
+            }
         } else if (parseOptions && *iterator == "--runtime-module") {
             ++iterator;
             if (iterator == arguments.end()) {
@@ -339,6 +356,11 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
         } else {
             parseInputFile(*iterator);
         }
+    }
+
+    if (printSysroot) {
+        accepted = !diagnostics->hasFailure();
+        return;
     }
 
     if (moduleName.empty()) {
@@ -464,6 +486,9 @@ void CommandLineArguments::printUsage() {
     std::cout << "  --module-source <name=file> add a file to a dependency module (repeatable)" << std::endl;
     std::cout << "  --runtime-module <name> authorize one explicit unit for internal runtime bindings (repeatable)" << std::endl;
     std::cout << "  --link-library <file> link an explicit native library in supplied order (repeatable)" << std::endl;
+    std::cout << "  --sysroot <dir>      toolchain root whose lib/ holds the standard modules (default: the compiler's directory)" << std::endl;
+    std::cout << "  --print-sysroot      print the toolchain root and exit" << std::endl;
+    std::cout << "  --no-stdlib          do not resolve imports from the toolchain's standard modules" << std::endl;
     std::cout << "  --emit-runtime-object <file> write an internal runtime object without startup or linking" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;
