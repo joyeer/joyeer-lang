@@ -1,0 +1,472 @@
+import moss.model
+
+// Text layout follows `javap -c -p` of JDK 25: offsets right-aligned to ten columns,
+// mnemonics padded to thirteen, and constant comments starting at column 46.
+
+func blanks(count: Int): String {
+    var text = ""
+    var index = 0
+    while index < count {
+        text = text + " "
+        index = index + 1
+    }
+    return text
+}
+
+func padLeft(text: borrowing String, width: Int): String {
+    if text.count >= width { return text }
+    return blanks(count: width - text.count) + text
+}
+
+func padRight(text: borrowing String, width: Int): String {
+    if text.count >= width { return text }
+    return text + blanks(count: width - text.count)
+}
+
+func number(value: Int): String {
+    return decimal(value: value)
+}
+
+private func printable(): String {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+}
+
+// Printable ASCII is kept; every other UTF-16 code unit becomes \uXXXX so the text stays lossless.
+// slashToDot turns an internal class name into its source form.
+private func unitsText(units: borrowing [Int], slashToDot: Bool, escapeQuotes: Bool): String {
+    let table = printable()
+    var parts: [String] = []
+    var index = 0
+    while index < units.count {
+        var piece = ""
+        var count = 0
+        while index < units.count && count < 64 {
+            let unit = units[index]
+            if unit == 47 && slashToDot {
+                piece = piece + "."
+            } else if escapeQuotes && unit == 34 {
+                piece = piece + "\\\""
+            } else if escapeQuotes && unit == 39 {
+                piece = piece + "\\'"
+            } else if escapeQuotes && unit == 92 {
+                piece = piece + "\\\\"
+            } else if escapeQuotes && unit == 10 {
+                piece = piece + "\\n"
+            } else if escapeQuotes && unit == 13 {
+                piece = piece + "\\r"
+            } else if escapeQuotes && unit == 9 {
+                piece = piece + "\\t"
+            } else if escapeQuotes && unit == 8 {
+                piece = piece + "\\b"
+            } else if escapeQuotes && unit == 12 {
+                piece = piece + "\\f"
+            } else if unit >= 32 && unit <= 126 {
+                piece = piece + byteToString(value: table[unit - 32])
+            } else {
+                piece = piece + "\\u" + hex(value: unit, digits: 4)
+            }
+            index = index + 1
+            count = count + 1
+        }
+        &parts.append(element: piece)
+    }
+    return joined(parts: consume parts)
+}
+
+public func plain(units: borrowing [Int]): String {
+    return unitsText(units: units, slashToDot: false, escapeQuotes: false)
+}
+
+public func dotted(units: borrowing [Int]): String {
+    return unitsText(units: units, slashToDot: true, escapeQuotes: false)
+}
+
+public func escaped(units: borrowing [Int]): String {
+    return unitsText(units: units, slashToDot: false, escapeQuotes: true)
+}
+
+// ---- descriptors ----
+
+// Reads one type from a descriptor and returns it as Java source, such as `int[]` or `java.lang.String`.
+func javaType(units: borrowing [Int], position: inout Int): String {
+    var dimensions = 0
+    while position < units.count && units[position] == 91 {
+        dimensions = dimensions + 1
+        &position = position + 1
+    }
+    var base = "?"
+    if position < units.count {
+        let kind = units[position]
+        &position = position + 1
+        if kind == 76 {
+            var name: [Int] = []
+            while position < units.count && units[position] != 59 {
+                &name.append(element: units[position])
+                &position = position + 1
+            }
+            &position = position + 1
+            base = dotted(units: name)
+        } else {
+            base = primitiveText(code: kind)
+        }
+    }
+    var index = 0
+    while index < dimensions {
+        base = base + "[]"
+        index = index + 1
+    }
+    return base
+}
+
+func fieldTypeText(units: borrowing [Int]): String {
+    var position = 0
+    return javaType(units: units, position: &position)
+}
+
+// Parameter types of a method descriptor, followed by the return type as the last element.
+public func methodTypes(units: borrowing [Int]): [String] {
+    var collected: [String] = []
+    var position = 1
+    while position < units.count && units[position] != 41 {
+        &collected.append(element: javaType(units: units, position: &position))
+    }
+    position = position + 1
+    &collected.append(element: javaType(units: units, position: &position))
+    return collected
+}
+
+// A varargs method prints its last array parameter as `T...`.
+public func parameterList(types: borrowing [String], varargs: Bool): String {
+    var text = ""
+    var index = 0
+    while index + 1 < types.count {
+        if index != 0 { text = text + ", " }
+        var item = types[index]
+        if varargs && index + 2 == types.count && item.count > 2 && item[item.count - 1] == 93 &&
+            item[item.count - 2] == 91 {
+            var kept = ""
+            var position = 0
+            while position < item.count - 2 {
+                kept = kept + byteToString(value: item[position])
+                position = position + 1
+            }
+            item = kept + "..."
+        }
+        text = text + item
+        index = index + 1
+    }
+    return text
+}
+
+// ---- access flags ----
+
+private func words(names: borrowing [String]): String {
+    var text = ""
+    var index = 0
+    while index < names.count {
+        if index != 0 { text = text + " " }
+        text = text + names[index]
+        index = index + 1
+    }
+    return text
+}
+
+func classModifiers(flags: Int): String {
+    var names: [String] = []
+    if flag(value: flags, mask: 1) { &names.append(element: "public") }
+    if flag(value: flags, mask: 16) { &names.append(element: "final") }
+    if flag(value: flags, mask: 1024) && !flag(value: flags, mask: 512) { &names.append(element: "abstract") }
+    return words(names: names)
+}
+
+func fieldModifiers(flags: Int): String {
+    var names: [String] = []
+    if flag(value: flags, mask: 1) { &names.append(element: "public") }
+    if flag(value: flags, mask: 4) { &names.append(element: "protected") }
+    if flag(value: flags, mask: 2) { &names.append(element: "private") }
+    if flag(value: flags, mask: 8) { &names.append(element: "static") }
+    if flag(value: flags, mask: 16) { &names.append(element: "final") }
+    if flag(value: flags, mask: 64) { &names.append(element: "volatile") }
+    if flag(value: flags, mask: 128) { &names.append(element: "transient") }
+    return words(names: names)
+}
+
+// inInterface adds javap's `default` for non-abstract, non-static, non-private interface methods.
+func methodModifiers(flags: Int, inInterface: Bool): String {
+    var names: [String] = []
+    if flag(value: flags, mask: 1) { &names.append(element: "public") }
+    if flag(value: flags, mask: 4) { &names.append(element: "protected") }
+    if flag(value: flags, mask: 2) { &names.append(element: "private") }
+    if flag(value: flags, mask: 1024) { &names.append(element: "abstract") }
+    if flag(value: flags, mask: 8) { &names.append(element: "static") }
+    if flag(value: flags, mask: 16) { &names.append(element: "final") }
+    if flag(value: flags, mask: 32) { &names.append(element: "synchronized") }
+    if flag(value: flags, mask: 256) { &names.append(element: "native") }
+    if flag(value: flags, mask: 2048) { &names.append(element: "strictfp") }
+    if inInterface && !flag(value: flags, mask: 1024) && !flag(value: flags, mask: 8) &&
+        !flag(value: flags, mask: 2) {
+        &names.append(element: "default")
+    }
+    return words(names: names)
+}
+
+// ---- constants ----
+
+private func signed32(value: Int): Int {
+    if value >= 2147483648 { return value - 4294967296 }
+    return value
+}
+
+private func signed64(high: Int, low: Int): Int {
+    return signed32(value: high) * 4294967296 + low
+}
+
+public func javaFloatText(bits: Int): String {
+    let negative = bits >= 2147483648
+    let exponent = (bits / 8388608) % 256
+    let fraction = bits % 8388608
+    var sign = ""
+    if negative { sign = "-" }
+    if exponent == 255 {
+        if fraction != 0 { return "NaN" }
+        return sign + "Infinity"
+    }
+    if exponent == 0 && fraction == 0 { return sign + "0.0" }
+    var mantissa = fraction
+    var scale = 0 - 149
+    if exponent != 0 {
+        mantissa = fraction + 8388608
+        scale = exponent - 150
+    }
+    let found = shortestFloat(mantissa: mantissa, exponent: scale)
+    if !found.found { return "0x" + hex(value: bits, digits: 8) }
+    return sign + javaDecimalText(found: found)
+}
+
+public func javaDoubleText(high: Int, low: Int): String {
+    let negative = high >= 2147483648
+    let exponent = (high / 1048576) % 2048
+    let fraction = (high % 1048576) * 4294967296 + low
+    var sign = ""
+    if negative { sign = "-" }
+    if exponent == 2047 {
+        if fraction != 0 { return "NaN" }
+        return sign + "Infinity"
+    }
+    if exponent == 0 && fraction == 0 { return sign + "0.0" }
+    var mantissa = fraction
+    var scale = 0 - 1074
+    if exponent != 0 {
+        mantissa = fraction + 4503599627370496
+        scale = exponent - 1075
+    }
+    let found = shortestDouble(mantissa: mantissa, exponent: scale)
+    if !found.found { return "0x" + hex(value: high, digits: 8) + hex(value: low, digits: 8) }
+    return sign + javaDecimalText(found: found)
+}
+
+// Raw-bit fallbacks (`0x...`) are not decimal literals, so they take no f/d suffix.
+private func withSuffix(text: borrowing String, suffix: borrowing String): String {
+    if text.count > 1 && text[0] == 48 && text[1] == 120 { return text }
+    return text + suffix
+}
+
+// Class names in comments keep internal slashes; array classes are quoted like javap does.
+func classRef(file: borrowing ClassFile, index: Int): String {
+    let units = file.pool[file.pool[index].first].text
+    if units.count > 0 && units[0] == 91 { return "\"" + plain(units: units) + "\"" }
+    return plain(units: units)
+}
+
+private func memberName(units: borrowing [Int]): String {
+    var special = false
+    var index = 0
+    while index < units.count {
+        if units[index] == 60 || units[index] == 62 { special = true }
+        index = index + 1
+    }
+    if special { return "\"" + plain(units: units) + "\"" }
+    return plain(units: units)
+}
+
+private func nameAndType(file: borrowing ClassFile, index: Int): String {
+    let pair = file.pool[index]
+    return memberName(units: file.pool[pair.first].text) + ":" + plain(units: file.pool[pair.second].text)
+}
+
+// javap leaves out the owner when the reference names this class's own constant-pool entry.
+private func memberRef(file: borrowing ClassFile, index: Int): String {
+    let item = file.pool[index]
+    if item.first == file.thisClass { return nameAndType(file: file, index: item.second) }
+    return classRef(file: file, index: item.first) + "." + nameAndType(file: file, index: item.second)
+}
+
+private func handleKind(kind: Int): String {
+    return match kind {
+        1 => "REF_getField",
+        2 => "REF_getStatic",
+        3 => "REF_putField",
+        4 => "REF_putStatic",
+        5 => "REF_invokeVirtual",
+        6 => "REF_invokeStatic",
+        7 => "REF_invokeSpecial",
+        8 => "REF_newInvokeSpecial",
+        9 => "REF_invokeInterface",
+        _ => "REF_?",
+    }
+}
+
+// The text javap puts after `//` for a constant-pool operand.
+func constantComment(file: borrowing ClassFile, index: Int): String {
+    let item = file.pool[index]
+    let tag = item.tag
+    if tag == 1 { return plain(units: item.text) }
+    if tag == 3 { return "int " + decimal(value: signed32(value: item.first)) }
+    if tag == 4 { return "float " + withSuffix(text: javaFloatText(bits: item.first), suffix: "f") }
+    if tag == 5 { return "long " + decimal(value: signed64(high: item.first, low: item.second)) + "l" }
+    if tag == 6 { return "double " + withSuffix(text: javaDoubleText(high: item.first, low: item.second), suffix: "d") }
+    if tag == 7 { return "class " + classRef(file: file, index: index) }
+    if tag == 8 { return "String " + escaped(units: file.pool[item.first].text) }
+    if tag == 9 { return "Field " + memberRef(file: file, index: index) }
+    if tag == 10 { return "Method " + memberRef(file: file, index: index) }
+    if tag == 11 { return "InterfaceMethod " + memberRef(file: file, index: index) }
+    if tag == 12 { return nameAndType(file: file, index: index) }
+    if tag == 15 {
+        return "MethodHandle " + handleKind(kind: item.first) + " " + memberRef(file: file, index: item.second)
+    }
+    if tag == 16 { return "MethodType " + plain(units: file.pool[item.first].text) }
+    if tag == 17 { return "Dynamic #" + decimal(value: item.first) + ":" + nameAndType(file: file, index: item.second) }
+    if tag == 18 {
+        return "InvokeDynamic #" + decimal(value: item.first) + ":" + nameAndType(file: file, index: item.second)
+    }
+    if tag == 19 { return "Module " + plain(units: file.pool[item.first].text) }
+    if tag == 20 { return "Package " + plain(units: file.pool[item.first].text) }
+    return ""
+}
+
+// ---- instructions ----
+
+private func payload(operand: borrowing Operand): Int {
+    return match operand {
+        .Immediate(value) => value,
+        .Local(value) => value,
+        .Constant(value) => value,
+        .Target(value) => value,
+        .ArrayType(value) => value,
+        .Dimensions(value) => value,
+        .Count(value) => value,
+        .DefaultTarget(value) => value,
+        .SwitchTarget(_, target) => target,
+    }
+}
+
+private func arrayTypeName(code: Int): String {
+    return match code {
+        4 => "boolean",
+        5 => "char",
+        6 => "float",
+        7 => "double",
+        8 => "byte",
+        9 => "short",
+        10 => "int",
+        11 => "long",
+        _ => "?",
+    }
+}
+
+private func switchText(prefix: borrowing String, item: borrowing Instruction): String {
+    var defaultTarget = 0
+    var pairs: [String] = []
+    var first = 0
+    var last = 0
+    var index = 0
+    while index < item.operands.count {
+        match item.operands[index] {
+            .DefaultTarget(target) => { defaultTarget = target },
+            .SwitchTarget(key, target) => {
+                if pairs.count == 0 { first = key }
+                last = key
+                &pairs.append(element: padLeft(text: decimal(value: key), width: 24) + ": " + decimal(value: target))
+            },
+            _ => {},
+        }
+        index = index + 1
+    }
+    var head = "{ // " + decimal(value: pairs.count)
+    if item.rawOpcode == 170 {
+        head = "{ // " + decimal(value: first) + " to " + decimal(value: last)
+    }
+    var text = prefix + padRight(text: item.mnemonic, width: 13) + " " + head + "\n"
+    index = 0
+    while index < pairs.count {
+        text = text + pairs[index] + "\n"
+        index = index + 1
+    }
+    return text + padLeft(text: "default", width: 24) + ": " + decimal(value: defaultTarget) + "\n" +
+        blanks(count: 12) + "}\n"
+}
+
+// javap drops trailing blanks from a comment, for example a String constant ending in a space.
+private func trimmedEnd(text: borrowing String): String {
+    var end = text.count
+    while end > 0 && text[end - 1] == 32 { end = end - 1 }
+    if end == text.count { return text }
+    var kept = ""
+    var index = 0
+    while index < end {
+        kept = kept + byteToString(value: text[index])
+        index = index + 1
+    }
+    return kept
+}
+
+// One instruction, in javap -c layout, ending in LF.
+func instructionText(file: borrowing ClassFile, item: borrowing Instruction): String {
+    let prefix = blanks(count: 6) + padLeft(text: decimal(value: item.methodOffset), width: 4) + ": "
+    let raw = item.rawOpcode
+    if raw == 170 || raw == 171 { return switchText(prefix: prefix, item: item) }
+    var name = item.mnemonic
+    if item.wide { name = name + "_w" }
+    let opcode = item.opcode
+    var operand = ""
+    var comment = ""
+    var extraSpace = false
+    let implicitLocal = !item.wide && ((opcode >= 26 && opcode <= 45) || (opcode >= 59 && opcode <= 78))
+    if opcode == 16 || opcode == 17 {
+        operand = decimal(value: payload(operand: item.operands[0]))
+    } else if opcode == 132 {
+        operand = decimal(value: payload(operand: item.operands[0])) + ", " +
+            decimal(value: payload(operand: item.operands[1]))
+    } else if !implicitLocal && ((opcode >= 21 && opcode <= 25) || (opcode >= 54 && opcode <= 58)) {
+        operand = decimal(value: payload(operand: item.operands[0]))
+    } else if (opcode >= 153 && opcode <= 167) || opcode == 198 || opcode == 199 || opcode == 200 {
+        operand = decimal(value: payload(operand: item.operands[0]))
+    } else if opcode == 188 {
+        operand = arrayTypeName(code: payload(operand: item.operands[0]))
+        extraSpace = true
+    } else if item.operands.count > 0 {
+        match item.operands[0] {
+            .Constant(index) => {
+                operand = "#" + decimal(value: index)
+                if opcode == 185 || opcode == 197 {
+                    operand = operand + ",  " + decimal(value: payload(operand: item.operands[1]))
+                } else if opcode == 186 {
+                    operand = operand + ",  0"
+                }
+                comment = constantComment(file: file, index: index)
+            },
+            _ => {},
+        }
+    }
+    if operand.count == 0 { return prefix + name + "\n" }
+    var head = prefix + padRight(text: name, width: 13) + " "
+    if extraSpace { head = head + " " }
+    head = head + operand
+    if comment.count == 0 { return head + "\n" }
+    if head.count < 46 {
+        head = head + blanks(count: 46 - head.count)
+    } else {
+        head = head + " "
+    }
+    return head + "// " + trimmedEnd(text: comment) + "\n"
+}

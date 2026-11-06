@@ -1,0 +1,411 @@
+import moss.model
+
+// Class, member, and Code layout follows `javap -c -p -l` of JDK 25.
+
+private func u16(input: borrowing String, offset: Int): Int {
+    if offset < 0 || offset + 2 > input.count { return 0 }
+    return byteToInt(value: input[offset]) * 256 + byteToInt(value: input[offset + 1])
+}
+
+private func attributeIndex(file: borrowing ClassFile, attributes: borrowing [Attribute],
+    name: borrowing String): Int {
+    var index = 0
+    while index < attributes.count {
+        if unitsEqualAscii(units: file.pool[attributes[index].nameIndex].text, text: name) { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+private func validUtf8(file: borrowing ClassFile, index: Int): Bool {
+    return index > 0 && index < file.pool.count && file.pool[index].tag == 1
+}
+
+private func validClass(file: borrowing ClassFile, index: Int): Bool {
+    return index > 0 && index < file.pool.count && file.pool[index].tag == 7
+}
+
+// Units of the Signature attribute in `attributes`, or empty when there is none.
+private func signatureUnits(input: borrowing String, file: borrowing ClassFile,
+    attributes: borrowing [Attribute]): [Int] {
+    let attribute = attributeIndex(file: file, attributes: attributes, name: "Signature")
+    if attribute < 0 { return [] }
+    let reference = u16(input: input, offset: attributes[attribute].body.offset)
+    if !validUtf8(file: file, index: reference) { return [] }
+    return file.pool[reference].text
+}
+
+private func classHeader(input: borrowing String, file: borrowing ClassFile): String {
+    var text = ""
+    let source = attributeIndex(file: file, attributes: file.attributes, name: "SourceFile")
+    if source >= 0 {
+        let name = u16(input: input, offset: file.attributes[source].body.offset)
+        if validUtf8(file: file, index: name) {
+            text = "Compiled from \"" + plain(units: file.pool[name].text) + "\"\n"
+        }
+    }
+    var line = ""
+    let modifiers = classModifiers(flags: file.flags)
+    if modifiers.count != 0 { line = modifiers + " " }
+    let isInterface = flag(value: file.flags, mask: 512)
+    if isInterface {
+        line = line + "interface "
+    } else {
+        line = line + "class "
+    }
+    line = line + dotted(units: className(file: file))
+    let generic = signatureUnits(input: input, file: file, attributes: file.attributes)
+    if generic.count > 0 {
+        let parsed = parseClassSignature(units: generic)
+        line = line + parsed.typeParameters
+        if !isInterface && parsed.superclass != "java.lang.Object" {
+            line = line + " extends " + parsed.superclass
+        }
+        if parsed.interfaces.count > 0 {
+            if isInterface {
+                line = line + " extends "
+            } else {
+                line = line + " implements "
+            }
+            var position = 0
+            while position < parsed.interfaces.count {
+                if position != 0 { line = line + ", " }
+                line = line + parsed.interfaces[position]
+                position = position + 1
+            }
+        }
+        return text + line + " {\n"
+    }
+    if !isInterface && validClass(file: file, index: file.superClass) {
+        let superUnits = file.pool[file.pool[file.superClass].first].text
+        if !unitsEqualAscii(units: superUnits, text: "java/lang/Object") {
+            line = line + " extends " + dotted(units: superUnits)
+        }
+    }
+    if file.interfaces.count > 0 {
+        if isInterface {
+            line = line + " extends "
+        } else {
+            line = line + " implements "
+        }
+        var index = 0
+        while index < file.interfaces.count {
+            // javap joins interface names without a space unless a generic Signature is present.
+            if index != 0 { line = line + "," }
+            line = line + dotted(units: file.pool[file.pool[file.interfaces[index]].first].text)
+            index = index + 1
+        }
+    }
+    return text + line + " {\n"
+}
+
+private func fieldLine(input: borrowing String, file: borrowing ClassFile, item: borrowing Member): String {
+    var text = "  "
+    let modifiers = fieldModifiers(flags: item.flags)
+    if modifiers.count != 0 { text = text + modifiers + " " }
+    var type = fieldTypeText(units: file.pool[item.descriptorIndex].text)
+    let generic = signatureUnits(input: input, file: file, attributes: item.attributes)
+    if generic.count > 0 {
+        var position = 0
+        type = signatureType(units: generic, position: &position)
+    }
+    return text + type + " " + plain(units: file.pool[item.nameIndex].text) + ";\n"
+}
+
+private func throwsClause(input: borrowing String, file: borrowing ClassFile, item: borrowing Member,
+    signed: borrowing [String]): String {
+    if signed.count > 0 {
+        var text = " throws "
+        var position = 0
+        while position < signed.count {
+            if position != 0 { text = text + ", " }
+            text = text + signed[position]
+            position = position + 1
+        }
+        return text
+    }
+    let attribute = attributeIndex(file: file, attributes: item.attributes, name: "Exceptions")
+    if attribute < 0 { return "" }
+    let body = item.attributes[attribute].body
+    let count = u16(input: input, offset: body.offset)
+    var text = ""
+    var index = 0
+    while index < count && 2 + index * 2 + 2 <= body.length {
+        let reference = u16(input: input, offset: body.offset + 2 + index * 2)
+        if validClass(file: file, index: reference) {
+            if text.count == 0 {
+                text = " throws "
+            } else {
+                text = text + ", "
+            }
+            text = text + dotted(units: file.pool[file.pool[reference].first].text)
+        }
+        index = index + 1
+    }
+    return text
+}
+
+private func methodSignature(input: borrowing String, file: borrowing ClassFile, item: borrowing Member): String {
+    let name = file.pool[item.nameIndex].text
+    if unitsEqualAscii(units: name, text: "<clinit>") { return "  static {}" }
+    var text = "  "
+    let modifiers = methodModifiers(flags: item.flags, inInterface: flag(value: file.flags, mask: 512))
+    if modifiers.count != 0 { text = text + modifiers + " " }
+    var types = methodTypes(units: file.pool[item.descriptorIndex].text)
+    var typeParameters = ""
+    var thrown: [String] = []
+    let generic = signatureUnits(input: input, file: file, attributes: item.attributes)
+    if generic.count > 0 {
+        let parsed = parseMethodSignature(units: generic)
+        typeParameters = parsed.typeParameters
+        types = parsed.parameters
+        &types.append(element: parsed.returnType)
+        thrown = parsed.thrown
+    }
+    if typeParameters.count > 0 { text = text + typeParameters + " " }
+    if unitsEqualAscii(units: name, text: "<init>") {
+        text = text + dotted(units: className(file: file))
+    } else {
+        text = text + types[types.count - 1] + " " + plain(units: name)
+    }
+    return text + "(" + parameterList(types: types, varargs: flag(value: item.flags, mask: 128)) + ")" +
+        throwsClause(input: input, file: file, item: item, signed: thrown)
+}
+
+private func methodLine(input: borrowing String, file: borrowing ClassFile, item: borrowing Member): String {
+    return methodSignature(input: input, file: file, item: item) + ";\n"
+}
+
+private func exceptionTable(file: borrowing ClassFile, code: borrowing Code): String {
+    var text = "      Exception table:\n         from    to  target type\n"
+    var index = 0
+    while index < code.exceptions.count {
+        let item = code.exceptions[index]
+        var kind = "any"
+        if item.catchType != 0 { kind = "Class " + classRef(file: file, index: item.catchType) }
+        text = text + padLeft(text: decimal(value: item.start), width: 14) +
+            padLeft(text: decimal(value: item.end), width: 6) +
+            padLeft(text: decimal(value: item.handler), width: 6) + "   " + kind + "\n"
+        index = index + 1
+    }
+    return text
+}
+
+private func lineTable(code: borrowing Code): String {
+    var text = "      LineNumberTable:\n"
+    var index = 0
+    while index < code.lines.count {
+        text = text + "        line " + decimal(value: code.lines[index].line) + ": " +
+            decimal(value: code.lines[index].offset) + "\n"
+        index = index + 1
+    }
+    return text
+}
+
+// javap -l lists the descriptor-based table only; generic LocalVariableTypeTable rows are not printed.
+private func localTable(file: borrowing ClassFile, code: borrowing Code): String {
+    var text = "      LocalVariableTable:\n        Start  Length  Slot  Name   Signature\n"
+    var index = 0
+    while index < code.locals.count {
+        let item = code.locals[index]
+        if !item.generic {
+            text = text + blanks(count: 8) + padLeft(text: decimal(value: item.start), width: 5) + " " +
+                padLeft(text: decimal(value: item.length), width: 7) + " " +
+                padLeft(text: decimal(value: item.slot), width: 5) + " " +
+                padLeft(text: plain(units: file.pool[item.nameIndex].text), width: 5) + "   " +
+                plain(units: file.pool[item.descriptorIndex].text) + "\n"
+        }
+        index = index + 1
+    }
+    return text
+}
+
+// `complete` is false for a paged instruction listing, which omits the trailing tables.
+private func codeSection(file: borrowing ClassFile, item: borrowing Member, instructions: borrowing [Instruction],
+    first: Int, end: Int, complete: Bool): Result<String, Diagnostic> {
+    var output = buffer()
+    append(buffer: &output, text: "    Code:\n")?
+    var index = first
+    while index < end {
+        append(buffer: &output, text: instructionText(file: file, item: instructions[index]))?
+        index = index + 1
+    }
+    match item.code {
+        .Some(code) => {
+            if complete {
+                if code.exceptions.count > 0 {
+                    append(buffer: &output, text: exceptionTable(file: file, code: code))?
+                }
+                var which = 0
+                while which < code.attributes.count {
+                    let name = file.pool[code.attributes[which].nameIndex].text
+                    if unitsEqualAscii(units: name, text: "LineNumberTable") {
+                        append(buffer: &output, text: lineTable(code: code))?
+                    } else if unitsEqualAscii(units: name, text: "LocalVariableTable") {
+                        append(buffer: &output, text: localTable(file: file, code: code))?
+                    }
+                    which = which + 1
+                }
+            }
+        },
+        .None => {},
+    }
+    return .Ok(finish(buffer: consume output))
+}
+
+private func moreNote(page: borrowing Page): String {
+    return match page.nextOffset {
+        .Some(next) => "// more: continue with --offset " + decimal(value: next) + "\n",
+        .None => "",
+    }
+}
+
+private func invalidQuery(message: borrowing String): Diagnostic {
+    return Diagnostic(code: "output.invalid-query", offset: -1, context: "output", message: message)
+}
+
+// A whole class (or a page of its methods) with every method's Code, as `javap -c -p`.
+// groups[i] holds the decoded instructions of method page.first + i.
+public func renderClassDisasm(input: borrowing String, file: borrowing ClassFile,
+    groups: borrowing [[Instruction]], page: borrowing Page): Result<String, Diagnostic> {
+    if page.first < 0 || page.end < page.first || page.end > file.methods.count ||
+        groups.count != page.end - page.first {
+        return .Err(invalidQuery(message: "invalid class disassembly page"))
+    }
+    var output = buffer()
+    append(buffer: &output, text: classHeader(input: input, file: file))?
+    var index = 0
+    while index < file.fields.count {
+        append(buffer: &output, text: fieldLine(input: input, file: file, item: file.fields[index]) + "\n")?
+        index = index + 1
+    }
+    var group = 0
+    while group < groups.count {
+        let member = file.methods[page.first + group]
+        if group != 0 { append(buffer: &output, text: "\n")? }
+        append(buffer: &output, text: methodLine(input: input, file: file, item: member))?
+        match member.code {
+            .Some(_) => {
+                append(buffer: &output, text: codeSection(file: file, item: member, instructions: groups[group],
+                    first: 0, end: groups[group].count, complete: true)?)?
+            },
+            .None => {},
+        }
+        group = group + 1
+    }
+    append(buffer: &output, text: "}\n" + moreNote(page: page))?
+    return .Ok(finish(buffer: consume output))
+}
+
+// One selected method; page selects a range of its instructions.
+public func renderMethodDisasm(input: borrowing String, file: borrowing ClassFile, methodIndex: Int,
+    instructions: borrowing [Instruction], page: borrowing Page): Result<String, Diagnostic> {
+    if methodIndex < 0 || methodIndex >= file.methods.count || page.first < 0 ||
+        page.end < page.first || page.end > instructions.count {
+        return .Err(invalidQuery(message: "invalid method or instruction page"))
+    }
+    let member = file.methods[methodIndex]
+    var output = buffer()
+    append(buffer: &output, text: classHeader(input: input, file: file))?
+    append(buffer: &output, text: methodLine(input: input, file: file, item: member))?
+    match member.code {
+        .Some(_) => {
+            let whole = page.first == 0 && page.end == instructions.count
+            append(buffer: &output, text: codeSection(file: file, item: member, instructions: instructions,
+                first: page.first, end: page.end, complete: whole)?)?
+        },
+        .None => {},
+    }
+    append(buffer: &output, text: "}\n" + moreNote(page: page))?
+    return .Ok(finish(buffer: consume output))
+}
+
+// Method declarations only, with the index and descriptor needed to select an overload.
+public func renderMethods(input: borrowing String, file: borrowing ClassFile,
+    page: borrowing Page): Result<String, Diagnostic> {
+    if page.first < 0 || page.end < page.first || page.end > file.methods.count {
+        return .Err(invalidQuery(message: "invalid method page"))
+    }
+    var output = buffer()
+    append(buffer: &output, text: classHeader(input: input, file: file))?
+    var index = page.first
+    while index < page.end {
+        let member = file.methods[index]
+        append(buffer: &output, text: methodSignature(input: input, file: file, item: member) + ";  // index " +
+            decimal(value: index) + ", descriptor " + plain(units: file.pool[member.descriptorIndex].text) + "\n")?
+        index = index + 1
+    }
+    append(buffer: &output, text: "}\n" + moreNote(page: page))?
+    return .Ok(finish(buffer: consume output))
+}
+
+private func kindName(tag: Int): String {
+    return match tag {
+        1 => "Utf8",
+        3 => "Integer",
+        4 => "Float",
+        5 => "Long",
+        6 => "Double",
+        7 => "Class",
+        8 => "String",
+        9 => "Fieldref",
+        10 => "Methodref",
+        11 => "InterfaceMethodref",
+        12 => "NameAndType",
+        15 => "MethodHandle",
+        16 => "MethodType",
+        17 => "Dynamic",
+        18 => "InvokeDynamic",
+        19 => "Module",
+        20 => "Package",
+        _ => "Unknown",
+    }
+}
+
+private func constantOperands(item: borrowing Constant): String {
+    let tag = item.tag
+    if tag == 7 || tag == 8 || tag == 16 || tag == 19 || tag == 20 { return "#" + decimal(value: item.first) }
+    if tag == 9 || tag == 10 || tag == 11 || tag == 12 || tag == 17 || tag == 18 {
+        return "#" + decimal(value: item.first) + ":#" + decimal(value: item.second)
+    }
+    if tag == 15 { return decimal(value: item.first) + ":#" + decimal(value: item.second) }
+    return ""
+}
+
+// Version, flags, constant pool, fields, and method declarations (no Code), like `javap -p -v` minus bytecode.
+public func renderInspect(input: borrowing String, file: borrowing ClassFile): Result<String, Diagnostic> {
+    var output = buffer()
+    append(buffer: &output, text: classHeader(input: input, file: file))?
+    append(buffer: &output, text: "  // version " + decimal(value: file.major) + "." + decimal(value: file.minor) +
+        ", flags 0x" + hex(value: file.flags, digits: 4) + ", constant pool " + decimal(value: file.pool.count - 1) +
+        ", fields " + decimal(value: file.fields.count) + ", methods " + decimal(value: file.methods.count) + "\n")?
+    append(buffer: &output, text: "  Constant pool:\n")?
+    var index = 1
+    while index < file.pool.count {
+        let item = file.pool[index]
+        if item.tag != 0 {
+            var line = padLeft(text: "#" + decimal(value: index), width: 6) + " = " +
+                padRight(text: kindName(tag: item.tag), width: 19) + constantOperands(item: item)
+            let comment = constantComment(file: file, index: index)
+            if comment.count != 0 && item.tag != 1 {
+                line = padRight(text: line, width: 42) + " // " + comment
+            } else if item.tag == 1 {
+                line = line + comment
+            }
+            append(buffer: &output, text: line + "\n")?
+        }
+        index = index + 1
+    }
+    index = 0
+    while index < file.fields.count {
+        append(buffer: &output, text: fieldLine(input: input, file: file, item: file.fields[index]))?
+        index = index + 1
+    }
+    index = 0
+    while index < file.methods.count {
+        append(buffer: &output, text: methodLine(input: input, file: file, item: file.methods[index]))?
+        index = index + 1
+    }
+    append(buffer: &output, text: "}\n")?
+    return .Ok(finish(buffer: consume output))
+}

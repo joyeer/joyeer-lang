@@ -1,6 +1,6 @@
 ## §9 Contracts & Runtime Checks
 
-Joyeer uses Swift-style runtime checks instead of declaration-level contract
+Joyeer uses runtime checks instead of declaration-level contract
 keywords. There is no `requires` / `ensures` / `invariant` syntax in v0.1.
 
 **Implementation status:** this chapter specifies the intended library API.

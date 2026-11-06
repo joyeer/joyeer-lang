@@ -793,6 +793,48 @@ func parseManifest(contents: String): Result<ModuleSpec, ToolError> {
     return .Ok(spec)
 }
 
+// Reads <compiler directory>/lib/index.toml, the list of standard modules that
+// ship with a toolchain. Only the module names matter to fern; the compiler
+// validates the build stamp and resolves the modules.
+func parseStandardIndex(contents: String): Result<[String], ToolError> {
+    manifestInput(contents: contents)?
+    var p = ManifestCursor(input: contents, pos: 0)
+    var modules: [String] = []
+    var hasSchema = false
+    var hasModules = false
+    while p.pos < p.input.count {
+        manifestTrivia(p: &p)?
+        if p.pos >= p.input.count { break }
+        let keyPos = p.pos
+        let key = manifestKey(p: &p)?
+        if key == "schema-version" {
+            if hasSchema { return .Err(ToolError(message: "duplicate schema-version", pos: keyPos)) }
+            manifestSchema(p: &p, expected: 1)?
+            hasSchema = true
+        } else if key == "compiler-version" || key == "target" || key == "configuration" {
+            let text = manifestString(p: &p)?
+            if text.count == 0 { return .Err(ToolError(message: "empty " + key, pos: keyPos)) }
+        } else if key == "modules" {
+            if hasModules { return .Err(ToolError(message: "duplicate modules", pos: keyPos)) }
+            modules = manifestArray(p: &p, category: "modules")?
+            hasModules = true
+        } else {
+            return .Err(ToolError(message: "unknown index key: " + key, pos: keyPos))
+        }
+        manifestLineEnd(p: &p)?
+    }
+    if !hasSchema { return .Err(ToolError(message: "missing schema-version", pos: 0)) }
+    if !hasModules { return .Err(ToolError(message: "missing modules", pos: 0)) }
+    var index = 0
+    while index < modules.count {
+        if !validModuleName(name: modules[index]) {
+            return .Err(ToolError(message: "invalid standard module name: " + modules[index], pos: 0))
+        }
+        index = index + 1
+    }
+    return .Ok(modules)
+}
+
 func parseWorkspace(contents: String): Result<[String], ToolError> {
     manifestInput(contents: contents)?
     var p = ManifestCursor(input: contents, pos: 0)
@@ -805,7 +847,7 @@ func parseWorkspace(contents: String): Result<[String], ToolError> {
     let members = manifestWorkspaceBody(p: &p, pos: table.pos)?
     manifestTrivia(p: &p)?
     if p.pos != contents.count {
-        return .Err(ToolError(message: "only one [workspace] table is allowed; nested workspaces are unsupported", pos: p.pos))
+        return .Err(ToolError(message: "only one [workspace] table is allowed per file; list a nested workspace's directory as a member", pos: p.pos))
     }
     return .Ok(members)
 }

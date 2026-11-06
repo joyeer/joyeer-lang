@@ -1,0 +1,290 @@
+import moss.model
+
+// Dominators and natural loops over a method's CFG.
+//
+// Dominators use the iterative Cooper-Harvey-Kennedy algorithm over reverse postorder.
+// Every edge, including exception edges, is control flow. A back edge is an edge whose
+// target dominates its source; each header's natural loop is the header plus every block
+// that reaches one of its latches without passing through the header. A retreating edge
+// that is not a back edge makes the graph irreducible; it is reported, never repaired.
+
+public struct Loop {
+    public let header: Int
+    public let latches: [Int]
+    public let blocks: [Int]
+    public let depth: Int
+}
+
+public struct Dominance {
+    // Immediate dominator per block; -1 for the entry and for unreachable blocks.
+    public let idom: [Int]
+    // Depth in the dominator tree (entry 0); -1 for unreachable blocks.
+    public let treeDepth: [Int]
+    // Number of natural loops containing the block.
+    public let loopDepth: [Int]
+    // Index into loops of the smallest loop containing the block; -1 outside every loop.
+    public let innermost: [Int]
+    public let loops: [Loop]
+    // Edge indices into Cfg.edges.
+    public let backEdges: [Int]
+    public let irreducibleEdges: [Int]
+}
+
+private func filled(count: Int, value: Int): [Int] {
+    var values: [Int] = []
+    var index = 0
+    while index < count {
+        &values.append(element: value)
+        index = index + 1
+    }
+    return values
+}
+
+private func flags(count: Int): [Bool] {
+    var values: [Bool] = []
+    var index = 0
+    while index < count {
+        &values.append(element: false)
+        index = index + 1
+    }
+    return values
+}
+
+private func contains(values: borrowing [Int], value: Int): Bool {
+    var index = 0
+    while index < values.count {
+        if values[index] == value { return true }
+        index = index + 1
+    }
+    return false
+}
+
+private func intersect(dom: borrowing [Int], post: borrowing [Int], first: Int, second: Int): Int {
+    var left = first
+    var right = second
+    while left != right {
+        while post[left] < post[right] { left = dom[left] }
+        while post[right] < post[left] { right = dom[right] }
+    }
+    return left
+}
+
+private func dominates(dom: borrowing [Int], ancestor: Int, node: Int): Bool {
+    var current = node
+    while current != ancestor {
+        if current == 0 || dom[current] < 0 { return false }
+        current = dom[current]
+    }
+    return true
+}
+
+public func analyzeDominance(cfg: borrowing Cfg): Result<Dominance, Diagnostic> {
+    let count = cfg.blocks.count
+    if count == 0 {
+        return .Err(Diagnostic(code: "cfg.invalid", offset: -1, context: "control flow",
+            message: "dominance needs at least one block"))
+    }
+
+    // Predecessor adjacency in compressed form: predEdge[predStart[b] ..< predStart[b + 1]].
+    var predStart = filled(count: count + 1, value: 0)
+    var edge = 0
+    while edge < cfg.edges.count {
+        let target = cfg.edges[edge].to
+        &predStart[target + 1] = predStart[target + 1] + 1
+        edge = edge + 1
+    }
+    var block = 0
+    while block < count {
+        &predStart[block + 1] = predStart[block + 1] + predStart[block]
+        block = block + 1
+    }
+    var fill = filled(count: count, value: 0)
+    var predEdge = filled(count: cfg.edges.count, value: 0)
+    edge = 0
+    while edge < cfg.edges.count {
+        let target = cfg.edges[edge].to
+        &predEdge[predStart[target] + fill[target]] = edge
+        &fill[target] = fill[target] + 1
+        edge = edge + 1
+    }
+
+    // Depth-first search from the entry: postorder numbers and retreating edges.
+    var state = filled(count: count, value: 0)
+    var cursor = filled(count: count, value: 0)
+    block = 0
+    while block < count {
+        &cursor[block] = cfg.blocks[block].firstEdge
+        block = block + 1
+    }
+    var stack = filled(count: count, value: 0)
+    var post = filled(count: count, value: -1)
+    var order = filled(count: count, value: 0)
+    var retreating: [Int] = []
+    var visited = 0
+    var top = 1
+    &state[0] = 1
+    while top > 0 {
+        let current = stack[top - 1]
+        if cursor[current] < cfg.blocks[current].firstEdge + cfg.blocks[current].edgeCount {
+            let next = cursor[current]
+            &cursor[current] = next + 1
+            let target = cfg.edges[next].to
+            if state[target] == 0 {
+                &state[target] = 1
+                &stack[top] = target
+                top = top + 1
+            } else if state[target] == 1 {
+                &retreating.append(element: next)
+            }
+        } else {
+            &state[current] = 2
+            &post[current] = visited
+            &order[visited] = current
+            visited = visited + 1
+            top = top - 1
+        }
+    }
+
+    // Immediate dominators, processed in reverse postorder until stable.
+    var dom = filled(count: count, value: -1)
+    &dom[0] = 0
+    var changed = true
+    var passes = 0
+    while changed {
+        changed = false
+        passes = passes + 1
+        if passes > count + 3 {
+            return .Err(Diagnostic(code: "cfg.dominance-diverged", offset: -1, context: "control flow",
+                message: "dominator iteration did not converge"))
+        }
+        var position = visited - 2
+        while position >= 0 {
+            let current = order[position]
+            var chosen = -1
+            var slot = predStart[current]
+            while slot < predStart[current + 1] {
+                let source = cfg.edges[predEdge[slot]].from
+                if post[source] >= 0 && dom[source] >= 0 {
+                    if chosen < 0 {
+                        chosen = source
+                    } else {
+                        chosen = intersect(dom: dom, post: post, first: source, second: chosen)
+                    }
+                }
+                slot = slot + 1
+            }
+            if chosen != dom[current] {
+                &dom[current] = chosen
+                changed = true
+            }
+            position = position - 1
+        }
+    }
+
+    var idom = filled(count: count, value: -1)
+    var treeDepth = filled(count: count, value: -1)
+    &treeDepth[0] = 0
+    var position = visited - 2
+    while position >= 0 {
+        let current = order[position]
+        &idom[current] = dom[current]
+        &treeDepth[current] = treeDepth[dom[current]] + 1
+        position = position - 1
+    }
+
+    // Classify retreating edges.
+    var backEdges: [Int] = []
+    var irreducibleEdges: [Int] = []
+    var isHeader = flags(count: count)
+    var index = 0
+    while index < retreating.count {
+        let item = cfg.edges[retreating[index]]
+        if dominates(dom: dom, ancestor: item.to, node: item.from) {
+            &backEdges.append(element: retreating[index])
+            &isHeader[item.to] = true
+        } else {
+            &irreducibleEdges.append(element: retreating[index])
+        }
+        index = index + 1
+    }
+
+    // Natural loops, one per header, in ascending header order.
+    var headers: [Int] = []
+    var latchLists: [[Int]] = []
+    var bodies: [[Int]] = []
+    var loopDepth = filled(count: count, value: 0)
+    var innermost = filled(count: count, value: -1)
+    var innermostSize = filled(count: count, value: 0)
+    var header = 0
+    while header < count {
+        if isHeader[header] {
+            var latches: [Int] = []
+            index = 0
+            while index < backEdges.count {
+                let item = cfg.edges[backEdges[index]]
+                if item.to == header && !contains(values: latches, value: item.from) {
+                    &latches.append(element: item.from)
+                }
+                index = index + 1
+            }
+            var inBody = flags(count: count)
+            &inBody[header] = true
+            var work = filled(count: count, value: 0)
+            var pending = 0
+            index = 0
+            while index < latches.count {
+                if !inBody[latches[index]] {
+                    &inBody[latches[index]] = true
+                    &work[pending] = latches[index]
+                    pending = pending + 1
+                }
+                index = index + 1
+            }
+            while pending > 0 {
+                pending = pending - 1
+                let current = work[pending]
+                var slot = predStart[current]
+                while slot < predStart[current + 1] {
+                    let source = cfg.edges[predEdge[slot]].from
+                    if post[source] >= 0 && !inBody[source] {
+                        &inBody[source] = true
+                        &work[pending] = source
+                        pending = pending + 1
+                    }
+                    slot = slot + 1
+                }
+            }
+            var body: [Int] = []
+            block = 0
+            while block < count {
+                if inBody[block] { &body.append(element: block) }
+                block = block + 1
+            }
+            let loopIndex = headers.count
+            index = 0
+            while index < body.count {
+                let member = body[index]
+                &loopDepth[member] = loopDepth[member] + 1
+                if innermost[member] < 0 || body.count < innermostSize[member] {
+                    &innermost[member] = loopIndex
+                    &innermostSize[member] = body.count
+                }
+                index = index + 1
+            }
+            &headers.append(element: header)
+            &latchLists.append(element: latches)
+            &bodies.append(element: body)
+        }
+        header = header + 1
+    }
+
+    var loops: [Loop] = []
+    index = 0
+    while index < headers.count {
+        &loops.append(element: Loop(header: headers[index], latches: latchLists[index],
+            blocks: bodies[index], depth: loopDepth[headers[index]]))
+        index = index + 1
+    }
+    return .Ok(Dominance(idom: idom, treeDepth: treeDepth, loopDepth: loopDepth, innermost: innermost,
+        loops: loops, backEdges: backEdges, irreducibleEdges: irreducibleEdges))
+}

@@ -14,6 +14,8 @@ add_library(JoyeerCompilerCore OBJECT
 	driver/driver.cpp
 	driver/driver.h
 	driver/options.h
+	driver/toolchain.cpp
+	driver/toolchain.h
 	frontend/hostbuiltins.h
 	frontend/nativebinding.h
 	frontend/lexparser.cpp
@@ -45,6 +47,9 @@ target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SRC_DIR})
 target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
 	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"
+	JOYEER_TOOLCHAIN_VERSION="${JOYEER_TOOLCHAIN_VERSION}"
+	JOYEER_TOOLCHAIN_TARGET="${JOYEER_TOOLCHAIN_TARGET}"
+	JOYEER_TOOLCHAIN_CONFIG="$<LOWER_CASE:$<CONFIG>>"
 	JOYEER_SDK_ROOT_PATH="${JOYEER_MACOS_SDK_PATH}"
 	JOYEER_SDK_VERSION="${JOYEER_MACOS_SDK_VERSION}"
 	JOYEER_MACOS_DEPLOYMENT_TARGET="${JOYEER_MACOS_DEPLOYMENT_TARGET}"

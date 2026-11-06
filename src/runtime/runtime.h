@@ -52,6 +52,13 @@ enum JoyeerStderrErrorKind {
     JOYEER_STDERR_ERROR_WRITE_FAILED = 1,
 };
 
+enum JoyeerStdinErrorKind {
+    JOYEER_STDIN_ERROR_NONE = 0,
+    JOYEER_STDIN_ERROR_END_OF_INPUT = 1,
+    JOYEER_STDIN_ERROR_LINE_TOO_LONG = 2,
+    JOYEER_STDIN_ERROR_READ_FAILED = 3,
+};
+
 JOYEER_NORETURN void joyeer_panic(const char* message);
 int64_t joyeer_runtime_active_allocations(void);
 
@@ -149,6 +156,20 @@ int32_t joyeer_write_stderr_abi(
     int64_t* errorCode,
     const uint8_t* data,
     int64_t count);
+// Reads one line from stdin (spec 18.5). Success returns 0 with an owned
+// String in *result and *errorCode = 0. Failures return the
+// JoyeerStdinErrorKind tag and leave *result untouched: 1 EndOfInput and
+// 2 LineTooLong carry code 0; 3 ReadFailed carries the native errno (EINVAL
+// for a negative limit). A line ends at LF; one preceding CR is removed; a
+// final unterminated line is returned. At most maximumBytes + 1 bytes of a
+// line are held, and an over-long line is consumed through its terminator.
+// Flushes stdout first (failure ignored). Windows switches stdin to binary mode
+// on first use. Null result or error
+// storage is ABI misuse and panics.
+int32_t joyeer_read_stdin_line_abi(
+    JoyeerString* result,
+    int64_t* errorCode,
+    int64_t maximumBytes);
 void joyeer_string_concat_abi(
     JoyeerString* result,
     const uint8_t* leftData,

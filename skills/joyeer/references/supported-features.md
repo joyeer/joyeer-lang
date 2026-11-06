@@ -159,6 +159,12 @@ explicit `match` for errors that cannot be propagated with `?`.
   returns `Result<String, FileSystemError>` and is integrated and compiled;
   its `Int` parameter resolves and lowers to a scalar LLVM input. Full
   boundary/error acceptance remains pending.
+- `readStdinLine(maximumBytes:)` returns `Result<String, StdinError>`: one
+  line from standard input without its LF/CRLF, with `.EndOfInput(Int)`,
+  `.LineTooLong(Int)` (the rest of that line is discarded), and
+  `.ReadFailed(Int)` (CRT `errno`). The limit is required. Windows stdin is
+  put in binary mode on first use. There is no unbounded, timed, or
+  partial-line read.
 - Portable host paths and arguments require valid UTF-8 without embedded
   NUL; file contents still preserve arbitrary bytes. Windows compiler `wmain`
   UTF-8 and native/linker-path fixes are integrated and compiled, with scoped

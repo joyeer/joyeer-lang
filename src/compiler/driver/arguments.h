@@ -21,6 +21,9 @@ struct CommandLineArguments {
     std::vector<joyeer::ModuleSources> modules;
     std::vector<std::string> runtimeModules;
     std::vector<std::filesystem::path> nativeLibraries;
+    std::filesystem::path sysroot;       // --sysroot; empty means the executable's directory
+    bool standardLibrary = true;         // --no-stdlib clears it
+    bool printSysroot = false;
 
     bool accepted = false;
     joyeer::OutputMode outputMode = joyeer::OutputMode::validate;

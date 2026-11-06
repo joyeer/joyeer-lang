@@ -1,0 +1,7 @@
+schema-version = 1
+
+[module]
+name = "moss.archive"
+kind = "source"
+sources = ["archive.joyeer"]
+dependencies = ["Compression", "moss.model"]

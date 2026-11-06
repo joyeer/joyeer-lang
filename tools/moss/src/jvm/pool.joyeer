@@ -1,0 +1,195 @@
+import moss.binary
+import moss.model
+
+private func modifiedUtf8(input: borrowing String, region: borrowing ByteRange): Result<[Int], Diagnostic> {
+    var cursor = bounded(input: input, region: region, context: "CONSTANT_Utf8")?
+    var units: [Int] = []
+    while cursor.position < cursor.end {
+        let offset = cursor.position
+        let first = u(input: input, cursor: &cursor, width: 1, context: "CONSTANT_Utf8")?
+        var value = first
+        if first == 0 || first >= 240 || (first >= 128 && first < 192) {
+            return .Err(diagnostic(code: "jvm.invalid-mutf8", offset: offset,
+                context: "CONSTANT_Utf8", message: "invalid modified UTF-8 leading byte"))
+        }
+        if first >= 192 {
+            let second = u(input: input, cursor: &cursor, width: 1, context: "CONSTANT_Utf8")?
+            if second < 128 || second > 191 {
+                return .Err(diagnostic(code: "jvm.invalid-mutf8", offset: offset,
+                    context: "CONSTANT_Utf8", message: "invalid continuation byte"))
+            }
+            if first < 224 {
+                value = (first - 192) * 64 + second - 128
+                if value < 128 && !(first == 192 && second == 128) {
+                    return .Err(diagnostic(code: "jvm.invalid-mutf8", offset: offset,
+                        context: "CONSTANT_Utf8", message: "overlong encoding"))
+                }
+            } else {
+                let third = u(input: input, cursor: &cursor, width: 1, context: "CONSTANT_Utf8")?
+                if third < 128 || third > 191 {
+                    return .Err(diagnostic(code: "jvm.invalid-mutf8", offset: offset,
+                        context: "CONSTANT_Utf8", message: "invalid continuation byte"))
+                }
+                value = (first - 224) * 4096 + (second - 128) * 64 + third - 128
+                if value < 2048 {
+                    return .Err(diagnostic(code: "jvm.invalid-mutf8", offset: offset,
+                        context: "CONSTANT_Utf8", message: "overlong encoding"))
+                }
+            }
+        }
+        // MUTF-8 encodes UTF-16 code units, including isolated surrogates.
+        &units.append(element: value)
+    }
+    return .Ok(units)
+}
+
+func readPool(input: borrowing String, cursor: inout Cursor, major: Int,
+    budget: inout ParseBudget): Result<[Constant], Diagnostic> {
+    let count = u(input: input, cursor: &cursor, width: 2, context: "constant_pool_count")?
+    if count == 0 {
+        return .Err(diagnostic(code: "jvm.invalid-constant-count", offset: cursor.position - 2,
+            context: "constant_pool", message: "count must include the unused zero index"))
+    }
+    charge(budget: &budget, count: count, offset: cursor.position - 2)?
+    var pool: [Constant] = [
+        Constant(index: 0, tag: 0, bytes: ByteRange(offset: 8, length: 0),
+            first: 0, second: 0, text: []),
+    ]
+    var index = 1
+    while index < count {
+        let start = cursor.position
+        let tag = u(input: input, cursor: &cursor, width: 1, context: "constant.tag")?
+        var first = 0
+        var second = 0
+        var text: [Int] = []
+        if tag == 1 {
+            let length = u(input: input, cursor: &cursor, width: 2, context: "CONSTANT_Utf8.length")?
+            if length > 1048576 - budget.textBytes {
+                return .Err(diagnostic(code: "jvm.resource-limit", offset: start,
+                    context: "constant_pool", message: "encoded Utf8 payloads exceed the total 1 MiB budget"))
+            }
+            &budget.textBytes = budget.textBytes + length
+            let region = take(input: input, cursor: &cursor, length: length, context: "CONSTANT_Utf8.bytes")?
+            text = modifiedUtf8(input: input, region: region)?
+            first = length
+        } else if tag == 3 || tag == 4 {
+            first = u(input: input, cursor: &cursor, width: 4, context: "constant.bits")?
+        } else if tag == 5 || tag == 6 {
+            first = u(input: input, cursor: &cursor, width: 4, context: "constant.high_bits")?
+            second = u(input: input, cursor: &cursor, width: 4, context: "constant.low_bits")?
+            if count - index < 2 {
+                return .Err(diagnostic(code: "jvm.invalid-constant-count", offset: start,
+                    context: "constant_pool", message: "64-bit constant requires a second unusable slot"))
+            }
+        } else if tag == 7 || tag == 8 || tag == 16 || tag == 19 || tag == 20 {
+            if (tag == 19 || tag == 20) && major < 53 {
+                return .Err(diagnostic(code: "jvm.invalid-constant-version", offset: start,
+                    context: "constant_pool", message: "module/package constants require Java 9"))
+            }
+            first = u(input: input, cursor: &cursor, width: 2, context: "constant.index")?
+        } else if tag == 9 || tag == 10 || tag == 11 || tag == 12 || tag == 17 || tag == 18 {
+            if tag == 17 && major < 55 {
+                return .Err(diagnostic(code: "jvm.invalid-constant-version", offset: start,
+                    context: "constant_pool", message: "dynamic constants require Java 11"))
+            }
+            first = u(input: input, cursor: &cursor, width: 2, context: "constant.first")?
+            second = u(input: input, cursor: &cursor, width: 2, context: "constant.second")?
+        } else if tag == 15 {
+            first = u(input: input, cursor: &cursor, width: 1, context: "MethodHandle.kind")?
+            second = u(input: input, cursor: &cursor, width: 2, context: "MethodHandle.reference")?
+        } else {
+            return .Err(diagnostic(code: "jvm.unsupported-constant-tag", offset: start,
+                context: "constant_pool", message: "unknown constant pool tag"))
+        }
+        &pool.append(element: Constant(index: index, tag: tag,
+            bytes: ByteRange(offset: start, length: cursor.position - start),
+            first: first, second: second, text: text))
+        index = index + 1
+        if tag == 5 || tag == 6 {
+            &pool.append(element: Constant(index: index, tag: 0,
+                bytes: ByteRange(offset: start, length: 0), first: 0, second: 0, text: []))
+            index = index + 1
+        }
+    }
+    validatePool(pool: pool)?
+    return .Ok(pool)
+}
+
+private func validateNameAndType(pool: borrowing [Constant], index: Int, method: Bool,
+    offset: Int): Result<Void, Diagnostic> {
+    requireTag(pool: pool, index: index, tag: 12, offset: offset, context: "NameAndType")?
+    let name = utf8(pool: pool, index: pool[index].first, offset: offset, context: "name")?
+    if !validName(units: name, method: method) {
+        return .Err(diagnostic(code: "jvm.invalid-member-name", offset: offset,
+            context: "NameAndType", message: "invalid unqualified name"))
+    }
+    let type = utf8(pool: pool, index: pool[index].second, offset: offset, context: "descriptor")?
+    let info = descriptor(units: type, method: method, offset: offset)?
+    if method && unitsEqualAscii(units: name, text: "<init>") && info.returnType != 86 {
+        return .Err(diagnostic(code: "jvm.invalid-descriptor", offset: offset,
+            context: "<init>", message: "constructor return type must be void"))
+    }
+    return .Ok(())
+}
+
+func validatePool(pool: borrowing [Constant]): Result<Void, Diagnostic> {
+    var index = 1
+    while index < pool.count {
+        let tag = pool[index].tag
+        let first = pool[index].first
+        let second = pool[index].second
+        let offset = pool[index].bytes.offset
+        if tag == 7 {
+            classConstant(pool: pool, index: index, arrayAllowed: true, offset: offset, context: "Class")?
+        } else if tag == 8 || tag == 19 || tag == 20 {
+            requireTag(pool: pool, index: first, tag: 1, offset: offset, context: "constant text")?
+        } else if tag == 16 {
+            let type = utf8(pool: pool, index: first, offset: offset, context: "MethodType")?
+            descriptor(units: type, method: true, offset: offset)?
+            ()
+        } else if tag == 12 {
+            let type = utf8(pool: pool, index: second, offset: offset, context: "NameAndType")?
+            let method = type.count > 0 && type[0] == 40
+            validateNameAndType(pool: pool, index: index, method: method, offset: offset)?
+        } else if tag == 9 || tag == 10 || tag == 11 {
+            classConstant(pool: pool, index: first, arrayAllowed: true, offset: offset, context: "member owner")?
+            validateNameAndType(pool: pool, index: second, method: tag != 9, offset: offset)?
+            let nameIndex = pool[second].first
+            if tag != 9 && (named(pool: pool, index: nameIndex, name: "<clinit>") ||
+                (tag == 11 && named(pool: pool, index: nameIndex, name: "<init>"))) {
+                return .Err(diagnostic(code: "jvm.invalid-member-name", offset: offset,
+                    context: "method reference", message: "invalid special method reference"))
+            }
+        } else if tag == 17 || tag == 18 {
+            validateNameAndType(pool: pool, index: second, method: tag == 18, offset: offset)?
+            if named(pool: pool, index: pool[second].first, name: "<init>") ||
+                named(pool: pool, index: pool[second].first, name: "<clinit>") {
+                return .Err(diagnostic(code: "jvm.invalid-member-name", offset: offset,
+                    context: "dynamic constant", message: "special names are not allowed"))
+            }
+        } else if tag == 15 {
+            requireTag(pool: pool, index: second, tag: 0, offset: offset, context: "MethodHandle")?
+            let referenceTag = pool[second].tag
+            let valid = (first >= 1 && first <= 4 && referenceTag == 9) ||
+                ((first == 5 || first == 8) && referenceTag == 10) ||
+                ((first == 6 || first == 7) && (referenceTag == 10 || referenceTag == 11)) ||
+                (first == 9 && referenceTag == 11)
+            if !valid {
+                return .Err(diagnostic(code: "jvm.invalid-method-handle", offset: offset,
+                    context: "MethodHandle", message: "reference kind and tag do not agree"))
+            }
+            if first >= 5 {
+                let reference = pool[second].second
+                requireTag(pool: pool, index: reference, tag: 12, offset: offset, context: "MethodHandle")?
+                let constructor = named(pool: pool, index: pool[reference].first, name: "<init>")
+                if (first == 8 && !constructor) || (first != 8 && constructor) ||
+                    named(pool: pool, index: pool[reference].first, name: "<clinit>") {
+                    return .Err(diagnostic(code: "jvm.invalid-method-handle", offset: offset,
+                        context: "MethodHandle", message: "invalid special method name"))
+                }
+            }
+        }
+        index = index + 1
+    }
+    return .Ok(())
+}

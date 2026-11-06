@@ -1,0 +1,342 @@
+import moss.binary
+
+func testNumbers(state: inout TestState, octets: borrowing String) {
+    let inputs: [[Int]] = [
+        [0], [127], [128], [255],
+        [0, 0], [0, 128], [127, 255], [128, 0], [255, 127], [255, 255],
+        [0, 0, 0, 0], [0, 0, 0, 128], [0, 0, 128, 0],
+        [1, 2, 3, 4], [127, 255, 255, 255], [128, 0, 0, 0],
+        [255, 255, 255, 128], [255, 0, 0, 1], [255, 255, 255, 255],
+    ]
+    let unsignedValues = [
+        0, 127, 128, 255,
+        0, 128, 32767, 32768, 65407, 65535,
+        0, 128, 32768, 16909060, 2147483647, 2147483648,
+        4294967168, 4278190081, 4294967295,
+    ]
+    let signedValues = [
+        0, 127, -128, -1,
+        0, 128, 32767, -32768, -129, -1,
+        0, 128, 32768, 16909060, 2147483647, -2147483648,
+        -128, -16777215, -1,
+    ]
+    var index = 0
+    while index < inputs.count {
+        let input = fixtureBytes(octets: octets, values: inputs[index])
+        let width = inputs[index].count
+        var cursor = fullCursor(input: input)
+        let unsigned = readUnsigned(input: input, cursor: &cursor,
+            width: width, context: "test")
+        expect(state: &state, condition: integerEquals(outcome: unsigned,
+            expected: unsignedValues[index]) && cursor.position == width,
+            name: "unsigned numeric case " + decimal(value: index))
+        var signedCursor = fullCursor(input: input)
+        let signed = readSigned(input: input, cursor: &signedCursor,
+            width: width, context: "test")
+        expect(state: &state, condition: integerEquals(outcome: signed,
+            expected: signedValues[index]) && signedCursor.position == width,
+            name: "signed numeric case " + decimal(value: index))
+        index = index + 1
+    }
+    var cursor = fullCursor(input: octets)
+    var value = 0
+    while value < 256 {
+        let outcome = readUnsigned(input: octets, cursor: &cursor,
+            width: 1, context: "test")
+        expect(state: &state, condition: integerEquals(outcome: outcome, expected: value) &&
+            cursor.position == value + 1,
+            name: "sequential byte " + decimal(value: value))
+        value = value + 1
+    }
+    expect(state: &state, condition: integerEquals(outcome: remaining(
+        input: octets, cursor: cursor, context: "test"), expected: 0),
+        name: "remaining at EOF")
+}
+
+func testTruncation(state: inout TestState) {
+    let widths = [1, 2, 4]
+    var index = 0
+    while index < widths.count {
+        let width = widths[index]
+        var input = ""
+        var available = 0
+        while available < width {
+            var cursor = fullCursor(input: input)
+            let unsigned = readUnsigned(input: input, cursor: &cursor,
+                width: width, context: "test")
+            expect(state: &state, condition: integerError(outcome: unsigned,
+                code: "binary.truncated", offset: 0, requested: width, available: available) &&
+                cursor.position == 0,
+                name: "unsigned truncation " + decimal(value: width) + "/" + decimal(value: available))
+            let signed = readSigned(input: input, cursor: &cursor,
+                width: width, context: "test")
+            expect(state: &state, condition: integerError(outcome: signed,
+                code: "binary.truncated", offset: 0, requested: width, available: available) &&
+                cursor.position == 0,
+                name: "signed truncation " + decimal(value: width) + "/" + decimal(value: available))
+            input = input + "A"
+            available = available + 1
+        }
+        index = index + 1
+    }
+    let minimum = -9223372036854775807 - 1
+    let invalidWidths = [minimum, -1, 0, 3, 5, 8, 9223372036854775807]
+    index = 0
+    while index < invalidWidths.count {
+        let width = invalidWidths[index]
+        var cursor = fullCursor(input: "abcdefgh")
+        let outcome = readUnsigned(input: "abcdefgh", cursor: &cursor,
+            width: width, context: "test")
+        expect(state: &state, condition: integerError(outcome: outcome,
+            code: "binary.invalid-width", offset: 0, requested: width, available: 0) &&
+            cursor.position == 0, name: "invalid width " + decimal(value: width))
+        let signed = readSigned(input: "abcdefgh", cursor: &cursor,
+            width: width, context: "test")
+        expect(state: &state, condition: integerError(outcome: signed,
+            code: "binary.invalid-width", offset: 0, requested: width, available: 0) &&
+            cursor.position == 0, name: "invalid signed width " + decimal(value: width))
+        index = index + 1
+    }
+    var available = 0
+    var input = ""
+    while available < 8 {
+        var cursor = fullCursor(input: input)
+        let outcome = match readBits64(input: input, cursor: &cursor, context: "test") {
+            .Ok(_) => false,
+            .Err(error) => errorMatches(error: error, code: "binary.truncated", offset: 0,
+                requested: 8, available: available, context: "test"),
+        }
+        expect(state: &state, condition: outcome && cursor.position == 0,
+            name: "64-bit atomic truncation " + decimal(value: available))
+        input = input + "A"
+        available = available + 1
+    }
+}
+
+func testSpans(state: inout TestState) {
+    let input = "01234567"
+    let minimum = -9223372036854775807 - 1
+    let offsets = [minimum, -1, 9, 9223372036854775807, 0, 1, 8]
+    let lengths = [0, 1, 0, 9223372036854775807, -1, 9223372036854775807, 1]
+    let available = [0, 0, 0, 0, 8, 7, 0]
+    var index = 0
+    while index < offsets.count {
+        let outcome = match span(input: input, offset: offsets[index],
+            length: lengths[index], context: "test") {
+            .Ok(_) => false,
+            .Err(error) => errorMatches(error: error, code: "binary.invalid-range",
+                offset: offsets[index], requested: lengths[index], available: available[index],
+                context: "test"),
+        }
+        expect(state: &state, condition: outcome, name: "invalid span " + decimal(value: index))
+        let invalid = Span(offset: offsets[index], length: lengths[index])
+        let bounded = match boundedCursor(input: input, region: invalid, context: "test") {
+            .Ok(_) => false,
+            .Err(error) => errorMatches(error: error, code: "binary.invalid-range",
+                offset: offsets[index], requested: lengths[index], available: available[index],
+                context: "test"),
+        }
+        expect(state: &state, condition: bounded, name: "invalid bounded region " + decimal(value: index))
+        index = index + 1
+    }
+    let empty = match span(input: input, offset: 8, length: 0, context: "test") {
+        .Ok(region) => region.offset == 8 && region.length == 0,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: empty, name: "zero-length span at EOF")
+    var cursor = match boundedCursor(input: input,
+        region: Span(offset: 2, length: 4), context: "test") {
+        .Ok(value) => value,
+        .Err(_) => {
+            expect(state: &state, condition: false, name: "valid bounded cursor")
+            return
+        },
+    }
+    expect(state: &state, condition: cursor.start == 2 && cursor.end == 6 &&
+        cursor.position == 2, name: "bounded cursor coordinates")
+    let region = match takeSpan(input: input, cursor: &cursor, length: 3, context: "test") {
+        .Ok(value) => value.offset == 2 && value.length == 3,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: region && cursor.position == 5, name: "takeSpan advances exactly")
+    let negative = match takeSpan(input: input, cursor: &cursor,
+        length: minimum, context: "test") {
+        .Ok(_) => false,
+        .Err(error) => errorMatches(error: error, code: "binary.invalid-range",
+            offset: 5, requested: minimum, available: 1, context: "test"),
+    }
+    expect(state: &state, condition: negative && cursor.position == 5, name: "negative span is atomic")
+    let huge = match skip(input: input, cursor: &cursor,
+        count: 9223372036854775807, context: "test") {
+        .Ok(_) => false,
+        .Err(error) => errorMatches(error: error, code: "binary.truncated",
+            offset: 5, requested: 9223372036854775807, available: 1, context: "test"),
+    }
+    expect(state: &state, condition: huge && cursor.position == 5, name: "huge skip does not overflow")
+    let zero = match skip(input: input, cursor: &cursor, count: 0, context: "test") {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: zero && cursor.position == 5, name: "zero skip")
+    let last = readUnsigned(input: input, cursor: &cursor, width: 1, context: "last byte")
+    expect(state: &state, condition: integerEquals(outcome: last, expected: 53) &&
+        cursor.position == 6, name: "last bounded byte")
+    let overread = match readUnsigned(input: input, cursor: &cursor,
+        width: 1, context: "Code.max_stack") {
+        .Ok(_) => false,
+        .Err(error) => errorMatches(error: error, code: "binary.truncated",
+            offset: 6, requested: 1, available: 0, context: "Code.max_stack"),
+    }
+    expect(state: &state, condition: overread && cursor.position == 6,
+        name: "bounded EOF does not read enclosing bytes")
+    let invalidOffsets = [minimum, 1, 7, 9223372036854775807]
+    index = 0
+    while index < invalidOffsets.count {
+        let outcome = match seek(input: input, cursor: &cursor,
+            offset: invalidOffsets[index], context: "test") {
+            .Ok(_) => false,
+            .Err(error) => errorMatches(error: error, code: "binary.invalid-range",
+                offset: invalidOffsets[index], requested: 0, available: 0, context: "test"),
+        }
+        expect(state: &state, condition: outcome && cursor.position == 6,
+            name: "seek outside bounded region " + decimal(value: index))
+        index = index + 1
+    }
+    let seekStart = match seek(input: input, cursor: &cursor, offset: 2, context: "test") {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: seekStart && cursor.position == 2, name: "seek bounded start")
+    let positiveSkip = match skip(input: input, cursor: &cursor, count: 3, context: "test") {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: positiveSkip && cursor.position == 5,
+        name: "positive bounded skip")
+    let negativeSkip = match skip(input: input, cursor: &cursor, count: -1, context: "test") {
+        .Ok(_) => false,
+        .Err(error) => errorMatches(error: error, code: "binary.invalid-range",
+            offset: 5, requested: -1, available: 1, context: "test"),
+    }
+    expect(state: &state, condition: negativeSkip && cursor.position == 5,
+        name: "negative skip preserves cursor")
+    let seekEnd = match seek(input: input, cursor: &cursor, offset: 6, context: "test") {
+        .Ok(_) => true,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: seekEnd && cursor.position == 6, name: "seek exclusive end")
+    let zeroRegion = match takeSpan(input: input, cursor: &cursor, length: 0, context: "test") {
+        .Ok(value) => value.offset == 6 && value.length == 0,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: zeroRegion && cursor.position == 6,
+        name: "zero-length takeSpan at bounded end")
+    let child = boundedCursor(input: input,
+        region: Span(offset: 2, length: 3), context: "test")
+    match child {
+        .Ok(value) => {
+            var nested = value
+            let read = readUnsigned(input: input, cursor: &nested, width: 4, context: "test")
+            expect(state: &state, condition: integerError(outcome: read, code: "binary.truncated",
+                offset: 2, requested: 4, available: 3) && nested.position == 2 &&
+                cursor.position == 6, name: "child cursor is independently bounded")
+        },
+        .Err(_) => expect(state: &state, condition: false, name: "child cursor creation"),
+    }
+}
+
+func testInvalidCursors(state: inout TestState) {
+    let minimum = -9223372036854775807 - 1
+    let cursors: [Cursor] = [
+        Cursor(start: minimum, end: 8, position: 0),
+        Cursor(start: -1, end: 8, position: 0),
+        Cursor(start: 4, end: 3, position: 4),
+        Cursor(start: 2, end: 8, position: 1),
+        Cursor(start: 0, end: 8, position: 9),
+        Cursor(start: 0, end: 9, position: 0),
+        Cursor(start: 0, end: 8, position: minimum),
+        Cursor(start: 0, end: 8, position: 9223372036854775807),
+        Cursor(start: 0, end: minimum, position: 0),
+        Cursor(start: 0, end: 9223372036854775807, position: 0),
+    ]
+    var index = 0
+    while index < cursors.count {
+        var cursor = cursors[index]
+        let position = cursor.position
+        let remainingOutcome = remaining(input: "abcdefgh", cursor: cursor, context: "test")
+        expect(state: &state, condition: integerError(outcome: remainingOutcome,
+            code: "binary.invalid-cursor", offset: position, requested: 0, available: 0),
+            name: "invalid cursor remaining " + decimal(value: index))
+        let read = readUnsigned(input: "abcdefgh", cursor: &cursor, width: 1, context: "test")
+        expect(state: &state, condition: integerError(outcome: read,
+            code: "binary.invalid-cursor", offset: position, requested: 0, available: 0) &&
+            cursor.position == position, name: "invalid cursor read " + decimal(value: index))
+        let skipRejected = match skip(input: "abcdefgh", cursor: &cursor, count: 1, context: "test") {
+            .Ok(_) => false,
+            .Err(error) => errorMatches(error: error, code: "binary.invalid-cursor",
+                offset: position, requested: 0, available: 0, context: "test"),
+        }
+        expect(state: &state, condition: skipRejected && cursor.position == position,
+            name: "invalid cursor skip " + decimal(value: index))
+        index = index + 1
+    }
+    var cursor = fullCursor(input: "abcdefgh")
+    let differentLength = readUnsigned(input: "a", cursor: &cursor, width: 1, context: "test")
+    expect(state: &state, condition: integerError(outcome: differentLength,
+        code: "binary.invalid-cursor", offset: 0, requested: 0, available: 0) &&
+        cursor.position == 0, name: "cursor rejects a shorter backing input")
+}
+
+func testBitPatterns(state: inout TestState, octets: borrowing String) {
+    let inputs: [[Int]] = [
+        [0, 0, 0, 0, 0, 0, 0, 0],
+        [255, 255, 255, 255, 255, 255, 255, 255],
+        [128, 0, 0, 0, 0, 0, 0, 0],
+        [127, 240, 0, 0, 0, 0, 0, 1],
+        [1, 2, 3, 4, 5, 6, 7, 8],
+    ]
+    let highs = [0, 4294967295, 2147483648, 2146435072, 16909060]
+    let lows = [0, 4294967295, 0, 1, 84281096]
+    var index = 0
+    while index < inputs.count {
+        let input = fixtureBytes(octets: octets, values: inputs[index])
+        var cursor = fullCursor(input: input)
+        let outcome = match readBits64(input: input, cursor: &cursor, context: "test") {
+            .Ok(bits) => bits.high == highs[index] && bits.low == lows[index],
+            .Err(_) => false,
+        }
+        expect(state: &state, condition: outcome && cursor.position == 8,
+            name: "64-bit raw pattern " + decimal(value: index))
+        index = index + 1
+    }
+    let input = "A" + fixtureBytes(octets: octets, values: inputs[1]) + "Z"
+    var cursor = match boundedCursor(input: input,
+        region: Span(offset: 1, length: 8), context: "test") {
+        .Ok(value) => value,
+        .Err(_) => {
+            expect(state: &state, condition: false, name: "bounded 64-bit cursor creation")
+            return
+        },
+    }
+    let bounded = match readBits64(input: input, cursor: &cursor, context: "test") {
+        .Ok(bits) => bits.high == 4294967295 && bits.low == 4294967295,
+        .Err(_) => false,
+    }
+    expect(state: &state, condition: bounded && cursor.position == 9,
+        name: "64-bit read uses absolute nonzero offset")
+    var short = match boundedCursor(input: input,
+        region: Span(offset: 1, length: 7), context: "test") {
+        .Ok(value) => value,
+        .Err(_) => {
+            expect(state: &state, condition: false, name: "short 64-bit cursor creation")
+            return
+        },
+    }
+    let truncated = match readBits64(input: input, cursor: &short, context: "test") {
+        .Ok(_) => false,
+        .Err(error) => errorMatches(error: error, code: "binary.truncated",
+            offset: 1, requested: 8, available: 7, context: "test"),
+    }
+    expect(state: &state, condition: truncated && short.position == 1,
+        name: "64-bit read cannot escape a bounded region")
+}

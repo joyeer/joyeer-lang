@@ -1,0 +1,2144 @@
+[
+  {
+    "name": "op0",
+    "opcode": 0,
+    "mnemonic": "nop",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op1",
+    "opcode": 1,
+    "mnemonic": "aconst_null",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op2",
+    "opcode": 2,
+    "mnemonic": "iconst_m1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op3",
+    "opcode": 3,
+    "mnemonic": "iconst_0",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op4",
+    "opcode": 4,
+    "mnemonic": "iconst_1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op5",
+    "opcode": 5,
+    "mnemonic": "iconst_2",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op6",
+    "opcode": 6,
+    "mnemonic": "iconst_3",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op7",
+    "opcode": 7,
+    "mnemonic": "iconst_4",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op8",
+    "opcode": 8,
+    "mnemonic": "iconst_5",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op9",
+    "opcode": 9,
+    "mnemonic": "lconst_0",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op10",
+    "opcode": 10,
+    "mnemonic": "lconst_1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op11",
+    "opcode": 11,
+    "mnemonic": "fconst_0",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op12",
+    "opcode": 12,
+    "mnemonic": "fconst_1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op13",
+    "opcode": 13,
+    "mnemonic": "fconst_2",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op14",
+    "opcode": 14,
+    "mnemonic": "dconst_0",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op15",
+    "opcode": 15,
+    "mnemonic": "dconst_1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op16",
+    "opcode": 16,
+    "mnemonic": "bipush",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "immediate",
+        "value": -128
+      }
+    ]
+  },
+  {
+    "name": "op17",
+    "opcode": 17,
+    "mnemonic": "sipush",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "immediate",
+        "value": -32768
+      }
+    ]
+  },
+  {
+    "name": "op18",
+    "opcode": 18,
+    "mnemonic": "ldc",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 6
+      }
+    ]
+  },
+  {
+    "name": "op19",
+    "opcode": 19,
+    "mnemonic": "ldc_w",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 6
+      }
+    ]
+  },
+  {
+    "name": "op20",
+    "opcode": 20,
+    "mnemonic": "ldc2_w",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 7
+      }
+    ]
+  },
+  {
+    "name": "op21",
+    "opcode": 21,
+    "mnemonic": "iload",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op22",
+    "opcode": 22,
+    "mnemonic": "lload",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op23",
+    "opcode": 23,
+    "mnemonic": "fload",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op24",
+    "opcode": 24,
+    "mnemonic": "dload",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op25",
+    "opcode": 25,
+    "mnemonic": "aload",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op26",
+    "opcode": 26,
+    "mnemonic": "iload_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op27",
+    "opcode": 27,
+    "mnemonic": "iload_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op28",
+    "opcode": 28,
+    "mnemonic": "iload_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op29",
+    "opcode": 29,
+    "mnemonic": "iload_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op30",
+    "opcode": 30,
+    "mnemonic": "lload_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op31",
+    "opcode": 31,
+    "mnemonic": "lload_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op32",
+    "opcode": 32,
+    "mnemonic": "lload_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op33",
+    "opcode": 33,
+    "mnemonic": "lload_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op34",
+    "opcode": 34,
+    "mnemonic": "fload_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op35",
+    "opcode": 35,
+    "mnemonic": "fload_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op36",
+    "opcode": 36,
+    "mnemonic": "fload_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op37",
+    "opcode": 37,
+    "mnemonic": "fload_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op38",
+    "opcode": 38,
+    "mnemonic": "dload_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op39",
+    "opcode": 39,
+    "mnemonic": "dload_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op40",
+    "opcode": 40,
+    "mnemonic": "dload_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op41",
+    "opcode": 41,
+    "mnemonic": "dload_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op42",
+    "opcode": 42,
+    "mnemonic": "aload_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op43",
+    "opcode": 43,
+    "mnemonic": "aload_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op44",
+    "opcode": 44,
+    "mnemonic": "aload_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op45",
+    "opcode": 45,
+    "mnemonic": "aload_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op46",
+    "opcode": 46,
+    "mnemonic": "iaload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op47",
+    "opcode": 47,
+    "mnemonic": "laload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op48",
+    "opcode": 48,
+    "mnemonic": "faload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op49",
+    "opcode": 49,
+    "mnemonic": "daload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op50",
+    "opcode": 50,
+    "mnemonic": "aaload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op51",
+    "opcode": 51,
+    "mnemonic": "baload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op52",
+    "opcode": 52,
+    "mnemonic": "caload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op53",
+    "opcode": 53,
+    "mnemonic": "saload",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op54",
+    "opcode": 54,
+    "mnemonic": "istore",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op55",
+    "opcode": 55,
+    "mnemonic": "lstore",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op56",
+    "opcode": 56,
+    "mnemonic": "fstore",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op57",
+    "opcode": 57,
+    "mnemonic": "dstore",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op58",
+    "opcode": 58,
+    "mnemonic": "astore",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      }
+    ]
+  },
+  {
+    "name": "op59",
+    "opcode": 59,
+    "mnemonic": "istore_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op60",
+    "opcode": 60,
+    "mnemonic": "istore_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op61",
+    "opcode": 61,
+    "mnemonic": "istore_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op62",
+    "opcode": 62,
+    "mnemonic": "istore_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op63",
+    "opcode": 63,
+    "mnemonic": "lstore_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op64",
+    "opcode": 64,
+    "mnemonic": "lstore_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op65",
+    "opcode": 65,
+    "mnemonic": "lstore_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op66",
+    "opcode": 66,
+    "mnemonic": "lstore_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op67",
+    "opcode": 67,
+    "mnemonic": "fstore_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op68",
+    "opcode": 68,
+    "mnemonic": "fstore_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op69",
+    "opcode": 69,
+    "mnemonic": "fstore_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op70",
+    "opcode": 70,
+    "mnemonic": "fstore_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op71",
+    "opcode": 71,
+    "mnemonic": "dstore_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op72",
+    "opcode": 72,
+    "mnemonic": "dstore_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op73",
+    "opcode": 73,
+    "mnemonic": "dstore_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op74",
+    "opcode": 74,
+    "mnemonic": "dstore_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op75",
+    "opcode": 75,
+    "mnemonic": "astore_0",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 0
+      }
+    ]
+  },
+  {
+    "name": "op76",
+    "opcode": 76,
+    "mnemonic": "astore_1",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 1
+      }
+    ]
+  },
+  {
+    "name": "op77",
+    "opcode": 77,
+    "mnemonic": "astore_2",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 2
+      }
+    ]
+  },
+  {
+    "name": "op78",
+    "opcode": 78,
+    "mnemonic": "astore_3",
+    "size": 1,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 3
+      }
+    ]
+  },
+  {
+    "name": "op79",
+    "opcode": 79,
+    "mnemonic": "iastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op80",
+    "opcode": 80,
+    "mnemonic": "lastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op81",
+    "opcode": 81,
+    "mnemonic": "fastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op82",
+    "opcode": 82,
+    "mnemonic": "dastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op83",
+    "opcode": 83,
+    "mnemonic": "aastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op84",
+    "opcode": 84,
+    "mnemonic": "bastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op85",
+    "opcode": 85,
+    "mnemonic": "castore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op86",
+    "opcode": 86,
+    "mnemonic": "sastore",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op87",
+    "opcode": 87,
+    "mnemonic": "pop",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op88",
+    "opcode": 88,
+    "mnemonic": "pop2",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op89",
+    "opcode": 89,
+    "mnemonic": "dup",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op90",
+    "opcode": 90,
+    "mnemonic": "dup_x1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op91",
+    "opcode": 91,
+    "mnemonic": "dup_x2",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op92",
+    "opcode": 92,
+    "mnemonic": "dup2",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op93",
+    "opcode": 93,
+    "mnemonic": "dup2_x1",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op94",
+    "opcode": 94,
+    "mnemonic": "dup2_x2",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op95",
+    "opcode": 95,
+    "mnemonic": "swap",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op96",
+    "opcode": 96,
+    "mnemonic": "iadd",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op97",
+    "opcode": 97,
+    "mnemonic": "ladd",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op98",
+    "opcode": 98,
+    "mnemonic": "fadd",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op99",
+    "opcode": 99,
+    "mnemonic": "dadd",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op100",
+    "opcode": 100,
+    "mnemonic": "isub",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op101",
+    "opcode": 101,
+    "mnemonic": "lsub",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op102",
+    "opcode": 102,
+    "mnemonic": "fsub",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op103",
+    "opcode": 103,
+    "mnemonic": "dsub",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op104",
+    "opcode": 104,
+    "mnemonic": "imul",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op105",
+    "opcode": 105,
+    "mnemonic": "lmul",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op106",
+    "opcode": 106,
+    "mnemonic": "fmul",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op107",
+    "opcode": 107,
+    "mnemonic": "dmul",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op108",
+    "opcode": 108,
+    "mnemonic": "idiv",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op109",
+    "opcode": 109,
+    "mnemonic": "ldiv",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op110",
+    "opcode": 110,
+    "mnemonic": "fdiv",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op111",
+    "opcode": 111,
+    "mnemonic": "ddiv",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op112",
+    "opcode": 112,
+    "mnemonic": "irem",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op113",
+    "opcode": 113,
+    "mnemonic": "lrem",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op114",
+    "opcode": 114,
+    "mnemonic": "frem",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op115",
+    "opcode": 115,
+    "mnemonic": "drem",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op116",
+    "opcode": 116,
+    "mnemonic": "ineg",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op117",
+    "opcode": 117,
+    "mnemonic": "lneg",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op118",
+    "opcode": 118,
+    "mnemonic": "fneg",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op119",
+    "opcode": 119,
+    "mnemonic": "dneg",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op120",
+    "opcode": 120,
+    "mnemonic": "ishl",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op121",
+    "opcode": 121,
+    "mnemonic": "lshl",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op122",
+    "opcode": 122,
+    "mnemonic": "ishr",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op123",
+    "opcode": 123,
+    "mnemonic": "lshr",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op124",
+    "opcode": 124,
+    "mnemonic": "iushr",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op125",
+    "opcode": 125,
+    "mnemonic": "lushr",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op126",
+    "opcode": 126,
+    "mnemonic": "iand",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op127",
+    "opcode": 127,
+    "mnemonic": "land",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op128",
+    "opcode": 128,
+    "mnemonic": "ior",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op129",
+    "opcode": 129,
+    "mnemonic": "lor",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op130",
+    "opcode": 130,
+    "mnemonic": "ixor",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op131",
+    "opcode": 131,
+    "mnemonic": "lxor",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op132",
+    "opcode": 132,
+    "mnemonic": "iinc",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 255
+      },
+      {
+        "kind": "immediate",
+        "value": -128
+      }
+    ]
+  },
+  {
+    "name": "op133",
+    "opcode": 133,
+    "mnemonic": "i2l",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op134",
+    "opcode": 134,
+    "mnemonic": "i2f",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op135",
+    "opcode": 135,
+    "mnemonic": "i2d",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op136",
+    "opcode": 136,
+    "mnemonic": "l2i",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op137",
+    "opcode": 137,
+    "mnemonic": "l2f",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op138",
+    "opcode": 138,
+    "mnemonic": "l2d",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op139",
+    "opcode": 139,
+    "mnemonic": "f2i",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op140",
+    "opcode": 140,
+    "mnemonic": "f2l",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op141",
+    "opcode": 141,
+    "mnemonic": "f2d",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op142",
+    "opcode": 142,
+    "mnemonic": "d2i",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op143",
+    "opcode": 143,
+    "mnemonic": "d2l",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op144",
+    "opcode": 144,
+    "mnemonic": "d2f",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op145",
+    "opcode": 145,
+    "mnemonic": "i2b",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op146",
+    "opcode": 146,
+    "mnemonic": "i2c",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op147",
+    "opcode": 147,
+    "mnemonic": "i2s",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op148",
+    "opcode": 148,
+    "mnemonic": "lcmp",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op149",
+    "opcode": 149,
+    "mnemonic": "fcmpl",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op150",
+    "opcode": 150,
+    "mnemonic": "fcmpg",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op151",
+    "opcode": 151,
+    "mnemonic": "dcmpl",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op152",
+    "opcode": 152,
+    "mnemonic": "dcmpg",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op153",
+    "opcode": 153,
+    "mnemonic": "ifeq",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op154",
+    "opcode": 154,
+    "mnemonic": "ifne",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op155",
+    "opcode": 155,
+    "mnemonic": "iflt",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op156",
+    "opcode": 156,
+    "mnemonic": "ifge",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op157",
+    "opcode": 157,
+    "mnemonic": "ifgt",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op158",
+    "opcode": 158,
+    "mnemonic": "ifle",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op159",
+    "opcode": 159,
+    "mnemonic": "if_icmpeq",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op160",
+    "opcode": 160,
+    "mnemonic": "if_icmpne",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op161",
+    "opcode": 161,
+    "mnemonic": "if_icmplt",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op162",
+    "opcode": 162,
+    "mnemonic": "if_icmpge",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op163",
+    "opcode": 163,
+    "mnemonic": "if_icmpgt",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op164",
+    "opcode": 164,
+    "mnemonic": "if_icmple",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op165",
+    "opcode": 165,
+    "mnemonic": "if_acmpeq",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op166",
+    "opcode": 166,
+    "mnemonic": "if_acmpne",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op167",
+    "opcode": 167,
+    "mnemonic": "goto",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op170",
+    "opcode": 170,
+    "mnemonic": "tableswitch",
+    "size": 20,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 0
+      },
+      {
+        "kind": "switchTarget",
+        "key": -1,
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op171",
+    "opcode": 171,
+    "mnemonic": "lookupswitch",
+    "size": 20,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 0
+      },
+      {
+        "kind": "switchTarget",
+        "key": -10,
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op172",
+    "opcode": 172,
+    "mnemonic": "ireturn",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op173",
+    "opcode": 173,
+    "mnemonic": "lreturn",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op174",
+    "opcode": 174,
+    "mnemonic": "freturn",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op175",
+    "opcode": 175,
+    "mnemonic": "dreturn",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op176",
+    "opcode": 176,
+    "mnemonic": "areturn",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op177",
+    "opcode": 177,
+    "mnemonic": "return",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op178",
+    "opcode": 178,
+    "mnemonic": "getstatic",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 13
+      }
+    ]
+  },
+  {
+    "name": "op179",
+    "opcode": 179,
+    "mnemonic": "putstatic",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 13
+      }
+    ]
+  },
+  {
+    "name": "op180",
+    "opcode": 180,
+    "mnemonic": "getfield",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 13
+      }
+    ]
+  },
+  {
+    "name": "op181",
+    "opcode": 181,
+    "mnemonic": "putfield",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 13
+      }
+    ]
+  },
+  {
+    "name": "op182",
+    "opcode": 182,
+    "mnemonic": "invokevirtual",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 18
+      }
+    ]
+  },
+  {
+    "name": "op183",
+    "opcode": 183,
+    "mnemonic": "invokespecial",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 23
+      }
+    ]
+  },
+  {
+    "name": "op184",
+    "opcode": 184,
+    "mnemonic": "invokestatic",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 27
+      }
+    ]
+  },
+  {
+    "name": "op185",
+    "opcode": 185,
+    "mnemonic": "invokeinterface",
+    "size": 5,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 32
+      },
+      {
+        "kind": "count",
+        "value": 1
+      }
+    ]
+  },
+  {
+    "name": "op186",
+    "opcode": 186,
+    "mnemonic": "invokedynamic",
+    "size": 5,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 36
+      }
+    ]
+  },
+  {
+    "name": "op187",
+    "opcode": 187,
+    "mnemonic": "new",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 37
+      }
+    ]
+  },
+  {
+    "name": "op188",
+    "opcode": 188,
+    "mnemonic": "newarray",
+    "size": 2,
+    "operands": [
+      {
+        "kind": "arrayType",
+        "value": 11
+      }
+    ]
+  },
+  {
+    "name": "op189",
+    "opcode": 189,
+    "mnemonic": "anewarray",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 37
+      }
+    ]
+  },
+  {
+    "name": "op190",
+    "opcode": 190,
+    "mnemonic": "arraylength",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op191",
+    "opcode": 191,
+    "mnemonic": "athrow",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op192",
+    "opcode": 192,
+    "mnemonic": "checkcast",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 37
+      }
+    ]
+  },
+  {
+    "name": "op193",
+    "opcode": 193,
+    "mnemonic": "instanceof",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 37
+      }
+    ]
+  },
+  {
+    "name": "op194",
+    "opcode": 194,
+    "mnemonic": "monitorenter",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op195",
+    "opcode": 195,
+    "mnemonic": "monitorexit",
+    "size": 1,
+    "operands": []
+  },
+  {
+    "name": "op197",
+    "opcode": 197,
+    "mnemonic": "multianewarray",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "constant",
+        "index": 39
+      },
+      {
+        "kind": "dimensions",
+        "value": 2
+      }
+    ]
+  },
+  {
+    "name": "op198",
+    "opcode": 198,
+    "mnemonic": "ifnull",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op199",
+    "opcode": 199,
+    "mnemonic": "ifnonnull",
+    "size": 3,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "op200",
+    "opcode": 200,
+    "mnemonic": "goto_w",
+    "size": 5,
+    "operands": [
+      {
+        "kind": "target",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "wide21",
+    "opcode": 21,
+    "rawOpcode": 196,
+    "mnemonic": "iload",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide22",
+    "opcode": 22,
+    "rawOpcode": 196,
+    "mnemonic": "lload",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide23",
+    "opcode": 23,
+    "rawOpcode": 196,
+    "mnemonic": "fload",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide24",
+    "opcode": 24,
+    "rawOpcode": 196,
+    "mnemonic": "dload",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide25",
+    "opcode": 25,
+    "rawOpcode": 196,
+    "mnemonic": "aload",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide54",
+    "opcode": 54,
+    "rawOpcode": 196,
+    "mnemonic": "istore",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide55",
+    "opcode": 55,
+    "rawOpcode": 196,
+    "mnemonic": "lstore",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide56",
+    "opcode": 56,
+    "rawOpcode": 196,
+    "mnemonic": "fstore",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide57",
+    "opcode": 57,
+    "rawOpcode": 196,
+    "mnemonic": "dstore",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide58",
+    "opcode": 58,
+    "rawOpcode": 196,
+    "mnemonic": "astore",
+    "size": 4,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      }
+    ]
+  },
+  {
+    "name": "wide132",
+    "opcode": 132,
+    "rawOpcode": 196,
+    "mnemonic": "iinc",
+    "size": 6,
+    "operands": [
+      {
+        "kind": "local",
+        "index": 300
+      },
+      {
+        "kind": "immediate",
+        "value": -32768
+      }
+    ]
+  },
+  {
+    "name": "align170_0",
+    "instructionIndex": 0,
+    "methodOffset": 0,
+    "opcode": 170,
+    "mnemonic": "tableswitch",
+    "size": 20,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 0
+      },
+      {
+        "kind": "switchTarget",
+        "key": 0,
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "align170_1",
+    "instructionIndex": 1,
+    "methodOffset": 1,
+    "opcode": 170,
+    "mnemonic": "tableswitch",
+    "size": 19,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 1
+      },
+      {
+        "kind": "switchTarget",
+        "key": 0,
+        "methodOffset": 1
+      }
+    ]
+  },
+  {
+    "name": "align170_2",
+    "instructionIndex": 2,
+    "methodOffset": 2,
+    "opcode": 170,
+    "mnemonic": "tableswitch",
+    "size": 18,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 2
+      },
+      {
+        "kind": "switchTarget",
+        "key": 0,
+        "methodOffset": 2
+      }
+    ]
+  },
+  {
+    "name": "align170_3",
+    "instructionIndex": 3,
+    "methodOffset": 3,
+    "opcode": 170,
+    "mnemonic": "tableswitch",
+    "size": 17,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 3
+      },
+      {
+        "kind": "switchTarget",
+        "key": 0,
+        "methodOffset": 3
+      }
+    ]
+  },
+  {
+    "name": "align171_0",
+    "instructionIndex": 0,
+    "methodOffset": 0,
+    "opcode": 171,
+    "mnemonic": "lookupswitch",
+    "size": 12,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 0
+      }
+    ]
+  },
+  {
+    "name": "align171_1",
+    "instructionIndex": 1,
+    "methodOffset": 1,
+    "opcode": 171,
+    "mnemonic": "lookupswitch",
+    "size": 11,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 1
+      }
+    ]
+  },
+  {
+    "name": "align171_2",
+    "instructionIndex": 2,
+    "methodOffset": 2,
+    "opcode": 171,
+    "mnemonic": "lookupswitch",
+    "size": 10,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 2
+      }
+    ]
+  },
+  {
+    "name": "align171_3",
+    "instructionIndex": 3,
+    "methodOffset": 3,
+    "opcode": 171,
+    "mnemonic": "lookupswitch",
+    "size": 9,
+    "operands": [
+      {
+        "kind": "defaultTarget",
+        "methodOffset": 3
+      }
+    ]
+  }
+]
