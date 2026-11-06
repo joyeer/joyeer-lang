@@ -1,0 +1,398 @@
+// Windows primitives for filesystem.joyeer, over kernel32. Paths are UTF-16LE
+// with a two-byte terminator. A handle is an Int. Results are >= 0 on success
+// and the negated GetLastError() code on failure.
+
+private let genericRead: UInt32 = 0x80000000
+private let genericWrite: UInt32 = 0x40000000
+private let shareAll: UInt32 = 7
+private let createNew: UInt32 = 1
+private let openExisting: UInt32 = 3
+private let normalAttributes: UInt32 = 0x80
+private let attributeDirectory: UInt32 = 0x10
+private let attributeDevice: UInt32 = 0x40
+private let attributeReparse: UInt32 = 0x400
+private let flagsForKind: UInt32 = 0x02200000
+private let invalidAttributes: UInt32 = 0xFFFFFFFF
+private let findDataSize: Int = 592
+private let findNameOffset: Int = 44
+private let findNameUnits: Int = 260
+
+@platform(windows)
+@c_extern(symbol: "CreateFileW", pointer: "path")
+private func createFileW(path: [UInt8], access: UInt32, share: UInt32, security: Int,
+    disposition: UInt32, flags: UInt32, template: Int): Int
+
+@platform(windows)
+@c_extern(symbol: "ReadFile", pointer: "buffer", pointer: "done")
+private func readFileW(handle: Int, buffer: inout [UInt8], count: UInt32, done: inout [UInt8],
+    overlapped: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "WriteFile", pointer: "buffer", pointer: "done")
+private func writeFileW(handle: Int, buffer: [UInt8], count: UInt32, done: inout [UInt8],
+    overlapped: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "CloseHandle")
+private func closeHandleW(handle: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func lastErrorW(): UInt32
+
+@platform(windows)
+@c_extern(symbol: "SetLastError")
+private func setLastErrorW(code: UInt32): Void
+
+@platform(windows)
+@c_extern(symbol: "GetFileAttributesW", pointer: "path")
+private func fileAttributesW(path: [UInt8]): UInt32
+
+@platform(windows)
+@c_extern(symbol: "CreateDirectoryW", pointer: "path")
+private func createDirectoryW(path: [UInt8], security: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "DeleteFileW", pointer: "path")
+private func deleteFileW(path: [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "RemoveDirectoryW", pointer: "path")
+private func removeDirectoryW(path: [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "FindFirstFileW", pointer: "pattern", pointer: "data")
+private func findFirstW(pattern: [UInt8], data: inout [UInt8]): Int
+
+@platform(windows)
+@c_extern(symbol: "FindNextFileW", pointer: "data")
+private func findNextW(handle: Int, data: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "FindClose")
+private func findCloseW(handle: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetFileType")
+private func fileTypeW(handle: Int): UInt32
+
+@platform(windows)
+@c_extern(symbol: "GetFileInformationByHandle", pointer: "information")
+private func fileInformationW(handle: Int, information: inout [UInt8]): Int32
+
+@platform(windows)
+func invalidInputCode(): Int { return 87 }
+
+@platform(windows)
+func invalidEncodingCode(): Int { return 1113 }
+
+@platform(windows)
+func invalidNameCode(): Int { return 123 }
+
+@platform(windows)
+func writeFaultCode(): Int { return 29 }
+
+@platform(windows)
+func separator(): String { return "\\" }
+
+@platform(windows)
+func classifyError(code: Int): FileSystemError {
+    if code == 123 || code == 161 || code == 87 || code == 1113 || code == 206 { return .InvalidPath(code) }
+    if code == 2 || code == 3 || code == 53 { return .NotFound(code) }
+    if code == 5 || code == 32 || code == 19 { return .PermissionDenied(code) }
+    if code == 80 || code == 183 { return .AlreadyExists(code) }
+    if code == 267 { return .NotDirectory(code) }
+    return .Other(code)
+}
+
+private func appendUnit(bytes: inout [UInt8], unit: Int) {
+    &bytes.append(element: (unit & 255) as UInt8)
+    &bytes.append(element: ((unit >> 8) & 255) as UInt8)
+}
+
+// UTF-8 to UTF-16LE. The text is already known to be well-formed UTF-8.
+private func utf16Bytes(text: String): [UInt8] {
+    var bytes: [UInt8] = []
+    var index = 0
+    while index < text.count {
+        let first = byteToInt(value: text[index])
+        var scalar = first
+        var length = 1
+        if first >= 240 {
+            scalar = first & 7
+            length = 4
+        } else if first >= 224 {
+            scalar = first & 15
+            length = 3
+        } else if first >= 192 {
+            scalar = first & 31
+            length = 2
+        }
+        var offset = 1
+        while offset < length {
+            scalar = (scalar << 6) | (byteToInt(value: text[index + offset]) & 63)
+            offset = offset + 1
+        }
+        index = index + length
+        if scalar >= 65536 {
+            let reduced = scalar - 65536
+            appendUnit(bytes: &bytes, unit: 55296 + (reduced >> 10))
+            appendUnit(bytes: &bytes, unit: 56320 + (reduced & 1023))
+        } else {
+            appendUnit(bytes: &bytes, unit: scalar)
+        }
+    }
+    return bytes
+}
+
+@platform(windows)
+func nativePathBytes(text: String): [UInt8] {
+    var bytes = utf16Bytes(text: text)
+    appendUnit(bytes: &bytes, unit: 0)
+    return bytes
+}
+
+private func unitAt(bytes: [UInt8], offset: Int): Int {
+    return byteToInt(value: bytes[offset]) | (byteToInt(value: bytes[offset + 1]) << 8)
+}
+
+private func appendUtf8(bytes: inout [UInt8], scalar: Int) {
+    if scalar < 128 {
+        &bytes.append(element: scalar as UInt8)
+    } else if scalar < 2048 {
+        &bytes.append(element: (192 | (scalar >> 6)) as UInt8)
+        &bytes.append(element: (128 | (scalar & 63)) as UInt8)
+    } else if scalar < 65536 {
+        &bytes.append(element: (224 | (scalar >> 12)) as UInt8)
+        &bytes.append(element: (128 | ((scalar >> 6) & 63)) as UInt8)
+        &bytes.append(element: (128 | (scalar & 63)) as UInt8)
+    } else {
+        &bytes.append(element: (240 | (scalar >> 18)) as UInt8)
+        &bytes.append(element: (128 | ((scalar >> 12) & 63)) as UInt8)
+        &bytes.append(element: (128 | ((scalar >> 6) & 63)) as UInt8)
+        &bytes.append(element: (128 | (scalar & 63)) as UInt8)
+    }
+}
+
+// Decodes the NUL-terminated UTF-16LE name at `start` into UTF-8 bytes.
+// Returns false on an unpaired surrogate or an unterminated name.
+private func decodeName(data: [UInt8], start: Int, units: Int, into: inout [UInt8]): Bool {
+    var index = 0
+    while index < units {
+        let unit = unitAt(bytes: data, offset: start + index * 2)
+        if unit == 0 { return true }
+        index = index + 1
+        if unit >= 55296 && unit < 56320 {
+            if index >= units { return false }
+            let low = unitAt(bytes: data, offset: start + index * 2)
+            if low < 56320 || low > 57343 { return false }
+            index = index + 1
+            appendUtf8(bytes: &into, scalar: 65536 + ((unit - 55296) << 10) + (low - 56320))
+        } else if unit >= 56320 && unit < 57344 {
+            return false
+        } else {
+            appendUtf8(bytes: &into, scalar: unit)
+        }
+    }
+    return false
+}
+
+private func failed(code: UInt32): Int {
+    return 0 - (code as Int)
+}
+
+@platform(windows)
+private func lastFailure(): Int {
+    return failed(code: lastErrorW())
+}
+
+@platform(windows)
+func nativeOpenRead(path: [UInt8]): Int {
+    let handle = createFileW(path: path, access: genericRead, share: shareAll, security: 0,
+        disposition: openExisting, flags: normalAttributes, template: 0)
+    if handle == -1 { return lastFailure() }
+    return handle
+}
+
+@platform(windows)
+func nativeOpenNew(path: [UInt8]): Int {
+    let handle = createFileW(path: path, access: genericWrite, share: 0, security: 0,
+        disposition: createNew, flags: normalAttributes, template: 0)
+    if handle == -1 { return lastFailure() }
+    return handle
+}
+
+// A failed open of a directory reports access denied; the caller turns that
+// into IsDirectory, as the Win32 attributes (which count directory links) say.
+@platform(windows)
+func opensAsDirectory(path: [UInt8], code: Int): Bool {
+    if code != 5 { return false }
+    let attributes = fileAttributesW(path: path)
+    return attributes != invalidAttributes && (attributes & attributeDirectory) != 0
+}
+
+@platform(windows)
+func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    var done = zeroBuffer(count: 4)
+    let succeeded = readFileW(handle: handle, buffer: &buffer, count: count as UInt32, done: &done, overlapped: 0)
+    if succeeded == 0 { return lastFailure() }
+    return unitAt(bytes: done, offset: 0) | (unitAt(bytes: done, offset: 2) << 16)
+}
+
+@platform(windows)
+func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
+    var done = zeroBuffer(count: 4)
+    let succeeded = writeFileW(handle: handle, buffer: buffer, count: count as UInt32, done: &done, overlapped: 0)
+    if succeeded == 0 { return lastFailure() }
+    return unitAt(bytes: done, offset: 0) | (unitAt(bytes: done, offset: 2) << 16)
+}
+
+@platform(windows)
+func nativeClose(handle: Int): Int {
+    if closeHandleW(handle: handle) == 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeCreateDirectory(path: [UInt8]): Int {
+    if createDirectoryW(path: path, security: 0) == 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeRemoveFile(path: [UInt8]): Int {
+    let attributes = fileAttributesW(path: path)
+    if attributes == invalidAttributes { return lastFailure() }
+    var removed: Int32 = 0
+    if (attributes & attributeDirectory) != 0 && (attributes & attributeReparse) != 0 {
+        removed = removeDirectoryW(path: path)
+    } else {
+        removed = deleteFileW(path: path)
+    }
+    if removed == 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeRemoveDirectory(path: [UInt8]): Int {
+    let attributes = fileAttributesW(path: path)
+    if attributes == invalidAttributes { return lastFailure() }
+    if (attributes & attributeDirectory) == 0 || (attributes & attributeReparse) != 0 { return -267 }
+    if removeDirectoryW(path: path) == 0 { return lastFailure() }
+    return 0
+}
+
+// Kind tags: 0 file, 1 directory, 2 symlink, 3 other. The leaf is never followed.
+@platform(windows)
+func nativeKind(path: [UInt8]): Int {
+    let attributes = fileAttributesW(path: path)
+    if attributes == invalidAttributes { return lastFailure() }
+    if (attributes & attributeReparse) != 0 { return 2 }
+    if (attributes & attributeDirectory) != 0 { return 1 }
+    // A DOS device such as NUL can look like an ordinary file; ask a
+    // metadata-only handle what it is, without reading or following links.
+    let handle = createFileW(path: path, access: 0, share: shareAll, security: 0,
+        disposition: openExisting, flags: flagsForKind, template: 0)
+    if handle == -1 { return lastFailure() }
+    var kind = 3
+    var code = 0
+    setLastErrorW(code: 0)
+    let type = fileTypeW(handle: handle)
+    if type == 0 {
+        code = 0 - lastFailure()
+    } else if type == 1 {
+        var information = zeroBuffer(count: 52)
+        if fileInformationW(handle: handle, information: &information) == 0 {
+            code = 0 - lastFailure()
+        } else {
+            let found = unitAt(bytes: information, offset: 0) | (unitAt(bytes: information, offset: 2) << 16)
+            if (found & 1024) != 0 {
+                kind = 2
+            } else if (found & 16) != 0 {
+                kind = 1
+            } else if (found & 64) == 0 {
+                kind = 0
+            }
+        }
+    }
+    let closed = nativeClose(handle: handle)
+    if code == 0 && closed < 0 { code = 0 - closed }
+    if code != 0 { return 0 - code }
+    return kind
+}
+
+@platform(windows)
+func replacesBase(path: String): Bool {
+    let first = path[0]
+    if first == b'/' || first == b'\\' { return true }
+    return path.count >= 2 && isDriveLetter(byte: first) && path[1] == b':'
+}
+
+@platform(windows)
+func needsSeparator(base: String): Bool {
+    if base.count == 2 && isDriveLetter(byte: base[0]) && base[1] == b':' { return false }
+    let last = base[base.count - 1]
+    return last != b'/' && last != b'\\'
+}
+
+private func isDriveLetter(byte: UInt8): Bool {
+    return (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z')
+}
+
+// Entries between a first FindFirstFileW result and the end, excluding "." and "..".
+@platform(windows)
+private func collectEntries(handle: Int, data: inout [UInt8], names: inout [String], first: Bool): Int {
+    var more = true
+    var code = 0
+    var advance = !first
+    while more && code == 0 {
+        if advance {
+            if findNextW(handle: handle, data: &data) == 0 {
+                more = false
+                let last = lastErrorW()
+                if last != 18 { code = last as Int }
+                continue
+            }
+        }
+        advance = true
+        var name: [UInt8] = []
+        if !decodeName(data: data, start: findNameOffset, units: findNameUnits, into: &name) {
+            code = 1113
+            continue
+        }
+        let isDot = name.count == 1 && name[0] == b'.'
+        let isDotDot = name.count == 2 && name[0] == b'.' && name[1] == b'.'
+        if !isDot && !isDotDot { &names.append(element: stringFromBytes(bytes: name, count: name.count)) }
+    }
+    return code
+}
+
+@platform(windows)
+func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
+    let attributes = fileAttributesW(path: native)
+    if attributes == invalidAttributes { return .Err(classifyError(code: lastErrorW() as Int)) }
+    if (attributes & attributeDirectory) == 0 { return .Err(.NotDirectory(267)) }
+    // The search pattern is the path, a separator unless it ends in one or is
+    // a bare drive, and "*". The bare drive keeps its drive-relative meaning.
+    var pattern = path
+    if needsSeparator(base: path) { pattern = pattern + "\\" }
+    pattern = pattern + "*"
+    let patternBytes = nativePathBytes(text: pattern)
+    var data = zeroBuffer(count: findDataSize)
+    let handle = findFirstW(pattern: patternBytes, data: &data)
+    var names: [String] = []
+    if handle == -1 {
+        let code = lastErrorW()
+        if code != 2 { return .Err(classifyError(code: code as Int)) }
+        // No entries at all, not even "." and "..": an empty directory.
+        let remaining = fileAttributesW(path: native)
+        if remaining == invalidAttributes { return .Err(classifyError(code: lastErrorW() as Int)) }
+        if (remaining & attributeDirectory) == 0 { return .Err(classifyError(code: code as Int)) }
+        return .Ok(names)
+    }
+    let work = collectEntries(handle: handle, data: &data, names: &names, first: true)
+    var code = work
+    if findCloseW(handle: handle) == 0 && code == 0 { code = lastErrorW() as Int }
+    if code != 0 { return .Err(classifyError(code: code)) }
+    return .Ok(names)
+}

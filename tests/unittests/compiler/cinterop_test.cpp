@@ -217,6 +217,94 @@ func output(bytes: initializing [UInt8]): Void
     EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 
+TEST_F(CInteropTest, ImportsBareBytePointersWithoutACount) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "native_pointers", pointer: "text", pointer: "output")
+func nativePointers(text: [UInt8], limit: Int, output: inout [UInt8]): Int
+func use(text: [UInt8]): Int {
+    var output: [UInt8] = []
+    return nativePointers(text: text, limit: 4, output: &output)
+}
+)"));
+    const auto& imported = function("nativePointers");
+    ASSERT_TRUE(imported.nativeBinding.has_value());
+    EXPECT_EQ(imported.nativeBinding->pointerParameters, (std::vector<uint32_t> {0, 2}));
+    EXPECT_NE(joyeer::ir::dump(*module).find("pointer#0 pointer#2"), std::string::npos);
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    EXPECT_EQ(joyeer::ir::dump(decoded), joyeer::ir::dump(*module));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    // A bare pointer contributes one C parameter, not a pointer and a count.
+    EXPECT_NE(emitted.text.find("@native_pointers(ptr, i64, ptr)"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsMisusedPointerAnnotations) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"n\", pointer: \"missing\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"bytes\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"text\")\nfunc f(text: String): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"value\")\nfunc f(value: Int): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"names\")\nfunc f(names: [String]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"out\")\nfunc f(out: initializing [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"bytes\")\nfunc f(bytes: consuming [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: 3)\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", extra: \"bytes\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", \"bytes\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\")\nfunc f(bytes: inout [UInt8]): Void\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    check("@c_export(symbol: \"n\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Void {}\n");
+    EXPECT_FALSE(checking.succeeded());
+    // Imports that agree on which buffers are bare pointers may share a symbol.
+    check("@c_extern(symbol: \"n\", pointer: \"bytes\")\nfunc first(bytes: [UInt8]): Void\n"
+          "@c_extern(symbol: \"n\", pointer: \"data\")\nfunc second(data: [UInt8]): Void\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("@c_extern(symbol: \"n\", pointer: \"bytes\")\nfunc first(bytes: [UInt8]): Void\n"
+          "@c_extern(symbol: \"n\")\nfunc second(data: [UInt8]): Void\n");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::conflictingNativeSymbol));
+}
+
+TEST_F(CInteropTest, VerifierRejectsMalformedPointerMetadata) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "native_pointer_borrow", pointer: "bytes")
+func borrowed(bytes: [UInt8]): Void
+@c_extern(symbol: "native_pointer_mutable", pointer: "bytes")
+func mutable(bytes: inout [UInt8]): Void
+@c_extern(symbol: "native_pointer_scalar")
+func scalar(value: Int): Void
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& borrowed = function("borrowed");
+    auto& mutable_ = function("mutable");
+    auto& scalar = function("scalar");
+    scalar.nativeBinding->pointerParameters = {0};
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    scalar.nativeBinding->pointerParameters.clear();
+    borrowed.nativeBinding->pointerParameters = {1};
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.nativeBinding->pointerParameters = {0};
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.parameters[0].isMutable = true;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.parameters[0].isMutable = false;
+    mutable_.parameters[0].isMutable = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    mutable_.parameters[0].isMutable = true;
+    mutable_.parameters[0].isConsuming = true;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    mutable_.parameters[0].isConsuming = false;
+    // A symbol shared by imports must agree on bare pointers.
+    mutable_.nativeBinding->symbol = borrowed.nativeBinding->symbol;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
 TEST_F(CInteropTest, AcceptsEmptyParameterListsAndExplicitUnitSpellings) {
     check(R"(
 @c_extern(symbol: "native_flush")

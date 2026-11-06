@@ -3,8 +3,10 @@
 
 #include "token.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace joyeer {
 
@@ -18,6 +20,17 @@ struct NativeBinding {
     NativeBindingKind kind = NativeBindingKind::cImport;
     std::string symbol;
     SourceSpan span;
+    // Indices of `[UInt8]` parameters passed as a bare data pointer, with no
+    // count (`pointer: "label"` on the annotation). An `inout` byte buffer is
+    // always one of these.
+    std::vector<uint32_t> pointerParameters;
+
+    [[nodiscard]] bool passesPointer(size_t parameter) const {
+        for (const auto index : pointerParameters) {
+            if (index == parameter) return true;
+        }
+        return false;
+    }
 };
 
 [[nodiscard]] inline bool isCIdentifier(std::string_view name) {

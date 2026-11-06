@@ -4,7 +4,7 @@
 >
 > **Done (see [fern](../impl/fern.md), [Compression](../impl/compression.md)):**
 > `Foundation` (text helpers and `crc32`, + `FoundationTests`), root `workspace.toml`, part of `System`
-> (lexical path helpers, host error/status formatters, `SystemTests`), and the
+> (lexical path helpers, host error/status formatters, the Joyeer filesystem operations verified on Windows, `SystemTests`), and the
 > optional `Compression` module.
 >
 > **Pending:** the items in §2–§4.

@@ -595,6 +595,35 @@ TEST_F(ModuleServiceTest, PlatformVariantsInADependencyAreSelectedForTheImporter
     }
 }
 
+// The System filesystem is Joyeer code with one variant per platform. Only the
+// host's variant runs here, so compile the real library sources for every
+// target: this type-checks the others' bindings, signatures, and bodies.
+TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
+    const std::filesystem::path library = JOYEER_LIBRARY_SOURCES;
+    root("main.joyeer",
+         "import System\nfunc main() {\n"
+         "    match System.fileKind(path: \".\") {\n"
+         "        .Ok(kind) => print(value: 1),\n"
+         "        .Err(error) => print(value: 0),\n"
+         "    }\n}\n");
+    options.modules.push_back({"Foundation",
+            {library / "Foundation" / "text.joyeer", library / "Foundation" / "checksum.joyeer"}});
+    options.modules.push_back({"System", {
+            library / "System" / "path.joyeer", library / "System" / "messages.joyeer",
+            library / "System" / "filesystem.joyeer", library / "System" / "filesystem_windows.joyeer",
+            library / "System" / "filesystem_posix.joyeer"}});
+    options.runtimeModules = {"System"};
+    for (const auto target : {joyeer::semantic::TargetPlatform::windows, joyeer::semantic::TargetPlatform::linux,
+                              joyeer::semantic::TargetPlatform::macos}) {
+        diagnostics = Diagnostics();
+        options.targetPlatform = target;
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        EXPECT_FALSE(diagnostics.hasFailure())
+                << joyeer::semantic::platformName(target) << ":\n" << errors();
+    }
+}
+
 TEST_F(ModuleServiceTest, ReferenceToAFunctionWithoutAVariantForTheTargetFails) {
     root("main.joyeer",
          "@platform(windows)\nfunc code(): Int { return 1 }\n"

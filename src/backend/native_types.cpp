@@ -283,9 +283,14 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
 llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
     std::vector<llvm::Type*> parameters;
     std::vector<typing::TypeKind> kinds;
-    for (const auto& parameter : function.parameters) {
+    for (size_t index = 0; index < function.parameters.size(); ++index) {
+        const auto& parameter = function.parameters[index];
         const auto kind = type(parameter.value.type).kind;
-        if (parameter.isInitializing) {
+        if (function.nativeBinding->passesPointer(index)) {
+            // A bare data pointer: no count follows.
+            parameters.push_back(pointer());
+            kinds.push_back(typing::TypeKind::voidType);
+        } else if (parameter.isInitializing) {
             parameters.push_back(pointer());
             kinds.push_back(typing::TypeKind::voidType);
         } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {

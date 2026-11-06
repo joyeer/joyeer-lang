@@ -671,8 +671,20 @@ VerificationResult Verifier::verify(const Module& module) const {
                     return found == types.end() ? nullptr : found->second;
                 });
             };
-            for (const auto& parameter : function.parameters) {
+            for (const auto pointer : binding.pointerParameters) {
+                valid &= importing && pointer < function.parameters.size();
+            }
+            for (size_t parameterIndex = 0; parameterIndex < function.parameters.size(); ++parameterIndex) {
+                const auto& parameter = function.parameters[parameterIndex];
                 const auto buffer = bufferKind(parameter.value.type);
+                if (binding.passesPointer(parameterIndex)) {
+                    // A bare data pointer: borrowed bytes, or a mutable byte buffer.
+                    valid &= buffer == typing::NativeBufferKind::bytes &&
+                            !parameter.isConsuming && !parameter.isInitializing && !parameter.acceptsAnyType &&
+                            ((parameter.value.category == ValueCategory::value && !parameter.isMutable) ||
+                             (parameter.value.category == ValueCategory::address && parameter.isMutable));
+                    continue;
+                }
                 const bool borrowed =
                         (scalar(parameter.value.type) ||
                          (importing && buffer != typing::NativeBufferKind::none)) &&
@@ -706,6 +718,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                 for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
                     matches &= compatible(function.parameters[index].value.type, other.parameters[index].value.type);
                     matches &= function.parameters[index].isInitializing == other.parameters[index].isInitializing;
+                    matches &= function.parameters[index].isMutable == other.parameters[index].isMutable;
+                    matches &= binding.passesPointer(index) == other.nativeBinding->passesPointer(index);
                 }
                 if (!matches) {
                     report(VerificationErrorId::callMismatch, functionId, {}, {},
@@ -2380,6 +2394,7 @@ std::string dump(const Module& module) {
             out << (function.nativeBinding->kind == NativeBindingKind::cImport
                             ? " c_import \"" : " c_export \"")
                 << escape(function.nativeBinding->symbol) << '"';
+            for (const auto pointer : function.nativeBinding->pointerParameters) out << " pointer#" << pointer;
         }
         if (function.isExternal) {
             out << "\n";

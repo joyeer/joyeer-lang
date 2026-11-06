@@ -1,0 +1,395 @@
+import System
+import Foundation
+
+// Differential tests: every scenario runs through the compiler's built-in
+// filesystem operations and through the Joyeer implementation in System, in
+// parallel directory trees, and the rendered results must be identical.
+// Unqualified names are the built-ins; `System.` names are the Joyeer code.
+
+func describeText(outcome: Result<String, FileSystemError>): String {
+    return match outcome {
+        .Ok(text) => "ok:" + decimalString(value: text.count) + ":" + text,
+        .Err(error) => "err:" + fileSystemMessage(error: error),
+    }
+}
+
+func describeUnit(outcome: Result<Void, FileSystemError>): String {
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => "err:" + fileSystemMessage(error: error),
+    }
+}
+
+func describeKind(outcome: Result<FileKind, FileSystemError>): String {
+    return match outcome {
+        .Ok(kind) => match kind {
+            .File => "ok:file",
+            .Directory => "ok:directory",
+            .Symlink => "ok:symlink",
+            .Other => "ok:other",
+        },
+        .Err(error) => "err:" + fileSystemMessage(error: error),
+    }
+}
+
+func describeNames(outcome: Result<[String], FileSystemError>): String {
+    return match outcome {
+        .Ok(names) => joinNames(names: names),
+        .Err(error) => "err:" + fileSystemMessage(error: error),
+    }
+}
+
+func joinNames(names: [String]): String {
+    var text = "ok:" + decimalString(value: names.count)
+    var index = 0
+    while index < names.count {
+        text = text + "|" + names[index]
+        index = index + 1
+    }
+    return text
+}
+
+func agree(label: String, expected: String, actual: String): Int {
+    if expected == actual { return 0 }
+    print(value: "MISMATCH " + label)
+    print(value: "  built-in: " + expected)
+    print(value: "  Joyeer:   " + actual)
+    return 1
+}
+
+// A name no other test run is using: the exclusive create settles races.
+func claimDirectory(prefix: String): String {
+    var attempt = 0
+    while attempt < 1000 {
+        let name = prefix + decimalString(value: attempt)
+        if describeUnit(outcome: createDirectory(path: name)) == "ok" { return name }
+        attempt = attempt + 1
+    }
+    return ""
+}
+
+func ignoreUnit(outcome: Result<Void, FileSystemError>) {
+}
+
+func zeroByte(): String {
+    return byteToString(value: 0)
+}
+
+func sampleBytes(): String {
+    return "line one" + zeroByte() + byteToString(value: 255) + byteToString(value: 200) + "\r\nend"
+}
+
+func largeText(): String {
+    var text = sampleBytes()
+    var round = 0
+    while round < 14 {
+        text = text + text
+        round = round + 1
+    }
+    return text
+}
+
+func pathIn(root: String, name: String): String {
+    return root + "/" + name
+}
+
+func compareReads(root: String, label: String, name: String): Int {
+    let builtIn = describeText(outcome: readFileUtf8(path: pathIn(root: root, name: "built-in/" + name)))
+    let joyeer = describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "joyeer/" + name)))
+    return agree(label: label, expected: builtIn, actual: joyeer)
+}
+
+func comparePrefix(root: String, label: String, name: String, limit: Int): Int {
+    let builtIn = describeText(outcome: readFilePrefix(path: pathIn(root: root, name: "built-in/" + name), maximumBytes: limit))
+    let joyeer = describeText(outcome: System.readFilePrefix(path: pathIn(root: root, name: "joyeer/" + name), maximumBytes: limit))
+    return agree(label: label + " limit " + decimalString(value: limit), expected: builtIn, actual: joyeer)
+}
+
+func seed(root: String, name: String, contents: String) {
+    ignoreUnit(outcome: writeFileNew(path: pathIn(root: root, name: "built-in/" + name), contents: contents))
+    ignoreUnit(outcome: writeFileNew(path: pathIn(root: root, name: "joyeer/" + name), contents: contents))
+}
+
+func testReads(root: String): Int {
+    var failures = 0
+    seed(root: root, name: "data.bin", contents: sampleBytes())
+    seed(root: root, name: "empty.txt", contents: "")
+    seed(root: root, name: "large.bin", contents: largeText())
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/folder")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer/folder")))
+
+    failures = failures + compareReads(root: root, label: "read data", name: "data.bin")
+    failures = failures + compareReads(root: root, label: "read empty", name: "empty.txt")
+    failures = failures + compareReads(root: root, label: "read large", name: "large.bin")
+    failures = failures + compareReads(root: root, label: "read missing", name: "missing.bin")
+    failures = failures + compareReads(root: root, label: "read directory", name: "folder")
+    failures = failures + compareReads(root: root, label: "read missing parent", name: "nowhere/file")
+
+    let size = sampleBytes().count
+    var limits: [Int] = [0, 1, size - 1, size, size + 1, 65536, 65537]
+    var index = 0
+    while index < limits.count {
+        failures = failures + comparePrefix(root: root, label: "prefix data", name: "data.bin", limit: limits[index])
+        failures = failures + comparePrefix(root: root, label: "prefix large", name: "large.bin", limit: limits[index])
+        failures = failures + comparePrefix(root: root, label: "prefix empty", name: "empty.txt", limit: limits[index])
+        index = index + 1
+    }
+    failures = failures + comparePrefix(root: root, label: "prefix negative", name: "data.bin", limit: -1)
+    failures = failures + comparePrefix(root: root, label: "prefix missing", name: "missing.bin", limit: 0)
+    failures = failures + comparePrefix(root: root, label: "prefix directory", name: "folder", limit: 8)
+    return failures
+}
+
+func testWrites(root: String): Int {
+    var failures = 0
+    let builtInFile = pathIn(root: root, name: "built-in/new.bin")
+    let joyeerFile = pathIn(root: root, name: "joyeer/new.bin")
+    failures = failures + agree(label: "write new",
+        expected: describeUnit(outcome: writeFileNew(path: builtInFile, contents: largeText())),
+        actual: describeUnit(outcome: System.writeFileNew(path: joyeerFile, contents: largeText())))
+    failures = failures + agree(label: "written bytes",
+        expected: describeText(outcome: readFileUtf8(path: builtInFile)),
+        actual: describeText(outcome: readFileUtf8(path: joyeerFile)))
+    failures = failures + agree(label: "write existing",
+        expected: describeUnit(outcome: writeFileNew(path: builtInFile, contents: "x")),
+        actual: describeUnit(outcome: System.writeFileNew(path: joyeerFile, contents: "x")))
+    failures = failures + agree(label: "existing untouched",
+        expected: describeText(outcome: readFileUtf8(path: builtInFile)),
+        actual: describeText(outcome: readFileUtf8(path: joyeerFile)))
+    failures = failures + agree(label: "write empty",
+        expected: describeUnit(outcome: writeFileNew(path: pathIn(root: root, name: "built-in/empty.bin"), contents: "")),
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: "joyeer/empty.bin"), contents: "")))
+    failures = failures + agree(label: "write missing parent",
+        expected: describeUnit(outcome: writeFileNew(path: pathIn(root: root, name: "built-in/no/such/file"), contents: "x")),
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: "joyeer/no/such/file"), contents: "x")))
+    failures = failures + agree(label: "write over directory",
+        expected: describeUnit(outcome: writeFileNew(path: pathIn(root: root, name: "built-in"), contents: "x")),
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: "joyeer"), contents: "x")))
+    return failures
+}
+
+func testDirectories(root: String): Int {
+    var failures = 0
+    failures = failures + agree(label: "create directory",
+        expected: describeUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/dir"))),
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "joyeer/dir"))))
+    failures = failures + agree(label: "create existing",
+        expected: describeUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/dir"))),
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "joyeer/dir"))))
+    failures = failures + agree(label: "create missing parent",
+        expected: describeUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/a/b"))),
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "joyeer/a/b"))))
+
+    seed(root: root, name: "dir/one.txt", contents: "1")
+    seed(root: root, name: "dir/two.txt", contents: "22")
+    failures = failures + agree(label: "list directory",
+        expected: describeNames(outcome: listDirectory(path: pathIn(root: root, name: "built-in/dir"))),
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "joyeer/dir"))))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/hollow")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer/hollow")))
+    failures = failures + agree(label: "list empty",
+        expected: describeNames(outcome: listDirectory(path: pathIn(root: root, name: "built-in/hollow"))),
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "joyeer/hollow"))))
+    failures = failures + agree(label: "list missing",
+        expected: describeNames(outcome: listDirectory(path: pathIn(root: root, name: "built-in/nowhere"))),
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "joyeer/nowhere"))))
+    failures = failures + agree(label: "list file",
+        expected: describeNames(outcome: listDirectory(path: pathIn(root: root, name: "built-in/dir/one.txt"))),
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "joyeer/dir/one.txt"))))
+    return failures
+}
+
+func testKinds(root: String): Int {
+    var failures = 0
+    seed(root: root, name: "plain.txt", contents: "x")
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/kinds")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer/kinds")))
+    for name in ["plain.txt", "kinds", "missing", "kinds/missing", "plain.txt/below"] {
+        failures = failures + agree(label: "kind " + name,
+            expected: describeKind(outcome: fileKind(path: pathIn(root: root, name: "built-in/" + name))),
+            actual: describeKind(outcome: System.fileKind(path: pathIn(root: root, name: "joyeer/" + name))))
+    }
+    return failures
+}
+
+func testRemovals(root: String): Int {
+    var failures = 0
+    seed(root: root, name: "doomed.txt", contents: "x")
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/emptydir")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer/emptydir")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/fulldir")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer/fulldir")))
+    seed(root: root, name: "fulldir/inside.txt", contents: "x")
+    failures = failures + agree(label: "remove file",
+        expected: describeUnit(outcome: removeFile(path: pathIn(root: root, name: "built-in/doomed.txt"))),
+        actual: describeUnit(outcome: System.removeFile(path: pathIn(root: root, name: "joyeer/doomed.txt"))))
+    failures = failures + agree(label: "remove missing file",
+        expected: describeUnit(outcome: removeFile(path: pathIn(root: root, name: "built-in/doomed.txt"))),
+        actual: describeUnit(outcome: System.removeFile(path: pathIn(root: root, name: "joyeer/doomed.txt"))))
+    failures = failures + agree(label: "remove file on directory",
+        expected: describeUnit(outcome: removeFile(path: pathIn(root: root, name: "built-in/emptydir"))),
+        actual: describeUnit(outcome: System.removeFile(path: pathIn(root: root, name: "joyeer/emptydir"))))
+    failures = failures + agree(label: "remove directory on file",
+        expected: describeUnit(outcome: removeDirectory(path: pathIn(root: root, name: "built-in/plain.txt"))),
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "joyeer/plain.txt"))))
+    failures = failures + agree(label: "remove nonempty directory",
+        expected: describeUnit(outcome: removeDirectory(path: pathIn(root: root, name: "built-in/fulldir"))),
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "joyeer/fulldir"))))
+    failures = failures + agree(label: "remove empty directory",
+        expected: describeUnit(outcome: removeDirectory(path: pathIn(root: root, name: "built-in/emptydir"))),
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "joyeer/emptydir"))))
+    failures = failures + agree(label: "remove missing directory",
+        expected: describeUnit(outcome: removeDirectory(path: pathIn(root: root, name: "built-in/emptydir"))),
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "joyeer/emptydir"))))
+    return failures
+}
+
+func testInvalidPaths(): Int {
+    var failures = 0
+    let invalid: [String] = ["", "a" + zeroByte() + "b", "bad" + byteToString(value: 255), byteToString(value: 192) + byteToString(value: 128)]
+    var index = 0
+    while index < invalid.count {
+        let path = invalid[index]
+        let label = "invalid path #" + decimalString(value: index)
+        failures = failures + agree(label: label + " read",
+            expected: describeText(outcome: readFileUtf8(path: path)),
+            actual: describeText(outcome: System.readFileUtf8(path: path)))
+        failures = failures + agree(label: label + " prefix",
+            expected: describeText(outcome: readFilePrefix(path: path, maximumBytes: 4)),
+            actual: describeText(outcome: System.readFilePrefix(path: path, maximumBytes: 4)))
+        failures = failures + agree(label: label + " write",
+            expected: describeUnit(outcome: writeFileNew(path: path, contents: "x")),
+            actual: describeUnit(outcome: System.writeFileNew(path: path, contents: "x")))
+        failures = failures + agree(label: label + " mkdir",
+            expected: describeUnit(outcome: createDirectory(path: path)),
+            actual: describeUnit(outcome: System.createDirectory(path: path)))
+        failures = failures + agree(label: label + " list",
+            expected: describeNames(outcome: listDirectory(path: path)),
+            actual: describeNames(outcome: System.listDirectory(path: path)))
+        failures = failures + agree(label: label + " kind",
+            expected: describeKind(outcome: fileKind(path: path)),
+            actual: describeKind(outcome: System.fileKind(path: path)))
+        failures = failures + agree(label: label + " remove file",
+            expected: describeUnit(outcome: removeFile(path: path)),
+            actual: describeUnit(outcome: System.removeFile(path: path)))
+        failures = failures + agree(label: label + " remove directory",
+            expected: describeUnit(outcome: removeDirectory(path: path)),
+            actual: describeUnit(outcome: System.removeDirectory(path: path)))
+        index = index + 1
+    }
+    return failures
+}
+
+func describeJoin(outcome: Result<String, FileSystemError>): String {
+    return match outcome {
+        .Ok(text) => "ok:" + text,
+        .Err(error) => "err:" + fileSystemMessage(error: error),
+    }
+}
+
+func testJoins(): Int {
+    var failures = 0
+    let pairs: [[String]] = [
+        ["a", "b"], ["a/", "b"], ["a\\", "b"], ["a", "/b"], ["a", "\\b"], ["/", "b"],
+        ["C:", "child"], ["C:\\x", "D:y"], ["C:x", "y"], ["a", "C:\\b"], ["a", "C:/b"], ["a", "C:b"],
+        ["a", "1:b"], ["", "b"], ["a", ""], ["a", "b/c"], ["a//", "b"],
+        ["a" + zeroByte(), "b"], ["a", "b" + zeroByte()], ["bad" + byteToString(value: 255), "b"],
+        ["a", "bad" + byteToString(value: 255)], ["caf" + byteToString(value: 195) + byteToString(value: 169), "x"],
+    ]
+    var index = 0
+    while index < pairs.count {
+        failures = failures + agree(label: "join #" + decimalString(value: index),
+            expected: describeJoin(outcome: joinPath(base: pairs[index][0], path: pairs[index][1])),
+            actual: describeJoin(outcome: System.joinPath(base: pairs[index][0], path: pairs[index][1])))
+        index = index + 1
+    }
+    return failures
+}
+
+func unicodeName(): String {
+    return "caf" + byteToString(value: 195) + byteToString(value: 169) + "-" +
+        byteToString(value: 230) + byteToString(value: 151) + byteToString(value: 165)
+}
+
+func testUnicodeNames(root: String): Int {
+    var failures = 0
+    let name = unicodeName()
+    failures = failures + agree(label: "unicode mkdir",
+        expected: describeUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in/" + name))),
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "joyeer/" + name))))
+    failures = failures + agree(label: "unicode write",
+        expected: describeUnit(outcome: writeFileNew(path: pathIn(root: root, name: "built-in/" + name + "/" + name), contents: "u")),
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: "joyeer/" + name + "/" + name), contents: "u")))
+    failures = failures + agree(label: "unicode list",
+        expected: describeNames(outcome: listDirectory(path: pathIn(root: root, name: "built-in/" + name))),
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "joyeer/" + name))))
+    failures = failures + agree(label: "unicode read",
+        expected: describeText(outcome: readFileUtf8(path: pathIn(root: root, name: "built-in/" + name + "/" + name))),
+        actual: describeText(outcome: readFileUtf8(path: pathIn(root: root, name: "joyeer/" + name + "/" + name))))
+    return failures
+}
+
+// Windows-only behavior: DOS devices, drive-relative paths, and the legacy forms.
+@platform(windows)
+func testHostSpecific(root: String): Int {
+    var failures = 0
+    for path in ["NUL", "C:", "C:.", "C:\\", "\\\\.\\NUL"] {
+        failures = failures + agree(label: "kind " + path,
+            expected: describeKind(outcome: fileKind(path: path)),
+            actual: describeKind(outcome: System.fileKind(path: path)))
+    }
+    failures = failures + agree(label: "list drive root",
+        expected: describeNames(outcome: listDirectory(path: "C:\\")),
+        actual: describeNames(outcome: System.listDirectory(path: "C:\\")))
+    return failures
+}
+
+@platform(posix)
+func testHostSpecific(root: String): Int {
+    var failures = 0
+    for path in ["/dev/null", "/", "."] {
+        failures = failures + agree(label: "kind " + path,
+            expected: describeKind(outcome: fileKind(path: path)),
+            actual: describeKind(outcome: System.fileKind(path: path)))
+    }
+    return failures
+}
+
+func removeTree(root: String) {
+    // Remove only what these tests made, deepest first.
+    for side in ["built-in", "joyeer"] {
+        for name in [
+                "dir/one.txt", "dir/two.txt", "dir", "hollow", "kinds", "folder", "data.bin", "empty.txt", "large.bin",
+                "new.bin", "empty.bin", "plain.txt", "fulldir/inside.txt", "fulldir", "emptydir", "doomed.txt"] {
+            ignoreUnit(outcome: removeFile(path: pathIn(root: root, name: side + "/" + name)))
+            ignoreUnit(outcome: removeDirectory(path: pathIn(root: root, name: side + "/" + name)))
+        }
+        ignoreUnit(outcome: removeFile(path: pathIn(root: root, name: side + "/" + unicodeName() + "/" + unicodeName())))
+        ignoreUnit(outcome: removeDirectory(path: pathIn(root: root, name: side + "/" + unicodeName())))
+        ignoreUnit(outcome: removeDirectory(path: pathIn(root: root, name: side)))
+    }
+}
+
+public func testFileSystem(): Int {
+    let root = claimDirectory(prefix: "system-fs-test-")
+    if root == "" {
+        print(value: "FAIL: could not claim a scratch directory")
+        return 1
+    }
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "built-in")))
+    ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer")))
+    var failures = 0
+    failures = failures + testReads(root: root)
+    failures = failures + testWrites(root: root)
+    failures = failures + testDirectories(root: root)
+    failures = failures + testKinds(root: root)
+    failures = failures + testRemovals(root: root)
+    failures = failures + testInvalidPaths()
+    failures = failures + testJoins()
+    failures = failures + testUnicodeNames(root: root)
+    failures = failures + testHostSpecific(root: root)
+    removeTree(root: root)
+    ignoreUnit(outcome: removeDirectory(path: root))
+    if failures == 0 { print(value: "filesystem agreement passed") }
+    return failures
+}

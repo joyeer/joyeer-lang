@@ -57,10 +57,11 @@ function declaration (§3.2). They are not permitted on methods, initializers,
 accessors, types, fields, or bindings. A declaration may have exactly one C
 binding annotation: repeats and combining the two are errors.
 
-Each annotation requires exactly one named argument, `symbol:`, whose value
-is a nonempty string literal. Expressions, inferred names, omitted arguments,
-duplicate arguments, and other arguments, including `abi`, `library`, or a
-repeated signature, are errors. The decoded symbol must be an ASCII C
+Each annotation requires a first named argument, `symbol:`, whose value
+is a nonempty string literal. A `@c_extern` may then add `pointer:` arguments,
+each a string literal naming one of its `[UInt8]` parameters (§19.4.4). Expressions,
+inferred names, omitted arguments, duplicate `symbol:` arguments, and other
+arguments, including `abi`, `library`, or a repeated signature, are errors. The decoded symbol must be an ASCII C
 identifier: `[A-Za-z_][A-Za-z0-9_]*`. Embedded NUL, whitespace, and platform
 linker decorations are not allowed.
 
@@ -228,14 +229,46 @@ in the [buffer ABI implementation contract](../impl/c-interop.md#buffer-imports)
 There is no source-level raw-pointer value, asynchronous retention, callback,
 or general aggregate FFI in this extension.
 
+#### 19.4.4 Bare byte pointers
+
+An import may pass a `[UInt8]` parameter as a bare data pointer, with no count.
+The annotation names it: `@c_extern(symbol: "ReadFile", pointer: "buffer")`
+names the parameter whose label is `buffer`. Each `pointer:` argument names a
+distinct parameter, and the parameter must be a `[UInt8]` that is borrowing or
+`inout`. Without `pointer:`, a borrowed `[UInt8]` keeps the pointer-and-count
+form of §19.4.3, and an `inout` `[UInt8]` is rejected.
+
+```joyeer
+@c_extern(symbol: "read", pointer: "buffer")
+func nativeRead(descriptor: Int32, buffer: inout [UInt8], count: Int): Int
+```
+
+A borrowed buffer crosses as `const uint8_t*`; an `inout` buffer as `uint8_t*`
+to the array's own storage, which native code may write in place. The count of
+bytes valid at that address is the array's `count`; the signature carries any
+length the C function needs as an ordinary scalar parameter, and the binding
+author must not let it exceed the array's count. The native function must not
+retain the pointer, resize the array, or write beyond the count, and the
+compiler cannot check that it does not. An empty array may pass a null pointer.
+No NUL terminator is implied; a caller that needs a C string appends the `0`
+byte itself. Exclusivity and initialization rules for `inout` are those of
+ordinary calls. Repeated declarations of one symbol must agree on which
+parameters are bare pointers and on their access effects.
+
+This lets a binding fill C structures that are laid out in a `[UInt8]` and read
+back with ordinary indexing. It is a deliberately small step toward the
+byte address-and-length pairs of §19.10, remains runtime-only, and adds no
+source-level pointer value, address arithmetic, or dereference.
+
 ### 19.5 Invalid signatures
 
 All types and parameter effects not admitted by §19.4 are rejected at this
 boundary. In particular:
 
 - `Void` parameters and `Never` results have no admitted C representation.
-- `inout` and `consuming` parameters are not substitutes for native pointers
-  or ownership transfer. `initializing` is restricted to §19.4.3's outputs.
+- `consuming` parameters are not substitutes for ownership transfer, and
+  `inout` is admitted only for a `[UInt8]` named by `pointer:` (§19.4.4).
+  `initializing` is restricted to §19.4.3's outputs.
 - Other array forms, dictionaries, tuples, ordinary structs and enums,
   `Optional`, and `Result` have no implicit C ABI representation.
 - Neither `T?` nor `Optional<T>` denotes a nullable C value or address.
@@ -357,8 +390,8 @@ double joyeer_native_sample(float value, double scale);
 No address type, address-taking expression, pointer arithmetic, dereference,
 nullable pointer syntax, or public `unsafe` block is introduced here.
 The no-reference model in [§4.8](04-memory.md#48-no-reference-types) remains
-unchanged. Raw addresses, read-only/writable byte address-and-length pairs,
-output parameters, and owned native result storage need a separate accepted
+unchanged. Raw addresses, general address-and-length pairs (§19.4.4 admits only
+bare byte pointers), output parameters, and owned native result storage need a separate accepted
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 

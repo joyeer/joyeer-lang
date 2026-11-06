@@ -718,9 +718,9 @@ private:
                 {},
                 attribute.span,
             };
-            if (attribute.arguments.size() != 1) {
+            if (attribute.arguments.empty()) {
                 report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
-                       "C annotations require exactly one 'symbol:' string-literal argument");
+                       "C annotations require a 'symbol:' string-literal argument");
                 continue;
             }
             const auto& argument = attribute.arguments.front();
@@ -740,8 +740,44 @@ private:
                 report(TypeCheckingDiagnosticId::invalidAnnotation, argument->span,
                        "native symbol must be a nonempty ASCII C identifier without linker decoration");
             }
+            // Further arguments name `[UInt8]` parameters passed as a bare
+            // data pointer: `pointer: "label"`, once per parameter.
+            for (size_t position = 1; position < attribute.arguments.size(); ++position) {
+                const auto& extra = attribute.arguments[position];
+                const auto name = extra->value != nullptr && extra->value->kind == syntax::Kind::literalExpr
+                        ? std::static_pointer_cast<syntax::LiteralExprSyntax>(extra->value)
+                        : nullptr;
+                if (extra->label == nullptr || extra->label->rawValue != "pointer" ||
+                    extra->accessMarker != nullptr || name == nullptr || name->literal == nullptr ||
+                    name->literal->kind != stringLiteral) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, extra->span,
+                           "after 'symbol:', C annotations accept only 'pointer:' followed by a "
+                           "parameter label string literal");
+                    continue;
+                }
+                const auto& parameters = declaration->parameters;
+                const auto found = std::find_if(parameters.begin(), parameters.end(), [&](const auto& parameter) {
+                    return parameter->label != nullptr && parameter->label->rawValue == name->literal->rawValue;
+                });
+                if (found == parameters.end()) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, extra->span,
+                           "'pointer:' names no parameter '" + name->literal->rawValue + "'");
+                    continue;
+                }
+                const auto index = static_cast<uint32_t>(found - parameters.begin());
+                if (binding->passesPointer(index)) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, extra->span,
+                           "parameter '" + name->literal->rawValue + "' is already passed as a pointer");
+                    continue;
+                }
+                binding->pointerParameters.push_back(index);
+            }
         }
         if (!binding.has_value()) return;
+        if (binding->kind == NativeBindingKind::cExport && !binding->pointerParameters.empty()) {
+            report(TypeCheckingDiagnosticId::invalidAnnotation, binding->span,
+                   "'pointer:' applies only to C imports");
+        }
         if (!model->semanticModelValue->isRuntimeSource(declaration->span)) {
             report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, binding->span,
                    "C bindings require an explicitly selected runtime compilation unit");
@@ -769,6 +805,14 @@ private:
             const auto effect = parameter->accessEffect();
             const auto buffer = nativeBufferKind(signature.parameters[index],
                     [&](TypeId id) { return model->typeContext.type(id); });
+            if (binding->passesPointer(static_cast<uint32_t>(index))) {
+                if (!importing || buffer != NativeBufferKind::bytes ||
+                    (effect != syntax::AccessEffect::borrowing && effect != syntax::AccessEffect::inout)) {
+                    report(TypeCheckingDiagnosticId::unsupportedNativeSignature, parameter->span,
+                           "'pointer:' applies only to borrowing or inout [UInt8] parameters of C imports");
+                }
+                continue;
+            }
             const bool scalar = effect == syntax::AccessEffect::borrowing &&
                     isNativeScalar(model->typeContext.type(signature.parameters[index])->kind);
             const bool nativeBuffer = importing && buffer != NativeBufferKind::none &&
@@ -818,6 +862,12 @@ private:
                     sameEffects = previousSymbol->callable->parameters[index].access ==
                             symbol.callable->parameters[index].access;
                 }
+                // Repeated declarations must also agree on which buffers carry no count.
+                auto left_pointers = model->nativeBinding(previous->second)->pointerParameters;
+                auto right_pointers = binding->pointerParameters;
+                std::sort(left_pointers.begin(), left_pointers.end());
+                std::sort(right_pointers.begin(), right_pointers.end());
+                sameEffects = sameEffects && left_pointers == right_pointers;
                 if (left.parameters.size() != right.parameters.size() ||
                         !std::equal(left.parameters.begin(), left.parameters.end(),
                                 right.parameters.begin(), right.parameters.end(), compatible) ||

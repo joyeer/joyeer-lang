@@ -76,10 +76,31 @@ allocations into an output handle. Every return, including failure, leaves
 valid destroyable outputs; a status-returning Joyeer wrapper decides whether
 to expose them. Allocation failures follow the existing runtime panic policy.
 
+### Bare byte pointers
+
+A `[UInt8]` import parameter named by a `pointer:` annotation argument crosses
+as a single data pointer with no count ([§19.4.4](../spec/19-c-interop.md#1944-bare-byte-pointers)):
+
+```joyeer
+@c_extern(symbol: "ReadFile", pointer: "buffer", pointer: "done")
+func readFileW(handle: Int, buffer: inout [UInt8], count: UInt32,
+    done: inout [UInt8], overlapped: Int): Int32
+```
+
+The type checker records the named parameter indices in `NativeBinding`
+(`pointerParameters`); lowering copies them to the IR function, the verifier
+checks them (bytes only, borrowed value or exclusive address, in range, equal
+across declarations of one symbol), and the backend declares one `ptr` for such
+a parameter and passes the array's data pointer, loading it through the address
+for `inout`. `inout` byte buffers are admitted only this way. The
+[pointer fixture](../../tests/c-interop/pointers.joyeer) covers both forms, a
+pointer between scalars, empty arrays, and allocation balance, in both
+optimization profiles.
+
 Existing exclusivity, definite-initialization and lifetime rules still apply.
-`inout`/`consuming` buffers, nested output byte arrays, buffer return values,
-buffer exports, arbitrary aggregate ABI, escaping pointers and callbacks are
-not supported. Repeated native declarations must agree on buffer shape and
+`consuming` buffers, `inout` buffers without `pointer:`, nested output byte
+arrays, buffer return values, buffer exports, arbitrary aggregate ABI, escaping
+pointers and callbacks are not supported. Repeated native declarations must agree on buffer shape and
 access effect, even when two flattened pointer signatures happen to match.
 The interface is revision-matched to the compiler/runtime; version 1 is
 identified by `JOYEER_NATIVE_BUFFER_ABI_VERSION`, not a stable ABI for every
@@ -210,7 +231,7 @@ blanket-reserved. This check covers declarations known to the compiler, not
 the prototypes in an external native library.
 
 Object emission uses the existing versioned backend C ABI and opaque module
-handle. The private IR wire format is version 7; the backend C ABI remains
+handle. The private IR wire format is version 8; the backend C ABI remains
 version 1. The compiler and backend must be built/deployed from the same
 revision. macOS objects use the configured deployment target rather than a
 newer default OS version inferred from the host running LLVM.

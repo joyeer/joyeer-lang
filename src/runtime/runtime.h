@@ -61,6 +61,9 @@ enum JoyeerStdinErrorKind {
 
 JOYEER_NORETURN void joyeer_panic(const char* message);
 int64_t joyeer_runtime_active_allocations(void);
+// The calling thread's C-runtime errno. A Joyeer binding cannot dereference
+// the pointer that errno expands to, so native bindings read it through this.
+int32_t joyeer_native_errno(void);
 
 int64_t joyeer_checked_add_int(int64_t left, int64_t right);
 int64_t joyeer_checked_sub_int(int64_t left, int64_t right);

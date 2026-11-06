@@ -32,6 +32,9 @@ add_library(CInteropBuffers STATIC native-buffers.c)
 target_include_directories(CInteropBuffers PRIVATE "${JOYEER_SRC_DIR}")
 set_target_properties(CInteropBuffers PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+add_library(CInteropPointers STATIC native-pointers.c)
+set_target_properties(CInteropPointers PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
 target_compile_definitions(CInteropNativeShared PRIVATE CINTEROP_SHARED)
 foreach(provider IN ITEMS CInteropNativeStatic CInteropNativeShared)
     target_compile_definitions(${provider} PRIVATE
@@ -59,6 +62,15 @@ foreach(profile IN ITEMS Debug Optimized)
             "-DEXPECTED_OUTPUT=native buffer ownership passed\n"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.Buffers${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    add_test(NAME "JoyeerCInterop.Pointers${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/pointers.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/pointers-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.pointers;--runtime-module;runtime.pointers;--link-library;$<TARGET_FILE:CInteropPointers>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=native pointer buffers passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Pointers${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
     add_test(NAME "JoyeerCInterop.ScalarValues${profile}"
         COMMAND "${CMAKE_COMMAND}"
             "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"

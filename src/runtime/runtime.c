@@ -66,6 +66,10 @@ int64_t joyeer_runtime_active_allocations(void) {
     return atomic_load_explicit(&activeAllocations, memory_order_relaxed);
 }
 
+int32_t joyeer_native_errno(void) {
+    return (int32_t)errno;
+}
+
 static size_t checkedByteCount(int64_t count, int64_t stride) {
     if (count < 0 || stride < 0) joyeer_panic("negative allocation size");
     if (count != 0 && (uint64_t)stride > SIZE_MAX / (uint64_t)count) {

@@ -178,7 +178,13 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
         for (size_t index = 0; index < arguments.size(); ++index) {
             const auto& parameter = callee.parameters[index];
             const auto kind = type(parameter.value.type).kind;
-            if (parameter.isInitializing) {
+            if (callee.nativeBinding->passesPointer(index)) {
+                // Borrowed bytes arrive as a value; an inout buffer as the address of its handle.
+                auto* handle = parameter.value.category == ir::ValueCategory::address
+                        ? builder.CreateLoad(llvmType(parameter.value.type), arguments[index], temporary())
+                        : arguments[index];
+                nativeArguments.push_back(builder.CreateExtractValue(handle, 0, temporary()));
+            } else if (parameter.isInitializing) {
                 if (kind == typing::TypeKind::string) {
                     builder.CreateStore(llvm::Constant::getNullValue(llvmType(parameter.value.type)), arguments[index]);
                 } else {

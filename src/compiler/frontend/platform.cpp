@@ -270,10 +270,25 @@ private:
     }
 
     bool checkSymbolArgument(const syntax::AttributeSyntax& attribute) {
-        if (attribute.arguments.size() != 1) {
+        if (attribute.arguments.empty()) {
             report(PlatformDiagnosticId::invalidAnnotation, attribute.span,
-                   "C annotations require exactly one 'symbol:' string-literal argument");
+                   "C annotations require a 'symbol:' string-literal argument");
             return false;
+        }
+        bool valid = true;
+        for (size_t position = 1; position < attribute.arguments.size(); ++position) {
+            const auto& extra = attribute.arguments[position];
+            const auto name = extra->value != nullptr && extra->value->kind == syntax::Kind::literalExpr
+                    ? std::static_pointer_cast<syntax::LiteralExprSyntax>(extra->value)
+                    : nullptr;
+            if (extra->label == nullptr || extra->label->rawValue != "pointer" ||
+                extra->accessMarker != nullptr || name == nullptr || name->literal == nullptr ||
+                name->literal->kind != stringLiteral) {
+                report(PlatformDiagnosticId::invalidAnnotation, extra->span,
+                       "after 'symbol:', C annotations accept only 'pointer:' followed by a "
+                       "parameter label string literal");
+                valid = false;
+            }
         }
         const auto& argument = attribute.arguments.front();
         const auto literal = argument->value != nullptr && argument->value->kind == syntax::Kind::literalExpr
@@ -291,7 +306,7 @@ private:
                    "native symbol must be a nonempty ASCII C identifier without linker decoration");
             return false;
         }
-        return true;
+        return valid;
     }
 
     void collect(const syntax::FunctionDeclSyntax::Ptr& function, size_t file, std::vector<Variant>& variants) {
