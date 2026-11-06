@@ -1,14 +1,6 @@
 # Fern Module and Workspace Manager
 
-> **Status:** `fern 0.1.0` implements one source module per `project.toml` and
-> explicit multi-module `workspace.toml` files. Native Windows x64 Debug and
-> Release default builds and unfiltered CTest each pass 846/846, including
-> all 15 fern gates. Debug/optimized self-builds, workspace workflows, concurrent
-> generations, failures, and relocated installs are verified. Earlier Windows
-> ARM64 Debug evidence is recorded below; other native platform/profile gates
-> and publication remain open.
-
-The tool is written in Joyeer. It resolves manifests to explicit source sets
+`fern 0.1.0` is written in Joyeer. It resolves manifests to explicit source sets
 and invokes the compiler; it does not change the
 [language module definition](../spec/12-modules.md). The compiler CMake
 version remains `0.0.1`, independently of the tool's `0.1.0`. The module and
@@ -114,19 +106,6 @@ invocation: only the selected module's declared dependency closure is passed.
 Transitive modules in that closure remain available to the compiler; strict
 direct-import allowlists are not implemented. The compiler determines actual
 imports and preserves separate visibility/source-location boundaries.
-
-### Migration from the earlier unreleased layout
-
-The earlier `[package]`, `[[modules]]`, and `[[targets]]` project layout
-is rejected at its table with an explicit migration diagnostic. `--target` is rejected
-with help directing callers to `--module <logical-name>`. There is no silent
-legacy compatibility path.
-
-Keep `schema-version = 1` and split each old module into its own manifest.
-Move its old target
-kind/name into `kind`/`output`; modules without targets become `source`.
-Create a workspace listing the member directories, and make source paths
-relative to each member's manifest. No implicit module renaming occurs.
 
 ## 2. Commands and selection
 
@@ -301,64 +280,6 @@ Configure stages the same files and a schema-1 single-module
 [self-build manifest](../../tools/fern/project.toml.in).
 Debug PDB/dSYM byproducts, platform fallback, and install components are
 unchanged; see [building](../building.md#fern-bootstrap-and-acceptance).
-
-## 5. Validation evidence
-
-On 2026-11-01, native macOS ARM64 `main` based on `3a09bb7` with the macOS
-fixes passed fresh Debug/Release builds and unfiltered eight-worker CTest:
-**949 passed, one filesystem-dependent skip, and no failures per profile**,
-without retries. All 15 fern acceptance gates passed, including bootstrap
-regeneration, Debug/optimized self-build, second-stage execution, POSIX
-failure cases, Unicode paths, concurrency, exact component inventories, and
-relocated workflows. The root Foundation/System workspace passed `fern test`
-**2/2 per profile**. Isolated local Debug installs passed with and without
-dsymutil support. Provenance, temporary-file fixes, the skip, and SDK/package
-limits are recorded in
-[macOS main acceptance](../building.md#macos-arm64-acceptance-on-main).
-
-On native Windows x64 on 2026-10-19, fresh default Debug and Release builds
-with unit tests and fern enabled each passed unfiltered serial CTest
-**846/846**, with no skips, including all 15 fern gates. Bootstrap,
-Debug/optimized self-build and second-stage execution, workspace workflows,
-and relocated component installs passed in both configurations.
-Compiler, backend, and fern PE headers were independently verified as AMD64;
-Debug bootstrap produced its PDB. Toolchain provenance and the related
-in-memory debug-information fix are recorded in
-[C interop acceptance](c-interop.md#windows-x64).
-
-A follow-up native Windows ARM64 Debug default build and unfiltered CTest on
-2026-10-11 passed **809/809**, including all 15 fern gates, after adding
-public short-name imports to the compiler. All nine unchanged Moss modules
-passed workspace checks with that compiler. The original module/workspace
-acceptance evidence below remains dated to its own run.
-
-On native Windows ARM64 on 2026-10-10:
-
-- Default Debug build and unfiltered CTest: **790/790 passed**.
-- All 15 fern gates passed, including the new Workspace gate.
-- Exact manifest/string/array/member limits, legacy diagnostics, per-module
-  paths, diamonds, unselected cycles, kind/selection rules, and equal output
-  basenames are tested.
-- Resolved dependency indexes, ownership across differing directory/module
-  orders, and member-local CRLF graph diagnostic coordinates are covered.
-- Native failure paths, Unicode argv/paths, concurrent generations,
-  Debug/optimized self-build and second-stage execution, relocated component
-  installs, and bootstrap regeneration pass.
-- Migrated Moss workspace checks and Debug/Release native suites pass
-  673 binary, 1475 JVM, and 10 CLI checks per profile.
-
-The [shared test harness](../../tests/fern/helpers.cmake) claims run directories
-exclusively with process identity and random suffix. Exact fixture writes
-use a Joyeer binary writer with size/SHA-256 checks, not CMake text-mode bytes.
-Tests never claim ownership of collided directories.
-
-Previous-layout native Debug/Release acceptance recorded 789/789 each.
-Despite retaining version 0.1.0, those historical Release results are not
-a new full native ARM64 Release CTest run for the module/workspace layout;
-optimized tool/workspace self-builds are a narrower gate.
-These historical Windows results do not establish acceptance on other
-architectures. Current macOS ARM64 acceptance is recorded above; other
-unrecorded native targets still require complete Debug/Release gates.
 
 External local dependencies, registries/version resolution, lockfiles,
 cache/clean, process capture/timeouts, and remote acquisition

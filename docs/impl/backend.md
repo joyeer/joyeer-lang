@@ -230,7 +230,6 @@ UTF-8 at the C ABI boundary. Native Windows ARM64 Debug/Release regressions
 pass for wide CLI conversion, source/output/temporary paths, failure paths,
 and relocated product linking. This is not general Unicode-aware rendering
 or acceptance evidence for other architectures.
-Detailed evidence belongs in [fern](fern.md#5-validation-evidence).
 Diagnostic argument/path text is UTF-8, but OS-provided error messages and
 console rendering remain host-dependent.
 Legacy source-language `readFile` narrow CRT behavior is unchanged.

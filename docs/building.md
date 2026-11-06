@@ -311,7 +311,6 @@ native ARM64 Release gate for the new layout is open despite the retained
 0.1.0 version.
 Hardware, process, MSVC/LLVM architecture,
 and PE headers were independently recorded. See the
-[implementation evidence](impl/fern.md#5-validation-evidence) and
 [remaining platform gates](plan/package-manager.md#4-native-platform-validation).
 For another platform/architecture, use a matching Developer shell/SDK and fresh
 Debug/Release trees; registration or another target's pass is not acceptance.

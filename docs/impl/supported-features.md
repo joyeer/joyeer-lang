@@ -115,7 +115,7 @@ CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
 gates, including bootstrap regeneration, independently of
 `JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
 including self-build and relocated workflows; platform-specific evidence
-and packaging limits are recorded in [fern](fern.md#5-validation-evidence).
+and packaging limits are recorded in [building](../building.md#macos-arm64-acceptance-on-main).
 Every document is
 bounded to 65536 bytes with a sentinel
 read after regular-file classification. Outputs use module-qualified fresh
@@ -123,7 +123,7 @@ generations with 128 claims per module/profile. The tool does not scan
 upward, search PATH, delete/cache outputs, fetch external dependencies, or
 nested workspaces. These are not streaming or confinement guarantees.
 Unrecorded native targets and publication remain open.
-See [fern](fern.md) for current contracts, parser limits, and validation status.
+See [fern](fern.md) for current contracts and parser limits.
 
 ## Not implemented
 
