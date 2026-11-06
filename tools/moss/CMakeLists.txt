@@ -58,12 +58,17 @@ if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
                 ${JOYEER_MOSS_PROFILE_ARGS})
         list(APPEND moss_fern_tests "Moss.Fern.${module}")
     endforeach()
-    add_test(NAME Moss.JavapGoldens
-        COMMAND "${CMAKE_COMMAND}"
-            "-DMOSS=${JOYEER_MOSS_EXECUTABLE}"
-            "-DFIXTURES=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/jvm"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/verifyGoldens.cmake")
-    set_tests_properties(${moss_fern_tests} Moss.JavapGoldens PROPERTIES
+    # The javap goldens run `moss disasm` end to end from a fern test module. Fern
+    # does not build bin modules, so the freshly built executable is passed explicitly.
+    add_test(NAME Moss.Fern.moss.golden.tests
+        COMMAND "${JOYEER_FERN_EXECUTABLE}" test
+            --compiler "$<TARGET_FILE:joyeer>"
+            --workspace "${JOYEER_SOURCE_DIR}/workspace.toml"
+            --module moss.golden.tests
+            ${JOYEER_MOSS_PROFILE_ARGS}
+            -- --moss "${JOYEER_MOSS_EXECUTABLE}")
+    list(APPEND moss_fern_tests Moss.Fern.moss.golden.tests)
+    set_tests_properties(${moss_fern_tests} PROPERTIES
         LABELS "moss;native" TIMEOUT 900)
     set_tests_properties(${moss_fern_tests} PROPERTIES RUN_SERIAL ON)
 endif()

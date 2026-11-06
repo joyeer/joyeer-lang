@@ -13,5 +13,6 @@ members = [
     "tests",
     "tests/archive",
     "tests/binary",
+    "tests/golden",
     "tests/jvm",
 ]

@@ -1,0 +1,8 @@
+schema-version = 1
+
+[module]
+name = "moss.golden.tests"
+kind = "test"
+output = "moss-golden-tests"
+sources = ["main.joyeer"]
+dependencies = ["moss.model"]

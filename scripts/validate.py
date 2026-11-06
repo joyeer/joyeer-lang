@@ -220,9 +220,20 @@ def validate_config(config: str, args: argparse.Namespace, sdk: Path, env: dict[
                     results.append((ok and code == 0, f"{module}: {summary}"))
                 record("fern test", all(ok for ok, _ in results), "; ".join(text for _, text in results), started)
             else:
-                code, output = run(command, logs / "fern.log", env)
-                ok, summary = parse_fern(output)
-                record("fern test", ok and code == 0, summary, started)
+                # moss.golden.tests runs the real executable, which fern test does not
+                # build; stage it where that module looks by default.
+                moss_build = [str(fern), "build", "--compiler", str(compiler),
+                              "--workspace", str(ROOT / "workspace.toml"),
+                              "--module", "moss.app", "--bin-dir", str(ROOT / "target" / "bin")]
+                if config.lower() == "release":
+                    moss_build.append("--release")
+                code, output = run(moss_build, logs / "fern-moss-build.log", env)
+                if code != 0:
+                    record("fern test", False, "building moss.app into target/bin failed", started)
+                else:
+                    code, output = run(command, logs / "fern.log", env)
+                    ok, summary = parse_fern(output)
+                    record("fern test", ok and code == 0, summary, started)
     return rows
 
 

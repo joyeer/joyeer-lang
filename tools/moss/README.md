@@ -66,9 +66,28 @@ build/bin/fern build --compiler build/bin/joyeer --workspace workspace.toml     
 build/bin/fern test  --compiler build/bin/joyeer --workspace workspace.toml --module moss.tests
 ```
 
-`Moss.FernTests` runs the four native test modules with `fern test` and
-`Moss.JavapGoldens` compares `moss disasm` of each checked-in class with its
-`javap` golden byte for byte. Moss's modules are members of the repository's
+The javap goldens are the Fern test module `moss.golden.tests`. It runs the real
+`moss disasm` on every checked-in class that has a `*.javap.txt` and requires
+byte-identical output. It fails if the executable is missing or cannot run, if
+`moss` exits nonzero, if no golden exists, or if any output differs. It needs
+no JDK. `fern test` does not build executables, so build `moss` first and either
+pass it or stage it in the default location:
+
+```text
+build/bin/fern test --compiler build/bin/joyeer --workspace workspace.toml --module moss.golden.tests -- --moss build/bin/moss
+build/bin/fern build --compiler build/bin/joyeer --workspace workspace.toml --module moss.app --bin-dir target/bin
+build/bin/fern test --compiler build/bin/joyeer --workspace workspace.toml --module moss.golden.tests
+```
+
+Without `--moss`, the module uses `target/bin/moss` (`moss.exe` on Windows), which
+is what an unfiltered root `fern test` (and `scripts/validate.py`) relies on.
+`--fixtures <dir>` selects another directory of `<Name>.class` / `<Name>.javap.txt`
+pairs. Run from the repository root and add `--release` for the Release profile.
+Output goes through `moss --output` into a scratch directory `target/moss-golden-N`
+that the test claims exclusively and removes.
+
+`Moss.Fern.*` ctest entries run the five native test modules with `fern test`,
+including `moss.golden.tests` with the freshly built executable. Moss's modules are members of the repository's
 root [workspace.toml](../../workspace.toml), so fern runs from the repository root
 and test generations go to the root `target/` directory. `Compression` is not a member: modules declare it as a
 dependency and the compiler resolves it from its standard library.
