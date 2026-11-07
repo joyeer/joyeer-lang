@@ -3,6 +3,7 @@
 
 #include "compiler/codegen/llvm.h"
 #include "compiler/frontend/hostbuiltins.h"
+#include "compiler/frontend/intrinsics.h"
 #include "runtime/runtime.h"
 #include "native_module.h"
 
@@ -126,6 +127,8 @@ private:
             semantic::SymbolId symbol, size_t index);
     llvm::Value* pattern(const ir::Pattern& pattern, llvm::Value* value);
     llvm::Value* emitCall(const ir::Instruction& instruction);
+    llvm::Value* emitIntrinsic(const intrinsic::Descriptor& descriptor,
+            llvm::ArrayRef<llvm::Value*> arguments);
     bool emitCollection(const ir::Instruction& instruction, llvm::Value*& result);
     int keyKind(ir::TypeId id);
     llvm::Value* dictionaryFind(ir::TypeId id, llvm::Value* dictionary, llvm::Value* key);

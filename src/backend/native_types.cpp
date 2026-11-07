@@ -1,4 +1,5 @@
 #include "native_ir.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Verifier.h"
@@ -80,7 +81,9 @@ std::vector<Diagnostic> Builder::build() {
         // Reserve C linkage names first, so private generated helpers can never
         // take a native symbol and force LLVM to rename the public entry.
         for (const auto& function : source.functions) {
-            if (function.nativeBinding.has_value()) declareNativeFunction(function);
+            if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
+                declareNativeFunction(function);
+            }
         }
         emitOwnership();
         // Declare source functions before emitting their bodies so recursive
@@ -88,7 +91,7 @@ std::vector<Diagnostic> Builder::build() {
         for (const auto& function : source.functions) {
             if (!function.isExternal) {
                 functions.emplace(function.id, declareFunction(function));
-            } else if (function.nativeBinding.has_value()) {
+            } else if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
                 functions.emplace(function.id, declareNativeFunction(function));
             }
         }

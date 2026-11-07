@@ -260,6 +260,34 @@ back with ordinary indexing. It is a deliberately small step toward the
 byte address-and-length pairs of §19.10, remains runtime-only, and adds no
 source-level pointer value, address arithmetic, or dereference.
 
+#### 19.4.5 Compiler intrinsics
+
+A C import whose symbol begins with `joyeer_intrinsic_` names a compiler
+intrinsic. The compiler lowers it to inline instructions and never links a
+symbol of that name, so the declaration is the only place the operation exists.
+Every other rule for `@c_extern` applies unchanged: the declaration must be in
+a unit authorized for native bindings, so ordinary programs cannot use these.
+The symbol must be one of the table below, declared with exactly the listed
+parameter and result types; anything else with the prefix is an error, and
+`@c_export` of such a symbol is rejected. An address is an `Int`.
+
+| Symbol | Declaration | Effect |
+|---|---|---|
+| `joyeer_intrinsic_address_of` | `(bytes: inout [UInt8]) -> Int` or borrowed, with `pointer: "bytes"` | The address of the array's first element |
+| `joyeer_intrinsic_load_u8` / `_u16` / `_u32` / `_u64` | `(address: Int) -> UInt8` / `UInt16` / `UInt32` / `UInt64` | Little-endian load of that width |
+| `joyeer_intrinsic_store_u8` / `_u16` / `_u32` / `_u64` | `(address: Int, value: UInt8` / `UInt16` / `UInt32` / `UInt64`) `-> Void` | Little-endian store of that width |
+| `joyeer_intrinsic_atomic_add` | `(address: Int, delta: Int) -> Int` | Sequentially consistent add; returns the previous value |
+
+Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
+location. The operations assume a little-endian target; the supported targets
+are. An address from `address_of` is meaningful only while the array it came
+from is alive and unmodified in size, and the language does not track that.
+Nothing checks that an address points at memory the program may access: these
+operations can read and write anywhere, so a unit that uses them takes on the
+obligations of C. They exist so that the runtime itself can be written in
+Joyeer ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)); they add
+no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
+
 ### 19.5 Invalid signatures
 
 All types and parameter effects not admitted by §19.4 are rejected at this
@@ -387,8 +415,9 @@ double joyeer_native_sample(float value, double scale);
 
 ### 19.10 Deferred memory and ABI extensions
 
-No address type, address-taking expression, pointer arithmetic, dereference,
-nullable pointer syntax, or public `unsafe` block is introduced here.
+No address type, address-taking expression, dereference syntax, nullable
+pointer syntax, or public `unsafe` block is introduced here. The runtime-only
+`Int`-address intrinsics of §19.4.5 are not a pointer type.
 The no-reference model in [§4.8](04-memory.md#48-no-reference-types) remains
 unchanged. Raw addresses, general address-and-length pairs (§19.4.4 admits only
 bare byte pointers), output parameters, and owned native result storage need a separate accepted

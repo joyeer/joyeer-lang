@@ -1,4 +1,5 @@
 #include "native_ir.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -166,6 +167,39 @@ llvm::Value* Builder::emitHostCall(const ir::Function& function,
     return builder.CreateLoad(llvmType(function.resultType), destination);
 }
 
+// Spec §19.4.5. Loads and stores are unaligned-safe; the atomic add requires an
+// 8-byte-aligned location, which the caller guarantees.
+llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
+        llvm::ArrayRef<llvm::Value*> arguments) {
+    using intrinsic::Operation;
+    if (descriptor.operation == Operation::addressOf) {
+        return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
+    }
+    auto* address = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
+    switch (descriptor.operation) {
+        case Operation::load8:
+            return builder.CreateAlignedLoad(builder.getInt8Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::load16:
+            return builder.CreateAlignedLoad(builder.getInt16Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::load32:
+            return builder.CreateAlignedLoad(builder.getInt32Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::load64:
+            return builder.CreateAlignedLoad(builder.getInt64Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::store8:
+        case Operation::store16:
+        case Operation::store32:
+        case Operation::store64:
+            builder.CreateAlignedStore(arguments[1], address, llvm::MaybeAlign(1));
+            return nullptr;
+        case Operation::atomicAdd:
+            return builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, address, arguments[1],
+                    llvm::MaybeAlign(8), llvm::AtomicOrdering::SequentiallyConsistent);
+        case Operation::addressOf:
+            break;
+    }
+    return nullptr;
+}
+
 llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     if (!instruction.callee.has_value()) return nullptr;
     const auto found = sourceFunctions.find(*instruction.callee);
@@ -200,6 +234,9 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
             } else {
                 nativeArguments.push_back(arguments[index]);
             }
+        }
+        if (const auto* descriptor = intrinsic::find(callee.nativeBinding->symbol)) {
+            return emitIntrinsic(*descriptor, nativeArguments);
         }
         auto* function = functions.at(callee.id);
         auto* invocation = builder.CreateCall(function, nativeArguments);

@@ -71,6 +71,16 @@ foreach(profile IN ITEMS Debug Optimized)
             "-DEXPECTED_OUTPUT=native pointer buffers passed\n"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.Pointers${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    add_test(NAME "JoyeerCInterop.Intrinsics${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/intrinsics.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/intrinsics-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.intrinsics;--runtime-module;runtime.intrinsics;${compile_flags}"
+            "-DEXPECTED_OUTPUT=intrinsics passed
+"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Intrinsics${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
     add_test(NAME "JoyeerCInterop.ScalarValues${profile}"
         COMMAND "${CMAKE_COMMAND}"
             "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"

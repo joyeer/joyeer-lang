@@ -13,6 +13,18 @@ func describeText(outcome: Result<String, FileSystemError>): String {
     }
 }
 
+func describeLegacy(outcome: Result<String, IOError>): String {
+    return match outcome {
+        .Ok(text) => "ok:" + decimalString(value: text.count) + ":" + text,
+        .Err(error) => match error {
+            .NotFound(code) => "err:not-found:" + decimalString(value: code),
+            .PermissionDenied(code) => "err:denied:" + decimalString(value: code),
+            .InvalidPath(code) => "err:invalid:" + decimalString(value: code),
+            .Other(code) => "err:other:" + decimalString(value: code),
+        },
+    }
+}
+
 func describeUnit(outcome: Result<Void, FileSystemError>): String {
     return match outcome {
         .Ok(_) => "ok",
@@ -137,6 +149,24 @@ func testReads(root: String): Int {
     failures = failures + comparePrefix(root: root, label: "prefix negative", name: "data.bin", limit: -1)
     failures = failures + comparePrefix(root: root, label: "prefix missing", name: "missing.bin", limit: 0)
     failures = failures + comparePrefix(root: root, label: "prefix directory", name: "folder", limit: 8)
+    return failures
+}
+
+func testLegacyReads(root: String): Int {
+    var failures = 0
+    seed(root: root, name: "legacy.bin", contents: sampleBytes())
+    seed(root: root, name: "legacy-large.bin", contents: largeText())
+    seed(root: root, name: "legacy-empty.bin", contents: "")
+    for name in ["legacy.bin", "legacy-large.bin", "legacy-empty.bin", "missing.bin", "folder", "no/such/file"] {
+        failures = failures + agree(label: "legacy read " + name,
+            expected: describeLegacy(outcome: readFile(path: pathIn(root: root, name: "built-in/" + name))),
+            actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "joyeer/" + name))))
+    }
+    for path in ["", "a" + zeroByte() + "b", "bad" + byteToString(value: 255), ".", "/"] {
+        failures = failures + agree(label: "legacy read odd path",
+            expected: describeLegacy(outcome: readFile(path: path)),
+            actual: describeLegacy(outcome: System.readFile(path: path)))
+    }
     return failures
 }
 
@@ -360,7 +390,7 @@ func removeTree(root: String) {
     for side in ["built-in", "joyeer"] {
         for name in [
                 "dir/one.txt", "dir/two.txt", "dir", "hollow", "kinds", "folder", "data.bin", "empty.txt", "large.bin",
-                "new.bin", "empty.bin", "plain.txt", "fulldir/inside.txt", "fulldir", "emptydir", "doomed.txt"] {
+                "new.bin", "empty.bin", "legacy.bin", "legacy-large.bin", "legacy-empty.bin", "plain.txt", "fulldir/inside.txt", "fulldir", "emptydir", "doomed.txt"] {
             ignoreUnit(outcome: removeFile(path: pathIn(root: root, name: side + "/" + name)))
             ignoreUnit(outcome: removeDirectory(path: pathIn(root: root, name: side + "/" + name)))
         }
@@ -380,6 +410,7 @@ public func testFileSystem(): Int {
     ignoreUnit(outcome: createDirectory(path: pathIn(root: root, name: "joyeer")))
     var failures = 0
     failures = failures + testReads(root: root)
+    failures = failures + testLegacyReads(root: root)
     failures = failures + testWrites(root: root)
     failures = failures + testDirectories(root: root)
     failures = failures + testKinds(root: root)

@@ -1,0 +1,83 @@
+// The legacy whole-file reader, `readFile(path:) -> Result<String, IOError>`,
+// in Joyeer. Unlike the portable filesystem operations it deliberately uses
+// the C runtime's narrow `fopen` on every platform, so its path handling and
+// its errno-based error codes match the built-in it mirrors, including the
+// narrow-path behavior on Windows. Nothing here is platform-specific.
+
+private let readChunk: Int = 65536
+
+@c_extern(symbol: "joyeer_native_errno")
+private func errnoValue(): Int32
+
+@c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
+private func openStream(path: [UInt8], mode: [UInt8]): Int
+
+@c_extern(symbol: "fread", pointer: "buffer")
+private func readStream(buffer: inout [UInt8], size: Int, count: Int, stream: Int): Int
+
+@c_extern(symbol: "ferror")
+private func streamFailed(stream: Int): Int32
+
+@c_extern(symbol: "fclose")
+private func closeStream(stream: Int): Int32
+
+@platform(windows)
+private func nameTooLongCode(): Int { return 38 }
+
+@platform(linux)
+private func nameTooLongCode(): Int { return 36 }
+
+@platform(macos)
+private func nameTooLongCode(): Int { return 63 }
+
+private func legacyError(code: Int): IOError {
+    var value = code
+    if value == 0 { value = 5 }
+    if value == 2 { return .NotFound(value) }
+    if value == 13 || value == 1 { return .PermissionDenied(value) }
+    if value == 22 || value == nameTooLongCode() { return .InvalidPath(value) }
+    return .Other(value)
+}
+
+private func currentError(): Int {
+    return errnoValue() as Int
+}
+
+// Reads to the end of the stream. Returns 0, or the errno of a failed read.
+private func drain(stream: Int, data: inout [UInt8]): Int {
+    var chunk = zeroBuffer(count: readChunk)
+    var code = 0
+    var done = false
+    while !done {
+        let got = readStream(buffer: &chunk, size: 1, count: readChunk, stream: stream)
+        // errno is read before anything else can disturb it.
+        if got < readChunk {
+            done = true
+            if streamFailed(stream: stream) != 0 { code = currentError() }
+        }
+        var index = 0
+        while index < got {
+            &data.append(element: chunk[index])
+            index = index + 1
+        }
+    }
+    return code
+}
+
+public func readFile(path: String): Result<String, IOError> {
+    var index = 0
+    while index < path.count {
+        if path[index] == 0 { return .Err(legacyError(code: 22)) }
+        index = index + 1
+    }
+    var native = path.utf8()
+    &native.append(element: 0)
+    let mode: [UInt8] = [b'r', b'b', 0]
+    let stream = openStream(path: native, mode: mode)
+    if stream == 0 { return .Err(legacyError(code: currentError())) }
+    var data: [UInt8] = []
+    var code = drain(stream: stream, data: &data)
+    if closeStream(stream: stream) != 0 && code == 0 { code = currentError() }
+    if code != 0 { return .Err(legacyError(code: code)) }
+    return .Ok(stringFromBytes(bytes: data, count: data.count))
+}

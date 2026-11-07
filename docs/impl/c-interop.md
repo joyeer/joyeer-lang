@@ -76,6 +76,15 @@ allocations into an output handle. Every return, including failure, leaves
 valid destroyable outputs; a status-returning Joyeer wrapper decides whether
 to expose them. Allocation failures follow the existing runtime panic policy.
 
+### Compiler intrinsics
+
+Symbols beginning with `joyeer_intrinsic_` ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics)) are checked against a shared table
+([intrinsics.h](../../src/compiler/frontend/intrinsics.h)) by the type checker
+and the IR verifier, and the backend lowers them inline: `ptrtoint` for
+`address_of`, unaligned `load` and `store`, and `atomicrmw add`. No C function
+is declared. The [fixture](../../tests/c-interop/intrinsics.joyeer) uses them
+with `malloc` and `free` from the C library.
+
 ### Bare byte pointers
 
 A `[UInt8]` import parameter named by a `pointer:` annotation argument crosses

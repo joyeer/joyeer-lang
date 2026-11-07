@@ -1,6 +1,7 @@
 #include "typechecking.h"
 #include "hostbuiltins.h"
 #include "nameresolution.h"
+#include "intrinsics.h"
 
 #include <algorithm>
 #include <array>
@@ -830,6 +831,23 @@ private:
             report(TypeCheckingDiagnosticId::unsupportedNativeSignature,
                    declaration->returnType == nullptr ? declaration->span : declaration->returnType->span,
                    "C bindings require a scalar or Void result");
+        }
+        if (intrinsic::reserved(binding->symbol)) {
+            // A reserved symbol names a compiler intrinsic (§19.4.5): it must be
+            // a known one, imported, with exactly its signature.
+            std::vector<TypeKind> kinds;
+            std::vector<bool> pointers;
+            for (size_t index = 0; index < signature.parameters.size(); ++index) {
+                kinds.push_back(model->typeContext.type(signature.parameters[index])->kind);
+                pointers.push_back(binding->passesPointer(static_cast<uint32_t>(index)));
+            }
+            const auto* descriptor = intrinsic::find(binding->symbol);
+            if (!importing || descriptor == nullptr ||
+                !intrinsic::matches(*descriptor, model->typeContext.type(signature.result)->kind,
+                                    kinds, pointers)) {
+                report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                       "'" + binding->symbol + "' is not a compiler intrinsic with this signature");
+            }
         }
         if (diagnostics.size() == diagnosticStart) {
             model->nativeBindings.emplace(function, std::move(*binding));

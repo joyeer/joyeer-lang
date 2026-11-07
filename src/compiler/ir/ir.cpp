@@ -1,4 +1,5 @@
 #include "ir.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include <algorithm>
 #include <charconv>
@@ -697,6 +698,20 @@ VerificationResult Verifier::verify(const Module& module) const {
                         parameter.isMutable && parameter.isInitializing &&
                         !parameter.isConsuming && !parameter.acceptsAnyType;
                 valid &= borrowed || output;
+            }
+            if (intrinsic::reserved(binding.symbol)) {
+                // A compiler intrinsic must be a known import with exactly its signature.
+                const auto* descriptor = intrinsic::find(binding.symbol);
+                std::vector<typing::TypeKind> kinds;
+                std::vector<bool> pointers;
+                for (size_t index = 0; index < function.parameters.size(); ++index) {
+                    const auto found = types.find(function.parameters[index].value.type);
+                    kinds.push_back(found == types.end() ? typing::TypeKind::error : found->second->kind);
+                    pointers.push_back(binding.passesPointer(index));
+                }
+                const auto result = types.find(function.resultType);
+                valid &= importing && descriptor != nullptr && result != types.end() &&
+                        intrinsic::matches(*descriptor, result->second->kind, kinds, pointers);
             }
             if (!valid) {
                 report(VerificationErrorId::invalidInstruction, functionId, {}, {},

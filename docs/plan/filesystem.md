@@ -20,6 +20,35 @@
 - Verified: Windows x64, Debug and Release, through `fern test`. The POSIX
   variants type-check for Linux and macOS in a service test but have not run.
 
+Also in `System`: legacy `readFile(path:)` (`legacy_file.joyeer`), written once
+over the C runtime's narrow `fopen` on every platform and compared with the
+built-in by the same differential test. [Decision 0004](../decisions/0004-remove-host-builtins.md)
+sets the end state: the built-ins are removed and callers `import System`.
+[Decision 0005](../decisions/0005-runtime-unsafe-memory.md) sets the direction
+for the rest of the runtime.
+
+### Not yet ported: stderr and stdin
+
+`writeStderr` and `readStdinLine` have two problems a faithful port cannot
+paper over; each needs a decision before it is written.
+
+- **Windows error codes and descriptors.** The C code protects against a closed
+  CRT descriptor by installing a thread-local invalid-parameter *callback*, which
+  Joyeer cannot express, and it reports CRT `errno` values
+  ([§18.4](../spec/18-host.md#184-standard-error)). A Joyeer port would use the
+  Win32 handles directly (`GetStdHandle`, `WriteFile`, `ReadFile`): no text
+  mode, no descriptor crash, simpler, but the failure codes become `GetLastError`
+  values. That changes the documented contract on Windows.
+- **No place to keep read-ahead.** `readStdinLine` relies on the CRT's stdin
+  buffer so unread bytes survive between calls. Joyeer has no mutable global
+  storage, so a Joyeer reader either reads one byte per system call, or keeps
+  calling the CRT's `getchar` and needs a runtime accessor to tell end of input
+  from an error and to flush `stdout` first ([§18.5](../spec/18-host.md#185-standard-input)).
+
+The unsafe memory layer of decision 0005 is implemented, so `runProcess` can now
+be ported on POSIX (a table of argument addresses built in a byte buffer) as well
+as Windows; that is the next step.
+
 ## 2. Verify the POSIX variants (blocks everything below)
 
 On a Linux host and a macOS host, run `fern test` for `SystemTests` and the

@@ -305,6 +305,82 @@ func scalar(value: Int): Void
     EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 
+TEST_F(CInteropTest, LowersCompilerIntrinsicsInlineWithoutDeclaringCFunctions) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+func addressOf(bytes: inout [UInt8]): Int
+@c_extern(symbol: "joyeer_intrinsic_load_u16")
+func load16(address: Int): UInt16
+@c_extern(symbol: "joyeer_intrinsic_store_u32")
+func store32(address: Int, value: UInt32): Void
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+func atomicAdd(address: Int, delta: Int): Int
+func use(): Int {
+    var bytes: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    let location = addressOf(bytes: &bytes)
+    store32(address: location, value: 7)
+    return atomicAdd(address: location, delta: 1) + (load16(address: location) as Int)
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr"), std::string::npos);
+    EXPECT_NE(emitted.text.find("load i16, ptr"), std::string::npos);
+    EXPECT_NE(emitted.text.find("store i32"), std::string::npos);
+    EXPECT_NE(emitted.text.find("atomicrmw add ptr"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_unknown\")\nfunc f(address: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int, extra: Int): UInt8\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: UInt64): UInt8\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_store_u16\")\nfunc f(address: Int, value: UInt32): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_store_u16\")\nfunc f(address: Int, value: UInt16): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_atomic_add\")\nfunc f(address: Int, delta: Int64): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_address_of\")\nfunc f(bytes: [UInt8]): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_address_of\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): UInt8\n",
+            "@c_export(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): UInt8 { return 0 }\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    // Intrinsics are runtime-only, like every native binding.
+    check("@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): UInt8\n", false);
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedNativeBinding));
+    // A name that merely resembles the prefix is an ordinary symbol.
+    check("@c_extern(symbol: \"joyeer_intrinsics_other\")\nfunc f(address: Int): UInt8\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, VerifierRejectsTamperedIntrinsicBindings) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func load8(address: Int): UInt8
+@c_extern(symbol: "native_ordinary")
+func ordinary(address: Int): UInt8
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& ordinary = function("ordinary");
+    ordinary.nativeBinding->symbol = "joyeer_intrinsic_load_u16";
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    ordinary.nativeBinding->symbol = "joyeer_intrinsic_nonexistent";
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    ordinary.nativeBinding->symbol = "native_ordinary";
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    function("load8").nativeBinding->kind = joyeer::NativeBindingKind::cExport;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
 TEST_F(CInteropTest, AcceptsEmptyParameterListsAndExplicitUnitSpellings) {
     check(R"(
 @c_extern(symbol: "native_flush")

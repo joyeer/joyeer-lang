@@ -1,0 +1,96 @@
+@c_extern(symbol: "malloc")
+func allocate(size: UInt64): Int
+
+@c_extern(symbol: "free")
+func release(address: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+func addressOf(bytes: inout [UInt8]): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func load8(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_load_u16")
+func load16(address: Int): UInt16
+
+@c_extern(symbol: "joyeer_intrinsic_load_u32")
+func load32(address: Int): UInt32
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+func store8(address: Int, value: UInt8): Void
+
+@c_extern(symbol: "joyeer_intrinsic_store_u16")
+func store16(address: Int, value: UInt16): Void
+
+@c_extern(symbol: "joyeer_intrinsic_store_u32")
+func store32(address: Int, value: UInt32): Void
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+func atomicAdd(address: Int, delta: Int): Int
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+func allocations(): Int
+
+func zeros(count: Int): [UInt8] {
+    var buffer: [UInt8] = []
+    var index = 0
+    while index < count {
+        &buffer.append(element: 0)
+        index = index + 1
+    }
+    return buffer
+}
+
+func exercise(): Int {
+    let block = allocate(size: 64)
+    if block == 0 { return 1 }
+    // Every width round-trips, at aligned and unaligned offsets.
+    store64(address: block, value: 0x0102030405060708)
+    if load64(address: block) != 0x0102030405060708 { return 2 }
+    if load8(address: block) != 8 || load8(address: block + 7) != 1 { return 3 }
+    if load16(address: block + 1) != 0x0607 { return 4 }
+    if load32(address: block + 4) != 0x01020304 { return 5 }
+    store16(address: block + 9, value: 0xABCD)
+    store32(address: block + 11, value: 0xDEADBEEF)
+    store8(address: block + 15, value: 0x7F)
+    if load16(address: block + 9) != 0xABCD || load32(address: block + 11) != 0xDEADBEEF { return 6 }
+    if load8(address: block + 15) != 0x7F { return 7 }
+    // An atomic add returns the previous value and updates the location.
+    store64(address: block + 16, value: 40)
+    if atomicAdd(address: block + 16, delta: 2) != 40 { return 8 }
+    if load64(address: block + 16) != 42 { return 9 }
+    // A byte buffer's address lets native memory be read and written in place.
+    var bytes = zeros(count: 16)
+    let location = addressOf(bytes: &bytes)
+    if location == 0 { return 10 }
+    store32(address: location + 4, value: 0x11223344)
+    if bytes[4] != 0x44 || bytes[7] != 0x11 || bytes[0] != 0 { return 11 }
+    // A pointer array, as posix_spawn needs for argv: store an address, read it back.
+    var table = zeros(count: 16)
+    let tableAddress = addressOf(bytes: &table)
+    store64(address: tableAddress, value: location as UInt64)
+    let loaded = load64(address: tableAddress) as Int
+    if loaded != location { return 12 }
+    release(address: block)
+    return 0
+}
+
+func main(args: [String]): Int {
+    if args.count != 0 { return 20 }
+    let baseline = allocations()
+    var index = 0
+    while index < 20 {
+        let status = exercise()
+        if status != 0 { return status }
+        if allocations() != baseline { return 10 }
+        index = index + 1
+    }
+    print(value: "intrinsics passed")
+    return 0
+}
