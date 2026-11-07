@@ -605,6 +605,14 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
          "    match System.fileKind(path: \".\") {\n"
          "        .Ok(kind) => print(value: 1),\n"
          "        .Err(error) => print(value: 0),\n"
+         "    }\n"
+         "    match System.writeStderr(contents: \"x\") {\n"
+         "        .Ok(_) => print(value: 1),\n"
+         "        .Err(error) => print(value: 0),\n"
+         "    }\n"
+         "    match System.readStdinLine(maximumBytes: 8) {\n"
+         "        .Ok(line) => print(value: line),\n"
+         "        .Err(error) => print(value: 0),\n"
          "    }\n}\n");
     options.modules.push_back({"Foundation",
             {library / "Foundation" / "text.joyeer", library / "Foundation" / "checksum.joyeer"}});
@@ -613,7 +621,8 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
             library / "System" / "filesystem.joyeer", library / "System" / "filesystem_windows.joyeer",
             library / "System" / "filesystem_posix.joyeer", library / "System" / "legacy_file.joyeer",
             library / "System" / "process.joyeer", library / "System" / "process_windows.joyeer",
-            library / "System" / "process_posix.joyeer"}});
+            library / "System" / "process_posix.joyeer", library / "System" / "stdio.joyeer",
+            library / "System" / "stdio_windows.joyeer", library / "System" / "stdio_posix.joyeer"}});
     options.runtimeModules = {"System"};
     for (const auto target : {joyeer::semantic::TargetPlatform::windows, joyeer::semantic::TargetPlatform::linux,
                               joyeer::semantic::TargetPlatform::macos}) {

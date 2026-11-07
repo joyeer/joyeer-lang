@@ -1,0 +1,120 @@
+import Foundation
+
+// Standard error and standard input (spec §18.4 and §18.5), written in Joyeer
+// over the C runtime's stdio streams, so buffering, read-ahead and `errno`
+// codes are those of the C library the rest of the program uses. The
+// per-platform guards live in stdio_windows.joyeer and stdio_posix.joyeer.
+
+private let intMax: Int = 9223372036854775807
+private let ioError: Int = 5
+private let invalidArgument: Int = 22
+private let newline: Int = 10
+private let carriageReturn: UInt8 = 13
+
+@c_extern(symbol: "joyeer_native_stdio")
+private func standardStream(which: Int32): Int
+
+@c_extern(symbol: "joyeer_native_errno")
+private func errnoStdio(): Int32
+
+@c_extern(symbol: "fwrite", pointer: "buffer")
+private func writeStream(buffer: [UInt8], size: Int, count: Int, stream: Int): Int
+
+@c_extern(symbol: "fflush")
+private func flushNative(stream: Int): Int32
+
+@c_extern(symbol: "ferror")
+private func streamFailed(stream: Int): Int32
+
+@c_extern(symbol: "clearerr")
+private func clearStream(stream: Int): Void
+
+@c_extern(symbol: "fgetc")
+private func nextByte(stream: Int): Int32
+
+// The errno of the operation that just failed, or EIO if it supplied none.
+func stdioCode(): Int {
+    let code = errnoStdio() as Int
+    if code == 0 { return ioError }
+    return code
+}
+
+// fflush of a stream, as 0 or the failure's errno.
+func flushStdioStream(stream: Int): Int {
+    if flushNative(stream: stream) != 0 { return stdioCode() }
+    return 0
+}
+
+public func writeStderr(contents: String): Result<Void, StderrError> {
+    let stream = standardStream(which: 2)
+    let previous = enterStderr(stream: stream)
+    if previous < 0 { return .Err(.WriteFailed(0 - previous)) }
+    var code = 0
+    if contents.count != 0 {
+        let bytes = contents.utf8()
+        let written = writeStream(buffer: bytes, size: 1, count: bytes.count, stream: stream)
+        if written != bytes.count || streamFailed(stream: stream) != 0 { code = stdioCode() }
+    }
+    // Always flush, even after a short write, keeping the first failure.
+    let flushed = flushStdioStream(stream: stream)
+    if code == 0 { code = flushed }
+    let restored = leaveStderr(stream: stream, previous: previous)
+    if code == 0 { code = restored }
+    if code != 0 { return .Err(.WriteFailed(code)) }
+    return .Ok(())
+}
+
+public func readStdinLine(maximumBytes: Int): Result<String, StdinError> {
+    if maximumBytes < 0 { return .Err(.ReadFailed(invalidArgument)) }
+    let stream = standardStream(which: 0)
+    let prepared = prepareStdin(stream: stream)
+    if prepared != 0 { return .Err(.ReadFailed(prepared)) }
+
+    // A peer waiting for a prompt must see earlier output before this blocks.
+    // A flush failure is ignored: print has no error path.
+    if flushStdioStream(stream: standardStream(which: 1)) != 0 { }
+
+    // Hold at most maximumBytes + 1 bytes: the extra byte lets a maximal line
+    // end in CR before LF. Anything longer is counted as overflow and discarded
+    // through the terminator, so the stream stays line-aligned.
+    var cap = intMax
+    if maximumBytes != intMax { cap = maximumBytes + 1 }
+    var data: [UInt8] = []
+    var overflow = false
+    var sawByte = false
+    var terminated = false
+    var done = false
+    while !done {
+        let next = nextByte(stream: stream) as Int
+        if next < 0 {
+            done = true
+        } else {
+            sawByte = true
+            if next == newline {
+                terminated = true
+                done = true
+            } else {
+                if !overflow {
+                    if data.count == cap {
+                        overflow = true
+                    } else {
+                        &data.append(element: next as UInt8)
+                    }
+                }
+            }
+        }
+    }
+
+    if !terminated && streamFailed(stream: stream) != 0 {
+        let code = stdioCode()
+        clearStream(stream: stream)
+        return .Err(.ReadFailed(code))
+    }
+    if !sawByte { return .Err(.EndOfInput(0)) }
+    var length = data.count
+    if terminated && !overflow && length != 0 && data[length - 1] == carriageReturn {
+        length = length - 1
+    }
+    if overflow || length > maximumBytes { return .Err(.LineTooLong(0)) }
+    return .Ok(stringFromBytes(bytes: data, count: length))
+}

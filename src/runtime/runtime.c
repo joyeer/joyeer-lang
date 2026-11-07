@@ -86,6 +86,15 @@ int64_t joyeer_native_environment(void) {
 #endif
 }
 
+int64_t joyeer_native_stdio(int32_t which) {
+    switch (which) {
+    case 0: return (int64_t)(intptr_t)stdin;
+    case 1: return (int64_t)(intptr_t)stdout;
+    case 2: return (int64_t)(intptr_t)stderr;
+    default: return 0;
+    }
+}
+
 static size_t checkedByteCount(int64_t count, int64_t stride) {
     if (count < 0 || stride < 0) joyeer_panic("negative allocation size");
     if (count != 0 && (uint64_t)stride > SIZE_MAX / (uint64_t)count) {

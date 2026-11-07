@@ -1,0 +1,68 @@
+import Foundation
+
+// Windows guards for stdio.joyeer. The C runtime opens standard streams in
+// text mode and aborts the process when asked to change the mode of a
+// descriptor that is closed. The C implementation of these operations guards
+// that with a thread-local invalid-parameter handler, which Joyeer cannot
+// install, so the descriptor is checked through its Win32 standard handle
+// instead: a detached or closed stream has none that can be queried.
+
+private let badDescriptor: Int = 9
+private let binaryMode: Int32 = 32768
+private let unknownFileType: UInt32 = 0
+private let standardInputKind: UInt32 = 0xFFFFFFF6
+private let standardErrorKind: UInt32 = 0xFFFFFFF4
+
+@platform(windows)
+@c_extern(symbol: "GetStdHandle")
+private func standardHandleStdio(kind: UInt32): Int
+
+@platform(windows)
+@c_extern(symbol: "GetFileType")
+private func fileTypeStdio(handle: Int): UInt32
+
+@platform(windows)
+@c_extern(symbol: "_fileno")
+private func descriptorStdio(stream: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "_setmode")
+private func setModeStdio(descriptor: Int32, mode: Int32): Int32
+
+@platform(windows)
+private func handleUsable(kind: UInt32): Bool {
+    let handle = standardHandleStdio(kind: kind)
+    if handle == 0 || handle == -1 { return false }
+    return fileTypeStdio(handle: handle) != unknownFileType
+}
+
+// Flushes pending text, then switches the stream to binary mode so no byte is
+// translated. Returns the previous mode, or a negated errno on failure.
+@platform(windows)
+func enterStderr(stream: Int): Int {
+    if !handleUsable(kind: standardErrorKind) { return 0 - badDescriptor }
+    let flushed = flushStdioStream(stream: stream)
+    if flushed != 0 { return 0 - flushed }
+    let previous = setModeStdio(descriptor: descriptorStdio(stream: stream), mode: binaryMode)
+    if previous == -1 { return 0 - stdioCode() }
+    return previous as Int
+}
+
+@platform(windows)
+func leaveStderr(stream: Int, previous: Int): Int {
+    let restored = setModeStdio(descriptor: descriptorStdio(stream: stream), mode: previous as Int32)
+    if restored == -1 { return stdioCode() }
+    return 0
+}
+
+// Standard input is switched to binary mode, so CRLF and 0x1A are not
+// translated. The change is process-wide and never restored; repeating it on
+// every call is harmless.
+@platform(windows)
+func prepareStdin(stream: Int): Int {
+    if !handleUsable(kind: standardInputKind) { return badDescriptor }
+    if setModeStdio(descriptor: descriptorStdio(stream: stream), mode: binaryMode) == -1 {
+        return stdioCode()
+    }
+    return 0
+}

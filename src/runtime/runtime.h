@@ -68,6 +68,10 @@ int32_t joyeer_native_errno(void);
 // POSIX process spawning passes it as `envp`; a Joyeer binding cannot name the
 // C global.
 int64_t joyeer_native_environment(void);
+// The C `FILE*` for standard input (0), output (1) or error (2) as an integer,
+// or 0 for any other value. A Joyeer binding cannot name the C globals, and the
+// stdio functions it calls need the stream.
+int64_t joyeer_native_stdio(int32_t which);
 
 int64_t joyeer_checked_add_int(int64_t left, int64_t right);
 int64_t joyeer_checked_sub_int(int64_t left, int64_t right);

@@ -36,6 +36,7 @@ func main(args: [String]): Int {
 
     failures = failures + testFileSystem()
     failures = failures + testProcess()
+    failures = failures + testStdio()
 
     if failures == 0 { print(value: "System tests passed") }
     return failures

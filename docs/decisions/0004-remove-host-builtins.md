@@ -37,8 +37,9 @@ programs write `import System` and call the functions as ordinary public
 Order, because each step must keep the suite green:
 
 1. Port each operation into `System` with a differential test against the
-   built-in (done: the nine filesystem operations and legacy `readFile`; open:
-   `writeStderr`, `readStdinLine`, `runProcess`).
+   built-in (done: the nine filesystem operations, legacy `readFile`,
+   `runProcess` ([0006](0006-runprocess-in-joyeer.md)), `writeStderr` and
+   `readStdinLine` ([0007](0007-stdio-in-joyeer.md))).
 2. Verify the POSIX variants on Linux and macOS.
 3. In one change set: update fern, moss, the Compression library, tests, and
    examples to `import System`; delete the built-in descriptors, their type

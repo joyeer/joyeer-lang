@@ -27,27 +27,16 @@ sets the end state: the built-ins are removed and callers `import System`.
 [Decision 0005](../decisions/0005-runtime-unsafe-memory.md) sets the direction
 for the rest of the runtime.
 
-### Not yet ported: stderr and stdin
-
-`writeStderr` and `readStdinLine` have two problems a faithful port cannot
-paper over; each needs a decision before it is written.
-
-- **Windows error codes and descriptors.** The C code protects against a closed
-  CRT descriptor by installing a thread-local invalid-parameter *callback*, which
-  Joyeer cannot express, and it reports CRT `errno` values
-  ([§18.4](../spec/18-host.md#184-standard-error)). A Joyeer port would use the
-  Win32 handles directly (`GetStdHandle`, `WriteFile`, `ReadFile`): no text
-  mode, no descriptor crash, simpler, but the failure codes become `GetLastError`
-  values. That changes the documented contract on Windows.
-- **No place to keep read-ahead.** `readStdinLine` relies on the CRT's stdin
-  buffer so unread bytes survive between calls. Joyeer has no mutable global
-  storage, so a Joyeer reader either reads one byte per system call, or keeps
-  calling the CRT's `getchar` and needs a runtime accessor to tell end of input
-  from an error and to flush `stdout` first ([§18.5](../spec/18-host.md#185-standard-input)).
-
 `runProcess` is ported ([decision 0006](../decisions/0006-runprocess-in-joyeer.md)):
 verified on Windows x64 in Debug and Release; the POSIX variant (`posix_spawn`
 with an argument-address table built through the intrinsics) type-checks only.
+
+`writeStderr` and `readStdinLine` are ported ([decision 0007](../decisions/0007-stdio-in-joyeer.md))
+over the C library's own streams, reached through the `joyeer_native_stdio`
+accessor, so the documented `errno` codes and read-ahead are unchanged. Verified
+on Windows x64 in Debug and Release; the POSIX variant has no platform code and
+type-checks only. Every host operation of decision 0004 now has a Joyeer
+implementation.
 
 ## 2. Verify the POSIX variants (blocks everything below)
 
@@ -66,6 +55,8 @@ unfiltered CTest, in Debug and Release. Expect to fix, at least, the first run:
 - `runProcess`: `posix_spawn_file_actions_addchdir_np` availability (glibc 2.29,
   macOS 10.15), the size of `posix_spawn_file_actions_t`, the `waitpid` status
   decoding, and `joyeer_native_environment` against a real `environ`.
+- `writeStderr` and `readStdinLine`: `joyeer_native_stdio` against the real
+  `stdin`, `stdout` and `stderr`, and the closed-descriptor cases of the tests.
 
 Record the results in [supported-features](../impl/supported-features.md).
 
