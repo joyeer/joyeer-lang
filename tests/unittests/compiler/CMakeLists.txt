@@ -888,6 +888,18 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;runtime;ownership;string;utf8"
     )
 
+    add_test(NAME NativeExecutableStringIndex
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/string_index.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-string-index${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=5\n97\n0\n195\n122\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableStringIndex PROPERTIES
+            LABELS "native;llvm-backend;runtime;string"
+    )
+
     add_test(NAME NativeExecutableJsonParser
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -1262,6 +1274,12 @@ abcdabcd
             NativeCheckedArrayWrite checked_array_write_index "array index out of bounds")
     add_joyeer_native_checked_trap(
             NativeCheckedArrayMax checked_array_max_index "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedStringNegative checked_string_negative_index "string index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedStringPastEnd checked_string_index_past_end "string index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedStringEmpty checked_string_empty_index "string index out of bounds")
     add_joyeer_native_checked_trap(
             NativeCheckedIndexOverflow checked_index_overflow "integer addition overflow")
     add_joyeer_native_checked_trap(

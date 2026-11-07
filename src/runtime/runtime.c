@@ -153,24 +153,6 @@ static JoyeerString concatStrings(JoyeerString left, JoyeerString right) {
     return result;
 }
 
-static bool stringsEqual(JoyeerString left, JoyeerString right) {
-    return left.count == right.count &&
-           (left.count == 0 || memcmp(left.data, right.data, (size_t)left.count) == 0);
-}
-
-static int64_t compareStrings(JoyeerString left, JoyeerString right) {
-    const int64_t common = left.count < right.count ? left.count : right.count;
-    const int comparison = common == 0 ? 0 : memcmp(left.data, right.data, (size_t)common);
-    if (comparison < 0) return -1;
-    if (comparison > 0) return 1;
-    return (left.count > right.count) - (left.count < right.count);
-}
-
-static uint8_t stringByteAt(JoyeerString value, int64_t index) {
-    if (index < 0 || index >= value.count) joyeer_panic("string index out of bounds");
-    return value.data[index];
-}
-
 static void destroyString(JoyeerString* value) {
     if (value == NULL) return;
     checkedFree((void*)value->data);
@@ -379,10 +361,13 @@ static bool dictionaryKeyEqual(
             return *(const int64_t*)left == *(const int64_t*)right;
         case JOYEER_DICTIONARY_KEY_BOOL:
             return *(const bool*)left == *(const bool*)right;
-        case JOYEER_DICTIONARY_KEY_STRING:
-            return stringsEqual(
-                    *(const JoyeerString*)left,
-                    *(const JoyeerString*)right);
+        case JOYEER_DICTIONARY_KEY_STRING: {
+            const JoyeerString* leftString = (const JoyeerString*)left;
+            const JoyeerString* rightString = (const JoyeerString*)right;
+            return joyeer_string_equal_abi(
+                    leftString->data, leftString->count,
+                    rightString->data, rightString->count);
+        }
         case JOYEER_DICTIONARY_KEY_BYTE:
             return *(const uint8_t*)left == *(const uint8_t*)right;
         default:
@@ -655,30 +640,6 @@ void joyeer_string_concat_abi(
     *result = concatStrings(
             (JoyeerString) { leftData, leftCount },
             (JoyeerString) { rightData, rightCount });
-}
-
-bool joyeer_string_equal_abi(
-        const uint8_t* leftData,
-        int64_t leftCount,
-        const uint8_t* rightData,
-        int64_t rightCount) {
-    return stringsEqual(
-            (JoyeerString) { leftData, leftCount },
-            (JoyeerString) { rightData, rightCount });
-}
-
-int64_t joyeer_string_compare_abi(
-        const uint8_t* leftData,
-        int64_t leftCount,
-        const uint8_t* rightData,
-        int64_t rightCount) {
-    return compareStrings(
-            (JoyeerString) { leftData, leftCount },
-            (JoyeerString) { rightData, rightCount });
-}
-
-uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index) {
-    return stringByteAt((JoyeerString) { data, count }, index);
 }
 
 void* joyeer_dictionary_at_abi(

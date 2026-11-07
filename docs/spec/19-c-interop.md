@@ -304,6 +304,7 @@ existing intrinsics: reserved symbols, exact signatures, authorized units only.
 | Indirect calls through an address | Arrays and dictionaries call compiler-generated clone and destroy functions |
 | Data-symbol import | `environ`, and `stdin`/`stdout`/`stderr` where they are data |
 | Non-returning exports, and `main`/`wmain` exports | `joyeer_panic` and the program entry point |
+| The address of read-only constant data | Panic messages: a core unit cannot pass a `[UInt8]` constant without importing the runtime's array code in Debug |
 | A system-call intrinsic (Linux) | A runtime that does not depend on the C library |
 
 A *runtime unit* restricted to scalars, `Bool` and `Int` addresses (no

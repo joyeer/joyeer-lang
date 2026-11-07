@@ -52,6 +52,11 @@ int64_t joyeer_native_environment(void);
 // or 0 for any other value. A Joyeer binding cannot name the C globals, and the
 // stdio functions it calls need the stream.
 int64_t joyeer_native_stdio(int32_t which);
+// True when the bytes are strict UTF-8: no overlong sequence, surrogate,
+// truncated sequence or code point beyond U+10FFFF. Null data is valid only for
+// a count of zero; a negative count is invalid. Written in Joyeer
+// (src/runtime/joyeer/utf8.joyeer) and exported with this C ABI.
+bool joyeer_host_valid_utf8(const uint8_t* data, int64_t count);
 
 void joyeer_print_int(int64_t value);
 void joyeer_print_uint(uint64_t value);
@@ -124,7 +129,6 @@ int64_t joyeer_string_compare_abi(
     int64_t leftCount,
     const uint8_t* rightData,
     int64_t rightCount);
-uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
 void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value);
 void* joyeer_dictionary_at_abi(
     void* data,

@@ -119,12 +119,14 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 | `joyeer_panic` | every generated trap, all runtime code | R2 |
 | `joyeer_checked_{add,sub,mul,div,rem}_int` | removed in stage 0: generated code checks inline | done |
 | `joyeer_print_{int,uint,float,double,bool,byte}`, `joyeer_print_string_abi` | generated `print` | R3, R4 |
-| `joyeer_string_{equal,compare,byte_at,concat}_abi` | generated string operators | R3 |
+| `joyeer_string_{equal,compare}_abi` | generated string operators | done (stage 1.3) |
+| `joyeer_string_concat_abi` | generated string operators | R3 |
+| string byte access | generated `text[index]` | inline in the backend; no runtime function (stage 1.3) |
 | `joyeer_string_{clone,destroy}_abi`, `joyeer_byte_to_string_abi` | generated ownership code | R3 |
 | `joyeer_array_{create_owned,clone,append_owned,destroy}_abi` | generated array code | R5 |
 | `joyeer_dictionary_{create_owned,clone,set_owned,find,at,destroy}_abi` | generated dictionary code | R6 |
 | `joyeer_native_{bytes,strings}_init`, `joyeer_native_{bytes,string,strings}_assign` | native libraries (Compression), generated `initializing` outputs | R5 |
-| `joyeer_host_valid_utf8` | Compression's C unit | R8 |
+| `joyeer_host_valid_utf8` | Compression's C unit | done (stage 1.2) |
 | `joyeer_native_errno`, `joyeer_native_environment`, `joyeer_native_stdio` | `System` | R8 |
 | `main` / `wmain`, `joyeer_main_uses_arguments` | the C startup | R7 |
 | `joyeer_array_create`, `joyeer_array_at`, `joyeer_dictionary_create`, `joyeer_dictionary_at`, non-`_abi` string forms | removed in stage 0 | done |
@@ -217,7 +219,8 @@ and is out of scope here.
 **D7: Process termination and diagnostics.** Panic must not allocate or touch
 managed values. Recommend: write the message with the C library's `write` or
 `WriteFile` equivalent in one call, then `_Exit(1)`; keep the existing text
-(`Joyeer runtime error: <message>`) and exit status.
+(`Joyeer runtime error: <message>`) and exit status. It also needs a way to name a
+message from Joyeer: see §6 item 9.
 
 **D8: The allocator (Tier 2).** Options: (a) keep libc `malloc`; (b) a Joyeer
 allocator over `VirtualAlloc` / `mmap`: size-class free lists for small blocks,
@@ -254,7 +257,14 @@ All reserved to runtime units, using the existing `@c_extern` / intrinsic path
    C signatures (D4, D7).
 7. A system-call intrinsic on Linux (D10, Tier 2).
 8. Build: emit and archive several runtime units, with debug info, for every
-   claimed target.
+   claimed target. Done for the first target in
+   [decision 0008](../decisions/0008-runtime-core-build-shape.md).
+9. The address of read-only constant data, for panic messages (D7). A `[UInt8]`
+   constant passed to a `pointer:` parameter works in an optimized build but, in
+   Debug, drags in the runtime's array clone and destroy (decision 0008), so a
+   core unit cannot use it. Options: an intrinsic that returns the address of a
+   string literal given to it as a compile-time argument, or a core-dialect
+   exception for borrowed constant arrays that emits no ownership helpers.
 
 Each gets unit tests (lowering, rejection of misuse, tampered IR) and a native
 fixture, as decision 0005 did for the memory intrinsics.
@@ -436,19 +446,30 @@ to 40% between runs; treat only larger differences as real.
 
 The §8 performance gate compares against these rows on the same machine.
 
-### Stage 1: Build shape and pilot (needs no new compiler capability)
+### Stage 1: Build shape and pilot, done
 
-- [ ] 1.1 Build: compile an explicit list of runtime units
-  (`src/runtime/joyeer/*.joyeer`, listed in CMake) with `--emit-runtime-object`
-  using the just-built compiler, with debug info, and add the objects to
-  `JoyeerRuntime` next to the C ones. Record the build shape as a decision.
-- [ ] 1.2 Pilot: `joyeer_host_valid_utf8` in Joyeer (byte loads only), exported
-  with addresses as `Int`; delete the C. Proves the export ABI for a pointer
-  passed as `Int`, Compression's link, Windows whole-archive and ELF grouping,
-  and the `llvm-nm` object check.
-- [ ] 1.3 `joyeer_string_equal_abi`, `joyeer_string_compare_abi` and
-  `joyeer_string_byte_at_abi` in Joyeer; `memcmp` through an ordinary binding
-  until 3.2, `joyeer_panic` still C. Benchmarks against 0.3.
+- [x] 1.1 The core module `runtime.core` (`src/runtime/joyeer/*.joyeer`, an
+  explicit list in `src/runtime/CMakeLists.txt`) is compiled by the just-built
+  compiler into one object that `JoyeerRuntime` archives beside the C
+  ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). A test
+  (`RuntimeCoreObjectSymbols`, `llvm-nm`) allows only the approved exports and
+  imports.
+- [x] 1.2 `joyeer_host_valid_utf8` is Joyeer (`utf8.joyeer`); its C definition,
+  `host.c` and `host_internal.h` are gone. Checked against an independent
+  Unicode-table reference over every 1-, 2- and 3-byte sequence and the boundary
+  4-byte sequences. Compression links unchanged.
+- [x] 1.3 `joyeer_string_equal_abi` and `joyeer_string_compare_abi` are Joyeer
+  (`strings.joyeer`, `memcmp` through an ordinary binding until 3.2). String byte
+  access is now an inline checked load in the backend, and
+  `joyeer_string_byte_at_abi` is removed from the ABI; `text[index]` has native
+  trap fixtures for negative, past-end and empty. Dictionary string keys call the
+  exported equality. Release benchmarks match the Stage 0 baseline (1 KiB equal
+  and compare 34.2 ns, 16 B within noise).
+
+Finding: the symbol gate caught that a `[UInt8]` constant passed to a `pointer:`
+parameter makes a Debug build import the runtime's array clone and destroy. Core
+units must use scalars and addresses only (D3). The runtime therefore has no way
+yet to hand `joyeer_panic` a message from Joyeer; see D7 and §6 item 9.
 
 ### Stage 2: Spikes and decisions
 
@@ -473,6 +494,7 @@ Each with unit tests for lowering, misuse and tampered IR, and a native fixture.
 - [ ] 3.5 The core-dialect diagnostic (D3), turned on for every unit in
   `src/runtime/joyeer/`.
 - [ ] 3.6 Data-symbol imports (D5).
+- [ ] 3.7 The address of read-only constant data, for panic messages (§6 item 9).
 
 ### Stage 4: Substrate (R2)
 

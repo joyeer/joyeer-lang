@@ -112,3 +112,21 @@ add_custom_target(runtime-benchmark
     DEPENDS RuntimeBenchmarks
     COMMENT "Running the runtime micro-benchmarks"
     VERBATIM)
+
+# The Joyeer runtime core object may define only the approved exports and call
+# only the approved imports. Update both lists in the same change that adds a
+# function to src/runtime/joyeer/ (runtime plan §4).
+get_filename_component(joyeer_llvm_bin "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
+find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm.exe
+    HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
+get_target_property(JOYEER_RUNTIME_CORE_OBJECT JoyeerRuntime JOYEER_CORE_OBJECT)
+if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
+    add_test(NAME RuntimeCoreObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_CORE_OBJECT}"
+            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi"
+            "-DALLOWED_UNDEFINED=joyeer_panic;memcmp"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+endif()

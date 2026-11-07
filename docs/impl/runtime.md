@@ -1,7 +1,9 @@
 # Runtime Implementation
 
-The C11 runtime is declared in `src/runtime/runtime.h`; its implementation lives
-under `src/runtime/`, with strict UTF-8 validation in `host.c`. The
+The runtime is declared in `src/runtime/runtime.h`. Most of it is C under
+`src/runtime/`; the Joyeer core (`src/runtime/joyeer/`: UTF-8 validation, string
+equality and ordering) is compiled by the build-tree compiler into one object in
+the same archive ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.

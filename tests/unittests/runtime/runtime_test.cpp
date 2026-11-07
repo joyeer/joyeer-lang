@@ -100,9 +100,6 @@ int64_t compareStrings(JoyeerString left, JoyeerString right) {
     return joyeer_string_compare_abi(left.data, left.count, right.data, right.count);
 }
 
-uint8_t byteAt(JoyeerString value, int64_t index) {
-    return joyeer_string_byte_at_abi(value.data, value.count, index);
-}
 
 JoyeerArray createArray(const void* values, int64_t count, int64_t elementSize) {
     JoyeerArray result {};
@@ -141,7 +138,7 @@ TEST(RuntimeTest, ConcatenatesComparesAndIndexesStrings) {
     EXPECT_EQ(std::memcmp(joined.data, "Joyeer", 6), 0);
     EXPECT_TRUE(stringsEqual(joined, view(std::string("Joyeer"))));
     EXPECT_LT(compareStrings(view(left), view(right)), 0);
-    EXPECT_EQ(byteAt(joined, 3), static_cast<uint8_t>('e'));
+    EXPECT_EQ(joined.data[3], static_cast<uint8_t>('e'));
 
     joyeer_string_destroy_abi(&joined);
     EXPECT_EQ(joined.data, nullptr);
@@ -176,12 +173,6 @@ TEST(RuntimeTest, ConvertsBytesToOwnedSingleByteStrings) {
     EXPECT_EQ(text.data[0], static_cast<uint8_t>('J'));
     joyeer_string_destroy_abi(&text);
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
-}
-
-TEST(RuntimeDeathTest, TrapsStringBoundsFailures) {
-    EXPECT_DEATH(
-            static_cast<void>(byteAt(view(std::string("x")), 1)),
-            "string index out of bounds");
 }
 
 TEST(RuntimeTest, CopiesIndexesAndMutatesArrays) {
@@ -867,17 +858,6 @@ TEST(RuntimeBlackBoxTest, ConvertsByteValuesToOneByteStrings) {
         joyeer_string_destroy_abi(&text);
     }
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
-}
-
-TEST(RuntimeBlackBoxDeathTest, TrapsStringIndexOutsideTheBytes) {
-    const std::string text("ab");
-    const auto at = [&](int64_t index) {
-        return byteAt(view(text), index);
-    };
-    EXPECT_EQ(at(0), 'a');
-    EXPECT_EQ(at(1), 'b');
-    EXPECT_DEATH(static_cast<void>(at(2)), "string index out of bounds");
-    EXPECT_DEATH(static_cast<void>(at(-1)), "string index out of bounds");
 }
 
 TEST(RuntimeBlackBoxDeathTest, PanicPrintsTheMessageAndExitsWithFailure) {

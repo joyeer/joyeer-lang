@@ -92,6 +92,7 @@ in the spec.
 | [0005](decisions/0005-runtime-unsafe-memory.md) | A runtime-only unsafe memory layer of `Int`-address intrinsics |
 | [0006](decisions/0006-runprocess-in-joyeer.md) | `runProcess` in Joyeer over `CreateProcessW` and `posix_spawn` |
 | [0007](decisions/0007-stdio-in-joyeer.md) | `writeStderr` and `readStdinLine` over the C library's own streams |
+| [0008](decisions/0008-runtime-core-build-shape.md) | The Joyeer runtime core is one module compiled by the build-tree compiler into one object in `JoyeerRuntime` |
 
 ## Conventions
 
