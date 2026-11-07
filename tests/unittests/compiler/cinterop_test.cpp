@@ -574,6 +574,49 @@ TEST_F(CInteropTest, VerifierTiesTheEntryPointExportToACoreUnit) {
     EXPECT_FALSE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
 }
 
+TEST_F(CInteropTest, DeclaresAndLowersDataSymbolsAsAddressesNotCalls) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_data(symbol: "environ")
+func environAddress(): Int
+func environment(): Int { return environAddress() }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("@environ = external global i8"), std::string::npos);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @environ to i64"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@environ("), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsMalformedDataSymbolDeclarations) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_data(symbol: \"environ\")\nfunc f(value: Int): Int\n",
+            "@c_data(symbol: \"environ\")\nfunc f(): Int32\n",
+            "@c_data(symbol: \"environ\")\nfunc f(): Void\n",
+            "@c_data(symbol: \"environ\")\nfunc f(): Int { return 0 }\n",
+            "@c_data(symbol: \"main\")\nfunc f(): Int\n",
+            "@c_data(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(): Int\n",
+            "@c_data(symbol: \"environ\", pointer: \"bytes\")\nfunc f(): Int\n",
+            "@c_data(symbol: \"environ\")\n@c_extern(symbol: \"environ\")\nfunc f(): Int\n",
+            // One symbol cannot be both a function and a data symbol.
+            "@c_data(symbol: \"environ\")\nfunc a(): Int\n@c_extern(symbol: \"environ\")\nfunc b(): Int\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    // Like every native binding, it is runtime-only.
+    check("@c_data(symbol: \"environ\")\nfunc f(): Int\n", false);
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedNativeBinding));
+    // Two declarations of one data symbol agree.
+    check("@c_data(symbol: \"environ\")\nfunc a(): Int\n@c_data(symbol: \"environ\")\nfunc b(): Int\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
 TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
     for (const auto& declaration : std::vector<std::string> {
             "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int32): Int\n",

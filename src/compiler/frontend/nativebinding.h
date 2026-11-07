@@ -24,6 +24,9 @@ struct NativeBinding {
     // count (`pointer: "label"` on the annotation). An `inout` byte buffer is
     // always one of these.
     std::vector<uint32_t> pointerParameters;
+    // `@c_data`: a bodyless import whose value is the address of a C data symbol
+    // (spec 19.4.6). No function is declared and nothing is called.
+    bool dataSymbol = false;
 
     [[nodiscard]] bool passesPointer(size_t parameter) const {
         for (const auto index : pointerParameters) {

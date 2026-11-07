@@ -293,24 +293,16 @@ obligations of C. They exist so that the runtime itself can be written in
 Joyeer ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)); they add
 no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
-#### 19.4.6 Accepted runtime capabilities (not yet implemented) ⏳
+#### 19.4.6 Runtime capabilities still proposed ⏳
 
-Writing the whole runtime in Joyeer ([runtime plan](../plan/runtime-in-joyeer.md))
-needs operations beyond §19.4.5. The designs below are **accepted**
-([decision 0009](../decisions/0009-runtime-core-capabilities.md)) but are **not
-implemented**; until each lands, the compiler rejects it. All follow the rules of
-the existing intrinsics: reserved symbols, exact signatures, and units authorized
-for native bindings only.
+Two operations the runtime plan ([runtime plan](../plan/runtime-in-joyeer.md))
+may want have **no decision** yet and are rejected by the compiler: bulk memory
+(`memcpy`, `memmove`, `memset`, `memcmp`, which today are ordinary C library
+imports) and, for a runtime that does not depend on the C library, a Linux
+system-call intrinsic. Each would follow the rules of §19.4.5: a reserved symbol,
+an exact signature, and authorized units only.
 
-| Capability | Declaration | Effect |
-|---|---|---|
-| Data symbol | `@c_data(symbol: "environ")` on `func environAddress(): Int` | The address of that C data symbol; repeated declarations must agree |
-
-Still proposed, without a decision: bulk memory (`memcpy`, `memmove`, `memset`,
-`memcmp`) and, for a runtime that does not depend on the C library, a Linux
-system-call intrinsic.
-
-#### 19.4.7 Core units, `Never` results and the program entry point
+#### 19.4.7 Core units, `Never` results, data symbols and the program entry point
 
 A **core unit**, selected with `--runtime-core-module <name>` (which implies
 `--runtime-module`), may use only `Bool`, the integer and floating types, `Void`,
@@ -326,6 +318,15 @@ it declares a C function that does not return (`exit`); the call is followed by
 unreachable code and the declaration is `noreturn`. On an export it declares a
 Joyeer function that never returns (the runtime's panic); the C-callable entry is
 `noreturn` and does not return even if the body is mis-typed.
+
+A **data symbol** is declared with `@c_data(symbol: "name")` on a bodyless
+`func addressName(): Int` with no parameters: the function's value is the address
+of that C data symbol, and nothing is called. It is a C import in every other
+respect: authorized units only, the symbol must be a C identifier and not a
+startup or intrinsic name, repeated declarations must agree, and one symbol
+cannot be both a function (`@c_extern`) and a data symbol. For a C variable that
+holds a pointer, such as glibc's `stdout`, the address yielded is the address of
+the variable, so the pointer is read with the `load_u64` intrinsic.
 
 Only a core unit may export the platform's program entry point:
 `@c_export(symbol: "main")` or `"wmain"`, with the platform's C signature

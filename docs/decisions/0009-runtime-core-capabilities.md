@@ -2,11 +2,11 @@
 
 - Status: accepted (decided 2026-11-08). Static slots (D1), indirect calls (D2), core units (D3),
   Never results and the core entry export (D4, part of D7) and the
-  constant-data address (part of D7) are implemented and
-  measured; D5 is an accepted design for runtime plan stage 3.
+  constant-data address (part of D7) and data symbols (D5) are implemented and
+  measured. Bulk memory (3.2) still needs its own decision.
 - Spec: [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics) (implemented
-  intrinsics) and [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-)
-  (accepted, not yet implemented).
+  intrinsics) and [§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
+  (Never results, core units, data symbols and the entry point).
 
 ## Context
 

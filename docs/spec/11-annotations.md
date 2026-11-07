@@ -17,8 +17,8 @@ attribute_arg   ::= [ identifier ':' ] expression
 ```
 
 This is the parenthesized production of [§17](17-grammar.md). Each annotation
-fixes its own argument shape and rejects any other: `@c_extern`/`@c_export`
-take one `symbol:` string literal, `@c_extern` may add `pointer:` arguments
+fixes its own argument shape and rejects any other: `@c_extern`, `@c_export` and `@c_data`
+each take one `symbol:` string literal, `@c_extern` may add `pointer:` arguments
 naming bare-pointer parameters (§19.4.4), and `@platform` takes unlabelled
 platform names. Attribute placement and arguments are checked against the named
 annotation's rules; this production does not authorize unknown annotations or

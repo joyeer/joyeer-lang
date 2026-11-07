@@ -74,4 +74,4 @@ Prefer an internal scoped region mechanism over exposing pointer arithmetic.
 | Any public native capability? | Separate user-FFI/unsafe proposal |
 | Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](native-link-inputs.md) |
 | Complex ABI features | Separate gates: aggregates by value, unions/bit-fields, callbacks, varargs, `long double` |
-| Runtime-only capabilities | Static storage, bulk memory, indirect calls, data-symbol imports, non-returning and `main` exports, a Linux syscall intrinsic: accepted in [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-) and decided in the [runtime plan](runtime-in-joyeer.md) §5 |
+| Runtime-only capabilities | Implemented: static storage, indirect calls, data symbols, Never results, core units and the core entry export ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics), [§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)). Still undecided: bulk memory and a Linux syscall intrinsic ([§19.4.6](../spec/19-c-interop.md#1946-runtime-capabilities-still-proposed-)) |

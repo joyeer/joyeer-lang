@@ -81,7 +81,9 @@ std::vector<Diagnostic> Builder::build() {
         // Reserve C linkage names first, so private generated helpers can never
         // take a native symbol and force LLVM to rename the public entry.
         for (const auto& function : source.functions) {
-            if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
+            if (function.nativeBinding.has_value() && function.nativeBinding->dataSymbol) {
+                declareDataSymbol(function.nativeBinding->symbol);
+            } else if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
                 declareNativeFunction(function);
             }
         }
@@ -91,7 +93,8 @@ std::vector<Diagnostic> Builder::build() {
         for (const auto& function : source.functions) {
             if (!function.isExternal) {
                 functions.emplace(function.id, declareFunction(function));
-            } else if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
+            } else if (function.nativeBinding.has_value() && !function.nativeBinding->dataSymbol &&
+                       !intrinsic::reserved(function.nativeBinding->symbol)) {
                 functions.emplace(function.id, declareNativeFunction(function));
             }
         }
@@ -281,6 +284,18 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
             source.isRuntimeObject || function.nativeBinding.has_value()
                     ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
             "joyeer_fn_" + std::to_string(function.id), module());
+}
+
+llvm::GlobalVariable* Builder::declareDataSymbol(const std::string& symbol) {
+    if (auto* existing = module().getNamedGlobal(symbol)) return existing;
+    if (module().getNamedValue(symbol) != nullptr) {
+        const auto message = "native symbol '" + symbol + "' is declared as both a function and a data symbol";
+        report(DiagnosticId::conflictingNativeSymbol, {}, message);
+        throw std::runtime_error(message);
+    }
+    // The type is a placeholder: only the symbol's address is ever taken.
+    return new llvm::GlobalVariable(module(), builder.getInt8Ty(), false,
+            llvm::GlobalValue::ExternalLinkage, nullptr, symbol);
 }
 
 llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {

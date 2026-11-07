@@ -88,6 +88,8 @@ private:
     void defineTypes();
     llvm::Function* declareFunction(const ir::Function& function);
     llvm::Function* declareNativeFunction(const ir::Function& function);
+    // The external global behind a `@c_data` binding; declared once per symbol.
+    llvm::GlobalVariable* declareDataSymbol(const std::string& symbol);
     llvm::Function* declareCFunction(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Type*> parameters,
             llvm::ArrayRef<typing::TypeKind> parameterKinds = {},

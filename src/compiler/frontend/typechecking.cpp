@@ -709,7 +709,7 @@ private:
         std::optional<NativeBinding> binding;
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
-            if (name != "c_extern" && name != "c_export") {
+            if (name != "c_extern" && name != "c_export" && name != "c_data") {
                 report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
                        "unknown annotation '@" + name + "'");
                 continue;
@@ -720,10 +720,11 @@ private:
                 continue;
             }
             binding = NativeBinding {
-                name == "c_extern" ? NativeBindingKind::cImport : NativeBindingKind::cExport,
+                name == "c_export" ? NativeBindingKind::cExport : NativeBindingKind::cImport,
                 {},
                 attribute.span,
             };
+            binding->dataSymbol = name == "c_data";
             if (attribute.arguments.empty()) {
                 report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
                        "C annotations require a 'symbol:' string-literal argument");
@@ -798,6 +799,21 @@ private:
         if (declaration->returnType == nullptr) {
             report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
                    "C bindings require an explicit result type, including Void");
+        }
+        if (binding->dataSymbol) {
+            // @c_data names a data symbol, not a function: no parameters, and the
+            // address it yields is an Int. The name must not be a startup symbol.
+            const auto& shape = model->callables.at(function);
+            const auto* result = model->typeContext.type(shape.result);
+            if (!declaration->parameters.empty() || result == nullptr || result->kind != TypeKind::integer ||
+                !binding->pointerParameters.empty()) {
+                report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                       "@c_data declares 'func name(): Int', the address of a C data symbol");
+            }
+            if (isCEntrySymbol(binding->symbol)) {
+                report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                       "@c_data must not name a toolchain executable entry point");
+            }
         }
         const auto* symbol = model->semanticModelValue->symbol(function);
         // Only a core unit (spec 19.4.6) may export the platform's program entry
@@ -875,7 +891,10 @@ private:
             const auto* binding = model->nativeBinding(symbol.id);
             if (binding == nullptr) continue;
             const auto [previous, inserted] = declarations.emplace(binding->symbol, symbol.id);
-            if (!inserted) {
+            if (!inserted && model->nativeBinding(previous->second)->dataSymbol != binding->dataSymbol) {
+                report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                       "native symbol '" + binding->symbol + "' is declared as both a function and a data symbol");
+            } else if (!inserted) {
                 const auto& left = model->callables.at(previous->second);
                 const auto& right = model->callables.at(symbol.id);
                 const auto compatible = [&](TypeId a, TypeId b) {

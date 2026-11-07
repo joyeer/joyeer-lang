@@ -100,7 +100,7 @@ state, and the change is its own phase (R12).
 
 | Item | Where it is tracked | How it touches the runtime |
 |---|---|---|
-| Spec text for the runtime-only capabilities | [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-) (proposed) | Each capability becomes accepted spec text when its decision lands |
+| Spec text for the runtime-only capabilities | [§19.4.6](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point) (proposed) | Each capability becomes accepted spec text when its decision lands |
 | `assert`, `precondition`, `fatalError` | [library plan](library.md) §2 | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
 | `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
 | User generics | [§20](../spec/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
@@ -502,7 +502,7 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 - [x] 3.4 Indirect calls (D2), done in 2.2.
 - [x] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for
   every unit in `src/runtime/joyeer/`.
-- [ ] 3.6 Data-symbol imports (D5, `@c_data`).
+- [x] 3.6 Data-symbol imports (D5, `@c_data`).
 - [x] 3.7 The constant-data address intrinsic, for panic messages (D7).
 
 ### Stage 4: Substrate (R2)

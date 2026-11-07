@@ -27,3 +27,8 @@ int64_t cinterop_text_length(int64_t address) {
     while (text[length] != 0) ++length;
     return length;
 }
+
+// C data symbols, reached by address with @c_data (spec 19.4.6).
+int64_t cinterop_data_value = 4242;
+const char cinterop_data_text[] = "data symbol";
+int64_t cinterop_data_read(void) { return cinterop_data_value; }

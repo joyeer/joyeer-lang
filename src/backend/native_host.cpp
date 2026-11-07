@@ -118,6 +118,11 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     const auto& callee = *found->second;
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
+    if (callee.isExternal && callee.nativeBinding.has_value() && callee.nativeBinding->dataSymbol) {
+        // The value of a data-symbol binding is the symbol's address; nothing is called.
+        return builder.CreatePtrToInt(declareDataSymbol(callee.nativeBinding->symbol),
+                builder.getInt64Ty(), temporary());
+    }
     if (callee.isExternal && callee.nativeBinding.has_value()) {
         std::vector<llvm::Value*> nativeArguments;
         for (size_t index = 0; index < arguments.size(); ++index) {

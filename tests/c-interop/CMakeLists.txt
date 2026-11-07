@@ -307,3 +307,21 @@ foreach(profile IN ITEMS Debug Optimized)
     set_tests_properties("JoyeerCInterop.NeverExport${profile}" PROPERTIES
         PASS_REGULAR_EXPRESSION "never export before" LABELS "c-interop;native" TIMEOUT 30)
 endforeach()
+
+# The address of a C data symbol with @c_data (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.DataSymbol${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/data-symbol.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/data-symbol-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.data_symbol;--runtime-module;runtime.data_symbol;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=data symbols passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.DataSymbol${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()

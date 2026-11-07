@@ -666,6 +666,11 @@ VerificationResult Verifier::verify(const Module& module) const {
                 return types.contains(id) && typing::isNativeScalar(types.at(id)->kind);
             };
             const bool scalarResult = scalar(function.resultType);
+            // A data symbol is an import with no parameters whose result is its address.
+            valid &= !binding.dataSymbol ||
+                    (importing && function.parameters.empty() && binding.pointerParameters.empty() &&
+                     hasKind(function.resultType, typing::TypeKind::integer) &&
+                     !isCEntrySymbol(binding.symbol) && !intrinsic::reserved(binding.symbol));
             valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType) ||
                        hasKind(function.resultType, typing::TypeKind::never)) &&
                     function.returnsValue == scalarResult;
@@ -733,7 +738,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                     return types.contains(a) && types.contains(b) &&
                             typing::sameNativeRepresentation(types.at(a)->kind, types.at(b)->kind);
                 };
-                bool matches = compatible(function.resultType, other.resultType) &&
+                bool matches = binding.dataSymbol == other.nativeBinding->dataSymbol &&
+                        compatible(function.resultType, other.resultType) &&
                         function.parameters.size() == other.parameters.size();
                 for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
                     matches &= compatible(function.parameters[index].value.type, other.parameters[index].value.type);
