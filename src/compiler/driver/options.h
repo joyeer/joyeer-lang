@@ -75,6 +75,8 @@ struct CompileOptions {
     std::vector<std::filesystem::path> sourceFiles;
     std::vector<ModuleSources> modules;
     std::vector<std::string> runtimeModules;
+    // Runtime units that may use only scalars (spec 19.4.6); a subset of runtimeModules.
+    std::vector<std::string> coreModules;
     std::vector<std::filesystem::path> nativeLibraries;
     // <root>/lib of the running toolchain; used only when standardLibrary is set.
     std::filesystem::path libraryDirectory;

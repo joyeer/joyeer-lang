@@ -14,6 +14,40 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
     if (descriptor.operation == Operation::addressOf) {
         return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
     }
+    if (descriptor.operation == Operation::literalAddress) {
+        // The argument is a string literal, so its data is a private constant
+        // global. Re-emit those bytes with a NUL terminator and return the address.
+        // The data pointer is either the constant itself or an extractvalue of the
+        // literal's constant {pointer, count} struct, depending on folding.
+        llvm::Value* pointerValue = arguments[0];
+        if (auto* extraction = llvm::dyn_cast<llvm::ExtractValueInst>(pointerValue)) {
+            if (auto* literal = llvm::dyn_cast<llvm::ConstantStruct>(extraction->getAggregateOperand());
+                    literal != nullptr && extraction->getNumIndices() == 1 && extraction->getIndices()[0] == 0) {
+                pointerValue = literal->getOperand(0);
+            }
+        }
+        auto* global = llvm::dyn_cast<llvm::GlobalVariable>(pointerValue->stripPointerCasts());
+        llvm::Constant* initializer = global != nullptr && global->hasInitializer()
+                ? global->getInitializer() : nullptr;
+        std::string bytes;
+        bool literal = false;
+        if (const auto* array = llvm::dyn_cast_or_null<llvm::ConstantDataArray>(initializer)) {
+            bytes = array->getRawDataValues().str();
+            literal = true;
+        } else if (initializer != nullptr && llvm::isa<llvm::ConstantAggregateZero>(initializer) &&
+                   initializer->getType()->isArrayTy()) {
+            // An empty literal, or one made only of NUL bytes.
+            bytes.assign(initializer->getType()->getArrayNumElements(), '\0');
+            literal = true;
+        }
+        if (!literal) {
+            report(DiagnosticId::unsupportedExternal, {},
+                    "joyeer_intrinsic_literal_address requires a string literal argument");
+            return nullptr;
+        }
+        auto* terminated = stringLiteral(bytes, true);
+        return builder.CreatePtrToInt(terminated, builder.getInt64Ty(), temporary());
+    }
     if (descriptor.operation == Operation::callVoid1 || descriptor.operation == Operation::callVoid2) {
         // The callee is the target's ordinary C function taking addresses.
         auto* function = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
@@ -49,6 +83,7 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::addressOf:
         case Operation::callVoid1:
         case Operation::callVoid2:
+        case Operation::literalAddress:
             break;
     }
     return nullptr;

@@ -391,14 +391,67 @@ private:
         });
     }
 
+    // A core unit (spec 19.4.6) is part of the runtime, so it may use only the
+    // types that never lower to a runtime call: Bool, the integer and floating
+    // types, Void and Never.
+    [[nodiscard]] bool allowedInCoreUnit(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return true;
+        switch (record->kind) {
+            case TypeKind::error:
+            case TypeKind::voidType:
+            case TypeKind::never:
+            case TypeKind::boolean:
+                return true;
+            default:
+                return isNumeric(record->kind);
+        }
+    }
+
+    // The string-literal argument of joyeer_intrinsic_literal_address, which is
+    // read as constant data and never becomes a String value, is the one managed
+    // value a core unit may write.
+    const syntax::Node* literalAddressArgument = nullptr;
+    // Set while resolving the parameter of the literal-address intrinsic itself.
+    bool coreCheckSuspended = false;
+
+    [[nodiscard]] static bool declaresLiteralAddress(const syntax::FunctionDeclSyntax& declaration) {
+        for (const auto& attribute : declaration.attributes) {
+            if (attribute.name == nullptr || attribute.name->rawValue != "c_extern" ||
+                attribute.arguments.empty() || attribute.arguments.front()->value == nullptr ||
+                attribute.arguments.front()->value->kind != syntax::Kind::literalExpr) {
+                continue;
+            }
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(
+                    attribute.arguments.front()->value);
+            if (literal->literal != nullptr && literal->literal->rawValue == "joyeer_intrinsic_literal_address") {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void requireCoreType(const syntax::NodePtr& node, TypeId type) {
+        if (node == nullptr || coreCheckSuspended || node.get() == literalAddressArgument ||
+            !model->semanticModelValue->isCoreSource(node->span) || allowedInCoreUnit(type)) {
+            return;
+        }
+        report(TypeCheckingDiagnosticId::managedTypeInCoreUnit, node->span,
+               "a runtime core unit may use only scalar types, but this has type '" +
+                       model->typeContext.displayName(type) +
+                       "', whose operations call into the runtime");
+    }
+
     void recordNodeType(const syntax::NodePtr& node, TypeId type) {
         const auto id = model->semanticModelValue->nodeId(node);
         if (id.has_value()) model->nodeTypes[*id] = type;
+        requireCoreType(node, type);
     }
 
     void recordDeclaredType(const syntax::NodePtr& node, TypeId type) {
         const auto symbol = model->semanticModelValue->declaredSymbol(node);
         if (symbol.has_value()) model->symbolTypes[*symbol] = type;
+        requireCoreType(node, type);
     }
 
     void recordResolvedReference(
@@ -622,10 +675,15 @@ private:
             model->typeContext.voidType(),
         };
         signature.parameters.reserve(declaration->parameters.size());
+        const bool literalAddress = declaresLiteralAddress(*declaration);
         for (const auto& parameter : declaration->parameters) {
+            // The literal-address intrinsic's own String parameter is not a
+            // value a core unit builds; every other declaration is checked.
+            coreCheckSuspended = literalAddress;
             const auto type = resolveType(parameter->type).value_or(
                     model->typeContext.errorType());
             recordDeclaredType(parameter, type);
+            coreCheckSuspended = false;
             if (parameter->isReceiver) {
                 signature.receiverType = type;
                 continue;
@@ -635,6 +693,7 @@ private:
         if (declaration->returnType != nullptr) {
             signature.result = resolveType(declaration->returnType).value_or(
                     model->typeContext.errorType());
+            requireCoreType(declaration->returnType, signature.result);
         }
 
         model->symbolTypes[*function] = signature.result;
@@ -1745,6 +1804,11 @@ private:
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
+            semanticTarget->name == "print" && model->semanticModelValue->isCoreSource(expression->span)) {
+            report(TypeCheckingDiagnosticId::managedTypeInCoreUnit, expression->span,
+                   "a runtime core unit must not call print, which is implemented by the runtime");
+        }
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::method) {
             // A method needs a receiver value; `Type.method(...)` has none.
             const auto base = expression->callee->kind == syntax::Kind::memberExpr
@@ -1837,8 +1901,26 @@ private:
                 receiverResultType = model->typeContext.optionalType(baseType->arguments[1]);
             }
         }
+        const bool literalAddressCall = target.has_value() &&
+                model->nativeBinding(*target) != nullptr &&
+                model->nativeBinding(*target)->symbol == "joyeer_intrinsic_literal_address";
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
             const auto& argument = expression->arguments[index];
+            if (literalAddressCall && index == 0) {
+                // The data is read at compile time: it must be a string literal.
+                const auto literal = argument->value != nullptr &&
+                        argument->value->kind == syntax::Kind::literalExpr
+                        ? std::static_pointer_cast<syntax::LiteralExprSyntax>(argument->value)
+                        : nullptr;
+                if (literal == nullptr || literal->literal == nullptr ||
+                    literal->literal->kind != stringLiteral) {
+                    report(TypeCheckingDiagnosticId::invalidCallArguments,
+                           argument->value != nullptr ? argument->value->span : argument->span,
+                           "joyeer_intrinsic_literal_address requires a string literal argument");
+                } else {
+                    literalAddressArgument = argument->value.get();
+                }
+            }
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
@@ -3146,6 +3228,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.conflicting-native-symbol";
         case TypeCheckingDiagnosticId::invalidNumericLiteral:
             return "type-checking.invalid-numeric-literal";
+        case TypeCheckingDiagnosticId::managedTypeInCoreUnit:
+            return "type-checking.managed-type-in-core-unit";
     }
     return "type-checking.unknown";
 }

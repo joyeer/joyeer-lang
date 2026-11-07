@@ -218,3 +218,21 @@ add_custom_target(cinterop-indirect-benchmark
     COMMAND CInteropIndirectBenchmark
     DEPENDS CInteropIndirectBenchmark
     VERBATIM)
+
+# The address of a string literal's NUL-terminated constant data (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.LiteralAddress${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/literal-address.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/literal-address-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.literal;--runtime-module;runtime.literal;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=literal addresses passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.LiteralAddress${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()

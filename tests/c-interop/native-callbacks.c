@@ -18,3 +18,12 @@ static void clone_one(void* destination, const void* source) {
 int64_t cinterop_destroy_address(void) { return (int64_t)(intptr_t)&destroy_one; }
 int64_t cinterop_clone_address(void) { return (int64_t)(intptr_t)&clone_one; }
 int64_t cinterop_destroy_count(void) { return destroyed; }
+
+// Length of a NUL-terminated C string given as an address, for the
+// literal-address fixture (spec 19.4.6).
+int64_t cinterop_text_length(int64_t address) {
+    const char* text = (const char*)(intptr_t)address;
+    int64_t length = 0;
+    while (text[length] != 0) ++length;
+    return length;
+}

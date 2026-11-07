@@ -18,7 +18,7 @@ add_custom_command(
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
         COMMAND "$<TARGET_FILE:joyeer>"
                 --module-name runtime.core
-                --runtime-module runtime.core
+                --runtime-core-module runtime.core
                 "$<IF:$<CONFIG:Debug>,-O0,-O2>"
                 "$<IF:$<CONFIG:Debug>,-gfull,-g0>"
                 --emit-runtime-object "${JOYEER_RUNTIME_CORE_OBJECT}"

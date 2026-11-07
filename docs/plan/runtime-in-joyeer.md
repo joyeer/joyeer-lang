@@ -500,10 +500,10 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 - [ ] 3.3 Non-returning exports (`Never`) and `main`/`wmain` exports in core units
   only (D4, D7).
 - [x] 3.4 Indirect calls (D2), done in 2.2.
-- [ ] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for
+- [x] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for
   every unit in `src/runtime/joyeer/`.
 - [ ] 3.6 Data-symbol imports (D5, `@c_data`).
-- [ ] 3.7 The constant-data address intrinsic, for panic messages (D7).
+- [x] 3.7 The constant-data address intrinsic, for panic messages (D7).
 
 ### Stage 4: Substrate (R2)
 

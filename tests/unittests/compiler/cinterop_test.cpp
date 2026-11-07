@@ -338,6 +338,109 @@ func use(): Int {
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
+// Core units (spec 19.4.6) may use only scalars, because everything else lowers
+// to a call into the runtime that they are part of.
+TEST_F(CInteropTest, AcceptsScalarOnlyCodeInACoreUnit) {
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func loadByte(address: Int): UInt8
+let limit: Int = 4
+func sum(address: Int, count: Int): Int {
+    var total = 0
+    var index = 0
+    while index < count && index < limit {
+        total = total + (loadByte(address: address + index) as Int)
+        index = index + 1
+    }
+    return total
+}
+func ready(flag: Bool, ratio: Double): Bool { return flag && ratio > 0.5 }
+)")}, true, true}});
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, RejectsEveryManagedTypeInACoreUnit) {
+    for (const auto& source : std::vector<std::string> {
+            "func f(text: String): Int { return 0 }\n",
+            "func f(): Int { let text = \"x\"\n return 0 }\n",
+            "func f(): Int { let values = [1, 2]\n return 0 }\n",
+            "func f(): Int { let values: [Int: Int] = [:]\n return 0 }\n",
+            "func f(): Int? { return nil }\n",
+            "func f(): Result<Int, Int> { return .Ok(1) }\n",
+            "struct Pair { var left: Int }\nfunc f(): Int { let pair = Pair(left: 1)\n return pair.left }\n",
+            "enum Mode { Fast, Slow }\nfunc f(): Int { let mode = Mode.Fast\n return 0 }\n",
+            "func f() { print(value: 1) }\n",
+            "let table: [UInt8] = [1, 2]\n",
+            "func f(): String { return \"x\" }\n" }) {
+        checkModules({{"runtime.core", {parse(source)}, true, true}});
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::managedTypeInCoreUnit)) << source;
+    }
+}
+
+TEST_F(CInteropTest, AllowsAStringLiteralOnlyAsTheArgumentOfTheConstantAddressIntrinsic) {
+    // A core unit names a message with the intrinsic and builds no String.
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(): Int { return messageAddress(text: "boom") }
+)")}, true, true}});
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // Any other String in a core unit is still rejected.
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(): Int {
+    let text = "boom"
+    return messageAddress(text: "boom") + text.count
+}
+)")}, true, true}});
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::managedTypeInCoreUnit));
+}
+
+TEST_F(CInteropTest, RequiresALiteralForTheConstantAddressIntrinsic) {
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(text: String): Int { return messageAddress(text: text) }
+)");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments));
+    // Wrong shapes are not the intrinsic.
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_literal_address\")\nfunc f(text: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_literal_address\")\nfunc f(text: String): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_literal_address\")\nfunc f(text: String, extra: Int): Int\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+}
+
+TEST_F(CInteropTest, LowersTheConstantAddressToNulTerminatedReadOnlyData) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(): Int { return messageAddress(text: "boom") }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("c\"boom\\00\""), std::string::npos);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @.joyeer.panic."), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {
+    // The same code is fine in a runtime unit that is not a core unit.
+    check("func f(text: String): Int { return text.count }\n"
+          "func g() { print(value: \"x\") }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
 TEST_F(CInteropTest, LowersIndirectCallIntrinsicsAsCallsThroughAnAddress) {
     ASSERT_NO_FATAL_FAILURE(lower(R"(
 @c_extern(symbol: "joyeer_intrinsic_call_void1")

@@ -236,6 +236,7 @@ public:
                 indexNode(file);
                 model->sourceModules_[file->span.sourceId] = activeModule;
                 model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
+                model->coreSources_[file->span.sourceId] = modules[index].coreContext;
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;

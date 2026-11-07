@@ -1,7 +1,8 @@
 # 0009: Capabilities the Joyeer runtime core needs from the compiler
 
-- Status: accepted (decided 2026-11-08). Indirect calls (D2) are implemented and
-  measured; D1, D3, D4, D5 and D7 are accepted designs for runtime plan stage 3.
+- Status: accepted (decided 2026-11-08). Indirect calls (D2), core units (D3) and the
+  constant-data address (part of D7) are implemented and
+  measured; D1, D4, D5 and the rest of D7 are accepted designs for runtime plan stage 3.
 - Spec: [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics) (implemented
   intrinsics) and [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-)
   (accepted, not yet implemented).
@@ -64,7 +65,7 @@ compiler-specialized containers once user generics exist.
 implying `--runtime-module`) marks a unit as core. Core units may use `Bool`,
 the integer and floating types, `Void`, and top-level scalar constants, and
 nothing that lowers to a runtime call: `String`, arrays, dictionaries,
-`Optional`, `Result`, enums with payloads, structs, `print`, and string
+`Optional`, `Result`, enums, structs, `print`, and string
 literals (except as the argument of the literal-address intrinsic of D7). A
 violation is `type-checking.managed-type-in-core-unit`, reported at the use. The
 reason is concrete: decision 0008 showed a single `[UInt8]` constant makes a

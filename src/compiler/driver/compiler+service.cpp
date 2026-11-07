@@ -259,6 +259,14 @@ void CompilerService::compileModules(const std::filesystem::path& singleFile) {
             return;
         }
     }
+    std::unordered_set<std::string> coreModules;
+    for (const auto& name : options.coreModules) {
+        if (!coreModules.insert(name).second || !runtimeModules.contains(name)) {
+            diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                    "a core unit must be a unique runtime module: '" + name + "'");
+            return;
+        }
+    }
     if (options.outputMode == joyeer::OutputMode::runtimeObject &&
         !runtimeModules.contains(options.moduleName)) {
         diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
@@ -284,6 +292,7 @@ void CompilerService::compileModules(const std::filesystem::path& singleFile) {
         Module module {sourceSet.name, {}, {sourceSet.name, {}}};
         // Authorization belongs to each supplied unit, never to its imports.
         module.syntax.runtimeContext = runtimeModules.contains(sourceSet.name);
+        module.syntax.coreContext = coreModules.contains(sourceSet.name);
         for (const auto& input : sourceSet.files) {
             if (input.empty()) {
                 diagnostics->reportDiagnostic(ErrorLevel::failure, "module.read-source",

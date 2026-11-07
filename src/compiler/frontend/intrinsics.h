@@ -28,6 +28,7 @@ enum class Operation {
     atomicAdd,
     callVoid1,
     callVoid2,
+    literalAddress,
 };
 
 struct Descriptor {
@@ -42,7 +43,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 12> table {{
+inline constexpr std::array<Descriptor, 13> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -70,6 +71,11 @@ inline constexpr std::array<Descriptor, 12> table {{
       { TypeKind::integer, TypeKind::integer, TypeKind::error }, 2, false },
     { "joyeer_intrinsic_call_void2", Operation::callVoid2, TypeKind::voidType,
       { TypeKind::integer, TypeKind::integer, TypeKind::integer }, 3, false },
+    // The address of the NUL-terminated constant data of a string literal given
+    // as the argument (spec §19.4.6), for messages a core unit cannot build as a
+    // String. The argument must be a literal; no String value is created.
+    { "joyeer_intrinsic_literal_address", Operation::literalAddress, TypeKind::integer,
+      { TypeKind::string, TypeKind::error, TypeKind::error }, 1, false },
 }};
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {
