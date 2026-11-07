@@ -114,7 +114,7 @@ foreach(profile IN ITEMS Debug Optimized)
             LABELS "c-interop;native" TIMEOUT 60)
     endforeach()
     set(objects)
-    foreach(unit IN ITEMS roundtrip second scalars platform-scalars)
+    foreach(unit IN ITEMS roundtrip second scalars platform-scalars indirect)
         if(unit STREQUAL platform-scalars)
             set(unit_source "${CMAKE_CURRENT_BINARY_DIR}/${unit}.joyeer")
         else()
@@ -184,3 +184,37 @@ add_test(NAME JoyeerCInterop.CompilationContext
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-context.cmake")
 set_tests_properties(JoyeerCInterop.CompilationContext PROPERTIES
     LABELS "c-interop;native" TIMEOUT 60)
+
+# Indirect calls through an address held as an Int (spec 19.4.6): the runtime's
+# arrays and dictionaries call generated element clone and destroy functions.
+add_library(CInteropCallbacks STATIC native-callbacks.c)
+set_target_properties(CInteropCallbacks PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.Callbacks${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/callbacks.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/callbacks-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.callbacks;--runtime-module;runtime.callbacks;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=indirect calls passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Callbacks${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# Measures an indirect call from Joyeer against a C loop; not a test. Run
+#   cmake --build <dir> --target cinterop-indirect-benchmark
+# in a Release tree.
+add_executable(CInteropIndirectBenchmark indirect-benchmark.c)
+target_link_libraries(CInteropIndirectBenchmark PRIVATE CInteropJoyeerOptimized JoyeerRuntime)
+set_target_properties(CInteropIndirectBenchmark PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+add_custom_target(cinterop-indirect-benchmark
+    COMMAND CInteropIndirectBenchmark
+    DEPENDS CInteropIndirectBenchmark
+    VERBATIM)

@@ -278,6 +278,8 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_load_u8` / `_u16` / `_u32` / `_u64` | `(address: Int) -> UInt8` / `UInt16` / `UInt32` / `UInt64` | Little-endian load of that width |
 | `joyeer_intrinsic_store_u8` / `_u16` / `_u32` / `_u64` | `(address: Int, value: UInt8` / `UInt16` / `UInt32` / `UInt64`) `-> Void` | Little-endian store of that width |
 | `joyeer_intrinsic_atomic_add` | `(address: Int, delta: Int) -> Int` | Sequentially consistent add; returns the previous value |
+| `joyeer_intrinsic_call_void1` | `(function: Int, first: Int) -> Void` | Calls the C function at `function`, which returns void and takes one address argument, with the target's C calling convention |
+| `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
 location. The operations assume a little-endian target; the supported targets
@@ -289,28 +291,35 @@ obligations of C. They exist so that the runtime itself can be written in
 Joyeer ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)); they add
 no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
-#### 19.4.6 Proposed runtime capabilities ⏳
+#### 19.4.6 Accepted runtime capabilities (not yet implemented) ⏳
 
-Writing the whole runtime in Joyeer
-([runtime plan](../plan/runtime-in-joyeer.md)) needs operations that §19.4.5 does
-not yet admit. They are **proposed, not accepted**; each needs its own decision
-before it is added to the table above. All would follow the same rules as the
-existing intrinsics: reserved symbols, exact signatures, authorized units only.
+Writing the whole runtime in Joyeer ([runtime plan](../plan/runtime-in-joyeer.md))
+needs operations beyond §19.4.5. The designs below are **accepted**
+([decision 0009](../decisions/0009-runtime-core-capabilities.md)) but are **not
+implemented**; until each lands, the compiler rejects it. All follow the rules of
+the existing intrinsics: reserved symbols, exact signatures, and units authorized
+for native bindings only.
 
-| Capability | Why the runtime needs it |
-|---|---|
-| Static storage slots | The allocator's counter and state; the language has no mutable globals |
-| Bulk memory (`memcpy`, `memmove`, `memset`, `memcmp`) | Copies and comparisons that are not byte loops |
-| Indirect calls through an address | Arrays and dictionaries call compiler-generated clone and destroy functions |
-| Data-symbol import | `environ`, and `stdin`/`stdout`/`stderr` where they are data |
-| Non-returning exports, and `main`/`wmain` exports | `joyeer_panic` and the program entry point |
-| The address of read-only constant data | Panic messages: a core unit cannot pass a `[UInt8]` constant without importing the runtime's array code in Debug |
-| A system-call intrinsic (Linux) | A runtime that does not depend on the C library |
+| Capability | Declaration | Effect |
+|---|---|---|
+| Static storage | `joyeer_intrinsic_static_slot(index: Int) -> Int` | The address of 8-byte zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps |
+| Constant data | `joyeer_intrinsic_literal_address(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal; no `String` value is created |
+| Data symbol | `@c_data(symbol: "environ")` on `func environAddress(): Int` | The address of that C data symbol; repeated declarations must agree |
+| Non-returning export | `@c_export` with result type `Never` | The export is `noreturn` |
+| Program entry | `@c_export(symbol: "main")` or `"wmain"`, `(Int32, Int) -> Int32` | The C entry point; allowed in core units only, all other startup symbols stay rejected |
 
-A *runtime unit* restricted to scalars, `Bool` and `Int` addresses (no
-`String`, arrays, dictionaries or `print`) is also proposed, so the runtime
-cannot reach itself through code the compiler lowers to runtime calls. None of
-this changes ordinary programs.
+Still proposed, without a decision: bulk memory (`memcpy`, `memmove`, `memset`,
+`memcmp`) and, for a runtime that does not depend on the C library, a Linux
+system-call intrinsic.
+
+A **core unit**, selected with `--runtime-core-module <name>` (which implies
+`--runtime-module`), may use only `Bool`, the integer and floating types, `Void`
+and top-level scalar constants. `String`, arrays, dictionaries, `Optional`,
+`Result`, enums with payloads, structs, `print` and string literals (other than
+as the argument of the constant-data intrinsic) are reported as
+`type-checking.managed-type-in-core-unit`, because each lowers to a call into the
+runtime that the core unit is itself part of. None of this changes ordinary
+programs.
 
 ### 19.5 Invalid signatures
 

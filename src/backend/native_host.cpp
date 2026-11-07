@@ -14,6 +14,19 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
     if (descriptor.operation == Operation::addressOf) {
         return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
     }
+    if (descriptor.operation == Operation::callVoid1 || descriptor.operation == Operation::callVoid2) {
+        // The callee is the target's ordinary C function taking addresses.
+        auto* function = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
+        std::vector<llvm::Type*> parameterTypes;
+        std::vector<llvm::Value*> callArguments;
+        for (size_t index = 1; index < arguments.size(); ++index) {
+            parameterTypes.push_back(pointer());
+            callArguments.push_back(builder.CreateIntToPtr(arguments[index], pointer(), temporary()));
+        }
+        builder.CreateCall(llvm::FunctionType::get(builder.getVoidTy(), parameterTypes, false),
+                function, callArguments);
+        return nullptr;
+    }
     auto* address = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
     switch (descriptor.operation) {
         case Operation::load8:
@@ -34,6 +47,8 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
             return builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, address, arguments[1],
                     llvm::MaybeAlign(8), llvm::AtomicOrdering::SequentiallyConsistent);
         case Operation::addressOf:
+        case Operation::callVoid1:
+        case Operation::callVoid2:
             break;
     }
     return nullptr;

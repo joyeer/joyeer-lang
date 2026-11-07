@@ -26,13 +26,15 @@ enum class Operation {
     store32,
     store64,
     atomicAdd,
+    callVoid1,
+    callVoid2,
 };
 
 struct Descriptor {
     std::string_view symbol;
     Operation operation;
     typing::TypeKind result;
-    std::array<typing::TypeKind, 2> parameters;
+    std::array<typing::TypeKind, 3> parameters;
     size_t count;
     // The first parameter is a `[UInt8]` passed as a bare data pointer.
     bool bytePointer;
@@ -40,7 +42,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 10> table {{
+inline constexpr std::array<Descriptor, 12> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -61,6 +63,13 @@ inline constexpr std::array<Descriptor, 10> table {{
       { TypeKind::integer, TypeKind::uint64 }, 2, false },
     { "joyeer_intrinsic_atomic_add", Operation::atomicAdd, TypeKind::integer,
       { TypeKind::integer, TypeKind::integer }, 2, false },
+    // Indirect calls (spec §19.4.6): the first argument is the address of a C
+    // function returning void that takes one or two address arguments. The
+    // runtime uses them for the generated element clone and destroy functions.
+    { "joyeer_intrinsic_call_void1", Operation::callVoid1, TypeKind::voidType,
+      { TypeKind::integer, TypeKind::integer, TypeKind::error }, 2, false },
+    { "joyeer_intrinsic_call_void2", Operation::callVoid2, TypeKind::voidType,
+      { TypeKind::integer, TypeKind::integer, TypeKind::integer }, 3, false },
 }};
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

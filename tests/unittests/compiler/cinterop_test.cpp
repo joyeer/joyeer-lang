@@ -338,8 +338,43 @@ func use(): Int {
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
+TEST_F(CInteropTest, LowersIndirectCallIntrinsicsAsCallsThroughAnAddress) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+func callOne(function: Int, first: Int): Void
+@c_extern(symbol: "joyeer_intrinsic_call_void2")
+func callTwo(function: Int, first: Int, second: Int): Void
+func use(function: Int, first: Int, second: Int) {
+    callOne(function: function, first: first)
+    callTwo(function: function, first: first, second: second)
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    // The callee is an integer converted to a pointer, called with the target's
+    // C convention; no function named after the intrinsic is declared.
+    EXPECT_NE(emitted.text.find("inttoptr i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("call void %"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
 TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
     for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: UInt64): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int, second: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void2\")\nfunc f(function: Int, first: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void2\")\nfunc f(function: Int, first: Int, second: Int32): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void2\")\nfunc f(function: Int, first: Int, second: Int, third: Int): Void\n",
+            "@c_export(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int): Void { }\n",
             "@c_extern(symbol: \"joyeer_intrinsic_unknown\")\nfunc f(address: Int): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int, extra: Int): UInt8\n",

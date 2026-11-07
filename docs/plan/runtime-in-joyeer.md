@@ -100,7 +100,7 @@ state, and the change is its own phase (R12).
 
 | Item | Where it is tracked | How it touches the runtime |
 |---|---|---|
-| Spec text for the runtime-only capabilities | [§19.4.6](../spec/19-c-interop.md#1946-proposed-runtime-capabilities-) (proposed) | Each capability becomes accepted spec text when its decision lands |
+| Spec text for the runtime-only capabilities | [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-) (proposed) | Each capability becomes accepted spec text when its decision lands |
 | `assert`, `precondition`, `fatalError` | [library plan](library.md) §2 | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
 | `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
 | User generics | [§20](../spec/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
@@ -173,7 +173,7 @@ runtime archive + compiler/backend -> product staging -> fern / acceptance
 
 Each gets a record in [decisions](../decisions/README.md) before code.
 
-**D1: Static runtime storage.** The allocator needs a counter, and later a
+**D1: Static runtime storage** (decided, decision 0009). The allocator needs a counter, and later a
 free-list or arena state. Options: (a) an intrinsic that returns the address of
 a zero-initialized slot in a compiler-emitted internal global
 (`joyeer_intrinsic_static_slot(index)`); (b) mutable top-level `var` in runtime
@@ -183,17 +183,18 @@ and needs no language change.
 
 **D2: Calling generated clone and destroy functions.** Arrays and dictionaries
 store element-type callbacks. Options: (a) an indirect-call intrinsic
-(`joyeer_intrinsic_call2(function, a, b)`) with the function as an `Int`; (b)
+(`joyeer_intrinsic_call_void1`/`_void2(function, ...)`) with the function as an `Int`; (b)
 generate per-type array and dictionary helpers in the compiler so the runtime
 holds no callbacks; (c) wait for generics. Recommend (a) now, because it keeps
 the ABI and the layouts, and (b) once user generics exist. This is the largest
-open design question.
+open design question. **Decided and implemented** (decision 0009): option (a), as
+`joyeer_intrinsic_call_void1` and `_void2`, measured equal to a C indirect call.
 
-**D3: Enforcing the core dialect.** A diagnostic ID, and what counts as a managed
+**D3: Enforcing the core dialect** (decided, decision 0009). A diagnostic ID, and what counts as a managed
 use. Recommend rejecting any managed type in a core unit's function signatures,
 bodies or stored fields.
 
-**D4: The entry point.** Export `main` / `wmain` from Joyeer with
+**D4: The entry point** (decided, decision 0009). Export `main` / `wmain` from Joyeer with
 `@c_export(symbol: ...)`, take `argv` as an address, convert arguments (UTF-16 to
 UTF-8 on Windows, raw bytes on POSIX) in Joyeer, call the generated
 `joyeer_main`, destroy the arguments, run the leak check. Needs an exported
@@ -201,7 +202,7 @@ UTF-8 on Windows, raw bytes on POSIX) in Joyeer, call the generated
 that the platform startup (`mainCRTStartup`, `crt1.o`) accepts an exported
 `main` from an archive member.
 
-**D5: Data symbols.** Replace the three C accessors. `errno` is a function on
+**D5: Data symbols** (decided, decision 0009). Replace the three C accessors. `errno` is a function on
 every target (`_errno`, `__errno_location`, `__error`), `stdin`/`stdout`/`stderr`
 are `__acrt_iob_func` on Windows and data symbols elsewhere, and `environ` is a
 data symbol. Options: a `@c_extern` form that yields the address of a data symbol
@@ -216,7 +217,7 @@ fixed-size limbs in a byte buffer), proven against the C library over a large
 sample. Changing the format to shortest round-trip is a language-visible change
 and is out of scope here.
 
-**D7: Process termination and diagnostics.** Panic must not allocate or touch
+**D7: Process termination and diagnostics** (decided, decision 0009). Panic must not allocate or touch
 managed values. Recommend: write the message with the C library's `write` or
 `WriteFile` equivalent in one call, then `_Exit(1)`; keep the existing text
 (`Joyeer runtime error: <message>`) and exit status. It also needs a way to name a
@@ -471,30 +472,38 @@ parameter makes a Debug build import the runtime's array clone and destroy. Core
 units must use scalars and addresses only (D3). The runtime therefore has no way
 yet to hand `joyeer_panic` a message from Joyeer; see D7 and §6 item 9.
 
-### Stage 2: Spikes and decisions
+### Stage 2: Spikes and decisions, done
 
-- [ ] 2.1 Spike D4 on every host available: a Joyeer object in the archive exports
-  `wmain` (Windows) or `main` (POSIX) and the platform startup calls it. Run this
-  on Linux and macOS too, if at all possible; it is the riskiest link question.
-- [ ] 2.2 Spike D2: a prototype indirect-call intrinsic calling a generated
-  `joyeer_destroy_type_N`, with a measurement against the C loop.
-- [ ] 2.3 Record D1 (static storage), D2 (indirect calls), D3 (core dialect), D4
-  (entry), D5 (data symbols) and D7 (panic), and promote each accepted row of
-  [§19.4.6](../spec/19-c-interop.md#1946-proposed-runtime-capabilities-) to spec
-  text in §19.4.5.
+- [x] 2.1 Entry spike: a Joyeer object exporting `wmain`, linked ahead of the
+  runtime archive, is selected by the Windows x64 linker, calls the generated
+  `joyeer_main` and propagates its exit status. The compiler rejects exporting
+  `main`/`wmain` today and the runtime archive is linked whole, so the Joyeer
+  entry must replace `entry.c` in one change (7.1). **Linux and macOS were not
+  run (no host); do that before 7.1.** Details in
+  [decision 0009](../decisions/0009-runtime-core-capabilities.md).
+- [x] 2.2 Indirect-call spike, kept as the implementation:
+  `joyeer_intrinsic_call_void1` and `_void2` (table, type checker, verifier,
+  backend, native fixture `JoyeerCInterop.Callbacks*`). A Joyeer loop through them
+  costs 1.57 ns per element, the same as a true indirect call in C
+  (`cinterop-indirect-benchmark`).
+- [x] 2.3 Decisions D1, D2, D3, D4, D5 and D7 recorded in decision 0009; the
+  indirect calls are in spec §19.4.5 and the other accepted designs in §19.4.6.
 
 ### Stage 3: Compiler capabilities (R1)
 
 Each with unit tests for lowering, misuse and tampered IR, and a native fixture.
+Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 
 - [ ] 3.1 Static storage slots (D1).
-- [ ] 3.2 Bulk memory intrinsics; switch 1.3 from `memcmp` to them.
-- [ ] 3.3 Non-returning exports and `main`/`wmain` exports (D4, D7).
-- [ ] 3.4 Indirect calls (D2).
-- [ ] 3.5 The core-dialect diagnostic (D3), turned on for every unit in
-  `src/runtime/joyeer/`.
-- [ ] 3.6 Data-symbol imports (D5).
-- [ ] 3.7 The address of read-only constant data, for panic messages (§6 item 9).
+- [ ] 3.2 Bulk memory intrinsics (needs its own decision first); switch 1.3 from
+  `memcmp` to them.
+- [ ] 3.3 Non-returning exports (`Never`) and `main`/`wmain` exports in core units
+  only (D4, D7).
+- [x] 3.4 Indirect calls (D2), done in 2.2.
+- [ ] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for
+  every unit in `src/runtime/joyeer/`.
+- [ ] 3.6 Data-symbol imports (D5, `@c_data`).
+- [ ] 3.7 The constant-data address intrinsic, for panic messages (D7).
 
 ### Stage 4: Substrate (R2)
 
