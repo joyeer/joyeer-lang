@@ -617,8 +617,43 @@ TEST_F(CInteropTest, RejectsMalformedDataSymbolDeclarations) {
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
+TEST_F(CInteropTest, LowersBulkMemoryIntrinsicsToLlvmMemoryOperations) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+func copyBytes(destination: Int, source: Int, count: Int): Void
+@c_extern(symbol: "joyeer_intrinsic_memmove")
+func moveBytes(destination: Int, source: Int, count: Int): Void
+@c_extern(symbol: "joyeer_intrinsic_memset")
+func fillBytes(destination: Int, value: UInt8, count: Int): Void
+func use(a: Int, b: Int, n: Int) {
+    copyBytes(destination: a, source: b, count: n)
+    moveBytes(destination: a, source: b, count: n)
+    fillBytes(destination: a, value: 7, count: n)
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("@llvm.memcpy.p0.p0.i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("@llvm.memmove.p0.p0.i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("@llvm.memset.p0.i64"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
 TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
     for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_memcpy\")\nfunc f(destination: Int, source: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memcpy\")\nfunc f(destination: Int, source: Int, count: Int32): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memmove\")\nfunc f(destination: Int, source: Int, count: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memset\")\nfunc f(destination: Int, value: Int, count: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memset\")\nfunc f(destination: Int, value: UInt8, count: Int, extra: Int): Void\n",
+            "@c_export(symbol: \"joyeer_intrinsic_memcpy\")\nfunc f(destination: Int, source: Int, count: Int): Void { }\n",
             "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int32): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int): Int32\n",
             "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(): Int\n",

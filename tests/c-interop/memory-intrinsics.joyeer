@@ -1,0 +1,84 @@
+@c_extern(symbol: "malloc")
+func allocate(size: UInt64): Int
+
+@c_extern(symbol: "free")
+func release(address: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func load8(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+func store8(address: Int, value: UInt8): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+func copyBytes(destination: Int, source: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memmove")
+func moveBytes(destination: Int, source: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memset")
+func fillBytes(destination: Int, value: UInt8, count: Int): Void
+
+func fill(block: Int, count: Int) {
+    var index = 0
+    while index < count {
+        store8(address: block + index, value: (index + 1) as UInt8)
+        index = index + 1
+    }
+}
+
+func exercise(): Int {
+    let block = allocate(size: 64)
+    if block == 0 { return 1 }
+    fill(block: block, count: 32)
+    // memcpy: a disjoint range is copied exactly; the source is unchanged.
+    copyBytes(destination: block + 32, source: block, count: 16)
+    var index = 0
+    while index < 16 {
+        if load8(address: block + 32 + index) != (index + 1) as UInt8 { return 2 }
+        if load8(address: block + index) != (index + 1) as UInt8 { return 3 }
+        index = index + 1
+    }
+    // memmove: overlapping ranges, both directions, behave as if buffered.
+    fill(block: block, count: 32)
+    moveBytes(destination: block + 4, source: block, count: 16)
+    if load8(address: block + 4) != 1 || load8(address: block + 19) != 16 { return 5 }
+    if load8(address: block) != 1 || load8(address: block + 3) != 4 { return 6 }
+    fill(block: block, count: 32)
+    moveBytes(destination: block, source: block + 4, count: 16)
+    if load8(address: block) != 5 || load8(address: block + 15) != 20 { return 7 }
+    // A zero count touches nothing.
+    copyBytes(destination: block, source: block + 8, count: 0)
+    moveBytes(destination: block, source: block + 8, count: 0)
+    fillBytes(destination: block, value: 99, count: 0)
+    if load8(address: block) != 5 { return 8 }
+    // memset: every byte of the range and none beyond it.
+    fillBytes(destination: block, value: 170, count: 10)
+    index = 0
+    while index < 10 {
+        if load8(address: block + index) != 170 { return 9 }
+        index = index + 1
+    }
+    if load8(address: block + 10) == 170 { return 10 }
+    // A large copy (not expanded inline) crosses into the library call path.
+    let big = allocate(size: 4096)
+    let other = allocate(size: 4096)
+    if big == 0 || other == 0 { return 11 }
+    fillBytes(destination: big, value: 7, count: 4096)
+    store8(address: big + 4095, value: 9)
+    copyBytes(destination: other, source: big, count: 4096)
+    if load8(address: other) != 7 || load8(address: other + 4095) != 9 { return 12 }
+    release(address: big)
+    release(address: other)
+    release(address: block)
+    return 0
+}
+
+func main() {
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    print(value: "memory intrinsics passed")
+}

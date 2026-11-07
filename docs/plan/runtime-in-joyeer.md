@@ -489,14 +489,14 @@ yet to hand `joyeer_panic` a message from Joyeer; see D7 and §6 item 9.
 - [x] 2.3 Decisions D1, D2, D3, D4, D5 and D7 recorded in decision 0009; the
   indirect calls are in spec §19.4.5 and the other accepted designs in §19.4.6.
 
-### Stage 3: Compiler capabilities (R1)
+### Stage 3: Compiler capabilities (R1), done
 
-Each with unit tests for lowering, misuse and tampered IR, and a native fixture.
+Each has unit tests for lowering, misuse and tampered IR, and a native fixture at both
+optimization levels.
 Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 
 - [x] 3.1 Static storage slots (D1).
-- [ ] 3.2 Bulk memory intrinsics (needs its own decision first); switch 1.3 from
-  `memcmp` to them.
+- [x] 3.2 Bulk memory intrinsics `memcpy`, `memmove` and `memset` (D11). `memcmp` stays a C  import, so 1.3 is unchanged.
 - [x] 3.3 Non-returning bindings (`Never`) and `main`/`wmain` exports in core units
   only (D4, D7).
 - [x] 3.4 Indirect calls (D2), done in 2.2.

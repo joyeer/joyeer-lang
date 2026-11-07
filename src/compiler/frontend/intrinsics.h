@@ -35,6 +35,9 @@ enum class Operation {
     callVoid2,
     literalAddress,
     staticSlot,
+    memoryCopy,
+    memoryMove,
+    memoryFill,
 };
 
 struct Descriptor {
@@ -49,7 +52,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 14> table {{
+inline constexpr std::array<Descriptor, 17> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -86,6 +89,14 @@ inline constexpr std::array<Descriptor, 14> table {{
     // staticSlotCount slots shared by every unit in the program (spec §19.4.6).
     { "joyeer_intrinsic_static_slot", Operation::staticSlot, TypeKind::integer,
       { TypeKind::integer, TypeKind::error, TypeKind::error }, 1, false },
+    // Bulk memory (spec §19.4.5). `count` is a byte count taken as unsigned; the
+    // ranges are not checked. memcpy requires the ranges not to overlap.
+    { "joyeer_intrinsic_memcpy", Operation::memoryCopy, TypeKind::voidType,
+      { TypeKind::integer, TypeKind::integer, TypeKind::integer }, 3, false },
+    { "joyeer_intrinsic_memmove", Operation::memoryMove, TypeKind::voidType,
+      { TypeKind::integer, TypeKind::integer, TypeKind::integer }, 3, false },
+    { "joyeer_intrinsic_memset", Operation::memoryFill, TypeKind::voidType,
+      { TypeKind::integer, TypeKind::uint8, TypeKind::integer }, 3, false },
 }};
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

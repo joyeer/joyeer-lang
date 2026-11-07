@@ -14,6 +14,23 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
     if (descriptor.operation == Operation::addressOf) {
         return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
     }
+    if (descriptor.operation == Operation::memoryCopy || descriptor.operation == Operation::memoryMove ||
+        descriptor.operation == Operation::memoryFill) {
+        // LLVM's own memory intrinsics: small constant sizes become inline moves,
+        // the rest a call to the platform's memcpy, memmove or memset.
+        auto* destination = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
+        if (descriptor.operation == Operation::memoryFill) {
+            builder.CreateMemSet(destination, arguments[1], arguments[2], llvm::MaybeAlign(1));
+            return nullptr;
+        }
+        auto* source = builder.CreateIntToPtr(arguments[1], pointer(), temporary());
+        if (descriptor.operation == Operation::memoryCopy) {
+            builder.CreateMemCpy(destination, llvm::MaybeAlign(1), source, llvm::MaybeAlign(1), arguments[2]);
+        } else {
+            builder.CreateMemMove(destination, llvm::MaybeAlign(1), source, llvm::MaybeAlign(1), arguments[2]);
+        }
+        return nullptr;
+    }
     if (descriptor.operation == Operation::staticSlot) {
         // One zeroed table per program: every object that uses slots defines the
         // same linkonce symbol in a comdat, and the linker keeps a single copy.
@@ -106,6 +123,9 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::callVoid2:
         case Operation::literalAddress:
         case Operation::staticSlot:
+        case Operation::memoryCopy:
+        case Operation::memoryMove:
+        case Operation::memoryFill:
             break;
     }
     return nullptr;

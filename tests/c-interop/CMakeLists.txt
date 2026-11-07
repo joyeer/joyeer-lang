@@ -325,3 +325,21 @@ foreach(profile IN ITEMS Debug Optimized)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.DataSymbol${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
 endforeach()
+
+# Bulk memory intrinsics (spec 19.4.5): copy, overlapping move, fill.
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.MemoryIntrinsics${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/memory-intrinsics.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/memory-intrinsics-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.memory;--runtime-module;runtime.memory;${compile_flags}"
+            "-DEXPECTED_OUTPUT=memory intrinsics passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.MemoryIntrinsics${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()

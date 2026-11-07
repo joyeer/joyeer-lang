@@ -282,6 +282,9 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
 | `joyeer_intrinsic_literal_address` | `(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal. No `String` value is created and nothing is allocated; it is the one use of a string literal a core unit (§19.4.6) may make |
 | `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime plan](../plan/runtime-in-joyeer.md) |
+| `joyeer_intrinsic_memcpy` | `(destination: Int, source: Int, count: Int) -> Void` | Copies `count` bytes (taken as unsigned); the ranges must not overlap. No alignment is required. Lowers to LLVM's `memcpy`, so a small constant count becomes inline moves |
+| `joyeer_intrinsic_memmove` | `(destination: Int, source: Int, count: Int) -> Void` | The same for ranges that may overlap |
+| `joyeer_intrinsic_memset` | `(destination: Int, value: UInt8, count: Int) -> Void` | Stores `value` in `count` bytes |
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
 location. The operations assume a little-endian target; the supported targets
@@ -295,12 +298,13 @@ no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
 #### 19.4.6 Runtime capabilities still proposed ⏳
 
-Two operations the runtime plan ([runtime plan](../plan/runtime-in-joyeer.md))
-may want have **no decision** yet and are rejected by the compiler: bulk memory
-(`memcpy`, `memmove`, `memset`, `memcmp`, which today are ordinary C library
-imports) and, for a runtime that does not depend on the C library, a Linux
-system-call intrinsic. Each would follow the rules of §19.4.5: a reserved symbol,
-an exact signature, and authorized units only.
+One operation the runtime plan ([runtime plan](../plan/runtime-in-joyeer.md)) may
+want has **no decision** yet and is rejected by the compiler: for a runtime that
+does not depend on the C library, a Linux system-call intrinsic. It would follow
+the rules of §19.4.5: a reserved symbol, an exact signature, and authorized units
+only. Byte comparison (`memcmp`) is deliberately not an intrinsic: LLVM has no
+inline form of it, so a runtime unit imports the C library's `memcmp` with
+`@c_extern` until it can compare words itself.
 
 #### 19.4.7 Core units, `Never` results, data symbols and the program entry point
 

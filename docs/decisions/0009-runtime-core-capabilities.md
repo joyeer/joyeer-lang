@@ -3,7 +3,7 @@
 - Status: accepted (decided 2026-11-08). Static slots (D1), indirect calls (D2), core units (D3),
   Never results and the core entry export (D4, part of D7) and the
   constant-data address (part of D7) and data symbols (D5) are implemented and
-  measured. Bulk memory (3.2) still needs its own decision.
+  measured. Bulk memory (D11, added below) is implemented too.
 - Spec: [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics) (implemented
   intrinsics) and [§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
   (Never results, core units, data symbols and the entry point).
@@ -109,3 +109,21 @@ above), and message codes with a table in C.
 - Nothing here reaches ordinary programs: every capability is available only in
   units the toolchain authorizes.
 - **Not verified:** the entry spike on Linux and macOS, and on Windows ARM64.
+
+## Added during stage 3
+
+**D11: Bulk memory.** `joyeer_intrinsic_memcpy`, `_memmove` and `_memset` lower to
+LLVM's memory intrinsics (alignment 1, count taken as unsigned, no range check),
+so a small constant count becomes inline moves and a large one a call to the
+platform's function. `memcmp` is **not** an intrinsic: LLVM has no inline form of
+it, so a core unit keeps importing the C library's `memcmp` with `@c_extern`
+until a Tier 2 runtime compares words itself. Rejected: a checking variant
+(counts are validated by the runtime function before it copies, as the C was).
+In Tier 2 the variable-size forms still call `memcpy`/`memmove`/`memset` by
+name, so a libc-free runtime must define those symbols itself, in a unit that
+does not use them.
+
+**Entry-point export: the IR flag.** The IR function carries `coreContext`, and
+the IR wire format is version 10 (core flag, then the data-symbol flag), so the
+verifier checks the entry-point and data-symbol rules independently of the type
+checker.
