@@ -9,8 +9,8 @@ The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
 
-The [hybrid runtime plan](../plan/hybrid-runtime.md) proposes incremental
-Joyeer implementations behind the existing runtime interfaces; this document
+The [runtime plan](../plan/runtime-in-joyeer.md) describes how the whole runtime moves
+into Joyeer behind the existing runtime interfaces; this document
 describes the current C implementation. Public library modules and their
 separate fern workflow are tracked in the [library plan](../plan/library.md).
 The [C binding implementation](c-interop.md) supports the restricted

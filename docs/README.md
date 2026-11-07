@@ -20,7 +20,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
-| Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
+| Plan runtime and public-library development | [Runtime in Joyeer](plan/runtime-in-joyeer.md) and [Library modules](plan/library.md) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/toolchain-libraries.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
@@ -57,7 +57,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
 | [c-interop.md](impl/c-interop.md) | Authorized scalar and buffer C bindings, object generation, explicit native-library inputs, and acceptance gates |
 | [compression.md](impl/compression.md) | Optional miniz-backed ZIP module, limits, ownership, build and packaging |
-| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
+| [runtime.md](impl/runtime.md) | Process entry, the C runtime, ownership, collections, and where the host operations live |
 | [fern.md](impl/fern.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |
 
@@ -69,7 +69,7 @@ work.
 | Document | Topic |
 |---|---|
 | [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
-| [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
+| [runtime-in-joyeer.md](plan/runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
 | [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, fern management, and installed-library resolution gates |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |

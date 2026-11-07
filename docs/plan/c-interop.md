@@ -9,7 +9,7 @@
 The annotations are restricted to a toolchain-controlled runtime context. This
 plan does not add user FFI. Related plans:
 
-- [hybrid-runtime](hybrid-runtime.md): runtime migration and bootstrap.
+- [runtime-in-joyeer](runtime-in-joyeer.md): the runtime written in Joyeer, its design decisions and phases.
 - [library](library.md): `Foundation`, `System`, `Collections`, `Testing`.
 - [native-link-inputs](native-link-inputs.md): proposal for supplying link inputs.
 
