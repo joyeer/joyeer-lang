@@ -17,34 +17,6 @@ joyeer_discover_tests(RuntimeTests
         PROPERTIES LABELS runtime
 )
 
-add_executable(NativeFilesystemTests filesystem_test.cpp)
-target_link_libraries(NativeFilesystemTests
-        GTest::gtest_main
-        JoyeerRuntime
-)
-# Preserve label lists through the wrapper and generated discovery script.
-joyeer_discover_tests(NativeFilesystemTests
-        PROPERTIES LABELS "runtime\\\\;filesystem"
-)
-
-add_executable(NativeProcessTestChild process_test_child.c)
-set_target_properties(NativeProcessTestChild PROPERTIES
-        C_STANDARD 11
-        C_STANDARD_REQUIRED ON
-)
-add_executable(NativeProcessTests process_test.cpp)
-target_compile_definitions(NativeProcessTests PRIVATE
-        JOYEER_PROCESS_TEST_CHILD_PATH="$<TARGET_FILE:NativeProcessTestChild>"
-)
-add_dependencies(NativeProcessTests NativeProcessTestChild)
-target_link_libraries(NativeProcessTests
-        GTest::gtest_main
-        JoyeerRuntime
-)
-joyeer_discover_tests(NativeProcessTests
-        PROPERTIES LABELS "runtime\\\\;process"
-)
-
 if(WIN32)
     add_executable(NativeEntryEncodingTests
             entry_encoding_test.cpp

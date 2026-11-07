@@ -1,10 +1,11 @@
 # 0004: Replace the compiler-known host built-ins with the System library
 
-- Status: accepted as the direction (decided 2026-11-07); not yet implemented.
-  The built-ins stay until the Joyeer replacements are verified on Linux and
-  macOS.
-- Spec: none yet. [§18](../spec/18-host.md) will say which names `System`
-  provides and drop the "compiler-known" wording when this lands.
+- Status: accepted and implemented (decided and built 2026-11-07), verified on
+  Windows x64 Debug only.
+  The Joyeer variants for Linux and macOS have not run, so those platforms are
+  unverified; the C implementations were removed with the built-ins.
+- Spec: [§18](../spec/18-host.md) now says the operations are `System` functions
+  and no longer calls them compiler-known.
 
 ## Context
 
@@ -59,3 +60,30 @@ Order, because each step must keep the suite green:
   need a home in `System` before step 3, or stay in the prelude on purpose.
 - Tests that call the C ABI directly (`filesystem_test.cpp`, runtime tests) move
   to go through the language first.
+
+## As built
+
+Step 3 was done without step 2, at the owner's request, so Linux and macOS now
+run only Joyeer code that has never executed there
+([filesystem plan](../plan/filesystem.md) §2).
+
+- **Enumerations stay in the prelude on purpose.** `FileSystemError`, `FileKind`,
+  `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError` and `IOError` are
+  still compiler-declared prelude types; only their ABI tag mapping went away.
+  Moving them into `System` would have forced every program that names one to
+  import the module, and `ConversionError` cannot move at all. The descriptor
+  table in `hostbuiltins.h` is now just their case lists.
+- **Availability needed no new machinery.** `import System` already resolves
+  from the standard library staged beside the compiler, so a plain `joyeer`
+  compile and a `fern` project both reach it without a manifest dependency. fern
+  rejects a `System` dependency listed in a manifest outside a workspace that
+  loads it, so the manifests do not list it.
+- **Differential tests became expectation tests.** With the built-ins gone,
+  `SystemTests` states each result by error case rather than platform code. The
+  raw `errno`/`GetLastError` agreement it used to check is no longer asserted.
+- **Removed:** the host function descriptors, their name resolution, type
+  checking, IR lowering and LLVM emission; `filesystem.c`, `process.c`, the C
+  `readFile`, `writeStderr` and `readStdinLine`; and their C unit tests. The
+  runtime archive holds no `joyeer_fs_`, `joyeer_run_process`,
+  `joyeer_read_file`, `joyeer_write_stderr` or `joyeer_read_stdin` symbol
+  (checked with `llvm-nm` on the Windows x64 Debug archive).

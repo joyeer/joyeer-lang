@@ -73,7 +73,7 @@ and `src/backend/`:
 | [native_ownership.cpp](../../src/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership |
 | [native_functions.cpp](../../src/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
 | [native_collections.cpp](../../src/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
-| [native_host.cpp](../../src/backend/native_host.cpp) | External builtins, flat C arguments, Result construction, and ABI tag mapping |
+| [native_host.cpp](../../src/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
 | [native_debug.cpp](../../src/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
 | [backend.cpp](../../src/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
 | [linker.cpp](../../src/compiler/codegen/linker.cpp) | Artifact paths, runtime/SDK inputs, native linking, and debug sidecars |

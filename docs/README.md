@@ -70,7 +70,7 @@ work.
 |---|---|
 | [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
 | [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
-| [filesystem.md](plan/filesystem.md) | Remaining work after the Joyeer filesystem in `System`: POSIX verification, routing the built-in names, the allocation contract, and removing the C runtime code |
+| [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
 | [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, fern management, and installed-library resolution gates |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 

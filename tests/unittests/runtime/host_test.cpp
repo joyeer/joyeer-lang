@@ -34,41 +34,4 @@ TEST(NativeHostTest, RejectsOverlongSurrogateTruncatedAndOutOfRangeUtf8) {
     EXPECT_FALSE(joyeer_host_valid_utf8(nullptr, -1));
 }
 
-TEST(NativeHostTest, DistinguishesEmptyArgumentsFromEmptyPaths) {
-    int64_t error = -1;
-    auto* argument = joyeer_host_string(nullptr, 0, true, &error);
-    ASSERT_NE(argument, nullptr);
-    EXPECT_EQ(argument[0], 0);
-    EXPECT_EQ(error, 0);
-    free(argument);
-    EXPECT_EQ(joyeer_host_string(nullptr, 0, false, &error), nullptr);
-    EXPECT_NE(error, 0);
-}
-
-TEST(NativeHostTest, RejectsEmbeddedNulAndInvalidEncodingAtHostBoundary) {
-    int64_t error = 0;
-    const uint8_t embedded[] { 'a', 0, 'b' };
-    EXPECT_EQ(joyeer_host_string(embedded, 3, true, &error), nullptr);
-    EXPECT_NE(error, 0);
-    const uint8_t invalid[] { 0xed, 0xa0, 0x80 };
-    EXPECT_EQ(joyeer_host_string(invalid, 3, true, &error), nullptr);
-    EXPECT_NE(error, 0);
-}
-
-TEST(NativeHostTest, ConvertsSupplementaryUnicodeWithoutReplacement) {
-    const uint8_t bytes[] { 0xf0, 0x9f, 0x98, 0x80 };
-    int64_t error = -1;
-    auto* result = joyeer_host_string(bytes, 4, false, &error);
-    ASSERT_NE(result, nullptr);
-    EXPECT_EQ(error, 0);
-#if defined(_WIN32)
-    EXPECT_EQ(result[0], 0xd83d);
-    EXPECT_EQ(result[1], 0xde00);
-    EXPECT_EQ(result[2], 0);
-#else
-    EXPECT_EQ(std::string(result), "\xf0\x9f\x98\x80");
-#endif
-    free(result);
-}
-
 }

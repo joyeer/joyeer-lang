@@ -2,7 +2,8 @@
 
 This chapter defines the accepted first filesystem, synchronous-process,
 standard-error, and standard-input contracts. See [the implemented surface](../impl/supported-features.md) for
-implementation status. These compiler-known operations do not introduce
+implementation status. These operations are functions of the `System` standard
+module (`import System`); they are not compiler-known and do not introduce
 source-language FFI or user-defined generic functions.
 
 ### 18.1 Encoding, paths, and ownership
@@ -216,7 +217,7 @@ func readStdinLine(maximumBytes: Int): Result<String, StdinError>
 ```
 
 `readStdinLine` blocks until one complete line, the end of the standard-input
-stream, or a read failure. It is a compiler-known operation with an owned
+stream, or a read failure. It returns an owned
 `String` result.
 
 - A line ends at `\n`. The terminator is not part of the result. One `\r`

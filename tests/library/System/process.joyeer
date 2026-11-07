@@ -1,40 +1,37 @@
 import System
 import Foundation
 
-// Differential tests for runProcess: each scenario runs through the compiler's
-// built-in operation and through the Joyeer implementation in System, and the
-// rendered results must be identical. Unqualified names are the built-ins;
-// `System.` names are the Joyeer code.
+// Tests for runProcess (spec §18.3) as `System` provides it. Outcomes are
+// rendered by case, not by platform code; a case the platforms word
+// differently lists its alternatives.
 
 func describeRun(outcome: Result<ProcessStatus, ProcessError>): String {
     return match outcome {
         .Ok(status) => "ok:" + processStatusMessage(status: status),
-        .Err(error) => "err:" + processMessage(error: error),
+        .Err(error) => match error {
+            .InvalidInput(_) => "err:InvalidInput",
+            .NotFound(_) => "err:NotFound",
+            .PermissionDenied(_) => "err:PermissionDenied",
+            .LaunchFailed(_) => "err:LaunchFailed",
+            .WaitFailed(_) => "err:WaitFailed",
+        },
     }
 }
 
-func same(label: String, executable: String, arguments: [String], directory: String): Int {
-    let expected = describeRun(outcome: runProcess(
-        executable: executable, arguments: arguments, workingDirectory: directory))
+func runs(label: String, executable: String, arguments: [String], directory: String, expected: [String]): Int {
     let actual = describeRun(outcome: System.runProcess(
         executable: executable, arguments: arguments, workingDirectory: directory))
-    if expected == actual { return 0 }
-    print(value: "MISMATCH " + label)
-    print(value: "  built-in: " + expected)
-    print(value: "  Joyeer:   " + actual)
+    for option in expected {
+        if option == actual { return 0 }
+    }
+    print(value: "UNEXPECTED " + label)
+    print(value: "  expected one of: " + joinNames(names: expected))
+    print(value: "  actual:          " + actual)
     return 1
 }
 
-// The same scenario must also produce the stated result, so a platform where
-// both implementations fail identically cannot pass.
 func produces(label: String, executable: String, arguments: [String], directory: String, expected: String): Int {
-    let actual = describeRun(outcome: System.runProcess(
-        executable: executable, arguments: arguments, workingDirectory: directory))
-    if actual == expected { return same(label: label, executable: executable, arguments: arguments, directory: directory) }
-    print(value: "UNEXPECTED " + label)
-    print(value: "  expected: " + expected)
-    print(value: "  Joyeer:   " + actual)
-    return 1
+    return runs(label: label, executable: executable, arguments: arguments, directory: directory, expected: [expected])
 }
 
 @platform(windows)
@@ -78,21 +75,27 @@ public func testProcess(): Int {
         arguments: exitArguments(code: 0), directory: here, expected: "ok:exited with status 0")
     failures = failures + produces(label: "exit seven", executable: shell(),
         arguments: exitArguments(code: 7), directory: here, expected: "ok:exited with status 7")
-    failures = failures + same(label: "exit large", executable: shell(),
-        arguments: exitArguments(code: 3000), directory: here)
-    failures = failures + same(label: "missing executable", executable: shell() + ".missing",
-        arguments: none, directory: here)
-    failures = failures + same(label: "executable is directory", executable: ".",
-        arguments: none, directory: here)
-    failures = failures + same(label: "missing directory", executable: shell(),
-        arguments: exitArguments(code: 0), directory: "no-such-directory-for-process-test")
-    failures = failures + same(label: "directory is a file", executable: shell(),
-        arguments: exitArguments(code: 0), directory: shell())
-    failures = failures + same(label: "empty executable", executable: "", arguments: none, directory: here)
-    failures = failures + same(label: "empty directory", executable: shell(), arguments: none, directory: "")
-    failures = failures + same(label: "nul executable", executable: "a\0b", arguments: none, directory: here)
-    failures = failures + same(label: "nul argument", executable: shell(), arguments: ["a\0b"], directory: here)
-    failures = failures + same(label: "nul directory", executable: shell(), arguments: none, directory: "a\0b")
+    failures = failures + produces(label: "exit large", executable: shell(),
+        arguments: exitArguments(code: 3000), directory: here,
+        expected: hostValue(windows: "ok:exited with status 3000", posix: "ok:exited with status 184"))
+    failures = failures + produces(label: "missing executable", executable: shell() + ".missing",
+        arguments: none, directory: here, expected: "err:NotFound")
+    failures = failures + produces(label: "executable is directory", executable: ".",
+        arguments: none, directory: here, expected: "err:PermissionDenied")
+    failures = failures + produces(label: "missing directory", executable: shell(),
+        arguments: exitArguments(code: 0), directory: "no-such-directory-for-process-test", expected: "err:NotFound")
+    failures = failures + produces(label: "directory is a file", executable: shell(),
+        arguments: exitArguments(code: 0), directory: shell(), expected: "err:NotFound")
+    failures = failures + produces(label: "empty executable", executable: "", arguments: none,
+        directory: here, expected: "err:InvalidInput")
+    failures = failures + produces(label: "empty directory", executable: shell(), arguments: none,
+        directory: "", expected: "err:InvalidInput")
+    failures = failures + produces(label: "nul executable", executable: "a\0b", arguments: none,
+        directory: here, expected: "err:InvalidInput")
+    failures = failures + produces(label: "nul argument", executable: shell(), arguments: ["a\0b"],
+        directory: here, expected: "err:InvalidInput")
+    failures = failures + produces(label: "nul directory", executable: shell(), arguments: none,
+        directory: "a\0b", expected: "err:InvalidInput")
     return failures + testProcessPlatform()
 }
 
@@ -103,7 +106,7 @@ func testProcessPlatform(): Int {
     if directory == "" { return 1 }
     let script = directory + "\\run.cmd"
     var failures = 0
-    let created = describeUnit(outcome: writeFileNew(path: script, contents: "@exit 0\r\n"))
+    let created = describeUnit(outcome: System.writeFileNew(path: script, contents: "@exit 0\r\n"))
     if created != "ok" {
         print(value: "SETUP batch file: " + created)
         failures = failures + 1
@@ -112,11 +115,13 @@ func testProcessPlatform(): Int {
         arguments: ["-NoProfile", "-NonInteractive", "-Command",
             "if ((Get-Location).Path.EndsWith('" + directory + "')) { exit 0 } else { exit 9 }"],
         directory: directory, expected: "ok:exited with status 0")
-    failures = failures + same(label: "batch file", executable: script, arguments: [], directory: ".")
-    failures = failures + same(label: "empty argument", executable: shell(),
-        arguments: ["-NoProfile", "-NonInteractive", "-Command", "exit 0", ""], directory: ".")
-    ignoreUnit(outcome: removeFile(path: script))
-    ignoreUnit(outcome: removeDirectory(path: directory))
+    failures = failures + produces(label: "batch file", executable: script, arguments: [], directory: ".",
+        expected: "err:LaunchFailed")
+    failures = failures + produces(label: "empty argument", executable: shell(),
+        arguments: ["-NoProfile", "-NonInteractive", "-Command", "exit 0", ""], directory: ".",
+        expected: "ok:exited with status 0")
+    ignoreUnit(outcome: System.removeFile(path: script))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
     return failures
 }
 
@@ -128,16 +133,17 @@ func testProcessPlatform(): Int {
     if directory == "" { return 1 }
     let plain = directory + "/plain"
     var failures = 0
-    if describeUnit(outcome: writeFileNew(path: plain, contents: "x")) != "ok" { failures = failures + 1 }
+    if describeUnit(outcome: System.writeFileNew(path: plain, contents: "x")) != "ok" { failures = failures + 1 }
     failures = failures + produces(label: "signal", executable: shell(),
         arguments: ["-c", "kill -9 $$"], directory: ".", expected: "ok:terminated by signal 9")
     failures = failures + produces(label: "working directory", executable: shell(),
         arguments: ["-c", "case \"$(pwd)\" in *" + directory + ") exit 0;; *) exit 9;; esac"],
         directory: directory, expected: "ok:exited with status 0")
-    failures = failures + same(label: "not executable", executable: plain, arguments: [], directory: ".")
-    failures = failures + same(label: "empty argument", executable: shell(),
-        arguments: ["-c", "exit 0", ""], directory: ".")
-    ignoreUnit(outcome: removeFile(path: plain))
-    ignoreUnit(outcome: removeDirectory(path: directory))
+    failures = failures + produces(label: "not executable", executable: plain, arguments: [], directory: ".",
+        expected: "err:PermissionDenied")
+    failures = failures + produces(label: "empty argument", executable: shell(),
+        arguments: ["-c", "exit 0", ""], directory: ".", expected: "ok:exited with status 0")
+    ignoreUnit(outcome: System.removeFile(path: plain))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
     return failures
 }

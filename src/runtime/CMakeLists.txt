@@ -2,8 +2,6 @@ add_library(JoyeerRuntime STATIC
         runtime.c
         entry.c
         host.c
-        filesystem.c
-        process.c
 )
 target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_SRC_DIR})
 

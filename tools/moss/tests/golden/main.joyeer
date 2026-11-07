@@ -1,3 +1,5 @@
+import System
+
 import moss.model
 
 // End-to-end javap goldens: run the built `moss disasm` executable on every

@@ -1,10 +1,8 @@
 import System
 import Foundation
 
-// Differential tests for writeStderr and readStdinLine (spec §18.4, §18.5):
-// each scenario runs through the compiler's built-in operation and through the
-// Joyeer implementation in System, and the rendered results must be identical.
-// Unqualified names are the built-ins; `System.` names are the Joyeer code.
+// Tests for writeStderr and readStdinLine (spec §18.4, §18.5) as `System`
+// provides them.
 //
 // Standard error is pointed at a scratch file by duplicating a descriptor onto
 // descriptor 2, so the stream object itself is never replaced and is restored
@@ -172,96 +170,60 @@ private func restoreStderr(saved: Int32) {
 private func ignoreInt(value: Int32) {
 }
 
-private func writeVia(system: Bool, contents: String): String {
-    if system { return describeStderr(outcome: System.writeStderr(contents: contents)) }
-    return describeStderr(outcome: writeStderr(contents: contents))
+private func writeVia(contents: String): String {
+    return describeStderr(outcome: System.writeStderr(contents: contents))
 }
 
 // Writes `contents` with standard error redirected to a new file opened in
 // `mode`, and renders the outcome and what the file then holds.
-private func captured(system: Bool, contents: String, path: String, mode: String): String {
+private func captured(contents: String, path: String, mode: String): String {
     let saved = redirectStderr(source: openFile(path: native(text: path), mode: native(text: mode)))
     if saved < 0 { return "SETUP redirect" }
-    let outcome = writeVia(system: system, contents: contents)
+    let outcome = writeVia(contents: contents)
     restoreStderr(saved: saved)
     return outcome + "|" + fileText(path: path)
 }
 
 private func stderrScenario(label: String, contents: String, directory: String, mode: String, expected: String): Int {
-    let first = captured(system: false, contents: contents, path: directory + "/built-in", mode: mode)
-    let second = captured(system: true, contents: contents, path: directory + "/joyeer", mode: mode)
-    var failures = 0
-    if second != expected {
-        print(value: "UNEXPECTED stderr " + label)
-        print(value: "  expected: " + expected)
-        print(value: "  Joyeer:   " + second)
-        failures = 1
-    }
-    if first != second {
-        print(value: "MISMATCH stderr " + label)
-        print(value: "  built-in: " + first)
-        print(value: "  Joyeer:   " + second)
-        failures = 1
-    }
-    return failures
+    let actual = captured(contents: contents, path: directory + "/captured", mode: mode)
+    ignoreUnit(outcome: System.removeFile(path: directory + "/captured"))
+    if actual == expected { return 0 }
+    print(value: "UNEXPECTED stderr " + label)
+    print(value: "  expected: " + expected)
+    print(value: "  actual:   " + actual)
+    return 1
 }
 
 // A descriptor that was opened for reading only: every write to it fails.
 private func readOnlyScenario(directory: String): Int {
     let path = directory + "/readonly"
-    if describeUnit(outcome: writeFileNew(path: path, contents: "x")) != "ok" { return 1 }
-    var results: [String] = []
-    var index = 0
-    while index < 2 {
-        let saved = redirectStderr(source: openFile(path: native(text: path), mode: native(text: "rb")))
-        if saved < 0 { return 1 }
-        &results.append(element: writeVia(system: index == 1, contents: "y"))
-        restoreStderr(saved: saved)
-        index = index + 1
-    }
-    var failures = 0
-    if results[0] != "err:9" || results[1] != "err:9" {
-        print(value: "MISMATCH stderr read-only descriptor: " + results[0] + " / " + results[1])
-        failures = 1
-    }
-    ignoreUnit(outcome: removeFile(path: path))
-    return failures
+    if describeUnit(outcome: System.writeFileNew(path: path, contents: "x")) != "ok" { return 1 }
+    let saved = redirectStderr(source: openFile(path: native(text: path), mode: native(text: "rb")))
+    if saved < 0 { return 1 }
+    let outcome = writeVia(contents: "y")
+    restoreStderr(saved: saved)
+    ignoreUnit(outcome: System.removeFile(path: path))
+    if outcome == "err:9" { return 0 }
+    print(value: "UNEXPECTED stderr read-only descriptor: " + outcome)
+    return 1
 }
 
 // A closed descriptor is a write failure, not a crash.
 private func closedScenario(): Int {
-    var results: [String] = []
-    var index = 0
-    while index < 2 {
-        let stderrStream = streamOf(which: 2)
-        ignoreInt(value: flushFile(stream: stderrStream))
-        let descriptor = descriptorOf(stream: stderrStream)
-        let saved = duplicate(descriptor: descriptor)
-        if saved < 0 { return 1 }
-        ignoreInt(value: closeDescriptor(descriptor: descriptor))
-        &results.append(element: writeVia(system: index == 1, contents: "y"))
-        restoreStderr(saved: saved)
-        index = index + 1
-    }
     var failures = 0
     for contents in ["", "y"] {
-        // Re-run with the stated contents for the Joyeer code only.
         let stderrStream = streamOf(which: 2)
         ignoreInt(value: flushFile(stream: stderrStream))
         let descriptor = descriptorOf(stream: stderrStream)
         let saved = duplicate(descriptor: descriptor)
         if saved < 0 { return failures + 1 }
         ignoreInt(value: closeDescriptor(descriptor: descriptor))
-        let outcome = writeVia(system: true, contents: contents)
+        let outcome = writeVia(contents: contents)
         restoreStderr(saved: saved)
         if outcome != "err:9" {
             print(value: "UNEXPECTED stderr closed descriptor (" + decimalString(value: contents.count) + " bytes): " + outcome)
             failures = failures + 1
         }
-    }
-    if results[0] != results[1] {
-        print(value: "MISMATCH stderr closed descriptor: " + results[0] + " / " + results[1])
-        failures = failures + 1
     }
     return failures
 }
@@ -274,7 +236,7 @@ private func stderrModeScenario(directory: String): Int {
     if saved < 0 { return 1 }
     let descriptor = descriptorOf(stream: streamOf(which: 2))
     let before = setModeW(descriptor: descriptor, mode: textMode)
-    let outcome = writeVia(system: true, contents: "x\n")
+    let outcome = writeVia(contents: "x\n")
     let after = setModeW(descriptor: descriptor, mode: textMode)
     restoreStderr(saved: saved)
     if outcome == "ok" && before == textMode && after == textMode { return 0 }
@@ -301,22 +263,17 @@ private func testStderr(): Int {
     failures = failures + readOnlyScenario(directory: directory)
     failures = failures + closedScenario()
     failures = failures + stderrModeScenario(directory: directory)
-    ignoreUnit(outcome: removeFile(path: directory + "/built-in"))
-    ignoreUnit(outcome: removeFile(path: directory + "/joyeer"))
-    ignoreUnit(outcome: removeFile(path: directory + "/mode"))
-    ignoreUnit(outcome: removeDirectory(path: directory))
+    ignoreUnit(outcome: System.removeFile(path: directory + "/mode"))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
     return failures
 }
 
-// Re-opens standard input from a scratch file, discarding any read-ahead.
-// The built-in switches standard input to binary mode on its first use only, so
-// it is given a binary stream each time; the Joyeer code switches on every
-// call and is given a text stream, which only the switch makes exact.
-private func feed(path: String, contents: String, text: Bool): Bool {
-    if describeUnit(outcome: writeFileNew(path: path, contents: contents)) != "ok" { return false }
-    var mode = "rb"
-    if text { mode = readTextMode() }
-    return reopenFile(path: native(text: path), mode: native(text: mode), stream: streamOf(which: 0)) != 0
+// Re-opens standard input from a scratch file, discarding any read-ahead. On
+// Windows the stream is opened in text mode, so only the operation's own switch
+// to binary mode makes control-Z and CRLF bytes exact.
+private func feed(path: String, contents: String): Bool {
+    if describeUnit(outcome: System.writeFileNew(path: path, contents: contents)) != "ok" { return false }
+    return reopenFile(path: native(text: path), mode: native(text: readTextMode()), stream: streamOf(which: 0)) != 0
 }
 
 private func detachInput() {
@@ -329,15 +286,11 @@ private func nullDevice(): String { return "NUL" }
 private func nullDevice(): String { return "/dev/null" }
 
 // One call per limit, rendered in order.
-private func drain(system: Bool, limits: [Int]): String {
+private func drain(limits: [Int]): String {
     var text = ""
     var index = 0
     while index < limits.count {
-        if system {
-            text = text + describeLine(outcome: System.readStdinLine(maximumBytes: limits[index]))
-        } else {
-            text = text + describeLine(outcome: readStdinLine(maximumBytes: limits[index]))
-        }
+        text = text + describeLine(outcome: System.readStdinLine(maximumBytes: limits[index]))
         index = index + 1
     }
     return text
@@ -354,30 +307,16 @@ private func repeated(limit: Int, times: Int): [Int] {
 }
 
 private func stdinScenario(label: String, directory: String, contents: String, limits: [Int], expected: String): Int {
-    var results: [String] = []
-    var index = 0
-    while index < 2 {
-        let path = directory + "/input" + decimalString(value: index)
-        if !feed(path: path, contents: contents, text: index == 1) { return 1 }
-        &results.append(element: drain(system: index == 1, limits: limits))
-        detachInput()
-        ignoreUnit(outcome: removeFile(path: path))
-        index = index + 1
-    }
-    var failures = 0
-    if results[1] != expected {
-        print(value: "UNEXPECTED stdin " + label)
-        print(value: "  expected: " + expected)
-        print(value: "  Joyeer:   " + results[1])
-        failures = 1
-    }
-    if results[0] != results[1] {
-        print(value: "MISMATCH stdin " + label)
-        print(value: "  built-in: " + results[0])
-        print(value: "  Joyeer:   " + results[1])
-        failures = 1
-    }
-    return failures
+    let path = directory + "/input"
+    if !feed(path: path, contents: contents) { return 1 }
+    let actual = drain(limits: limits)
+    detachInput()
+    ignoreUnit(outcome: System.removeFile(path: path))
+    if actual == expected { return 0 }
+    print(value: "UNEXPECTED stdin " + label)
+    print(value: "  expected: " + expected)
+    print(value: "  actual:   " + actual)
+    return 1
 }
 
 private func bigLine(): String {
@@ -396,7 +335,7 @@ private func bigLine(): String {
 private func flushScenario(directory: String): Int {
     let input = directory + "/flush-input"
     let output = directory + "/flush-output"
-    if !feed(path: input, contents: "go\n", text: true) { return 1 }
+    if !feed(path: input, contents: "go\n") { return 1 }
     let stdoutStream = streamOf(which: 1)
     ignoreInt(value: flushFile(stream: stdoutStream))
     let saved = duplicate(descriptor: descriptorOf(stream: stdoutStream))
@@ -414,22 +353,21 @@ private func flushScenario(directory: String): Int {
     ignoreInt(value: closeDescriptor(descriptor: saved))
     clearFile(stream: stdoutStream)
     detachInput()
-    ignoreUnit(outcome: removeFile(path: input))
-    ignoreUnit(outcome: removeFile(path: output))
+    ignoreUnit(outcome: System.removeFile(path: input))
+    ignoreUnit(outcome: System.removeFile(path: output))
     if line == "[go]" && seen == "ok:7:prompt>" { return 0 }
     print(value: "MISMATCH stdin flush: line " + line + ", output " + seen)
     return 1
 }
 
-// A closed descriptor is a read failure, not a crash. Only the Joyeer code is
-// run: the built-in checks the descriptor on its first call only.
+// A closed descriptor is a read failure, not a crash.
 private func closedInputScenario(): Int {
     let stdinStream = streamOf(which: 0)
     let descriptor = descriptorOf(stream: stdinStream)
     let saved = duplicate(descriptor: descriptor)
     if saved < 0 { return 1 }
     ignoreInt(value: closeDescriptor(descriptor: descriptor))
-    let outcome = drain(system: true, limits: [8])
+    let outcome = drain(limits: [8])
     ignoreInt(value: duplicateOnto(source: saved, target: descriptor))
     ignoreInt(value: closeDescriptor(descriptor: saved))
     clearFile(stream: stdinStream)
@@ -477,7 +415,7 @@ private func testStdin(): Int {
     failures = failures + flushScenario(directory: directory)
     failures = failures + closedInputScenario()
     detachInput()
-    ignoreUnit(outcome: removeDirectory(path: directory))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
     return failures
 }
 

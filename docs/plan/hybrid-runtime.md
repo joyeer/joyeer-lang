@@ -23,7 +23,7 @@ profiles, a package registry.
 
 ## 2. Constraints
 
-- Runtime archive is five C sources today; no Joyeer objects yet.
+- Runtime archive is three C sources today (`runtime.c`, `entry.c`, `host.c`); no Joyeer objects yet.
 - Compiler string and collection lowering calls runtime functions. A Joyeer
   implementation must not reach its own operation through an operator, implicit
   copy, or cleanup helper (recursion).

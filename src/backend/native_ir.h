@@ -2,7 +2,6 @@
 #define JOYEER_BACKEND_NATIVE_IR_H
 
 #include "compiler/codegen/llvm.h"
-#include "compiler/frontend/hostbuiltins.h"
 #include "compiler/frontend/intrinsics.h"
 #include "runtime/runtime.h"
 #include "native_module.h"
@@ -132,12 +131,6 @@ private:
     bool emitCollection(const ir::Instruction& instruction, llvm::Value*& result);
     int keyKind(ir::TypeId id);
     llvm::Value* dictionaryFind(ir::TypeId id, llvm::Value* dictionary, llvm::Value* key);
-    llvm::Value* emitHostCall(const ir::Function& function,
-            llvm::ArrayRef<llvm::Value*> arguments, const ir::Instruction& instruction);
-        bool matchesHostValue(ir::TypeId id, hostbuiltins::ValueKind kind);
-        std::vector<size_t> enumTags(ir::TypeId id, const hostbuiltins::Enumeration& shape);
-    llvm::Value* hostEnum(ir::TypeId id, llvm::Value* storageAddress,
-            llvm::Value* tag, const hostbuiltins::Enumeration& shape);
 
     // Debug locations are attached to objects as they are built, never by
     // searching or rewriting printed instruction text.

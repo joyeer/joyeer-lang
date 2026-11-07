@@ -39,26 +39,6 @@ enum JoyeerDictionaryKeyKind {
     JOYEER_DICTIONARY_KEY_BYTE = 4,
 };
 
-enum JoyeerIOErrorKind {
-    JOYEER_IO_ERROR_NONE = 0,
-    JOYEER_IO_ERROR_NOT_FOUND = 1,
-    JOYEER_IO_ERROR_PERMISSION_DENIED = 2,
-    JOYEER_IO_ERROR_INVALID_PATH = 3,
-    JOYEER_IO_ERROR_OTHER = 4,
-};
-
-enum JoyeerStderrErrorKind {
-    JOYEER_STDERR_ERROR_NONE = 0,
-    JOYEER_STDERR_ERROR_WRITE_FAILED = 1,
-};
-
-enum JoyeerStdinErrorKind {
-    JOYEER_STDIN_ERROR_NONE = 0,
-    JOYEER_STDIN_ERROR_END_OF_INPUT = 1,
-    JOYEER_STDIN_ERROR_LINE_TOO_LONG = 2,
-    JOYEER_STDIN_ERROR_READ_FAILED = 3,
-};
-
 JOYEER_NORETURN void joyeer_panic(const char* message);
 int64_t joyeer_runtime_active_allocations(void);
 // The calling thread's C-runtime errno. A Joyeer binding cannot dereference
@@ -157,30 +137,6 @@ void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary);
 // Stable compiler ABI. These functions deliberately avoid passing or
 // returning C structs by value, whose ABI differs across targets.
 void joyeer_print_string_abi(const uint8_t* data, int64_t count);
-// Writes borrowed arbitrary bytes without a newline and flushes stderr,
-// including for an empty input. Returns 0 on success (errorCode = 0) or
-// 1 for WriteFailed (native CRT errno, or EIO if unavailable). Windows
-// temporarily uses binary CRT mode and restores the previous mode.
-// Null error storage, a negative/unrepresentable count, or null nonempty
-// data is ABI misuse and panics, like the other host write operations.
-int32_t joyeer_write_stderr_abi(
-    int64_t* errorCode,
-    const uint8_t* data,
-    int64_t count);
-// Reads one line from stdin (spec 18.5). Success returns 0 with an owned
-// String in *result and *errorCode = 0. Failures return the
-// JoyeerStdinErrorKind tag and leave *result untouched: 1 EndOfInput and
-// 2 LineTooLong carry code 0; 3 ReadFailed carries the native errno (EINVAL
-// for a negative limit). A line ends at LF; one preceding CR is removed; a
-// final unterminated line is returned. At most maximumBytes + 1 bytes of a
-// line are held, and an over-long line is consumed through its terminator.
-// Flushes stdout first (failure ignored). Windows switches stdin to binary mode
-// on first use. Null result or error
-// storage is ABI misuse and panics.
-int32_t joyeer_read_stdin_line_abi(
-    JoyeerString* result,
-    int64_t* errorCode,
-    int64_t maximumBytes);
 void joyeer_string_concat_abi(
     JoyeerString* result,
     const uint8_t* leftData,
@@ -200,15 +156,6 @@ int64_t joyeer_string_compare_abi(
 uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
 void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value);
 
-// Returns a stable JoyeerIOErrorKind and writes either an owned String or the
-// original platform error code. The compiler constructs Result<String,
-// IOError>, so this ABI does not depend on frontend enum tags or aggregate
-// layout.
-int32_t joyeer_read_file_abi(
-    JoyeerString* result,
-    int64_t* errorCode,
-    const uint8_t* pathData,
-    int64_t pathCount);
 
 void joyeer_array_create_abi(
     JoyeerArray* result,

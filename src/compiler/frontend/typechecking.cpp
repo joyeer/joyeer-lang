@@ -439,46 +439,6 @@ private:
                 model->semanticModelValue->preludeScope());
         assert(prelude != nullptr);
 
-        const auto hostEnumeration = [this](std::string_view name) {
-            const auto symbol = model->typeContext.builtinSymbol(std::string(name));
-            assert(symbol.has_value());
-            const auto type = model->typeContext.typeForSymbol(*symbol);
-            assert(type.has_value());
-            return *type;
-        };
-        const auto hostType = [this, &hostEnumeration](hostbuiltins::ValueKind kind) {
-            switch (kind) {
-                case hostbuiltins::ValueKind::string:
-                    return model->typeContext.stringType();
-                case hostbuiltins::ValueKind::strings:
-                    return model->typeContext.arrayType(model->typeContext.stringType());
-                case hostbuiltins::ValueKind::integer:
-                    return model->typeContext.intType();
-                case hostbuiltins::ValueKind::unit:
-                    return model->typeContext.voidType();
-                case hostbuiltins::ValueKind::fileKind:
-                    return hostEnumeration("FileKind");
-                case hostbuiltins::ValueKind::processStatus:
-                    return hostEnumeration("ProcessStatus");
-            }
-            assert(false && "unrecognized host value kind");
-            return model->typeContext.errorType();
-        };
-        for (const auto& descriptor : hostbuiltins::functions) {
-            const auto found = prelude->values.find(std::string(descriptor.name));
-            assert(found != prelude->values.end());
-            std::vector<TypeId> parameters;
-            for (const auto& parameter : descriptor.parameters) {
-                parameters.push_back(hostType(parameter.kind));
-            }
-            const auto result = model->typeContext.resultType(
-                    hostType(descriptor.result), hostEnumeration(descriptor.error));
-            model->symbolTypes[found->second] = result;
-            model->callables[found->second] = TypedCallableSignature {
-                semantic::CallableKind::function, true, std::move(parameters), result,
-            };
-        }
-
         const auto print = prelude->values.find("print");
         if (print != prelude->values.end()) {
             model->symbolTypes[print->second] = model->typeContext.voidType();
@@ -487,20 +447,6 @@ private:
                 true,
                 { model->typeContext.anyType() },
                 model->typeContext.voidType(),
-            };
-        }
-
-        const auto readFile = prelude->values.find("readFile");
-        if (readFile != prelude->values.end()) {
-            const auto result = model->typeContext.resultType(
-                    model->typeContext.stringType(),
-                    model->typeContext.ioErrorType());
-            model->symbolTypes[readFile->second] = result;
-            model->callables[readFile->second] = TypedCallableSignature {
-                semantic::CallableKind::function,
-                true,
-                { model->typeContext.stringType() },
-                result,
             };
         }
 

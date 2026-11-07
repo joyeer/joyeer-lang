@@ -1,3 +1,5 @@
+import System
+
 import moss.binary
 
 private func claimFile(contents: borrowing String): Result<String, String> {

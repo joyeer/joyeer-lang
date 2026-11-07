@@ -174,7 +174,7 @@ generics. See [collections.joyeer](../examples/collections.joyeer) and
 
 ## File input
 
-`readFile(path: "input.txt")` returns `Result<String, IOError>`. Match `.Ok`
+With `import System`, `readFile(path: "input.txt")` returns `Result<String, IOError>`. Match `.Ok`
 to use the bytes and `.Err` to report failure, or write
 `readFile(path: path)?` inside a function returning `Result<U, IOError>`.
 An `Int` entry point must match its final error and select an exit status.
@@ -186,7 +186,7 @@ Unicode characters or an assumed universal definition of text lines.
 
 ## Portable filesystem and processes
 
-These built-ins borrow their arguments; successful strings and arrays are
+These `System` functions (add `import System`) borrow their arguments; successful strings and arrays are
 independently owned:
 
 ```joyeer
@@ -203,7 +203,7 @@ func runProcess(executable: String, arguments: [String], workingDirectory: Strin
 func readStdinLine(maximumBytes: Int): Result<String, StdinError>
 ```
 
-These lines document signatures; do not redeclare the built-ins in a program.
+These lines document signatures; do not redeclare them in a program.
 Paths must be nonempty valid UTF-8 without NUL and use host path syntax.
 Windows uses wide-character APIs. `readFileUtf8` preserves arbitrary content
 bytes: its name describes path encoding, not text decoding.

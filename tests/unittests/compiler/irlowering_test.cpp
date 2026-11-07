@@ -613,54 +613,6 @@ print(value: number)
     EXPECT_EQ(opcodeCount(run, joyeer::ir::Opcode::returnVoid), 1u);
 }
 
-TEST_F(IRLoweringTest, LowersReadFileAsAnOwnedExternalResult) {
-    lower(R"JOYEER(func load(path: String): Result<String, IOError> {
-return readFile(path: path)
-}
-)JOYEER");
-
-    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    const auto verification = joyeer::ir::Verifier().verify(*result.module);
-    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
-
-    const auto& readFile = function("readFile");
-    EXPECT_TRUE(readFile.isExternal);
-    EXPECT_TRUE(readFile.returnsValue);
-    ASSERT_EQ(readFile.parameters.size(), 1u);
-    EXPECT_EQ(
-            result.module->types[readFile.parameters[0].value.type].kind,
-            joyeer::typing::TypeKind::string);
-    EXPECT_EQ(
-            result.module->types[readFile.resultType].kind,
-            joyeer::typing::TypeKind::result);
-    const auto& resultType = result.module->types[readFile.resultType];
-    ASSERT_EQ(resultType.arguments.size(), 2u);
-    const auto errorType = resultType.arguments[1];
-    EXPECT_EQ(
-            result.module->types[errorType].kind,
-            joyeer::typing::TypeKind::enumeration);
-    const auto errorEnumeration = std::find_if(
-            result.module->enumerations.begin(),
-            result.module->enumerations.end(),
-            [errorType](const auto& enumeration) {
-                return enumeration.type == errorType;
-            });
-    ASSERT_NE(errorEnumeration, result.module->enumerations.end());
-    ASSERT_EQ(errorEnumeration->cases.size(), 4u);
-    const auto integerType = std::find_if(
-            result.module->types.begin(),
-            result.module->types.end(),
-            [](const auto& type) {
-                return type.kind == joyeer::typing::TypeKind::integer;
-            });
-    ASSERT_NE(integerType, result.module->types.end());
-    for (const auto& enumCase : errorEnumeration->cases) {
-        ASSERT_EQ(enumCase.payloadTypes.size(), 1u);
-        EXPECT_EQ(enumCase.payloadTypes[0], integerType->id);
-    }
-    EXPECT_EQ(opcodeCount(function("load"), joyeer::ir::Opcode::call), 1u);
-}
-
 TEST_F(IRLoweringTest, LowersExplicitByteConversionCalls) {
     lower(R"JOYEER(func convert(value: UInt8): String {
 print(value: byteToInt(value: value))

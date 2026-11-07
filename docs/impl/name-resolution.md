@@ -108,11 +108,12 @@ The current prelude declares:
 - `Optional.Some` / `Optional.None` and `Result.Ok` / `Result.Err`;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
-- builtin functions: `print(value:)`, `byteToInt(value:)`, `byteToString(value:)`,
-  `readFile(path:)`, `readFileUtf8(path:)`, `writeFileNew(path:contents:)`,
-  `createDirectory(path:)`, `listDirectory(path:)`, `fileKind(path:)`,
-  `removeFile(path:)`, `removeDirectory(path:)`, `joinPath(base:path:)`, and
-  `runProcess(executable:arguments:workingDirectory:)`.
+- builtin functions: `print(value:)`, `byteToInt(value:)`, and
+  `byteToString(value:)`. The host operations (`readFile`, `readFileUtf8`,
+  `writeFileNew`, `runProcess`, ...) are not builtins: they are functions of the
+  `System` standard module, reached with `import System`. The prelude declares
+  only the enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
+  `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`).
 
 An internal `Any` marker also exists in the semantic prelude; the source
 spelling is reserved and is not a supported dynamic-value type.
