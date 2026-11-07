@@ -1,8 +1,8 @@
 # 0009: Capabilities the Joyeer runtime core needs from the compiler
 
-- Status: accepted (decided 2026-11-08). Indirect calls (D2), core units (D3) and the
+- Status: accepted (decided 2026-11-08). Static slots (D1), indirect calls (D2), core units (D3) and the
   constant-data address (part of D7) are implemented and
-  measured; D1, D4, D5 and the rest of D7 are accepted designs for runtime plan stage 3.
+  measured; D4, D5 and the rest of D7 are accepted designs for runtime plan stage 3.
 - Spec: [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics) (implemented
   intrinsics) and [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-)
   (accepted, not yet implemented).

@@ -281,6 +281,7 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_call_void1` | `(function: Int, first: Int) -> Void` | Calls the C function at `function`, which returns void and takes one address argument, with the target's C calling convention |
 | `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
 | `joyeer_intrinsic_literal_address` | `(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal. No `String` value is created and nothing is allocated; it is the one use of a string literal a core unit (§19.4.6) may make |
+| `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime plan](../plan/runtime-in-joyeer.md) |
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
 location. The operations assume a little-endian target; the supported targets
@@ -303,7 +304,6 @@ for native bindings only.
 
 | Capability | Declaration | Effect |
 |---|---|---|
-| Static storage | `joyeer_intrinsic_static_slot(index: Int) -> Int` | The address of 8-byte zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps |
 | Data symbol | `@c_data(symbol: "environ")` on `func environAddress(): Int` | The address of that C data symbol; repeated declarations must agree |
 | Non-returning export | `@c_export` with result type `Never` | The export is `noreturn` |
 | Program entry | `@c_export(symbol: "main")` or `"wmain"`, `(Int32, Int) -> Int32` | The C entry point; allowed in core units only, all other startup symbols stay rejected |

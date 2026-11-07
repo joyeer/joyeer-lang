@@ -114,7 +114,7 @@ foreach(profile IN ITEMS Debug Optimized)
             LABELS "c-interop;native" TIMEOUT 60)
     endforeach()
     set(objects)
-    foreach(unit IN ITEMS roundtrip second scalars platform-scalars indirect)
+    foreach(unit IN ITEMS roundtrip second scalars platform-scalars indirect static-slots-first static-slots-second)
         if(unit STREQUAL platform-scalars)
             set(unit_source "${CMAKE_CURRENT_BINARY_DIR}/${unit}.joyeer")
         else()
@@ -235,4 +235,47 @@ foreach(profile IN ITEMS Debug Optimized)
             "-DEXPECTED_OUTPUT=literal addresses passed\n"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.LiteralAddress${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# Static storage: a table of zeroed 8-byte slots shared by every unit in the
+# program (spec 19.4.6), reached by index with a range check.
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.StaticSlots${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/static-slots.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/static-slots-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.static_slots;--runtime-module;runtime.static_slots;${compile_flags}"
+            "-DEXPECTED_OUTPUT=static slots passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.StaticSlots${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    foreach(case IN ITEMS high negative maximum)
+        add_test(NAME "JoyeerCInterop.StaticSlotTrap${case}${profile}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/static-slot-traps.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/static-slot-trap-${case}-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+                "-DCOMPILER_ARGS=--module-name;runtime.static_slot_traps;--runtime-module;runtime.static_slot_traps;${compile_flags}"
+                "-DPROGRAM_ARGUMENT_1=${case}"
+                "-DEXPECTED_OUTPUT="
+                "-DEXPECTED_EXIT_CODE=1"
+                "-DEXPECTED_ERROR_PATTERN=static slot index out of range"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+        set_tests_properties("JoyeerCInterop.StaticSlotTrap${case}${profile}" PROPERTIES
+            LABELS "c-interop;native" TIMEOUT 60)
+    endforeach()
+    # Two separately compiled objects must share the one table.
+    set(target "CInteropStaticSlots${profile}")
+    add_executable(${target} static-slots-caller.c)
+    target_link_libraries(${target} PRIVATE CInteropJoyeer${profile} JoyeerRuntime)
+    set_target_properties(${target} PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+    add_test(NAME "JoyeerCInterop.SharedStaticSlots${profile}" COMMAND ${target})
+    set_tests_properties("JoyeerCInterop.SharedStaticSlots${profile}" PROPERTIES
+        LABELS "c-interop;native" TIMEOUT 30)
 endforeach()

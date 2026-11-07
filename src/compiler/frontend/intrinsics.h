@@ -15,6 +15,11 @@ namespace joyeer::intrinsic {
 
 inline constexpr std::string_view prefix = "joyeer_intrinsic_";
 
+// Slots in the table behind joyeer_intrinsic_static_slot, and the symbol every
+// object defines (as a merged comdat) so that all units share one table.
+inline constexpr int64_t staticSlotCount = 64;
+inline constexpr std::string_view staticSlotSymbol = "joyeer_static_slots";
+
 enum class Operation {
     addressOf,
     load8,
@@ -29,6 +34,7 @@ enum class Operation {
     callVoid1,
     callVoid2,
     literalAddress,
+    staticSlot,
 };
 
 struct Descriptor {
@@ -43,7 +49,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 13> table {{
+inline constexpr std::array<Descriptor, 14> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -76,6 +82,10 @@ inline constexpr std::array<Descriptor, 13> table {{
     // String. The argument must be a literal; no String value is created.
     { "joyeer_intrinsic_literal_address", Operation::literalAddress, TypeKind::integer,
       { TypeKind::string, TypeKind::error, TypeKind::error }, 1, false },
+    // The address of zero-initialized 8-byte slot `index` of a table of
+    // staticSlotCount slots shared by every unit in the program (spec §19.4.6).
+    { "joyeer_intrinsic_static_slot", Operation::staticSlot, TypeKind::integer,
+      { TypeKind::integer, TypeKind::error, TypeKind::error }, 1, false },
 }};
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

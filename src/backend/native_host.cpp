@@ -14,6 +14,27 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
     if (descriptor.operation == Operation::addressOf) {
         return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
     }
+    if (descriptor.operation == Operation::staticSlot) {
+        // One zeroed table per program: every object that uses slots defines the
+        // same linkonce symbol in a comdat, and the linker keeps a single copy.
+        const std::string symbol(intrinsic::staticSlotSymbol);
+        auto* tableType = llvm::ArrayType::get(builder.getInt64Ty(), static_cast<uint64_t>(intrinsic::staticSlotCount));
+        auto* table = module().getNamedGlobal(symbol);
+        if (table == nullptr) {
+            table = new llvm::GlobalVariable(module(), tableType, false,
+                    llvm::GlobalValue::LinkOnceODRLinkage, llvm::ConstantAggregateZero::get(tableType), symbol);
+            table->setAlignment(llvm::Align(8));
+            auto* comdat = module().getOrInsertComdat(symbol);
+            comdat->setSelectionKind(llvm::Comdat::Any);
+            table->setComdat(comdat);
+        }
+        auto* outside = builder.CreateICmpUGE(arguments[0],
+                integer(static_cast<uint64_t>(intrinsic::staticSlotCount)), temporary());
+        trap(outside, "static slot index out of range");
+        llvm::Value* zero = integer(0);
+        auto* slot = builder.CreateInBoundsGEP(tableType, table, {zero, arguments[0]}, temporary());
+        return builder.CreatePtrToInt(slot, builder.getInt64Ty(), temporary());
+    }
     if (descriptor.operation == Operation::literalAddress) {
         // The argument is a string literal, so its data is a private constant
         // global. Re-emit those bytes with a NUL terminator and return the address.
@@ -84,6 +105,7 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::callVoid1:
         case Operation::callVoid2:
         case Operation::literalAddress:
+        case Operation::staticSlot:
             break;
     }
     return nullptr;

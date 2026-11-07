@@ -468,8 +468,40 @@ func use(function: Int, first: Int, second: Int) {
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
+TEST_F(CInteropTest, LowersStaticSlotsToAMergedComdatTableWithARangeCheck) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+func counter(): Int { return slot(index: 3) }
+func variable(index: Int): Int { return slot(index: index) }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    // One zeroed table, merged across objects, indexed after an unsigned range check.
+    EXPECT_NE(emitted.text.find("@joyeer_static_slots = linkonce_odr global [64 x i64] zeroinitializer"),
+              std::string::npos);
+    EXPECT_NE(emitted.text.find("comdat"), std::string::npos);
+    EXPECT_NE(emitted.text.find("icmp uge i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("getelementptr inbounds [64 x i64], ptr @joyeer_static_slots"),
+              std::string::npos);
+    EXPECT_NE(emitted.text.find("static slot index out of range"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
 TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
     for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int32): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int, extra: Int): Int\n",
+            "@c_export(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int): Int { return index }\n",
             "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int): Void\n",
             "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: UInt64): Void\n",
