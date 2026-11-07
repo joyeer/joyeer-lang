@@ -752,6 +752,26 @@ TEST(RuntimeBlackBoxTest, PrintsIntegersBooleansAndBytesOnePerLine) {
     EXPECT_EQ(capturedStdout([] { joyeer_print_byte(0); }), "0\n");
 }
 
+TEST(RuntimeBlackBoxTest, PrintsDecimalAtEveryDigitCountBoundary) {
+    EXPECT_EQ(capturedStdout([] { joyeer_print_int(0); }), "0\n");
+    EXPECT_EQ(capturedStdout([] { joyeer_print_int(-1); }), "-1\n");
+    EXPECT_EQ(capturedStdout([] { joyeer_print_int(std::numeric_limits<int64_t>::max()); }),
+              "9223372036854775807\n");
+    // capturedStdout takes a plain function, so the value travels in a static.
+    static uint64_t printed;
+    printed = 1;
+    for (int digits = 1; digits <= 20; ++digits) {
+        EXPECT_EQ(capturedStdout([] { joyeer_print_uint(printed); }), std::to_string(printed) + "\n");
+        if (printed > 1) {
+            --printed;
+            EXPECT_EQ(capturedStdout([] { joyeer_print_uint(printed); }), std::to_string(printed) + "\n");
+            ++printed;
+        }
+        if (printed > std::numeric_limits<uint64_t>::max() / 10) break;
+        printed *= 10;
+    }
+}
+
 TEST(RuntimeBlackBoxTest, PrintsFloatingPointWithNineAndSeventeenSignificantDigits) {
     EXPECT_EQ(capturedStdout([] { joyeer_print_float(1.5f); }), "1.5\n");
     EXPECT_EQ(capturedStdout([] { joyeer_print_float(0.1f); }), "0.100000001\n");

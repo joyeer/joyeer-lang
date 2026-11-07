@@ -49,7 +49,7 @@ private func count(delta: Int): Int {
 public func allocate(size: Int): Int {
     let address = systemAllocate(size: request(size: size))
     if address == 0 { panic(message: literalAddress(text: "out of memory")) }
-    let previous = count(delta: 1)
+    count(delta: 1)
     return address
 }
 

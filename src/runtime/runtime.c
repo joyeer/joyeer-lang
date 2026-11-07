@@ -67,11 +67,6 @@ static size_t checkedByteCount(int64_t count, int64_t stride) {
     return (size_t)count * (size_t)stride;
 }
 
-// Bytes a string of `count` bytes occupies: an empty string still owns one byte.
-static size_t textBytes(int64_t count) {
-    return (size_t)(count == 0 ? 1 : count);
-}
-
 static size_t arrayStorageBytes(int64_t capacity, int64_t elementSize) {
     return sizeof(ArrayHeader) + checkedByteCount(capacity, elementSize);
 }
@@ -80,83 +75,12 @@ static size_t dictionaryStorageBytes(int64_t capacity, int64_t entrySize) {
     return sizeof(DictionaryHeader) + checkedByteCount(capacity, entrySize);
 }
 
-void joyeer_print_int(int64_t value) {
-    printf("%" PRId64 "\n", value);
-}
-
-void joyeer_print_uint(uint64_t value) {
-    printf("%" PRIu64 "\n", value);
-}
-
 void joyeer_print_float(float value) {
     printf("%.9g\n", (double)value);
 }
 
 void joyeer_print_double(double value) {
     printf("%.17g\n", value);
-}
-
-void joyeer_print_bool(bool value) {
-    puts(value ? "true" : "false");
-}
-
-void joyeer_print_byte(uint8_t value) {
-    printf("%u\n", (unsigned int)value);
-}
-
-static void printString(JoyeerString value) {
-    if (value.count < 0 || (value.count != 0 && value.data == NULL)) {
-        joyeer_panic("invalid string");
-    }
-    if (value.count != 0) fwrite(value.data, 1, (size_t)value.count, stdout);
-    fputc('\n', stdout);
-}
-
-static JoyeerString concatStrings(JoyeerString left, JoyeerString right) {
-    if (left.count < 0 || right.count < 0 ||
-        (left.count != 0 && left.data == NULL) ||
-        (right.count != 0 && right.data == NULL) ||
-        left.count > INT64_MAX - right.count) {
-        joyeer_panic("invalid string concatenation");
-    }
-    const int64_t count = left.count + right.count;
-    uint8_t* data = (uint8_t*)joyeer_alloc(textBytes(count));
-    if (left.count != 0) memcpy(data, left.data, (size_t)left.count);
-    if (right.count != 0) memcpy(data + left.count, right.data, (size_t)right.count);
-    JoyeerString result = { data, count };
-    return result;
-}
-
-static void destroyString(JoyeerString* value) {
-    if (value == NULL) return;
-    joyeer_free((void*)value->data, textBytes(value->count));
-    value->data = NULL;
-    value->count = 0;
-}
-
-void joyeer_string_clone_abi(
-        JoyeerString* result,
-        const uint8_t* data,
-        int64_t count) {
-    if (result == NULL || count < 0 || (count != 0 && data == NULL)) {
-        joyeer_panic("invalid string clone");
-    }
-    uint8_t* copy = (uint8_t*)joyeer_alloc(textBytes(count));
-    if (count != 0) memcpy(copy, data, (size_t)count);
-    result->data = copy;
-    result->count = count;
-}
-
-void joyeer_string_destroy_abi(JoyeerString* value) {
-    destroyString(value);
-}
-
-void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value) {
-    if (result == NULL) joyeer_panic("byteToString result is null");
-    uint8_t* data = (uint8_t*)joyeer_alloc(1);
-    data[0] = value;
-    result->data = data;
-    result->count = 1;
 }
 
 static JoyeerArray arrayCreateOwned(
@@ -600,22 +524,6 @@ static void destroyDictionary(JoyeerDictionary* dictionary) {
 
 void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary) {
     destroyDictionary(dictionary);
-}
-
-void joyeer_print_string_abi(const uint8_t* data, int64_t count) {
-    printString((JoyeerString) { data, count });
-}
-
-void joyeer_string_concat_abi(
-        JoyeerString* result,
-        const uint8_t* leftData,
-        int64_t leftCount,
-        const uint8_t* rightData,
-        int64_t rightCount) {
-    if (result == NULL) joyeer_panic("string result is null");
-    *result = concatStrings(
-            (JoyeerString) { leftData, leftCount },
-            (JoyeerString) { rightData, rightCount });
 }
 
 void* joyeer_dictionary_at_abi(

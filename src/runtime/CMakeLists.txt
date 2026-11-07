@@ -9,6 +9,8 @@ set(JOYEER_RUNTIME_CORE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/strings.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/panic.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/allocator.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/text.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/print.joyeer"
 )
 
 # Optimized in every configuration except Debug, which keeps full debug

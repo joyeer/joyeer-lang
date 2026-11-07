@@ -118,11 +118,12 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 | `joyeer_runtime_active_allocations`, allocation counter | `entry`, tests, fixtures | done (stage 4), Joyeer |
 | `joyeer_panic` | every generated trap, all runtime code | done (stage 4), Joyeer |
 | `joyeer_checked_{add,sub,mul,div,rem}_int` | removed in stage 0: generated code checks inline | done |
-| `joyeer_print_{int,uint,float,double,bool,byte}`, `joyeer_print_string_abi` | generated `print` | R3, R4 |
+| `joyeer_print_{int,uint,bool,byte}`, `joyeer_print_string_abi` | generated `print` | done (stage 5), Joyeer |
+| `joyeer_print_{float,double}` | generated `print` | R4 |
 | `joyeer_string_{equal,compare}_abi` | generated string operators | done (stage 1.3) |
-| `joyeer_string_concat_abi` | generated string operators | R3 |
+| `joyeer_string_concat_abi` | generated string operators | done (stage 5), Joyeer |
 | string byte access | generated `text[index]` | inline in the backend; no runtime function (stage 1.3) |
-| `joyeer_string_{clone,destroy}_abi`, `joyeer_byte_to_string_abi` | generated ownership code | R3 |
+| `joyeer_string_{clone,destroy}_abi`, `joyeer_byte_to_string_abi` | generated ownership code | done (stage 5), Joyeer |
 | `joyeer_array_{create_owned,clone,append_owned,destroy}_abi` | generated array code | R5 |
 | `joyeer_dictionary_{create_owned,clone,set_owned,find,at,destroy}_abi` | generated dictionary code | R6 |
 | `joyeer_native_{bytes,strings}_init`, `joyeer_native_{bytes,string,strings}_assign` | native libraries (Compression), generated `initializing` outputs | R5 |
@@ -515,13 +516,16 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   taking sizes, and `joyeer_runtime_active_allocations`. The remaining C calls the
   Joyeer allocator through its exports, so there is one counter.
 
-### Stage 5: Strings and printing (R3)
+### Stage 5: Strings and printing (R3), done
 
-- [ ] 5.1 `joyeer_string_clone_abi`, `joyeer_string_destroy_abi`,
-  `joyeer_byte_to_string_abi`.
-- [ ] 5.2 `joyeer_string_concat_abi`: one allocation, including for empty input.
-- [ ] 5.3 `joyeer_print_string_abi`, and `print` for every integer width, `Bool`
-  and `UInt8` (decimal formatting in Joyeer).
+- [x] 5.1 `joyeer_string_clone_abi`, `joyeer_string_destroy_abi`,
+  `joyeer_byte_to_string_abi` (`joyeer/text.joyeer`).
+- [x] 5.2 `joyeer_string_concat_abi`: one allocation, including for empty input.
+- [x] 5.3 `joyeer_print_string_abi`, and `print` for every integer width, `Bool`
+  and `UInt8` (decimal formatting in Joyeer, `joyeer/print.joyeer`). Output still goes
+  through the C `stdout` stream so ordering with `System` is unchanged; digits are
+  written with one `fputc` each, so printing allocates nothing. The stream comes from
+  `joyeer_native_stdio` until 7.2.
 
 ### Stage 6: Collections (R5, R6)
 
