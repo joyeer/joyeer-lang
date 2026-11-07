@@ -1108,7 +1108,7 @@ TEST_F(CInteropTest, RejectsNativeSignaturesConflictingWithGeneratedRuntimeCalls
             {"joyeer_print_int", "(): Int", "print(value: 42)"},
             {"joyeer_print_int", "(value: Int): Int", "print(value: 42)"},
             {"joyeer_print_bool", "(value: Int): Void", "print(value: true)"},
-            {"joyeer_panic", "(value: Int): Void", "let sum = value + 1\nprint(value: sum)"},
+            {"joyeer_panic", "(): Int", "let sum = value + 1\nprint(value: sum)"},
             {"joyeer_string_clone_abi", "(): Int", "let text = \"value\"\nprint(value: text)"},
         }) {
         for (const bool importing : {false, true}) {

@@ -121,12 +121,20 @@ find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm.exe
     HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
 get_target_property(JOYEER_RUNTIME_CORE_OBJECT JoyeerRuntime JOYEER_CORE_OBJECT)
 if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
+    # The C library calls the core may make: memory (allocator), compare, write
+    # and exit (panic). Windows spells the write call `_write`.
+    set(joyeer_core_imports "malloc;realloc;free;memcmp;_Exit")
+    if(WIN32)
+        list(APPEND joyeer_core_imports _write)
+    else()
+        list(APPEND joyeer_core_imports write)
+    endif()
     add_test(NAME RuntimeCoreObjectSymbols
         COMMAND "${CMAKE_COMMAND}"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DOBJECT=${JOYEER_RUNTIME_CORE_OBJECT}"
-            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi"
-            "-DALLOWED_UNDEFINED=joyeer_panic;memcmp"
+            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations"
+            "-DALLOWED_UNDEFINED=${joyeer_core_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
 endif()

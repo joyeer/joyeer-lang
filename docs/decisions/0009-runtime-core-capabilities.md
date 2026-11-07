@@ -92,8 +92,10 @@ address. A message is named with
 `joyeer_intrinsic_literal_address(text: String) -> Int`, whose argument must be a
 string literal: it lowers to the address of that literal's NUL-terminated
 constant data and creates no `String` value, so D3 allows it. `joyeer_panic`
-writes `Joyeer runtime error: <message>\n` with one `write` call and calls
-`_Exit(1)`; it neither allocates nor touches a managed value. `@c_export` of a
+writes `Joyeer runtime error: `, the message and a newline to standard error
+(three `write` calls: a core unit has no buffer to join them in without
+allocating) and calls `_Exit(1)`; it neither allocates nor touches a managed
+value. `@c_export` of a
 function with result type `Never` is allowed in any runtime unit and emits
 `noreturn`, and so is `Never` as the result of a `@c_extern` such as `exit`.
 Rejected: passing a `[UInt8]` constant through `pointer:` (the Debug finding
@@ -122,6 +124,22 @@ until a Tier 2 runtime compares words itself. Rejected: a checking variant
 In Tier 2 the variable-size forms still call `memcpy`/`memmove`/`memset` by
 name, so a libc-free runtime must define those symbols itself, in a unit that
 does not use them.
+
+**Panic in the generated code (stage 4).** The backend's own checks (overflow, bounds)
+call `joyeer_panic`; the call now passes the message as an `i64` address
+(`ptrtoint` of the literal) so it matches the Joyeer export's signature, which is
+the same C ABI as a `const char*` on a 64-bit target. A user program that
+declares `joyeer_panic` with any other signature is still
+`llvm.conflicting-native-symbol`. A runtime object emits no clone or destroy helpers
+for types that only core functions mention (the literal-address argument is a
+`String` constant that is never materialized); without this a Debug core object
+imported `joyeer_string_clone_abi`.
+
+**The allocator contract (stage 4).** `joyeer_alloc(size)`,
+`joyeer_realloc(address, oldSize, newSize)` and `joyeer_free(address, size)` are
+Joyeer exports; sizes are those of the last request, so the Tier 2 allocator (D8)
+needs no header. They wrap `malloc`, `realloc` and `free` today and ignore the
+sizes. The counter is static slot 0.
 
 **Entry-point export: the IR flag.** The IR function carries `coreContext`, and
 the IR wire format is version 10 (core flag, then the data-symbol flag), so the

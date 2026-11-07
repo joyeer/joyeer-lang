@@ -39,7 +39,19 @@ enum JoyeerDictionaryKeyKind {
     JOYEER_DICTIONARY_KEY_BYTE = 4,
 };
 
+// Writes `Joyeer runtime error: <message>` to standard error and exits with
+// status 1; a null message reads "unknown error". Written in Joyeer
+// (src/runtime/joyeer/panic.joyeer) and exported with this C ABI.
 JOYEER_NORETURN void joyeer_panic(const char* message);
+
+// The runtime allocator and its leak counter, written in Joyeer
+// (src/runtime/joyeer/allocator.joyeer). A size is the byte count the block was
+// last requested with (a zero-byte request is served as one byte), passed back to
+// `joyeer_realloc` and `joyeer_free`. All three panic rather than return failure.
+void* joyeer_alloc(size_t size);
+void* joyeer_realloc(void* address, size_t oldSize, size_t newSize);
+void joyeer_free(void* address, size_t size);
+// Blocks allocated and not yet freed.
 int64_t joyeer_runtime_active_allocations(void);
 // The calling thread's C-runtime errno. A Joyeer binding cannot dereference
 // the pointer that errno expands to, so native bindings read it through this.

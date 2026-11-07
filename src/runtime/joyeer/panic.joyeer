@@ -1,0 +1,67 @@
+// Runtime failure (`joyeer_panic`): writes `Joyeer runtime error: <message>` and a
+// newline to standard error, then ends the process with status 1. The message is
+// the address of a NUL-terminated constant (a string literal named with the
+// literal-address intrinsic, or a C string); zero means "unknown error".
+//
+// Nothing here allocates or touches a managed value, so a panic is safe at any
+// point, including inside the allocator.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only. It must
+// not use String values, arrays, dictionaries or print, which lower to runtime
+// calls (runtime plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func loadByte(address: Int): UInt8
+
+@c_extern(symbol: "_Exit")
+private func exitProcess(status: Int32): Never
+
+@platform(windows)
+@c_extern(symbol: "_write")
+private func writeW(descriptor: Int32, buffer: Int, count: UInt32): Int32
+
+@platform(posix)
+@c_extern(symbol: "write")
+private func writeP(descriptor: Int32, buffer: Int, count: Int): Int
+
+// Writes all `count` bytes at `address` to standard error, giving up on the
+// first failure: there is nowhere left to report it.
+@platform(windows)
+private func writeError(address: Int, count: Int) {
+    var done = 0
+    while done < count {
+        let written = writeW(descriptor: 2, buffer: address + done, count: (count - done) as UInt32)
+        if written <= 0 { return }
+        done = done + (written as Int)
+    }
+}
+
+@platform(posix)
+private func writeError(address: Int, count: Int) {
+    var done = 0
+    while done < count {
+        let written = writeP(descriptor: 2, buffer: address + done, count: count - done)
+        if written <= 0 { return }
+        done = done + written
+    }
+}
+
+private func length(address: Int): Int {
+    var count = 0
+    while loadByte(address: address + count) != 0 { count = count + 1 }
+    return count
+}
+
+@c_export(symbol: "joyeer_panic")
+public func panic(message: Int): Never {
+    var text = message
+    if text == 0 { text = literalAddress(text: "unknown error") }
+    let prefix = literalAddress(text: "Joyeer runtime error: ")
+    writeError(address: prefix, count: length(address: prefix))
+    writeError(address: text, count: length(address: text))
+    writeError(address: literalAddress(text: "\n"), count: 1)
+    exitProcess(status: 1)
+}

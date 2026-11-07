@@ -2,7 +2,7 @@
 
 The runtime is declared in `src/runtime/runtime.h`. Most of it is C under
 `src/runtime/`; the Joyeer core (`src/runtime/joyeer/`: UTF-8 validation, string
-equality and ordering) is compiled by the build-tree compiler into one object in
+equality and ordering, `joyeer_panic`, and the allocator with its leak counter) is compiled by the build-tree compiler into one object in
 the same archive ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
@@ -76,7 +76,8 @@ prelude's `byteToInt(value:)` zero-extends `UInt8` to signed 64-bit `Int`;
 `byteToString(value:)` creates an owned byte using
 `joyeer_byte_to_string_abi`, so normal cleanup applies.
 
-The runtime uses libc allocation. Collection allocations retain element
+The runtime allocates through `joyeer_alloc`, `joyeer_realloc` and `joyeer_free`
+(Joyeer, `allocator.joyeer`), which call libc and keep the leak counter. Collection allocations retain element
 layout and clone/destroy callbacks. On the current 64-bit layout, private
 headers occupy 24 bytes for arrays and 72 bytes for dictionaries, before
 payload and allocator overhead. These callbacks can introduce indirect

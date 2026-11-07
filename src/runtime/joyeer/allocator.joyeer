@@ -1,0 +1,76 @@
+// The runtime allocator and its leak counter (`joyeer_alloc`, `joyeer_realloc`,
+// `joyeer_free`, `joyeer_runtime_active_allocations`). Every runtime allocation
+// goes through here, so there is one counter: the number of blocks allocated and
+// not yet freed, kept in static slot 0 (runtime plan §5, D1) and updated with an
+// atomic add. A program exits non-zero when it ends with a non-zero count.
+//
+// The contract takes sizes, as a Joyeer allocator needs them: `free` and
+// `realloc` receive the size the block was last requested with. The blocks come
+// from the C library for now and the sizes go unused; the allocator over
+// `VirtualAlloc` / `mmap` (decision D8) replaces the three imports below without
+// changing a caller. A zero-byte request is served as one byte, so every live
+// block has its own address.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+private func atomicAdd(address: Int, delta: Int): Int
+
+@c_extern(symbol: "malloc")
+private func systemAllocate(size: Int): Int
+
+@c_extern(symbol: "realloc")
+private func systemReallocate(address: Int, size: Int): Int
+
+@c_extern(symbol: "free")
+private func systemFree(address: Int): Void
+
+// Runtime plan §5 assigns slots 0 to 15 to the core.
+private let counterSlot: Int = 0
+
+private func request(size: Int): Int {
+    if size < 0 { panic(message: literalAddress(text: "negative allocation size")) }
+    if size == 0 { return 1 }
+    return size
+}
+
+private func count(delta: Int): Int {
+    return atomicAdd(address: staticSlot(index: counterSlot), delta: delta)
+}
+
+@c_export(symbol: "joyeer_alloc")
+public func allocate(size: Int): Int {
+    let address = systemAllocate(size: request(size: size))
+    if address == 0 { panic(message: literalAddress(text: "out of memory")) }
+    let previous = count(delta: 1)
+    return address
+}
+
+// A block moved or grown in place is still one block: the counter is unchanged.
+@c_export(symbol: "joyeer_realloc")
+public func reallocate(address: Int, oldSize: Int, newSize: Int): Int {
+    if address == 0 { return allocate(size: newSize) }
+    let moved = systemReallocate(address: address, size: request(size: newSize))
+    if moved == 0 { panic(message: literalAddress(text: "out of memory")) }
+    return moved
+}
+
+@c_export(symbol: "joyeer_free")
+public func release(address: Int, size: Int): Void {
+    if address == 0 { return }
+    systemFree(address: address)
+    let previous = count(delta: -1)
+    if previous <= 0 { panic(message: literalAddress(text: "runtime allocation counter underflow")) }
+}
+
+@c_export(symbol: "joyeer_runtime_active_allocations")
+public func activeAllocations(): Int {
+    return count(delta: 0)
+}

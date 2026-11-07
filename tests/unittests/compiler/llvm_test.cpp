@@ -43,7 +43,7 @@ std::optional<std::string> blockLabel(std::string_view line) {
 void expectPanicAttributes(const std::string& text) {
     std::smatch declaration;
     ASSERT_TRUE(std::regex_search(text, declaration,
-            std::regex(R"(declare void @joyeer_panic\(ptr\) #(\d+))"))) << text;
+            std::regex(R"(declare void @joyeer_panic\(i64\) #(\d+))"))) << text;
     const auto start = text.find("attributes #" + declaration[1].str() + " = {");
     ASSERT_NE(start, std::string::npos);
     const auto attributes = text.substr(start, text.find('\n', start) - start);

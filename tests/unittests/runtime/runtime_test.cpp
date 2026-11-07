@@ -864,6 +864,56 @@ TEST(RuntimeBlackBoxDeathTest, PanicPrintsTheMessageAndExitsWithFailure) {
     EXPECT_EXIT(joyeer_panic("boom"), testing::ExitedWithCode(1), "Joyeer runtime error: boom");
     EXPECT_EXIT(joyeer_panic(nullptr), testing::ExitedWithCode(1),
                 "Joyeer runtime error: unknown error");
+    EXPECT_EXIT(joyeer_panic(""), testing::ExitedWithCode(1), "Joyeer runtime error: \n");
+}
+
+TEST(RuntimeBlackBoxTest, AllocatorCountsBlocksAndKeepsTheirContents) {
+    const auto baseline = joyeer_runtime_active_allocations();
+    auto* first = static_cast<uint8_t*>(joyeer_alloc(16));
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 1);
+    for (int index = 0; index < 16; ++index) first[index] = static_cast<uint8_t>(index);
+
+    // A zero-byte request is one block with an address of its own.
+    void* empty = joyeer_alloc(0);
+    void* other = joyeer_alloc(0);
+    ASSERT_NE(empty, nullptr);
+    ASSERT_NE(other, nullptr);
+    EXPECT_NE(empty, other);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 3);
+
+    // Growing and shrinking keep the leading bytes and do not change the count.
+    first = static_cast<uint8_t*>(joyeer_realloc(first, 16, 4096));
+    ASSERT_NE(first, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 3);
+    for (int index = 0; index < 16; ++index) EXPECT_EQ(first[index], index);
+    first = static_cast<uint8_t*>(joyeer_realloc(first, 4096, 8));
+    for (int index = 0; index < 8; ++index) EXPECT_EQ(first[index], index);
+
+    // Reallocating nothing allocates; freeing nothing is a no-op.
+    void* fresh = joyeer_realloc(nullptr, 0, 32);
+    ASSERT_NE(fresh, nullptr);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 4);
+    joyeer_free(nullptr, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + 4);
+
+    joyeer_free(first, 8);
+    joyeer_free(empty, 0);
+    joyeer_free(other, 0);
+    joyeer_free(fresh, 32);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST(RuntimeBlackBoxDeathTest, AllocatorRejectsNegativeSizesAndCounterUnderflow) {
+    EXPECT_EXIT(joyeer_alloc(static_cast<size_t>(-1)), testing::ExitedWithCode(1),
+                "Joyeer runtime error: negative allocation size");
+    EXPECT_EXIT(joyeer_realloc(nullptr, 0, static_cast<size_t>(-1)), testing::ExitedWithCode(1),
+                "Joyeer runtime error: negative allocation size");
+    // Freeing a block the counter never saw leaves it below zero.
+    EXPECT_EXIT({
+        void* block = std::malloc(8);
+        joyeer_free(block, 8);
+    }, testing::ExitedWithCode(1), "Joyeer runtime error: runtime allocation counter underflow");
 }
 
 TEST(RuntimeBlackBoxTest, GrowsArraysFromFourThenDoubles) {

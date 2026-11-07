@@ -274,7 +274,10 @@ void Builder::trap(llvm::Value* condition, std::string_view message) {
     auto* continuation = llvm::BasicBlock::Create(context(), "checked." + temporary(), activeFunction);
     builder.CreateCondBr(condition, failure, continuation);
     builder.SetInsertPoint(failure);
-    auto* panic = call("joyeer_panic", builder.getVoidTy(), {stringLiteral(message, true)});
+    // The runtime's panic is written in Joyeer and takes the message as an
+    // address-sized integer; the C ABI is the same as for a `const char*`.
+    auto* panic = call("joyeer_panic", builder.getVoidTy(), {
+            builder.CreatePtrToInt(stringLiteral(message, true), builder.getInt64Ty())});
     if (auto* function = panic->getCalledFunction()) {
         function->addFnAttr(llvm::Attribute::Cold);
         function->addFnAttr(llvm::Attribute::NoReturn);

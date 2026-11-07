@@ -115,8 +115,8 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 
 | Symbols | Called by | Phase |
 |---|---|---|
-| `joyeer_runtime_active_allocations`, allocation counter | `entry`, tests, fixtures | R2 |
-| `joyeer_panic` | every generated trap, all runtime code | R2 |
+| `joyeer_runtime_active_allocations`, allocation counter | `entry`, tests, fixtures | done (stage 4), Joyeer |
+| `joyeer_panic` | every generated trap, all runtime code | done (stage 4), Joyeer |
 | `joyeer_checked_{add,sub,mul,div,rem}_int` | removed in stage 0: generated code checks inline | done |
 | `joyeer_print_{int,uint,float,double,bool,byte}`, `joyeer_print_string_abi` | generated `print` | R3, R4 |
 | `joyeer_string_{equal,compare}_abi` | generated string operators | done (stage 1.3) |
@@ -505,11 +505,13 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 - [x] 3.6 Data-symbol imports (D5, `@c_data`).
 - [x] 3.7 The constant-data address intrinsic, for panic messages (D7).
 
-### Stage 4: Substrate (R2)
+### Stage 4: Substrate (R2), done
 
-- [ ] 4.1 `joyeer_panic` in Joyeer (D7): message, exit status and the
-  no-allocation property unchanged.
-- [ ] 4.2 The allocation counter in a static slot, `alloc` / `realloc` / `free`
+- [x] 4.1 `joyeer_panic` in Joyeer (D7): message, exit status and the
+  no-allocation property unchanged (`joyeer/panic.joyeer`). It writes the prefix, the
+  message and the newline as three `write` calls, not one: a core unit has no buffer
+  to join them in without allocating.
+- [x] 4.2 The allocation counter in a static slot (`joyeer/allocator.joyeer`), `alloc` / `realloc` / `free`
   taking sizes, and `joyeer_runtime_active_allocations`. The remaining C calls the
   Joyeer allocator through its exports, so there is one counter.
 

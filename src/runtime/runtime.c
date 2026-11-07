@@ -5,7 +5,6 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,36 +35,6 @@ typedef struct DictionaryHeader {
     JoyeerCloneValueFn cloneValue;
     JoyeerDestroyValueFn destroyValue;
 } DictionaryHeader;
-
-static _Atomic int64_t activeAllocations = 0;
-
-static void* checkedAllocate(size_t size) {
-    void* value = malloc(size == 0 ? 1 : size);
-    if (value == NULL) joyeer_panic("out of memory");
-    atomic_fetch_add_explicit(&activeAllocations, 1, memory_order_relaxed);
-    return value;
-}
-
-static void checkedFree(void* value) {
-    if (value == NULL) return;
-    free(value);
-    const int64_t previous = atomic_fetch_sub_explicit(
-            &activeAllocations,
-            1,
-            memory_order_relaxed);
-    if (previous <= 0) joyeer_panic("runtime allocation counter underflow");
-}
-
-static void* checkedReallocate(void* value, size_t size) {
-    if (value == NULL) return checkedAllocate(size);
-    void* result = realloc(value, size == 0 ? 1 : size);
-    if (result == NULL) joyeer_panic("out of memory");
-    return result;
-}
-
-int64_t joyeer_runtime_active_allocations(void) {
-    return atomic_load_explicit(&activeAllocations, memory_order_relaxed);
-}
 
 int32_t joyeer_native_errno(void) {
     return (int32_t)errno;
@@ -98,12 +67,17 @@ static size_t checkedByteCount(int64_t count, int64_t stride) {
     return (size_t)count * (size_t)stride;
 }
 
-_Noreturn void joyeer_panic(const char* message) {
-    fputs("Joyeer runtime error: ", stderr);
-    fputs(message == NULL ? "unknown error" : message, stderr);
-    fputc('\n', stderr);
-    fflush(stderr);
-    _Exit(EXIT_FAILURE);
+// Bytes a string of `count` bytes occupies: an empty string still owns one byte.
+static size_t textBytes(int64_t count) {
+    return (size_t)(count == 0 ? 1 : count);
+}
+
+static size_t arrayStorageBytes(int64_t capacity, int64_t elementSize) {
+    return sizeof(ArrayHeader) + checkedByteCount(capacity, elementSize);
+}
+
+static size_t dictionaryStorageBytes(int64_t capacity, int64_t entrySize) {
+    return sizeof(DictionaryHeader) + checkedByteCount(capacity, entrySize);
 }
 
 void joyeer_print_int(int64_t value) {
@@ -146,7 +120,7 @@ static JoyeerString concatStrings(JoyeerString left, JoyeerString right) {
         joyeer_panic("invalid string concatenation");
     }
     const int64_t count = left.count + right.count;
-    uint8_t* data = (uint8_t*)checkedAllocate((size_t)(count == 0 ? 1 : count));
+    uint8_t* data = (uint8_t*)joyeer_alloc(textBytes(count));
     if (left.count != 0) memcpy(data, left.data, (size_t)left.count);
     if (right.count != 0) memcpy(data + left.count, right.data, (size_t)right.count);
     JoyeerString result = { data, count };
@@ -155,7 +129,7 @@ static JoyeerString concatStrings(JoyeerString left, JoyeerString right) {
 
 static void destroyString(JoyeerString* value) {
     if (value == NULL) return;
-    checkedFree((void*)value->data);
+    joyeer_free((void*)value->data, textBytes(value->count));
     value->data = NULL;
     value->count = 0;
 }
@@ -167,7 +141,7 @@ void joyeer_string_clone_abi(
     if (result == NULL || count < 0 || (count != 0 && data == NULL)) {
         joyeer_panic("invalid string clone");
     }
-    uint8_t* copy = (uint8_t*)checkedAllocate((size_t)(count == 0 ? 1 : count));
+    uint8_t* copy = (uint8_t*)joyeer_alloc(textBytes(count));
     if (count != 0) memcpy(copy, data, (size_t)count);
     result->data = copy;
     result->count = count;
@@ -179,7 +153,7 @@ void joyeer_string_destroy_abi(JoyeerString* value) {
 
 void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value) {
     if (result == NULL) joyeer_panic("byteToString result is null");
-    uint8_t* data = (uint8_t*)checkedAllocate(1);
+    uint8_t* data = (uint8_t*)joyeer_alloc(1);
     data[0] = value;
     result->data = data;
     result->count = 1;
@@ -196,7 +170,7 @@ static JoyeerArray arrayCreateOwned(
     if (bytes > SIZE_MAX - sizeof(ArrayHeader)) {
         joyeer_panic("array allocation size overflow");
     }
-    ArrayHeader* storage = (ArrayHeader*)checkedAllocate(sizeof(ArrayHeader) + bytes);
+    ArrayHeader* storage = (ArrayHeader*)joyeer_alloc(sizeof(ArrayHeader) + bytes);
     storage->elementSize = elementSize;
     storage->cloneElement = cloneElement;
     storage->destroyElement = destroyElement;
@@ -316,8 +290,9 @@ void joyeer_array_append_owned_abi(
         if (bytes > SIZE_MAX - sizeof(ArrayHeader)) {
             joyeer_panic("array allocation size overflow");
         }
-        header = (ArrayHeader*)checkedReallocate(
+        header = (ArrayHeader*)joyeer_realloc(
                 header,
+                arrayStorageBytes(array->capacity, header->elementSize),
                 sizeof(ArrayHeader) + bytes);
         array->data = header + 1;
         array->capacity = capacity;
@@ -341,7 +316,7 @@ static void destroyArray(JoyeerArray* array) {
                     checkedByteCount(index - 1, header->elementSize));
         }
     }
-    checkedFree(header);
+    joyeer_free(header, arrayStorageBytes(array->capacity, header->elementSize));
     array->data = NULL;
     array->count = 0;
     array->capacity = 0;
@@ -425,7 +400,7 @@ static JoyeerDictionary dictionaryCreateOwned(
         joyeer_panic("dictionary allocation size overflow");
     }
     DictionaryHeader* storage =
-            (DictionaryHeader*)checkedAllocate(sizeof(DictionaryHeader) + bytes);
+            (DictionaryHeader*)joyeer_alloc(sizeof(DictionaryHeader) + bytes);
     storage->keySize = keySize;
     storage->valueSize = valueSize;
     storage->entrySize = entrySize;
@@ -554,8 +529,9 @@ void joyeer_dictionary_set_owned_abi(
         if (bytes > SIZE_MAX - sizeof(DictionaryHeader)) {
             joyeer_panic("dictionary allocation size overflow");
         }
-        header = (DictionaryHeader*)checkedReallocate(
+        header = (DictionaryHeader*)joyeer_realloc(
                 header,
+                dictionaryStorageBytes(dictionary->capacity, header->entrySize),
                 sizeof(DictionaryHeader) + bytes);
         dictionary->data = header + 1;
         dictionary->capacity = capacity;
@@ -616,7 +592,7 @@ static void destroyDictionary(JoyeerDictionary* dictionary) {
         }
         if (header->destroyKey != NULL) header->destroyKey(entry);
     }
-    checkedFree(header);
+    joyeer_free(header, dictionaryStorageBytes(dictionary->capacity, header->entrySize));
     dictionary->data = NULL;
     dictionary->count = 0;
     dictionary->capacity = 0;

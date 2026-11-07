@@ -7,6 +7,8 @@
 set(JOYEER_RUNTIME_CORE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/utf8.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/strings.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/panic.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/allocator.joyeer"
 )
 
 # Optimized in every configuration except Debug, which keeps full debug
@@ -43,9 +45,3 @@ set_target_properties(JoyeerRuntime PROPERTIES
         C_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY MultiThreaded
 )
-
-if(MSVC)
-    target_compile_options(JoyeerRuntime PRIVATE
-            $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>
-    )
-endif()
