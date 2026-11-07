@@ -278,7 +278,9 @@ fixture, as decision 0005 did for the memory intrinsics.
 | R12: Startup and `System` | D9: own entry point and argument parsing on Windows and Linux; macOS keeps `main`. `System` moves from the C library's stdio and `errno` to the system interface, using D1 state for buffering | Runtime archive and `System` have no undefined symbol outside the OS interface on Windows and Linux (checked with `llvm-nm`); entry, stdin and stderr tests unchanged |
 
 R3 to R8 can overlap once R1 and R2 are in. R10 to R12 start only after R9, so Tier 1
-ships first. Phases land one provider at a time and keep the suite green.
+ships first. Phases land one provider at a time and keep the suite green. The
+phases group the work by subject; the order to implement it in is the checklist
+in §11, which starts with functions that need no new compiler capability.
 
 ## 8. Acceptance
 
@@ -360,3 +362,150 @@ Update [runtime](../impl/runtime.md), [strings](../impl/string.md),
 [backend](../impl/backend.md), [C interop](../impl/c-interop.md),
 [supported features](../impl/supported-features.md) and
 [building](../building.md) as phases land.
+
+## 11. Implementation checklist
+
+Work top to bottom. Each box is one change set that leaves the suite green and is
+committed on its own. Tick a box (`[x]`) when it lands, with the commit, and
+delete a whole stage once every box in it is done and the impl docs describe it.
+
+**Every box is done only when:** the decision, if the box names one, is recorded
+in [decisions](../decisions/README.md); a failing test came first; the change
+passes focused tests and then the unfiltered CTest in Debug and Release on
+Windows x64; the impl docs and §3 here are updated; and the role reviewers in
+`.claude/agents/` ran on compiler changes. Other platforms are gated at stage 9,
+except where a box says otherwise.
+
+### Why this order
+
+- **Prove the build before the compiler work.** A few runtime functions need only
+  what the compiler already has: they read memory, allocate nothing and return a
+  scalar. Moving them first puts Joyeer objects into the archive, exercises
+  `@c_export` across the real ABI, and checks debug info and `llvm-nm`, before
+  any new intrinsic exists.
+- **Retire the unknowns early.** An exported `wmain`/`main` and calling a
+  compiler-generated function through an address are the two things most likely
+  to force a redesign. Spike both before building on them.
+- **Allocation before anything that allocates.** Strings, arrays, dictionaries
+  and entry all allocate, so the allocator and its counter move first, and the C
+  that remains calls the Joyeer allocator, so there is only ever one counter.
+- **Leaves before callers.** Strings before arrays (arrays of strings), arrays
+  before dictionaries and before entry (the arguments are a `[String]`).
+- **Floating-point printing is independent** and algorithm-heavy; run it as a
+  parallel track once output works.
+- **Delete the C last, then Tier 2.** Only when no symbol is provided by C does
+  the archive change shape; the allocator and startup work starts from there.
+
+### Stage 0: Baseline (R0)
+
+- [ ] 0.1 Decide the test-only symbols (`joyeer_checked_*`, `joyeer_array_create`,
+  `joyeer_array_at`, `joyeer_dictionary_create`, `joyeer_dictionary_at`, the
+  non-`_abi` string forms): delete them and move their tests to the `_abi` forms,
+  or keep them as exports. Recommend delete.
+- [ ] 0.2 Make `runtime_test.cpp` a black-box test of every symbol in §3, so it
+  can run unchanged against either provider. Add what is missing (printed output
+  of every `print_*`, every dictionary key kind, panic text and exit status).
+- [ ] 0.3 Add a benchmark target (label `benchmark`, outside the acceptance gate)
+  for string compare and concat, array append, dictionary set and find at `-O2`,
+  and record the C baseline numbers in this plan.
+
+### Stage 1: Build shape and pilot (needs no new compiler capability)
+
+- [ ] 1.1 Build: compile an explicit list of runtime units
+  (`src/runtime/joyeer/*.joyeer`, listed in CMake) with `--emit-runtime-object`
+  using the just-built compiler, with debug info, and add the objects to
+  `JoyeerRuntime` next to the C ones. Record the build shape as a decision.
+- [ ] 1.2 Pilot: `joyeer_host_valid_utf8` in Joyeer (byte loads only), exported
+  with addresses as `Int`; delete the C. Proves the export ABI for a pointer
+  passed as `Int`, Compression's link, Windows whole-archive and ELF grouping,
+  and the `llvm-nm` object check.
+- [ ] 1.3 `joyeer_string_equal_abi`, `joyeer_string_compare_abi` and
+  `joyeer_string_byte_at_abi` in Joyeer; `memcmp` through an ordinary binding
+  until 3.2, `joyeer_panic` still C. Benchmarks against 0.3.
+
+### Stage 2: Spikes and decisions
+
+- [ ] 2.1 Spike D4 on every host available: a Joyeer object in the archive exports
+  `wmain` (Windows) or `main` (POSIX) and the platform startup calls it. Run this
+  on Linux and macOS too, if at all possible; it is the riskiest link question.
+- [ ] 2.2 Spike D2: a prototype indirect-call intrinsic calling a generated
+  `joyeer_destroy_type_N`, with a measurement against the C loop.
+- [ ] 2.3 Record D1 (static storage), D2 (indirect calls), D3 (core dialect), D4
+  (entry), D5 (data symbols) and D7 (panic), and promote each accepted row of
+  [§19.4.6](../spec/19-c-interop.md#1946-proposed-runtime-capabilities-) to spec
+  text in §19.4.5.
+
+### Stage 3: Compiler capabilities (R1)
+
+Each with unit tests for lowering, misuse and tampered IR, and a native fixture.
+
+- [ ] 3.1 Static storage slots (D1).
+- [ ] 3.2 Bulk memory intrinsics; switch 1.3 from `memcmp` to them.
+- [ ] 3.3 Non-returning exports and `main`/`wmain` exports (D4, D7).
+- [ ] 3.4 Indirect calls (D2).
+- [ ] 3.5 The core-dialect diagnostic (D3), turned on for every unit in
+  `src/runtime/joyeer/`.
+- [ ] 3.6 Data-symbol imports (D5).
+
+### Stage 4: Substrate (R2)
+
+- [ ] 4.1 `joyeer_panic` in Joyeer (D7): message, exit status and the
+  no-allocation property unchanged.
+- [ ] 4.2 The allocation counter in a static slot, `alloc` / `realloc` / `free`
+  taking sizes, and `joyeer_runtime_active_allocations`. The remaining C calls the
+  Joyeer allocator through its exports, so there is one counter.
+
+### Stage 5: Strings and printing (R3)
+
+- [ ] 5.1 `joyeer_string_clone_abi`, `joyeer_string_destroy_abi`,
+  `joyeer_byte_to_string_abi`.
+- [ ] 5.2 `joyeer_string_concat_abi`: one allocation, including for empty input.
+- [ ] 5.3 `joyeer_print_string_abi`, and `print` for every integer width, `Bool`
+  and `UInt8` (decimal formatting in Joyeer).
+
+### Stage 6: Collections (R5, R6)
+
+- [ ] 6.1 Arrays: create, clone, append with the current growth policy, destroy.
+- [ ] 6.2 The native buffer helpers (`joyeer_native_{bytes,strings}_init`,
+  `joyeer_native_{bytes,string,strings}_assign`); Compression tests pass.
+- [ ] 6.3 Dictionaries: create, set with duplicates, find, at, clone, destroy, for
+  every key kind.
+
+### Stage 7: Entry and native-library API (R7, R8)
+
+- [ ] 7.1 `main` / `wmain` in Joyeer: argument conversion, leak check, exit-status
+  range check; all entry tests pass.
+- [ ] 7.2 Replace `joyeer_native_errno`, `joyeer_native_environment` and
+  `joyeer_native_stdio` with direct bindings (D5); update `System`.
+
+### Stage 8: Floating-point printing (R4), parallel track
+
+Start any time after 5.3.
+
+- [ ] 8.1 Decide the algorithm (D6) and build the oracle: a C test that compares
+  Joyeer output with the C library over boundary values and a large random sample.
+- [ ] 8.2 `Double` output byte-identical to `%.17g`.
+- [ ] 8.3 `Float` output byte-identical to `%.9g`.
+
+### Stage 9: Remove the C (R9)
+
+- [ ] 9.1 Delete `runtime.c`, `entry.c`, `host.c` and the C-only build settings
+  (`C_STANDARD`, `/experimental:c11atomics`); keep `runtime.h` and `native.h` for
+  native libraries.
+- [ ] 9.2 Add the archive check: no object not produced by the Joyeer compiler.
+- [ ] 9.3 Move `JoyeerRuntime.*` into `lib/`
+  ([toolchain libraries](toolchain-libraries.md) §3).
+- [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,
+  together with the POSIX verification of `System` ([filesystem plan](filesystem.md) §2).
+  **Tier 1 is done here.**
+
+### Stage 10: No C library (Tier 2: R10 to R12)
+
+- [ ] 10.1 D8, then the Joyeer allocator over `VirtualAlloc` / `mmap`, behind the
+  stage 4 contract; stress and fragmentation tests.
+- [ ] 10.2 D10, then output and exit straight to the system interface (R11).
+- [ ] 10.3 D9, then our own entry point on Windows and Linux (R12).
+- [ ] 10.4 `System` off the C library's stdio and `errno`, using static state for
+  buffering.
+- [ ] 10.5 The Tier 2 `llvm-nm` gate on Windows and Linux, and the macOS
+  equivalent. **Tier 2 is done here.**
