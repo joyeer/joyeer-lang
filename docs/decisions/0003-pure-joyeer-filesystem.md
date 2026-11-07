@@ -1,9 +1,10 @@
 # 0003: Pure-Joyeer filesystem and bare byte pointers
 
 - Status: accepted for the FFI extension and the `System` implementation
-  (implemented; verified on Windows x64 Debug and Release). Routing the
-  compiler's built-in names to it and deleting `filesystem.c` are **not**
-  decided: they wait for the POSIX variants to run on Linux and macOS.
+  (implemented; verified on Windows x64 Debug and Release). The routing
+  question was settled by [0004](0004-remove-host-builtins.md): the built-in
+  names and `filesystem.c` were removed, and `System` is the only provider.
+  The POSIX variants have still not run on Linux or macOS.
 - Spec: [§19.4.4 Bare byte pointers](../spec/19-c-interop.md#1944-bare-byte-pointers)
 
 ## Context

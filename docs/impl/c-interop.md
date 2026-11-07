@@ -45,8 +45,9 @@ not a variadically promoted `double`. These rules also apply to
 compiler-generated C runtime calls. Native targets outside the admitted
 x86-64/ARM64 Windows MSVC, Linux, and macOS families are diagnosed.
 
-This does not migrate any production runtime algorithm from C to Joyeer.
-Existing host builtins and normal executable generation remain supported.
+The core runtime is still C. The host operations already use this boundary:
+`System` implements them in Joyeer over `@c_extern` bindings
+([runtime](runtime.md#host-operations)).
 
 ### Buffer imports
 

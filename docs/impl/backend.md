@@ -475,20 +475,16 @@ calling-convention, and initialization contract.
 ## 4. Runtime boundary
 
 The C11 [runtime](runtime.md) owns process startup, checked
-arithmetic and bounds helpers, value storage, collections, file input, and
+arithmetic and bounds helpers, value storage, collections, printing and
 allocation-balance checking. It is a static archive linked into generated
-programs, not a dependency on LLVM/LLD.
+programs, not a dependency on LLVM/LLD. The
+[runtime plan](../plan/runtime-in-joyeer.md) replaces it with Joyeer.
 
-Descriptor-driven host calls include
-`writeStderr(contents: String): Result<Void, StderrError>`, where
-`StderrError` has `WriteFailed(Int)`. The emitter declares/calls
-`i32 @joyeer_write_stderr_abi(ptr, ptr, i64)` with the error-code out-pointer
-first and borrowed contents data/count afterward. ABI status `0` constructs
-`Ok(())`; status `1` constructs `Err(.WriteFailed(code))`. Error tags are mapped
-by enum case name, and invalid runtime tags trap. Unit successes use the
-existing zero-sized representation, not a runtime result out-pointer. See the
-[standard-error boundary](runtime.md#standard-error-boundary) for byte/flush
-semantics and CRT error reporting.
+The emitter calls the runtime only for `print`, the byte conversions, string,
+array and dictionary operations, ownership helpers, panics and the program
+entry. It knows no host operation: the filesystem, processes, standard error
+and input are ordinary `System` functions that reach the OS through
+`@c_extern` bindings ([§18](../spec/18-host.md), [runtime](runtime.md#host-operations)).
 
 ---
 

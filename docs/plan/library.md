@@ -2,10 +2,14 @@
 
 > **Status:** unfinished work only. Remove items when they are done.
 >
-> **Done (see [fern](../impl/fern.md), [Compression](../impl/compression.md)):**
-> `Foundation` (text helpers and `crc32`, + `FoundationTests`), root `workspace.toml`, part of `System`
-> (lexical path helpers, host error/status formatters, the Joyeer filesystem operations verified on Windows, `SystemTests`), and the
-> optional `Compression` module.
+> **Done (see [fern](../impl/fern.md), [Compression](../impl/compression.md),
+> [runtime](../impl/runtime.md#host-operations)):** `Foundation` (text helpers,
+> UTF-8 validation and `crc32`, + `FoundationTests`); `System` with every host
+> operation of §18 in Joyeer, lexical path helpers and message formatters
+> (+ `SystemTests`); the optional `Compression` module; the root
+> `workspace.toml`; standard-module resolution from the toolchain
+> ([toolchain libraries](toolchain-libraries.md)); and the removal of the
+> compiler's host built-ins ([decision 0004](../decisions/0004-remove-host-builtins.md)).
 >
 > **Pending:** the items in §2–§4.
 
@@ -14,26 +18,41 @@
 | Module | Responsibility | Boundary |
 |---|---|---|
 | `Foundation` | Text, encoding validation, numeric parsing/formatting, checksums | No dependency on `System` |
-| `System` | Paths, filesystem, processes, environment, time | May use `Foundation`; keep existing host contracts |
+| `System` | Paths, filesystem, processes, standard streams, environment, time | May use `Foundation`; keep the §18 contracts |
 | `Collections` | Extra containers and algorithms | Independent; builtin arrays/dicts do not need it |
 | `Testing` | Assertions, failure reporting, helpers | May use `Foundation` |
 
-Rules:
+Rules (the language-level ones are in [§12.5](../spec/12-modules.md#125-standard-modules)):
 - Each module is one real source unit with its own `project.toml`; no umbrella
   or re-exports. Keep the dependency graph acyclic.
-- Prelude types (`String`, `Array`, `Dict`, `Optional`, `Result`) need no import.
-- Runtime-only native bindings are not available to library code because of its
-  location or module name. Public APIs wrap internal bindings.
+- Prelude types (`String`, `Array`, `Dict`, `Optional`, `Result`, and the host
+  error and status enums) need no import.
+- Native bindings are authorized by the toolchain (`native-bindings = true`),
+  never by location or module name. Public APIs wrap internal bindings.
 - Add a module or workspace member only when it has real sources; no empty
   modules.
 - Layout: `src/library/<Module>/`, tests in `tests/library/<Module>/`, both
   listed in the root `workspace.toml`.
 
-## 2. Remaining Modules
+## 2. Remaining Library Work
 
-- **System:** filesystem and process wrappers, host detection (no builtin
-  exists; callers pass an explicit `windows` flag today), environment, time.
-  Do not change current host encoding, error, or ownership semantics.
+- **Contract APIs.** `assert`, `precondition` and `fatalError` (§9) are not
+  provided. They are prelude names in the spec, so they need either compiler
+  declarations lowered to the runtime panic, or a decision to ship them as
+  Joyeer source the compiler loads implicitly. `fatalError` returns `Never`.
+  Decide this before `Testing`, which builds on them.
+- **System: host detection.** Callers pass an explicit `windows: Bool` to the
+  path helpers. `@platform` (§11.5) now makes a `System.isWindows()` or a host
+  separator function trivial; add one and keep the explicit-flag forms for
+  cross-host path work.
+- **System: environment and time.** Reading environment variables, the current
+  directory, monotonic and wall-clock time. Each needs a §18 contract first.
+- **System: owned OS resources.** Open files, directory handles and child
+  processes as values need `deinit` and noncopyable types (§3.7, §4.7), which
+  are not implemented; until then every operation opens and closes within one
+  call.
+- **Verification.** The POSIX variants of `System` have never run
+  ([filesystem plan](filesystem.md) §2).
 - **Collections:** add only for a concrete consumer.
 - **Testing:** add only for a concrete consumer; then use it in test modules.
 - Use ordinary public functions until methods/protocols exist.
@@ -43,29 +62,18 @@ Rules:
 Replace duplicated helpers in
 [fern common.joyeer](../../tools/fern/common.joyeer) with library calls,
 after defining public input, error, and complexity contracts. Do it
-incrementally, using explicit local source mappings. Update bootstrap source
+incrementally. fern already imports `System` for host operations; its own
+path, text and number helpers are the next candidates. Update bootstrap source
 mappings and staged self-build manifests together. Fern must not depend on a
 previously installed tool.
 
-## 4. Installed Libraries (separate gate)
+## 4. Installed Libraries
 
-Fern resolves only inside an explicitly loaded workspace. Before offering
-`import Foundation` from an external project, define:
-
-- A toolchain-matched source-module catalog and relocatable install layout;
-  missing sources or version mismatches are explicit errors.
-- Fern resolution that combines project dependencies with selected bundled
-  modules and passes complete source mappings to the compiler. Do not weaken
-  workspace path validation.
-- Reserved official names and workspace/SDK collision rules. Reject ambiguity;
-  no first-found search order.
-- The compiler keeps taking explicit source inputs; it never discovers
-  libraries or reads manifests.
-- Prelude lookup precedes imported short names, so importing `System` does not
-  redirect an existing builtin. Use qualification; specify any builtin
-  migration separately.
-
-This is distinct from registry packages and binary-library ABI.
+Resolution of standard modules from the toolchain is implemented; the remaining
+items (moving the runtime archive into `lib/`, fern and `--sysroot`, shipping
+Compression by default, precompiled modules, cross-compilation) are tracked in
+[toolchain libraries](toolchain-libraries.md) §3. This is distinct from
+registry packages and binary-library ABI ([package manager](package-manager.md)).
 
 ## 5. Acceptance
 

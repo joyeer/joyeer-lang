@@ -5,8 +5,9 @@
 forms below remain independent proposals, not additional accepted annotation
 syntax.
 
-**Implementation status:** the runtime-only `Int`/`Void` C binding subset and
-`@platform` are parsed and checked. `@spec` and `@property` remain
+**Implementation status:** the C binding annotations (every §19.4 scalar,
+restricted buffers, bare byte pointers and the intrinsics) and `@platform` are
+parsed and checked. `@spec` and `@property` remain
 unsupported; their proposed tooling examples below are not currently
 compilable programs. See [current C binding coverage](../impl/c-interop.md).
 
@@ -17,8 +18,9 @@ attribute_arg   ::= [ identifier ':' ] expression
 
 This is the parenthesized production of [§17](17-grammar.md). Each annotation
 fixes its own argument shape and rejects any other: `@c_extern`/`@c_export`
-take one `symbol:` string literal, `@platform` takes unlabelled platform
-names. Attribute placement and arguments are checked against the named
+take one `symbol:` string literal, `@c_extern` may add `pointer:` arguments
+naming bare-pointer parameters (§19.4.4), and `@platform` takes unlabelled
+platform names. Attribute placement and arguments are checked against the named
 annotation's rules; this production does not authorize unknown annotations or
 silently ignored metadata. It does not include the proposed shorthand or
 quantifier DSL in §11.1 and §11.2.

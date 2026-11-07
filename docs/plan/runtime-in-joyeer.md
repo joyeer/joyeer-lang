@@ -96,6 +96,18 @@ decision 0007) and `errno`. Tier 2 moves it to the same system interface, which
 needs mutable state for buffering and `errno`-free error codes; D1 provides the
 state, and the change is its own phase (R12).
 
+### Related work outside this plan
+
+| Item | Where it is tracked | How it touches the runtime |
+|---|---|---|
+| Spec text for the runtime-only capabilities | [§19.4.6](../spec/19-c-interop.md#1946-proposed-runtime-capabilities-) (proposed) | Each capability becomes accepted spec text when its decision lands |
+| `assert`, `precondition`, `fatalError` | [library plan](library.md) §2 | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
+| `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
+| User generics | [§20](../spec/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
+| Runtime archive in `lib/` | [toolchain libraries](toolchain-libraries.md) §3 | Do it with R9, when the compiler builds the archive |
+| Sanitizer builds | [test audit](test-audit.md) item 3 | The main safety net for unchecked address code |
+| POSIX verification of `System` | [filesystem plan](filesystem.md) §2 | Same hosts and gates as this plan's platform acceptance |
+
 ## 3. Inventory
 
 Everything the compiler, the tests and native libraries call. "Phase" is where

@@ -1,7 +1,10 @@
 # 0001: Standard-input line reading
 
 - Status: accepted (runtime, compiler, and native tests pass on Windows ARM64
-  Debug; full validation and role reviews were not run)
+  Debug; full validation and role reviews were not run). The contract stands;
+  the C and host-builtin implementation described below was replaced by
+  `System.readStdinLine` in Joyeer ([0007](0007-stdio-in-joyeer.md),
+  [0004](0004-remove-host-builtins.md)).
 - Spec: [§18.5 Standard input](../spec/18-host.md#185-standard-input)
 
 ## Context

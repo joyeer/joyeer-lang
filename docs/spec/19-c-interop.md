@@ -289,6 +289,28 @@ obligations of C. They exist so that the runtime itself can be written in
 Joyeer ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)); they add
 no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
+#### 19.4.6 Proposed runtime capabilities ⏳
+
+Writing the whole runtime in Joyeer
+([runtime plan](../plan/runtime-in-joyeer.md)) needs operations that §19.4.5 does
+not yet admit. They are **proposed, not accepted**; each needs its own decision
+before it is added to the table above. All would follow the same rules as the
+existing intrinsics: reserved symbols, exact signatures, authorized units only.
+
+| Capability | Why the runtime needs it |
+|---|---|
+| Static storage slots | The allocator's counter and state; the language has no mutable globals |
+| Bulk memory (`memcpy`, `memmove`, `memset`, `memcmp`) | Copies and comparisons that are not byte loops |
+| Indirect calls through an address | Arrays and dictionaries call compiler-generated clone and destroy functions |
+| Data-symbol import | `environ`, and `stdin`/`stdout`/`stderr` where they are data |
+| Non-returning exports, and `main`/`wmain` exports | `joyeer_panic` and the program entry point |
+| A system-call intrinsic (Linux) | A runtime that does not depend on the C library |
+
+A *runtime unit* restricted to scalars, `Bool` and `Int` addresses (no
+`String`, arrays, dictionaries or `print`) is also proposed, so the runtime
+cannot reach itself through code the compiler lowers to runtime calls. None of
+this changes ordinary programs.
+
 ### 19.5 Invalid signatures
 
 All types and parameter effects not admitted by §19.4 are rejected at this

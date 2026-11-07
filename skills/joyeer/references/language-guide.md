@@ -210,11 +210,8 @@ bytes: its name describes path encoding, not text decoding.
 
 `readFilePrefix` reads at most `maximumBytes` bytes and returns owned arbitrary
 bytes, which can end inside a UTF-8 sequence. Zero still opens/closes the path;
-negative limits return `.Other` with a platform invalid-parameter code. Its
-`Int` host descriptor is integrated through name resolution/type checking and
-scalar LLVM lowering, and compiled in the Windows x64 Debug build; boundary
-and error regressions have not run. Check provenance before targeting older
-binaries. This is synchronous bounded input, not generic streaming.
+negative limits return `.Other` with a platform invalid-parameter code. This
+is synchronous bounded input, not generic streaming.
 
 Fern first uses `fileKind` to accept only `.File`, rejecting final symlinks,
 devices/FIFOs, and other nonregular manifests, then reads at most 65537 bytes

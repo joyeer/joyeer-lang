@@ -10,7 +10,7 @@
 | Layer | Evidence |
 |---|---|
 | GoogleTests, compiler | about 460 cases: semantic analysis 78, IR lowering 61, parser 56, LLVM 50, type checking 40, lexer 38, C interop 35, IR 29, module 28, name resolution 26 |
-| GoogleTests, runtime | about 90 cases: runtime 39, arguments 20, filesystem 18 |
+| GoogleTests, runtime | runtime, host and argument tests; the C filesystem and process tests were removed with that C code, and the host operations are now tested through `SystemTests` |
 | Native fixtures | 79 files in `tests/native`, mostly checked-arithmetic and bounds traps, ownership, and `regression_*` programs |
 | Negative fixtures | semantic-analysis 13, type-checking 17, parser 6, native 3, lexer 1, name-resolution 1 |
 | Leak detection | `src/runtime/entry.c` reads `joyeer_runtime_active_allocations()` at exit, so native fixtures check allocation balance |
@@ -32,7 +32,8 @@ This is a solid base. The gaps are mostly in systematic and adversarial testing.
    parser that checks only "no crash, no hang, a diagnostic or a valid AST".
 3. **No sanitizer builds.** There is no ASan/UBSan/MSVC AddressSanitizer
    configuration for the compiler or the C runtime. A CMake option plus one
-   validation row would cover it.
+   validation row would cover it. The [runtime plan](runtime-in-joyeer.md)
+   leans on this for the Joyeer runtime, whose address code is unchecked.
 4. **No CI configuration in the repo.** There is no `.github/workflows`.
    `scripts/validate.py` is the gate, but nothing runs it on a schedule or per
    change.
@@ -42,10 +43,8 @@ This is a solid base. The gaps are mostly in systematic and adversarial testing.
    programs that combine moves, loops, branches, early returns, and `?`
    propagation, run with the allocation-balance check. One generator would
    cover this whole family.
-6. **Stale legacy fixtures.** `tests/basis` (21 files) and `tests/errors` (9)
-   are `.xdump.yml` dumps, including `class_*`, and classes are not
-   implemented. No `CMakeLists.txt`, `.cmake`, or `.py` file references them.
-   Delete them or port the ones that still matter.
+6. **Stale legacy fixtures (done).** `tests/basis` and `tests/errors` have been
+   removed.
 7. **Thin negative coverage per stage.** Lexer, name resolution, and native
    entry checks each have 1 to 3 negative fixtures. Spec sections to
    mine for missing cases: visibility and cycle checks (`12-modules.md`),
@@ -66,7 +65,7 @@ This is a solid base. The gaps are mostly in systematic and adversarial testing.
 ## Suggested order
 
 1. Differential `-O0`/`-O2` run over `tests/native` (item 1).
-2. Delete or port the legacy fixtures (item 6).
+2. Delete or port the legacy fixtures (item 6, done).
 3. Add a sanitizer option and a validation row (item 3).
 4. Add the parser/lexer fuzzer (item 2).
 5. Add the ownership program generator (item 5).
