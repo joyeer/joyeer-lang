@@ -239,9 +239,12 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
     let startup = startupInfo(input: input, output: output, error: error)
     var information = zeroBuffer(count: informationSize)
     var commandBytes = nativePathBytes(text: command)
-    let launched = createProcessW(application: nativePathBytes(text: fullExecutable), command: &commandBytes,
+    // Bound first: a temporary would be freed before the last error is read.
+    let applicationBytes = nativePathBytes(text: fullExecutable)
+    let directoryBytes = nativePathBytes(text: fullDirectory)
+    let launched = createProcessW(application: applicationBytes, command: &commandBytes,
         processSecurity: 0, threadSecurity: 0, inherit: 1, flags: 0, environment: 0,
-        directory: nativePathBytes(text: fullDirectory), startup: startup, information: &information)
+        directory: directoryBytes, startup: startup, information: &information)
     var launchError = 0
     if launched == 0 { launchError = processLastErrorW() as Int }
     closeQuietly(handle: input)

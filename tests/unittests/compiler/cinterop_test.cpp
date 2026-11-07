@@ -348,6 +348,7 @@ TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
             "@c_extern(symbol: \"joyeer_intrinsic_store_u16\")\nfunc f(address: Int, value: UInt16): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_atomic_add\")\nfunc f(address: Int, delta: Int64): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_address_of\")\nfunc f(bytes: [UInt8]): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_address_of\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Int\n",
             "@c_extern(symbol: \"joyeer_intrinsic_address_of\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Int32\n",
             "@c_extern(symbol: \"joyeer_intrinsic_load_u8\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): UInt8\n",
             "@c_export(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): UInt8 { return 0 }\n" }) {
@@ -378,6 +379,31 @@ func ordinary(address: Int): UInt8
     ordinary.nativeBinding->symbol = "native_ordinary";
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
     function("load8").nativeBinding->kind = joyeer::NativeBindingKind::cExport;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
+// `address_of` is inout-only, because a borrowed array can be a constant in
+// read-only memory. The shape stays valid as a C binding, so only the
+// intrinsic rule can reject these.
+TEST_F(CInteropTest, VerifierRejectsTamperedIntrinsicShapes) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+func addressOf(bytes: inout [UInt8]): Int
+@c_extern(symbol: "joyeer_intrinsic_store_u16")
+func store16(address: Int, value: UInt16): Void
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& addressOf = function("addressOf");
+    addressOf.parameters[0].isMutable = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    addressOf.parameters[0].isMutable = true;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& store16 = function("store16");
+    auto removed = store16.parameters.back();
+    store16.parameters.pop_back();
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    store16.parameters.push_back(removed);
+    store16.nativeBinding->pointerParameters = {0};
     EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 

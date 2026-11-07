@@ -837,14 +837,16 @@ private:
             // a known one, imported, with exactly its signature.
             std::vector<TypeKind> kinds;
             std::vector<bool> pointers;
+            std::vector<bool> mutables;
             for (size_t index = 0; index < signature.parameters.size(); ++index) {
                 kinds.push_back(model->typeContext.type(signature.parameters[index])->kind);
                 pointers.push_back(binding->passesPointer(static_cast<uint32_t>(index)));
+                mutables.push_back(declaration->parameters[index]->accessEffect() == syntax::AccessEffect::inout);
             }
             const auto* descriptor = intrinsic::find(binding->symbol);
             if (!importing || descriptor == nullptr ||
                 !intrinsic::matches(*descriptor, model->typeContext.type(signature.result)->kind,
-                                    kinds, pointers)) {
+                                    kinds, pointers, mutables)) {
                 report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
                        "'" + binding->symbol + "' is not a compiler intrinsic with this signature");
             }

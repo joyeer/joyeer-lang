@@ -108,6 +108,10 @@ func testProcessPlatform(): Int {
         print(value: "SETUP batch file: " + created)
         failures = failures + 1
     }
+    failures = failures + produces(label: "working directory", executable: shell(),
+        arguments: ["-NoProfile", "-NonInteractive", "-Command",
+            "if ((Get-Location).Path.EndsWith('" + directory + "')) { exit 0 } else { exit 9 }"],
+        directory: directory, expected: "ok:exited with status 0")
     failures = failures + same(label: "batch file", executable: script, arguments: [], directory: ".")
     failures = failures + same(label: "empty argument", executable: shell(),
         arguments: ["-NoProfile", "-NonInteractive", "-Command", "exit 0", ""], directory: ".")
@@ -127,6 +131,9 @@ func testProcessPlatform(): Int {
     if describeUnit(outcome: writeFileNew(path: plain, contents: "x")) != "ok" { failures = failures + 1 }
     failures = failures + produces(label: "signal", executable: shell(),
         arguments: ["-c", "kill -9 $$"], directory: ".", expected: "ok:terminated by signal 9")
+    failures = failures + produces(label: "working directory", executable: shell(),
+        arguments: ["-c", "case \"$(pwd)\" in *" + directory + ") exit 0;; *) exit 9;; esac"],
+        directory: directory, expected: "ok:exited with status 0")
     failures = failures + same(label: "not executable", executable: plain, arguments: [], directory: ".")
     failures = failures + same(label: "empty argument", executable: shell(),
         arguments: ["-c", "exit 0", ""], directory: ".")

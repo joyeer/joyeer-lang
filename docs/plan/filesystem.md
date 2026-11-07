@@ -69,6 +69,12 @@ unfiltered CTest, in Debug and Release. Expect to fix, at least, the first run:
 
 Record the results in [supported-features](../impl/supported-features.md).
 
+**Intel macOS is not covered.** The macOS offsets (`lstat` mode at 4, `d_name` at 21)
+are the arm64 layout. On x86_64 the unsuffixed `lstat`, `readdir_r` and `opendir`
+symbols are the pre-INODE64 ABI, with different offsets, and `@platform(macos)`
+cannot select an architecture. Bind the `$INODE64` symbols or add an
+architecture guard before claiming Intel macOS.
+
 ## 3. Decide the routing
 
 Today the built-ins win unqualified. Choose, in a decision record:

@@ -157,7 +157,8 @@ representation selected for the actual target, not the build host:
 | `size_t` | `UInt64` | `UInt64` |
 | `ptrdiff_t` | `Int64` | `Int64` |
 
-`Int` is always signed 64-bit, not C `int` or an address carrier. `UInt`
+`Int` is always signed 64-bit, not C `int` or an address carrier (runtime units
+may use it as one; see the last rule of §19.5). `UInt`
 is always unsigned 64-bit, not a promise that every C unsigned type has that
 width. The table does not add support for a new target or data model.
 
@@ -273,7 +274,7 @@ parameter and result types; anything else with the prefix is an error, and
 
 | Symbol | Declaration | Effect |
 |---|---|---|
-| `joyeer_intrinsic_address_of` | `(bytes: inout [UInt8]) -> Int` or borrowed, with `pointer: "bytes"` | The address of the array's first element |
+| `joyeer_intrinsic_address_of` | `(bytes: inout [UInt8]) -> Int`, with `pointer: "bytes"` | The address of the array's first element. The parameter must be `inout`: a borrowed array may be a constant in read-only memory, and a store through its address would be undefined |
 | `joyeer_intrinsic_load_u8` / `_u16` / `_u32` / `_u64` | `(address: Int) -> UInt8` / `UInt16` / `UInt32` / `UInt64` | Little-endian load of that width |
 | `joyeer_intrinsic_store_u8` / `_u16` / `_u32` / `_u64` | `(address: Int, value: UInt8` / `UInt16` / `UInt32` / `UInt64`) `-> Void` | Little-endian store of that width |
 | `joyeer_intrinsic_atomic_add` | `(address: Int, delta: Int) -> Int` | Sequentially consistent add; returns the previous value |
@@ -306,7 +307,10 @@ boundary. In particular:
 - Native addresses and opaque handles that are actually pointers may not
   be disguised as `Int`, `UInt`, or another integer type. A native API whose
   handle is genuinely an integer may use its exact scalar representation;
-  that does not supply resource lifetime or close semantics.
+  that does not supply resource lifetime or close semantics. Runtime units
+  (§19.4.5) are the exception: they carry `FILE*`, `DIR*`, and other addresses
+  as `Int` because they also own the matching close, and the compiler does not
+  enforce this rule. Application code must not follow them.
 
 In particular, `String` is not `char*`: its current implementation preserves
 arbitrary bytes, including NUL and invalid UTF-8. Neither a string's storage

@@ -704,14 +704,16 @@ VerificationResult Verifier::verify(const Module& module) const {
                 const auto* descriptor = intrinsic::find(binding.symbol);
                 std::vector<typing::TypeKind> kinds;
                 std::vector<bool> pointers;
+                std::vector<bool> mutables;
                 for (size_t index = 0; index < function.parameters.size(); ++index) {
                     const auto found = types.find(function.parameters[index].value.type);
                     kinds.push_back(found == types.end() ? typing::TypeKind::error : found->second->kind);
                     pointers.push_back(binding.passesPointer(index));
+                    mutables.push_back(function.parameters[index].isMutable);
                 }
                 const auto result = types.find(function.resultType);
                 valid &= importing && descriptor != nullptr && result != types.end() &&
-                        intrinsic::matches(*descriptor, result->second->kind, kinds, pointers);
+                        intrinsic::matches(*descriptor, result->second->kind, kinds, pointers, mutables);
             }
             if (!valid) {
                 report(VerificationErrorId::invalidInstruction, functionId, {}, {},

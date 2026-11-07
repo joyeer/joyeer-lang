@@ -159,14 +159,17 @@ private func createMode(): [UInt8] {
 
 @platform(posix)
 func nativeOpenRead(path: [UInt8]): Int {
-    let stream = fopenP(path: path, mode: readMode())
+    // Bound first: a temporary would be freed before errno is read below.
+    let mode = readMode()
+    let stream = fopenP(path: path, mode: mode)
     if stream == 0 { return lastFailure() }
     return stream
 }
 
 @platform(posix)
 func nativeOpenNew(path: [UInt8]): Int {
-    let stream = fopenP(path: path, mode: createMode())
+    let mode = createMode()
+    let stream = fopenP(path: path, mode: mode)
     if stream == 0 { return lastFailure() }
     return stream
 }

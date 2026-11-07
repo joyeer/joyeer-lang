@@ -74,20 +74,24 @@ inline constexpr std::array<Descriptor, 10> table {{
     return nullptr;
 }
 
-// Whether a declaration's parameter and result kinds, and which parameters are
-// bare byte pointers, are exactly what the intrinsic requires.
+// Whether a declaration's parameter and result kinds, which parameters are bare
+// byte pointers, and which are `inout`, are exactly what the intrinsic requires.
+// The byte pointer must be `inout`: a borrowed array may live in read-only
+// memory (a constant), and a store through its address would then be undefined.
 [[nodiscard]] inline bool matches(
         const Descriptor& descriptor,
         TypeKind result,
         const std::vector<TypeKind>& parameters,
-        const std::vector<bool>& pointers) {
+        const std::vector<bool>& pointers,
+        const std::vector<bool>& mutables) {
     if (result != descriptor.result || parameters.size() != descriptor.count ||
-        pointers.size() != parameters.size()) {
+        pointers.size() != parameters.size() || mutables.size() != parameters.size()) {
         return false;
     }
     for (size_t index = 0; index < parameters.size(); ++index) {
         if (parameters[index] != descriptor.parameters[index]) return false;
         if (pointers[index] != (index == 0 && descriptor.bytePointer)) return false;
+        if (pointers[index] && !mutables[index]) return false;
     }
     return true;
 }
