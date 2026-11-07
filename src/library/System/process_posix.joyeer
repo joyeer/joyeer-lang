@@ -1,0 +1,170 @@
+import Foundation
+
+// POSIX (Linux and macOS) process launch for process.joyeer, over posix_spawn.
+// The child inherits the environment and every open descriptor. The working
+// directory is set by a spawn file action, so a bad directory or executable is
+// reported by posix_spawn itself, as the errno of the failed step.
+//
+// posix_spawn takes `argv` as a table of addresses. The argument strings are
+// packed into one byte buffer and the table is filled from its address with the
+// runtime-only intrinsics of spec §19.4.5; both buffers outlive the call.
+
+private let interrupted: Int = 4
+private let rangeError: Int = 34
+private let noChild: Int = 10
+private let actionsSize: Int = 256
+
+@platform(posix)
+@c_extern(symbol: "joyeer_native_errno")
+private func errnoSpawn(): Int32
+
+@platform(posix)
+@c_extern(symbol: "joyeer_native_environment")
+private func environmentSpawn(): Int
+
+@platform(posix)
+@c_extern(symbol: "getcwd", pointer: "buffer")
+private func getcwdSpawn(buffer: inout [UInt8], size: Int): Int
+
+@platform(posix)
+@c_extern(symbol: "posix_spawn_file_actions_init", pointer: "actions")
+private func actionsInit(actions: inout [UInt8]): Int32
+
+@platform(posix)
+@c_extern(symbol: "posix_spawn_file_actions_destroy", pointer: "actions")
+private func actionsDestroy(actions: inout [UInt8]): Int32
+
+@platform(posix)
+@c_extern(symbol: "posix_spawn_file_actions_addchdir_np", pointer: "actions", pointer: "path")
+private func actionsChdir(actions: inout [UInt8], path: [UInt8]): Int32
+
+@platform(posix)
+@c_extern(symbol: "posix_spawn", pointer: "pid", pointer: "path", pointer: "actions")
+private func spawnProcess(pid: inout [UInt8], path: [UInt8], actions: [UInt8], attributes: Int,
+    argv: Int, environment: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "waitpid", pointer: "status")
+private func waitProcess(pid: Int32, status: inout [UInt8], options: Int32): Int32
+
+@platform(posix)
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+private func addressOf(bytes: inout [UInt8]): Int
+
+@platform(posix)
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@platform(posix)
+func classifyProcessError(code: Int): ProcessError {
+    if code == 2 || code == 20 { return .NotFound(code) }
+    if code == 13 || code == 1 { return .PermissionDenied(code) }
+    return .LaunchFailed(code)
+}
+
+private func readInteger(bytes: [UInt8], offset: Int, width: Int): Int {
+    var value = 0
+    var index = width
+    while index > 0 {
+        index = index - 1
+        value = (value << 8) | byteToInt(value: bytes[offset + index])
+    }
+    return value
+}
+
+// A relative path becomes absolute against the current directory, so the
+// executable is resolved before the child changes directory.
+@platform(posix)
+private func absolute(text: String): Result<String, ProcessError> {
+    if text[0] == b'/' { return .Ok(text) }
+    var size = 256
+    var outcome: Result<String, ProcessError> = .Err(.LaunchFailed(rangeError))
+    var searching = true
+    while searching {
+        var buffer = zeroBuffer(count: size)
+        if getcwdSpawn(buffer: &buffer, size: size) != 0 {
+            var length = 0
+            while buffer[length] != 0 { length = length + 1 }
+            let base = stringFromBytes(bytes: buffer, count: length)
+            outcome = .Ok(base + "/" + text)
+            searching = false
+        } else {
+            let code = errnoSpawn() as Int
+            if code == rangeError {
+                size = size * 2
+            } else {
+                outcome = .Err(classifyProcessError(code: code))
+                searching = false
+            }
+        }
+    }
+    return outcome
+}
+
+// Appends `text` and a NUL; returns the offset it starts at.
+private func appendCString(block: inout [UInt8], text: String): Int {
+    let start = block.count
+    var index = 0
+    while index < text.count {
+        &block.append(element: text[index])
+        index = index + 1
+    }
+    &block.append(element: 0)
+    return start
+}
+
+@platform(posix)
+func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
+    let fullExecutable = absolute(text: executable)?
+    var block: [UInt8] = []
+    var offsets: [Int] = []
+    &offsets.append(element: appendCString(block: &block, text: fullExecutable))
+    var position = 0
+    while position < arguments.count {
+        &offsets.append(element: appendCString(block: &block, text: arguments[position]))
+        position = position + 1
+    }
+    let base = addressOf(bytes: &block)
+    var table = zeroBuffer(count: (offsets.count + 1) * 8)
+    let tableAddress = addressOf(bytes: &table)
+    var slot = 0
+    while slot < offsets.count {
+        store64(address: tableAddress + slot * 8, value: (base + offsets[slot]) as UInt64)
+        slot = slot + 1
+    }
+    var actions = zeroBuffer(count: actionsSize)
+    let initialized = actionsInit(actions: &actions) as Int
+    if initialized != 0 { return .Err(.LaunchFailed(initialized)) }
+    let chdir = actionsChdir(actions: &actions, path: nativePathBytes(text: workingDirectory)) as Int
+    if chdir != 0 {
+        actionsDestroy(actions: &actions)
+        return .Err(classifyProcessError(code: chdir))
+    }
+    var pid = zeroBuffer(count: 4)
+    let spawned = spawnProcess(pid: &pid, path: nativePathBytes(text: fullExecutable), actions: actions,
+        attributes: 0, argv: tableAddress, environment: environmentSpawn()) as Int
+    actionsDestroy(actions: &actions)
+    if spawned != 0 { return .Err(classifyProcessError(code: spawned)) }
+    return waitForChild(pid: readInteger(bytes: pid, offset: 0, width: 4))
+}
+
+// waitpid's status word: the low seven bits are the terminating signal (zero
+// for a normal exit, 0x7f for a stopped child), the next byte the exit code.
+@platform(posix)
+private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
+    var status = zeroBuffer(count: 4)
+    var waited = -1
+    var code = 0
+    var again = true
+    while again {
+        waited = waitProcess(pid: pid as Int32, status: &status, options: 0) as Int
+        code = errnoSpawn() as Int
+        again = waited < 0 && code == interrupted
+    }
+    if waited < 0 { return .Err(.WaitFailed(code)) }
+    let word = readInteger(bytes: status, offset: 0, width: 4)
+    let signal = word & 127
+    if signal == 0 { return .Ok(.Exited((word >> 8) & 255)) }
+    if signal != 127 { return .Ok(.Signaled(signal)) }
+    return .Err(.WaitFailed(noChild))
+}

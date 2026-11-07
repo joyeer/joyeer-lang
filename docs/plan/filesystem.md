@@ -45,9 +45,9 @@ paper over; each needs a decision before it is written.
   calling the CRT's `getchar` and needs a runtime accessor to tell end of input
   from an error and to flush `stdout` first ([§18.5](../spec/18-host.md#185-standard-input)).
 
-The unsafe memory layer of decision 0005 is implemented, so `runProcess` can now
-be ported on POSIX (a table of argument addresses built in a byte buffer) as well
-as Windows; that is the next step.
+`runProcess` is ported ([decision 0006](../decisions/0006-runprocess-in-joyeer.md)):
+verified on Windows x64 in Debug and Release; the POSIX variant (`posix_spawn`
+with an argument-address table built through the intrinsics) type-checks only.
 
 ## 2. Verify the POSIX variants (blocks everything below)
 
@@ -63,6 +63,9 @@ unfiltered CTest, in Debug and Release. Expect to fix, at least, the first run:
 - `statx` needs glibc 2.28 or musl with it; decide the minimum libc;
 - `errno` after stdio calls, and `EINTR` retries;
 - the Linux and macOS differences in `EILSEQ` and `ENAMETOOLONG`.
+- `runProcess`: `posix_spawn_file_actions_addchdir_np` availability (glibc 2.29,
+  macOS 10.15), the size of `posix_spawn_file_actions_t`, the `waitpid` status
+  decoding, and `joyeer_native_environment` against a real `environ`.
 
 Record the results in [supported-features](../impl/supported-features.md).
 

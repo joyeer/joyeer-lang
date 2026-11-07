@@ -4,5 +4,5 @@ schema-version = 1
 name = "SystemTests"
 kind = "test"
 output = "system-tests"
-sources = ["main.joyeer", "filesystem.joyeer"]
+sources = ["main.joyeer", "filesystem.joyeer", "process.joyeer"]
 dependencies = ["System", "Foundation"]

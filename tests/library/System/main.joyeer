@@ -35,6 +35,7 @@ func main(args: [String]): Int {
         ok: processStatusMessage(status: .Signaled(9)) == "terminated by signal 9")
 
     failures = failures + testFileSystem()
+    failures = failures + testProcess()
 
     if failures == 0 { print(value: "System tests passed") }
     return failures

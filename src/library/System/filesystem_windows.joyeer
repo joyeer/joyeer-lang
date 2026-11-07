@@ -105,13 +105,13 @@ func classifyError(code: Int): FileSystemError {
     return .Other(code)
 }
 
-private func appendUnit(bytes: inout [UInt8], unit: Int) {
+func appendUnit(bytes: inout [UInt8], unit: Int) {
     &bytes.append(element: (unit & 255) as UInt8)
     &bytes.append(element: ((unit >> 8) & 255) as UInt8)
 }
 
 // UTF-8 to UTF-16LE. The text is already known to be well-formed UTF-8.
-private func utf16Bytes(text: String): [UInt8] {
+func utf16Bytes(text: String): [UInt8] {
     var bytes: [UInt8] = []
     var index = 0
     while index < text.count {
@@ -152,7 +152,7 @@ func nativePathBytes(text: String): [UInt8] {
     return bytes
 }
 
-private func unitAt(bytes: [UInt8], offset: Int): Int {
+func unitAt(bytes: [UInt8], offset: Int): Int {
     return byteToInt(value: bytes[offset]) | (byteToInt(value: bytes[offset + 1]) << 8)
 }
 
@@ -176,7 +176,7 @@ private func appendUtf8(bytes: inout [UInt8], scalar: Int) {
 
 // Decodes the NUL-terminated UTF-16LE name at `start` into UTF-8 bytes.
 // Returns false on an unpaired surrogate or an unterminated name.
-private func decodeName(data: [UInt8], start: Int, units: Int, into: inout [UInt8]): Bool {
+func decodeName(data: [UInt8], start: Int, units: Int, into: inout [UInt8]): Bool {
     var index = 0
     while index < units {
         let unit = unitAt(bytes: data, offset: start + index * 2)

@@ -18,6 +18,12 @@
 #include <intrin.h>
 #endif
 
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#elif !defined(_WIN32)
+extern char** environ;
+#endif
+
 typedef struct ArrayHeader {
     int64_t elementSize;
     JoyeerCloneValueFn cloneElement;
@@ -68,6 +74,16 @@ int64_t joyeer_runtime_active_allocations(void) {
 
 int32_t joyeer_native_errno(void) {
     return (int32_t)errno;
+}
+
+int64_t joyeer_native_environment(void) {
+#if defined(_WIN32)
+    return 0;
+#elif defined(__APPLE__)
+    return (int64_t)(intptr_t)*_NSGetEnviron();
+#else
+    return (int64_t)(intptr_t)environ;
+#endif
 }
 
 static size_t checkedByteCount(int64_t count, int64_t stride) {

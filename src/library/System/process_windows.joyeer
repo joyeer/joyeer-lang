@@ -1,0 +1,279 @@
+import Foundation
+
+// Windows process launch for process.joyeer, over kernel32. The child inherits
+// the parent's environment and, through inheritable duplicates, its standard
+// handles. The executable and the working directory are resolved against the
+// parent's directory first; there is no PATH search and no command interpreter.
+
+private let waitFailed: Int = 4294967295
+private let waitInfinite: UInt32 = 0xFFFFFFFF
+private let useStandardHandles: Int = 256
+private let startupInfoSize: Int = 104
+private let informationSize: Int = 24
+private let ioPending: Int = 997
+private let insufficientBuffer: Int = 122
+private let badExecutableFormat: Int = 193
+private let standardInput: UInt32 = 0xFFFFFFF6
+private let standardOutput: UInt32 = 0xFFFFFFF5
+private let standardError: UInt32 = 0xFFFFFFF4
+private let duplicateSameAccess: UInt32 = 2
+private let backslashByte: UInt8 = 92
+private let quoteByte: UInt8 = 34
+
+@platform(windows)
+@c_extern(symbol: "GetFullPathNameW", pointer: "path", pointer: "buffer")
+private func fullPathW(path: [UInt8], length: UInt32, buffer: inout [UInt8], filePart: Int): UInt32
+
+@platform(windows)
+@c_extern(symbol: "GetStdHandle")
+private func standardHandleW(kind: UInt32): Int
+
+@platform(windows)
+@c_extern(symbol: "GetCurrentProcess")
+private func currentProcessW(): Int
+
+@platform(windows)
+@c_extern(symbol: "DuplicateHandle", pointer: "target")
+private func duplicateHandleW(sourceProcess: Int, source: Int, targetProcess: Int,
+    target: inout [UInt8], access: UInt32, inherit: Int32, options: UInt32): Int32
+
+@platform(windows)
+@c_extern(symbol: "CreateProcessW", pointer: "application", pointer: "command", pointer: "directory",
+    pointer: "startup", pointer: "information")
+private func createProcessW(application: [UInt8], command: inout [UInt8], processSecurity: Int,
+    threadSecurity: Int, inherit: Int32, flags: UInt32, environment: Int, directory: [UInt8],
+    startup: [UInt8], information: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "WaitForSingleObject")
+private func waitForObjectW(handle: Int, milliseconds: UInt32): UInt32
+
+@platform(windows)
+@c_extern(symbol: "GetExitCodeProcess", pointer: "code")
+private func exitCodeW(handle: Int, code: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "TerminateProcess")
+private func terminateProcessW(handle: Int, code: UInt32): Int32
+
+@platform(windows)
+@c_extern(symbol: "CloseHandle")
+private func closeProcessHandleW(handle: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func processLastErrorW(): UInt32
+
+// The Microsoft C runtime's argument quoting: wrap in quotes, double the
+// backslashes that precede a quote or the closing quote, escape each quote.
+// Everything else, including spaces, metacharacters and non-ASCII text, is
+// literal.
+public func windowsQuote(argument: String): String {
+    var quoted: [UInt8] = []
+    &quoted.append(element: quoteByte)
+    var slashes = 0
+    var index = 0
+    while index < argument.count {
+        let byte = argument[index]
+        index = index + 1
+        if byte == backslashByte {
+            slashes = slashes + 1
+            continue
+        }
+        var escapes = slashes
+        if byte == quoteByte { escapes = slashes * 2 }
+        while escapes > 0 {
+            &quoted.append(element: backslashByte)
+            escapes = escapes - 1
+        }
+        slashes = 0
+        if byte == quoteByte { &quoted.append(element: backslashByte) }
+        &quoted.append(element: byte)
+    }
+    var closing = slashes * 2
+    while closing > 0 {
+        &quoted.append(element: backslashByte)
+        closing = closing - 1
+    }
+    &quoted.append(element: quoteByte)
+    return stringFromBytes(bytes: quoted, count: quoted.count)
+}
+
+private func appendU32(bytes: inout [UInt8], value: Int) {
+    var shift = 0
+    while shift < 32 {
+        &bytes.append(element: ((value >> shift) & 255) as UInt8)
+        shift = shift + 8
+    }
+}
+
+private func appendU64(bytes: inout [UInt8], value: Int) {
+    var shift = 0
+    while shift < 64 {
+        &bytes.append(element: ((value >> shift) & 255) as UInt8)
+        shift = shift + 8
+    }
+}
+
+private func appendZeros(bytes: inout [UInt8], count: Int) {
+    var index = 0
+    while index < count {
+        &bytes.append(element: 0)
+        index = index + 1
+    }
+}
+
+private func readInteger(bytes: [UInt8], offset: Int, width: Int): Int {
+    var value = 0
+    var index = width
+    while index > 0 {
+        index = index - 1
+        value = (value << 8) | byteToInt(value: bytes[offset + index])
+    }
+    return value
+}
+
+// STARTUPINFOW with STARTF_USESTDHANDLES: size, flags at 60, handles at 80.
+private func startupInfo(input: Int, output: Int, error: Int): [UInt8] {
+    var info: [UInt8] = []
+    appendU32(bytes: &info, value: startupInfoSize)
+    appendZeros(bytes: &info, count: 56)
+    appendU32(bytes: &info, value: useStandardHandles)
+    appendZeros(bytes: &info, count: 16)
+    appendU64(bytes: &info, value: input)
+    appendU64(bytes: &info, value: output)
+    appendU64(bytes: &info, value: error)
+    return info
+}
+
+@platform(windows)
+func classifyProcessError(code: Int): ProcessError {
+    if code == 2 || code == 3 || code == 161 || code == 15 || code == 267 { return .NotFound(code) }
+    if code == 5 || code == 1314 || code == 32 { return .PermissionDenied(code) }
+    return .LaunchFailed(code)
+}
+
+// True when the final extension after the last dot is .bat or .cmd, any case.
+func isBatchFile(path: String): Bool {
+    var dot = -1
+    var index = 0
+    while index < path.count {
+        if path[index] == b'.' { dot = index }
+        index = index + 1
+    }
+    if dot < 0 || path.count - dot != 4 { return false }
+    let first = lowerAscii(byte: path[dot + 1])
+    let second = lowerAscii(byte: path[dot + 2])
+    let third = lowerAscii(byte: path[dot + 3])
+    if first == 98 && second == 97 && third == 116 { return true }
+    return first == 99 && second == 109 && third == 100
+}
+
+private func lowerAscii(byte: UInt8): Int {
+    let value = byteToInt(value: byte)
+    if value >= 65 && value <= 90 { return value + 32 }
+    return value
+}
+
+@platform(windows)
+private func absolute(text: String): Result<String, ProcessError> {
+    let path = nativePathBytes(text: text)
+    var probe = zeroBuffer(count: 2)
+    let length = fullPathW(path: path, length: 0, buffer: &probe, filePart: 0) as Int
+    if length == 0 { return .Err(classifyProcessError(code: processLastErrorW() as Int)) }
+    var buffer = zeroBuffer(count: length * 2)
+    let actual = fullPathW(path: path, length: length as UInt32, buffer: &buffer, filePart: 0) as Int
+    if actual == 0 { return .Err(classifyProcessError(code: processLastErrorW() as Int)) }
+    if actual >= length { return .Err(classifyProcessError(code: insufficientBuffer)) }
+    var name: [UInt8] = []
+    if !decodeName(data: buffer, start: 0, units: length, into: &name) {
+        return .Err(classifyProcessError(code: 1113))
+    }
+    return .Ok(stringFromBytes(bytes: name, count: name.count))
+}
+
+@platform(windows)
+private func closeQuietly(handle: Int) {
+    if handle != 0 { closeProcessHandleW(handle: handle) }
+}
+
+// An inheritable duplicate of a standard handle, 0 when the parent has none.
+// Returns the duplicate or the negated error code.
+@platform(windows)
+private func inheritable(kind: UInt32): Int {
+    let handle = standardHandleW(kind: kind)
+    if handle == 0 || handle == -1 { return 0 }
+    var target = zeroBuffer(count: 8)
+    let me = currentProcessW()
+    if duplicateHandleW(sourceProcess: me, source: handle, targetProcess: me, target: &target,
+        access: 0, inherit: 1, options: duplicateSameAccess) == 0 {
+        return 0 - (processLastErrorW() as Int)
+    }
+    return readInteger(bytes: target, offset: 0, width: 8)
+}
+
+@platform(windows)
+func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
+    let fullExecutable = absolute(text: executable)?
+    let fullDirectory = absolute(text: workingDirectory)?
+    if isBatchFile(path: fullExecutable) { return .Err(.LaunchFailed(badExecutableFormat)) }
+    var command = windowsQuote(argument: fullExecutable)
+    var position = 0
+    while position < arguments.count {
+        command = command + " " + windowsQuote(argument: arguments[position])
+        position = position + 1
+    }
+    let input = inheritable(kind: standardInput)
+    if input < 0 { return .Err(.LaunchFailed(0 - input)) }
+    let output = inheritable(kind: standardOutput)
+    if output < 0 {
+        closeQuietly(handle: input)
+        return .Err(.LaunchFailed(0 - output))
+    }
+    let error = inheritable(kind: standardError)
+    if error < 0 {
+        closeQuietly(handle: input)
+        closeQuietly(handle: output)
+        return .Err(.LaunchFailed(0 - error))
+    }
+    let startup = startupInfo(input: input, output: output, error: error)
+    var information = zeroBuffer(count: informationSize)
+    var commandBytes = nativePathBytes(text: command)
+    let launched = createProcessW(application: nativePathBytes(text: fullExecutable), command: &commandBytes,
+        processSecurity: 0, threadSecurity: 0, inherit: 1, flags: 0, environment: 0,
+        directory: nativePathBytes(text: fullDirectory), startup: startup, information: &information)
+    var launchError = 0
+    if launched == 0 { launchError = processLastErrorW() as Int }
+    closeQuietly(handle: input)
+    closeQuietly(handle: output)
+    closeQuietly(handle: error)
+    if launched == 0 { return .Err(classifyProcessError(code: launchError)) }
+    let process = readInteger(bytes: information, offset: 0, width: 8)
+    closeQuietly(handle: readInteger(bytes: information, offset: 8, width: 8))
+    return waitForExit(process: process)
+}
+
+@platform(windows)
+private func waitForExit(process: Int): Result<ProcessStatus, ProcessError> {
+    var waited = 0
+    var again = true
+    while again {
+        waited = waitForObjectW(handle: process, milliseconds: waitInfinite) as Int
+        again = waited == waitFailed && (processLastErrorW() as Int) == ioPending
+    }
+    if waited != 0 {
+        let code = processLastErrorW() as Int
+        terminateProcessW(handle: process, code: 1)
+        waitForObjectW(handle: process, milliseconds: waitInfinite)
+        closeQuietly(handle: process)
+        return .Err(.WaitFailed(code))
+    }
+    var status = zeroBuffer(count: 4)
+    if exitCodeW(handle: process, code: &status) == 0 {
+        let code = processLastErrorW() as Int
+        closeQuietly(handle: process)
+        return .Err(.WaitFailed(code))
+    }
+    closeQuietly(handle: process)
+    return .Ok(.Exited(readInteger(bytes: status, offset: 0, width: 4)))
+}
