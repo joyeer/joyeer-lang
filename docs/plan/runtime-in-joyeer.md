@@ -117,7 +117,7 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 |---|---|---|
 | `joyeer_runtime_active_allocations`, allocation counter | `entry`, tests, fixtures | R2 |
 | `joyeer_panic` | every generated trap, all runtime code | R2 |
-| `joyeer_checked_{add,sub,mul,div,rem}_int` | tests only; generated code checks inline | R0 (remove or keep as exports) |
+| `joyeer_checked_{add,sub,mul,div,rem}_int` | removed in stage 0: generated code checks inline | done |
 | `joyeer_print_{int,uint,float,double,bool,byte}`, `joyeer_print_string_abi` | generated `print` | R3, R4 |
 | `joyeer_string_{equal,compare,byte_at,concat}_abi` | generated string operators | R3 |
 | `joyeer_string_{clone,destroy}_abi`, `joyeer_byte_to_string_abi` | generated ownership code | R3 |
@@ -127,7 +127,7 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 | `joyeer_host_valid_utf8` | Compression's C unit | R8 |
 | `joyeer_native_errno`, `joyeer_native_environment`, `joyeer_native_stdio` | `System` | R8 |
 | `main` / `wmain`, `joyeer_main_uses_arguments` | the C startup | R7 |
-| `joyeer_array_create`, `joyeer_array_at`, `joyeer_dictionary_create`, `joyeer_dictionary_at`, non-`_abi` string forms | tests only | R0 (remove) |
+| `joyeer_array_create`, `joyeer_array_at`, `joyeer_dictionary_create`, `joyeer_dictionary_at`, non-`_abi` string forms | removed in stage 0 | done |
 
 Layouts that must be preserved: `JoyeerString { data, count }`,
 `JoyeerArray { data, count, capacity }` with an `ArrayHeader { elementSize,
@@ -396,18 +396,45 @@ except where a box says otherwise.
 - **Delete the C last, then Tier 2.** Only when no symbol is provided by C does
   the archive change shape; the allocator and startup work starts from there.
 
-### Stage 0: Baseline (R0)
+### Stage 0: Baseline (R0), done
 
-- [ ] 0.1 Decide the test-only symbols (`joyeer_checked_*`, `joyeer_array_create`,
-  `joyeer_array_at`, `joyeer_dictionary_create`, `joyeer_dictionary_at`, the
-  non-`_abi` string forms): delete them and move their tests to the `_abi` forms,
-  or keep them as exports. Recommend delete.
-- [ ] 0.2 Make `runtime_test.cpp` a black-box test of every symbol in §3, so it
-  can run unchanged against either provider. Add what is missing (printed output
-  of every `print_*`, every dictionary key kind, panic text and exit status).
-- [ ] 0.3 Add a benchmark target (label `benchmark`, outside the acceptance gate)
-  for string compare and concat, array append, dictionary set and find at `-O2`,
-  and record the C baseline numbers in this plan.
+- [x] 0.1 Test-only symbols removed: `joyeer_checked_*`, `joyeer_array_create`,
+  `joyeer_array_at`, `joyeer_dictionary_create` and their `_abi` wrappers, and the
+  by-value string, array and dictionary forms (now `static` helpers inside
+  `runtime.c`; the ABI is the flat `_abi` functions). Their tests were deleted
+  where the behavior lives in generated code (checked arithmetic and array bounds
+  have native fixtures) and migrated to the `_abi` forms elsewhere.
+- [x] 0.2 `runtime_test.cpp` names only symbols that `runtime.h` declares, so it
+  runs unchanged against any provider. Added: printed output of every `print_*`,
+  panic text and status, exact `-1/0/1` string ordering over unsigned bytes and
+  embedded NUL, allocation counts (none for comparison, one for concatenation and
+  for an empty result), array growth (capacity 4 then doubling), empty-array
+  clone, and the native `errno`, `stdio` and `environment` accessors. Dictionary
+  key kinds and clone/set/find were already covered.
+- [x] 0.3 `RuntimeBenchmarks` (`tests/unittests/runtime/runtime_benchmark.cpp`),
+  run with `cmake --build <dir> --target runtime-benchmark`. It is not registered
+  with CTest.
+
+Baseline, C runtime, Windows x64 Release (`/O2 /Ob2 /MT`), AMD EPYC 7763,
+2026-11-07, best of 7 repetitions, three runs. Rows under about 10 ns vary by up
+to 40% between runs; treat only larger differences as real.
+
+| Benchmark | ns per operation |
+|---|---|
+| string equal, equal, 16 B | 5.7 to 9.3 |
+| string compare, last byte differs, 16 B | 6.3 to 9.4 |
+| string concat + destroy, 16 B | 47 to 56 |
+| string clone + destroy, 16 B | 41 |
+| string equal, equal, 1024 B | 34 |
+| string compare, last byte differs, 1024 B | 34 |
+| string concat + destroy, 1024 B | 73 to 76 |
+| string clone + destroy, 1024 B | 56 to 58 |
+| array append, grow from empty (`Int`) | 8.7 to 9.1 |
+| array clone + destroy, 1000 elements with callbacks | 5.8 per element |
+| dictionary set, 1000 distinct `Int` keys (linear) | 1.4 µs per set |
+| dictionary find, last of 1000 `Int` keys | 2.8 µs per find |
+
+The §8 performance gate compares against these rows on the same machine.
 
 ### Stage 1: Build shape and pilot (needs no new compiler capability)
 

@@ -24,8 +24,8 @@ printing, panic and bounds traps, and the process entry and allocation-balance
 check. File, filesystem, process and standard-stream operations are in the
 `System` module instead (see Host operations below).
 Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
-the checked arithmetic and generic array-indexing C entry points remain
-available for runtime clients. String and dictionary accesses use runtime
+the runtime has no checked-arithmetic or array-indexing entry points of its own
+(the former ones were removed in runtime plan stage 0). String and dictionary accesses use runtime
 operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
@@ -37,7 +37,7 @@ integers use an unsigned printer after zero extension. Floating printers use
 adaptations do not introduce implicit conversions at explicit C bindings.
 
 Checked `Int` division truncates toward zero; a nonzero remainder has the
-dividend's sign. Both `joyeer_checked_div_int` and `joyeer_checked_rem_int`
+dividend's sign. The generated checks
 panic on a zero divisor or `INT64_MIN` with divisor `-1`, before evaluating
 the C arithmetic operation. The generated LLVM checks have the same behavior
 at every optimization level. Diagnostics distinguish `integer division by

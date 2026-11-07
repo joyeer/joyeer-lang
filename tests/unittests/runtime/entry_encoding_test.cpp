@@ -16,8 +16,7 @@ extern "C" int joyeer_main_uses_arguments(void) {
 
 extern "C" int64_t joyeer_main(const JoyeerArray* arguments) {
     if (arguments->count != 1) return 1;
-    const auto* argument = static_cast<const JoyeerString*>(
-            joyeer_array_at_abi(arguments->data, arguments->count, 0));
+    const auto* argument = static_cast<const JoyeerString*>(arguments->data);
     observedArgument.assign(
             reinterpret_cast<const char*>(argument->data),
             static_cast<size_t>(argument->count));

@@ -100,3 +100,15 @@ target_link_libraries(RuntimeOptionsTests
 joyeer_discover_tests(RuntimeOptionsTests
         PROPERTIES LABELS "runtime\;optimization\;debug-info"
 )
+
+# Micro-benchmarks for the exported runtime ABI. Deliberately not registered
+# with CTest: timings are not pass/fail. Run in a Release build with
+#   cmake --build <dir> --target runtime-benchmark
+add_executable(RuntimeBenchmarks runtime_benchmark.cpp)
+target_include_directories(RuntimeBenchmarks PRIVATE ${JOYEER_SOURCE_DIR}/src)
+target_link_libraries(RuntimeBenchmarks PRIVATE JoyeerRuntime)
+add_custom_target(runtime-benchmark
+    COMMAND RuntimeBenchmarks
+    DEPENDS RuntimeBenchmarks
+    COMMENT "Running the runtime micro-benchmarks"
+    VERBATIM)
