@@ -497,7 +497,7 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 - [x] 3.1 Static storage slots (D1).
 - [ ] 3.2 Bulk memory intrinsics (needs its own decision first); switch 1.3 from
   `memcmp` to them.
-- [ ] 3.3 Non-returning exports (`Never`) and `main`/`wmain` exports in core units
+- [x] 3.3 Non-returning bindings (`Never`) and `main`/`wmain` exports in core units
   only (D4, D7).
 - [x] 3.4 Indirect calls (D2), done in 2.2.
 - [x] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for

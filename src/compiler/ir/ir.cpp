@@ -659,12 +659,15 @@ VerificationResult Verifier::verify(const Module& module) const {
                     function.runtimeContext && isCIdentifier(binding.symbol) &&
                     function.isExternal == importing &&
                     !(function.isRootModule && function.name == "main") &&
-                    (importing || !isCEntrySymbol(binding.symbol));
+                    (!function.coreContext || function.runtimeContext) &&
+                    (importing || !isCEntrySymbol(binding.symbol) ||
+                     (function.coreContext && isCoreEntrySymbol(binding.symbol)));
             const auto scalar = [&](TypeId id) {
                 return types.contains(id) && typing::isNativeScalar(types.at(id)->kind);
             };
             const bool scalarResult = scalar(function.resultType);
-            valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
+            valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType) ||
+                       hasKind(function.resultType, typing::TypeKind::never)) &&
                     function.returnsValue == scalarResult;
             const auto bufferKind = [&](TypeId id) {
                 return typing::nativeBufferKind(id, [&](TypeId value) {

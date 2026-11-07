@@ -45,6 +45,12 @@ struct NativeBinding {
     return true;
 }
 
+// The C entry points a core unit may export (spec 19.4.6): main for POSIX and
+// narrow Windows startup, wmain for the wide Windows startup.
+[[nodiscard]] inline bool isCoreEntrySymbol(std::string_view name) {
+    return name == "main" || name == "wmain";
+}
+
 [[nodiscard]] inline bool isCEntrySymbol(std::string_view name) {
     return name == "main" || name == "wmain" || name == "WinMain" ||
            name == "wWinMain" || name == "_start" ||

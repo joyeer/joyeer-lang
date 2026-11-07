@@ -266,7 +266,7 @@ uses `.o`/`.obj` code generation, and does not require a runtime archive or
 an application `main`. It does not establish a general binary-module ABI.
 `--runtime-core-module <name>` is `--runtime-module` plus a restriction: a core
 unit may use only `Bool`, the integer and floating types and `Void`
-([§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-)),
+([§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-and-the-program-entry-point)),
 and a use of anything else is `type-checking.managed-type-in-core-unit`. The
 Joyeer runtime core (`src/runtime/joyeer/`) is built this way.
 See [C binding coverage](c-interop.md) for signatures, static/shared providers,

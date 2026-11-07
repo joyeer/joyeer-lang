@@ -800,8 +800,12 @@ private:
                    "C bindings require an explicit result type, including Void");
         }
         const auto* symbol = model->semanticModelValue->symbol(function);
+        // Only a core unit (spec 19.4.6) may export the platform's program entry
+        // point; every other startup symbol, and every other unit, may not.
+        const bool coreEntry = !importing && isCoreEntrySymbol(binding->symbol) &&
+                model->semanticModelValue->isCoreSource(declaration->span);
         if ((symbol->isRootModule && symbol->name == "main") ||
-            (!importing && isCEntrySymbol(binding->symbol))) {
+            (!importing && isCEntrySymbol(binding->symbol) && !coreEntry)) {
             report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
                    "C bindings must not replace a toolchain executable entry point");
         }
@@ -831,8 +835,11 @@ private:
                        "String, [UInt8], [String], [[UInt8]] and initializing String, [UInt8], [String]");
             }
         }
+        // Never marks a C function that does not return (an import such as exit),
+        // or an export that does not (the runtime's panic).
         if (!isNativeScalar(model->typeContext.type(signature.result)->kind) &&
-            signature.result != model->typeContext.voidType()) {
+            signature.result != model->typeContext.voidType() &&
+            model->typeContext.type(signature.result)->kind != TypeKind::never) {
             report(TypeCheckingDiagnosticId::unsupportedNativeSignature,
                    declaration->returnType == nullptr ? declaration->span : declaration->returnType->span,
                    "C bindings require a scalar or Void result");

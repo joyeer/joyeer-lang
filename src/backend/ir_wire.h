@@ -8,7 +8,7 @@
 
 namespace joyeer::llvmbackend::wire {
 
-inline constexpr uint32_t version = 8;
+inline constexpr uint32_t version = 9;
 
 // This private wire format carries Joyeer IR, not LLVM assembly. Both sides
 // allocate their own C++ objects; only borrowed bytes cross the backend C ABI.
@@ -60,7 +60,7 @@ template<class Archive> void fields(Archive& archive, ir::Function& value) {
     archive(value.id, value.symbol, value.name, value.parameters, value.resultType,
             value.returnsValue, value.isExternal, value.entry, value.blocks,
             value.debugLocation, value.debugScope, value.entryDebugVariableBindings,
-            value.isRootModule, value.runtimeContext, value.nativeBinding);
+            value.isRootModule, value.runtimeContext, value.coreContext, value.nativeBinding);
 }
 template<class Archive> void fields(Archive& archive, ir::TypeName& value) {
     archive(value.id, value.name, value.kind, value.symbol, value.arguments, value.declarationSpan);

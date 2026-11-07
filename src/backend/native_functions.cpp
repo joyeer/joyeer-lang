@@ -118,7 +118,8 @@ void Builder::emitNativeExport(const ir::Function& function) {
     // The exported C entry is separate from Joyeer's internal calling
     // convention, even when the first scalar slice needs no conversions.
     auto* result = builder.CreateCall(functions.at(function.id), arguments);
-    if (function.returnsValue) builder.CreateRet(result);
+    if (type(function.resultType).kind == typing::TypeKind::never) builder.CreateUnreachable();
+    else if (function.returnsValue) builder.CreateRet(result);
     else builder.CreateRetVoid();
 }
 

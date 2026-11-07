@@ -318,6 +318,10 @@ llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* res
     auto* signature = llvm::FunctionType::get(result, parameters, false);
     const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
     llvm::AttributeList attributes;
+    if (resultKind == typing::TypeKind::never) {
+        // A C function that does not return: the call site is followed by unreachable.
+        attributes = attributes.addFnAttribute(context(), llvm::Attribute::NoReturn);
+    }
     const auto returnExtension = cExtension(target, result, typing::isSignedInteger(resultKind));
     if (returnExtension != llvm::Attribute::None) {
         attributes = attributes.addRetAttribute(context(), returnExtension);

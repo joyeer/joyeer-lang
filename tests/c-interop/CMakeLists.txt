@@ -114,7 +114,7 @@ foreach(profile IN ITEMS Debug Optimized)
             LABELS "c-interop;native" TIMEOUT 60)
     endforeach()
     set(objects)
-    foreach(unit IN ITEMS roundtrip second scalars platform-scalars indirect static-slots-first static-slots-second)
+    foreach(unit IN ITEMS roundtrip second scalars platform-scalars indirect static-slots-first static-slots-second never-export)
         if(unit STREQUAL platform-scalars)
             set(unit_source "${CMAKE_CURRENT_BINARY_DIR}/${unit}.joyeer")
         else()
@@ -278,4 +278,32 @@ foreach(profile IN ITEMS Debug Optimized)
     add_test(NAME "JoyeerCInterop.SharedStaticSlots${profile}" COMMAND ${target})
     set_tests_properties("JoyeerCInterop.SharedStaticSlots${profile}" PROPERTIES
         LABELS "c-interop;native" TIMEOUT 30)
+endforeach()
+
+# Never as the result of a C binding: a C function that does not return, and a
+# Joyeer export that does not (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.NeverImport${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/never-import.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/never-import-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.never_import;--runtime-module;runtime.never_import;${compile_flags}"
+            "-DEXPECTED_OUTPUT=before exit\n"
+            "-DEXPECTED_EXIT_CODE=3"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.NeverImport${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    set(target "CInteropNeverExport${profile}")
+    add_executable(${target} never-export-caller.c)
+    target_link_libraries(${target} PRIVATE CInteropJoyeer${profile} JoyeerRuntime)
+    set_target_properties(${target} PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+    add_test(NAME "JoyeerCInterop.NeverExport${profile}" COMMAND ${target})
+    set_tests_properties("JoyeerCInterop.NeverExport${profile}" PROPERTIES
+        PASS_REGULAR_EXPRESSION "never export before" LABELS "c-interop;native" TIMEOUT 30)
 endforeach()

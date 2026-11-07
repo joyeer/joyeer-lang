@@ -789,6 +789,7 @@ private:
         }
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
         function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
+        function.coreContext = semanticModel.isCoreSource(declaration->span);
         if (const auto* binding = model->nativeBinding(*symbol)) {
             function.nativeBinding = *binding;
             function.isExternal = binding->kind == NativeBindingKind::cImport;

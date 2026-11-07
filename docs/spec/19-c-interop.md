@@ -305,28 +305,43 @@ for native bindings only.
 | Capability | Declaration | Effect |
 |---|---|---|
 | Data symbol | `@c_data(symbol: "environ")` on `func environAddress(): Int` | The address of that C data symbol; repeated declarations must agree |
-| Non-returning export | `@c_export` with result type `Never` | The export is `noreturn` |
-| Program entry | `@c_export(symbol: "main")` or `"wmain"`, `(Int32, Int) -> Int32` | The C entry point; allowed in core units only, all other startup symbols stay rejected |
 
 Still proposed, without a decision: bulk memory (`memcpy`, `memmove`, `memset`,
 `memcmp`) and, for a runtime that does not depend on the C library, a Linux
 system-call intrinsic.
 
+#### 19.4.7 Core units, `Never` results and the program entry point
+
 A **core unit**, selected with `--runtime-core-module <name>` (which implies
-`--runtime-module`), may use only `Bool`, the integer and floating types, `Void`
-and top-level scalar constants. `String`, arrays, dictionaries, `Optional`,
-`Result`, enums, structs, `print` and string literals (other than
-as the argument of the constant-data intrinsic) are reported as
+`--runtime-module`), may use only `Bool`, the integer and floating types, `Void`,
+`Never` and top-level scalar constants. `String`, arrays, dictionaries,
+`Optional`, `Result`, enums, structs, `print` and string literals (other than as
+the argument of the constant-data intrinsic) are reported as
 `type-checking.managed-type-in-core-unit`, because each lowers to a call into the
 runtime that the core unit is itself part of. None of this changes ordinary
 programs.
+
+A C binding in any runtime unit may have the result type `Never`. On an import
+it declares a C function that does not return (`exit`); the call is followed by
+unreachable code and the declaration is `noreturn`. On an export it declares a
+Joyeer function that never returns (the runtime's panic); the C-callable entry is
+`noreturn` and does not return even if the body is mis-typed.
+
+Only a core unit may export the platform's program entry point:
+`@c_export(symbol: "main")` or `"wmain"`, with the platform's C signature
+(`Int32` argument count, then the `argv` address as an `Int`, returning `Int32`).
+Every other startup symbol (`_start`, `mainCRTStartup`, `WinMain`, `DllMain`,
+`joyeer_main` and the rest) stays rejected, in every unit. The IR carries a core
+flag so that the verifier enforces this too. A program that links a Joyeer entry
+point must not also link another one: the runtime archive is linked whole on
+Windows.
 
 ### 19.5 Invalid signatures
 
 All types and parameter effects not admitted by §19.4 are rejected at this
 boundary. In particular:
 
-- `Void` parameters and `Never` results have no admitted C representation.
+- `Void` and `Never` parameters have no admitted C representation. `Void` and `Never` are admitted as results (§19.4.7).
 - `consuming` parameters are not substitutes for ownership transfer, and
   `inout` is admitted only for a `[UInt8]` named by `pointer:` (§19.4.4).
   `initializing` is restricted to §19.4.3's outputs.

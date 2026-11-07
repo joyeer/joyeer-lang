@@ -1,8 +1,9 @@
 # 0009: Capabilities the Joyeer runtime core needs from the compiler
 
-- Status: accepted (decided 2026-11-08). Static slots (D1), indirect calls (D2), core units (D3) and the
+- Status: accepted (decided 2026-11-08). Static slots (D1), indirect calls (D2), core units (D3),
+  Never results and the core entry export (D4, part of D7) and the
   constant-data address (part of D7) are implemented and
-  measured; D4, D5 and the rest of D7 are accepted designs for runtime plan stage 3.
+  measured; D5 is an accepted design for runtime plan stage 3.
 - Spec: [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics) (implemented
   intrinsics) and [§19.4.6](../spec/19-c-interop.md#1946-accepted-runtime-capabilities-not-yet-implemented-)
   (accepted, not yet implemented).
@@ -93,7 +94,8 @@ string literal: it lowers to the address of that literal's NUL-terminated
 constant data and creates no `String` value, so D3 allows it. `joyeer_panic`
 writes `Joyeer runtime error: <message>\n` with one `write` call and calls
 `_Exit(1)`; it neither allocates nor touches a managed value. `@c_export` of a
-function with result type `Never` is allowed (core units) and emits `noreturn`.
+function with result type `Never` is allowed in any runtime unit and emits
+`noreturn`, and so is `Never` as the result of a `@c_extern` such as `exit`.
 Rejected: passing a `[UInt8]` constant through `pointer:` (the Debug finding
 above), and message codes with a table in C.
 

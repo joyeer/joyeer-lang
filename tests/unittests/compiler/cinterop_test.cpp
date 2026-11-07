@@ -144,7 +144,8 @@ TEST_F(CInteropTest, RejectsUnsupportedNativeTypesAndAccessEffects) {
         check("@c_extern(symbol: \"native\")\nfunc native(value: " + parameter + "): Int\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
     }
-    for (const auto& result : {"String", "Int?", "Never"}) {
+    // Never is accepted as a result (it marks a C function that does not return).
+    for (const auto& result : {"String", "Int?", "[Int]"}) {
         SCOPED_TRACE(result);
         check("@c_extern(symbol: \"native\")\nfunc native(): " + std::string(result) + "\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
@@ -493,6 +494,84 @@ func variable(index: Int): Int { return slot(index: index) }
               std::string::npos);
     EXPECT_NE(emitted.text.find("static slot index out of range"), std::string::npos);
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, AcceptsNeverAsTheResultOfCBindingsThatDoNotReturn) {
+    check(R"(
+@c_extern(symbol: "exit")
+func exitProcess(status: Int32): Never
+@c_export(symbol: "runtime_fail")
+func fail(code: Int32): Never { exitProcess(status: code) }
+)");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // Never is the only non-scalar result: other result types are still rejected.
+    check("@c_extern(symbol: \"f\")\nfunc f(): Int?\n");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
+}
+
+TEST_F(CInteropTest, EmitsNoReturnForNeverBindingsAndEndsTheExportInUnreachable) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "exit")
+func exitProcess(status: Int32): Never
+@c_export(symbol: "runtime_fail")
+func fail(code: Int32): Never { exitProcess(status: code) }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("declare void @exit(i32"), std::string::npos);
+    EXPECT_NE(emitted.text.find("noreturn"), std::string::npos);
+    EXPECT_NE(emitted.text.find("define void @runtime_fail(i32"), std::string::npos);
+    EXPECT_NE(emitted.text.find("unreachable"), std::string::npos);
+}
+
+TEST_F(CInteropTest, OnlyCoreUnitsMayExportTheProgramEntryPoint) {
+    const auto entry = [](const std::string& symbol) {
+        return "@c_export(symbol: \"" + symbol + "\")\nfunc entry(argc: Int32, argv: Int): Int32 { return 0 }\n";
+    };
+    for (const auto* symbol : { "main", "wmain" }) {
+        checkModules({{"runtime.core", {parse(entry(symbol))}, true, true}});
+        EXPECT_TRUE(checking.succeeded()) << symbol << joyeer::typing::dump(checking.diagnostics);
+        // A runtime unit that is not a core unit may not.
+        check(entry(symbol));
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidNativeDeclaration)) << symbol;
+    }
+    // No other startup symbol is ever allowed, core or not.
+    for (const auto* symbol : { "_start", "mainCRTStartup", "wmainCRTStartup", "WinMain",
+                                "wWinMain", "DllMain", "joyeer_main", "joyeer_main_uses_arguments" }) {
+        checkModules({{"runtime.core", {parse(entry(symbol))}, true, true}});
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidNativeDeclaration)) << symbol;
+    }
+}
+
+TEST_F(CInteropTest, VerifierTiesTheEntryPointExportToACoreUnit) {
+    // lower() builds a plain runtime unit, so build the core module by hand.
+    checkModules({{"runtime.core", {parse(
+            "@c_export(symbol: \"main\")\nfunc entry(argc: Int32, argv: Int): Int32 { return 0 }\n")}, true, true}});
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+    ASSERT_TRUE(analysis.succeeded()) << joyeer::analysis::dump(analysis.diagnostics);
+    auto lowered = joyeer::lowering::Lowerer().lower(
+            checking.model, "fixture.joyeer",
+            joyeer::ir::SourceInfo { "fixture.joyeer", ".", source->content.size(), source->lineStarts });
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    auto entryModule = lowered.module;
+    entryModule->isRuntimeObject = true;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
+    auto& exported = *std::find_if(entryModule->functions.begin(), entryModule->functions.end(),
+            [](const auto& value) { return value.nativeBinding.has_value(); });
+    EXPECT_TRUE(exported.coreContext);
+    exported.coreContext = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
+    exported.coreContext = true;
+    exported.runtimeContext = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
 }
 
 TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
