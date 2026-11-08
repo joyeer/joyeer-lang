@@ -118,8 +118,10 @@ JoyeerBackendStatus emitObject(
         JoyeerBackendDiagnosticCallback diagnosticCallback,
         void* diagnosticContext) {
     static const bool targetInitializationFailed = [] {
+        // The assembly parser is for the inline assembly of the system-call intrinsic.
         return llvm::InitializeNativeTarget() ||
-                llvm::InitializeNativeTargetAsmPrinter();
+                llvm::InitializeNativeTargetAsmPrinter() ||
+                llvm::InitializeNativeTargetAsmParser();
     }();
     if (targetInitializationFailed) {
         report(
