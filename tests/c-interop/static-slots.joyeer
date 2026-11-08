@@ -11,8 +11,9 @@ func store64(address: Int, value: UInt64): Void
 func atomicAdd(address: Int, delta: Int): Int
 
 func exercise(): Int {
-    // The table starts zeroed, and its slots are eight bytes apart.
-    var index = 0
+    // The table starts zeroed apart from the runtime's own slots (0 to 39, runtime plan §5),
+    // and its slots are eight bytes apart.
+    var index = 40
     while index < 64 {
         if load64(address: slot(index: index)) != 0 { return 1 }
         index = index + 1

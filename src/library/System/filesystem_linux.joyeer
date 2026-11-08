@@ -23,12 +23,14 @@ private let createExclusive: Int = 193
 private let writeOnly: Int = 1
 
 // The kernel's O_DIRECTORY differs between architectures.
+@platform(linux)
 private func directoryFlag(): Int {
     if onArm() { return 16384 }
     return 65536
 }
 
 // openat(AT_FDCWD, path, flags, mode)
+@platform(linux)
 private func openPath(path: [UInt8], flags: Int, mode: Int): Int {
     var bytes = path
     let address = addressOfBytes(bytes: &bytes)
@@ -93,6 +95,7 @@ func nativeCreateDirectory(path: [UInt8]): Int {
 }
 
 // unlinkat(AT_FDCWD, path, flags): flags 0 removes a file, AT_REMOVEDIR (512) a directory.
+@platform(linux)
 private func unlink(path: [UInt8], flags: Int): Int {
     var bytes = path
     let outcome = linuxCall(x86: 263, arm: 35, first: currentDirectory, second: addressOfBytes(bytes: &bytes),
@@ -114,6 +117,7 @@ func nativeRemoveDirectory(path: [UInt8]): Int {
     return unlink(path: path, flags: 512)
 }
 
+@platform(linux)
 private func modeKind(mode: Int): Int {
     let format = mode & kindMask
     if format == kindFile { return 0 }
@@ -139,6 +143,7 @@ func nativeKind(path: [UInt8]): Int {
 // The names in one batch of struct linux_dirent64 records (inode 8 bytes, offset 8,
 // length 2 at 16, type 1, then the NUL-terminated name from byte 19). Returns an error
 // code, 0 otherwise.
+@platform(linux)
 private func appendNames(buffer: [UInt8], used: Int, names: inout [String]): Int {
     var position = 0
     while position < used {
@@ -163,6 +168,7 @@ private func appendNames(buffer: [UInt8], used: Int, names: inout [String]): Int
 }
 
 // getdents64 until it reports nothing more: 0 on success, else the error code.
+@platform(linux)
 private func collectEntries(descriptor: Int, names: inout [String]): Int {
     var buffer = zeroBuffer(count: entriesBufferSize)
     let address = addressOfBytes(bytes: &buffer)

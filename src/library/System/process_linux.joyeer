@@ -26,6 +26,7 @@ private let reportBytes: Int = 8
 private func store64(address: Int, value: UInt64): Void
 
 // The little-endian integer of `width` bytes at `offset`.
+@platform(linux)
 private func wordAt(bytes: [UInt8], offset: Int, width: Int): Int {
     var value = 0
     var index = width
@@ -66,6 +67,7 @@ private func absolute(text: String): Result<String, ProcessError> {
 }
 
 // Appends `text` and a NUL; returns the offset it starts at.
+@platform(linux)
 private func appendTerminated(block: inout [UInt8], text: String): Int {
     let start = block.count
     var index = 0
@@ -77,12 +79,14 @@ private func appendTerminated(block: inout [UInt8], text: String): Int {
     return start
 }
 
+@platform(linux)
 private func closeDescriptor(descriptor: Int) {
     linuxCall(x86: 3, arm: 57, first: descriptor, second: 0, third: 0, fourth: 0, fifth: 0, sixth: 0)
 }
 
 // The child's end: change directory, replace the process image, and on a failure of
 // either tell the parent which errno and leave. It never returns to the caller's logic.
+@platform(linux)
 private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int): Int {
     var code = 0
     let changed = linuxCall(x86: 80, arm: 49, first: directory, second: 0, third: 0, fourth: 0, fifth: 0,
@@ -104,6 +108,7 @@ private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int): Int 
 
 // wait4's status word: the low seven bits are the terminating signal (zero for a normal
 // exit, 0x7f for a stopped child), the next byte the exit code.
+@platform(linux)
 private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
     var status = zeroBuffer(count: 4)
     let address = addressOfBytes(bytes: &status)
