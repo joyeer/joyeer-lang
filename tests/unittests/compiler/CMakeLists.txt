@@ -272,7 +272,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DCLANG=${JOYEER_CLANG_EXECUTABLE}
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-dwarf-o0.ll
                     "-DCOMPILER_ARGS=-O0;-gdwarf"
                     "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;Dwarf Version;isOptimized: false;!DILocation"
@@ -287,7 +287,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DCLANG=${JOYEER_CLANG_EXECUTABLE}
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-dwarf-o2.ll
                     "-DCOMPILER_ARGS=-O2;-gdwarf"
                     "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;Dwarf Version;isOptimized: true;DISPFlagOptimized"
@@ -301,7 +301,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DCLANG=${JOYEER_CLANG_EXECUTABLE}
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/full_debug.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/full_debug.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-full-debug.ll
                     "-DCOMPILER_ARGS=-O0;-gfull;-gdwarf"
                     "-DEXPECTED_IR_PATTERNS=emissionKind: FullDebug;llvm.dbg.declare;DILocalVariable;DILexicalBlock;DIBasicType;DICompositeType"
@@ -317,7 +317,7 @@ if(JOYEER_CLANG_EXECUTABLE)
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DCLANG=${JOYEER_CLANG_EXECUTABLE}
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-platform.ll
                         -DCOMPILER_ARGS=-g
                         "-DEXPECTED_IR_PATTERNS=!llvm.dbg.cu;CodeView;!DILocation"
@@ -329,16 +329,16 @@ if(JOYEER_CLANG_EXECUTABLE)
         )
     endif()
 
-    add_test(NAME NativeExecutableHello
+    add_test(NAME E2EExecutableHello
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-hello${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableHello PROPERTIES
-            LABELS "native;llvm-backend;runtime"
+    set_tests_properties(E2EExecutableHello PROPERTIES
+            LABELS "e2e;llvm-backend;runtime"
     )
 
     set(module_sources
@@ -350,7 +350,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             --module-source "project.config=${JOYEER_TESTS_DIR}/modules/config/types/record.joyeer"
     )
     foreach(level IN ITEMS 0 1 2 3)
-        add_test(NAME NativeExecutableCompilationUnitsO${level}
+        add_test(NAME E2EExecutableCompilationUnitsO${level}
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DMODULE_NAME=project.app
@@ -360,10 +360,10 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableCompilationUnitsO${level} PROPERTIES
-                LABELS "modules;native;llvm-backend"
+        set_tests_properties(E2EExecutableCompilationUnitsO${level} PROPERTIES
+                LABELS "modules;e2e;llvm-backend"
         )
-        add_test(NAME NativeExecutableUnqualifiedImportsO${level}
+        add_test(NAME E2EExecutableUnqualifiedImportsO${level}
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DMODULE_NAME=project.app
@@ -373,24 +373,24 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\n42\n42\n42\nowned\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableUnqualifiedImportsO${level} PROPERTIES
-                LABELS "modules;native;llvm-backend;ownership"
+        set_tests_properties(E2EExecutableUnqualifiedImportsO${level} PROPERTIES
+                LABELS "modules;e2e;llvm-backend;ownership"
         )
     endforeach()
 
     if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE)
-        add_test(NAME NativeExecutableArchitecture
+        add_test(NAME E2EExecutableArchitecture
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-architecture${CMAKE_EXECUTABLE_SUFFIX}
                         -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
                         -DEXPECTED_MACHINE=${JOYEER_WINDOWS_MACHINE}
                         -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableArchitecture PROPERTIES
-                LABELS "native;llvm-backend;runtime;architecture"
+        set_tests_properties(E2EExecutableArchitecture PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;architecture"
         )
     endif()
 
@@ -399,70 +399,70 @@ if(JOYEER_CLANG_EXECUTABLE)
                     -DBUILD_DIR=${CMAKE_BINARY_DIR}
                     -DSTAGING_DIR=${CMAKE_CURRENT_BINARY_DIR}/installed-compiler
                     -DRUNTIME_ARCHIVE_NAME=${CMAKE_STATIC_LIBRARY_PREFIX}JoyeerRuntime${CMAKE_STATIC_LIBRARY_SUFFIX}
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DEXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstalledCompiler.cmake
     )
     set_tests_properties(InstalledCompilerNativeHello PROPERTIES
-            LABELS "native;llvm-backend;runtime;packaging"
+            LABELS "e2e;llvm-backend;runtime;packaging"
     )
 
-    add_test(NAME NativeExecutableNoDebugArtifact
+    add_test(NAME E2EExecutableNoDebugArtifact
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-no-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O0;-g0"
                     -DEXPECT_NO_DEBUG_ARTIFACT=ON
                     -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableNoDebugArtifact PROPERTIES
-            LABELS "native;llvm-backend;runtime;debug-info;optimization"
+    set_tests_properties(E2EExecutableNoDebugArtifact PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
     )
 
-    add_test(NAME NativeExecutableMetacharacterPath
+    add_test(NAME E2EExecutableMetacharacterPath
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer native $() %PATH% & safe${CMAKE_EXECUTABLE_SUFFIX}"
                     -DEXPECT_NO_DEBUG_ARTIFACT=ON
                     -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableMetacharacterPath PROPERTIES
-            LABELS "native;llvm-backend;runtime;security"
+    set_tests_properties(E2EExecutableMetacharacterPath PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;security"
     )
 
-    add_test(NAME NativeLinkerPreservesOutputDirectory
+    add_test(NAME E2ELinkerPreservesOutputDirectory
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-protected-output
                     -DARTIFACT_KIND=OUTPUT
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeArtifactDirectoryRejected.cmake
     )
-    set_tests_properties(NativeLinkerPreservesOutputDirectory PROPERTIES
-            LABELS "native;llvm-backend;security"
+    set_tests_properties(E2ELinkerPreservesOutputDirectory PROPERTIES
+            LABELS "e2e;llvm-backend;security"
     )
 
-    add_test(NAME NativeLinkerRejectsSourceOutputCollision
+    add_test(NAME E2ELinkerRejectsSourceOutputCollision
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-output-collision
                     -DCOLLISION_KIND=OUTPUT
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
     )
-    set_tests_properties(NativeLinkerRejectsSourceOutputCollision PROPERTIES
-            LABELS "native;llvm-backend;security"
+    set_tests_properties(E2ELinkerRejectsSourceOutputCollision PROPERTIES
+            LABELS "e2e;llvm-backend;security"
     )
 
     add_test(NAME LLVMEmitterRejectsSourceOutputCollision
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                    -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                     -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-llvm-collision
                     -DCOLLISION_KIND=LLVM
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
@@ -472,7 +472,7 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
 
         if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE AND JOYEER_LLVM_PDBUTIL_EXECUTABLE)
-        add_test(NAME NativeExecutableCompilationUnitsDebug
+        add_test(NAME E2EExecutableCompilationUnitsDebug
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DMODULE_NAME=project.app
@@ -485,14 +485,14 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableCompilationUnitsDebug PROPERTIES
-                LABELS "modules;native;llvm-backend;debug-info"
+        set_tests_properties(E2EExecutableCompilationUnitsDebug PROPERTIES
+                LABELS "modules;e2e;llvm-backend;debug-info"
         )
 
-        add_test(NAME NativeExecutableCodeViewPdb
+        add_test(NAME E2EExecutableCodeViewPdb
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-codeview${CMAKE_EXECUTABLE_SUFFIX}
                         "-DCOMPILER_ARGS=-O0;-gcodeview"
                         -DEXPECT_PDB=ON
@@ -504,14 +504,14 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableCodeViewPdb PROPERTIES
-                LABELS "native;llvm-backend;runtime;debug-info"
+        set_tests_properties(E2EExecutableCodeViewPdb PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info"
         )
 
-        add_test(NAME NativeExecutableFullDebugPdb
+        add_test(NAME E2EExecutableFullDebugPdb
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/full_debug.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/full_debug.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-full-debug${CMAKE_EXECUTABLE_SUFFIX}
                         "-DCOMPILER_ARGS=-O0;-gfull;-gcodeview"
                         -DEXPECT_PDB=ON
@@ -523,98 +523,98 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=3\n7\n5\n5\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableFullDebugPdb PROPERTIES
-                LABELS "native;llvm-backend;runtime;debug-info"
+        set_tests_properties(E2EExecutableFullDebugPdb PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info"
         )
 
-        add_test(NAME NativeLinkerPreservesPdbDirectory
+        add_test(NAME E2ELinkerPreservesPdbDirectory
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-protected-pdb.exe
                         -DARTIFACT_KIND=PDB
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeArtifactDirectoryRejected.cmake
         )
-        set_tests_properties(NativeLinkerPreservesPdbDirectory PROPERTIES
-                LABELS "native;llvm-backend;debug-info;security"
+        set_tests_properties(E2ELinkerPreservesPdbDirectory PROPERTIES
+                LABELS "e2e;llvm-backend;debug-info;security"
         )
 
-        add_test(NAME NativeLinkerRejectsSourcePdbCollision
+        add_test(NAME E2ELinkerRejectsSourcePdbCollision
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-pdb-collision
                         -DCOLLISION_KIND=PDB
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
         )
-        set_tests_properties(NativeLinkerRejectsSourcePdbCollision PROPERTIES
-                LABELS "native;llvm-backend;debug-info;security"
+        set_tests_properties(E2ELinkerRejectsSourcePdbCollision PROPERTIES
+                LABELS "e2e;llvm-backend;debug-info;security"
         )
 
-        add_test(NAME NativeLinkerRejectsNoDebugSourcePdbCollision
+        add_test(NAME E2ELinkerRejectsNoDebugSourcePdbCollision
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DSOURCE_TEMPLATE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/source-nodebug-pdb-collision
                         -DCOLLISION_KIND=PDB_NODEBUG
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifySourceOutputCollisionRejected.cmake
         )
-        set_tests_properties(NativeLinkerRejectsNoDebugSourcePdbCollision PROPERTIES
-                LABELS "native;llvm-backend;security"
+        set_tests_properties(E2ELinkerRejectsNoDebugSourcePdbCollision PROPERTIES
+                LABELS "e2e;llvm-backend;security"
         )
 
-        add_test(NAME NativeLinkerRemovesStalePdb
+        add_test(NAME E2ELinkerRemovesStalePdb
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-transition.exe
                         -DARTIFACT_KIND=PDB
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeDebugArtifactTransition.cmake
         )
-        set_tests_properties(NativeLinkerRemovesStalePdb PROPERTIES
-                LABELS "native;llvm-backend;debug-info"
+        set_tests_properties(E2ELinkerRemovesStalePdb PROPERTIES
+                LABELS "e2e;llvm-backend;debug-info"
         )
 
-        add_test(NAME NativeLinkerRejectsPdbOutputCollision
+        add_test(NAME E2ELinkerRejectsPdbOutputCollision
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-output-collision.PDB
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativePdbCollisionRejected.cmake
         )
-        set_tests_properties(NativeLinkerRejectsPdbOutputCollision PROPERTIES
-                LABELS "native;llvm-backend;debug-info;security"
+        set_tests_properties(E2ELinkerRejectsPdbOutputCollision PROPERTIES
+                LABELS "e2e;llvm-backend;debug-info;security"
         )
 
-        add_test(NAME NativeLinkerRejectsTrailingSpacePdbAlias
+        add_test(NAME E2ELinkerRejectsTrailingSpacePdbAlias
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-output-alias.pdb "
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativePdbCollisionRejected.cmake
         )
-        set_tests_properties(NativeLinkerRejectsTrailingSpacePdbAlias PROPERTIES
-                LABELS "native;llvm-backend;debug-info;security"
+        set_tests_properties(E2ELinkerRejectsTrailingSpacePdbAlias PROPERTIES
+                LABELS "e2e;llvm-backend;debug-info;security"
         )
 
-        add_test(NAME NativeLinkerRejectsAlternateDataStreamOutput
+        add_test(NAME E2ELinkerRejectsAlternateDataStreamOutput
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/joyeer-output.exe:stream"
                         "-DEXPECTED_PATTERN=alternate data streams"
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
         )
-        set_tests_properties(NativeLinkerRejectsAlternateDataStreamOutput PROPERTIES
-                LABELS "native;llvm-backend;security"
+        set_tests_properties(E2ELinkerRejectsAlternateDataStreamOutput PROPERTIES
+                LABELS "e2e;llvm-backend;security"
         )
         endif()
 
         if(WIN32 AND JOYEER_LLVM_READOBJ_EXECUTABLE)
-        add_test(NAME NativeExecutableDwarfArtifact
+        add_test(NAME E2EExecutableDwarfArtifact
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dwarf${CMAKE_EXECUTABLE_SUFFIX}
                         "-DCOMPILER_ARGS=-O2;-gdwarf"
                         -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
@@ -622,14 +622,14 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
-                LABELS "native;llvm-backend;runtime;debug-info;optimization"
+        set_tests_properties(E2EExecutableDwarfArtifact PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
         )
         elseif(APPLE AND JOYEER_LLVM_READOBJ_EXECUTABLE AND JOYEER_DSYMUTIL_EXECUTABLE)
-        add_test(NAME NativeExecutableDwarfArtifact
+        add_test(NAME E2EExecutableDwarfArtifact
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dwarf${CMAKE_EXECUTABLE_SUFFIX}
                         "-DCOMPILER_ARGS=-O2;-gdwarf"
                         -DEXPECT_DSYM=ON
@@ -638,26 +638,26 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
-                LABELS "native;llvm-backend;runtime;debug-info;optimization"
+        set_tests_properties(E2EExecutableDwarfArtifact PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
         )
 
-        add_test(NAME NativeLinkerRemovesStaleDsym
+        add_test(NAME E2ELinkerRemovesStaleDsym
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-debug-transition
                         -DARTIFACT_KIND=DSYM
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeDebugArtifactTransition.cmake
         )
-        set_tests_properties(NativeLinkerRemovesStaleDsym PROPERTIES
-                LABELS "native;llvm-backend;debug-info"
+        set_tests_properties(E2ELinkerRemovesStaleDsym PROPERTIES
+                LABELS "e2e;llvm-backend;debug-info"
         )
         elseif(UNIX AND NOT APPLE AND JOYEER_LLVM_READOBJ_EXECUTABLE)
-        add_test(NAME NativeExecutableDwarfArtifact
+        add_test(NAME E2EExecutableDwarfArtifact
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/hello.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/hello.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dwarf${CMAKE_EXECUTABLE_SUFFIX}
                         "-DCOMPILER_ARGS=-O2;-gdwarf"
                         -DLLVM_READOBJ=${JOYEER_LLVM_READOBJ_EXECUTABLE}
@@ -665,40 +665,40 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -DEXPECTED_OUTPUT=42\nnative\n8\n42\n
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableDwarfArtifact PROPERTIES
-                LABELS "native;llvm-backend;runtime;debug-info;optimization"
+        set_tests_properties(E2EExecutableDwarfArtifact PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;debug-info;optimization"
         )
     endif()
 
-    add_test(NAME NativeExecutableOwnership
+    add_test(NAME E2EExecutableOwnership
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/ownership.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/ownership.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-ownership${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=left!\nleft!\nbeta\nvalue\nsame\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableOwnership PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership"
+    set_tests_properties(E2EExecutableOwnership PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership"
     )
 
-    add_test(NAME NativeExecutableTrailingReturn
+    add_test(NAME E2EExecutableTrailingReturn
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/trailing_return.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/trailing_return.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-trailing-return${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=42\ntrailing\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableTrailingReturn PROPERTIES
-            LABELS "native;llvm-backend;runtime;semantic-analysis"
+    set_tests_properties(E2EExecutableTrailingReturn PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;semantic-analysis"
     )
 
     function(joyeer_add_entry_case name fixture expected_output expected_exit)
         add_test(NAME ${name}
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/${fixture}.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/${fixture}.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${name}${CMAKE_EXECUTABLE_SUFFIX}
                         "-DEXPECTED_OUTPUT=${expected_output}"
                         -DEXPECTED_EXIT_CODE=${expected_exit}
@@ -706,159 +706,159 @@ if(JOYEER_CLANG_EXECUTABLE)
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
         set_tests_properties(${name} PROPERTIES
-                LABELS "native;llvm-backend;runtime;entry"
+                LABELS "e2e;llvm-backend;runtime;entry"
                 TIMEOUT 60)
     endfunction()
 
-    joyeer_add_entry_case(NativeEntryNoArguments entry_arguments "0\n" 0)
-    joyeer_add_entry_case(NativeEntryEmptyAndWhitespace entry_arguments
+    joyeer_add_entry_case(E2EEntryNoArguments entry_arguments "0\n" 0)
+    joyeer_add_entry_case(E2EEntryEmptyAndWhitespace entry_arguments
             "2\n0\n\n5\n a b \n" 73
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
             -DPROGRAM_ARGUMENT_2_SURROUND_SPACES=ON)
     string(ASCII 195 169 entry_accent)
-    joyeer_add_entry_case(NativeEntryUnicodeArgument entry_arguments
+    joyeer_add_entry_case(E2EEntryUnicodeArgument entry_arguments
             "2\n0\n\n3\nh${entry_accent}\n" 73
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=h${entry_accent}")
-    joyeer_add_entry_case(NativeEntryUnoptimizedArguments entry_arguments
+    joyeer_add_entry_case(E2EEntryUnoptimizedArguments entry_arguments
             "2\n0\n\n3\na b\n" 73
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
             -DCOMPILER_ARGS=-O0)
     # Quotes and backslashes survive the trip through the command line (the rules of the C
     # runtime and CommandLineToArgvW, which the Windows entry point implements itself).
-    joyeer_add_entry_case(NativeEntryQuotesAndBackslashes entry_arguments
+    joyeer_add_entry_case(E2EEntryQuotesAndBackslashes entry_arguments
             "2\n8\nsay \"hi\"\n7\nC:\\dir\\\n" 73
             "-DPROGRAM_ARGUMENT_1=say \"hi\"" "-DPROGRAM_ARGUMENT_2=C:\\dir\\")
-    joyeer_add_entry_case(NativeEntryLegacyIgnoresArguments hello
+    joyeer_add_entry_case(E2EEntryLegacyIgnoresArguments hello
             "42\nnative\n8\n42\n" 0
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=ignored")
     if(UNIX)
-        joyeer_add_entry_case(NativeEntryPosixRawBytes entry_argument_bytes
+        joyeer_add_entry_case(E2EEntryPosixRawBytes entry_argument_bytes
                 "1\n1\n255\n" 0
                 -DPROGRAM_ARGUMENT_1_NON_UTF8=ON)
     endif()
-    joyeer_add_entry_case(NativeEntryExitZero entry_exit_status "cleanup\n" 0)
-    joyeer_add_entry_case(NativeEntryExitOne entry_exit_status "cleanup\n" 1
+    joyeer_add_entry_case(E2EEntryExitZero entry_exit_status "cleanup\n" 0)
+    joyeer_add_entry_case(E2EEntryExitOne entry_exit_status "cleanup\n" 1
             -DPROGRAM_ARGUMENT_1=one)
-    joyeer_add_entry_case(NativeEntryExitMaximum entry_exit_status "cleanup\n" 255
+    joyeer_add_entry_case(E2EEntryExitMaximum entry_exit_status "cleanup\n" 255
             -DPROGRAM_ARGUMENT_1=max)
-    joyeer_add_entry_case(NativeEntryExitNegative entry_exit_status "cleanup\n" 1
+    joyeer_add_entry_case(E2EEntryExitNegative entry_exit_status "cleanup\n" 1
             -DPROGRAM_ARGUMENT_1=negative
             "-DEXPECTED_ERROR_PATTERN=entry returned exit code -1 outside 0")
-    joyeer_add_entry_case(NativeEntryExitOverflow entry_exit_status "cleanup\n" 1
+    joyeer_add_entry_case(E2EEntryExitOverflow entry_exit_status "cleanup\n" 1
             -DPROGRAM_ARGUMENT_1=overflow
             "-DEXPECTED_ERROR_PATTERN=entry returned exit code 256 outside 0")
 
-    add_test(NAME NativeEntryRejectsInvalidSignature
+    add_test(NAME E2EEntryRejectsInvalidSignature
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/err/invalid_entry_signature.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/invalid_entry_signature.joyeer
                     "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/invalid-entry${CMAKE_EXECUTABLE_SUFFIX}"
                     -DEXPECTED_PATTERN=llvm.invalid-entry-point
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
     )
-    set_tests_properties(NativeEntryRejectsInvalidSignature PROPERTIES
-            LABELS "native;llvm-backend;entry;diagnostics")
+    set_tests_properties(E2EEntryRejectsInvalidSignature PROPERTIES
+            LABELS "e2e;llvm-backend;entry;diagnostics")
 
-    add_test(NAME NativeEntryRejectsDuplicate
+    add_test(NAME E2EEntryRejectsDuplicate
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/err/duplicate_entry.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/duplicate_entry.joyeer
                     "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/duplicate-entry${CMAKE_EXECUTABLE_SUFFIX}"
                     -DEXPECTED_PATTERN=name-resolution.duplicate-declaration
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
     )
-    set_tests_properties(NativeEntryRejectsDuplicate PROPERTIES
-            LABELS "native;name-resolution;entry;diagnostics")
+    set_tests_properties(E2EEntryRejectsDuplicate PROPERTIES
+            LABELS "e2e;name-resolution;entry;diagnostics")
 
-    add_test(NAME NativeEntryRejectsMissing
+    add_test(NAME E2EEntryRejectsMissing
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/err/missing_entry.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/err/missing_entry.joyeer
                     "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/missing-entry${CMAKE_EXECUTABLE_SUFFIX}"
                     -DEXPECTED_PATTERN=linker.missing-entry-point
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
     )
-    set_tests_properties(NativeEntryRejectsMissing PROPERTIES
-            LABELS "native;llvm-backend;entry;diagnostics")
+    set_tests_properties(E2EEntryRejectsMissing PROPERTIES
+            LABELS "e2e;llvm-backend;entry;diagnostics")
 
-    add_test(NAME NativeExecutableDeferredInitialization
+    add_test(NAME E2EExecutableDeferredInitialization
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/deferred_initialization.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/deferred_initialization.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deferred-initialization${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=42\ninitialized\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableDeferredInitialization PROPERTIES
-            LABELS "native;llvm-backend;runtime;semantic-analysis;ownership"
+    set_tests_properties(E2EExecutableDeferredInitialization PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;semantic-analysis;ownership"
     )
 
-    add_test(NAME NativeExecutableReadFile
+    add_test(NAME E2EExecutableReadFile
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/read_file.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/read_file.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-read-file${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_OUTPUT=file contents\nnot found\ntrue\n"
-                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/native
+                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/e2e
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableReadFile PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;file-io"
+    set_tests_properties(E2EExecutableReadFile PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;file-io"
     )
 
     foreach(level IN ITEMS 0 2)
-        add_test(NAME NativeExecutableStdinLinesO${level}
+        add_test(NAME E2EExecutableStdinLinesO${level}
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/stdin_lines.joyeer
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/stdin_lines.joyeer
                         -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-stdin-lines-O${level}${CMAKE_EXECUTABLE_SUFFIX}
                         -DCOMPILER_ARGS=-O${level}
-                        -DPROGRAM_STDIN_FILE=${JOYEER_TESTS_DIR}/native/stdin_lines_input.txt
+                        -DPROGRAM_STDIN_FILE=${JOYEER_TESTS_DIR}/e2e/stdin_lines_input.txt
                         "-DEXPECTED_OUTPUT=[alpha]\ntoo long\n[]\ntoo long\n[ok]\n[last]\nend\n"
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
         )
-        set_tests_properties(NativeExecutableStdinLinesO${level} PROPERTIES
-                LABELS "native;llvm-backend;runtime;ownership;stdin"
+        set_tests_properties(E2EExecutableStdinLinesO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;ownership;stdin"
                 TIMEOUT 60
         )
     endforeach()
 
-    add_test(NAME NativeExecutableArrayAppend
+    add_test(NAME E2EExecutableArrayAppend
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/array_append.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/array_append.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-array-append${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=3\n30\nfirst!\nsecond\nsecond\n2\n6\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableArrayAppend PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;array"
+    set_tests_properties(E2EExecutableArrayAppend PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;array"
     )
 
     set(dictionary_set_output
             "3\nupdated!\ntwo\nretained\nretained\n2\n6\n2\n40\n30\n2\n40\n30\n2\nlast\nkept\n2\nlast\nkept\n")
-    add_test(NAME NativeExecutableDictionarySet
+    add_test(NAME E2EExecutableDictionarySet
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/dictionary_set.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dictionary_set.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-dictionary-set${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_OUTPUT=${dictionary_set_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableDictionarySet PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;dictionary"
+    set_tests_properties(E2EExecutableDictionarySet PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;dictionary"
     )
 
-    add_test(NAME NativeExecutableByteConversion
+    add_test(NAME E2EExecutableByteConversion
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/byte_conversion.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/byte_conversion.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-byte-conversion${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=7\nJ\nJoy\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableByteConversion PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;byte-conversion"
+    set_tests_properties(E2EExecutableByteConversion PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;byte-conversion"
     )
 
     # The compiler targets its host, so each host expects its own variants.
@@ -869,89 +869,89 @@ if(JOYEER_CLANG_EXECUTABLE)
     else()
         set(platform_selection_output "linux\n/\n")
     endif()
-    add_test(NAME NativeExecutablePlatformSelection
+    add_test(NAME E2EExecutablePlatformSelection
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/platform_selection.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/platform_selection.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-platform-selection${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_OUTPUT=${platform_selection_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutablePlatformSelection PROPERTIES
-            LABELS "native;llvm-backend;platform"
+    set_tests_properties(E2EExecutablePlatformSelection PROPERTIES
+            LABELS "e2e;llvm-backend;platform"
     )
 
-    add_test(NAME NativeExecutableStringUtf8
+    add_test(NAME E2EExecutableStringUtf8
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/string_utf8.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/string_utf8.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-string-utf8${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=Joy\n3\n66\n111\n121\n0\n3\n104\n195\n169\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableStringUtf8 PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;string;utf8"
+    set_tests_properties(E2EExecutableStringUtf8 PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;string;utf8"
     )
 
-    add_test(NAME NativeExecutableStringIndex
+    add_test(NAME E2EExecutableStringIndex
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/string_index.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/string_index.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-string-index${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=5\n97\n0\n195\n122\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableStringIndex PROPERTIES
-            LABELS "native;llvm-backend;runtime;string"
+    set_tests_properties(E2EExecutableStringIndex PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;string"
     )
 
-    add_test(NAME NativeExecutableJsonParser
+    add_test(NAME E2EExecutableJsonParser
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/json_parser.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/json_parser.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-json-parser${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_OUTPUT=true\njoyeer\ntrue\n4\n10\nok\ntrue\n-7\nline\nquote: \"ok\"\ntrue\n"
-                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/native
+                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/e2e
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableJsonParser PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;file-io;array;dictionary;byte-conversion;json-parser"
+    set_tests_properties(E2EExecutableJsonParser PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;file-io;array;dictionary;byte-conversion;json-parser"
     )
 
-    add_test(NAME NativeExecutableConsuming
+    add_test(NAME E2EExecutableConsuming
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/consuming.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/consuming.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-consuming${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=first!\nsecond\nsecond\ntemporary!\nforwarded!\n2\nreinitialized\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableConsuming PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;consuming"
+    set_tests_properties(E2EExecutableConsuming PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;consuming"
     )
 
-    add_test(NAME NativeExecutableInitializing
+    add_test(NAME E2EExecutableInitializing
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/initializing.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/initializing.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-initializing${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=created!\ncreated!\nforwarded!\n2\nfirst\nsecond\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableInitializing PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;initializing"
+    set_tests_properties(E2EExecutableInitializing PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;initializing"
     )
 
-    add_test(NAME NativeExecutableProjectionConsume
+    add_test(NAME E2EExecutableProjectionConsume
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/projection_consume.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/projection_consume.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-projection-consume${CMAKE_EXECUTABLE_SUFFIX}
                     -DEXPECTED_OUTPUT=left\nright\nnew-left\nfirst\nnew-first\nsecond\nold\nnew\n
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeExecutableProjectionConsume PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;consuming;projection-consume"
+    set_tests_properties(E2EExecutableProjectionConsume PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;consuming;projection-consume"
     )
 
     function(add_joyeer_native_regression name fixture expected_output)
@@ -963,152 +963,152 @@ if(JOYEER_CLANG_EXECUTABLE)
             add_test(NAME ${name}O${level}
                     COMMAND ${CMAKE_COMMAND}
                             -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                            -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/${fixture}.joyeer
+                            -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/${fixture}.joyeer
                             -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${fixture}-O${level}${CMAKE_EXECUTABLE_SUFFIX}
                             -DCOMPILER_ARGS=-O${level}
                             "-DEXPECTED_OUTPUT=${expected_output}"
                             -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
             )
             set_tests_properties(${name}O${level} PROPERTIES
-                    LABELS "native;llvm-backend;runtime;ownership;safety;regression"
+                    LABELS "e2e;llvm-backend;runtime;ownership;safety;regression"
                     TIMEOUT 60
             )
         endforeach()
     endfunction()
 
     add_joyeer_native_regression(
-            NativeRegressionShortCircuit regression_lowering_short_circuit
+            E2ERegressionShortCircuit regression_lowering_short_circuit
             "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
     add_joyeer_native_regression(
-            NativeRegressionCapture regression_lowering_capture
+            E2ERegressionCapture regression_lowering_capture
             "true\nreplacement\ntrue\nbefore\nafter\nafter\nafter\n")
     add_joyeer_native_regression(
-            NativeRegressionPendingOperands regression_lowering_pending_operands
+            E2ERegressionPendingOperands regression_lowering_pending_operands
             "ab\n7\nab\nc\nvalue\nab\n42\nbeforebefore\ntrue\nfalse\nearly\nbefore!\npayload\npayload\nnested\narray\nnested\narray\n")
     add_joyeer_native_regression(
-            NativeRegressionDictionaryDuplicates dictionary_set "${dictionary_set_output}" 0)
+            E2ERegressionDictionaryDuplicates dictionary_set "${dictionary_set_output}" 0)
     add_joyeer_native_regression(
-            NativeRegressionPatterns regression_backend_patterns
+            E2ERegressionPatterns regression_backend_patterns
             "30\n10\n20\n3\n1\n2\n4\n")
     add_joyeer_native_regression(
-            NativeRegressionLoopStack regression_backend_loop_stack
+            E2ERegressionLoopStack regression_backend_loop_stack
             "100000\n")
     add_joyeer_native_regression(
-            NativeRegressionEnumInstances regression_backend_enum_instances
+            E2ERegressionEnumInstances regression_backend_enum_instances
             "42\nhello\n7\n9\n")
     add_joyeer_native_regression(
-            NativeRegressionPayloadCoverage regression_type_payload_coverage
+            E2ERegressionPayloadCoverage regression_type_payload_coverage
             "0\n0\n1\n2\n3\n3\n4\n7\n10\n11\n12\n20\n21\n22\n23\n24\n")
     add_joyeer_native_regression(
-            NativeRegressionEvaluationAccesses regression_type_evaluation_accesses
+            E2ERegressionEvaluationAccesses regression_type_evaluation_accesses
             "2\n7\n4\nupdated\n7\nchanged\n7\n10\n5\n")
     add_joyeer_native_regression(
-            NativeRegressionFlowReinitialization regression_flow_reinitialization
+            E2ERegressionFlowReinitialization regression_flow_reinitialization
             "ready\nready\nold\nnew\niteration\niteration\n")
     set(methods_output "1\n7\n14\ntrue\n0\n15\n1000\n2\n8\n")
-    add_joyeer_native_regression(NativeMethods methods "${methods_output}")
+    add_joyeer_native_regression(E2EMethods methods "${methods_output}")
     add_joyeer_native_regression(
-            NativeMethodsOwnership methods_ownership
+            E2EMethodsOwnership methods_ownership
             "abcd\nabcdef\n3\n2\n6\nabcdef\n5\n9\nxyz\nxyxyzz\n")
     set_tests_properties(
-            NativeMethodsO0 NativeMethodsO2
-            NativeMethodsOwnershipO0 NativeMethodsOwnershipO2
-            PROPERTIES LABELS "native;llvm-backend;runtime;ownership;safety;regression;methods")
-    add_test(NAME NativeMethodsFullDebug
+            E2EMethodsO0 E2EMethodsO2
+            E2EMethodsOwnershipO0 E2EMethodsOwnershipO2
+            PROPERTIES LABELS "e2e;llvm-backend;runtime;ownership;safety;regression;methods")
+    add_test(NAME E2EMethodsFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/methods.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/methods.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/methods-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O0;-gfull"
                     "-DEXPECTED_OUTPUT=${methods_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeMethodsFullDebug PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;debug-info;methods"
+    set_tests_properties(E2EMethodsFullDebug PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;debug-info;methods"
             TIMEOUT 60)
 
     set(propagation_output
             "local!\nready!\nok\n1\nlocal!\nfailed!\n2\nfailed!\n3\nfirst!\nready!\n4\nheld!\npresent!\nheld!\nmissing\nunit some\nunit none\n7\nunit!\nscope!\n9\narray ok\narray!\nouter\ninner\n42\nouter\ninner\n42\nkept!\nkept!\nborrowed error!\nborrowed error!\n3\nnever success\n9\nnever none\nfalse\n0\ntrue\n1\nguard failed\n2\n")
     add_joyeer_native_regression(
-            NativePropagation propagation "${propagation_output}")
-    set_tests_properties(NativePropagationO0 NativePropagationO2 PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;safety;regression;propagation")
+            E2EPropagation propagation "${propagation_output}")
+    set_tests_properties(E2EPropagationO0 E2EPropagationO2 PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;safety;regression;propagation")
 
-    add_test(NAME NativePropagationFullDebug
+    add_test(NAME E2EPropagationFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/propagation.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/propagation.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/propagation-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O0;-gfull"
                     "-DEXPECTED_OUTPUT=${propagation_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativePropagationFullDebug PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;propagation;debug-info")
+    set_tests_properties(E2EPropagationFullDebug PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;propagation;debug-info")
 
-    add_test(NAME NativePropagationFile
+    add_test(NAME E2EPropagationFile
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/propagation_file.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/propagation_file.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/propagation-file${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_OUTPUT=file contents\nmissing\n"
-                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/native
+                    -DPROGRAM_WORKING_DIRECTORY=${JOYEER_TESTS_DIR}/e2e
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativePropagationFile PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;file-io;propagation")
+    set_tests_properties(E2EPropagationFile PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;file-io;propagation")
 
     set(unit_values_output
             "true\ntrue\n2\ntrue\nbranch!\ntrue\n3\ntemporary!\n4\ntemporary!\n3\ntrue\n5\n2\ntrue\n6\ntrue\nowned!\nevent\nsome\nnone\nunit error\n100\n")
     add_joyeer_native_regression(
-            NativeUnitValues unit_values "${unit_values_output}")
+            E2EUnitValues unit_values "${unit_values_output}")
     add_joyeer_native_regression(
-            NativeDictionaryGet dictionary_get "dictionary get ok\n" 0 1 2 3)
+            E2EDictionaryGet dictionary_get "dictionary get ok\n" 0 1 2 3)
     add_joyeer_native_regression(
-            NativeControlFlowArithmetic control_flow_arithmetic "control flow arithmetic ok\n" 0 1 2 3)
-    add_test(NAME NativeControlFlowArithmeticFullDebug
+            E2EControlFlowArithmetic control_flow_arithmetic "control flow arithmetic ok\n" 0 1 2 3)
+    add_test(NAME E2EControlFlowArithmeticFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/control_flow_arithmetic.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/control_flow_arithmetic.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/control-flow-arithmetic-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O0;-gfull"
                     "-DEXPECTED_OUTPUT=control flow arithmetic ok\n"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeControlFlowArithmeticFullDebug PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;debug-info"
+    set_tests_properties(E2EControlFlowArithmeticFullDebug PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;debug-info"
             TIMEOUT 60)
-    add_test(NAME NativeDictionaryGetFullDebug
+    add_test(NAME E2EDictionaryGetFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/dictionary_get.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/dictionary_get.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/dictionary-get-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O0;-gfull"
                     "-DEXPECTED_OUTPUT=dictionary get ok\n"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeDictionaryGetFullDebug PROPERTIES
-            LABELS "native;llvm-backend;runtime;ownership;debug-info"
+    set_tests_properties(E2EDictionaryGetFullDebug PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;debug-info"
             TIMEOUT 60)
-    add_test(NAME NativeUnitValuesFullDebug
+    add_test(NAME E2EUnitValuesFullDebug
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/unit_values.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/unit_values.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/unit-values-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O0;-gfull"
                     "-DEXPECTED_OUTPUT=${unit_values_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeUnitValuesFullDebug PROPERTIES
-            LABELS "native;llvm-backend;ownership;debug-info;unit"
+    set_tests_properties(E2EUnitValuesFullDebug PROPERTIES
+            LABELS "e2e;llvm-backend;ownership;debug-info;unit"
             TIMEOUT 60)
 
     add_joyeer_native_regression(
-            NativeCheckedArithmetic checked_arithmetic
+            E2ECheckedArithmetic checked_arithmetic
             "9223372036854775807\n-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-9223372036854775808\n0\n21\n2\n49995000\n"
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeBitwiseOperators bitwise_operators
+            E2EBitwiseOperators bitwise_operators
             "15728880
 4293984240
 4278255360
@@ -1127,7 +1127,7 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeIntegerConversions integer_conversions
+            E2EIntegerConversions integer_conversions
             "300
 200
 -5
@@ -1143,7 +1143,7 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeConstantTables constant_tables
+            E2EConstantTables constant_tables
             "3421780262
 256
 755167117
@@ -1162,7 +1162,7 @@ true
 "
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeCompoundAssignment compound_assignment
+            E2ECompoundAssignment compound_assignment
             "3
 680
 abcdabcd
@@ -1176,19 +1176,19 @@ abcdabcd
 "
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeAssignmentOrder assignment_order
+            E2EAssignmentOrder assignment_order
             "2\n102\n11\n202\na!\n52\n6\n65\n30\n60\n7\n"
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeForIn for_in
+            E2EForIn for_in
             "10\na\nbc\nx\ny\n17\n0\n1\n2\n10\n20\n30\n-2\n-1\n255\n0\n1\n2\n16\ntick\ntick\n104\n105\n10\n20\n30\n6\n0\n1\n10\n11\np\nq\npq\n"
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeTryConversions conversion_try
+            E2ETryConversions conversion_try
             "true\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\nfalse\ntrue\ntrue\ntrue\nfalse\n200\n-1\n-3\n"
             0 1 2 3)
     add_joyeer_native_regression(
-            NativeRadixLiterals radix_literals
+            E2ERadixLiterals radix_literals
             "255
 3988292384
 165
@@ -1202,123 +1202,123 @@ abcdabcd
     set(typed_array_output
             "2\n40\n50\n30\n122\nfalse\ntrue\ntrue\nsecond\nchanged\n2\n9\n121\n9\ntrue\n11\nowned\n2\ntrue\n")
     add_joyeer_native_regression(
-            NativeTypedArrayAccess typed_array_access "${typed_array_output}"
+            E2ETypedArrayAccess typed_array_access "${typed_array_output}"
             0 1 2 3)
-    add_test(NAME NativeCheckedAccessDebugInfo
+    add_test(NAME E2ECheckedAccessDebugInfo
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/typed_array_access.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/typed_array_access.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-checked-debug${CMAKE_EXECUTABLE_SUFFIX}
                     "-DCOMPILER_ARGS=-O3;-gfull"
                     "-DEXPECTED_OUTPUT=${typed_array_output}"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
-    set_tests_properties(NativeCheckedAccessDebugInfo PROPERTIES
-            LABELS "native;llvm-backend;optimization;safety;debug-info")
+    set_tests_properties(E2ECheckedAccessDebugInfo PROPERTIES
+            LABELS "e2e;llvm-backend;optimization;safety;debug-info")
 
     function(add_joyeer_native_checked_trap name fixture diagnostic)
         foreach(level IN ITEMS 0 1 2 3)
             add_test(NAME ${name}O${level}
                     COMMAND ${CMAKE_COMMAND}
                             -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                            -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/${fixture}.joyeer
+                            -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/${fixture}.joyeer
                             -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${fixture}-trap-O${level}${CMAKE_EXECUTABLE_SUFFIX}
                             -DCOMPILER_ARGS=-O${level}
                             "-DEXPECTED_PATTERN=${diagnostic}"
                             -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
             )
             set_tests_properties(${name}O${level} PROPERTIES
-                    LABELS "native;llvm-backend;runtime;optimization;safety"
+                    LABELS "e2e;llvm-backend;runtime;optimization;safety"
                     TIMEOUT 60)
         endforeach()
     endfunction()
     add_joyeer_native_checked_trap(
-            NativeUnitArrayBounds unit_array_bounds "array index out of bounds")
+            E2EUnitArrayBounds unit_array_bounds "array index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
+            E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
 
     # Runtime-loaded operands keep these checks from folding to unconditional
-    # panic calls; NativeOptimizedOverflowTrap still covers constant overflow.
+    # panic calls; E2EOptimizedOverflowTrap still covers constant overflow.
     add_joyeer_native_checked_trap(
-            NativeCheckedAddOverflow checked_add_overflow "integer addition overflow")
+            E2ECheckedAddOverflow checked_add_overflow "integer addition overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedSubtractOverflow checked_subtract_overflow "integer subtraction overflow")
+            E2ECheckedSubtractOverflow checked_subtract_overflow "integer subtraction overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedMultiplyOverflow checked_multiply_overflow "integer multiplication overflow")
+            E2ECheckedMultiplyOverflow checked_multiply_overflow "integer multiplication overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedMinMultiplyOverflow checked_min_multiply_overflow "integer multiplication overflow")
+            E2ECheckedMinMultiplyOverflow checked_min_multiply_overflow "integer multiplication overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedDivideZero checked_divide_zero "integer division by zero")
+            E2ECheckedDivideZero checked_divide_zero "integer division by zero")
     add_joyeer_native_checked_trap(
-            NativeBitwiseShiftOverflow bitwise_shift_overflow "integer shift count out of range")
+            E2EBitwiseShiftOverflow bitwise_shift_overflow "integer shift count out of range")
     add_joyeer_native_checked_trap(
-            NativeBitwiseShiftNegative bitwise_shift_negative "integer shift count out of range")
+            E2EBitwiseShiftNegative bitwise_shift_negative "integer shift count out of range")
     add_joyeer_native_checked_trap(
-            NativeConversionNegative conversion_negative "integer conversion out of range")
+            E2EConversionNegative conversion_negative "integer conversion out of range")
     add_joyeer_native_checked_trap(
-            NativeConversionNarrow conversion_narrow "integer conversion out of range")
+            E2EConversionNarrow conversion_narrow "integer conversion out of range")
     add_joyeer_native_checked_trap(
-            NativeConversionUnsignedHigh conversion_unsigned_high "integer conversion out of range")
+            E2EConversionUnsignedHigh conversion_unsigned_high "integer conversion out of range")
     add_joyeer_native_checked_trap(
-            NativeCompoundOverflow compound_overflow "integer addition overflow")
+            E2ECompoundOverflow compound_overflow "integer addition overflow")
     add_joyeer_native_checked_trap(
-            NativeCompoundShiftRange compound_shift_range "integer shift count out of range")
+            E2ECompoundShiftRange compound_shift_range "integer shift count out of range")
     add_joyeer_native_checked_trap(
-            NativeCheckedRemainderZero checked_remainder_zero "integer remainder by zero")
+            E2ECheckedRemainderZero checked_remainder_zero "integer remainder by zero")
     add_joyeer_native_checked_trap(
-            NativeCheckedDivideOverflow checked_divide_overflow "integer division overflow")
+            E2ECheckedDivideOverflow checked_divide_overflow "integer division overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedRemainderOverflow checked_remainder_overflow "integer remainder overflow")
+            E2ECheckedRemainderOverflow checked_remainder_overflow "integer remainder overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedArrayUpper optimized_bounds "array index out of bounds")
+            E2ECheckedArrayUpper optimized_bounds "array index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedArrayNegative checked_array_negative_index "array index out of bounds")
+            E2ECheckedArrayNegative checked_array_negative_index "array index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedArrayEmpty checked_array_empty_index "array index out of bounds")
+            E2ECheckedArrayEmpty checked_array_empty_index "array index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedArrayWrite checked_array_write_index "array index out of bounds")
+            E2ECheckedArrayWrite checked_array_write_index "array index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedArrayMax checked_array_max_index "array index out of bounds")
+            E2ECheckedArrayMax checked_array_max_index "array index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedStringNegative checked_string_negative_index "string index out of bounds")
+            E2ECheckedStringNegative checked_string_negative_index "string index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedStringPastEnd checked_string_index_past_end "string index out of bounds")
+            E2ECheckedStringPastEnd checked_string_index_past_end "string index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedStringEmpty checked_string_empty_index "string index out of bounds")
+            E2ECheckedStringEmpty checked_string_empty_index "string index out of bounds")
     add_joyeer_native_checked_trap(
-            NativeCheckedIndexOverflow checked_index_overflow "integer addition overflow")
+            E2ECheckedIndexOverflow checked_index_overflow "integer addition overflow")
     add_joyeer_native_checked_trap(
-            NativeCheckedBoundsBeforeOverflow checked_bounds_before_overflow "array index out of bounds")
+            E2ECheckedBoundsBeforeOverflow checked_bounds_before_overflow "array index out of bounds")
 
-    add_test(NAME NativeOptimizedOverflowTrap
+    add_test(NAME E2EOptimizedOverflowTrap
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/optimized_overflow.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/optimized_overflow.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-optimized-overflow${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_PATTERN=integer addition overflow"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
     )
-    set_tests_properties(NativeOptimizedOverflowTrap PROPERTIES
-            LABELS "native;llvm-backend;runtime;optimization;safety"
+    set_tests_properties(E2EOptimizedOverflowTrap PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;optimization;safety"
     )
 
-    add_test(NAME NativeOptimizedBoundsTrap
+    add_test(NAME E2EOptimizedBoundsTrap
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/optimized_bounds.joyeer
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/optimized_bounds.joyeer
                     -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-optimized-bounds${CMAKE_EXECUTABLE_SUFFIX}
                     "-DEXPECTED_PATTERN=array index out of bounds"
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizedNativeFailure.cmake
     )
-    set_tests_properties(NativeOptimizedBoundsTrap PROPERTIES
-            LABELS "native;llvm-backend;runtime;optimization;safety"
+    set_tests_properties(E2EOptimizedBoundsTrap PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;optimization;safety"
     )
 
     # Differential check: every self-contained native fixture must behave the
     # same (exit status, stdout, stderr) at -O0 through -O3. Fixtures that need
     # program arguments, a working directory, input files, or that are meant to
     # fail compilation are excluded.
-    file(GLOB joyeer_native_fixtures "${JOYEER_TESTS_DIR}/native/*.joyeer")
+    file(GLOB joyeer_native_fixtures "${JOYEER_TESTS_DIR}/e2e/*.joyeer")
     set(joyeer_equivalence_excluded
             entry_argument_bytes entry_arguments entry_exit_status
             filesystem file-kind-device process read_file propagation_file
@@ -1328,7 +1328,7 @@ abcdabcd
         if(fixture IN_LIST joyeer_equivalence_excluded)
             continue()
         endif()
-        add_test(NAME NativeOptimizationEquivalence_${fixture}
+        add_test(NAME E2EOptimizationEquivalence_${fixture}
                 COMMAND ${CMAKE_COMMAND}
                         -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                         -DINPUT_FILE=${fixture_path}
@@ -1336,8 +1336,8 @@ abcdabcd
                         -DCMAKE_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                         -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyOptimizationEquivalence.cmake
         )
-        set_tests_properties(NativeOptimizationEquivalence_${fixture} PROPERTIES
-                LABELS "native;llvm-backend;optimization;differential"
+        set_tests_properties(E2EOptimizationEquivalence_${fixture} PROPERTIES
+                LABELS "e2e;llvm-backend;optimization;differential"
                 TIMEOUT 240)
     endforeach()
 endif()
@@ -1603,17 +1603,17 @@ set_tests_properties(SemanticAnalysisCliReportsUnusedBindingWarning PROPERTIES
         PASS_REGULAR_EXPRESSION semantic-analysis.unused-binding
 )
 
-add_test(NAME NativeLinkerRejectsMissingMain
+add_test(NAME E2ELinkerRejectsMissingMain
         COMMAND ${CMAKE_COMMAND}
                 -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/missing_main.joyeer
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/missing_main.joyeer
                 -DEXPECTED_PATTERN=linker.missing-entry-point
                 "-DEXTRA_ARGS=-o;${CMAKE_CURRENT_BINARY_DIR}/missing-main${CMAKE_EXECUTABLE_SUFFIX}"
                 -DOUTPUT_TO_REMOVE=${CMAKE_CURRENT_BINARY_DIR}/missing-main${CMAKE_EXECUTABLE_SUFFIX}
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectCompilerFailure.cmake
 )
-set_tests_properties(NativeLinkerRejectsMissingMain PROPERTIES
-        LABELS "native;llvm-backend"
+set_tests_properties(E2ELinkerRejectsMissingMain PROPERTIES
+        LABELS "e2e;llvm-backend"
 )
 
 add_test(NAME ParserMvpCliAcceptance

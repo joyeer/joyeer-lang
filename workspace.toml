@@ -4,8 +4,8 @@ schema-version = 1
 members = [
     "lib/Foundation",
     "lib/System",
-    "tests/library/Foundation",
-    "tests/library/System",
+    "tests/lib/Foundation",
+    "tests/lib/System",
     # Moss is a workspace of its own; it needs the Compression standard module.
     "tools/moss",
 ]

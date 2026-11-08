@@ -21,7 +21,7 @@ if(BUILD_TESTING)
                 "-DPROGRAM_WORKING_DIRECTORY=${working_directory}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
         set_tests_properties("JoyeerSkill.${name}" PROPERTIES
-            LABELS "skill;native"
+            LABELS "skill;e2e"
             TIMEOUT 60)
     endfunction()
 
@@ -45,7 +45,7 @@ endif()
 if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
     add_subdirectory(c-interop)
     if(JOYEER_BUILD_COMPRESSION)
-        add_subdirectory(library/Compression)
+        add_subdirectory(lib/Compression)
     endif()
 endif()
 
