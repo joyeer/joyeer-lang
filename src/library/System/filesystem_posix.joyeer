@@ -248,7 +248,7 @@ private func modeKind(mode: Int): Int {
     return 3
 }
 
-private func halfWord(bytes: [UInt8], offset: Int): Int {
+func halfWord(bytes: [UInt8], offset: Int): Int {
     return byteToInt(value: bytes[offset]) | (byteToInt(value: bytes[offset + 1]) << 8)
 }
 
