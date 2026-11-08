@@ -23,7 +23,7 @@ and needs a way to express the per-OS differences.
 Constraints from the current compiler:
 
 - Name resolution keys a scope's functions by name only
-  ([nameresolution.cpp](../../src/compiler/frontend/nameresolution.cpp)). Two
+  ([nameresolution.cpp](../../compiler/frontend/nameresolution.cpp)). Two
   declarations of one name are `name-resolution.duplicate-declaration`.
 - Annotations are already parsed generically, as a name plus arguments on
   `FunctionDeclSyntax`. The type checker rejects any annotation except

@@ -31,8 +31,8 @@ source
   -> native executable
 ```
 
-The compiler-side emitter lives in `src/compiler/codegen/llvm.h` and
-`src/compiler/codegen/llvm.cpp`. It verifies Joyeer IR, encodes it into a private byte
+The compiler-side emitter lives in `compiler/codegen/llvm.h` and
+`compiler/codegen/llvm.cpp`. It verifies Joyeer IR, encodes it into a private byte
 format, and calls the backend's versioned C ABI. This is an in-memory call,
 not a source file or a persistent object format. The backend decodes its own
 Joyeer model and uses LLVM `IRBuilder` and `DIBuilder` to construct objects;
@@ -59,24 +59,24 @@ depend on a print/parse round trip to normalize debug information.
 
 ### Lowering responsibilities
 
-Implementation files are grouped by ownership under `src/compiler/codegen/`
-and `src/backend/`:
+Implementation files are grouped by ownership under `compiler/codegen/`
+and `compiler/backend/`:
 
 | File | Responsibility |
 |---|---|
-| [llvm.cpp](../../src/compiler/codegen/llvm.cpp) | Compiler-side verification, byte transport, diagnostic copying, and opaque-handle ownership |
-| [ir_wire.h](../../src/backend/ir_wire.h) | Shared field visitors and bounded decoding of private Joyeer IR bytes |
-| [native_module.cpp](../../src/backend/native_module.cpp) | C ABI construction, printing, destruction, and exception translation |
-| [native_module.h](../../src/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
-| [native_ir.h](../../src/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
-| [native_types.cpp](../../src/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
-| [native_ownership.cpp](../../src/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership |
-| [native_functions.cpp](../../src/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
-| [native_collections.cpp](../../src/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
-| [native_host.cpp](../../src/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
-| [native_debug.cpp](../../src/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
-| [backend.cpp](../../src/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
-| [linker.cpp](../../src/compiler/codegen/linker.cpp) | Artifact paths, runtime/SDK inputs, native linking, and debug sidecars |
+| [llvm.cpp](../../compiler/codegen/llvm.cpp) | Compiler-side verification, byte transport, diagnostic copying, and opaque-handle ownership |
+| [ir_wire.h](../../compiler/backend/ir_wire.h) | Shared field visitors and bounded decoding of private Joyeer IR bytes |
+| [native_module.cpp](../../compiler/backend/native_module.cpp) | C ABI construction, printing, destruction, and exception translation |
+| [native_module.h](../../compiler/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
+| [native_ir.h](../../compiler/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
+| [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
+| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership |
+| [native_functions.cpp](../../compiler/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
+| [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
+| [native_host.cpp](../../compiler/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
+| [native_debug.cpp](../../compiler/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
+| [backend.cpp](../../compiler/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
+| [linker.cpp](../../compiler/codegen/linker.cpp) | Artifact paths, runtime/SDK inputs, native linking, and debug sidecars |
 
 Start with `Emitter::emit`, follow `joyeer_backend_build_module` into
 `Builder::build`, and then read `emitFunction` / `emitInstruction`. Ownership,
@@ -111,17 +111,19 @@ usual prefix/suffix; rebuild compiler clients and the backend together.
 
 ### Source and build boundaries
 
-Headers and implementation files are colocated under `src/`; there is no
-separate public-header tree or installed C++ SDK. `src/compiler/` contains the
-driver, frontend, diagnostics, Joyeer IR, and backend-call adapters. These build
-as one private `JoyeerCompilerCore` object target, reused by `joyeer` and the
-stage-specific C++ unit tests. Only `main.cpp` belongs exclusively to the
-compiler executable. Include paths are target-scoped: same-directory headers
-use their filename, and cross-directory headers use paths relative to `src/`.
+Headers and implementation files are colocated under the top-level `compiler/`
+directory and `src/`; there is no separate public-header tree or installed C++
+SDK. `compiler/` contains the driver, frontend, diagnostics, Joyeer IR, and
+backend-call adapters. These build as one private `JoyeerCompilerCore` object
+target, reused by `joyeer` and the stage-specific C++ unit tests. Only
+`main.cpp` belongs exclusively to the compiler executable. Include paths are
+target-scoped: same-directory headers use their filename, compiler headers use
+paths relative to the repository root (`compiler/...`), and runtime and library
+headers use paths relative to `src/`.
 
-`src/backend/` remains the shared `JoyeerBackend` C ABI library. Its LLVM
+`compiler/backend/` remains the shared `JoyeerBackend` C ABI library. Its LLVM
 dependencies, exception handling, allocation, and Windows `/MT` compilation
-are separate from the compiler core. The verifier in `src/compiler/ir/ir.cpp`
+are separate from the compiler core. The verifier in `compiler/ir/ir.cpp`
 is compiled privately into this target with its own CRT and hidden visibility;
 it is the same implementation, not a second verifier or a reused frontend
 object file. `src/runtime/` builds the C11 `JoyeerRuntime` static archive
@@ -143,9 +145,9 @@ than source names. Equal names in different modules or file-private scopes
 therefore do not collide, and source declarations are not renamed to enforce
 entry-point rules.
 
-The native linker lives in `src/compiler/codegen/linker.h` and
-`src/compiler/codegen/linker.cpp`. It calls the versioned C ABI in
-`src/backend/backend.h` on every platform. The
+The native linker lives in `compiler/codegen/linker.h` and
+`compiler/codegen/linker.cpp`. It calls the versioned C ABI in
+`compiler/backend/backend.h` on every platform. The
 native-backend library verifies the constructed module, runs the selected LLVM
 optimization pipeline, emits a COFF, Mach-O, or ELF object, and invokes the
 corresponding LLD driver in-process. A mutex serializes LLD because its library

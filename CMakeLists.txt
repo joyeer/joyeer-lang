@@ -259,7 +259,20 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 string(TOLOWER "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}" JOYEER_TOOLCHAIN_TARGET)
 set(JOYEER_TOOLCHAIN_VERSION "${PROJECT_VERSION}")
 
-add_subdirectory(src)
+add_subdirectory(src/runtime)
+add_subdirectory(compiler)
+
+# Object generation needs the compiler before a mixed-language runtime exists.
+# Stage the usable product separately, rather than making joyeer wait for it.
+add_custom_target(JoyeerToolchain ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:JoyeerRuntime>"
+        "$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerRuntime>"
+    DEPENDS joyeer JoyeerRuntime
+    COMMENT "Staging the Joyeer compiler/runtime product"
+    VERBATIM)
+
+add_subdirectory(src/library)
 
 # Standard modules live in <toolchain>/lib, found by the compiler relative to
 # its own executable. Stage them (and lib/index.toml) next to the build tree's

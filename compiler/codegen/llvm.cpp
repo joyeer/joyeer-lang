@@ -1,6 +1,6 @@
 #include "llvm.h"
-#include "backend/backend.h"
-#include "backend/ir_wire.h"
+#include "compiler/backend/backend.h"
+#include "compiler/backend/ir_wire.h"
 
 #include <sstream>
 

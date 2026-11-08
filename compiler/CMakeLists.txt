@@ -1,3 +1,5 @@
+add_subdirectory(backend)
+
 # One private object target serves the compiler and its stage-specific tests.
 # Source directories describe responsibilities, not separately shipped libraries.
 add_library(JoyeerCompilerCore OBJECT
@@ -45,7 +47,7 @@ add_library(JoyeerCompilerCore OBJECT
 	ir/irlowering.cpp
 	ir/irlowering.h
 )
-target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SRC_DIR})
+target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_SRC_DIR})
 target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
 	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"

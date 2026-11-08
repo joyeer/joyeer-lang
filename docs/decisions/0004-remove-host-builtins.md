@@ -13,7 +13,7 @@ The host operations (`readFileUtf8`, `readFilePrefix`, `writeFileNew`,
 `createDirectory`, `listDirectory`, `fileKind`, `removeFile`, `removeDirectory`,
 `joinPath`, legacy `readFile`, `writeStderr`, `readStdinLine`, `runProcess`) are
 names the compiler knows. It lowers each to a `joyeer_*_abi` function in the C
-runtime ([hostbuiltins.h](../../src/compiler/frontend/hostbuiltins.h)).
+runtime ([hostbuiltins.h](../../compiler/frontend/hostbuiltins.h)).
 [Decision 0003](0003-pure-joyeer-filesystem.md) implemented the filesystem
 operations in Joyeer in `System`. Keeping two implementations under two spellings
 (`readFileUtf8` and `System.readFileUtf8`) is a transition state, not a design.
