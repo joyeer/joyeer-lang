@@ -1,7 +1,7 @@
 # 0013: Concurrency model: share-nothing threads and channels
 
-- Status: proposed (2026-11-08), revised the same day after a `language-designer`
-  review. Design only; nothing is implemented, and no spec chapter changes until
+- Status: proposed (2026-11-08), revised the same day after two `language-designer`
+  reviews. Design only; nothing is implemented, and no spec chapter changes until
   this is accepted. Items marked *recommended* are the reviewer's and the
   author's suggested answers, not yet accepted. Stage 1 below needs no language
   change and can be built first.
@@ -109,7 +109,14 @@ That claim covers memory only.
   some compiler-known types are *noncopyable by decree* (without a user `deinit`),
   that §4.1.1's propagation then covers arrays, structs and enums containing them,
   and that the `System` handle types use it (or wrap a noncopyable type). This is
-  the same problem as 0012's open question 1 and should be solved once.
+  the same problem as 0012's open question 1 and should be solved once. It is not
+  only a copy rule: a channel destroys queued values, and a `TcpConnection`
+  destroyed without `deinit` frees its memory but leaks its file descriptor. So the
+  decreed handle types also need a compiler-generated destroy helper that closes
+  the resource, as the runtime already generates helpers for `Array` and `Dict`.
+  Making a handle noncopyable also makes `Result<TcpConnection, NetworkError>`,
+  `Optional` handles and arrays of handles noncopyable (§4.1.1), changes how match
+  bindings and `?` treat them, and must fail the `Copyable` builtin of §20.5.
 - **No native-address deny-list.** An earlier draft proposed rejecting values that
   hold a native address. That cannot be a type rule, because runtime units hold
   addresses and descriptors as plain `Int` (§4.9, §19.4.5). Native bindings that keep
@@ -146,18 +153,37 @@ Write each as its own decision when it starts.
 - **`join`.** `Task<R>` has a consuming `join` returning the function's owned
   result `R`. A `Task` is noncopyable (by the rule above) and **must be consumed
   on every path**: a task that is not joined is a compile error
-  (`task-not-joined`), found by the existing initialization and consumption
-  analysis with a linear flag on the builtin. This also settles process exit:
-  every task is finished before `main` returns, so the leak check sees a settled
-  balance. There are no detached tasks.
+  (`task-not-joined`). This settles process exit: every task is finished before
+  `main` returns, so the leak check sees a settled balance. There are no detached
+  tasks.
+  - "Must be consumed" is a **linear** rule, stronger than noncopyable (affine).
+    It contradicts §4.7 as written, where every owning binding is destroyed at
+    scope end, so the spec needs a new kind of type that cannot be dropped, and
+    §4.7 must be amended. The existing analysis tracks "uninitialized after
+    consume"; the inverse check, "still initialized at scope exit", is new work.
+    P2 of the plan owns it.
+  - It interacts with control flow: every `?` or early `return` between `spawn`
+    and `join` needs a join on that path (and `defer` is reserved, §15); a loop must
+    consume per iteration; assigning over a live task is an error; and linearity
+    propagates through `Array`, `Optional`, `Result`, structs and enums, so the
+    generated destroy helpers must reject, not silently drop, a non-empty `[Task]`.
+    Joining on an error path while the paired sender is still live is the
+    deadlock described under Destruction, so the clumsy path is also the dangerous
+    one.
+  - An alternative to evaluate: join-on-drop (as scoped threads do) needs no linear
+    type and fits §4.7, but a drop that blocks has the same hidden deadlock. The
+    worker-pool example decides between them.
 - **Not a function value in v1.** The spec has no closures (§20.1) and gives
   non-generic functions a `function_type` (§2.3), which the compiler does not
   implement; a generic function cannot be named as a value (§20.4). So the
-  `function:` argument is a distinct syntactic position that the type checker
-  resolves to a function symbol, and is not a general function value. It is
-  specified so that a later `function:` argument of the §2.3 function type, or the
-  `Work` form (option 7), accepts every program it accepts. That keeps the closure
-  question open.
+  `function:` argument is an ordinary labeled argument to the parser (`serve` is a
+  plain identifier, and `call_arg` cannot restrict it); it is a **type-checker
+  rule**, on a builtin with no declared signature, that resolves the identifier to
+  a function symbol and is not a general function value. It is specified as a subset
+  of a future `function:` argument of the §2.3 function type, so every program it
+  accepts stays valid then. The `Work` form (option 7) is spelled differently
+  (`spawn(work: ...)`), so it is a separate form and inherits no such guarantee.
+  That keeps the closure question open.
 - **Channels (v1: single sender, single receiver).** A bounded channel has two
   noncopyable owned ends, each with exactly one owner; capacity is at least 1.
   `send(value: consume T)` returns `Result<Void, SendError>` whose error carries
@@ -166,10 +192,19 @@ Write each as its own decision when it starts.
   alternative). Dropping or closing an end closes the channel: a blocked peer wakes
   with the closed result, and values still queued are destroyed by whichever end
   drops last, on that thread, through per-type destroy helpers the compiler
-  already generates for builtins. Multi-sender channels need an atomic sender
-  count, which is shared ownership inside the runtime and would be the one named
-  exception to §4.1 and §4.8; they are deferred. The server shape below does not
-  need them.
+  already generates for builtins. The two ends share one runtime-owned block that
+  the last end dropped frees: an internal atomic count of two. That is shared
+  ownership in the runtime, not user-visible aliasing, and it is a difference of
+  degree from a multi-sender count, which is deferred as the one named exception to
+  §4.1 and §4.8 rather than because it is categorically different. The server
+  shape below does not need it.
+- **Creating a channel is not yet specified.** There is no `channel(capacity:)` and
+  no return type. The element type cannot be inferred from a return type alone
+  (§20.4 forbids it; explicit type arguments are deferred, §20.10), a pair of
+  noncopyable ends needs consuming destructuring that does not exist (there are no
+  general tuples), and §2.6 allows only four generic builtins, so `Task<R>`,
+  `Sender<T>`, `Receiver<T>` and `SendError<T>` need a spec amendment. See open
+  question 17.
 - **Compiler-known types.** `Task<R>`, the two channel ends and `spawn` are
   builtins in the manner of `Array`, `Dict`, `Optional` and `Result`; they do not
   wait for user generics. Because `Task` is a common name in application code,
@@ -243,14 +278,29 @@ it.
 - **Counter ordering.** The counter is described as a relaxed atomic in runtime.md
   and as sequentially consistent in §19.4.5. Reconcile them; the balance is read
   only when no other task runs.
-- **Per-thread state.** The panic context, and any allocator cache later, are
-  per thread. Without a runtime TLS they need the thread pointer register (`FS` or
-  `GS` on x86-64, `TPIDR_EL0` on AArch64, the TEB on Windows), set by whoever
-  creates the thread.
+- **No per-thread runtime state in v1.** With `pthread` on Linux and macOS the
+  thread pointer belongs to libc, so the runtime does not set it. A task's context
+  travels through its entry argument, and the panicking flag is global. An
+  allocator cache, which would need real thread-local storage, is a later
+  optimization.
+- **Locking primitive.** Only an atomic add exists today (§19.4.5). A lock built on
+  it is a ticket lock, with the same add (adding zero) as the load; a spin loop on a
+  plain load can be hoisted by the optimizer. Otherwise a compare-and-swap or atomic
+  load intrinsic is added to §19.4.5. The plan names which.
 - **Thread creation.**
-  - Windows: `CreateThread` and `WaitOnAddress`.
+  - Windows: `CreateThread`, with `SRWLOCK` and `CONDITION_VARIABLE` for blocking.
+    These are in `kernel32`, which the link already names. `WaitOnAddress` lives in
+    `Synchronization.lib`, which the link line and 0011's import gate do not allow.
   - Linux and macOS, where libc is already linked: `pthread_create`, `pthread_join`
-    and a condition variable or `futex` through libc. This is cheaper and safer than
+    and a condition variable or `futex` through libc. `pthread_create` takes four
+    arguments and returns a value, but §19.4.5 has only `call_void1` and
+    `call_void2`, so it is an `@c_extern` binding with `Int` arguments or a new
+    intrinsic; the thread entry is a Joyeer function whose address comes from
+    `symbol_address`, and §19.6, which says entry from foreign threads needs a
+    separate design, is amended. Programs that use tasks import the `pthread`
+    names and everyone else does not, so the Linux symbol gate (0011) is extended
+    by exactly those names for task programs only (older glibc also needs
+    `-lpthread`). This is cheaper and safer than
     raw `clone`, which would give the thread a TLS block without libc's layout and
     crash on the first stack-protector load, `errno` access, or support-function
     call. A raw `clone`/`futex` path, which needs a new inline-assembly trampoline
@@ -313,7 +363,7 @@ it.
 
 ## Open questions
 
-Each has a recommendation; none is accepted yet.
+Questions 1 to 16 carry a recommendation; 17 to 19 are open and block stage 2. None is accepted yet.
 
 1. **Task joining.** Recommended: every task must be consumed on every path, a
    compile error otherwise; no detached tasks. Detached tasks would fail the leak
@@ -328,12 +378,15 @@ Each has a recommendation; none is accepted yet.
    destroy helpers for builtins), plus an explicit consuming `close`.
 5. **Bounded or unbounded.** Recommended: bounded only, capacity at least 1; an
    unbounded queue turns a stalled consumer into memory exhaustion.
-6. **`deinit` and noncopyable.** Recommended: `deinit` is not required first, but
-   the noncopyable-builtin rule is a prerequisite of stage 2, and handles become
-   noncopyable before they cross threads.
+6. **`deinit` and noncopyable.** Recommended: user `deinit` is not required first,
+   but the noncopyable-builtin rule is a prerequisite of stage 2, handles become
+   noncopyable before they cross threads, and the decreed handle types get a
+   compiler-generated destroy helper that closes the resource. Without that, a
+   channel that destroys a queued `TcpConnection` leaks its descriptor.
 7. **Multi-sender channels.** Recommended: not in v1 (shared ownership; see above).
 8. **`receive` result.** `Result<T, ChannelClosed>` (recommended) or `Optional<T>`.
-9. **Zero-parameter spawn targets.** Allowed (a task with no input) or rejected?
+9. **Zero-parameter spawn targets.** Recommended: rejected, so the arity of `spawn`
+   does not depend on its target; exactly one `consuming` parameter.
 10. **Limits.** Maximum live threads and a stack size, and whether either is
     configurable.
 11. **Dispatch.** Is a non-blocking try-receive, or a small `select`, needed so the
@@ -343,11 +396,24 @@ Each has a recommendation; none is accepted yet.
 13. **`runProcess` in a multithreaded program.** Allowed with the child path
     constrained (above), or rejected while tasks exist?
 14. **Thread path on Linux.** `pthread` first (recommended) or raw `clone`.
-15. **Name collisions.** Does a user `Task` or `Sender` shadow the builtin
-    (recommended), or is the builtin name reserved? Or choose rarer names such as
-    `JoinHandle`.
+15. **Name collisions.** Recommended: rarer builtin names (`JoinHandle`,
+    `ChannelSender`, `ChannelReceiver`) in place of `Task`, `Sender`, `Receiver`,
+    which application code uses constantly, plus a rule that a user declaration of
+    the same name wins and a test for it.
 16. **Where does a task's unread result live** if a program is stopped by a trap?
     Recommended: nowhere; a trap exits the process.
+17. **Creating a channel.** The form and its exact return type are unspecified (see
+    Channels): a function returning a pair needs general tuples or consuming
+    destructuring, and the element type needs an annotation or an explicit type
+    argument. Candidates: a builtin struct holding both ends with consuming
+    extraction, or one `channel(capacity:)` call whose ends are bound through two
+    consuming accessors. Blocking for stage 2.
+18. **Linear types.** Whether "task must be consumed" is a new linear type kind
+    (amending §4.7 and the propagation rules), or join-on-drop with its hidden
+    deadlock; how early return, `?`, loops and arrays of tasks behave; and whether
+    the language needs a scope-exit hook such as the reserved `defer`.
+19. **Locking primitive.** A ticket lock over the existing atomic add, or a new
+    compare-and-swap or atomic-load intrinsic (see Runtime changes).
 
 ## Evidence
 
@@ -362,7 +428,13 @@ Each has a recommendation; none is accepted yet.
   overstated the memory argument for handles, relied on a native-address deny-list
   that cannot exist, assumed noncopyable and `deinit` machinery that is not
   implemented, proposed a reference-counted sender, conflicted with the leak
-  check, and wrote an invalid call form. Each is corrected above.
+  check, and wrote an invalid call form. Each is corrected above. A second pass the
+  same day confirmed those fixes and added: channel creation is unspecified; "must
+  be consumed" is a linear rule that §4.7 forbids as written; the `function:`
+  position is a type-checker rule, not a grammar position; `WaitOnAddress` and the
+  `pthread` imports conflict with the import gates; per-thread state conflicts with
+  libc's use of the thread pointer; and a noncopyable handle without a closing
+  destroy helper leaks. Those are the new text and open questions 17 to 19.
 - Hylo (mutable value semantics) and Rust's `Send` rules are the reference points
   in the preamble. Rust needs `Sync` because it has shared references and `Arc`;
   Joyeer's difference is that it has neither, but it still needs handles that

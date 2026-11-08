@@ -18,14 +18,15 @@ the acceptance test for the later phases.
 ## Order and dependencies
 
 ```text
-P0 design ─ P1a timeouts ─ (P1b readiness, optional)
-          └ P2 language prerequisites ─┐
-            P3 thread primitives + lock ─ P4 thread-safe runtime ─ P5 compiler ─ P6 runtime semantics ─ P7 server ─ P8 acceptance
+P0 design ─ P1a timeouts (done) ─ (P1b readiness, optional)
+          ├ P2 language prerequisites ──────────────────────────┐
+          └ P3 thread primitives + lock ─ P4 thread-safe runtime ┴ P5 compiler ─ P6 runtime semantics ─ P7 server ─ P8 acceptance
 ```
 
-- P1a needs no language change and ships first.
-- P2 (noncopyable types and handles, owning a received value, array removal) has
-  no dependency on threads and unblocks P5 and P1b.
+- P1a needs no language change; it is done (receive and accept timeouts).
+- P2 (noncopyable and linear types, closing handles, owning a received value,
+  array removal) has no dependency on threads. It and P4 must both finish before
+  P5 starts.
 - P3 builds the thread primitives and a minimal lock before P4 uses the lock;
   the first draft ordered these the other way around.
 - P4 must not slow or change any single-threaded program.
@@ -51,16 +52,26 @@ Decision to write: 0014, network timeouts and readiness. Spec: additions to
 
 **1a, timeouts**
 
-- [ ] Specify receive, send, accept and connect timeouts (milliseconds; a
-      documented value for "no timeout"; `0` is a poll) using the existing
-      `.TimedOut` case, distinct from a connection reset.
-- [ ] Windows: socket timeouts or `WSAPoll` with a deadline. Linux: the `ppoll`
-      (or `poll`) system call, x86-64 and AArch64 numbers; no libc. macOS stays a
-      placeholder.
-- [ ] Tests: the timeout fires with no data; data arriving first wins; zero polls;
-      an invalid value is rejected. Loopback, single thread.
-- [ ] Give `example/web-server` a per-connection idle deadline so a silent client
-      is dropped, with a cap on request-head time.
+Done in [0014](../decisions/0014-network-timeouts.md): receive and accept take
+`timeoutMillis` (`-1` unlimited, `0` poll, up to 2147483647), using a readiness
+wait before the call.
+
+- [x] Specify receive and accept timeouts (milliseconds; `-1` for none; `0` is a
+      poll) using the existing `.TimedOut` case, distinct from a connection reset.
+- [x] Windows over `WSAPoll`; Linux over the `ppoll` system call (x86-64 and
+      AArch64 numbers; AArch64 untested); macOS stays a placeholder.
+- [x] Tests on Windows and Linux: the timeout fires with no data and the
+      connection stays usable; data after a timeout is not lost; zero polls; end of
+      stream is not a timeout; out-of-range values are rejected; accept times out
+      and returns a pending connection.
+- [x] `example/web-server` reads a request head with a 5 s per-read timeout,
+      answers a silent client with `408` and keeps serving; checked on Windows and
+      Linux (the silent client was dropped after 5.0 s).
+- [ ] Send and connect timeouts. They need non-blocking sockets (a blocking
+      `send` of a large buffer waits after readiness), so they move to 1b or later.
+- [ ] A total deadline for a request head. It needs a monotonic clock in
+      `System`, which does not exist yet; until then a peer that dribbles bytes is
+      bounded only by the 16 KiB head cap.
 
 **1b, readiness (optional; only if a single-thread server is wanted for itself)**
 
@@ -85,9 +96,23 @@ This is a user-visible feature, so the feature workflow applies in full.
 - [ ] Implement noncopyable types through the type checker and semantic analysis
       (copy is an error; use-after-consume already exists). The compiler has no such
       machinery today.
-- [ ] Make the `System` handle types (`TcpConnection`, `TcpListener`) noncopyable,
-      so a handle cannot become two owners. Update spec §18.6, the tests and the
-      example.
+- [ ] Specify **linear** (non-droppable) types for `Task` and the channel ends:
+      amend §4.7, which destroys every owning binding at scope end; define
+      propagation through `Array`, `Optional`, `Result`, structs and enums (the
+      generated destroy helpers must reject a non-empty array of tasks, not drop
+      it); and the inverse of the current analysis, "still initialized at scope
+      exit". Decide how early `return`, `?`, loops and assignment over a live value
+      behave, and whether the reserved `defer` is needed (0013 Q18).
+- [ ] Make the `System` handle types (`TcpConnection`, `TcpListener`) noncopyable
+      **and closing on destroy** (a compiler-generated destroy helper that closes
+      the descriptor), so a handle cannot become two owners and a queued handle
+      does not leak. Audit what changes: `Result<TcpConnection, NetworkError>`,
+      `Optional` handles and arrays of handles become noncopyable; `System`'s own
+      internal copies and the tests; the `Copyable` builtin of §20.5 must fail for
+      decreed types. Update spec §18.6, the tests and the example.
+- [ ] Amend spec §2.6 for the new compiler-known generic builtins (`JoinHandle<R>`,
+      the channel ends, `SendError<T>`) and decide the channel-creation form
+      (0013 Q17).
 - [ ] Resolve 0012's open question 1: let a `match` pattern binding on an owned
       temporary be consumed, or give another way to own a received value, so the
       worker loop and `tcpCloseConnection(consume ...)` work without `?`.
@@ -99,26 +124,33 @@ This is a user-visible feature, so the feature workflow applies in full.
 
 Decision to write: 0016, thread creation and blocking.
 
-- [ ] Windows: `CreateThread`/`ExitThread`, `WaitOnAddress`/`WakeByAddress*`;
-      only `kernel32`-family imports.
+- [ ] Windows: `CreateThread`/`ExitThread` with `SRWLOCK` and `CONDITION_VARIABLE`
+      for blocking, all in `kernel32`. Not `WaitOnAddress`, which is in
+      `Synchronization.lib` and outside the link line and 0011's import gate.
 - [ ] Linux x86-64 and AArch64: `pthread_create`/`pthread_join` and a condition
-      variable or `futex` through libc, which the program already links
-      ([0011](../decisions/0011-runtime-without-the-c-library.md)). The AArch64 path
-      stays untested until it runs natively. Raw `clone` (own stack and TLS,
-      `futex`, and an inline-assembly trampoline intrinsic because the child starts on
-      an empty stack) is deferred.
+      variable through libc, which the program already links
+      ([0011](../decisions/0011-runtime-without-the-c-library.md)). `pthread_create`
+      takes four arguments and returns a value, so bind it with `@c_extern` and `Int`
+      arguments or add an intrinsic; the entry is a Joyeer function reached through
+      `symbol_address`; amend §19.6 (foreign-thread entry). The AArch64 path stays
+      untested until it runs natively. Raw `clone` (own stack and TLS, `futex`, and
+      an inline-assembly trampoline intrinsic because the child starts on an empty
+      stack) is deferred.
 - [ ] macOS: libSystem `pthread`; written, gated until run on a Mac.
-- [ ] A thread-pointer intrinsic (`FS`/`GS`, `TPIDR_EL0`, the TEB) and a way for
-      the thread creator to set it, if any per-thread runtime state is needed.
+- [ ] No thread-pointer intrinsic and no per-thread runtime state in v1: libc owns
+      the thread pointer under `pthread`. A task's context travels through its entry
+      argument and the panicking flag is global.
 - [ ] A small internal runtime API (create a thread running a runtime function with
-      one argument, join, wait and wake on an `Int` address, yield) and a minimal
-      spin-then-yield lock built on it and the existing atomic add. Keep it out of
-      `System`.
+      one argument, join, block and wake on a condition, yield) and a minimal lock.
+      Decide the lock (0013 Q19): a ticket lock over the existing atomic add (adding
+      zero as the load), or a new compare-and-swap or atomic-load intrinsic in
+      §19.4.5. Keep the API out of `System`.
 - [ ] Decide stack size, thread-count limit, and whether either is configurable
       (0013 Q10).
 - [ ] Tests: a thread starts and returns; many short threads; a write before exit is
-      seen after join; wait and wake without a lost wakeup; thread-pointer isolation;
-      the symbol-import gates still allow only the listed names on Windows and Linux.
+      seen after join; wait and wake without a lost wakeup; the symbol-import gates
+      allow exactly the added names, and only for programs that use tasks, on Windows
+      and Linux.
 
 ## P4: Make the runtime thread-safe (M to L)
 
@@ -165,17 +197,18 @@ spec, failing tests first, every pipeline stage, role reviews, validation.
       `spawn(function: serve, input: consume connection)`.
 - [ ] Reserved words: `async`, `await` and `actor` stay reserved; decide whether
       `spawn` is a function name or a keyword (a function-like builtin is preferred).
-- [ ] Parser: the grammar for the `function:` position (it must not be a general
-      value) and any labeled-call additions; syntax nodes carry spans.
+- [ ] Parser: no new production for `function:`. The parser sees an ordinary labeled
+      argument (`call_arg` takes any identifier); the restriction is a type-checker
+      rule on the `spawn` builtin. Add only what the chosen channel-creation form
+      needs; syntax nodes carry spans.
 - [ ] Name resolution: resolve the `function:` argument to a function symbol;
       define builtin-name shadowing (a user `Task` wins, 0013 Q15).
 - [ ] Type checking: `Task<R>` and the channel ends as compiler-known builtins;
       target rules (exactly one `consuming` parameter, non-generic, not a method,
       not native, not overloaded, not `main`, not `Never`); noncopyable ends and
       tasks; moved values dead after `spawn` and `send`.
-- [ ] Semantic analysis: `task-not-joined` through a linear flag on the builtin
-      with the existing consumption analysis; use-after-move across `spawn` and
-      `send`.
+- [ ] Semantic analysis: `task-not-joined` using the linear-type rule specified and
+      implemented in P2; use-after-move across `spawn` and `send`.
 - [ ] IR and verifier: spawn, join, send, receive, close operations; ownership
       operations stay explicit; debug scopes preserved.
 - [ ] Backend: lower to the P3 and P4 runtime calls; keep the C ABI unchanged.
