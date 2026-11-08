@@ -633,7 +633,7 @@ if ($LASTEXITCODE -ne 0) { throw "Program failed" }
 On Linux:
 
 ```bash
-"$HOME/.joyeer/bin/joyeer" -O0 -gfull -o out/hello tests/native/hello.joyeer
+"$HOME/.joyeer/bin/joyeer" -O0 -gfull -o out/hello tests/e2e/hello.joyeer
 ./out/hello
 ```
 

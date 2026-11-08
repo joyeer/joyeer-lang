@@ -95,8 +95,8 @@ argument, so later use is `use-after-consume`.
 
 Unit tests cover the parser (`ParserTest.*Method*`, `*Extension*`), name
 resolution, the type checker, semantic analysis and IR lowering. Native
-fixtures [methods.joyeer](../../tests/native/methods.joyeer) and
-[methods_ownership.joyeer](../../tests/native/methods_ownership.joyeer) run at
+fixtures [methods.joyeer](../../tests/e2e/methods.joyeer) and
+[methods_ownership.joyeer](../../tests/e2e/methods_ownership.joyeer) run at
 `-O0` and `-O2`, and the first also with full debug information. The ownership
 fixture mutates `String` and array fields through nested receivers and relies on
 the runtime's allocation-balance check to catch leaks and double frees.

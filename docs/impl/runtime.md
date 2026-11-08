@@ -220,9 +220,9 @@ while remaining unrecoverable. `print` and a panic share one standard output buf
 ([decision 0011](../decisions/0011-runtime-without-the-c-library.md)).
 
 
-Focused test labels include `runtime`, `native`, `file-io`, `filesystem`,
+Focused test labels include `runtime`, `e2e`, `native`, `file-io`, `filesystem`,
 `process`, `stdin` and `host`.
-Native tests verify string/collection ownership, runtime traps, argument
+End-to-end tests verify string/collection ownership, runtime traps, argument
 boundaries, return statuses, and zero final allocation balance. Entry tests
 cover both `main` forms, empty and spaced arguments, Unicode arguments,
 POSIX raw bytes, normal and out-of-range statuses, and missing, duplicate,
@@ -235,25 +235,25 @@ console code page; it does not change the program's output bytes or the
 console code page.
 
 The host operations are tested through the language. `SystemTests`
-([tests/library/System](../../tests/library/System)) runs under `fern test` and
+([tests/lib/System](../../tests/lib/System)) runs under `fern test` and
 states the expected result of each scenario, rendered by error case rather than
 platform code, with the Windows and POSIX values or alternatives where the
 platforms genuinely differ. It covers Unicode and malformed paths, create-new
 preservation, classification and enumeration, empty-directory removal, argument
 quoting, completion statuses, standard-error bytes and mode restoration, line
 splitting and limits, the stdout flush before a read, and closed descriptors.
-Native fixtures (`tests/native/filesystem.joyeer`, `process.joyeer`,
+End-to-end fixtures (`tests/e2e/filesystem.joyeer`, `process.joyeer`,
 `read_file.joyeer`, `stdin_lines.joyeer`) and the module fixtures under
 `tests/modules/host_*` exercise concrete result types, early propagation, owned
 outputs, unit successes, optimization levels and full debug emission. Compiler
 unit tests check that the host enumerations are prelude types and that no host
 function is.
-Many native executable tests are registered only when `JOYEER_CLANG_EXECUTABLE`
+Many end-to-end tests are registered only when `JOYEER_CLANG_EXECUTABLE`
 was found during CMake configuration; see
 [backend validation](backend.md#6-validation) before treating a label
 run as the complete acceptance suite.
 
-`NativeExecutableStdinLinesO0`/`O2` feed standard input to a compiled program.
+`E2EExecutableStdinLinesO0`/`O2` feed standard input to a compiled program.
 Moss's `Moss.Serve` test and the live-pipe check in
 [the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
 depend on `readStdinLine` flushing standard output before it blocks.

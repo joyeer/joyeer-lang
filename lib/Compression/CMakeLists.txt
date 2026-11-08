@@ -33,7 +33,7 @@ file(GENERATE OUTPUT "${package}/Compression/licenses/Joyeer-LICENSE"
 file(GENERATE OUTPUT "${package}/Compression/project.toml"
     CONTENT "schema-version = 1\n[module]\nname = 'Compression'\nkind = 'source'\nsources = ['compression.joyeer']\ndependencies = []\nnative-bindings = true\nnative-libraries = ['native/$<TARGET_FILE_NAME:JoyeerCompression>']\n")
 file(GENERATE OUTPUT "${package}/CompressionTests/main.joyeer"
-    INPUT "${JOYEER_TESTS_DIR}/library/Compression/main.joyeer")
+    INPUT "${JOYEER_TESTS_DIR}/lib/Compression/main.joyeer")
 file(GENERATE OUTPUT "${package}/CompressionTests/project.toml"
     CONTENT "schema-version = 1\n[module]\nname = 'CompressionTests'\nkind = 'test'\noutput = 'compression-tests'\nsources = ['main.joyeer']\ndependencies = ['Compression']\n")
 file(GENERATE OUTPUT "${package}/workspace.toml"

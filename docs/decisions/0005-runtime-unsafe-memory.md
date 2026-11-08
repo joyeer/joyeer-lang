@@ -68,7 +68,7 @@ it uses, which also makes its unsafe surface visible at its top.
   diagnostic, and none exists yet.
 - Tests: unit tests for lowering (inline instructions, no C declaration),
   rejection of unknown, mismatched, exported, and unauthorized uses, and
-  tampered IR; and a native fixture that stores and loads every width at
+  tampered IR; and an end-to-end fixture that stores and loads every width at
   unaligned offsets, does an atomic add, reads and writes a byte buffer through
   its address, and stores an address into another buffer, in both optimization
   profiles with an allocation-balance check.

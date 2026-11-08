@@ -20,7 +20,7 @@ development; an older binary with the same version may lack these interfaces.
 
 Keep this directory with the matching release or revision. The upstream
 `docs/spec.md` defines the language design;
-`docs/impl/supported-features.md` and native fixtures describe current
+`docs/impl/supported-features.md` and end-to-end fixtures describe current
 implementation coverage. Specification examples can use future features.
 Compiler acceptance is evidence of implementation support, not a replacement
 for the normative language rules.

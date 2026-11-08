@@ -83,7 +83,7 @@ Option 2.
   ABI tests.
 - Tests: `tests/c-interop/pointers.joyeer` with a C fixture (both profiles),
   unit tests for accepted and rejected declarations and malformed IR,
-  `tests/library/System/filesystem.joyeer` (over a hundred differential
+  `tests/lib/System/filesystem.joyeer` (over a hundred differential
   comparisons), and a service test that type-checks `System` for every target.
 
 ## Evidence

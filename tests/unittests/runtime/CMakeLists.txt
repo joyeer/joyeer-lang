@@ -46,10 +46,10 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
     set(host_work_directory "${CMAKE_CURRENT_BINARY_DIR}/portable-host-${mode}")
     file(MAKE_DIRECTORY "${host_work_directory}")
     set(filesystem_output "${CMAKE_CURRENT_BINARY_DIR}/filesystem-${mode}${CMAKE_EXECUTABLE_SUFFIX}")
-    add_test(NAME NativePortableFilesystem${mode}
+    add_test(NAME E2EPortableFilesystem${mode}
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/native/filesystem.joyeer
+                    -DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/filesystem.joyeer
                     -DOUTPUT_FILE=${filesystem_output}
                     "-DCOMPILER_ARGS=${host_compiler_args}"
                     "-DPROGRAM_ARGUMENT_1=${host_work_directory}"
@@ -57,10 +57,10 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set(process_output "${CMAKE_CURRENT_BINARY_DIR}/process-${mode}${CMAKE_EXECUTABLE_SUFFIX}")
-    add_test(NAME NativeSynchronousProcess${mode}
+    add_test(NAME E2ESynchronousProcess${mode}
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
-                    -DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/native/process.joyeer
+                    -DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/process.joyeer
                     -DOUTPUT_FILE=${process_output}
                     "-DCOMPILER_ARGS=${host_compiler_args}"
                     "-DPROGRAM_ARGUMENT_1=${process_output}"
@@ -69,7 +69,7 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set(module_host_output "${CMAKE_CURRENT_BINARY_DIR}/module-host-${mode}${CMAKE_EXECUTABLE_SUFFIX}")
-    add_test(NAME NativeModuleHost${mode}
+    add_test(NAME E2EModuleHost${mode}
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
                     -DMODULE_NAME=host.app
@@ -82,8 +82,8 @@ foreach(mode IN ITEMS O0 O2 FullDebug)
                     -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
     )
     set_tests_properties(
-            NativePortableFilesystem${mode} NativeSynchronousProcess${mode} NativeModuleHost${mode}
-            PROPERTIES LABELS "native;runtime;host;ownership" TIMEOUT 120
+            E2EPortableFilesystem${mode} E2ESynchronousProcess${mode} E2EModuleHost${mode}
+            PROPERTIES LABELS "e2e;runtime;host;ownership" TIMEOUT 120
     )
 endforeach()
 
@@ -228,7 +228,7 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
             add_test(NAME RuntimeSystemProgramHasNoCRuntime_${fixture}
                 COMMAND "${CMAKE_COMMAND}"
                     "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
-                    "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/native/${fixture}.joyeer"
+                    "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/${fixture}.joyeer"
                     "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-${fixture}.exe"
                     "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
                     "-DCOMPILER_ARGS=-O0;-g0"
@@ -248,7 +248,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
         add_test(NAME RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
             COMMAND "${CMAKE_COMMAND}"
                 "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
-                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/native/${fixture}.joyeer"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/${fixture}.joyeer"
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-${fixture}"
                 "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0"

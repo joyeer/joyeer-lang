@@ -23,7 +23,7 @@ if(WIN32)
     set(wide_status 4045620583)
     set(installer_program "${work}/setup${EXECUTABLE_SUFFIX}")
     execute_process(COMMAND "${JOYEER_EXECUTABLE}" -O0 -g0 -o "${installer_program}"
-        -- "${FIXTURE_DIR}/../../native/as-invoker.joyeer"
+        -- "${FIXTURE_DIR}/../../e2e/as-invoker.joyeer"
         RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 60)
     if(NOT result STREQUAL "0")
         message(FATAL_ERROR "As-invoker fixture did not compile (${result}):\n${output}\n${error}")
@@ -39,7 +39,7 @@ else()
 endif()
 set(device_program "${work}/device-kind${EXECUTABLE_SUFFIX}")
 execute_process(COMMAND "${JOYEER_EXECUTABLE}" -O0 -g0 -o "${device_program}"
-    -- "${FIXTURE_DIR}/../../native/file-kind-device.joyeer"
+    -- "${FIXTURE_DIR}/../../e2e/file-kind-device.joyeer"
     RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error TIMEOUT 60)
 if(NOT result STREQUAL "0")
     message(FATAL_ERROR "Device classification fixture did not compile (${result}):\n${output}\n${error}")
