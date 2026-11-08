@@ -1,10 +1,11 @@
 # 0013: Concurrency model: share-nothing threads and channels
 
-- Status: proposed (2026-11-08), revised the same day after two `language-designer`
-  reviews. Design only; nothing is implemented, and no spec chapter changes until
-  this is accepted. Items marked *recommended* are the reviewer's and the
-  author's suggested answers, not yet accepted. Stage 1 below needs no language
-  change and can be built first.
+- Status: accepted (2026-11-08) as a design direction, after two `language-designer`
+  reviews. Nothing is implemented, and no spec chapter has changed: the spec chapter
+  is the first step of the compiler phase of the
+  [plan](../plan/concurrency.md). The recommendations marked *recommended* below
+  are accepted as written, and the answers to questions 17 to 19 are recorded under
+  "Resolutions". Stage 1 needs no language change and has begun (0014).
 - Spec: none yet. When accepted, the rules go in a new chapter next to the
   memory model ([§4](../spec/04-memory.md)) and the reserved keywords in
   [§15](../spec/15-reserved.md) are revisited.
@@ -105,15 +106,15 @@ That claim covers memory only.
 - **Handles.** A handle that denotes an operating-system resource is safe to move
   only if it cannot also be copied; copying it into two tasks would make two owners
   of one resource, and no check would catch it. Making handles safe is therefore a
-  **prerequisite** of stage 2, not a follow-up: the language needs a rule that
-  some compiler-known types are *noncopyable by decree* (without a user `deinit`),
-  that §4.1.1's propagation then covers arrays, structs and enums containing them,
-  and that the `System` handle types use it (or wrap a noncopyable type). This is
+  **prerequisite** of stage 2, not a follow-up: the language needs noncopyable
+  types, which §4.1.1 already ties to `deinit`, with the propagation to arrays,
+  structs and enums containing them, and the `System` handle types use it. This is
   the same problem as 0012's open question 1 and should be solved once. It is not
   only a copy rule: a channel destroys queued values, and a `TcpConnection`
-  destroyed without `deinit` frees its memory but leaks its file descriptor. So the
-  decreed handle types also need a compiler-generated destroy helper that closes
-  the resource, as the runtime already generates helpers for `Array` and `Dict`.
+  destroyed without a `deinit` frees its memory but leaks its file descriptor. So
+  the handles close through a real `deinit` ([0015](0015-noncopyable-and-linear-types.md),
+  which settles this; the earlier idea of compiler-generated destroy helpers for
+  decreed handle types is dropped).
   Making a handle noncopyable also makes `Result<TcpConnection, NetworkError>`,
   `Optional` handles and arrays of handles noncopyable (§4.1.1), changes how match
   bindings and `?` treat them, and must fail the `Copyable` builtin of §20.5.
@@ -149,9 +150,9 @@ Write each as its own decision when it starts.
   parameter**, and a result type that is not `Never`. A `borrowing`, `inout` or
   `initializing` parameter is rejected (a borrow cannot outlive `spawn`; the child
   would mutate the parent's storage). Whether a zero-parameter function is allowed
-  is an open question. The result is a `Task<R>`.
-- **`join`.** `Task<R>` has a consuming `join` returning the function's owned
-  result `R`. A `Task` is noncopyable (by the rule above) and **must be consumed
+  is an open question. The result is a `JoinHandle<R>`.
+- **`join`.** `JoinHandle<R>` has a consuming `join` returning the function's owned
+  result `R`. A `JoinHandle` is noncopyable (by the rule above) and **must be consumed
   on every path**: a task that is not joined is a compile error
   (`task-not-joined`). This settles process exit: every task is finished before
   `main` returns, so the leak check sees a settled balance. There are no detached
@@ -166,7 +167,7 @@ Write each as its own decision when it starts.
     and `join` needs a join on that path (and `defer` is reserved, §15); a loop must
     consume per iteration; assigning over a live task is an error; and linearity
     propagates through `Array`, `Optional`, `Result`, structs and enums, so the
-    generated destroy helpers must reject, not silently drop, a non-empty `[Task]`.
+    generated destroy helpers must reject, not silently drop, a non-empty `[JoinHandle]`.
     Joining on an error path while the paired sender is still live is the
     deadlock described under Destruction, so the clumsy path is also the dangerous
     one.
@@ -202,14 +203,15 @@ Write each as its own decision when it starts.
   no return type. The element type cannot be inferred from a return type alone
   (§20.4 forbids it; explicit type arguments are deferred, §20.10), a pair of
   noncopyable ends needs consuming destructuring that does not exist (there are no
-  general tuples), and §2.6 allows only four generic builtins, so `Task<R>`,
-  `Sender<T>`, `Receiver<T>` and `SendError<T>` need a spec amendment. See open
+  general tuples), and §2.6 allows only four generic builtins, so `JoinHandle<R>`,
+  `ChannelSender<T>`, `ChannelReceiver<T>` and `SendError<T>` need a spec amendment. See open
   question 17.
-- **Compiler-known types.** `Task<R>`, the two channel ends and `spawn` are
+- **Compiler-known types.** `JoinHandle<R>`, the two channel ends and `spawn` are
   builtins in the manner of `Array`, `Dict`, `Optional` and `Result`; they do not
-  wait for user generics. Because `Task` is a common name in application code,
-  whether a user declaration of the same name shadows the builtin (recommended: it
-  does) must be specified and tested.
+  wait for user generics. Their names (`JoinHandle`, `ChannelSender`,
+  `ChannelReceiver`) are chosen to be rare in application code; a user declaration
+  of the same name still wins over the builtin, and that must be specified and
+  tested.
 - **Server shape.** The accept loop owns the listener and one bounded channel per
   worker, and moves each accepted `TcpConnection` into a worker's channel in
   round-robin order. Workers close what they own. A slow connection can hold up the
@@ -338,7 +340,7 @@ it.
     binding is a use-after-consume error; a constant array passed to `spawn` is
     cloned, not freed.
   - Rejections: one fixture per diagnostic below, with stable IDs.
-  - Noncopyable: copying a task or a channel end is an error; `[Sender<T>]`
+  - Noncopyable: copying a task or a channel end is an error; `[ChannelSender<T>]`
     propagates; a copied `TcpConnection` is rejected once handles are noncopyable.
   - Exit and traps: a trap in one task flushes once and exits, with no
     destructors; two simultaneous traps print one message; the leak check passes
@@ -347,7 +349,7 @@ it.
   - Runtime: allocator stress with cross-thread frees returns the counter to zero;
     `print` atomicity; first-use initialization races from two tasks; a
     `runProcess` from a task while others allocate.
-  - Names: a user `struct Task` coexists with the builtin.
+  - Names: a user `struct JoinHandle` coexists with, and wins over, the builtin.
   - Deadlock: a cycle of full bounded channels hangs and is documented, or a
     timeout variant exists.
   - Gates: the symbol-import gates still allow only the listed names.
@@ -363,7 +365,13 @@ it.
 
 ## Open questions
 
-Questions 1 to 16 carry a recommendation; 17 to 19 are open and block stage 2. None is accepted yet.
+Questions 1 to 16 carry a recommendation, accepted as written on 2026-11-08, with
+these clarifications: question 9 is **rejected** (exactly one `consuming`
+parameter); question 13 is **rejected while tasks exist** (`runProcess` is not
+allowed in a threaded program in v1); question 14 is `pthread` first; question 15
+is the rarer names, with a user declaration winning; questions 10 (limits) and 11
+(dispatch) are decided in the phases that need them (P3 and P7). Questions 17 to 19
+were answered the same day; see "Resolutions" after question 19.
 
 1. **Task joining.** Recommended: every task must be consumed on every path, a
    compile error otherwise; no detached tasks. Detached tasks would fail the leak
@@ -378,11 +386,14 @@ Questions 1 to 16 carry a recommendation; 17 to 19 are open and block stage 2. N
    destroy helpers for builtins), plus an explicit consuming `close`.
 5. **Bounded or unbounded.** Recommended: bounded only, capacity at least 1; an
    unbounded queue turns a stalled consumer into memory exhaustion.
-6. **`deinit` and noncopyable.** Recommended: user `deinit` is not required first,
-   but the noncopyable-builtin rule is a prerequisite of stage 2, handles become
-   noncopyable before they cross threads, and the decreed handle types get a
-   compiler-generated destroy helper that closes the resource. Without that, a
-   channel that destroys a queued `TcpConnection` leaks its descriptor.
+6. **`deinit` and noncopyable.** Originally recommended and accepted: user `deinit`
+   not required first, handles closed by compiler-generated destroy helpers.
+   **Revised 2026-11-08:** `deinit` is implemented first
+   ([0015](0015-noncopyable-and-linear-types.md)), because a closing handle is the
+   same feature as `deinit` and a second, special mechanism would be replaced by it.
+   Handles are noncopyable and close through `deinit` before they cross threads;
+   `JoinHandle` and the channel ends remain compiler-known linear builtins with
+   runtime-generated destroy helpers.
 7. **Multi-sender channels.** Recommended: not in v1 (shared ownership; see above).
 8. **`receive` result.** `Result<T, ChannelClosed>` (recommended) or `Optional<T>`.
 9. **Zero-parameter spawn targets.** Recommended: rejected, so the arity of `spawn`
@@ -414,6 +425,34 @@ Questions 1 to 16 carry a recommendation; 17 to 19 are open and block stage 2. N
     the language needs a scope-exit hook such as the reserved `defer`.
 19. **Locking primitive.** A ticket lock over the existing atomic add, or a new
     compare-and-swap or atomic-load intrinsic (see Runtime changes).
+
+### Resolutions of 17 to 19 (accepted 2026-11-08)
+
+17. **Creating a channel** uses the language's existing `initializing` parameters,
+    so it needs no tuples and no new inference rule:
+
+    ```joyeer
+    var sender: ChannelSender<Int>
+    var receiver: ChannelReceiver<Int>
+    channel(capacity: 8, sender: &sender, receiver: &receiver)
+    ```
+
+    `channel` is a builtin returning `Void`; both outputs are `initializing`, so the
+    compiler requires both variables to be declared, uninitialized, with their
+    types, and to be initialized on every returning path; the element type comes
+    from those declared types, and the two must agree. A capacity below 1 is a
+    runtime-checked error (`InvalidInput`-style trap or `Result`; the spec chapter
+    decides which). The ends are then moved with `consume` as any value.
+18. **Linear types.** `JoinHandle`, and the channel ends, are **linear**: they must
+    be consumed on every path, and the language gains a "still initialized at scope
+    exit" check and an amendment to §4.7. Join-on-drop is rejected for v1 because a
+    blocking drop hides the destruction-order deadlock. How early `return`, `?` and
+    loops interact, and whether the reserved `defer` is needed, are settled in
+    decision 0015 and the spec chapter, not here.
+19. **The lock** is a **ticket lock over the existing atomic add**, using the add
+    (of zero) as the load; no new intrinsic in v1. A compare-and-swap intrinsic is
+    added only if measurement shows the ticket lock's fairness or cost is a
+    problem.
 
 ## Evidence
 

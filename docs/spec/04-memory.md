@@ -60,6 +60,14 @@ with its own destruction obligation:
 A type that declares `deinit` is noncopyable by default. Ordinary
 initialization or assignment from a binding of that type is rejected rather
 than synthesizing a fieldwise copy that could release the same resource twice.
+Noncopyability propagates: a `struct` or `enum` with a noncopyable field or
+payload, and an `Array`, `Dict`, `Optional` or `Result` whose element, key, value,
+payload or error type is noncopyable, is itself noncopyable, so
+`Result<TcpConnection, NetworkError>` cannot be copied. A noncopyable type does not
+satisfy the `Copyable` constraint of §20.5. The implicit copy that lowering performs
+when a borrowed value is needed as an owned one (§4.1) is a compile-time error for
+such a type, reported at the copy site (provisional; see
+[decision 0015](../decisions/0015-noncopyable-and-linear-types.md)).
 Such a value may still be passed through a consuming boundary or produced as
 an owned temporary. A future explicit copy-initializer design may let a type
 opt back into copying; it is not part of v0.1.
@@ -397,6 +405,15 @@ A value's `deinit` runs when:
 Order within a scope is **reverse declaration order**, for stored fields
 of a struct as well. Order is fully deterministic; no finalizer queue,
 no GC.
+
+A value of a type with a `deinit` is destroyed whole: its `deinit` body runs first,
+and then its stored fields are destroyed in reverse declaration order. For that
+reason a stored field of such a value cannot be moved out of it (§3.7.1), and a
+`consuming` function that is given one destroys it, running its `deinit`, at the
+end of the call unless the function passes it on. A `deinit` may run on a different
+thread from the one that created the value when ownership has moved between threads
+(provisional; the concurrency design in
+[decision 0013](../decisions/0013-concurrency-model.md)).
 
 For an overwrite, the right-hand side is evaluated and converted into an
 owned replacement before the previous value is destroyed. The old value is

@@ -407,7 +407,7 @@ releases the handle; closing again is impossible and not needed.
 A normal close of a connection lets bytes already accepted for sending be
 delivered before the connection ends; it neither waits for the peer nor
 discards them. A handle that is never closed stays open until the process ends.
-There is no `deinit` to do it automatically yet, so a long-running program
+There is no `deinit` to do it automatically yet (decision 0015 adds one), so a long-running program
 must close every handle on every path, including error paths.
 
 #### Errors

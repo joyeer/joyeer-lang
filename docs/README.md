@@ -99,8 +99,9 @@ in the spec.
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 | [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
 | [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows and Linux implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
-| [0013](decisions/0013-concurrency-model.md) | Concurrency (proposed): share-nothing threads, ownership moved through tasks and bounded channels, no shared mutable state; timeouts and readiness polling first |
+| [0013](decisions/0013-concurrency-model.md) | Concurrency (accepted direction): share-nothing threads, ownership moved through tasks and bounded channels, no shared mutable state; timeouts and readiness polling first |
 | [0014](decisions/0014-network-timeouts.md) | `timeoutMillis` on `tcpAccept` and `tcpReceive` (proposed, implemented on Windows and Linux): a bounded wait per call, no send or connect timeout, no total deadline |
+| [0015](decisions/0015-noncopyable-and-linear-types.md) | Noncopyable and linear types and handles that close (proposed): copy and consume checks, a "must be consumed" analysis, consuming a pattern binding; the open fork is `deinit` versus a restricted resource annotation |
 
 ## Conventions
 

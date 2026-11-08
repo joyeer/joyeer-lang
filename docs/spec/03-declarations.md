@@ -406,6 +406,29 @@ deinit_decl     ::= 'deinit' '(' ')' block
 - Preconditions inside `init` are expressed with `precondition(...)` (§9),
   not declaration-level clauses.
 
+#### 3.7.1 `deinit` rules (provisional)
+
+**Implementation status:** not implemented. The compiler reserves the `deinit`
+keyword and nothing more. These rules fix the first implementation
+([decision 0015](../decisions/0015-noncopyable-and-linear-types.md)): `deinit` for
+structs, so that a handle can close the resource it owns. `init` declarations stay
+unimplemented, and a struct with a `deinit` is constructed with its memberwise
+initializer.
+
+- A `deinit` may appear in the body of a `struct`, not in an `enum` or an
+  `extension`. A struct has at most one. It takes no parameters, has no visibility
+  modifier, and is not `mutating` or `consuming`.
+- Inside the body `self` is the value being destroyed, read through `self.field`
+  (§3.9). The body may not consume `self`, move a stored field out of it, or call
+  `deinit` explicitly; it may mutate stored fields of `self`. It ends at `return` or
+  the end of the block.
+- The compiler runs the `deinit` body when the value is destroyed (§4.7), exactly
+  once per destruction, and then destroys the stored fields in reverse declaration
+  order. A trap inside the body ends the process like any other trap (§9).
+- A value of a type with a `deinit` may be passed through a `consuming` boundary or
+  produced as an owned temporary, but not copied (§4.1.1), and no stored field of it
+  may be moved out, because the body needs the whole value.
+
 ### 3.8 Import declarations
 
 ```

@@ -33,17 +33,22 @@ P0 design ─ P1a timeouts (done) ─ (P1b readiness, optional)
 
 ## P0: Settle the design (S)
 
-- [ ] Re-run the `language-designer` review on the revised 0013.
-- [ ] Decide the 0013 open questions that block P5, using the recommendations
-      in that record: task joining (Q1), the form of the function reference (Q2),
-      closing (Q4), bounded only (Q5), single sender (Q7), the `receive` result (Q8),
-      zero-parameter targets (Q9).
-- [ ] Decide the questions that can wait but must be recorded: limits (Q10),
-      dispatch `select` (Q11), output ordering (Q12), `runProcess` in a threaded
-      program (Q13), thread path on Linux (Q14), name collisions (Q15).
+- [x] Re-run the `language-designer` review on the revised 0013 (second pass done;
+      its findings are folded into 0013).
+- [x] Decide the 0013 open questions that block P5: task joining (Q1), the form of
+      the function reference (Q2), closing (Q4), bounded only (Q5), single sender
+      (Q7), the `receive` result (Q8), zero-parameter targets rejected (Q9), channel
+      creation through `initializing` outputs (Q17), linear `JoinHandle` and ends
+      (Q18), ticket lock (Q19).
+- [x] Decide the questions that can wait but must be recorded: `runProcess`
+      rejected while tasks exist (Q13), `pthread` first (Q14), rarer names with a user
+      declaration winning (Q15). Limits (Q10) are decided in P3 and dispatch (Q11) in
+      P7; output ordering (Q12) stays unspecified.
 - [ ] Reconcile the allocation counter's described ordering: runtime.md says
-      relaxed, §19.4.5 says sequentially consistent.
-- [ ] Mark 0013 `accepted` only here, once, with the spec chapter still to come.
+      relaxed, §19.4.5 says sequentially consistent. Do this in P4 with the audit.
+- [x] Mark 0013 `accepted` as a design direction (2026-11-08), with the spec chapter
+      still to come. The later decisions (0015 onward) are each marked accepted when
+      their phase lands.
 
 ## P1: Timeouts, then readiness (S for 1a, M for 1b)
 
@@ -87,37 +92,64 @@ wait before the call.
 
 ## P2: Language prerequisites (M to L)
 
-Decision to write: 0015, noncopyable compiler-known types and owned handles.
-This is a user-visible feature, so the feature workflow applies in full.
+Decision: [0015](../decisions/0015-noncopyable-and-linear-types.md), proposed. Settled
+2026-11-08: handles close through a real `deinit`, as the spec already describes
+(§3.7, §4.1.1, §4.7), not through a special annotation. This is a user-visible feature,
+so the feature workflow applies in full. The compiler today has only the `deinit`
+keyword; copies are made implicitly in lowering (`prepareOwned`), consumption is tracked
+one way in `InitializationBuilder`, and destroy helpers are generated per type.
 
-- [ ] Specify that some compiler-known types are **noncopyable by decree** (no user
-      `deinit`), and that §4.1.1's propagation makes arrays, structs, enums and
-      optionals containing them noncopyable.
-- [ ] Implement noncopyable types through the type checker and semantic analysis
-      (copy is an error; use-after-consume already exists). The compiler has no such
-      machinery today.
-- [ ] Specify **linear** (non-droppable) types for `Task` and the channel ends:
-      amend §4.7, which destroys every owning binding at scope end; define
-      propagation through `Array`, `Optional`, `Result`, structs and enums (the
-      generated destroy helpers must reject a non-empty array of tasks, not drop
-      it); and the inverse of the current analysis, "still initialized at scope
-      exit". Decide how early `return`, `?`, loops and assignment over a live value
-      behave, and whether the reserved `defer` is needed (0013 Q18).
-- [ ] Make the `System` handle types (`TcpConnection`, `TcpListener`) noncopyable
-      **and closing on destroy** (a compiler-generated destroy helper that closes
-      the descriptor), so a handle cannot become two owners and a queued handle
-      does not leak. Audit what changes: `Result<TcpConnection, NetworkError>`,
-      `Optional` handles and arrays of handles become noncopyable; `System`'s own
-      internal copies and the tests; the `Copyable` builtin of §20.5 must fail for
-      decreed types. Update spec §18.6, the tests and the example.
-- [ ] Amend spec §2.6 for the new compiler-known generic builtins (`JoinHandle<R>`,
-      the channel ends, `SendError<T>`) and decide the channel-creation form
-      (0013 Q17).
+**P2a: `deinit` and noncopyable types**
+
+- [x] Settle the 0015 fork (`deinit`).
+- [ ] Spec: amend §3.7 (struct-only `deinit` rules, implementation status), §4.1.1
+      (propagation to containers and aggregates; `Copyable` false), §4.7 (no partial moves
+      out of a type with a `deinit`) and §18.6 (handles).
+- [ ] Failing tests first, one set per stage, citing the spec sections.
+- [ ] Parser: `deinit() { ... }` in a struct body; reject in an `enum`, an extension, with
+      parameters, with a visibility, or twice.
+- [ ] Name resolution: `self` in the body; one unnameable `deinit` per struct.
+- [ ] Type checking: the body, noncopyability on the type and its propagation, `Copyable`,
+      a diagnostic at each copy site (assignment, argument, return, aggregate or array
+      element), no consuming `self` or moving a field out in the body.
+- [ ] Semantic analysis: the body through the existing analysis; reject a partially
+      consumed value of a type with a `deinit`.
+- [ ] IR and lowering: lower `deinit` to an internal function; `requiresDestruction`
+      true; call it once per destruction, before field destruction, on overwrite and at
+      scope end; keep `prepareOwned`'s copy as an assertion.
+- [ ] Backend: the generated destroy helper calls it then destroys the fields; debug
+      scopes preserved.
+- [ ] Stable diagnostic IDs for each rejection.
+- [ ] Build and run the compiler tests on Linux in WSL as well as on Windows (a C++
+      change needs a rebuild; the Windows build is run from an MSVC Developer shell).
+
+**P2b: handles that close, owning what you receive, array removal**
+
+- [ ] `System`: `deinit` on `TcpConnection` and `TcpListener` that closes an open
+      handle; the explicit close functions close, report, and store an invalid handle so
+      `deinit` finds nothing (0015 question 6 checks that a consumed value may be
+      mutated). Audit what noncopyability changes: `Result<TcpConnection, NetworkError>`,
+      `Optional` handles and arrays of handles, `System`'s internal copies, the tests, the
+      web-server example, and `Copyable` (§20.5).
 - [ ] Resolve 0012's open question 1: let a `match` pattern binding on an owned
-      temporary be consumed, or give another way to own a received value, so the
-      worker loop and `tcpCloseConnection(consume ...)` work without `?`.
-- [ ] Add `Array` element removal (`removeLast`) and a consuming element accessor
-      (§4.5.1), which any array of tasks or of connections needs.
+      temporary be consumed, so the worker loop and `tcpCloseConnection(consume ...)` work
+      without `?`.
+- [ ] Add `Array` element removal (`removeLast`) and decide on the consuming element
+      accessor (§4.5.1), which any array of tasks or of connections needs.
+
+**P2c: linear types and builtin generics**
+
+- [ ] Specify **linear** (non-droppable) types for `JoinHandle` and the channel ends:
+      amend §4.7, which destroys every owning binding at scope end; define propagation
+      through `Array`, `Optional`, `Result`, structs and enums (the generated destroy
+      helpers must reject a non-empty array of tasks, not drop it); and the inverse of the
+      current analysis, "still initialized at scope exit". Decide how early `return`, `?`,
+      loops and assignment over a live value behave, and whether the reserved `defer` is
+      needed (0013 Q18, 0015 question 2).
+- [ ] Amend spec §2.6 for the new compiler-known generic builtins (`JoinHandle<R>`,
+      `ChannelSender<T>`, `ChannelReceiver<T>`, `SendError<T>`). Channel creation is
+      decided (0013 Q17): `channel(capacity:, sender: &s, receiver: &r)` with two
+      `initializing` outputs; specify it, including a capacity below 1.
 - [ ] Fixtures per stage, written failing first, with stable diagnostic IDs.
 
 ## P3: Thread primitives and a minimal lock (L)
