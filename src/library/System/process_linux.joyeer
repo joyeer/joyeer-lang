@@ -176,7 +176,7 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
     closeDescriptor(descriptor: readEnd)
     if got == reportBytes {
         // The child failed and has exited; collect it.
-        let ignored = waitForChild(pid: pid)
+        waitForChild(pid: pid)
         return .Err(classifyProcessError(code: wordAt(bytes: report, offset: 0, width: 4)))
     }
     return waitForChild(pid: pid)
