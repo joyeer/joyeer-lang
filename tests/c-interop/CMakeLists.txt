@@ -32,6 +32,9 @@ add_library(CInteropBuffers STATIC native-buffers.c)
 target_include_directories(CInteropBuffers PRIVATE "${JOYEER_SRC_DIR}")
 set_target_properties(CInteropBuffers PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+add_library(CInteropPointers STATIC native-pointers.c)
+set_target_properties(CInteropPointers PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
 target_compile_definitions(CInteropNativeShared PRIVATE CINTEROP_SHARED)
 foreach(provider IN ITEMS CInteropNativeStatic CInteropNativeShared)
     target_compile_definitions(${provider} PRIVATE
@@ -59,6 +62,25 @@ foreach(profile IN ITEMS Debug Optimized)
             "-DEXPECTED_OUTPUT=native buffer ownership passed\n"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.Buffers${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    add_test(NAME "JoyeerCInterop.Pointers${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/pointers.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/pointers-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.pointers;--runtime-module;runtime.pointers;--link-library;$<TARGET_FILE:CInteropPointers>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=native pointer buffers passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Pointers${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    add_test(NAME "JoyeerCInterop.Intrinsics${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/intrinsics.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/intrinsics-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.intrinsics;--runtime-module;runtime.intrinsics;${compile_flags}"
+            "-DEXPECTED_OUTPUT=intrinsics passed
+"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Intrinsics${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
     add_test(NAME "JoyeerCInterop.ScalarValues${profile}"
         COMMAND "${CMAKE_COMMAND}"
             "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
@@ -92,7 +114,7 @@ foreach(profile IN ITEMS Debug Optimized)
             LABELS "c-interop;native" TIMEOUT 60)
     endforeach()
     set(objects)
-    foreach(unit IN ITEMS roundtrip second scalars platform-scalars)
+    foreach(unit IN ITEMS roundtrip second scalars platform-scalars indirect static-slots-first static-slots-second never-export)
         if(unit STREQUAL platform-scalars)
             set(unit_source "${CMAKE_CURRENT_BINARY_DIR}/${unit}.joyeer")
         else()
@@ -162,3 +184,207 @@ add_test(NAME JoyeerCInterop.CompilationContext
         -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-context.cmake")
 set_tests_properties(JoyeerCInterop.CompilationContext PROPERTIES
     LABELS "c-interop;native" TIMEOUT 60)
+
+# Indirect calls through an address held as an Int (spec 19.4.6): the runtime's
+# arrays and dictionaries call generated element clone and destroy functions.
+add_library(CInteropCallbacks STATIC native-callbacks.c)
+set_target_properties(CInteropCallbacks PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.Callbacks${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/callbacks.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/callbacks-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.callbacks;--runtime-module;runtime.callbacks;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=indirect calls passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.Callbacks${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# Measures an indirect call from Joyeer against a C loop; not a test. Run
+#   cmake --build <dir> --target cinterop-indirect-benchmark
+# in a Release tree.
+add_executable(CInteropIndirectBenchmark indirect-benchmark.c)
+target_link_libraries(CInteropIndirectBenchmark PRIVATE CInteropJoyeerOptimized JoyeerRuntime)
+set_target_properties(CInteropIndirectBenchmark PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+add_custom_target(cinterop-indirect-benchmark
+    COMMAND CInteropIndirectBenchmark
+    DEPENDS CInteropIndirectBenchmark
+    VERBATIM)
+
+# The address of a string literal's NUL-terminated constant data (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.LiteralAddress${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/literal-address.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/literal-address-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.literal;--runtime-module;runtime.literal;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=literal addresses passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.LiteralAddress${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# The address of a named function, stored as a callback (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.SymbolAddress${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/symbol-address.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/symbol-address-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.symbol;--runtime-module;runtime.symbol;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=symbol addresses passed
+"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.SymbolAddress${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# Static storage: a table of zeroed 8-byte slots shared by every unit in the
+# program (spec 19.4.6), reached by index with a range check.
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.StaticSlots${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/static-slots.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/static-slots-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.static_slots;--runtime-module;runtime.static_slots;${compile_flags}"
+            "-DEXPECTED_OUTPUT=static slots passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.StaticSlots${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    foreach(case IN ITEMS high negative maximum)
+        add_test(NAME "JoyeerCInterop.StaticSlotTrap${case}${profile}"
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/static-slot-traps.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/static-slot-trap-${case}-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+                "-DCOMPILER_ARGS=--module-name;runtime.static_slot_traps;--runtime-module;runtime.static_slot_traps;${compile_flags}"
+                "-DPROGRAM_ARGUMENT_1=${case}"
+                "-DEXPECTED_OUTPUT="
+                "-DEXPECTED_EXIT_CODE=1"
+                "-DEXPECTED_ERROR_PATTERN=static slot index out of range"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+        set_tests_properties("JoyeerCInterop.StaticSlotTrap${case}${profile}" PROPERTIES
+            LABELS "c-interop;native" TIMEOUT 60)
+    endforeach()
+    # Two separately compiled objects must share the one table.
+    set(target "CInteropStaticSlots${profile}")
+    add_executable(${target} static-slots-caller.c)
+    target_link_libraries(${target} PRIVATE CInteropJoyeer${profile} JoyeerRuntime)
+    set_target_properties(${target} PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+    add_test(NAME "JoyeerCInterop.SharedStaticSlots${profile}" COMMAND ${target})
+    set_tests_properties("JoyeerCInterop.SharedStaticSlots${profile}" PROPERTIES
+        LABELS "c-interop;native" TIMEOUT 30)
+endforeach()
+
+# Never as the result of a C binding: a C function that does not return, and a
+# Joyeer export that does not (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.NeverImport${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/never-import.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/never-import-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.never_import;--runtime-module;runtime.never_import;${compile_flags}"
+            "-DEXPECTED_OUTPUT=before exit\n"
+            "-DEXPECTED_EXIT_CODE=3"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.NeverImport${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+    set(target "CInteropNeverExport${profile}")
+    add_executable(${target} never-export-caller.c)
+    target_link_libraries(${target} PRIVATE CInteropJoyeer${profile} JoyeerRuntime)
+    set_target_properties(${target} PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
+    add_test(NAME "JoyeerCInterop.NeverExport${profile}" COMMAND ${target})
+    set_tests_properties("JoyeerCInterop.NeverExport${profile}" PROPERTIES
+        PASS_REGULAR_EXPRESSION "never export before" LABELS "c-interop;native" TIMEOUT 30)
+endforeach()
+
+# The address of a C data symbol with @c_data (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.DataSymbol${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/data-symbol.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/data-symbol-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.data_symbol;--runtime-module;runtime.data_symbol;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=data symbols passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.DataSymbol${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# Bulk memory intrinsics (spec 19.4.5): copy, overlapping move, fill.
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.MemoryIntrinsics${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/memory-intrinsics.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/memory-intrinsics-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.memory;--runtime-module;runtime.memory;${compile_flags}"
+            "-DEXPECTED_OUTPUT=memory intrinsics passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.MemoryIntrinsics${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# The target-architecture intrinsic folds to the architecture the program is built for.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|X86_64)$")
+    set(joyeer_expected_architecture 1)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64|AARCH64)$")
+    set(joyeer_expected_architecture 2)
+else()
+    set(joyeer_expected_architecture 0)
+endif()
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.TargetArchitecture${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/target-architecture.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/target-architecture-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.target_architecture;--runtime-module;runtime.target_architecture;${compile_flags}"
+            "-DEXPECTED_OUTPUT=${joyeer_expected_architecture}\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.TargetArchitecture${profile}" PROPERTIES
+        LABELS "c-interop;native" TIMEOUT 60)
+endforeach()

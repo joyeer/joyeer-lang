@@ -43,7 +43,7 @@ std::optional<std::string> blockLabel(std::string_view line) {
 void expectPanicAttributes(const std::string& text) {
     std::smatch declaration;
     ASSERT_TRUE(std::regex_search(text, declaration,
-            std::regex(R"(declare void @joyeer_panic\(ptr\) #(\d+))"))) << text;
+            std::regex(R"(declare void @joyeer_panic\(i64\) #(\d+))"))) << text;
     const auto start = text.find("attributes #" + declaration[1].str() + " = {");
     ASSERT_NE(start, std::string::npos);
     const auto attributes = text.substr(start, text.find('\n', start) - start);
@@ -1565,28 +1565,6 @@ print(value: match second { .Ok(_) => 0, .Err(code) => code })
     EXPECT_NE(result.text.find("define i64 @joyeer_main(ptr %args)"), std::string::npos);
     EXPECT_NE(result.text.find("call void @joyeer_print_int"), std::string::npos);
 }
-
-        TEST_F(LLVMBackendTest, EmitsTypedReadFileResultFromLayoutIndependentABI) {
-            emit(R"JOYEER(func load(path: String): Result<String, IOError> {
-        return readFile(path: path)
-        }
-        )JOYEER");
-
-            ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
-            EXPECT_NE(
-                result.text.find(
-                    "declare i32 @joyeer_read_file_abi(ptr, ptr, ptr, i64)"),
-                std::string::npos);
-            EXPECT_NE(
-                result.text.find("call i32 @joyeer_read_file_abi(ptr"),
-                std::string::npos);
-            EXPECT_NE(result.text.find("readfile.ok."), std::string::npos);
-            EXPECT_NE(result.text.find("readfile.error."), std::string::npos);
-            EXPECT_NE(result.text.find("select i1"), std::string::npos);
-            EXPECT_NE(result.text.find("getelementptr inbounds %joyeer.enum."),
-                  std::string::npos);
-            EXPECT_NE(result.text.find("store %joyeer.enum."), std::string::npos);
-        }
 
 TEST_F(LLVMBackendTest, EmitsExplicitByteConversions) {
     emit(R"JOYEER(func convert(value: UInt8): String {

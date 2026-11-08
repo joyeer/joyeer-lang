@@ -1,0 +1,102 @@
+// `print` for strings, integers, `Float`, `Double`, `Bool` and bytes
+// (`joyeer_print_string_abi`, `joyeer_print_{int,uint,float,double,bool,byte}`), written
+// to the runtime's standard output buffer (streams.joyeer), which `System` and a panic
+// share, so the order of output is the order of the calls. A value is followed by one
+// newline, and the output is flushed at once when standard output is a terminal.
+//
+// Integers and strings allocate nothing. Floating-point values are formatted in
+// scratch memory from the allocator (floats.joyeer).
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+private func store8(address: Int, value: UInt8): Void
+
+private func endLine() {
+    putByte(value: 10)
+    endPrint()
+}
+
+private func putDecimal(value: UInt64) {
+    // The largest power of ten not above `value`; 10^19 is the most a UInt64 holds.
+    var divisor: UInt64 = 1
+    while value / divisor >= 10 { divisor = divisor * 10 }
+    var remaining = value
+    while divisor != 0 {
+        let digit = remaining / divisor
+        putByte(value: (48 + digit) as Int)
+        remaining = remaining - digit * divisor
+        divisor = divisor / 10
+    }
+}
+
+@c_export(symbol: "joyeer_print_string_abi")
+public func printString(data: Int, count: Int): Void {
+    if count < 0 || (count != 0 && data == 0) {
+        panic(message: literalAddress(text: "invalid string"))
+    }
+    if count != 0 { putBytes(data: data, count: count) }
+    endLine()
+}
+
+@c_export(symbol: "joyeer_print_uint")
+public func printUnsigned(value: UInt64): Void {
+    putDecimal(value: value)
+    endLine()
+}
+
+@c_export(symbol: "joyeer_print_int")
+public func printInteger(value: Int): Void {
+    if value < 0 {
+        putByte(value: 45)
+        // value + 1 cannot overflow below zero, and the magnitude of Int.min
+        // does not fit an Int: take it from the UInt64 side.
+        putDecimal(value: ((0 - (value + 1)) as UInt64) + 1)
+    } else {
+        putDecimal(value: value as UInt64)
+    }
+    endLine()
+}
+
+@c_export(symbol: "joyeer_print_byte")
+public func printByte(value: UInt8): Void {
+    putDecimal(value: value as UInt64)
+    endLine()
+}
+
+@c_export(symbol: "joyeer_print_bool")
+public func printBool(value: Bool): Void {
+    if value {
+        putBytes(data: literalAddress(text: "true"), count: 4)
+    } else {
+        putBytes(data: literalAddress(text: "false"), count: 5)
+    }
+    endLine()
+}
+
+// Writes the `count` bytes of formatted text in `scratch`, then a newline, and gives
+// the scratch memory back.
+private func finishFormatted(scratch: Int, count: Int) {
+    store8(address: scratch + formatTextOffset + count, value: 10)
+    putBytes(data: scratch + formatTextOffset, count: count + 1)
+    endPrint()
+    release(address: scratch, size: formatScratchBytes)
+}
+
+// A Double with 17 significant digits.
+@c_export(symbol: "joyeer_print_double")
+public func printDouble(value: Double): Void {
+    let scratch = allocate(size: formatScratchBytes)
+    finishFormatted(scratch: scratch, count: formatDouble(scratch: scratch, precision: 17, value: value))
+}
+
+// A Float with the 9 significant digits that identify it.
+@c_export(symbol: "joyeer_print_float")
+public func printFloat(value: Float): Void {
+    let scratch = allocate(size: formatScratchBytes)
+    finishFormatted(scratch: scratch, count: formatFloat(scratch: scratch, precision: 9, value: value))
+}

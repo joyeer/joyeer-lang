@@ -1,0 +1,52 @@
+@c_extern(symbol: "cinterop_pointer_upper", pointer: "text", pointer: "output")
+func nativeUpper(text: [UInt8], output: inout [UInt8], capacity: Int): Int
+
+@c_extern(symbol: "cinterop_pointer_fill", pointer: "buffer")
+func nativeFill(buffer: inout [UInt8], count: Int): Int
+
+@c_extern(symbol: "cinterop_pointer_sum", pointer: "bytes")
+func nativeSum(base: Int, bytes: [UInt8], count: Int, extra: Int): Int
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+func allocations(): Int
+
+func zeros(count: Int): [UInt8] {
+    var buffer: [UInt8] = []
+    var index = 0
+    while index < count {
+        &buffer.append(element: 0)
+        index = index + 1
+    }
+    return buffer
+}
+
+func exercise(): Int {
+    var text = "joyeer".utf8()
+    &text.append(element: 0)
+    var output = zeros(count: 16)
+    if nativeUpper(text: text, output: &output, capacity: 16) != 6 { return 1 }
+    if output[0] != b'J' || output[5] != b'R' || output[6] != 0 || output.count != 16 { return 2 }
+    var small = zeros(count: 3)
+    if nativeUpper(text: text, output: &small, capacity: 3) != -1 { return 3 }
+    var filled = zeros(count: 8)
+    if nativeFill(buffer: &filled, count: 8) != 8 { return 4 }
+    if filled[0] != 1 || filled[7] != 22 || filled.count != 8 { return 5 }
+    if nativeSum(base: 100, bytes: filled, count: 4, extra: 1000) != 1122 { return 6 }
+    var empty = zeros(count: 0)
+    if nativeFill(buffer: &empty, count: 0) != 0 { return 7 }
+    return 0
+}
+
+func main(args: [String]): Int {
+    if args.count != 0 { return 20 }
+    let baseline = allocations()
+    var index = 0
+    while index < 20 {
+        let status = exercise()
+        if status != 0 { return status }
+        if allocations() != baseline { return 10 }
+        index = index + 1
+    }
+    print(value: "native pointer buffers passed")
+    return 0
+}

@@ -1,0 +1,275 @@
+// The runtime allocator and its leak counter (`joyeer_alloc`, `joyeer_realloc`,
+// `joyeer_free`, `joyeer_runtime_active_allocations`). Every runtime allocation
+// goes through here, so there is one counter: the number of blocks allocated and
+// not yet freed, kept in static slot 0 (runtime plan §5, D1) and updated with an
+// atomic add. A program exits non-zero when it ends with a non-zero count.
+//
+// Memory comes straight from the operating system (decision 0011): `VirtualAlloc`
+// on Windows, the `mmap` system call on Linux and libSystem's on macOS, no C library allocator. The contract takes sizes
+// because Joyeer always knows them: `free` and `realloc` receive the size the
+// block was last requested with, so a block carries no header.
+//
+// - A block of up to 32768 bytes is served from a size class: sixteen-byte steps up
+//   to 512 bytes, then four steps per power of two. A freed block goes on its
+//   class's free list, a list is popped first, and otherwise the block is cut from a
+//   1 MiB region mapped on demand. Small blocks are never returned to the system.
+// - A larger block is its own mapping, rounded up to whole pages, and is unmapped
+//   when freed.
+// - Every block is sixteen-byte aligned. A zero-byte request is served as one byte,
+//   so every live block has its own address.
+// - The allocator is not thread safe; the language has no threads yet. The counter
+//   is atomic only because it was.
+//
+// The allocator's state lives in the first bytes of the first region, found
+// through static slot 1: the bump pointer and region end, then one free-list head
+// per class.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+private func atomicAdd(address: Int, delta: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "VirtualAlloc")
+private func virtualAlloc(address: Int, size: Int, kind: UInt32, protection: UInt32): Int
+
+@platform(windows)
+@c_extern(symbol: "VirtualFree")
+private func virtualFree(address: Int, size: Int, kind: UInt32): Int32
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+private func systemCall(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int,
+    sixth: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "mmap")
+private func memoryMap(address: Int, length: Int, protection: Int32, flags: Int32,
+    descriptor: Int32, offset: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "munmap")
+private func memoryUnmap(address: Int, length: Int): Int32
+
+// Maps `size` zeroed, readable and writable bytes, or returns 0. MEM_COMMIT |
+// MEM_RESERVE with PAGE_READWRITE; PROT_READ | PROT_WRITE with MAP_PRIVATE |
+// MAP_ANONYMOUS.
+@platform(windows)
+public func mapPages(size: Int): Int {
+    return virtualAlloc(address: 0, size: size, kind: 12288, protection: 4)
+}
+
+@platform(windows)
+public func unmapPages(address: Int, size: Int): Void {
+    virtualFree(address: address, size: 0, kind: 32768)
+}
+
+// MAP_PRIVATE | MAP_ANONYMOUS is 0x1002 on macOS, 0x22 on Linux.
+@platform(macos)
+public func mapPages(size: Int): Int {
+    let address = memoryMap(address: 0, length: size, protection: 3, flags: 4098,
+        descriptor: -1, offset: 0)
+    if address == -1 { return 0 }
+    return address
+}
+
+@platform(macos)
+public func unmapPages(address: Int, size: Int): Void {
+    memoryUnmap(address: address, length: size)
+}
+
+// Linux calls the kernel directly: mmap and munmap (the call numbers are the
+// architecture's, selected in streams.joyeer). A result from -4095 to -1 is a failure.
+@platform(linux)
+public func mapPages(size: Int): Int {
+    let address = systemCall(number: callNumber(x86: 9, arm: 222), first: 0, second: size, third: 3,
+        fourth: 34, fifth: 0 - 1, sixth: 0)
+    if address < 0 && address >= 0 - 4095 { return 0 }
+    return address
+}
+
+@platform(linux)
+public func unmapPages(address: Int, size: Int): Void {
+    systemCall(number: callNumber(x86: 11, arm: 215), first: address, second: size, third: 0,
+        fourth: 0, fifth: 0, sixth: 0)
+}
+
+// Runtime plan §5 assigns slots 0 to 15 to the core.
+private let counterSlot: Int = 0
+private let stateSlot: Int = 1
+
+private let regionBytes: Int = 1048576
+private let pageBytes: Int = 4096
+private let smallLimit: Int = 32768
+private let granule: Int = 16
+private let fineClasses: Int = 32
+private let fineLimit: Int = 512
+// Free-list heads follow the bump pointer and the region end; the state ends
+// before the first block is cut.
+private let headsOffset: Int = 16
+private let stateBytes: Int = 512
+private let largestRequest: Int = 4611686018427387904
+
+private func outOfMemory(): Never {
+    panic(message: literalAddress(text: "out of memory"))
+}
+
+private func request(size: Int): Int {
+    if size < 0 { panic(message: literalAddress(text: "negative allocation size")) }
+    if size == 0 { return 1 }
+    return size
+}
+
+private func count(delta: Int): Int {
+    return atomicAdd(address: staticSlot(index: counterSlot), delta: delta)
+}
+
+// The allocator state, created with the first region on first use.
+private func state(): Int {
+    let slot = staticSlot(index: stateSlot)
+    var base = load64(address: slot) as Int
+    if base == 0 {
+        base = mapPages(size: regionBytes)
+        if base == 0 { outOfMemory() }
+        store64(address: slot, value: base as UInt64)
+        store64(address: base, value: (base + stateBytes) as UInt64)
+        store64(address: base + 8, value: (base + regionBytes) as UInt64)
+    }
+    return base
+}
+
+// The size class of a request of `size` bytes (1 to smallLimit).
+private func classIndex(size: Int): Int {
+    if size <= fineLimit { return (size + granule - 1) / granule - 1 }
+    var power = fineLimit
+    var octave = 0
+    while power * 2 < size {
+        power = power * 2
+        octave = octave + 1
+    }
+    let step = power / 4
+    let quarter = (size - power + step - 1) / step
+    return fineClasses + octave * 4 + quarter - 1
+}
+
+// The bytes of a block of class `index`.
+private func classBytes(index: Int): Int {
+    if index < fineClasses { return (index + 1) * granule }
+    let octave = (index - fineClasses) / 4
+    let quarter = (index - fineClasses) % 4 + 1
+    var power = fineLimit
+    var step = 0
+    while step < octave {
+        power = power * 2
+        step = step + 1
+    }
+    return power + quarter * (power / 4)
+}
+
+// A request above smallLimit gets whole pages.
+private func largeBytes(size: Int): Int {
+    if size > largestRequest { outOfMemory() }
+    return (size + pageBytes - 1) / pageBytes * pageBytes
+}
+
+private func takeSmall(size: Int): Int {
+    let base = state()
+    let index = classIndex(size: size)
+    let head = base + headsOffset + index * 8
+    let free = load64(address: head) as Int
+    if free != 0 {
+        store64(address: head, value: load64(address: free))
+        return free
+    }
+    let bytes = classBytes(index: index)
+    var cursor = load64(address: base) as Int
+    var end = load64(address: base + 8) as Int
+    if cursor + bytes > end {
+        // The rest of the region (under smallLimit bytes) is abandoned.
+        cursor = mapPages(size: regionBytes)
+        if cursor == 0 { outOfMemory() }
+        end = cursor + regionBytes
+        store64(address: base + 8, value: end as UInt64)
+    }
+    store64(address: base, value: (cursor + bytes) as UInt64)
+    return cursor
+}
+
+private func take(size: Int): Int {
+    if size <= smallLimit { return takeSmall(size: size) }
+    let address = mapPages(size: largeBytes(size: size))
+    if address == 0 { outOfMemory() }
+    return address
+}
+
+private func give(address: Int, size: Int): Void {
+    if size > smallLimit {
+        unmapPages(address: address, size: largeBytes(size: size))
+        return
+    }
+    let head = state() + headsOffset + classIndex(size: size) * 8
+    store64(address: address, value: load64(address: head))
+    store64(address: head, value: address as UInt64)
+}
+
+// Whether two request sizes are served by blocks of the same size.
+private func sameBlock(first: Int, second: Int): Bool {
+    if first <= smallLimit && second <= smallLimit {
+        return classIndex(size: first) == classIndex(size: second)
+    }
+    if first > smallLimit && second > smallLimit {
+        return largeBytes(size: first) == largeBytes(size: second)
+    }
+    return false
+}
+
+@c_export(symbol: "joyeer_alloc")
+public func allocate(size: Int): Int {
+    let address = take(size: request(size: size))
+    count(delta: 1)
+    return address
+}
+
+// A block moved or grown in place is still one block: the counter is unchanged.
+@c_export(symbol: "joyeer_realloc")
+public func reallocate(address: Int, oldSize: Int, newSize: Int): Int {
+    if address == 0 { return allocate(size: newSize) }
+    let before = request(size: oldSize)
+    let after = request(size: newSize)
+    if sameBlock(first: before, second: after) { return address }
+    let moved = take(size: after)
+    var kept = before
+    if after < kept { kept = after }
+    copyBytes(destination: moved, source: address, count: kept)
+    give(address: address, size: before)
+    return moved
+}
+
+@c_export(symbol: "joyeer_free")
+public func release(address: Int, size: Int): Void {
+    if address == 0 { return }
+    let previous = count(delta: -1)
+    if previous <= 0 { panic(message: literalAddress(text: "runtime allocation counter underflow")) }
+    give(address: address, size: request(size: size))
+}
+
+@c_export(symbol: "joyeer_runtime_active_allocations")
+public func activeAllocations(): Int {
+    return count(delta: 0)
+}

@@ -1,0 +1,15 @@
+// Destroys `count` elements in reverse order by calling `function` on each
+// element's address, as the runtime's array destruction does with a generated
+// destroy function. Used only to measure the cost of an indirect call from
+// Joyeer against the same loop in C (indirect-benchmark.c).
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+private func callVoid1(function: Int, first: Int): Void
+
+@c_export(symbol: "cinterop_destroy_all")
+public func destroyAll(function: Int, base: Int, count: Int, stride: Int): Void {
+    var index = count
+    while index > 0 {
+        index = index - 1
+        callVoid1(function: function, first: base + index * stride)
+    }
+}

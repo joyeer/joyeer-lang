@@ -1,0 +1,9 @@
+// A Joyeer function exported to C that does not return (the shape of the
+// runtime's panic). Called from never-export-caller.c.
+@c_extern(symbol: "exit")
+private func exitProcess(status: Int32): Never
+
+@c_export(symbol: "cinterop_finish")
+public func finish(status: Int32): Never {
+    exitProcess(status: status)
+}

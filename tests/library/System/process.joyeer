@@ -1,0 +1,149 @@
+import System
+import Foundation
+
+// Tests for runProcess (spec §18.3) as `System` provides it. Outcomes are
+// rendered by case, not by platform code; a case the platforms word
+// differently lists its alternatives.
+
+func describeRun(outcome: Result<ProcessStatus, ProcessError>): String {
+    return match outcome {
+        .Ok(status) => "ok:" + processStatusMessage(status: status),
+        .Err(error) => match error {
+            .InvalidInput(_) => "err:InvalidInput",
+            .NotFound(_) => "err:NotFound",
+            .PermissionDenied(_) => "err:PermissionDenied",
+            .LaunchFailed(_) => "err:LaunchFailed",
+            .WaitFailed(_) => "err:WaitFailed",
+        },
+    }
+}
+
+func runs(label: String, executable: String, arguments: [String], directory: String, expected: [String]): Int {
+    let actual = describeRun(outcome: System.runProcess(
+        executable: executable, arguments: arguments, workingDirectory: directory))
+    for option in expected {
+        if option == actual { return 0 }
+    }
+    print(value: "UNEXPECTED " + label)
+    print(value: "  expected one of: " + joinNames(names: expected))
+    print(value: "  actual:          " + actual)
+    return 1
+}
+
+func produces(label: String, executable: String, arguments: [String], directory: String, expected: String): Int {
+    return runs(label: label, executable: executable, arguments: arguments, directory: directory, expected: [expected])
+}
+
+@platform(windows)
+func shell(): String { return "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" }
+
+@platform(posix)
+func shell(): String { return "/bin/sh" }
+
+@platform(windows)
+func exitArguments(code: Int): [String] { return ["-NoProfile", "-NonInteractive", "-Command", "exit " + decimalString(value: code)] }
+
+@platform(posix)
+func exitArguments(code: Int): [String] { return ["-c", "exit " + decimalString(value: code)] }
+
+func expectQuoted(label: String, argument: String, expected: String): Int {
+    let actual = windowsQuote(argument: argument)
+    if actual == expected { return 0 }
+    print(value: "QUOTE " + label + ": " + actual + " != " + expected)
+    return 1
+}
+
+func testQuoting(): Int {
+    var failures = 0
+    failures = failures + expectQuoted(label: "plain", argument: "abc", expected: "\"abc\"")
+    failures = failures + expectQuoted(label: "empty", argument: "", expected: "\"\"")
+    failures = failures + expectQuoted(label: "space", argument: "with spaces", expected: "\"with spaces\"")
+    failures = failures + expectQuoted(label: "quote", argument: "a\"b", expected: "\"a\\\"b\"")
+    failures = failures + expectQuoted(label: "trailing slash", argument: "dir\\", expected: "\"dir\\\\\"")
+    failures = failures + expectQuoted(label: "slash before quote", argument: "a\\\"b", expected: "\"a\\\\\\\"b\"")
+    failures = failures + expectQuoted(label: "inner slash", argument: "a\\b", expected: "\"a\\b\"")
+    failures = failures + expectQuoted(label: "metacharacters", argument: "$&*%x", expected: "\"$&*%x\"")
+    failures = failures + expectQuoted(label: "unicode", argument: "é", expected: "\"é\"")
+    return failures
+}
+
+public func testProcess(): Int {
+    var failures = testQuoting()
+    let here = "."
+    let none: [String] = []
+    failures = failures + produces(label: "exit zero", executable: shell(),
+        arguments: exitArguments(code: 0), directory: here, expected: "ok:exited with status 0")
+    failures = failures + produces(label: "exit seven", executable: shell(),
+        arguments: exitArguments(code: 7), directory: here, expected: "ok:exited with status 7")
+    failures = failures + produces(label: "exit large", executable: shell(),
+        arguments: exitArguments(code: 3000), directory: here,
+        expected: hostValue(windows: "ok:exited with status 3000", posix: "ok:exited with status 184"))
+    failures = failures + produces(label: "missing executable", executable: shell() + ".missing",
+        arguments: none, directory: here, expected: "err:NotFound")
+    failures = failures + produces(label: "executable is directory", executable: ".",
+        arguments: none, directory: here, expected: "err:PermissionDenied")
+    failures = failures + produces(label: "missing directory", executable: shell(),
+        arguments: exitArguments(code: 0), directory: "no-such-directory-for-process-test", expected: "err:NotFound")
+    failures = failures + produces(label: "directory is a file", executable: shell(),
+        arguments: exitArguments(code: 0), directory: shell(), expected: "err:NotFound")
+    failures = failures + produces(label: "empty executable", executable: "", arguments: none,
+        directory: here, expected: "err:InvalidInput")
+    failures = failures + produces(label: "empty directory", executable: shell(), arguments: none,
+        directory: "", expected: "err:InvalidInput")
+    failures = failures + produces(label: "nul executable", executable: "a\0b", arguments: none,
+        directory: here, expected: "err:InvalidInput")
+    failures = failures + produces(label: "nul argument", executable: shell(), arguments: ["a\0b"],
+        directory: here, expected: "err:InvalidInput")
+    failures = failures + produces(label: "nul directory", executable: shell(), arguments: none,
+        directory: "a\0b", expected: "err:InvalidInput")
+    return failures + testProcessPlatform()
+}
+
+// Windows does not run batch files without a command interpreter (§18.3).
+@platform(windows)
+func testProcessPlatform(): Int {
+    let directory = claimDirectory(prefix: "process-test-")
+    if directory == "" { return 1 }
+    let script = directory + "\\run.cmd"
+    var failures = 0
+    let created = describeUnit(outcome: System.writeFileNew(path: script, contents: "@exit 0\r\n"))
+    if created != "ok" {
+        print(value: "SETUP batch file: " + created)
+        failures = failures + 1
+    }
+    failures = failures + produces(label: "working directory", executable: shell(),
+        arguments: ["-NoProfile", "-NonInteractive", "-Command",
+            "if ((Get-Location).Path.EndsWith('" + directory + "')) { exit 0 } else { exit 9 }"],
+        directory: directory, expected: "ok:exited with status 0")
+    failures = failures + produces(label: "batch file", executable: script, arguments: [], directory: ".",
+        expected: "err:LaunchFailed")
+    failures = failures + produces(label: "empty argument", executable: shell(),
+        arguments: ["-NoProfile", "-NonInteractive", "-Command", "exit 0", ""], directory: ".",
+        expected: "ok:exited with status 0")
+    ignoreUnit(outcome: System.removeFile(path: script))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
+    return failures
+}
+
+// A signal is reported as a signal, and a file without the execute bit is a
+// permission failure.
+@platform(posix)
+func testProcessPlatform(): Int {
+    let directory = claimDirectory(prefix: "process-test-")
+    if directory == "" { return 1 }
+    let plain = directory + "/plain"
+    var failures = 0
+    if describeUnit(outcome: System.writeFileNew(path: plain, contents: "x")) != "ok" { failures = failures + 1 }
+    failures = failures + produces(label: "signal", executable: shell(),
+        arguments: ["-c", "kill -9 $$"], directory: ".", expected: "ok:terminated by signal 9")
+    failures = failures + produces(label: "working directory", executable: shell(),
+        arguments: ["-c", "case \"$(pwd)\" in *" + directory + ") exit 0;; *) exit 9;; esac"],
+        directory: directory, expected: "ok:exited with status 0")
+    failures = failures + produces(label: "not executable", executable: plain, arguments: [], directory: ".",
+        expected: "err:PermissionDenied")
+    failures = failures + produces(label: "empty argument", executable: shell(),
+        arguments: ["-c", "exit 0", ""], directory: ".", expected: "ok:exited with status 0")
+    ignoreUnit(outcome: System.removeFile(path: plain))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
+    return failures
+}

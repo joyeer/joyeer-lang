@@ -1,3 +1,5 @@
+import System
+
 // Shared byte-oriented helpers. All files are compiled in fern.app.
 struct ToolError {
     let message: String

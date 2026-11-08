@@ -221,9 +221,15 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
             auto* base = argument(0);
             auto* index = argument(1);
             if (baseType.kind == typing::TypeKind::string && !addressResult) {
-                result = call("joyeer_string_byte_at_abi", builder.getInt8Ty(),
-                        {builder.CreateExtractValue(base, 0, temporary()),
-                         builder.CreateExtractValue(base, 1, temporary()), index});
+                // Byte access is inline: a checked index, then one load. The
+                // runtime has no function for it.
+                auto* data = builder.CreateExtractValue(base, 0, temporary());
+                auto* count = builder.CreateExtractValue(base, 1, temporary());
+                auto* negative = builder.CreateICmpSLT(index, integer(0), temporary());
+                auto* pastEnd = builder.CreateICmpSGE(index, count, temporary());
+                trap(builder.CreateOr(negative, pastEnd, temporary()), "string index out of bounds");
+                result = builder.CreateLoad(builder.getInt8Ty(),
+                        builder.CreateGEP(builder.getInt8Ty(), data, index, temporary()), temporary());
                 return true;
             }
             if (addressResult) base = builder.CreateLoad(llvmType(baseId), base, temporary());

@@ -1,3 +1,5 @@
+import System
+
 func load(path: String): Result<String, IOError> {
     let contents = readFile(path: path)?
     return .Ok(contents)

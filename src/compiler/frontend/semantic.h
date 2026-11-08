@@ -157,6 +157,7 @@ public:
     [[nodiscard]] bool isAccessible(SymbolId symbol, SourceSpan use) const;
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
     [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
+    [[nodiscard]] bool isCoreSource(SourceSpan span) const;
 
 private:
     friend class NameResolutionBuilder;
@@ -183,6 +184,7 @@ private:
     std::unordered_map<NodeId, size_t> deferredReferenceIndices_;
     std::unordered_map<uint32_t, uint32_t> sourceModules_;
     std::unordered_map<uint32_t, bool> runtimeSources_;
+    std::unordered_map<uint32_t, bool> coreSources_;
     std::unordered_map<NodeId, bool> moduleQualified_;
 };
 

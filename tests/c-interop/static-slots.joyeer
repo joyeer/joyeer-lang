@@ -1,0 +1,42 @@
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+func atomicAdd(address: Int, delta: Int): Int
+
+func exercise(): Int {
+    // The table starts zeroed apart from the runtime's own slots (0 to 39, runtime plan §5),
+    // and its slots are eight bytes apart.
+    var index = 40
+    while index < 64 {
+        if load64(address: slot(index: index)) != 0 { return 1 }
+        index = index + 1
+    }
+    if slot(index: 1) - slot(index: 0) != 8 { return 2 }
+    if slot(index: 63) - slot(index: 0) != 504 { return 3 }
+    // The same index is the same address, and slots do not alias.
+    store64(address: slot(index: 5), value: 41)
+    if load64(address: slot(index: 5)) != 41 { return 4 }
+    if load64(address: slot(index: 4)) != 0 || load64(address: slot(index: 6)) != 0 { return 5 }
+    // The intrinsics compose: an atomic add on a slot.
+    if atomicAdd(address: slot(index: 5), delta: 1) != 41 { return 6 }
+    if load64(address: slot(index: 5)) != 42 { return 7 }
+    // Slots are 8-byte aligned, as the atomic add requires.
+    if slot(index: 0) % 8 != 0 { return 8 }
+    return 0
+}
+
+func main() {
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    print(value: "static slots passed")
+}

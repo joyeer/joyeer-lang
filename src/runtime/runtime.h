@@ -39,57 +39,58 @@ enum JoyeerDictionaryKeyKind {
     JOYEER_DICTIONARY_KEY_BYTE = 4,
 };
 
-enum JoyeerIOErrorKind {
-    JOYEER_IO_ERROR_NONE = 0,
-    JOYEER_IO_ERROR_NOT_FOUND = 1,
-    JOYEER_IO_ERROR_PERMISSION_DENIED = 2,
-    JOYEER_IO_ERROR_INVALID_PATH = 3,
-    JOYEER_IO_ERROR_OTHER = 4,
-};
-
-enum JoyeerStderrErrorKind {
-    JOYEER_STDERR_ERROR_NONE = 0,
-    JOYEER_STDERR_ERROR_WRITE_FAILED = 1,
-};
-
-enum JoyeerStdinErrorKind {
-    JOYEER_STDIN_ERROR_NONE = 0,
-    JOYEER_STDIN_ERROR_END_OF_INPUT = 1,
-    JOYEER_STDIN_ERROR_LINE_TOO_LONG = 2,
-    JOYEER_STDIN_ERROR_READ_FAILED = 3,
-};
-
+// Writes `Joyeer runtime error: <message>` to standard error and exits with
+// status 1; a null message reads "unknown error". Written in Joyeer
+// (src/runtime/joyeer/panic.joyeer) and exported with this C ABI.
 JOYEER_NORETURN void joyeer_panic(const char* message);
+
+// The runtime allocator and its leak counter, written in Joyeer
+// (src/runtime/joyeer/allocator.joyeer). A size is the byte count the block was
+// last requested with (a zero-byte request is served as one byte), passed back to
+// `joyeer_realloc` and `joyeer_free`. All three panic rather than return failure.
+void* joyeer_alloc(size_t size);
+void* joyeer_realloc(void* address, size_t oldSize, size_t newSize);
+void joyeer_free(void* address, size_t size);
+// Blocks allocated and not yet freed.
 int64_t joyeer_runtime_active_allocations(void);
 
-int64_t joyeer_checked_add_int(int64_t left, int64_t right);
-int64_t joyeer_checked_sub_int(int64_t left, int64_t right);
-int64_t joyeer_checked_mul_int(int64_t left, int64_t right);
-int64_t joyeer_checked_div_int(int64_t left, int64_t right);
-int64_t joyeer_checked_rem_int(int64_t left, int64_t right);
+// The process's standard streams, written in Joyeer straight over the operating system
+// (src/runtime/joyeer/streams.joyeer). Standard output is buffered and shared with `print`;
+// standard error is not. Each returns 0 or an errno-style code (9, 13, 28, 32, 5).
+int32_t joyeer_stdout_write(const uint8_t* data, int64_t count);
+int32_t joyeer_stdout_flush(void);
+int32_t joyeer_stderr_write(const uint8_t* data, int64_t count);
+// The next byte of standard input (0 to 255), -1 at the end of the input, or a negated
+// error code (-2 or below).
+int32_t joyeer_stdin_read_byte(void);
+// Drops the buffered, unread standard input (for a program that redirects its own).
+void joyeer_stdin_discard(void);
+// True when the bytes are strict UTF-8: no overlong sequence, surrogate,
+// truncated sequence or code point beyond U+10FFFF. Null data is valid only for
+// a count of zero; a negative count is invalid. Written in Joyeer
+// (src/runtime/joyeer/utf8.joyeer) and exported with this C ABI.
+bool joyeer_host_valid_utf8(const uint8_t* data, int64_t count);
 
 void joyeer_print_int(int64_t value);
 void joyeer_print_uint(uint64_t value);
+// `print` of a Float (9 significant digits) or Double (17), written in Joyeer
+// (src/runtime/joyeer/floats.joyeer, print.joyeer).
 void joyeer_print_float(float value);
 void joyeer_print_double(double value);
+// Formats `value` like the C library's `%.<precision>g` (precision 1 to 17, NaN as
+// `nan`) into `buffer`, which must hold 40 bytes, with no terminator. Returns the
+// number of bytes written.
+int64_t joyeer_format_double_abi(char* buffer, int32_t precision, double value);
+int64_t joyeer_format_float_abi(char* buffer, int32_t precision, float value);
 void joyeer_print_bool(bool value);
 void joyeer_print_byte(uint8_t value);
-void joyeer_print_string(JoyeerString value);
 
-JoyeerString joyeer_string_concat(JoyeerString left, JoyeerString right);
-bool joyeer_string_equal(JoyeerString left, JoyeerString right);
-int64_t joyeer_string_compare(JoyeerString left, JoyeerString right);
-uint8_t joyeer_string_byte_at(JoyeerString value, int64_t index);
-void joyeer_string_destroy(JoyeerString* value);
 void joyeer_string_clone_abi(
     JoyeerString* result,
     const uint8_t* data,
     int64_t count);
 void joyeer_string_destroy_abi(JoyeerString* value);
 
-JoyeerArray joyeer_array_create(const void* values, int64_t count, int64_t elementSize);
-void* joyeer_array_at(JoyeerArray array, int64_t index);
-void joyeer_array_destroy(JoyeerArray* array);
 void joyeer_array_create_owned_abi(
     JoyeerArray* result,
     const void* values,
@@ -106,20 +107,6 @@ void joyeer_array_append_owned_abi(
     const void* element);
 void joyeer_array_destroy_abi(JoyeerArray* array);
 
-JoyeerDictionary joyeer_dictionary_create(
-        const void* entries,
-        int64_t count,
-        int64_t keySize,
-        int64_t valueSize,
-        int64_t entrySize,
-        int64_t valueOffset,
-        int32_t keyKind);
-void* joyeer_dictionary_at(
-        JoyeerDictionary dictionary,
-        const void* key,
-        int64_t keySize,
-        int32_t keyKind);
-void joyeer_dictionary_destroy(JoyeerDictionary* dictionary);
 void joyeer_dictionary_create_owned_abi(
     JoyeerDictionary* result,
     const void* entries,
@@ -146,30 +133,6 @@ void joyeer_dictionary_destroy_abi(JoyeerDictionary* dictionary);
 // Stable compiler ABI. These functions deliberately avoid passing or
 // returning C structs by value, whose ABI differs across targets.
 void joyeer_print_string_abi(const uint8_t* data, int64_t count);
-// Writes borrowed arbitrary bytes without a newline and flushes stderr,
-// including for an empty input. Returns 0 on success (errorCode = 0) or
-// 1 for WriteFailed (native CRT errno, or EIO if unavailable). Windows
-// temporarily uses binary CRT mode and restores the previous mode.
-// Null error storage, a negative/unrepresentable count, or null nonempty
-// data is ABI misuse and panics, like the other host write operations.
-int32_t joyeer_write_stderr_abi(
-    int64_t* errorCode,
-    const uint8_t* data,
-    int64_t count);
-// Reads one line from stdin (spec 18.5). Success returns 0 with an owned
-// String in *result and *errorCode = 0. Failures return the
-// JoyeerStdinErrorKind tag and leave *result untouched: 1 EndOfInput and
-// 2 LineTooLong carry code 0; 3 ReadFailed carries the native errno (EINVAL
-// for a negative limit). A line ends at LF; one preceding CR is removed; a
-// final unterminated line is returned. At most maximumBytes + 1 bytes of a
-// line are held, and an over-long line is consumed through its terminator.
-// Flushes stdout first (failure ignored). Windows switches stdin to binary mode
-// on first use. Null result or error
-// storage is ABI misuse and panics.
-int32_t joyeer_read_stdin_line_abi(
-    JoyeerString* result,
-    int64_t* errorCode,
-    int64_t maximumBytes);
 void joyeer_string_concat_abi(
     JoyeerString* result,
     const uint8_t* leftData,
@@ -186,35 +149,7 @@ int64_t joyeer_string_compare_abi(
     int64_t leftCount,
     const uint8_t* rightData,
     int64_t rightCount);
-uint8_t joyeer_string_byte_at_abi(const uint8_t* data, int64_t count, int64_t index);
 void joyeer_byte_to_string_abi(JoyeerString* result, uint8_t value);
-
-// Returns a stable JoyeerIOErrorKind and writes either an owned String or the
-// original platform error code. The compiler constructs Result<String,
-// IOError>, so this ABI does not depend on frontend enum tags or aggregate
-// layout.
-int32_t joyeer_read_file_abi(
-    JoyeerString* result,
-    int64_t* errorCode,
-    const uint8_t* pathData,
-    int64_t pathCount);
-
-void joyeer_array_create_abi(
-    JoyeerArray* result,
-    const void* values,
-    int64_t count,
-    int64_t elementSize);
-void* joyeer_array_at_abi(void* data, int64_t count, int64_t index);
-
-void joyeer_dictionary_create_abi(
-    JoyeerDictionary* result,
-    const void* entries,
-    int64_t count,
-    int64_t keySize,
-    int64_t valueSize,
-    int64_t entrySize,
-    int64_t valueOffset,
-    int32_t keyKind);
 void* joyeer_dictionary_at_abi(
     void* data,
     int64_t count,

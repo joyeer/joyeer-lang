@@ -1,9 +1,11 @@
 # Runtime Implementation
 
-The C11 runtime is declared in `src/runtime/runtime.h`, with portable
-host ABIs in `src/runtime/filesystem.h` and
-`src/runtime/process.h`. Its implementation lives under
-`src/runtime/`, including shared strict UTF-8 host conversion. The
+The runtime is declared in `src/runtime/runtime.h`. Almost all of it is Joyeer
+(`src/runtime/joyeer/`): UTF-8 validation, string equality and ordering, owned strings,
+arrays, dictionaries, the native buffer helpers, `print` for every scalar,
+`joyeer_panic`, the allocator with its leak counter, and the program entry. The
+build-tree compiler compiles it into three objects in the same archive (the core; the entry
+logic with the Windows `joyeer_start`; and the C `main`/`wmain` wrappers); `runtime.c` holds no code now ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -11,8 +13,8 @@ The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
 
-The [hybrid runtime plan](../plan/hybrid-runtime.md) proposes incremental
-Joyeer implementations behind the existing runtime interfaces; this document
+The [runtime plan](../plan/runtime-in-joyeer.md) describes how the whole runtime moves
+into Joyeer behind the existing runtime interfaces; this document
 describes the current C implementation. Public library modules and their
 separate fern workflow are tracked in the [library plan](../plan/library.md).
 The [C binding implementation](c-interop.md) supports the restricted
@@ -21,13 +23,13 @@ It does not replace any production C algorithm or compiler-known runtime
 interface described here.
 
 It supplies checked `Int` add/subtract/multiply/divide/remainder, scalar/string printing,
-string storage and operations, arrays and dictionaries, binary file input,
-portable filesystem operations, synchronous processes, fallible byte-exact
-standard-error writing, panic and bounds
-traps, and the process entry and allocation-balance check.
+string storage and operations, arrays and dictionaries, scalar and string
+printing, panic and bounds traps, and the process entry and allocation-balance
+check. File, filesystem, process and standard-stream operations are in the
+`System` module instead (see Host operations below).
 Generated Joyeer arithmetic and typed array accesses use inline LLVM checks;
-the checked arithmetic and generic array-indexing C entry points remain
-available for runtime clients. String and dictionary accesses use runtime
+the runtime has no checked-arithmetic or array-indexing entry points of its own
+(the former ones were removed in runtime plan stage 0). String and dictionary accesses use runtime
 operations. The LLVM emitter generates `joyeer_main` and implements
 `String.utf8()` using the runtime's owned-array creation API; neither is a
 dedicated C runtime operation.
@@ -35,11 +37,12 @@ dedicated C runtime operation.
 Scalar printing includes all integer widths, `Float`, and `Double`. Signed
 integers use the existing 64-bit printer after sign extension; unsigned
 integers use an unsigned printer after zero extension. Floating printers use
-9 and 17 significant decimal digits, respectively. These internal printing
+9 and 17 significant decimal digits, respectively, written exactly like the C
+library's `%.9g` and `%.17g` ([decision 0010](../decisions/0010-floating-point-printing.md)). These internal printing
 adaptations do not introduce implicit conversions at explicit C bindings.
 
 Checked `Int` division truncates toward zero; a nonzero remainder has the
-dividend's sign. Both `joyeer_checked_div_int` and `joyeer_checked_rem_int`
+dividend's sign. The generated checks
 panic on a zero divisor or `INT64_MIN` with divisor `-1`, before evaluating
 the C arithmetic operation. The generated LLVM checks have the same behavior
 at every optimization level. Diagnostics distinguish `integer division by
@@ -58,10 +61,13 @@ status (zero for parameterless `main`). No collection is passed by value
 across the generated-module/runtime boundary. Missing and invalid entry
 signatures produce compiler diagnostics, not platform linker errors.
 
-The C entry omits the executable name and preserves argument boundaries,
+The entry (`src/runtime/joyeer/entry.joyeer`, Joyeer) omits the executable name and preserves argument boundaries,
 empty arguments, and spaces. POSIX arguments preserve their original bytes.
-Windows uses `wmain` and converts UTF-16 arguments to UTF-8, rejecting invalid
-encoding. The runtime owns the array until the Joyeer function has returned
+Windows converts UTF-16 arguments to UTF-8, rejecting invalid
+encoding. A Windows program that calls no C library starts at `joyeer_start`, which splits
+`GetCommandLineW` by the C runtime's rules and never initialises the C runtime; one that does,
+or that links a native library, keeps the C startup and `wmain` (the linker reads the program
+object's undefined symbols to decide, [decision 0011](../decisions/0011-runtime-without-the-c-library.md)). The runtime owns the array until the Joyeer function has returned
 and cleaned its local values and temporaries. It then destroys the argument
 storage and checks the runtime-managed allocation balance. Leaks fail the
 process; otherwise an exit status in `0..255` is returned. An out-of-range
@@ -76,7 +82,9 @@ prelude's `byteToInt(value:)` zero-extends `UInt8` to signed 64-bit `Int`;
 `byteToString(value:)` creates an owned byte using
 `joyeer_byte_to_string_abi`, so normal cleanup applies.
 
-The runtime uses libc allocation. Collection allocations retain element
+The runtime allocates through `joyeer_alloc`, `joyeer_realloc` and `joyeer_free`
+(Joyeer, `allocator.joyeer`), a size-class allocator over `VirtualAlloc` / `mmap` that keeps the leak counter
+(decision [0011](../decisions/0011-runtime-without-the-c-library.md)). Collection allocations retain element
 layout and clone/destroy callbacks. On the current 64-bit layout, private
 headers occupy 24 bytes for arrays and 72 bytes for dictionaries, before
 payload and allocator overhead. These callbacks can introduce indirect
@@ -86,8 +94,8 @@ relaxed atomic balance counter; this is accounting, not reference counting.
 Joyeer IR `copy`, `take`, and `destroy` operations lower to generated per-type
 LLVM helpers, which recurse through structs and tagged payloads and call
 runtime string/collection operations. Scope lowering destroys owned storage
-and temporaries in reverse order on normal and early-return paths. The C
-entry checks the allocation count after the generated function returns and
+and temporaries in reverse order on normal and early-return paths. The
+Joyeer entry checks the allocation count after the generated function returns and
 its borrowed argument storage is destroyed, making integration-test leaks
 observable. The balance covers runtime-managed storage, not arbitrary future
 unsafe/native allocations; zero outstanding allocations does not mean the
@@ -143,177 +151,53 @@ success payload. Arrays and dictionaries can store zero-sized unit values
 while retaining their metadata, allocation, count, and bounds behavior. No
 new runtime allocation or destruction API is introduced for unit values.
 
-## File input
+## Host operations
 
-The current prelude exposes:
+File input, the portable filesystem, synchronous processes, standard-error
+writing and standard-input line reading are not part of the C runtime. They are
+ordinary Joyeer functions in the `System` standard module
+([spec §18](../spec/18-host.md)): `readFile` (legacy), `readFileUtf8`,
+`readFilePrefix`, `writeFileNew`, `createDirectory`, `listDirectory`,
+`fileKind`, `removeFile`, `removeDirectory`, `joinPath`, `runProcess`,
+`writeStderr` and `readStdinLine`. A program writes `import System`. The
+compiler knows no host function; it declares only the error and status
+enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
+`ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`) as prelude types,
+so user code and `System` share one definition.
 
-```joyeer
-readFile(path: String): Result<String, IOError>
-```
-
-`Ok` contains an owned, byte-preserving `String`, including embedded NUL
-bytes. `Err` contains `.NotFound(code)`, `.PermissionDenied(code)`,
-`.InvalidPath(code)`, or `.Other(code)` with a stable category and the nonzero
-platform C I/O error code. A function returning `Result<U, IOError>` may use
-`readFile(path: path)?` to propagate the same error type; an entry returning
-`Int` must handle its final result explicitly.
-
-Byte preservation does not establish valid UTF-8. The reader grows from a
-4096-byte buffer and retains spare capacity on success; `count` is the
-logical byte length, not allocated capacity. LLVM passes the path as
-pointer/count with owned-string and error-code out-pointers to
-`joyeer_read_file_abi`. The runtime returns a stable C ABI category; LLVM
-constructs the concrete `IOError` and `Result` tags without making the
-runtime depend on frontend case ordering or aggregate layout. A path with
-embedded NUL produces `InvalidPath`. Windows currently uses the active
-narrow-character CRT path encoding. This compatibility function is unchanged;
-new code can use the separate portable filesystem interface below.
-
-## Portable filesystem and process boundaries
-
-The source signatures and compatibility rules are specified in
-[portable host operations](../spec/18-host.md). The new functions are
-compiler-known borrowing operations, not source-language FFI. Filesystem
-operations return `Result<T, FileSystemError>`; `runProcess` returns
-`Result<ProcessStatus, ProcessError>`. The existing `IOError` cases and
-`readFile` result type are not extended or converted implicitly.
-
-`host.c` validates Unicode scalar UTF-8, excluding overlong sequences,
-surrogates, truncated sequences, and code points beyond U+10FFFF. Host string
-conversion additionally rejects embedded NUL and empty paths, while allowing
-empty process arguments. Windows conversion uses strict UTF-8/UTF-16 APIs.
-File contents are not passed through path validation and remain arbitrary
+`System` reaches the operating system through `@c_extern` bindings, authorized
+by the module's `native-bindings = true` ([§19](../spec/19-c-interop.md)): the
+Win32 API on Windows, the kernel on Linux and libSystem on macOS, selected per function by
+`@platform`.
+Per-platform files hold the primitives and one portable file holds the logic;
+see [decision 0003](../decisions/0003-pure-joyeer-filesystem.md),
+[0006](../decisions/0006-runprocess-in-joyeer.md) and
+[0007](../decisions/0007-stdio-in-joyeer.md). Paths are validated for UTF-8, an
+embedded NUL and emptiness before the host is asked, and become UTF-16 on
+Windows and UTF-8 on POSIX. Contents are never validated and remain arbitrary
 bytes.
 
-The private runtime ABI uses flat data/count inputs, scalar error-kind
-returns, and output pointers. No platform-dependent C aggregate is passed or
-returned by value. Runtime tags are stable constants in the host headers;
-the LLVM emitter maps them by source enum case name, rather than assuming
-that a source enum's declaration order is its C ABI representation.
+What the runtime still provides to them:
 
-| Operation group | Runtime outputs on success |
+| Symbol | Purpose |
 |---|---|
-| File read and lexical path join | Owned `JoyeerString` |
-| Directory listing | Owned `JoyeerArray` of owned `JoyeerString` names |
-| File classification | Scalar `JoyeerFileKind` |
-| Create-new write, mkdir, file removal, empty-directory removal | No payload; the compiler constructs `Ok(())` |
-| Synchronous process | Scalar completion kind and full signed-64-bit status storage |
+| `joyeer_stderr_write`, `joyeer_stdout_flush`, `joyeer_stdin_read_byte`, `joyeer_stdin_discard` | The standard streams, written straight over the operating system (`streams.joyeer`) |
+| `joyeer_string_clone_abi` and the array API | Construct owned `String` and `[String]` results |
+| `joyeer_host_valid_utf8` | Strict UTF-8 validation, shared with the Compression native unit |
 
-Failures return a stable category and original platform code, without
-publishing a partially owned success value. Returned strings and arrays use
-the ordinary tracked runtime allocation and recursive destruction paths.
-Host conversion buffers and OS resources have shorter native lifetimes and
-are released by the host operation.
-
-### Bounded prefix input
-
-`readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError>`
-uses the stable exported C ABI
-`int32_t joyeer_fs_read_file_prefix_abi(JoyeerString* result, int64_t* errorCode, const uint8_t* pathData, int64_t pathCount, int64_t maximumBytes)`.
-The string output is a pointer to runtime data/count storage, followed by the
-error-code pointer, borrowed path data/count, and the scalar signed-64-bit
-limit. No string or `Result` aggregate is passed by value. On success the
-runtime returns zero, clears the error code, and transfers one owned string;
-on failure the output stays empty and the original platform code is retained.
-
-The host descriptor declares concrete `String`/`Int` parameters and a
-`Result<String, FileSystemError>` result. `ValueKind::integer` maps to `Int`
-in name resolution and type checking. LLVM's flat host-call lowering matches
-an integer and emits one `i64` operand, rather than a string/array data-count
-pair. Ordinary Joyeer IR host-call collection consumes the descriptor;
-this needs no new IR opcode, source-language FFI, or user-defined generic
-support. Native macOS ARM64 Debug/Release acceptance covers zero, partial,
-exact, past-EOF and manifest-sentinel reads, negative limits, error paths,
-and allocation balance; see
-[macOS main acceptance](../building.md#macos-arm64-acceptance-on-main).
-
-The shared native reader keeps `readFileUtf8`'s unbounded growth and final-copy
-behavior unchanged. Prefix reads use the same strict UTF-8 path conversion,
-wide Windows `CreateFileW`/`ReadFile`, and narrow POSIX `open`/`read` behavior,
-including interrupted-read retry and resource cleanup. They read at most the
-requested bytes without querying a file size, reading the tail, or probing
-another byte after the cap. Contents are not decoded or UTF-8 validated; a
-prefix can cut a multibyte sequence. A zero limit still opens and closes the
-path before returning an owned empty string. The prefix reader does not itself
-require a regular file; fern's loader classifies the manifest first and
-rejects final symlinks and other nonregular entries. Negative limits return the
-existing `Other` tag with `ERROR_INVALID_PARAMETER` or `EINVAL` before path
-conversion, deliberately bypassing the invalid-path error mapper.
-
-Prefix storage starts as a one-byte tracked empty-string allocation, grows
-geometrically from at most 4096 bytes, and clamps every growth to
-`maximumBytes`. Reallocation preserves that single tracked libc block, which
-is transferred directly to the output without a second content copy. Content
-capacity cannot exceed the limit (one byte for an empty result); path
-conversion storage and native/allocator bookkeeping are separate. Early EOF
-can retain spare capacity within the cap. Read or close failure destroys this
-storage without publishing partial success. Ordinary
-`joyeer_string_destroy_abi` balances successful output ownership.
-
-For a 65,536-byte manifest limit, the caller requests 65,537 bytes and rejects
-a returned count above 65,536. A result exactly as long as the requested cap
-does not distinguish an exact-size file from a larger file. The caller should
-classify tool inputs using `fileKind` before reading to reject directories,
-links, and other nonregular entries; that check is not race-free confinement.
-This interface remains synchronous and bounded, not streaming. The legacy
-`readFile`/`IOError` boundary and all existing error enum cases are unchanged.
-
-### Other portable operations
-
-Exclusive creation enforces `writeFileNew`'s nonreplacement contract at the
-OS operation. A failed write can leave its own partially created file; it
-must not remove or replace an unrelated preexisting destination.
-`fileKind` examines the final link itself, `removeFile` unlinks the final
-entry, and `removeDirectory` handles only empty real directories. There is
-no recursive cleanup API or confinement guarantee.
-On Windows, ordinary-looking file attributes are not sufficient: DOS devices
-such as `NUL` can advertise them. Non-directory, non-reparse entries are
-classified through a metadata-only handle and its disk-file information.
-Character/pipe devices return `Other` without reading; query/open/close errors
-remain fallible host errors. Metadata inspection does not require data access,
-including for an exclusively opened ordinary file.
-
-Processes use an explicit executable path, an argument array, and a child
-working directory, without shell evaluation or PATH fallback. The runtime
-preserves native nonzero completion separately from launch/wait errors.
-Windows status values are widened without signed-32-bit truncation; POSIX
-signal completion remains distinct. Native standard streams and environment
-are inherited, and the parent's working directory is unchanged.
-
-## Standard-error boundary
-
-The exact source signature is
-`writeStderr(contents: String): Result<Void, StderrError>`, with the single
-`StderrError.WriteFailed(Int)` case. It is a compiler-known borrowing operation
-described by the same host builtin table as filesystem/process operations.
-Name resolution, concrete result typing, Joyeer IR lowering, and LLVM emission
-consume that descriptor; there is no dedicated stderr IR instruction or second
-error conversion path. The existing unit-result machinery constructs `Ok(())`
-without loading or storing LLVM `void`.
-
-The stable C ABI is
-`int32_t joyeer_write_stderr_abi(int64_t* errorCode, const uint8_t* data, int64_t count)`.
-It returns `0` with `*errorCode = 0` on success, or `1` with the native CRT
-`errno` for `WriteFailed` (falling back to `EIO` when none was supplied). LLVM
-maps that stable error kind to the source enum by case name. The runtime never
-receives a `Result` aggregate or owns the borrowed contents, and makes no
-runtime-tracked allocation.
-
-The implementation uses a byte-counted `fwrite`, appends nothing, and checks
-both short writes and `fflush(stderr)`. Empty contents still flush the stream.
-The first observed failure is retained even if a subsequent flush also fails.
-On Windows, pending CRT output is flushed before switching temporarily to
-`_O_BINARY`; the previous mode is restored after the write/flush, including
-the failure path. Mode failures are fallible CRT errors too. NUL, invalid UTF-8,
-and newline bytes are not transformed. This does not modify global console
-code pages or establish how a terminal displays arbitrary bytes.
-
-Null error-code storage, a negative count, a count unrepresentable as `size_t`,
-or null data with a nonzero count is ABI misuse and panics, matching the other
-host write/owned-value boundaries. Null data with count zero is valid.
-Failures may leave partial output; no rollback or message-level atomicity is
-guaranteed. Native signals (including default POSIX `SIGPIPE`) and concurrent
-foreign CRT mode/stream reconfiguration remain host concerns.
+Results use the ordinary tracked runtime allocation and recursive destruction.
+Failures carry the original platform code; categories are mapped to the enum
+cases in Joyeer. `readStdinLine` holds at most `maximumBytes + 1` bytes of a
+line, flushes standard output before it blocks, and reads bytes exactly (no
+text-mode translation, as nothing translates). `writeStderr` writes exactly its
+bytes without a trailing newline, at once. Both use the runtime's own streams, which
+talk to the operating system directly (decision
+[0011](../decisions/0011-runtime-without-the-c-library.md)), so no C library buffer,
+mode or `errno` is involved; failures carry errno-style codes (9, 13, 28, 32, 5). On Windows
+the whole of `System` now calls only `kernel32`, including the legacy narrow-path
+`readFile` (`CreateFileA`, with the C library's mapping of system errors to `errno`
+codes). On Linux the file, directory and process operations are system calls
+(`filesystem_linux.joyeer`, `process_linux.joyeer`); macOS calls libSystem.
 
 ## Limits and validation
 
@@ -329,11 +213,15 @@ See the
 [backend limitations](backend.md#5-known-limitations) and
 [IR verification bounds](ir.md#5-verification) for other gaps.
 
-Panic flushes stderr and uses C11 `_Exit` with a nonzero status, avoiding
-platform crash dialogs while remaining unrecoverable.
+Panic writes any buffered standard output, then its message to standard error, directly
+through the system interface (`WriteFile`, the Linux `write` system call, libSystem), and ends the
+process with `ExitProcess`, `exit_group` or `_exit` and status 1, avoiding platform crash dialogs
+while remaining unrecoverable. `print` and a panic share one standard output buffer
+([decision 0011](../decisions/0011-runtime-without-the-c-library.md)).
+
 
 Focused test labels include `runtime`, `native`, `file-io`, `filesystem`,
-`process`, and `host`.
+`process`, `stdin` and `host`.
 Native tests verify string/collection ownership, runtime traps, argument
 boundaries, return statuses, and zero final allocation balance. Entry tests
 cover both `main` forms, empty and spaced arguments, Unicode arguments,
@@ -345,66 +233,27 @@ captures Joyeer compiler and program output with explicit UTF-8 encoding.
 On Windows this avoids CMake's policy-dependent `AUTO` decoding through the
 console code page; it does not change the program's output bytes or the
 console code page.
-File-input tests cover binary data and missing files.
-Stderr unit coverage in the existing runtime test target checks empty writes,
-binary bytes including NUL/invalid UTF-8/newlines, no appended newline, Windows
-CRT mode restoration, write and buffered/empty flush failures with the native
-CRT error code, and misuse traps. Failure injection is isolated in death-test
-subprocesses rather than modifying the test runner's standard-error descriptor.
-Portable host tests cover Unicode, malformed encoding, create-new
-preservation, classification/enumeration, empty-directory removal, link-target
-preservation, argument quoting, completion statuses, inherited streams and
-environment, explicit executable resolution, and unchanged parent directories.
-Prefix unit coverage includes zero/partial/exact/greater-than-EOF limits,
-arbitrary binary bytes and cuts inside UTF-8, clamped growth and the 65,537-byte
-manifest sentinel, negative-limit platform errors, opening/validation at zero,
-and allocation balances on success and failure. Compiler coverage checks the
-descriptor, exact `String`/`Int` signature, unchanged exhaustive filesystem
-errors, same-error propagation, rejection of incorrect types/error conversions,
-verified IR scalar operands, and the flat prefix ABI with full debug emission.
-Source-level host fixtures exercise concrete result types, early propagation,
-owned outputs, unit successes, optimization, and full debug emission.
-Host compiler unit tests additionally exercise `StderrError` construction and
-matching, same-error propagation, rejection of implicit error conversions,
-the flat stderr ABI declaration/call, and full-debug unit-result emission.
-Existing ownership-heavy native tests run at the default `-O2` and retain
-the zero-allocation-balance check. Many native executable tests are registered
-only when `JOYEER_CLANG_EXECUTABLE` was found during CMake configuration; see
+
+The host operations are tested through the language. `SystemTests`
+([tests/library/System](../../tests/library/System)) runs under `fern test` and
+states the expected result of each scenario, rendered by error case rather than
+platform code, with the Windows and POSIX values or alternatives where the
+platforms genuinely differ. It covers Unicode and malformed paths, create-new
+preservation, classification and enumeration, empty-directory removal, argument
+quoting, completion statuses, standard-error bytes and mode restoration, line
+splitting and limits, the stdout flush before a read, and closed descriptors.
+Native fixtures (`tests/native/filesystem.joyeer`, `process.joyeer`,
+`read_file.joyeer`, `stdin_lines.joyeer`) and the module fixtures under
+`tests/modules/host_*` exercise concrete result types, early propagation, owned
+outputs, unit successes, optimization levels and full debug emission. Compiler
+unit tests check that the host enumerations are prelude types and that no host
+function is.
+Many native executable tests are registered only when `JOYEER_CLANG_EXECUTABLE`
+was found during CMake configuration; see
 [backend validation](backend.md#6-validation) before treating a label
 run as the complete acceptance suite.
 
-## Standard-input line boundary
-
-`readStdinLine(maximumBytes: Int): Result<String, StdinError>` is described by
-the same host builtin table as the other host operations; no dedicated IR
-instruction or error conversion path exists. `StdinError` has the
-`EndOfInput(Int)`, `LineTooLong(Int)` and `ReadFailed(Int)` cases (ABI tags 1, 2
-and 3, mapped to the source enum by case name). The contract is
-[spec §18.5](../spec/18-host.md#185-standard-input).
-
-The stable C ABI is
-`int32_t joyeer_read_stdin_line_abi(JoyeerString* result, int64_t* errorCode, int64_t maximumBytes)`.
-It returns `0` with an owned `String` (one tracked allocation, balanced by the
-ordinary destructor) and `*errorCode = 0`, or a nonzero tag and an untouched
-`*result`. Null result or error storage panics as ABI misuse; a negative limit
-is `ReadFailed(EINVAL)` before any byte is consumed.
-
-The implementation reads with `getc` into a temporary runtime-tracked buffer
-capped at `maximumBytes + 1` bytes, so a hostile peer cannot grow memory past
-the limit. Beyond the cap it only counts and discards until the terminator, so a
-`LineTooLong` result leaves the stream at the next line. One `\r` before `\n` is
-removed after the cap check, which is why the extra byte is held. On Windows,
-stdin is switched once to `_O_BINARY` (reusing the stderr descriptor
-validation, with the thread's invalid-parameter handler guarded) and never
-restored, so CRLF and `0x1A` are untranslated. The flag is not thread-safe.
-Unit tests run against redirected scratch files and check allocation balance;
-a native fixture (`NativeExecutableStdinLinesO0`/`O2`) feeds stdin to a compiled
-program.
-
-`joyeer_read_stdin_line_abi` calls `fflush(stdout)` before it blocks (after the
-negative-limit and Windows stdin setup checks), ignoring the result, so a client
-on the other end of a pipe sees earlier `print` output. `StdinLineTest` points
-descriptor 1 at a fully buffered scratch file to prove the bytes arrive during
-the read. Moss's `Moss.Serve` test and the live-pipe check in
+`NativeExecutableStdinLinesO0`/`O2` feed standard input to a compiled program.
+Moss's `Moss.Serve` test and the live-pipe check in
 [the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
-depend on it.
+depend on `readStdinLine` flushing standard output before it blocks.

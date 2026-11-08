@@ -1,169 +1,183 @@
 #include "native_ir.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include <algorithm>
 #include <stdexcept>
+#include <vector>
+
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace joyeer::llvmbackend::native {
 
-namespace {
-size_t caseTag(const ir::EnumerationDefinition& definition, std::string_view name) {
-    for (size_t index = 0; index < definition.cases.size(); ++index) {
-        if (definition.cases[index].name == name) return index;
+// Spec §19.4.5. Loads and stores are unaligned-safe; the atomic add requires an
+// 8-byte-aligned location, which the caller guarantees.
+llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
+        llvm::ArrayRef<llvm::Value*> arguments) {
+    using intrinsic::Operation;
+    if (descriptor.operation == Operation::addressOf) {
+        return builder.CreatePtrToInt(arguments[0], builder.getInt64Ty(), temporary());
     }
-    throw std::runtime_error("missing concrete enum case '" + std::string(name) + "'");
-}
-}
-
-bool Builder::matchesHostValue(ir::TypeId id, hostbuiltins::ValueKind kind) {
-    const auto& record = type(id);
-    using Kind = hostbuiltins::ValueKind;
-    switch (kind) {
-        case Kind::string: return record.kind == typing::TypeKind::string;
-        case Kind::integer: return record.kind == typing::TypeKind::integer;
-        case Kind::unit: return unit(id);
-        case Kind::strings:
-            return record.kind == typing::TypeKind::array && record.arguments.size() == 1 &&
-                    type(record.arguments[0]).kind == typing::TypeKind::string;
-        case Kind::fileKind: return record.kind == typing::TypeKind::enumeration && record.name == "FileKind";
-        case Kind::processStatus: return record.kind == typing::TypeKind::enumeration && record.name == "ProcessStatus";
-    }
-    return false;
-}
-
-std::vector<size_t> Builder::enumTags(ir::TypeId id, const hostbuiltins::Enumeration& shape) {
-    std::vector<size_t> tags;
-    const auto found = enumerations.find(id);
-    if (type(id).kind == typing::TypeKind::enumeration && type(id).name == shape.name &&
-            found != enumerations.end() && found->second->cases.size() == shape.cases.size()) {
-        for (const auto name : shape.cases) {
-            for (size_t index = 0; index < found->second->cases.size(); ++index) {
-                const auto& candidate = found->second->cases[index];
-                if (candidate.name != name) continue;
-                if ((!shape.integerPayload && candidate.payloadTypes.empty()) ||
-                        (shape.integerPayload && candidate.payloadTypes.size() == 1 &&
-                         type(candidate.payloadTypes[0]).kind == typing::TypeKind::integer)) {
-                    tags.push_back(index);
-                }
-                break;
-            }
-        }
-    }
-    if (tags.size() != shape.cases.size()) {
-        report(DiagnosticId::unsupportedExternal, {}, "invalid host enumeration shape for '" + std::string(shape.name) + "'");
-        throw std::runtime_error("invalid host enumeration");
-    }
-    return tags;
-}
-
-llvm::Value* Builder::hostEnum(ir::TypeId id, llvm::Value* destination,
-        llvm::Value* nativeTag, const hostbuiltins::Enumeration& shape) {
-    const auto tags = enumTags(id, shape);
-    auto* below = builder.CreateICmpULT(nativeTag, integer(static_cast<uint64_t>(shape.firstAbiTag), 32), temporary());
-    auto* above = builder.CreateICmpUGT(nativeTag, integer(static_cast<uint64_t>(shape.firstAbiTag) + tags.size() - 1, 32), temporary());
-    trap(builder.CreateOr(below, above, temporary()), "invalid native " + std::string(shape.name) + " tag");
-    llvm::Value* selected = integer(tags.front(), 32);
-    // Source declaration order is independent of the stable runtime ABI tags.
-    for (size_t index = 1; index < tags.size(); ++index) {
-        selected = builder.CreateSelect(builder.CreateICmpEQ(nativeTag,
-                integer(static_cast<uint64_t>(shape.firstAbiTag) + index, 32), temporary()),
-                integer(tags[index], 32), selected, temporary());
-    }
-    builder.CreateStore(llvm::Constant::getNullValue(llvmType(id)), destination);
-    builder.CreateStore(selected, field(llvmType(id), destination, 0));
-    return destination;
-}
-
-llvm::Value* Builder::emitHostCall(const ir::Function& function,
-        llvm::ArrayRef<llvm::Value*> arguments, const ir::Instruction& instruction) {
-    const auto* descriptor = hostbuiltins::findFunction(function.name);
-    const auto& result = type(function.resultType);
-    const auto invalidSignature = [&]() -> llvm::Value* {
-        report(DiagnosticId::unsupportedExternal, instruction.span,
-                "invalid signature for host function '" + function.name + "'");
-        return nullptr;
-    };
-    if (descriptor == nullptr || !instruction.result.has_value() ||
-            arguments.size() != descriptor->parameters.size() || result.kind != typing::TypeKind::result ||
-            result.arguments.size() != 2 || !matchesHostValue(result.arguments[0], descriptor->result) ||
-            !enumerations.contains(function.resultType)) return invalidSignature();
-    const auto successId = result.arguments[0];
-    const auto errorId = result.arguments[1];
-    const auto& cases = *enumerations.at(function.resultType);
-    const auto okTag = caseTag(cases, "Ok");
-    const auto errorTag = caseTag(cases, "Err");
-    if (cases.cases[okTag].payloadTypes != std::vector<ir::TypeId>{successId} ||
-            cases.cases[errorTag].payloadTypes != std::vector<ir::TypeId>{errorId}) {
-        report(DiagnosticId::unsupportedExternal, instruction.span, "host function requires concrete Result cases");
-        return nullptr;
-    }
-    const auto* errorShape = hostbuiltins::findEnumeration(descriptor->error);
-    enumTags(errorId, *errorShape);
-    const bool process = descriptor->result == hostbuiltins::ValueKind::processStatus;
-    const bool enumSuccess = process || descriptor->result == hostbuiltins::ValueKind::fileKind;
-    const auto* successShape = enumSuccess
-            ? hostbuiltins::findEnumeration(process ? "ProcessStatus" : "FileKind") : nullptr;
-    if (successShape != nullptr) enumTags(successId, *successShape);
-    std::vector<llvm::Value*> abiArguments;
-    llvm::Value* output = nullptr;
-    llvm::Value* status = nullptr;
-    if (descriptor->result != hostbuiltins::ValueKind::unit) {
-        auto* outputType = enumSuccess ? builder.getInt32Ty() : llvmType(successId);
-        output = stack(outputType);
-        builder.CreateStore(llvm::Constant::getNullValue(outputType), output);
-        abiArguments.push_back(output);
-    }
-    if (process) {
-        status = stack(builder.getInt64Ty());
-        builder.CreateStore(integer(0), status);
-        abiArguments.push_back(status);
-    }
-    auto* error = stack(builder.getInt64Ty());
-    builder.CreateStore(integer(0), error);
-    abiArguments.push_back(error);
-    for (size_t index = 0; index < arguments.size(); ++index) {
-        if (!matchesHostValue(values.at(instruction.operands[index]).type, descriptor->parameters[index].kind)) {
-            report(DiagnosticId::unsupportedExternal, instruction.span,
-                    "invalid argument to host function '" + function.name + "'");
+    if (descriptor.operation == Operation::memoryCopy || descriptor.operation == Operation::memoryMove ||
+        descriptor.operation == Operation::memoryFill) {
+        // LLVM's own memory intrinsics: small constant sizes become inline moves,
+        // the rest a call to the platform's memcpy, memmove or memset.
+        auto* destination = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
+        if (descriptor.operation == Operation::memoryFill) {
+            builder.CreateMemSet(destination, arguments[1], arguments[2], llvm::MaybeAlign(1));
             return nullptr;
         }
-        if (descriptor->parameters[index].kind == hostbuiltins::ValueKind::integer) {
-            abiArguments.push_back(arguments[index]);
+        auto* source = builder.CreateIntToPtr(arguments[1], pointer(), temporary());
+        if (descriptor.operation == Operation::memoryCopy) {
+            builder.CreateMemCpy(destination, llvm::MaybeAlign(1), source, llvm::MaybeAlign(1), arguments[2]);
         } else {
-            // Flatten language handles into borrowed data/count pairs. The
-            // runtime writes owned results into caller-provided stack storage.
-            abiArguments.push_back(builder.CreateExtractValue(arguments[index], 0, temporary()));
-            abiArguments.push_back(builder.CreateExtractValue(arguments[index], 1, temporary()));
+            builder.CreateMemMove(destination, llvm::MaybeAlign(1), source, llvm::MaybeAlign(1), arguments[2]);
         }
+        return nullptr;
     }
-    auto* nativeTag = call(descriptor->runtimeName, builder.getInt32Ty(), abiArguments);
-    auto* destination = stack(llvmType(function.resultType));
-    builder.CreateStore(llvm::Constant::getNullValue(llvmType(function.resultType)), destination);
-    auto* tagAddress = field(llvmType(function.resultType), destination, 0);
-    auto* resultPayload = payload(llvmType(function.resultType), destination);
-    auto* ok = llvm::BasicBlock::Create(context(), "host.ok." + temporary(), activeFunction);
-    auto* failed = llvm::BasicBlock::Create(context(), "host.error." + temporary(), activeFunction);
-    auto* done = llvm::BasicBlock::Create(context(), "host.done." + temporary(), activeFunction);
-    builder.CreateCondBr(builder.CreateICmpEQ(nativeTag, integer(0, 32), temporary()), ok, failed);
-    builder.SetInsertPoint(ok);
-    builder.CreateStore(integer(okTag, 32), tagAddress);
-    if (enumSuccess) {
-        hostEnum(successId, resultPayload, builder.CreateLoad(builder.getInt32Ty(), output, temporary()), *successShape);
-        if (process) {
-            builder.CreateStore(builder.CreateLoad(builder.getInt64Ty(), status, temporary()),
-                    payload(llvmType(successId), resultPayload));
+    if (descriptor.operation == Operation::doubleBits || descriptor.operation == Operation::floatBits) {
+        return builder.CreateBitCast(arguments[0],
+                descriptor.operation == Operation::doubleBits ? builder.getInt64Ty() : builder.getInt32Ty(), temporary());
+    }
+    if (descriptor.operation == Operation::targetArchitecture) {
+        const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
+        return integer(target.getArch() == llvm::Triple::x86_64 ? 1 : target.getArch() == llvm::Triple::aarch64 ? 2 : 0);
+    }
+    if (descriptor.operation == Operation::systemCall) {
+        // Only the Linux kernel promises a stable system call interface, and only a Linux
+        // program can use this (the runtime selects it with `@platform(linux)`), but the IR is
+        // produced for any target so that a Linux unit can be validated on another host. The
+        // call number and the six arguments go in the architecture's registers; the kernel
+        // result comes back in the first. Constraint 0 ties the number to the result
+        // register (rax) or the first argument to it (x0), which the call overwrites.
+        const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
+        const bool x86 = target.getArch() == llvm::Triple::x86_64;
+        if (!x86 && target.getArch() != llvm::Triple::aarch64) {
+            report(DiagnosticId::unsupportedExternal, {},
+                    "joyeer_intrinsic_syscall requires an x86-64 or AArch64 target");
+            return integer(0);
         }
-    } else if (!unit(successId)) {
-        builder.CreateStore(builder.CreateLoad(llvmType(successId), output, temporary()), resultPayload);
+        auto* integerType = builder.getInt64Ty();
+        auto* assemblyType = llvm::FunctionType::get(integerType, std::vector<llvm::Type*>(7, integerType), false);
+        auto* assembly = llvm::InlineAsm::get(assemblyType, x86 ? "syscall" : "svc #0",
+                x86 ? "={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"
+                    : "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}",
+                true);
+        return builder.CreateCall(assemblyType, assembly, arguments, temporary());
     }
-    builder.CreateBr(done);
-    builder.SetInsertPoint(failed);
-    builder.CreateStore(integer(errorTag, 32), tagAddress);
-    hostEnum(errorId, resultPayload, nativeTag, *errorShape);
-    builder.CreateStore(builder.CreateLoad(builder.getInt64Ty(), error, temporary()),
-            payload(llvmType(errorId), resultPayload));
-    builder.CreateBr(done);
-    builder.SetInsertPoint(done);
-    return builder.CreateLoad(llvmType(function.resultType), destination);
+    if (descriptor.operation == Operation::staticSlot) {
+        // One zeroed table per program: every object that uses slots defines the
+        // same linkonce symbol in a comdat, and the linker keeps a single copy.
+        const std::string symbol(intrinsic::staticSlotSymbol);
+        auto* tableType = llvm::ArrayType::get(builder.getInt64Ty(), static_cast<uint64_t>(intrinsic::staticSlotCount));
+        auto* table = module().getNamedGlobal(symbol);
+        if (table == nullptr) {
+            table = new llvm::GlobalVariable(module(), tableType, false,
+                    llvm::GlobalValue::LinkOnceODRLinkage, llvm::ConstantAggregateZero::get(tableType), symbol);
+            table->setAlignment(llvm::Align(8));
+            auto* comdat = module().getOrInsertComdat(symbol);
+            comdat->setSelectionKind(llvm::Comdat::Any);
+            table->setComdat(comdat);
+        }
+        auto* outside = builder.CreateICmpUGE(arguments[0],
+                integer(static_cast<uint64_t>(intrinsic::staticSlotCount)), temporary());
+        trap(outside, "static slot index out of range");
+        llvm::Value* zero = integer(0);
+        auto* slot = builder.CreateInBoundsGEP(tableType, table, {zero, arguments[0]}, temporary());
+        return builder.CreatePtrToInt(slot, builder.getInt64Ty(), temporary());
+    }
+    if (descriptor.operation == Operation::literalAddress || descriptor.operation == Operation::symbolAddress) {
+        // The argument is a string literal, so its data is a private constant
+        // global. A literal address re-emits those bytes with a NUL terminator; a
+        // symbol address reads them as the name of a function or data symbol.
+        // The data pointer is either the constant itself or an extractvalue of the
+        // literal's constant {pointer, count} struct, depending on folding.
+        llvm::Value* pointerValue = arguments[0];
+        if (auto* extraction = llvm::dyn_cast<llvm::ExtractValueInst>(pointerValue)) {
+            if (auto* literal = llvm::dyn_cast<llvm::ConstantStruct>(extraction->getAggregateOperand());
+                    literal != nullptr && extraction->getNumIndices() == 1 && extraction->getIndices()[0] == 0) {
+                pointerValue = literal->getOperand(0);
+            }
+        }
+        auto* global = llvm::dyn_cast<llvm::GlobalVariable>(pointerValue->stripPointerCasts());
+        llvm::Constant* initializer = global != nullptr && global->hasInitializer()
+                ? global->getInitializer() : nullptr;
+        std::string bytes;
+        bool literal = false;
+        if (const auto* array = llvm::dyn_cast_or_null<llvm::ConstantDataArray>(initializer)) {
+            bytes = array->getRawDataValues().str();
+            literal = true;
+        } else if (initializer != nullptr && llvm::isa<llvm::ConstantAggregateZero>(initializer) &&
+                   initializer->getType()->isArrayTy()) {
+            // An empty literal, or one made only of NUL bytes.
+            bytes.assign(initializer->getType()->getArrayNumElements(), '\0');
+            literal = true;
+        }
+        if (!literal) {
+            report(DiagnosticId::unsupportedExternal, {},
+                    std::string(descriptor.symbol) + " requires a string literal argument");
+            return nullptr;
+        }
+        if (descriptor.operation == Operation::symbolAddress) {
+            // A function defined in this module is taken directly; anything else is
+            // an external symbol resolved by the linker.
+            if (auto* function = module().getFunction(bytes)) {
+                return builder.CreatePtrToInt(function, builder.getInt64Ty(), temporary());
+            }
+            return builder.CreatePtrToInt(declareDataSymbol(bytes), builder.getInt64Ty(), temporary());
+        }
+        auto* terminated = stringLiteral(bytes, true);
+        return builder.CreatePtrToInt(terminated, builder.getInt64Ty(), temporary());
+    }
+    if (descriptor.operation == Operation::callVoid1 || descriptor.operation == Operation::callVoid2) {
+        // The callee is the target's ordinary C function taking addresses.
+        auto* function = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
+        std::vector<llvm::Type*> parameterTypes;
+        std::vector<llvm::Value*> callArguments;
+        for (size_t index = 1; index < arguments.size(); ++index) {
+            parameterTypes.push_back(pointer());
+            callArguments.push_back(builder.CreateIntToPtr(arguments[index], pointer(), temporary()));
+        }
+        builder.CreateCall(llvm::FunctionType::get(builder.getVoidTy(), parameterTypes, false),
+                function, callArguments);
+        return nullptr;
+    }
+    auto* address = builder.CreateIntToPtr(arguments[0], pointer(), temporary());
+    switch (descriptor.operation) {
+        case Operation::load8:
+            return builder.CreateAlignedLoad(builder.getInt8Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::load16:
+            return builder.CreateAlignedLoad(builder.getInt16Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::load32:
+            return builder.CreateAlignedLoad(builder.getInt32Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::load64:
+            return builder.CreateAlignedLoad(builder.getInt64Ty(), address, llvm::MaybeAlign(1), temporary());
+        case Operation::store8:
+        case Operation::store16:
+        case Operation::store32:
+        case Operation::store64:
+            builder.CreateAlignedStore(arguments[1], address, llvm::MaybeAlign(1));
+            return nullptr;
+        case Operation::atomicAdd:
+            return builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, address, arguments[1],
+                    llvm::MaybeAlign(8), llvm::AtomicOrdering::SequentiallyConsistent);
+        case Operation::addressOf:
+        case Operation::callVoid1:
+        case Operation::callVoid2:
+        case Operation::literalAddress:
+        case Operation::symbolAddress:
+        case Operation::staticSlot:
+        case Operation::memoryCopy:
+        case Operation::memoryMove:
+        case Operation::memoryFill:
+        case Operation::doubleBits:
+        case Operation::floatBits:
+        case Operation::systemCall:
+        case Operation::targetArchitecture:
+            break;
+    }
+    return nullptr;
 }
 
 llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
@@ -173,12 +187,23 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
     const auto& callee = *found->second;
     std::vector<llvm::Value*> arguments;
     for (const auto id : instruction.operands) arguments.push_back(operand(id));
+    if (callee.isExternal && callee.nativeBinding.has_value() && callee.nativeBinding->dataSymbol) {
+        // The value of a data-symbol binding is the symbol's address; nothing is called.
+        return builder.CreatePtrToInt(declareDataSymbol(callee.nativeBinding->symbol),
+                builder.getInt64Ty(), temporary());
+    }
     if (callee.isExternal && callee.nativeBinding.has_value()) {
         std::vector<llvm::Value*> nativeArguments;
         for (size_t index = 0; index < arguments.size(); ++index) {
             const auto& parameter = callee.parameters[index];
             const auto kind = type(parameter.value.type).kind;
-            if (parameter.isInitializing) {
+            if (callee.nativeBinding->passesPointer(index)) {
+                // Borrowed bytes arrive as a value; an inout buffer as the address of its handle.
+                auto* handle = parameter.value.category == ir::ValueCategory::address
+                        ? builder.CreateLoad(llvmType(parameter.value.type), arguments[index], temporary())
+                        : arguments[index];
+                nativeArguments.push_back(builder.CreateExtractValue(handle, 0, temporary()));
+            } else if (parameter.isInitializing) {
                 if (kind == typing::TypeKind::string) {
                     builder.CreateStore(llvm::Constant::getNullValue(llvmType(parameter.value.type)), arguments[index]);
                 } else {
@@ -195,6 +220,9 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
                 nativeArguments.push_back(arguments[index]);
             }
         }
+        if (const auto* descriptor = intrinsic::find(callee.nativeBinding->symbol)) {
+            return emitIntrinsic(*descriptor, nativeArguments);
+        }
         auto* function = functions.at(callee.id);
         auto* invocation = builder.CreateCall(function, nativeArguments);
         invocation->setAttributes(function->getAttributes());
@@ -206,7 +234,6 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
         invocation->setAttributes(function->getAttributes());
         return invocation;
     }
-    if (hostbuiltins::findFunction(callee.name) != nullptr) return emitHostCall(callee, arguments, instruction);
     if (callee.name == "print" && arguments.size() == 1) {
         const auto& argumentType = type(values.at(instruction.operands[0]).type);
         if (typing::isSignedInteger(argumentType.kind)) {
@@ -246,62 +273,6 @@ llvm::Value* Builder::emitCall(const ir::Instruction& instruction) {
         if (callee.name == "byteToInt") return builder.CreateZExt(arguments[0], builder.getInt64Ty());
         auto* destination = stack(llvmType(callee.resultType));
         call("joyeer_byte_to_string_abi", builder.getVoidTy(), {destination, arguments[0]});
-        return builder.CreateLoad(llvmType(callee.resultType), destination);
-    }
-    if (callee.name == "readFile" && arguments.size() == 1) {
-        const auto invalid = [&]() -> llvm::Value* {
-            report(DiagnosticId::unsupportedExternal, instruction.span, "readFile result must be Result<String, IOError>");
-            return nullptr;
-        };
-        if (!arguments[0]->getType()->isStructTy() || !enumerations.contains(callee.resultType)) return invalid();
-        const auto& cases = *enumerations.at(callee.resultType);
-        const auto okTag = caseTag(cases, "Ok");
-        const auto errorTag = caseTag(cases, "Err");
-        if (cases.cases[okTag].payloadTypes.size() != 1 || cases.cases[errorTag].payloadTypes.size() != 1) return invalid();
-        const auto stringId = cases.cases[okTag].payloadTypes[0];
-        const auto errorId = cases.cases[errorTag].payloadTypes[0];
-        if (type(stringId).kind != typing::TypeKind::string || !enumerations.contains(errorId)) return invalid();
-        const auto& errors = *enumerations.at(errorId);
-        const std::array<std::string_view, 4> names {"NotFound", "PermissionDenied", "InvalidPath", "Other"};
-        std::vector<size_t> tags;
-        for (const auto name : names) {
-            const auto tag = caseTag(errors, name);
-            if (errors.cases[tag].payloadTypes.size() != 1 ||
-                    type(errors.cases[tag].payloadTypes[0]).kind != typing::TypeKind::integer) return invalid();
-            tags.push_back(tag);
-        }
-        auto* stringAddress = stack(llvmType(stringId));
-        auto* codeAddress = stack(builder.getInt64Ty());
-        builder.CreateStore(llvm::Constant::getNullValue(llvmType(stringId)), stringAddress);
-        builder.CreateStore(integer(0), codeAddress);
-        auto* errorKind = call("joyeer_read_file_abi", builder.getInt32Ty(),
-                {stringAddress, codeAddress, builder.CreateExtractValue(arguments[0], 0, temporary()),
-                 builder.CreateExtractValue(arguments[0], 1, temporary())});
-        auto* destination = stack(llvmType(callee.resultType));
-        builder.CreateStore(llvm::Constant::getNullValue(llvmType(callee.resultType)), destination);
-        auto* tagAddress = field(llvmType(callee.resultType), destination, 0);
-        auto* resultPayload = payload(llvmType(callee.resultType), destination);
-        auto* ok = llvm::BasicBlock::Create(context(), "readfile.ok." + temporary(), activeFunction);
-        auto* failed = llvm::BasicBlock::Create(context(), "readfile.error." + temporary(), activeFunction);
-        auto* done = llvm::BasicBlock::Create(context(), "readfile.done." + temporary(), activeFunction);
-        builder.CreateCondBr(builder.CreateICmpEQ(errorKind, integer(JOYEER_IO_ERROR_NONE, 32), temporary()), ok, failed);
-        builder.SetInsertPoint(ok);
-        builder.CreateStore(integer(okTag, 32), tagAddress);
-        builder.CreateStore(builder.CreateLoad(llvmType(stringId), stringAddress, temporary()), resultPayload);
-        builder.CreateBr(done);
-        builder.SetInsertPoint(failed);
-        builder.CreateStore(integer(errorTag, 32), tagAddress);
-        llvm::Value* selected = integer(tags[3], 32);
-        for (size_t index = 0; index < 3; ++index) {
-            selected = builder.CreateSelect(builder.CreateICmpEQ(errorKind, integer(index + 1, 32), temporary()),
-                    integer(tags[index], 32), selected, temporary());
-        }
-        builder.CreateStore(llvm::Constant::getNullValue(llvmType(errorId)), resultPayload);
-        builder.CreateStore(selected, field(llvmType(errorId), resultPayload, 0));
-        builder.CreateStore(builder.CreateLoad(builder.getInt64Ty(), codeAddress, temporary()),
-                payload(llvmType(errorId), resultPayload));
-        builder.CreateBr(done);
-        builder.SetInsertPoint(done);
         return builder.CreateLoad(llvmType(callee.resultType), destination);
     }
     report(DiagnosticId::unsupportedExternal, instruction.span, "unsupported external function '" + callee.name + "'");

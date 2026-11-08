@@ -1,0 +1,12 @@
+// Two separately compiled units use the same table: this one writes, the other
+// reads (static-slots-second.joyeer). Called from static-slots-caller.c.
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+private func atomicAdd(address: Int, delta: Int): Int
+
+@c_export(symbol: "cinterop_slot_increment")
+public func increment(index: Int, delta: Int): Int {
+    return atomicAdd(address: slot(index: index), delta: delta)
+}

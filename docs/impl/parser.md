@@ -156,9 +156,13 @@ Rules and intentional restrictions:
 
 An omitted body is parsed only when annotations are present. Type checking
 admits it only for an authorized, valid `@c_extern` declaration; every other
-function requires a body. Annotation arguments reuse call-argument syntax
-for precise diagnostics, but C annotations admit only a `symbol:` string
-literal without access markers. `@spec`/`@property` shorthand/DSL syntax and
+function requires a body. (`@platform` selection runs first and itself rejects
+a bodyless function that lacks `@c_extern`, so a selected function never
+reaches the type checker without one.) Annotation arguments reuse
+call-argument syntax for precise diagnostics, but C annotations admit only a
+`symbol:` string literal without access markers, and `@platform` only
+unlabelled platform names. Annotations on struct, enum, and extension members
+are consumed and reported once as unsupported syntax. `@spec`/`@property` shorthand/DSL syntax and
 parameter defaults remain unsupported. See [C binding coverage](c-interop.md).
 
 1. A top-level binding may infer its type; a stored field must declare one.

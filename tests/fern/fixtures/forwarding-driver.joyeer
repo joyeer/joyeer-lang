@@ -1,3 +1,5 @@
+import System
+
 // CMake lists drop empty unquoted elements. This driver supplies the real argv
 // array directly so the acceptance test cannot accidentally omit that case.
 func main(args: [String]): Int {

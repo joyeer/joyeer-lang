@@ -95,6 +95,35 @@ TEST(ModuleArgumentsTest, RejectsImplicitUnknownOrRepeatedRuntimeAuthorization) 
     }
 }
 
+TEST(ModuleArgumentsTest, CoreUnitsAreRuntimeUnitsSelectedByName) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(diagnostics, {
+        "joyeer", "--module-name", "runtime.core", source().string(),
+        "--runtime-core-module", "runtime.core", "--emit-runtime-object", "runtime.o",
+    });
+    ASSERT_FALSE(diagnostics.hasFailure());
+    EXPECT_EQ(arguments->coreModules, (std::vector<std::string> {"runtime.core"}));
+    // A core unit is also a runtime unit, so object output accepts it.
+    EXPECT_EQ(arguments->runtimeModules, (std::vector<std::string> {"runtime.core"}));
+    EXPECT_EQ(arguments->outputMode, joyeer::OutputMode::runtimeObject);
+}
+
+TEST(ModuleArgumentsTest, RejectsUnknownRepeatedOrNamelessCoreUnits) {
+    for (const auto& values : std::vector<std::vector<std::string>> {
+            {"joyeer", source().string(), "--runtime-core-module", "runtime"},
+            {"joyeer", "--module-name", "runtime", source().string(),
+             "--runtime-core-module", "unknown"},
+            {"joyeer", "--module-name", "runtime", source().string(),
+             "--runtime-core-module", "runtime", "--runtime-core-module", "runtime"},
+            {"joyeer", "--module-name", "runtime", source().string(), "--runtime-core-module"},
+        }) {
+        Diagnostics diagnostics;
+        const auto arguments = parseArguments(diagnostics, values);
+        EXPECT_TRUE(diagnostics.hasFailure());
+        EXPECT_FALSE(arguments->accepted);
+    }
+}
+
 TEST(ModuleArgumentsTest, PreservesLegacySingleFileInput) {
     Diagnostics diagnostics;
     const auto arguments = parseArguments(diagnostics, {"joyeer", source().string()});

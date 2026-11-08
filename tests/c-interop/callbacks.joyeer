@@ -1,0 +1,75 @@
+@c_extern(symbol: "malloc")
+func allocate(size: UInt64): Int
+
+@c_extern(symbol: "free")
+func release(address: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+func callVoid1(function: Int, first: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void2")
+func callVoid2(function: Int, first: Int, second: Int): Void
+
+@c_extern(symbol: "cinterop_destroy_address")
+func destroyAddress(): Int
+
+@c_extern(symbol: "cinterop_clone_address")
+func cloneAddress(): Int
+
+@c_extern(symbol: "cinterop_destroy_count")
+func destroyCount(): Int
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+func allocations(): Int
+
+func exercise(): Int {
+    let block = allocate(size: 64)
+    if block == 0 { return 1 }
+    var index = 0
+    while index < 4 {
+        store64(address: block + index * 8, value: 10 + index as UInt64)
+        index = index + 1
+    }
+
+    // One address argument: every element is destroyed once, in the order called.
+    index = 0
+    while index < 4 {
+        callVoid1(function: destroyAddress(), first: block + index * 8)
+        index = index + 1
+    }
+    if destroyCount() != 4 { return 2 }
+    index = 0
+    while index < 4 {
+        if load64(address: block + index * 8) != 18446744073709551615 { return 3 }
+        index = index + 1
+    }
+
+    // Two address arguments: destination first, then source.
+    store64(address: block, value: 21)
+    callVoid2(function: cloneAddress(), first: block + 8, second: block)
+    if load64(address: block + 8) != 42 { return 4 }
+    if load64(address: block) != 21 { return 5 }
+
+    release(address: block)
+    return 0
+}
+
+func main() {
+    let before = allocations()
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    if allocations() != before {
+        print(value: 99)
+        return
+    }
+    print(value: "indirect calls passed")
+}

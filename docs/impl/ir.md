@@ -125,7 +125,7 @@ The current instruction set covers:
 - implemented arithmetic, comparison, and logical operations;
 - checked `div` / `rem` with exactly two `Int` value operands and an `Int`
   value result;
-- direct source and external calls, including external host builtins;
+- direct source and external calls, including the external builtins (`print`, byte conversions) and native bindings;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction and payload extraction;

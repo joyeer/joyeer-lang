@@ -1,0 +1,37 @@
+// The C entry point of a native program: `wmain` on Windows, `main` elsewhere.
+// Both hand the process arguments to `joyeer_entry_run` (entry.joyeer). Only a runtime
+// core unit may export these symbols (spec §19.4.7). This file is an object of its
+// own, neither the core nor the entry logic: it is linked only into a program that
+// uses the C startup, so a program that starts at `joyeer_start` carries no reference
+// to the C library from here.
+//
+// The C startup is present here, so the standard output buffer is registered to be
+// flushed by `exit`: a program that calls the C library's `exit` itself does not lose
+// its output.
+
+@c_extern(symbol: "joyeer_entry_run")
+private func entryRun(argc: Int32, argv: Int): Int32
+
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+private func symbolAddress(name: String): Int
+
+@c_extern(symbol: "atexit")
+private func registerExit(callback: Int): Int32
+
+private func flushAtExit() {
+    registerExit(callback: symbolAddress(name: "joyeer_stdout_flush"))
+}
+
+@platform(windows)
+@c_export(symbol: "wmain")
+public func wideMain(argc: Int32, argv: Int): Int32 {
+    flushAtExit()
+    return entryRun(argc: argc, argv: argv)
+}
+
+@platform(posix)
+@c_export(symbol: "main")
+public func byteMain(argc: Int32, argv: Int): Int32 {
+    flushAtExit()
+    return entryRun(argc: argc, argv: argv)
+}

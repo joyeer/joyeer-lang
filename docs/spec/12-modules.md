@@ -134,18 +134,54 @@ The draft standard-library prelude includes:
 
 - `Bool`, `Int`, `UInt`, `Float`, `Double`, `Char`, `String`, `Void`, `Never`
 - `Optional`, `Result`, `IOError`
+- the host error and status types of §18: `FileSystemError`, `FileKind`,
+  `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`
 - `Array`, `Dict`, `Tuple`
-- `print`, `readFile`, `assert`, `precondition`, `fatalError`
+- `print`, `assert`, `precondition`, `fatalError`
+
+The prelude holds the language's own vocabulary: types and the few functions
+every program needs without an import. Operations on the host are **not**
+prelude functions; they are ordinary functions of the `System` standard module
+(§12.5). The host error and status types stay in the prelude so that user code,
+`System` and any other module share one definition of each.
 
 This is a long-term design vision, not the current compiler prelude inventory.
-For example, the compiler does not supply contract APIs, `Float`/`Double`,
-`Char`, or general tuple support, while it does provide portable filesystem
-and process types (§18). See the
+For example, the compiler does not yet supply the contract APIs or general
+tuple support. See the
 [implemented name-resolution prelude](../impl/name-resolution.md#3-scopes-and-symbols)
 for the authoritative current list.
 
 The names `Display`, `Equatable`, `Comparable` are reserved for a future
 protocol system (§15) but are **not** usable as constraints or conformances
 in v0.1.
+
+### 12.5 Standard modules
+
+A **standard module** is a module that ships with the toolchain and is written
+in Joyeer. A program uses one with an ordinary `import`; no manifest entry is
+required. The toolchain finds standard modules relative to the compiler itself,
+never through a search path, and a module supplied explicitly with the same
+name takes precedence (which is how the library itself is developed). The
+resolution mechanism is an implementation contract, described in
+[toolchain libraries](../plan/toolchain-libraries.md).
+
+| Module | Provides |
+|---|---|
+| `Foundation` | Text helpers, UTF-8 validation, decimal formatting, checksums. No host access |
+| `System` | The host operations of §18 (filesystem, processes, standard error and input, legacy `readFile`), lexical path helpers, and message formatting for the host error types |
+| `Compression` | ZIP and JAR reading; optional, and backed by a native library |
+
+Rules:
+
+- Standard modules follow every rule of this chapter. They gain no privilege
+  from their name: a standard module that binds native code is authorized by the
+  toolchain (§19.1), and importing it grants the importer nothing.
+- Prelude lookup precedes imported short names (§12.3), so a standard module
+  cannot redefine a prelude name, and a prelude name cannot be moved into a
+  module without a separate migration.
+- Each standard module states its dependencies; the graph is acyclic and
+  `Foundation` depends on no other standard module.
+- The set of modules and their APIs is not frozen in v0.1. Adding a module is
+  a library decision; changing a §18 contract is a specification change.
 
 ---

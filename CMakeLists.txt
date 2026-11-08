@@ -237,6 +237,9 @@ endif()
 # Use C++20.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# Standard C++ (-std=c++20), not gnu++20: GNU mode predefines `linux` as a macro, which
+# breaks the TargetPlatform enumerator of that name.
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 get_filename_component(JOYEER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} REALPATH)
 

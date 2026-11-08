@@ -68,9 +68,9 @@ All other functions, including `@c_export`, require a body. The restricted
 C binding rules, including authorization and explicit result types, are
 specified in [§19](19-c-interop.md), not implied by the grammar alone.
 
-**Implementation status:** the initial runtime-only C binding subset accepts
-bodyless imports. Ordinary functions still require bodies; broader C scalar
-support is tracked in [the implementation boundary](../impl/c-interop.md).
+**Implementation status:** bodyless `@c_extern` imports are accepted in
+authorized units; ordinary functions still require bodies. Coverage is
+recorded in [the implementation boundary](../impl/c-interop.md).
 
 `method_effect` is only meaningful for functions that have a receiver
 (methods declared inside a `struct`, `enum`, or `extension`). Free functions
@@ -414,8 +414,8 @@ import_path     ::= identifier ( '.' identifier )*
 ```
 
 ```joyeer
-import std.io
-import std.collections
+import System
+import Foundation
 ```
 
 Imports precede declarations and apply only to their source file. An import

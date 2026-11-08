@@ -1,3 +1,5 @@
+import System
+
 import host.services
 
 func main(args: [String]): Int {

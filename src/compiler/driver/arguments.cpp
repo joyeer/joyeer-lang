@@ -316,6 +316,24 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             } else {
                 runtimeModules.push_back(*iterator);
             }
+        } else if (parseOptions && *iterator == "--runtime-core-module") {
+            // A core unit is a runtime unit that may use only scalars (spec 19.4.6).
+            ++iterator;
+            if (iterator == arguments.end()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                        "--runtime-core-module requires an explicit logical module name");
+                break;
+            }
+            if (!joyeer::isModuleName(*iterator) ||
+                std::find(coreModules.begin(), coreModules.end(), *iterator) != coreModules.end()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "module.invalid-runtime-context",
+                        "--runtime-core-module requires a valid, nonduplicate logical module name");
+            } else {
+                coreModules.push_back(*iterator);
+                if (std::find(runtimeModules.begin(), runtimeModules.end(), *iterator) == runtimeModules.end()) {
+                    runtimeModules.push_back(*iterator);
+                }
+            }
         } else if (parseOptions && (*iterator == "--emit-llvm" || *iterator == "-o" ||
                                    *iterator == "--emit-runtime-object")) {
             const auto option = *iterator;

@@ -1,0 +1,321 @@
+import Foundation
+
+// POSIX primitives for filesystem.joyeer. The names, codes and path rules that Linux and
+// macOS share are here for both; the operations are macOS only, over libSystem, because
+// Linux calls the kernel directly (filesystem_linux.joyeer). Paths are UTF-8 with a NUL
+// terminator. A handle is an Int (a FILE* or DIR*). Results are >= 0 on success and the
+// negated errno on failure.
+//
+// Files use stdio, whose exclusive-create mode "x" (C11) creates a file with the same
+// effect as open(O_CREAT | O_EXCL, 0666) without a variadic call. The struct layouts
+// used below are struct stat and struct dirent on macOS.
+
+private let interrupted: Int = 4
+private let directoryMode: UInt32 = 511
+private let statxBufferSize: Int = 256
+private let direntBufferSize: Int = 2048
+private let kindMask: Int = 61440
+private let kindFile: Int = 32768
+private let kindDirectory: Int = 16384
+private let kindSymlink: Int = 40960
+
+@platform(macos)
+@c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
+private func fopenP(path: [UInt8], mode: [UInt8]): Int
+
+@platform(macos)
+@c_extern(symbol: "fread", pointer: "buffer")
+private func freadP(buffer: inout [UInt8], size: Int, count: Int, stream: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "fwrite", pointer: "buffer")
+private func fwriteP(buffer: [UInt8], size: Int, count: Int, stream: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "fclose")
+private func fcloseP(stream: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "ferror")
+private func ferrorP(stream: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "clearerr")
+private func clearerrP(stream: Int): Void
+
+@platform(macos)
+@c_extern(symbol: "mkdir", pointer: "path")
+private func mkdirP(path: [UInt8], mode: UInt32): Int32
+
+@platform(macos)
+@c_extern(symbol: "unlink", pointer: "path")
+private func unlinkP(path: [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "rmdir", pointer: "path")
+private func rmdirP(path: [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "opendir", pointer: "path")
+private func opendirP(path: [UInt8]): Int
+
+@platform(macos)
+@c_extern(symbol: "closedir")
+private func closedirP(directory: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "readdir_r", pointer: "entry", pointer: "found")
+private func readdirP(directory: Int, entry: inout [UInt8], found: inout [UInt8]): Int32
+
+@platform(macos)
+@c_extern(symbol: "lstat", pointer: "path", pointer: "buffer")
+private func lstatP(path: [UInt8], buffer: inout [UInt8]): Int32
+
+// errno values that differ between Linux and macOS.
+@platform(linux)
+func encodingErrno(): Int { return 84 }
+
+@platform(macos)
+func encodingErrno(): Int { return 92 }
+
+@platform(linux)
+func nameTooLongErrno(): Int { return 36 }
+
+@platform(macos)
+func nameTooLongErrno(): Int { return 63 }
+
+@platform(posix)
+func invalidInputCode(): Int { return 22 }
+
+@platform(posix)
+func invalidEncodingCode(): Int { return encodingErrno() }
+
+@platform(posix)
+func invalidNameCode(): Int { return 22 }
+
+@platform(posix)
+func writeFaultCode(): Int { return 5 }
+
+@platform(posix)
+func separator(): String { return "/" }
+
+@platform(posix)
+func classifyError(code: Int): FileSystemError {
+    if code == 22 || code == encodingErrno() || code == nameTooLongErrno() { return .InvalidPath(code) }
+    if code == 2 { return .NotFound(code) }
+    if code == 13 || code == 1 || code == 30 { return .PermissionDenied(code) }
+    if code == 17 { return .AlreadyExists(code) }
+    if code == 20 { return .NotDirectory(code) }
+    if code == 21 { return .IsDirectory(code) }
+    return .Other(code)
+}
+
+@platform(posix)
+func nativePathBytes(text: String): [UInt8] {
+    var bytes = text.utf8()
+    &bytes.append(element: 0)
+    return bytes
+}
+
+@platform(posix)
+func opensAsDirectory(path: [UInt8], code: Int): Bool {
+    // A directory opens for reading; the failure arrives later, as EISDIR.
+    return false
+}
+
+@platform(posix)
+func replacesBase(path: String): Bool {
+    return path[0] == b'/'
+}
+
+@platform(posix)
+func needsSeparator(base: String): Bool {
+    return base[base.count - 1] != b'/'
+}
+
+@platform(macos)
+private func lastFailure(): Int {
+    return 0 - (cErrno() as Int)
+}
+
+@platform(macos)
+private func readMode(): [UInt8] {
+    let mode: [UInt8] = [b'r', b'b', 0]
+    return mode
+}
+
+@platform(macos)
+private func createMode(): [UInt8] {
+    let mode: [UInt8] = [b'w', b'b', b'x', 0]
+    return mode
+}
+
+@platform(macos)
+func nativeOpenRead(path: [UInt8]): Int {
+    // Bound first: a temporary would be freed before errno is read below.
+    let mode = readMode()
+    let stream = fopenP(path: path, mode: mode)
+    if stream == 0 { return lastFailure() }
+    return stream
+}
+
+@platform(macos)
+func nativeOpenNew(path: [UInt8]): Int {
+    let mode = createMode()
+    let stream = fopenP(path: path, mode: mode)
+    if stream == 0 { return lastFailure() }
+    return stream
+}
+
+// A stream's error is retried when it was only an interrupted system call.
+@platform(macos)
+func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    var outcome = 0
+    var retry = true
+    while retry {
+        retry = false
+        let got = freadP(buffer: &buffer, size: 1, count: count, stream: handle)
+        if got > 0 {
+            outcome = got
+        } else if ferrorP(stream: handle) != 0 {
+            let code = 0 - lastFailure()
+            if code == interrupted {
+                clearerrP(stream: handle)
+                retry = true
+            } else {
+                outcome = 0 - code
+            }
+        }
+    }
+    return outcome
+}
+
+@platform(macos)
+func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
+    var outcome = 0
+    var retry = true
+    while retry {
+        retry = false
+        let written = fwriteP(buffer: buffer, size: 1, count: count, stream: handle)
+        if written > 0 {
+            outcome = written
+        } else if ferrorP(stream: handle) != 0 {
+            let code = 0 - lastFailure()
+            if code == interrupted {
+                clearerrP(stream: handle)
+                retry = true
+            } else {
+                outcome = 0 - code
+            }
+        }
+    }
+    return outcome
+}
+
+@platform(macos)
+func nativeClose(handle: Int): Int {
+    if fcloseP(stream: handle) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(macos)
+func nativeCreateDirectory(path: [UInt8]): Int {
+    if mkdirP(path: path, mode: directoryMode) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(macos)
+func nativeRemoveFile(path: [UInt8]): Int {
+    if unlinkP(path: path) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(macos)
+func nativeRemoveDirectory(path: [UInt8]): Int {
+    let kind = nativeKind(path: path)
+    if kind < 0 { return kind }
+    if kind != 1 { return -20 }
+    if rmdirP(path: path) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(macos)
+private func modeKind(mode: Int): Int {
+    let format = mode & kindMask
+    if format == kindFile { return 0 }
+    if format == kindDirectory { return 1 }
+    if format == kindSymlink { return 2 }
+    return 3
+}
+
+func halfWord(bytes: [UInt8], offset: Int): Int {
+    return byteToInt(value: bytes[offset]) | (byteToInt(value: bytes[offset + 1]) << 8)
+}
+
+// Kind tags: 0 file, 1 directory, 2 symlink, 3 other. The leaf is never followed.
+// st_mode sits at offset 4 of the 64-bit struct stat.
+@platform(macos)
+func nativeKind(path: [UInt8]): Int {
+    var buffer = zeroBuffer(count: statxBufferSize)
+    if lstatP(path: path, buffer: &buffer) != 0 { return lastFailure() }
+    return modeKind(mode: halfWord(bytes: buffer, offset: 4))
+}
+
+@platform(macos)
+func nameOffset(): Int { return 21 }
+
+// Entries until readdir_r reports none: 0 on success, else the error code.
+@platform(macos)
+private func collectEntries(directory: Int, names: inout [String]): Int {
+    var entry = zeroBuffer(count: direntBufferSize)
+    var found = zeroBuffer(count: 8)
+    var code = 0
+    var finished = false
+    while !finished {
+        let status = readdirP(directory: directory, entry: &entry, found: &found)
+        if status != 0 {
+            code = status as Int
+            finished = true
+            continue
+        }
+        var ended = true
+        var position = 0
+        while position < 8 {
+            if found[position] != 0 { ended = false }
+            position = position + 1
+        }
+        if ended {
+            finished = true
+            continue
+        }
+        var name: [UInt8] = []
+        var cursor = nameOffset()
+        while cursor < direntBufferSize && entry[cursor] != 0 {
+            &name.append(element: entry[cursor])
+            cursor = cursor + 1
+        }
+        let isDot = name.count == 1 && name[0] == b'.'
+        let isDotDot = name.count == 2 && name[0] == b'.' && name[1] == b'.'
+        if !isDot && !isDotDot {
+            let text = stringFromBytes(bytes: name, count: name.count)
+            if !isValidUtf8(text: text) {
+                code = encodingErrno()
+                finished = true
+            } else {
+                &names.append(element: text)
+            }
+        }
+    }
+    return code
+}
+
+@platform(macos)
+func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
+    let directory = opendirP(path: native)
+    if directory == 0 { return .Err(classifyError(code: 0 - lastFailure())) }
+    var names: [String] = []
+    var code = collectEntries(directory: directory, names: &names)
+    if closedirP(directory: directory) != 0 && code == 0 { code = 0 - lastFailure() }
+    if code != 0 { return .Err(classifyError(code: code)) }
+    return .Ok(names)
+}

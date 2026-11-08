@@ -20,7 +20,9 @@ void Builder::emitOwnership() {
     if (source.isRuntimeObject) {
         std::vector<ir::TypeId> pending;
         for (const auto& function : source.functions) {
-            if (function.isExternal) continue;
+            // A core function holds no managed value: the String literal that names
+            // a message for the literal-address intrinsic is never materialized.
+            if (function.isExternal || function.coreContext) continue;
             pending.push_back(function.resultType);
             for (const auto& parameter : function.parameters) pending.push_back(parameter.value.type);
             for (const auto& block : function.blocks) {

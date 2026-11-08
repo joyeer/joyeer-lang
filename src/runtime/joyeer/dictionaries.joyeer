@@ -1,0 +1,312 @@
+// Owned dictionaries (`joyeer_dictionary_*_abi`). A dictionary is a
+// `{ data, count, capacity }` handle of three 8-byte fields; `data` points just
+// past a 72-byte header and an array of `entrySize`-byte entries, each a key at
+// offset 0 and a value at `valueOffset`:
+//
+//     header + 0   keySize
+//     header + 8   valueSize
+//     header + 16  entrySize
+//     header + 24  valueOffset
+//     header + 32  keyKind (32 bits)
+//     header + 40  cloneKey(destination, source)
+//     header + 48  destroyKey(key)
+//     header + 56  cloneValue(destination, source)
+//     header + 64  destroyValue(value)
+//     header + 72  entry 0 ...
+//
+// Lookup is a linear scan comparing keys by kind. One allocation holds the
+// header and `capacity` entries, so freeing a block gives back
+// `72 + capacity * entrySize` bytes.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func load8(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_load_u32")
+private func load32(address: Int): UInt32
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u32")
+private func store32(address: Int, value: UInt32): Void
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memset")
+private func fillBytes(destination: Int, value: UInt8, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+private func callVoid1(target: Int, first: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void2")
+private func callVoid2(target: Int, first: Int, second: Int): Void
+
+@c_extern(symbol: "memcmp")
+private func memoryCompare(left: Int, right: Int, count: Int): Int32
+
+private let intMax: Int = 9223372036854775807
+private let headerSize: Int = 72
+
+private let keyKindInt: Int = 1
+private let keyKindBool: Int = 2
+private let keyKindString: Int = 3
+private let keyKindByte: Int = 4
+
+private func read(address: Int): Int {
+    return load64(address: address) as Int
+}
+
+private func write(address: Int, value: Int) {
+    store64(address: address, value: value as UInt64)
+}
+
+private func byteCount(count: Int, stride: Int): Int {
+    if count < 0 || stride < 0 { panic(message: literalAddress(text: "negative allocation size")) }
+    if count != 0 && stride > intMax / count {
+        panic(message: literalAddress(text: "allocation size overflow"))
+    }
+    return count * stride
+}
+
+private func storageBytes(capacity: Int, entrySize: Int): Int {
+    let bytes = byteCount(count: capacity, stride: entrySize)
+    if bytes > intMax - headerSize {
+        panic(message: literalAddress(text: "dictionary allocation size overflow"))
+    }
+    return headerSize + bytes
+}
+
+private func keysEqual(left: Int, right: Int, keySize: Int, keyKind: Int): Bool {
+    if keyKind == keyKindInt { return load64(address: left) == load64(address: right) }
+    if keyKind == keyKindBool || keyKind == keyKindByte {
+        return load8(address: left) == load8(address: right)
+    }
+    if keyKind == keyKindString {
+        return stringEqual(leftData: read(address: left), leftCount: read(address: left + 8),
+            rightData: read(address: right), rightCount: read(address: right + 8))
+    }
+    return memoryCompare(left: left, right: right, count: keySize) == 0
+}
+
+// When an entry in `data`'s first `count` entries has `key`, destroys the
+// duplicate `key`, replaces that entry's value with the one at `value` (taking
+// ownership) and returns true.
+private func replaceEntry(data: Int, count: Int, key: Int, value: Int): Bool {
+    let header = data - headerSize
+    let keySize = read(address: header)
+    let valueSize = read(address: header + 8)
+    let entrySize = read(address: header + 16)
+    let valueOffset = read(address: header + 24)
+    let keyKind = load32(address: header + 32) as Int
+    var index = 0
+    while index < count {
+        let entry = data + byteCount(count: index, stride: entrySize)
+        index = index + 1
+        if !keysEqual(left: entry, right: key, keySize: keySize, keyKind: keyKind) { continue }
+        let destroyKey = read(address: header + 48)
+        let destroyValue = read(address: header + 64)
+        if destroyKey != 0 { callVoid1(target: destroyKey, first: key) }
+        if destroyValue != 0 { callVoid1(target: destroyValue, first: entry + valueOffset) }
+        if valueSize != 0 { copyBytes(destination: entry + valueOffset, source: value, count: valueSize) }
+        return true
+    }
+    return false
+}
+
+private func store(handle: Int, data: Int, count: Int, capacity: Int) {
+    write(address: handle, value: data)
+    write(address: handle + 8, value: count)
+    write(address: handle + 16, value: capacity)
+}
+
+// Allocates room for `count` entries and fills it from `entries`. With
+// `cloneEntries` the entries are cloned (a copy of an existing dictionary);
+// otherwise the entries are adopted and duplicate keys collapse, keeping the
+// last value. Stores the handle at `output`.
+private func makeDictionary(output: Int, entries: Int, count: Int, keySize: Int, valueSize: Int,
+        entrySize: Int, valueOffset: Int, keyKind: Int, cloneKey: Int, destroyKey: Int,
+        cloneValue: Int, destroyValue: Int, cloneEntries: Bool) {
+    if keySize <= 0 || valueSize < 0 || entrySize < keySize || valueOffset < keySize ||
+        valueOffset > entrySize || valueSize > entrySize - valueOffset {
+        panic(message: literalAddress(text: "invalid dictionary layout"))
+    }
+    let bytes = byteCount(count: count, stride: entrySize)
+    let storage = allocate(size: storageBytes(capacity: count, entrySize: entrySize))
+    write(address: storage, value: keySize)
+    write(address: storage + 8, value: valueSize)
+    write(address: storage + 16, value: entrySize)
+    write(address: storage + 24, value: valueOffset)
+    store32(address: storage + 32, value: keyKind as UInt32)
+    write(address: storage + 40, value: cloneKey)
+    write(address: storage + 48, value: destroyKey)
+    write(address: storage + 56, value: cloneValue)
+    write(address: storage + 64, value: destroyValue)
+    let data = storage + headerSize
+    if bytes != 0 {
+        if entries == 0 { panic(message: literalAddress(text: "dictionary initializer is null")) }
+        if cloneEntries && (cloneKey != 0 || cloneValue != 0) {
+            fillBytes(destination: data, value: 0, count: bytes)
+            var offset = 0
+            while offset < bytes {
+                if cloneKey != 0 {
+                    callVoid2(target: cloneKey, first: data + offset, second: entries + offset)
+                } else {
+                    copyBytes(destination: data + offset, source: entries + offset, count: keySize)
+                }
+                if cloneValue != 0 {
+                    callVoid2(target: cloneValue, first: data + offset + valueOffset,
+                        second: entries + offset + valueOffset)
+                } else {
+                    copyBytes(destination: data + offset + valueOffset,
+                        source: entries + offset + valueOffset, count: valueSize)
+                }
+                offset = offset + entrySize
+            }
+        } else {
+            copyBytes(destination: data, source: entries, count: bytes)
+        }
+    }
+    if cloneEntries {
+        store(handle: output, data: data, count: count, capacity: count)
+        return
+    }
+    // Adopted entries may repeat a key: collapse them in place.
+    var kept = 0
+    var index = 0
+    while index < count {
+        let entry = data + byteCount(count: index, stride: entrySize)
+        index = index + 1
+        if replaceEntry(data: data, count: kept, key: entry, value: entry + valueOffset) { continue }
+        let destination = data + byteCount(count: kept, stride: entrySize)
+        if destination != entry { copyBytes(destination: destination, source: entry, count: entrySize) }
+        kept = kept + 1
+    }
+    store(handle: output, data: data, count: kept, capacity: count)
+}
+
+@c_export(symbol: "joyeer_dictionary_create_owned_abi")
+public func dictionaryCreateOwned(output: Int, entries: Int, count: Int, keySize: Int, valueSize: Int,
+        entrySize: Int, valueOffset: Int, keyKind: Int32, cloneKey: Int, destroyKey: Int,
+        cloneValue: Int, destroyValue: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "dictionary result is null")) }
+    makeDictionary(output: output, entries: entries, count: count, keySize: keySize,
+        valueSize: valueSize, entrySize: entrySize, valueOffset: valueOffset,
+        keyKind: keyKind as Int, cloneKey: cloneKey, destroyKey: destroyKey,
+        cloneValue: cloneValue, destroyValue: destroyValue, cloneEntries: false)
+}
+
+@c_export(symbol: "joyeer_dictionary_clone_abi")
+public func dictionaryClone(output: Int, data: Int, count: Int): Void {
+    if output == 0 || data == 0 { panic(message: literalAddress(text: "invalid dictionary clone")) }
+    let header = data - headerSize
+    makeDictionary(output: output, entries: data, count: count, keySize: read(address: header),
+        valueSize: read(address: header + 8), entrySize: read(address: header + 16),
+        valueOffset: read(address: header + 24), keyKind: load32(address: header + 32) as Int,
+        cloneKey: read(address: header + 40), destroyKey: read(address: header + 48),
+        cloneValue: read(address: header + 56), destroyValue: read(address: header + 64),
+        cloneEntries: true)
+}
+
+@c_export(symbol: "joyeer_dictionary_set_owned_abi")
+public func dictionarySetOwned(dictionary: Int, key: Int, value: Int): Void {
+    if dictionary == 0 || read(address: dictionary) == 0 || key == 0 ||
+        read(address: dictionary + 8) < 0 || read(address: dictionary + 16) < read(address: dictionary + 8) {
+        panic(message: literalAddress(text: "invalid dictionary set"))
+    }
+    var data = read(address: dictionary)
+    let count = read(address: dictionary + 8)
+    let capacity = read(address: dictionary + 16)
+    let header = data - headerSize
+    let keySize = read(address: header)
+    let valueSize = read(address: header + 8)
+    let entrySize = read(address: header + 16)
+    let valueOffset = read(address: header + 24)
+    if keySize <= 0 || valueSize < 0 || (valueSize != 0 && value == 0) || count == intMax {
+        panic(message: literalAddress(text: "invalid dictionary set"))
+    }
+    if replaceEntry(data: data, count: count, key: key, value: value) { return }
+
+    if count == capacity {
+        var grown = 4
+        if capacity >= 4 {
+            if capacity > intMax / 2 { panic(message: literalAddress(text: "dictionary capacity overflow")) }
+            grown = capacity * 2
+        }
+        let moved = reallocate(address: header,
+            oldSize: storageBytes(capacity: capacity, entrySize: entrySize),
+            newSize: storageBytes(capacity: grown, entrySize: entrySize))
+        data = moved + headerSize
+        write(address: dictionary, value: data)
+        write(address: dictionary + 16, value: grown)
+    }
+    let entry = data + byteCount(count: count, stride: entrySize)
+    fillBytes(destination: entry, value: 0, count: entrySize)
+    copyBytes(destination: entry, source: key, count: keySize)
+    if valueSize != 0 { copyBytes(destination: entry + valueOffset, source: value, count: valueSize) }
+    write(address: dictionary + 8, value: count + 1)
+}
+
+// The value storage for `key`, or 0 when absent.
+private func find(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int): Int {
+    if data == 0 || key == 0 { panic(message: literalAddress(text: "invalid dictionary lookup")) }
+    let header = data - headerSize
+    if keySize != read(address: header) || keyKind != (load32(address: header + 32) as Int) {
+        panic(message: literalAddress(text: "dictionary key type mismatch"))
+    }
+    let entrySize = read(address: header + 16)
+    var index = 0
+    while index < count {
+        let entry = data + byteCount(count: index, stride: entrySize)
+        if keysEqual(left: entry, right: key, keySize: keySize, keyKind: keyKind) {
+            return entry + read(address: header + 24)
+        }
+        index = index + 1
+    }
+    return 0
+}
+
+@c_export(symbol: "joyeer_dictionary_find_abi")
+public func dictionaryFind(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int {
+    return find(data: data, count: count, key: key, keySize: keySize, keyKind: keyKind as Int)
+}
+
+@c_export(symbol: "joyeer_dictionary_at_abi")
+public func dictionaryAt(data: Int, count: Int, key: Int, keySize: Int, keyKind: Int32): Int {
+    let value = find(data: data, count: count, key: key, keySize: keySize, keyKind: keyKind as Int)
+    if value == 0 { panic(message: literalAddress(text: "dictionary key not found")) }
+    return value
+}
+
+@c_export(symbol: "joyeer_dictionary_destroy_abi")
+public func dictionaryDestroy(dictionary: Int): Void {
+    if dictionary == 0 { return }
+    let data = read(address: dictionary)
+    if data == 0 { return }
+    let header = data - headerSize
+    let entrySize = read(address: header + 16)
+    let valueOffset = read(address: header + 24)
+    let destroyKey = read(address: header + 48)
+    let destroyValue = read(address: header + 64)
+    var index = read(address: dictionary + 8)
+    while index > 0 {
+        let entry = data + (index - 1) * entrySize
+        if destroyValue != 0 { callVoid1(target: destroyValue, first: entry + valueOffset) }
+        if destroyKey != 0 { callVoid1(target: destroyKey, first: entry) }
+        index = index - 1
+    }
+    release(address: header,
+        size: storageBytes(capacity: read(address: dictionary + 16), entrySize: entrySize))
+    write(address: dictionary, value: 0)
+    write(address: dictionary + 8, value: 0)
+    write(address: dictionary + 16, value: 0)
+}

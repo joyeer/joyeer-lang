@@ -255,6 +255,7 @@ enum class TypeCheckingDiagnosticId {
     unauthorizedNativeBinding,
     conflictingNativeSymbol,
     invalidNumericLiteral,
+    managedTypeInCoreUnit,
 };
 
 struct TypeCheckingDiagnostic {

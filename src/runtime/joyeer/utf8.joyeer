@@ -1,0 +1,54 @@
+// Strict UTF-8 validation for native libraries (`joyeer_host_valid_utf8`), the
+// first runtime function written in Joyeer. It rejects overlong sequences,
+// surrogates, truncated sequences and code points beyond U+10FFFF.
+//
+// This is a runtime core unit: it uses only scalars and an address held as an
+// `Int`, and the load intrinsic of spec §19.4.5. It must not use String, arrays,
+// dictionaries or print, which lower to runtime calls (runtime plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func loadByte(address: Int): UInt8
+
+private func continuation(address: Int): Bool {
+    let byte = loadByte(address: address) as Int
+    return byte >= 128 && byte <= 191
+}
+
+@c_export(symbol: "joyeer_host_valid_utf8")
+public func hostValidUtf8(data: Int, count: Int): Bool {
+    if count < 0 { return false }
+    if count != 0 && data == 0 { return false }
+    var index = 0
+    while index < count {
+        let first = loadByte(address: data + index) as Int
+        index = index + 1
+        if first <= 127 { continue }
+        var remaining = 0
+        var lower = 128
+        var upper = 191
+        if first >= 194 && first <= 223 {
+            remaining = 1
+        } else if first >= 224 && first <= 239 {
+            remaining = 2
+            if first == 224 { lower = 160 }
+            if first == 237 { upper = 159 }
+        } else if first >= 240 && first <= 244 {
+            remaining = 3
+            if first == 240 { lower = 144 }
+            if first == 244 { upper = 143 }
+        } else {
+            return false
+        }
+        if count - index < remaining { return false }
+        let second = loadByte(address: data + index) as Int
+        if second < lower || second > upper { return false }
+        index = index + 1
+        var seen = 1
+        while seen < remaining {
+            if !continuation(address: data + index) { return false }
+            index = index + 1
+            seen = seen + 1
+        }
+    }
+    return true
+}

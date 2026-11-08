@@ -1,5 +1,5 @@
 #include "native.h"
-#include "runtime/host_internal.h"
+#include "runtime/runtime.h"
 #include "miniz.h"
 
 #include <limits.h>

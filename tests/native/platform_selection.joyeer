@@ -1,0 +1,19 @@
+@platform(windows)
+func hostName(): String { return "windows" }
+
+@platform(linux)
+func hostName(): String { return "linux" }
+
+@platform(macos)
+func hostName(): String { return "macos" }
+
+@platform(windows)
+func separator(): String { return "\\" }
+
+@platform(posix)
+func separator(): String { return "/" }
+
+func main() {
+    print(value: hostName())
+    print(value: separator())
+}

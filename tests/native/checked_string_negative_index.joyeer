@@ -1,0 +1,5 @@
+func main() {
+    let text = "joyeer"
+    let minimum = 0 - 9223372036854775807 - 1
+    print(value: text[minimum])
+}

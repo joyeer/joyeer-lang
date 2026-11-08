@@ -133,8 +133,14 @@ assign_op         ::= '=' | '+=' | '-=' | '*=' | '/=' | '%='
                    |  '&=' | '|=' | '^=' | '<<=' | '>>='
 
 attribute         ::= '@' identifier '(' [ attribute_arg , ... ] ')'
-attribute_arg     ::= identifier ':' expression
+attribute_arg     ::= [ identifier ':' ] expression
 ```
+
+Each annotation fixes its own argument shape: `@c_extern` and `@c_export`
+take one `symbol:` string literal ([§19](19-c-interop.md)); `@platform` takes
+one or more unlabelled platform names ([§11.5](11-annotations.md#115-platform)),
+the one place an annotation argument is unlabelled. An argument of any other
+shape is rejected by the annotation that owns it.
 
 **C declaration constraints (§19).** A missing function body is valid only
 for `@c_extern`, which must not have a body. Every other function, including

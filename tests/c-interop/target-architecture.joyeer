@@ -1,0 +1,7 @@
+// The architecture intrinsic is a constant of the target: 1 for x86-64, 2 for AArch64.
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+func architecture(): Int
+
+func main() {
+    print(value: architecture())
+}

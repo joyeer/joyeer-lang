@@ -60,11 +60,13 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
-| Built-ins | Primitive/string `print(value:)`, fallible byte-exact `writeStderr(contents:)`, bounded line-oriented `readStdinLine(maximumBytes:)`, byte conversions, legacy `readFile(path:)`, and the portable host functions below |
-| Filesystem | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
-| Processes | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
+| Built-ins | Primitive/string `print(value:)` and byte conversions. Everything that touches the host is in `System` (below) |
+| Filesystem (`System`) | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
+| Processes (`System`) | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
-| Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
+| Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics (`joyeer_intrinsic_*`: address-of, loads, stores, atomic add), scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
+| System library (Joyeer) | `import System` provides the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4) and `readStdinLine` (§18.5), written in Joyeer over kernel32 (Windows) or libc (POSIX; processes use `posix_spawn`; the standard streams use the C library's own stdio) through `@platform` variants. They are no longer compiler-known built-ins and the C runtime has no filesystem, process, stderr, stdin or `readFile` code. Verified by `SystemTests` and the native fixtures on Windows x64 Debug. The POSIX variants type-check for Linux and macOS but have not run there |
+| Platform selection | `@platform(windows, linux, macos, posix)` (one or more names) on top-level functions ([§11.5](../spec/11-annotations.md#115-platform)). The selected variant is kept and the others are removed before name resolution; the target is the host. `CompileOptions.targetPlatform` can name another, but only for `validate` output (`driver.unsupported-target-platform` otherwise); there is no command-line option. Dropped variants must parse and keep valid annotations but are not resolved or type-checked; a failed selection reports only `platform.*` diagnostics |
 | Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
@@ -196,22 +198,18 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   timeouts, and asynchronous handles are not provided.
 - `writeStderr(contents: String): Result<Void, StderrError>` writes exact bytes
   without appending a newline and flushes; `.WriteFailed(Int)` carries CRT
-  `errno`, not a Win32 status. Its regressions pass in native Windows ARM64
-  Debug and Release. The bounded
+  `errno`, not a Win32 status. The bounded
   `readFilePrefix(path: String, maximumBytes: Int)` returns
-  `Result<String, FileSystemError>` and is integrated for the 65537-byte
-  manifest read after regular-file classification. Its `Int` host descriptor
-  maps through name resolution/type checking to a scalar LLVM `i64` input;
-  exact boundary/error and allocation-balance tests pass on that target,
-  and no streaming API is implied.
+  `Result<String, FileSystemError>` and is what fern uses for the 65537-byte
+  manifest read after regular-file classification; no streaming API is implied.
 - `readStdinLine(maximumBytes: Int): Result<String, StdinError>` reads one
   line from standard input (LF or CRLF stripped, final unterminated line
   returned). `StdinError` has `EndOfInput(Int)`, `LineTooLong(Int)` and
   `ReadFailed(Int)`; a longer line is consumed through its terminator so the
   next call resynchronizes. The bound is required. Windows switches stdin to
-  binary mode on first use, and stdout is flushed before the read blocks. See [spec §18.5](../spec/18-host.md#185-standard-input).
-  Runtime ABI, compiler signature, and native `-O0`/`-O2` regressions pass on
-  Windows ARM64 Debug; no streaming, timeout, or partial-line API exists.
+  binary mode, and stdout is flushed before the read blocks. See
+  [spec §18.5](../spec/18-host.md#185-standard-input). No streaming, timeout,
+  or partial-line API exists.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original
   bytes. The entry return status must be in `0..255`; other values produce

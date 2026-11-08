@@ -1,7 +1,8 @@
 ## §8 Error Handling
 
 **Implementation status:** the current compiler supports `Result`, `Optional`,
-explicit `match`, postfix `?`, and the typed `readFile` errors below. `??` and
+explicit `match`, postfix `?`, and the typed `IOError` below (`readFile` is a
+`System` function). `??` and
 several library helpers used in examples are broader, unimplemented design.
 See
 [the implemented language surface](../impl/supported-features.md).
@@ -31,7 +32,8 @@ func parseInt(s: String): Result<Int, ParseError> {
 
 #### 8.2.1 Typed I/O errors
 
-The prelude defines a stable error enum for legacy file input:
+The prelude defines a stable error enum for legacy file input, which the
+`System` standard module's `readFile` returns (§12.5):
 
 ```joyeer
 enum IOError {
@@ -41,6 +43,7 @@ enum IOError {
   Other(Int),
 }
 
+// in System (import System)
 func readFile(path: String): Result<String, IOError>
 ```
 

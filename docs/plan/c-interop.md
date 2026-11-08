@@ -9,7 +9,7 @@
 The annotations are restricted to a toolchain-controlled runtime context. This
 plan does not add user FFI. Related plans:
 
-- [hybrid-runtime](hybrid-runtime.md): runtime migration and bootstrap.
+- [runtime-in-joyeer](runtime-in-joyeer.md): the runtime written in Joyeer, its design decisions and phases.
 - [library](library.md): `Foundation`, `System`, `Collections`, `Testing`.
 - [native-link-inputs](native-link-inputs.md): proposal for supplying link inputs.
 
@@ -50,7 +50,7 @@ Decide each contract below before adding source syntax:
 |---|---|
 | Borrowed read-only bytes | Valid for the call only; no mutation, retention, or escape |
 | Writable bytes | Exclusive access, capacity, initialized length, partial writes |
-| Raw/opaque addresses | Source representation, allowed operations, lifetime; never an integer |
+| Raw/opaque addresses | Source representation, allowed operations, lifetime; never an integer in ordinary code (runtime units already carry addresses as `Int`, [decision 0005](../decisions/0005-runtime-unsafe-memory.md)) |
 | Output parameters | Representation, initialization on success/failure, cleanup |
 | Nullable addresses | Explicit null form; zero-length inputs; `Optional` is not pointer layout |
 | Owned result storage | Allocator, transfer point, exactly one release |
@@ -74,3 +74,4 @@ Prefer an internal scoped region mechanism over exposing pointer arithmetic.
 | Any public native capability? | Separate user-FFI/unsafe proposal |
 | Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](native-link-inputs.md) |
 | Complex ABI features | Separate gates: aggregates by value, unions/bit-fields, callbacks, varargs, `long double` |
+| Runtime-only capabilities | Implemented: static storage, indirect calls, data symbols, Never results, core units and the core entry export ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics), [§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)). Still undecided: bulk memory and a Linux syscall intrinsic ([§19.4.6](../spec/19-c-interop.md#1946-runtime-capabilities-still-proposed-)) |

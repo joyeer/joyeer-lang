@@ -73,7 +73,7 @@ and `src/backend/`:
 | [native_ownership.cpp](../../src/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership |
 | [native_functions.cpp](../../src/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
 | [native_collections.cpp](../../src/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
-| [native_host.cpp](../../src/backend/native_host.cpp) | External builtins, flat C arguments, Result construction, and ABI tag mapping |
+| [native_host.cpp](../../src/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |
 | [native_debug.cpp](../../src/backend/native_debug.cpp) | DIBuilder types, scopes, variables, source files, and instruction locations |
 | [backend.cpp](../../src/backend/backend.cpp) | Target-specific optimization/object generation and embedded LLD drivers |
 | [linker.cpp](../../src/compiler/codegen/linker.cpp) | Artifact paths, runtime/SDK inputs, native linking, and debug sidecars |
@@ -264,6 +264,11 @@ repeat it to select more units. Unknown or duplicate selections are errors.
 `--emit-runtime-object <file>` requires authorization for the named root,
 uses `.o`/`.obj` code generation, and does not require a runtime archive or
 an application `main`. It does not establish a general binary-module ABI.
+`--runtime-core-module <name>` is `--runtime-module` plus a restriction: a core
+unit may use only `Bool`, the integer and floating types and `Void`
+([§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)),
+and a use of anything else is `type-checking.managed-type-in-core-unit`. The
+Joyeer runtime core (`src/runtime/joyeer/`) is built this way.
 See [C binding coverage](c-interop.md) for signatures, static/shared providers,
 authorization boundaries, and acceptance gates.
 
@@ -475,20 +480,16 @@ calling-convention, and initialization contract.
 ## 4. Runtime boundary
 
 The C11 [runtime](runtime.md) owns process startup, checked
-arithmetic and bounds helpers, value storage, collections, file input, and
+arithmetic and bounds helpers, value storage, collections, printing and
 allocation-balance checking. It is a static archive linked into generated
-programs, not a dependency on LLVM/LLD.
+programs, not a dependency on LLVM/LLD. The
+[runtime plan](../plan/runtime-in-joyeer.md) replaces it with Joyeer.
 
-Descriptor-driven host calls include
-`writeStderr(contents: String): Result<Void, StderrError>`, where
-`StderrError` has `WriteFailed(Int)`. The emitter declares/calls
-`i32 @joyeer_write_stderr_abi(ptr, ptr, i64)` with the error-code out-pointer
-first and borrowed contents data/count afterward. ABI status `0` constructs
-`Ok(())`; status `1` constructs `Err(.WriteFailed(code))`. Error tags are mapped
-by enum case name, and invalid runtime tags trap. Unit successes use the
-existing zero-sized representation, not a runtime result out-pointer. See the
-[standard-error boundary](runtime.md#standard-error-boundary) for byte/flush
-semantics and CRT error reporting.
+The emitter calls the runtime only for `print`, the byte conversions, string,
+array and dictionary operations, ownership helpers, panics and the program
+entry. It knows no host operation: the filesystem, processes, standard error
+and input are ordinary `System` functions that reach the OS through
+`@c_extern` bindings ([§18](../spec/18-host.md), [runtime](runtime.md#host-operations)).
 
 ---
 

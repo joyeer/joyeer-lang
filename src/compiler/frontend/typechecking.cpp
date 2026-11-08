@@ -1,6 +1,7 @@
 #include "typechecking.h"
 #include "hostbuiltins.h"
 #include "nameresolution.h"
+#include "intrinsics.h"
 
 #include <algorithm>
 #include <array>
@@ -390,14 +391,67 @@ private:
         });
     }
 
+    // A core unit (spec 19.4.6) is part of the runtime, so it may use only the
+    // types that never lower to a runtime call: Bool, the integer and floating
+    // types, Void and Never.
+    [[nodiscard]] bool allowedInCoreUnit(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return true;
+        switch (record->kind) {
+            case TypeKind::error:
+            case TypeKind::voidType:
+            case TypeKind::never:
+            case TypeKind::boolean:
+                return true;
+            default:
+                return isNumeric(record->kind);
+        }
+    }
+
+    // The string-literal argument of joyeer_intrinsic_literal_address, which is
+    // read as constant data and never becomes a String value, is the one managed
+    // value a core unit may write.
+    const syntax::Node* literalAddressArgument = nullptr;
+    // Set while resolving the parameter of the literal-address intrinsic itself.
+    bool coreCheckSuspended = false;
+
+    [[nodiscard]] static bool declaresLiteralAddress(const syntax::FunctionDeclSyntax& declaration) {
+        for (const auto& attribute : declaration.attributes) {
+            if (attribute.name == nullptr || attribute.name->rawValue != "c_extern" ||
+                attribute.arguments.empty() || attribute.arguments.front()->value == nullptr ||
+                attribute.arguments.front()->value->kind != syntax::Kind::literalExpr) {
+                continue;
+            }
+            const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(
+                    attribute.arguments.front()->value);
+            if (literal->literal != nullptr && intrinsic::readsLiteral(literal->literal->rawValue)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void requireCoreType(const syntax::NodePtr& node, TypeId type) {
+        if (node == nullptr || coreCheckSuspended || node.get() == literalAddressArgument ||
+            !model->semanticModelValue->isCoreSource(node->span) || allowedInCoreUnit(type)) {
+            return;
+        }
+        report(TypeCheckingDiagnosticId::managedTypeInCoreUnit, node->span,
+               "a runtime core unit may use only scalar types, but this has type '" +
+                       model->typeContext.displayName(type) +
+                       "', whose operations call into the runtime");
+    }
+
     void recordNodeType(const syntax::NodePtr& node, TypeId type) {
         const auto id = model->semanticModelValue->nodeId(node);
         if (id.has_value()) model->nodeTypes[*id] = type;
+        requireCoreType(node, type);
     }
 
     void recordDeclaredType(const syntax::NodePtr& node, TypeId type) {
         const auto symbol = model->semanticModelValue->declaredSymbol(node);
         if (symbol.has_value()) model->symbolTypes[*symbol] = type;
+        requireCoreType(node, type);
     }
 
     void recordResolvedReference(
@@ -438,46 +492,6 @@ private:
                 model->semanticModelValue->preludeScope());
         assert(prelude != nullptr);
 
-        const auto hostEnumeration = [this](std::string_view name) {
-            const auto symbol = model->typeContext.builtinSymbol(std::string(name));
-            assert(symbol.has_value());
-            const auto type = model->typeContext.typeForSymbol(*symbol);
-            assert(type.has_value());
-            return *type;
-        };
-        const auto hostType = [this, &hostEnumeration](hostbuiltins::ValueKind kind) {
-            switch (kind) {
-                case hostbuiltins::ValueKind::string:
-                    return model->typeContext.stringType();
-                case hostbuiltins::ValueKind::strings:
-                    return model->typeContext.arrayType(model->typeContext.stringType());
-                case hostbuiltins::ValueKind::integer:
-                    return model->typeContext.intType();
-                case hostbuiltins::ValueKind::unit:
-                    return model->typeContext.voidType();
-                case hostbuiltins::ValueKind::fileKind:
-                    return hostEnumeration("FileKind");
-                case hostbuiltins::ValueKind::processStatus:
-                    return hostEnumeration("ProcessStatus");
-            }
-            assert(false && "unrecognized host value kind");
-            return model->typeContext.errorType();
-        };
-        for (const auto& descriptor : hostbuiltins::functions) {
-            const auto found = prelude->values.find(std::string(descriptor.name));
-            assert(found != prelude->values.end());
-            std::vector<TypeId> parameters;
-            for (const auto& parameter : descriptor.parameters) {
-                parameters.push_back(hostType(parameter.kind));
-            }
-            const auto result = model->typeContext.resultType(
-                    hostType(descriptor.result), hostEnumeration(descriptor.error));
-            model->symbolTypes[found->second] = result;
-            model->callables[found->second] = TypedCallableSignature {
-                semantic::CallableKind::function, true, std::move(parameters), result,
-            };
-        }
-
         const auto print = prelude->values.find("print");
         if (print != prelude->values.end()) {
             model->symbolTypes[print->second] = model->typeContext.voidType();
@@ -486,20 +500,6 @@ private:
                 true,
                 { model->typeContext.anyType() },
                 model->typeContext.voidType(),
-            };
-        }
-
-        const auto readFile = prelude->values.find("readFile");
-        if (readFile != prelude->values.end()) {
-            const auto result = model->typeContext.resultType(
-                    model->typeContext.stringType(),
-                    model->typeContext.ioErrorType());
-            model->symbolTypes[readFile->second] = result;
-            model->callables[readFile->second] = TypedCallableSignature {
-                semantic::CallableKind::function,
-                true,
-                { model->typeContext.stringType() },
-                result,
             };
         }
 
@@ -675,10 +675,15 @@ private:
             model->typeContext.voidType(),
         };
         signature.parameters.reserve(declaration->parameters.size());
+        const bool literalAddress = declaresLiteralAddress(*declaration);
         for (const auto& parameter : declaration->parameters) {
+            // The literal-address intrinsic's own String parameter is not a
+            // value a core unit builds; every other declaration is checked.
+            coreCheckSuspended = literalAddress;
             const auto type = resolveType(parameter->type).value_or(
                     model->typeContext.errorType());
             recordDeclaredType(parameter, type);
+            coreCheckSuspended = false;
             if (parameter->isReceiver) {
                 signature.receiverType = type;
                 continue;
@@ -688,6 +693,7 @@ private:
         if (declaration->returnType != nullptr) {
             signature.result = resolveType(declaration->returnType).value_or(
                     model->typeContext.errorType());
+            requireCoreType(declaration->returnType, signature.result);
         }
 
         model->symbolTypes[*function] = signature.result;
@@ -703,7 +709,7 @@ private:
         std::optional<NativeBinding> binding;
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
-            if (name != "c_extern" && name != "c_export") {
+            if (name != "c_extern" && name != "c_export" && name != "c_data") {
                 report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
                        "unknown annotation '@" + name + "'");
                 continue;
@@ -714,13 +720,14 @@ private:
                 continue;
             }
             binding = NativeBinding {
-                name == "c_extern" ? NativeBindingKind::cImport : NativeBindingKind::cExport,
+                name == "c_export" ? NativeBindingKind::cExport : NativeBindingKind::cImport,
                 {},
                 attribute.span,
             };
-            if (attribute.arguments.size() != 1) {
+            binding->dataSymbol = name == "c_data";
+            if (attribute.arguments.empty()) {
                 report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
-                       "C annotations require exactly one 'symbol:' string-literal argument");
+                       "C annotations require a 'symbol:' string-literal argument");
                 continue;
             }
             const auto& argument = attribute.arguments.front();
@@ -740,8 +747,44 @@ private:
                 report(TypeCheckingDiagnosticId::invalidAnnotation, argument->span,
                        "native symbol must be a nonempty ASCII C identifier without linker decoration");
             }
+            // Further arguments name `[UInt8]` parameters passed as a bare
+            // data pointer: `pointer: "label"`, once per parameter.
+            for (size_t position = 1; position < attribute.arguments.size(); ++position) {
+                const auto& extra = attribute.arguments[position];
+                const auto name = extra->value != nullptr && extra->value->kind == syntax::Kind::literalExpr
+                        ? std::static_pointer_cast<syntax::LiteralExprSyntax>(extra->value)
+                        : nullptr;
+                if (extra->label == nullptr || extra->label->rawValue != "pointer" ||
+                    extra->accessMarker != nullptr || name == nullptr || name->literal == nullptr ||
+                    name->literal->kind != stringLiteral) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, extra->span,
+                           "after 'symbol:', C annotations accept only 'pointer:' followed by a "
+                           "parameter label string literal");
+                    continue;
+                }
+                const auto& parameters = declaration->parameters;
+                const auto found = std::find_if(parameters.begin(), parameters.end(), [&](const auto& parameter) {
+                    return parameter->label != nullptr && parameter->label->rawValue == name->literal->rawValue;
+                });
+                if (found == parameters.end()) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, extra->span,
+                           "'pointer:' names no parameter '" + name->literal->rawValue + "'");
+                    continue;
+                }
+                const auto index = static_cast<uint32_t>(found - parameters.begin());
+                if (binding->passesPointer(index)) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, extra->span,
+                           "parameter '" + name->literal->rawValue + "' is already passed as a pointer");
+                    continue;
+                }
+                binding->pointerParameters.push_back(index);
+            }
         }
         if (!binding.has_value()) return;
+        if (binding->kind == NativeBindingKind::cExport && !binding->pointerParameters.empty()) {
+            report(TypeCheckingDiagnosticId::invalidAnnotation, binding->span,
+                   "'pointer:' applies only to C imports");
+        }
         if (!model->semanticModelValue->isRuntimeSource(declaration->span)) {
             report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, binding->span,
                    "C bindings require an explicitly selected runtime compilation unit");
@@ -757,9 +800,28 @@ private:
             report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
                    "C bindings require an explicit result type, including Void");
         }
+        if (binding->dataSymbol) {
+            // @c_data names a data symbol, not a function: no parameters, and the
+            // address it yields is an Int. The name must not be a startup symbol.
+            const auto& shape = model->callables.at(function);
+            const auto* result = model->typeContext.type(shape.result);
+            if (!declaration->parameters.empty() || result == nullptr || result->kind != TypeKind::integer ||
+                !binding->pointerParameters.empty()) {
+                report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                       "@c_data declares 'func name(): Int', the address of a C data symbol");
+            }
+            if (isCEntrySymbol(binding->symbol)) {
+                report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                       "@c_data must not name a toolchain executable entry point");
+            }
+        }
         const auto* symbol = model->semanticModelValue->symbol(function);
+        // Only a core unit (spec 19.4.6) may export the platform's program entry
+        // point; every other startup symbol, and every other unit, may not.
+        const bool coreEntry = !importing && isCoreEntrySymbol(binding->symbol) &&
+                model->semanticModelValue->isCoreSource(declaration->span);
         if ((symbol->isRootModule && symbol->name == "main") ||
-            (!importing && isCEntrySymbol(binding->symbol))) {
+            (!importing && isCEntrySymbol(binding->symbol) && !coreEntry)) {
             report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
                    "C bindings must not replace a toolchain executable entry point");
         }
@@ -769,6 +831,14 @@ private:
             const auto effect = parameter->accessEffect();
             const auto buffer = nativeBufferKind(signature.parameters[index],
                     [&](TypeId id) { return model->typeContext.type(id); });
+            if (binding->passesPointer(static_cast<uint32_t>(index))) {
+                if (!importing || buffer != NativeBufferKind::bytes ||
+                    (effect != syntax::AccessEffect::borrowing && effect != syntax::AccessEffect::inout)) {
+                    report(TypeCheckingDiagnosticId::unsupportedNativeSignature, parameter->span,
+                           "'pointer:' applies only to borrowing or inout [UInt8] parameters of C imports");
+                }
+                continue;
+            }
             const bool scalar = effect == syntax::AccessEffect::borrowing &&
                     isNativeScalar(model->typeContext.type(signature.parameters[index])->kind);
             const bool nativeBuffer = importing && buffer != NativeBufferKind::none &&
@@ -781,11 +851,33 @@ private:
                        "String, [UInt8], [String], [[UInt8]] and initializing String, [UInt8], [String]");
             }
         }
+        // Never marks a C function that does not return (an import such as exit),
+        // or an export that does not (the runtime's panic).
         if (!isNativeScalar(model->typeContext.type(signature.result)->kind) &&
-            signature.result != model->typeContext.voidType()) {
+            signature.result != model->typeContext.voidType() &&
+            model->typeContext.type(signature.result)->kind != TypeKind::never) {
             report(TypeCheckingDiagnosticId::unsupportedNativeSignature,
                    declaration->returnType == nullptr ? declaration->span : declaration->returnType->span,
                    "C bindings require a scalar or Void result");
+        }
+        if (intrinsic::reserved(binding->symbol)) {
+            // A reserved symbol names a compiler intrinsic (§19.4.5): it must be
+            // a known one, imported, with exactly its signature.
+            std::vector<TypeKind> kinds;
+            std::vector<bool> pointers;
+            std::vector<bool> mutables;
+            for (size_t index = 0; index < signature.parameters.size(); ++index) {
+                kinds.push_back(model->typeContext.type(signature.parameters[index])->kind);
+                pointers.push_back(binding->passesPointer(static_cast<uint32_t>(index)));
+                mutables.push_back(declaration->parameters[index]->accessEffect() == syntax::AccessEffect::inout);
+            }
+            const auto* descriptor = intrinsic::find(binding->symbol);
+            if (!importing || descriptor == nullptr ||
+                !intrinsic::matches(*descriptor, model->typeContext.type(signature.result)->kind,
+                                    kinds, pointers, mutables)) {
+                report(TypeCheckingDiagnosticId::invalidNativeDeclaration, declaration->span,
+                       "'" + binding->symbol + "' is not a compiler intrinsic with this signature");
+            }
         }
         if (diagnostics.size() == diagnosticStart) {
             model->nativeBindings.emplace(function, std::move(*binding));
@@ -799,7 +891,10 @@ private:
             const auto* binding = model->nativeBinding(symbol.id);
             if (binding == nullptr) continue;
             const auto [previous, inserted] = declarations.emplace(binding->symbol, symbol.id);
-            if (!inserted) {
+            if (!inserted && model->nativeBinding(previous->second)->dataSymbol != binding->dataSymbol) {
+                report(TypeCheckingDiagnosticId::conflictingNativeSymbol, binding->span,
+                       "native symbol '" + binding->symbol + "' is declared as both a function and a data symbol");
+            } else if (!inserted) {
                 const auto& left = model->callables.at(previous->second);
                 const auto& right = model->callables.at(symbol.id);
                 const auto compatible = [&](TypeId a, TypeId b) {
@@ -818,6 +913,12 @@ private:
                     sameEffects = previousSymbol->callable->parameters[index].access ==
                             symbol.callable->parameters[index].access;
                 }
+                // Repeated declarations must also agree on which buffers carry no count.
+                auto left_pointers = model->nativeBinding(previous->second)->pointerParameters;
+                auto right_pointers = binding->pointerParameters;
+                std::sort(left_pointers.begin(), left_pointers.end());
+                std::sort(right_pointers.begin(), right_pointers.end());
+                sameEffects = sameEffects && left_pointers == right_pointers;
                 if (left.parameters.size() != right.parameters.size() ||
                         !std::equal(left.parameters.begin(), left.parameters.end(),
                                 right.parameters.begin(), right.parameters.end(), compatible) ||
@@ -1729,6 +1830,11 @@ private:
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
+            semanticTarget->name == "print" && model->semanticModelValue->isCoreSource(expression->span)) {
+            report(TypeCheckingDiagnosticId::managedTypeInCoreUnit, expression->span,
+                   "a runtime core unit must not call print, which is implemented by the runtime");
+        }
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::method) {
             // A method needs a receiver value; `Type.method(...)` has none.
             const auto base = expression->callee->kind == syntax::Kind::memberExpr
@@ -1821,8 +1927,26 @@ private:
                 receiverResultType = model->typeContext.optionalType(baseType->arguments[1]);
             }
         }
+        const bool literalAddressCall = target.has_value() &&
+                model->nativeBinding(*target) != nullptr &&
+                intrinsic::readsLiteral(model->nativeBinding(*target)->symbol);
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
             const auto& argument = expression->arguments[index];
+            if (literalAddressCall && index == 0) {
+                // The data is read at compile time: it must be a string literal.
+                const auto literal = argument->value != nullptr &&
+                        argument->value->kind == syntax::Kind::literalExpr
+                        ? std::static_pointer_cast<syntax::LiteralExprSyntax>(argument->value)
+                        : nullptr;
+                if (literal == nullptr || literal->literal == nullptr ||
+                    literal->literal->kind != stringLiteral) {
+                    report(TypeCheckingDiagnosticId::invalidCallArguments,
+                           argument->value != nullptr ? argument->value->span : argument->span,
+                           model->nativeBinding(*target)->symbol + " requires a string literal argument");
+                } else {
+                    literalAddressArgument = argument->value.get();
+                }
+            }
             const auto parameterIndex = semanticTarget == nullptr
                     ? std::optional<size_t>()
                     : parameterIndexForArgument(*semanticTarget, *argument, index);
@@ -3130,6 +3254,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.conflicting-native-symbol";
         case TypeCheckingDiagnosticId::invalidNumericLiteral:
             return "type-checking.invalid-numeric-literal";
+        case TypeCheckingDiagnosticId::managedTypeInCoreUnit:
+            return "type-checking.managed-type-in-core-unit";
     }
     return "type-checking.unknown";
 }

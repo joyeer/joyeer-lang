@@ -1,0 +1,10 @@
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_export(symbol: "cinterop_slot_read")
+public func read(index: Int): UInt64 {
+    return load64(address: slot(index: index))
+}

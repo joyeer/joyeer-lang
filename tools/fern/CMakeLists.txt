@@ -72,7 +72,7 @@ add_custom_command(
 add_custom_target(fern ALL
     DEPENDS "${JOYEER_FERN_EXECUTABLE}" ${JOYEER_FERN_SOURCES}
     SOURCES ${JOYEER_FERN_SOURCES} platform.joyeer.in project.toml.in)
-add_dependencies(fern JoyeerToolchain)
+add_dependencies(fern JoyeerToolchain JoyeerStandardLibrary)
 
 install(PROGRAMS "${JOYEER_FERN_EXECUTABLE}"
     DESTINATION . COMPONENT PRODUCT)
