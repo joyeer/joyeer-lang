@@ -270,7 +270,12 @@ bool needsCRuntime(const std::filesystem::path& objectFile) {
         if (!undefinedExternal) continue;
         if (name.rfind("__imp_", 0) == 0) name.erase(0, 6);
         static const char* const support[] = {"memcpy", "memmove", "memset", "memcmp", "__chkstk", "_fltused"};
-        if (name.rfind("joyeer_", 0) == 0 || std::find(std::begin(support), std::end(support), name) != std::end(support)) {
+        // Winsock exports its Berkeley socket functions in lower case; ws2_32.lib is always linked and
+        // none of these needs the C runtime's startup (decision 0012).
+        static const char* const winsock[] = {"socket", "bind", "listen", "accept", "connect", "recv", "send",
+            "closesocket", "getsockname"};
+        if (name.rfind("joyeer_", 0) == 0 || std::find(std::begin(support), std::end(support), name) != std::end(support) ||
+            std::find(std::begin(winsock), std::end(winsock), name) != std::end(winsock)) {
             continue;
         }
         if (name.empty() || name[0] < 'A' || name[0] > 'Z') return true;
@@ -640,6 +645,9 @@ LinkResult Linker::link(
         // directive for the C runtime, so name the static one (/MT) explicitly.
         "libcmt.lib",
         "kernel32.lib",
+        // Import libraries contribute only the symbols a program references, so programs that
+        // use no sockets are unchanged (spec 18.6).
+        "ws2_32.lib",
     };
     const auto optimizeReferences = options.optimizationLevel == OptimizationLevel::O0
             ? "/OPT:NOREF"

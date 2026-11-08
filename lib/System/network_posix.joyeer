@@ -1,0 +1,44 @@
+// POSIX placeholders for network.joyeer. TCP is implemented for Windows only so
+// far (decision 0012); every operation here fails with ENOSYS (38 on Linux),
+// reported as `.Other(38)`, so that `System` type-checks and links everywhere
+// and a program fails cleanly instead of failing to build. Linux system calls
+// and macOS libSystem calls replace these, one platform at a time.
+
+@platform(posix)
+func networkInvalidCode(): Int { return 22 }
+
+@platform(posix)
+func classifyNetworkError(code: Int): NetworkError {
+    if code == 22 { return .InvalidInput(code) }
+    return .Other(code)
+}
+
+@platform(posix)
+func nativeTcpOpen(): Int { return -38 }
+
+@platform(posix)
+func nativeTcpPrepareListener(handle: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpBind(handle: Int, address: Int, port: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpListen(handle: Int, backlog: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpAccept(handle: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpConnect(handle: Int, address: Int, port: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpPort(handle: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int { return -38 }
+
+@platform(posix)
+func nativeTcpClose(handle: Int): Int { return -38 }

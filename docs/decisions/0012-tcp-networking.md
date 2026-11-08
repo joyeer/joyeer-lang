@@ -1,8 +1,10 @@
 # 0012: Blocking TCP networking in `System`
 
-- Status: proposed (2026-11-08). Nothing is implemented. The first consumer is
-  the [markdown web server example](../../example/markdown-server/README.md),
-  which is written against this API and cannot be built until it lands.
+- Status: proposed (2026-11-08); the Windows implementation landed the same
+  day and is verified on Windows x64 Debug (loopback tests in `SystemTests`, and
+  the [markdown web server example](../../example/markdown-server/README.md)
+  served over real HTTP). Linux and macOS are placeholders that fail with
+  `.Other(38)`; full validation and the role reviews have not run.
 - Spec: [§18.6 TCP networking](../spec/18-host.md#186-tcp-networking)
   (provisional)
 
@@ -111,12 +113,14 @@ Implementation shape (informative, to be confirmed while building):
   import set grows by `ws2_32` only for programs that use sockets.
 - Diagnostics: none new at compile time. The new names are ordinary `System`
   functions; misuse after close is the existing use-after-consume diagnostic.
-- Open questions to settle during implementation:
-  1. Whether `System` can make the handle field of `TcpListener` /
-     `TcpConnection` inaccessible to importers (file-local `private` applies to
-     declarations; field-level access is not documented). If not, the types are
-     opaque by contract only.
-  2. How strong the `consuming` close really is. Compiling the example against
+- Settled during the Windows implementation: the handle field is a plain
+  internal `let` (as in `Compression`'s `ZipArchive`), which importers cannot
+  read or construct, so the types are opaque by construction. The linker now
+  always names `ws2_32.lib` and treats the Winsock names (`socket`, `bind`,
+  `listen`, `accept`, `connect`, `recv`, `send`, `closesocket`, `getsockname`) as
+  not needing the C runtime, so socket programs keep the own entry point.
+- Open questions:
+  1. How strong the `consuming` close really is. Compiling the example against
      a stub of this API showed that a `match` pattern binding such as
      `.Ok(connection)` is not an owning local, so
      `tcpCloseConnection(connection: consume connection)` is rejected
@@ -127,8 +131,9 @@ Implementation shape (informative, to be confirmed while building):
      resource. Whether to leave this as is, let a pattern binding be consumed
      when the scrutinee is a temporary, or make the close take a borrowed
      handle is open.
-  3. Whether the macOS and Linux AArch64 variants should be gated behind the
-     same acceptance steps as the POSIX filesystem, which has not run there.
+  2. The Linux (raw system calls) and macOS (libSystem) implementations are
+     still to write, and will need the same acceptance steps as the POSIX
+     filesystem, which has not run there either.
 
 ## Evidence
 

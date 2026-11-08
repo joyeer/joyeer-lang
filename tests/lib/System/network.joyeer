@@ -1,0 +1,216 @@
+import System
+import Foundation
+
+// Tests for the TCP operations (spec §18.6) as `System` provides them. Every
+// connection is to a listener of this program on 127.0.0.1: the kernel
+// completes the handshake into the listen backlog, so one thread can listen,
+// connect and accept in turn. The POSIX variants are placeholders (decision
+// 0012), so these tests run on Windows only.
+
+@platform(windows)
+private func implemented(): Bool { return true }
+
+@platform(posix)
+private func implemented(): Bool { return false }
+
+private func caseName(error: NetworkError): String {
+    return match error {
+        .InvalidInput(_) => "InvalidInput",
+        .AddressInUse(_) => "AddressInUse",
+        .AddressNotAvailable(_) => "AddressNotAvailable",
+        .PermissionDenied(_) => "PermissionDenied",
+        .ConnectionRefused(_) => "ConnectionRefused",
+        .ConnectionReset(_) => "ConnectionReset",
+        .TimedOut(_) => "TimedOut",
+        .Other(_) => "Other",
+    }
+}
+
+private func listenCase(address: String, port: Int, backlog: Int): String {
+    let outcome = tcpListen(address: address, port: port, backlog: backlog)
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => caseName(error: error),
+    }
+}
+
+private func connectCase(address: String, port: Int): String {
+    let outcome = tcpConnect(address: address, port: port)
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => caseName(error: error),
+    }
+}
+
+private func receiveCase(connection: TcpConnection, maximumBytes: Int): String {
+    let outcome = tcpReceive(connection: connection, maximumBytes: maximumBytes)
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => caseName(error: error),
+    }
+}
+
+private func checkCase(name: String, actual: String, expected: String): Int {
+    if actual == expected { return 0 }
+    print(value: "FAIL: " + name + ": expected " + expected + ", got " + actual)
+    return 1
+}
+
+private func testAddressForms(): Int {
+    var failures = 0
+    let bad = ["", "1.2.3", "1.2.3.4.5", "256.0.0.1", "01.2.3.4", "1.2.3.-1", "a.b.c.d", "localhost", "::1",
+        " 1.2.3.4", "1.2.3.4 ", "1..3.4", "1.2.3.", ".1.2.3", "1.2.3.1234", "127.0.0.1\n"]
+    var index = 0
+    while index < bad.count {
+        failures = failures + checkCase(name: "listen address '" + bad[index] + "'",
+            actual: listenCase(address: bad[index], port: 0, backlog: 1), expected: "InvalidInput")
+        failures = failures + checkCase(name: "connect address '" + bad[index] + "'",
+            actual: connectCase(address: bad[index], port: 80), expected: "InvalidInput")
+        index = index + 1
+    }
+    failures = failures + checkCase(name: "listen port -1",
+        actual: listenCase(address: "127.0.0.1", port: -1, backlog: 1), expected: "InvalidInput")
+    failures = failures + checkCase(name: "listen port 65536",
+        actual: listenCase(address: "127.0.0.1", port: 65536, backlog: 1), expected: "InvalidInput")
+    failures = failures + checkCase(name: "listen backlog 0",
+        actual: listenCase(address: "127.0.0.1", port: 0, backlog: 0), expected: "InvalidInput")
+    failures = failures + checkCase(name: "connect port 0",
+        actual: connectCase(address: "127.0.0.1", port: 0), expected: "InvalidInput")
+    failures = failures + checkCase(name: "connect port 65536",
+        actual: connectCase(address: "127.0.0.1", port: 65536), expected: "InvalidInput")
+    return failures
+}
+
+// A string of exactly `count` bytes whose content depends on the position.
+private func pattern(count: Int): String {
+    var block = "0123456789abcdefghijklmnopqrstuvwxyz"
+    while block.count < count { block = block + block }
+    return substring(text: block, start: 0, end: count)
+}
+
+private func loopback(): Result<Int, NetworkError> {
+    var failures = 0
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 4)?
+    let port = tcpLocalPort(listener: listener)?
+    failures = failures + check(name: "ephemeral port assigned", ok: port > 0 && port < 65536)
+
+    let client = tcpConnect(address: "127.0.0.1", port: port)?
+    let server = tcpAccept(listener: listener)?
+
+    failures = failures + checkCase(name: "receive bound 0",
+        actual: receiveCase(connection: server, maximumBytes: 0), expected: "InvalidInput")
+    failures = failures + checkCase(name: "receive bound over 1 MiB",
+        actual: receiveCase(connection: server, maximumBytes: 1048577), expected: "InvalidInput")
+
+    // Both directions, a short read, and an empty send.
+    tcpSend(connection: client, contents: "hello\r\n")?
+    tcpSend(connection: client, contents: "")?
+    let request = tcpReceive(connection: server, maximumBytes: 64)?
+    failures = failures + check(name: "server receives request", ok: request == "hello\r\n")
+    tcpSend(connection: server, contents: "world")?
+    let reply = tcpReceive(connection: client, maximumBytes: 64)?
+    failures = failures + check(name: "client receives reply", ok: reply == "world")
+
+    // A bound smaller than the data returns a prefix; the rest arrives next.
+    tcpSend(connection: client, contents: "abcdef")?
+    var assembled = ""
+    var reads = 0
+    while assembled.count < 6 && reads < 10 {
+        assembled = assembled + tcpReceive(connection: server, maximumBytes: 2)?
+        reads = reads + 1
+    }
+    failures = failures + check(name: "bounded reads reassemble", ok: assembled == "abcdef")
+
+    // More than one receive's worth, delivered in pieces.
+    let payload = pattern(count: 32768)
+    tcpSend(connection: client, contents: payload)?
+    var received = ""
+    var passes = 0
+    while received.count < payload.count && passes < 100 {
+        let piece = tcpReceive(connection: server, maximumBytes: 4096)?
+        failures = failures + check(name: "piece within bound", ok: piece.count >= 1 && piece.count <= 4096)
+        received = received + piece
+        passes = passes + 1
+    }
+    failures = failures + check(name: "32 KiB arrives intact", ok: received == payload)
+
+    // Closing the client ends the stream for the server, repeatedly.
+    tcpCloseConnection(connection: consume client)?
+    let end = tcpReceive(connection: server, maximumBytes: 64)?
+    failures = failures + check(name: "end of stream is empty", ok: end == "")
+    let again = tcpReceive(connection: server, maximumBytes: 64)?
+    failures = failures + check(name: "end of stream repeats", ok: again == "")
+
+    tcpCloseConnection(connection: consume server)?
+    tcpCloseListener(listener: consume listener)?
+    return .Ok(failures)
+}
+
+private func reportLoopback(label: String, outcome: Result<Int, NetworkError>): Int {
+    return match outcome {
+        .Ok(failures) => failures,
+        .Err(error) => reportFailure(label: label, error: error),
+    }
+}
+
+private func reportFailure(label: String, error: NetworkError): Int {
+    print(value: "FAIL: " + label + " raised " + caseName(error: error))
+    return 1
+}
+
+private func testAddressInUse(): Result<Int, NetworkError> {
+    var failures = 0
+    let first = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: first)?
+    failures = failures + checkCase(name: "second listen on a used port",
+        actual: listenCase(address: "127.0.0.1", port: port, backlog: 1), expected: "AddressInUse")
+    tcpCloseListener(listener: consume first)?
+    return .Ok(failures)
+}
+
+private func testRefused(): Result<Int, NetworkError> {
+    var failures = 0
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    tcpCloseListener(listener: consume listener)?
+    failures = failures + checkCase(name: "connect to a closed port",
+        actual: connectCase(address: "127.0.0.1", port: port), expected: "ConnectionRefused")
+    return .Ok(failures)
+}
+
+// Sending to a peer that has gone must fail with an error, not stop the process.
+private func testSendToClosedPeer(): Result<Int, NetworkError> {
+    var failures = 0
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let port = tcpLocalPort(listener: listener)?
+    let client = tcpConnect(address: "127.0.0.1", port: port)?
+    let server = tcpAccept(listener: listener)?
+    tcpCloseConnection(connection: consume client)?
+
+    let block = pattern(count: 1024)
+    var outcome = "none"
+    var attempts = 0
+    while outcome == "none" && attempts < 200 {
+        let sent = tcpSend(connection: server, contents: block)
+        outcome = match sent {
+            .Ok(_) => "none",
+            .Err(error) => caseName(error: error),
+        }
+        attempts = attempts + 1
+    }
+    failures = failures + checkCase(name: "send after the peer closed", actual: outcome, expected: "ConnectionReset")
+
+    tcpCloseConnection(connection: consume server)?
+    tcpCloseListener(listener: consume listener)?
+    return .Ok(failures)
+}
+
+public func testNetwork(): Int {
+    if !implemented() { return 0 }
+    var failures = testAddressForms()
+    failures = failures + reportLoopback(label: "loopback", outcome: loopback())
+    failures = failures + reportLoopback(label: "address in use", outcome: testAddressInUse())
+    failures = failures + reportLoopback(label: "connection refused", outcome: testRefused())
+    failures = failures + reportLoopback(label: "send to closed peer", outcome: testSendToClosedPeer())
+    return failures
+}

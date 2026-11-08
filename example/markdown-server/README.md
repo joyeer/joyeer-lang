@@ -4,18 +4,14 @@ A static web server, written in Joyeer, that serves a directory of Markdown
 files as a website. Each request reads the file, renders it to HTML, and
 answers; there is nothing to build when a page changes.
 
-> **Status: written ahead of its platform API.** The server uses the proposed
-> TCP functions of `System` ([spec §18.6](../../docs/spec/18-host.md#186-tcp-networking),
-> [decision 0012](../../docs/decisions/0012-tcp-networking.md)). They are not
-> implemented yet, so `fern build` fails with unresolved `tcpListen`,
-> `tcpAccept` and the rest until they are. The example is deliberately **not** a
-> member of the root workspace, so it does not affect `fern check --workspace`
-> or CTest.
->
-> Everything that does not touch a socket (the Markdown renderer, request
-> parsing, URL-to-file mapping, response building) was compiled and checked with
-> the in-tree compiler against a stub of the network API. The socket calls were
-> only type-checked, never run.
+> **Status: runs on Windows.** The server uses the provisional TCP functions of
+> `System` ([spec §18.6](../../docs/spec/18-host.md#186-tcp-networking),
+> [decision 0012](../../docs/decisions/0012-tcp-networking.md)), which are
+> implemented for Windows only; on Linux and macOS they fail with `.Other(38)`,
+> so the server prints a listen error and exits. It was built with the in-tree
+> compiler and checked over real HTTP on Windows x64 Debug (`GET`, `HEAD`,
+> `404`, `405`). The example is deliberately **not** a member of the root
+> workspace, so it does not affect `fern check --workspace` or CTest.
 
 ## Layout
 
@@ -30,9 +26,10 @@ answers; there is nothing to build when a page changes.
 Only `main.joyeer` and `http.joyeer` (reading the request head) call the
 network API.
 
-## Run it (once the network API exists)
+## Run it
 
-From this directory:
+From this directory (the compiler must be built with the network library
+staged beside it):
 
 ```text
 fern run --compiler <path-to-joyeer> -- site --port 8080

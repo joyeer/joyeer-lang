@@ -22,7 +22,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
 | Plan runtime and public-library development | [Runtime in Joyeer](plan/runtime-in-joyeer.md) and [Library modules](plan/library.md) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/toolchain-libraries.md) |
-| See a larger program (a Markdown web server, written ahead of the proposed [TCP API](spec/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
+| See a larger program (a Markdown web server over the provisional [TCP API](spec/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
@@ -97,7 +97,7 @@ in the spec.
 | [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 | [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
-| [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (proposed): opaque listener and connection handles, bounded receive, no concurrency yet |
+| [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
 
 ## Conventions
 

@@ -258,8 +258,9 @@ point.
 
 ### 18.6 TCP networking
 
-> **Status: proposed (provisional).** Nothing in this section is implemented.
-> The design record is [0012](../decisions/0012-tcp-networking.md). Rules here
+> **Status: provisional.** Implemented and tested on Windows only (x64 Debug);
+> on Linux and macOS every operation currently fails with `.Other(38)`. The
+> design record is [0012](../decisions/0012-tcp-networking.md). Rules here
 > may change before acceptance. The first version is deliberately small:
 > blocking IPv4 TCP between literal addresses. Names, IPv6, UDP, timeouts,
 > non-blocking I/O, concurrency, socket options, peer addresses, and TLS are
@@ -392,6 +393,7 @@ the platform's invalid-argument code. Classification:
 
 | Case | POSIX | Windows |
 |---|---|---|
+| `InvalidInput` | `EINVAL` | `WSAEINVAL`, `WSAEFAULT` |
 | `AddressInUse` | `EADDRINUSE` | `WSAEADDRINUSE` |
 | `AddressNotAvailable` | `EADDRNOTAVAIL` | `WSAEADDRNOTAVAIL` |
 | `PermissionDenied` | `EACCES`, `EPERM` | `WSAEACCES` |

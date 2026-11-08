@@ -62,6 +62,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
 | Built-ins | Primitive/string `print(value:)` and byte conversions. Everything that touches the host is in `System` (below) |
 | Filesystem (`System`) | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
+| TCP (`System`, provisional) | `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpLocalPort`, `tcpReceive`, `tcpSend`, `tcpCloseConnection`, `tcpCloseListener`: blocking IPv4 literal addresses, over Winsock (`ws2_32`, linked by the toolchain). Windows x64 Debug only; other platforms are placeholders. See [spec §18.6](../spec/18-host.md#186-tcp-networking) |
 | Processes (`System`) | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 | Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics (`joyeer_intrinsic_*`: address-of, loads, stores, atomic add), scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
@@ -131,11 +132,11 @@ See [fern](fern.md) for current contracts and parser limits.
 
 - User-defined generics, traits/protocols/interfaces, classes, closures, or
   asynchronous/concurrent functions.
-- Networking. Blocking IPv4 TCP in `System` is proposed in
-  [spec §18.6](../spec/18-host.md#186-tcp-networking) and
-  [decision 0012](../decisions/0012-tcp-networking.md) but not implemented;
-  the [Markdown web server example](../../example/markdown-server/README.md)
-  is written against it and does not build yet.
+- Networking beyond blocking IPv4 TCP: UDP, IPv6, host names, timeouts,
+  non-blocking I/O, TLS. The TCP operations
+  ([spec §18.6](../spec/18-host.md#186-tcp-networking), provisional,
+  [decision 0012](../decisions/0012-tcp-networking.md)) work on Windows only; on
+  Linux and macOS they return `.Other(38)`.
 - User-defined `init` / `deinit` bodies, explicit copy initializers, or
   user-defined accessors.
 - Implicit-`self` field access (write `self.count`, not `count`), extensions of
