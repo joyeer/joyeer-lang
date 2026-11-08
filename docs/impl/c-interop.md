@@ -63,7 +63,7 @@ Only `@c_extern` admits these additional parameter forms:
 
 Counts are byte counts for strings/byte buffers and element counts for
 lists. There is no implicit C-string conversion or NUL terminator.
-The native declarations come from `src/runtime/native.h` and `runtime.h`.
+The native declarations come from `lib/Runtime/include/joyeer/native.h` and `runtime.h`.
 List descriptors expose only borrowed runtime handles: the native function
 must not mutate, retain, or free descriptors or backing storage.
 
@@ -80,7 +80,7 @@ to expose them. Allocation failures follow the existing runtime panic policy.
 ### Compiler intrinsics
 
 Symbols beginning with `joyeer_intrinsic_` ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics)) are checked against a shared table
-([intrinsics.h](../../src/compiler/frontend/intrinsics.h)) by the type checker
+([intrinsics.h](../../compiler/frontend/intrinsics.h)) by the type checker
 and the IR verifier, and the backend lowers them inline: `ptrtoint` for
 `address_of`, unaligned `load` and `store`, and `atomicrmw add`. No C function
 is declared. The [fixture](../../tests/c-interop/intrinsics.joyeer) uses them

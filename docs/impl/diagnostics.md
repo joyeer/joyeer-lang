@@ -9,7 +9,7 @@
 ## 1. Model
 
 `Diagnostics` remains the shared carrier in
-`src/compiler/diagnostics/diagnostic.h`. An `ErrorMessage` may now contain:
+`compiler/diagnostics/diagnostic.h`. An `ErrorMessage` may now contain:
 
 - `ErrorLevel` (`failure` or nonfatal `report`);
 - a stable stage-qualified code;

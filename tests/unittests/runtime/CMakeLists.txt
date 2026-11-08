@@ -5,7 +5,7 @@ add_executable(RuntimeTests
 )
 
 target_include_directories(RuntimeTests PRIVATE
-        ${JOYEER_SOURCE_DIR}/src/runtime
+        ${JOYEER_RUNTIME_INCLUDE_DIR}
 )
 
 target_link_libraries(RuntimeTests
@@ -104,7 +104,7 @@ joyeer_discover_tests(RuntimeOptionsTests
 # with CTest: timings are not pass/fail. Run in a Release build with
 #   cmake --build <dir> --target runtime-benchmark
 add_executable(RuntimeBenchmarks runtime_benchmark.cpp)
-target_include_directories(RuntimeBenchmarks PRIVATE ${JOYEER_SOURCE_DIR}/src)
+target_include_directories(RuntimeBenchmarks PRIVATE ${JOYEER_RUNTIME_INCLUDE_DIR})
 target_link_libraries(RuntimeBenchmarks PRIVATE JoyeerRuntime)
 add_custom_target(runtime-benchmark
     COMMAND RuntimeBenchmarks
@@ -114,7 +114,7 @@ add_custom_target(runtime-benchmark
 
 # The Joyeer runtime core object may define only the approved exports and call
 # only the approved imports. Update both lists in the same change that adds a
-# function to src/runtime/joyeer/ (runtime plan §4).
+# function to lib/Runtime/core/ (runtime plan §4).
 get_filename_component(joyeer_llvm_bin "${JOYEER_CLANG_EXECUTABLE}" DIRECTORY)
 find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm.exe
     HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")

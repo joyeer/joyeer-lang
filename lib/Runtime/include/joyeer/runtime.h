@@ -41,11 +41,11 @@ enum JoyeerDictionaryKeyKind {
 
 // Writes `Joyeer runtime error: <message>` to standard error and exits with
 // status 1; a null message reads "unknown error". Written in Joyeer
-// (src/runtime/joyeer/panic.joyeer) and exported with this C ABI.
+// (lib/Runtime/core/panic.joyeer) and exported with this C ABI.
 JOYEER_NORETURN void joyeer_panic(const char* message);
 
 // The runtime allocator and its leak counter, written in Joyeer
-// (src/runtime/joyeer/allocator.joyeer). A size is the byte count the block was
+// (lib/Runtime/core/allocator.joyeer). A size is the byte count the block was
 // last requested with (a zero-byte request is served as one byte), passed back to
 // `joyeer_realloc` and `joyeer_free`. All three panic rather than return failure.
 void* joyeer_alloc(size_t size);
@@ -55,7 +55,7 @@ void joyeer_free(void* address, size_t size);
 int64_t joyeer_runtime_active_allocations(void);
 
 // The process's standard streams, written in Joyeer straight over the operating system
-// (src/runtime/joyeer/streams.joyeer). Standard output is buffered and shared with `print`;
+// (lib/Runtime/core/streams.joyeer). Standard output is buffered and shared with `print`;
 // standard error is not. Each returns 0 or an errno-style code (9, 13, 28, 32, 5).
 int32_t joyeer_stdout_write(const uint8_t* data, int64_t count);
 int32_t joyeer_stdout_flush(void);
@@ -68,13 +68,13 @@ void joyeer_stdin_discard(void);
 // True when the bytes are strict UTF-8: no overlong sequence, surrogate,
 // truncated sequence or code point beyond U+10FFFF. Null data is valid only for
 // a count of zero; a negative count is invalid. Written in Joyeer
-// (src/runtime/joyeer/utf8.joyeer) and exported with this C ABI.
+// (lib/Runtime/core/utf8.joyeer) and exported with this C ABI.
 bool joyeer_host_valid_utf8(const uint8_t* data, int64_t count);
 
 void joyeer_print_int(int64_t value);
 void joyeer_print_uint(uint64_t value);
 // `print` of a Float (9 significant digits) or Double (17), written in Joyeer
-// (src/runtime/joyeer/floats.joyeer, print.joyeer).
+// (lib/Runtime/core/floats.joyeer, print.joyeer).
 void joyeer_print_float(float value);
 void joyeer_print_double(double value);
 // Formats `value` like the C library's `%.<precision>g` (precision 1 to 17, NaN as

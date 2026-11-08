@@ -1,6 +1,6 @@
 #include "compiler/codegen/llvm.h"
 #include "compiler/codegen/linker.h"
-#include "backend/backend.h"
+#include "compiler/backend/backend.h"
 #include "compiler/ir/irlowering.h"
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"

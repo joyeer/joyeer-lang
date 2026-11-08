@@ -10,8 +10,8 @@
 ## 1. Boundary
 
 The Stage 5 pass lives in
-`src/compiler/frontend/semanticanalysis.h` and
-`src/compiler/frontend/semanticanalysis.cpp`. It consumes resolved symbols and canonical
+`compiler/frontend/semanticanalysis.h` and
+`compiler/frontend/semanticanalysis.cpp`. It consumes resolved symbols and canonical
 types from `TypeCheckedModel` and does not mutate the syntax tree.
 
 The compiler runs the pass after successful type checking and before Joyeer IR

@@ -5,7 +5,7 @@
 #include "compiler/frontend/semanticanalysis.h"
 #include "compiler/frontend/typechecking.h"
 #include "compiler/ir/irlowering.h"
-#include "backend/ir_wire.h"
+#include "compiler/backend/ir_wire.h"
 
 #include <gtest/gtest.h>
 
