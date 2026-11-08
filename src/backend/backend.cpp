@@ -194,12 +194,18 @@ JoyeerBackendStatus emitObject(
     }
 
     llvm::TargetOptions targetOptions;
+    // Position-independent code on Linux, so an object also links into a PIE executable
+    // (the default of the C toolchains that link the runtime into their own programs).
+    std::optional<llvm::Reloc::Model> relocationModel;
+#if !defined(_WIN32) && !defined(__APPLE__)
+    relocationModel = llvm::Reloc::PIC_;
+#endif
     std::unique_ptr<llvm::TargetMachine> targetMachine(target->createTargetMachine(
             triple,
             "generic",
             "",
             targetOptions,
-            std::nullopt,
+            relocationModel,
             std::nullopt,
             codeGenerationLevel(options.optimizationLevel)));
     if (targetMachine == nullptr) {
@@ -385,9 +391,17 @@ std::optional<std::vector<std::string>> buildElfLinkerArguments(
         diagnostics,
         "Joyeer native linker");
 
-    const llvm::ArrayRef<const char*> driverArguments(
-        options.arguments,
-        options.argumentCount);
+    // The link itself runs in this process, so the driver only has to accept the linker
+    // name: `-fuse-ld=lld` would search the disk for an `ld.lld` that need not exist, and
+    // an existing path is taken as given.
+    std::vector<std::string> linkerArguments;
+    for (size_t index = 0; index < options.argumentCount; ++index) {
+        linkerArguments.emplace_back(options.arguments[index]);
+        if (linkerArguments.back() == "-fuse-ld=lld") linkerArguments.back() = "-fuse-ld=/proc/self/exe";
+    }
+    std::vector<const char*> driverArgumentPointers;
+    for (const auto& argument : linkerArguments) driverArgumentPointers.push_back(argument.c_str());
+    const llvm::ArrayRef<const char*> driverArguments(driverArgumentPointers);
     std::unique_ptr<clang::driver::Compilation> compilation(
         driver.BuildCompilation(driverArguments));
     diagnosticsStream.flush();
