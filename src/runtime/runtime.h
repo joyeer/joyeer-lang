@@ -63,6 +63,8 @@ int32_t joyeer_stderr_write(const uint8_t* data, int64_t count);
 // The next byte of standard input (0 to 255), -1 at the end of the input, or a negated
 // error code (-2 or below).
 int32_t joyeer_stdin_read_byte(void);
+// Drops the buffered, unread standard input (for a program that redirects its own).
+void joyeer_stdin_discard(void);
 // True when the bytes are strict UTF-8: no overlong sequence, surrogate,
 // truncated sequence or code point beyond U+10FFFF. Null data is valid only for
 // a count of zero; a negative count is invalid. Written in Joyeer

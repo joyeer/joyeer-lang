@@ -180,21 +180,22 @@ What the runtime still provides to them:
 
 | Symbol | Purpose |
 |---|---|
-| `joyeer_native_errno()` | The calling thread's `errno`, which a binding cannot dereference |
-| `joyeer_native_environment()` | The address of `environ`, for `posix_spawn` |
-| `joyeer_native_stdio(which)` | The `FILE*` for standard input, output or error |
+| `joyeer_stderr_write`, `joyeer_stdout_flush`, `joyeer_stdin_read_byte`, `joyeer_stdin_discard` | The standard streams, written straight over the operating system (`streams.joyeer`) |
 | `joyeer_string_clone_abi` and the array API | Construct owned `String` and `[String]` results |
 | `joyeer_host_valid_utf8` | Strict UTF-8 validation, shared with the Compression native unit |
 
 Results use the ordinary tracked runtime allocation and recursive destruction.
 Failures carry the original platform code; categories are mapped to the enum
 cases in Joyeer. `readStdinLine` holds at most `maximumBytes + 1` bytes of a
-line, flushes standard output before it blocks, and on Windows switches
-standard input to binary mode. `writeStderr` writes exactly its bytes without a
-trailing newline and flushes. Both use the C library's own streams, so
-buffering, read-ahead and `errno` codes are the program's. The Windows guard
-against a closed descriptor checks the Win32 standard handle first, because
-Joyeer cannot install the CRT's invalid-parameter handler.
+line, flushes standard output before it blocks, and reads bytes exactly (no
+text-mode translation, as nothing translates). `writeStderr` writes exactly its
+bytes without a trailing newline, at once. Both use the runtime's own streams, which
+talk to the operating system directly (decision
+[0011](../decisions/0011-runtime-without-the-c-library.md)), so no C library buffer,
+mode or `errno` is involved; failures carry errno-style codes (9, 13, 28, 32, 5). On Windows
+the whole of `System` now calls only `kernel32`, including the legacy narrow-path
+`readFile` (`CreateFileA`, with the C library's mapping of system errors to `errno`
+codes); on POSIX the file and process operations still call the C library.
 
 ## Limits and validation
 

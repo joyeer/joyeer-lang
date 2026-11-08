@@ -1,9 +1,9 @@
 # 0011: The runtime without the C library (Tier 2)
 
-- Status: accepted, being implemented in stage 10 of the
-  [runtime plan](../plan/runtime-in-joyeer.md). Each section says what is built.
-  Verified on Windows x64 only; Linux and macOS code is written against the plan's
-  platform table and has not run.
+- Status: accepted and implemented in stage 10 of the
+  [runtime plan](../plan/runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
+  Windows x64 only; the Linux and macOS code is written against the plan's platform table,
+  is not even compiled on a Windows host (`@platform` drops it), and has not run.
 - Spec: [§19.4.6](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
   gains the syscall and target-architecture intrinsics when 10.2 lands.
 
@@ -31,7 +31,7 @@ names (`libcmt.lib`); none of them needs the CRT's startup.
 
 | | Allocator | Output and exit | Program entry |
 |---|---|---|---|
-| Windows | `VirtualAlloc` / `VirtualFree` | `WriteFile`, `GetStdHandle`, `ExitProcess` | own entry `joyeer_start`, unless native libraries are linked |
+| Windows | `VirtualAlloc` / `VirtualFree` | `WriteFile`, `GetStdHandle`, `ExitProcess` | own entry `joyeer_start`, unless the program calls the C library or links a native one |
 | Linux | raw `mmap` / `munmap` | raw `write`, `read`, `exit_group` | `main` from the C startup |
 | macOS | libSystem `mmap` / `munmap` | libSystem `write`, `read`, `_exit` | `main` from dyld |
 
@@ -84,21 +84,30 @@ that printed and then failed lost the text when its output was a pipe. Exit stat
 the message are unchanged. And a program that is killed leaves unflushed output
 behind, as with the C library.
 
-**D9: the entry point (10.3).** On Windows the entry object also defines `joyeer_start`,
-and the link passes `/ENTRY:joyeer_start` when no native library is selected. It reads
-`GetCommandLineW`, splits it with the rules the CRT and `CommandLineToArgvW` use
-(backslashes are literal unless they precede a quote; `"` toggles quoting; two quotes
-inside a quoted part give one), converts each argument to UTF-8 as before, runs the
-shared entry logic and calls `ExitProcess` with the status. The argument memory is
-mapped directly from the system and kept for the life of the process. With a native
-library, the link keeps the CRT startup and `wmain`.
+**D9: the entry point (10.3).** On Windows the entry object also defines `joyeer_start`.
+The linker reads the program object's undefined symbols: when no native library is selected
+and every one is the runtime's own (`joyeer_`), a compiler support symbol, or a Win32 API
+name, the link passes `/ENTRY:joyeer_start`, links the runtime archive by symbol, and adds
+`libvcruntime.lib` for `memcpy` and its relatives. Win32 names are PascalCase and the C
+library's are lower case or underscored, so a name that does not start with a capital is taken
+for the C library: a wrong guess only keeps the C startup, which is always correct. The C
+`wmain`/`main` wrappers (and their `atexit` call) are a third archive object, so that link
+leaves them out. `joyeer_start` reads `GetCommandLineW`, splits it with the rules the CRT
+and `CommandLineToArgvW` use (backslashes are literal unless they precede a quote; `"` toggles
+quoting; two quotes inside a quoted part give one), converts each argument to UTF-8 as before,
+runs the shared entry logic and calls `ExitProcess` with the status. The argument memory is
+mapped directly from the system and kept for the life of the process. With a native library,
+or any C library call, the link keeps the CRT startup and `wmain`. The image of a program that
+needs no C library imports twelve `kernel32` functions.
 
 **R12: `System` (10.4).** `System`'s standard error and standard input stop using C
 streams: they call the runtime's stream functions (`joyeer_stdout_flush`,
-`joyeer_stderr_write`, `joyeer_stdin_read`), so the buffering above is the only
+`joyeer_stderr_write`, `joyeer_stdin_read_byte`), so the buffering above is the only
 buffering. The whole-file legacy reader on Windows uses `CreateFileA` and `ReadFile`
-and maps `GetLastError` to the same errno values it reported before. POSIX `System`
-keeps its libc file and process calls (above).
+and maps `GetLastError` to the same errno values the C library did (its `_dosmaperr`; an empty path
+is EINVAL as before). Windows `System` then calls `kernel32` only, which the tests check by the
+imports of programs that use each part. POSIX `System` keeps its libc file and process calls (above).
+`joyeer_stdin_discard` drops buffered input for a program, or a test, that redirects its own.
 
 ## Consequences
 

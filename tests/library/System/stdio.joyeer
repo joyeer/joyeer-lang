@@ -68,11 +68,14 @@ private func flushFile(stream: Int): Int32
 @c_extern(symbol: "clearerr")
 private func clearFile(stream: Int): Void
 
-@c_extern(symbol: "fputs", pointer: "text")
-private func putText(text: [UInt8], stream: Int): Int32
+@c_extern(symbol: "joyeer_stdin_discard")
+private func discardInput(): Void
 
-@c_extern(symbol: "setvbuf")
-private func setBuffer(stream: Int, buffer: Int, mode: Int32, size: Int): Int32
+@c_extern(symbol: "joyeer_stdout_write", pointer: "buffer")
+private func writeOutput(buffer: [UInt8], count: Int): Int32
+
+@c_extern(symbol: "joyeer_stdout_flush")
+private func flushOutput(): Int32
 
 @platform(windows)
 @c_extern(symbol: "_dup")
@@ -267,27 +270,6 @@ private func closedScenario(): Int {
     return failures
 }
 
-// The stream's mode is put back after a successful write.
-@platform(windows)
-private func stderrModeScenario(directory: String): Int {
-    let textMode: Int32 = 16384
-    let saved = redirectStderr(source: openFile(path: native(text: directory + "/mode"), mode: native(text: "wt")))
-    if saved < 0 { return 1 }
-    let descriptor = descriptorOf(stream: streamOf(which: 2))
-    let before = setModeW(descriptor: descriptor, mode: textMode)
-    let outcome = writeVia(contents: "x\n")
-    let after = setModeW(descriptor: descriptor, mode: textMode)
-    restoreStderr(saved: saved)
-    if outcome == "ok" && before == textMode && after == textMode { return 0 }
-    let beforeText = decimalString(value: before as Int)
-    let afterText = decimalString(value: after as Int)
-    print(value: "MISMATCH stderr mode: " + outcome + " before " + beforeText + " after " + afterText)
-    return 1
-}
-
-@platform(posix)
-private func stderrModeScenario(directory: String): Int { return 0 }
-
 private func testStderr(): Int {
     let directory = claimDirectory(prefix: "stdio-test-")
     if directory == "" { return 1 }
@@ -301,7 +283,6 @@ private func testStderr(): Int {
         mode: writeTextMode(), expected: "ok|ok:0:")
     failures = failures + readOnlyScenario(directory: directory)
     failures = failures + closedScenario()
-    failures = failures + stderrModeScenario(directory: directory)
     ignoreUnit(outcome: System.removeFile(path: directory + "/mode"))
     ignoreUnit(outcome: System.removeDirectory(path: directory))
     return failures
@@ -312,11 +293,14 @@ private func testStderr(): Int {
 // to binary mode makes control-Z and CRLF bytes exact.
 private func feed(path: String, contents: String): Bool {
     if describeUnit(outcome: System.writeFileNew(path: path, contents: contents)) != "ok" { return false }
-    return reopenFile(path: native(text: path), mode: native(text: readTextMode()), stream: streamOf(which: 0)) != 0
+    let reopened = reopenFile(path: native(text: path), mode: native(text: readTextMode()), stream: streamOf(which: 0)) != 0
+    discardInput()
+    return reopened
 }
 
 private func detachInput() {
     if reopenFile(path: native(text: nullDevice()), mode: native(text: "r"), stream: streamOf(which: 0)) == 0 { }
+    discardInput()
 }
 
 @platform(windows)
@@ -369,12 +353,14 @@ private func bigLine(): String {
 }
 
 // A peer waiting for a response must see earlier output before the read
-// blocks: standard output is pointed at a scratch file and fully buffered, so
-// the bytes can only appear there if the read flushed them.
+// blocks: standard output is pointed at a scratch file and the runtime buffers it
+// (it is not a terminal), so the bytes can only appear there if the read flushed them.
 private func flushScenario(directory: String): Int {
     let input = directory + "/flush-input"
     let output = directory + "/flush-output"
-    if !feed(path: input, contents: "go\n") { return 1 }
+    if !feed(path: input, contents: "go
+") { return 1 }
+    ignoreInt(value: flushOutput())
     let stdoutStream = streamOf(which: 1)
     ignoreInt(value: flushFile(stream: stdoutStream))
     let saved = duplicate(descriptor: descriptorOf(stream: stdoutStream))
@@ -382,12 +368,12 @@ private func flushScenario(directory: String): Int {
     if saved < 0 || target == 0 { return 1 }
     ignoreInt(value: duplicateOnto(source: descriptorOf(stream: target), target: descriptorOf(stream: stdoutStream)))
     ignoreInt(value: closeFile(stream: target))
-    ignoreInt(value: setBuffer(stream: stdoutStream, buffer: 0, mode: 0, size: 4096))
-    ignoreInt(value: putText(text: native(text: "prompt>"), stream: stdoutStream))
+    let prompt = native(text: "prompt>")
+    ignoreInt(value: writeOutput(buffer: prompt, count: 7))
     let line = describeLine(outcome: System.readStdinLine(maximumBytes: 8))
     // Read the destination while standard output still points at it.
     let seen = fileText(path: output)
-    ignoreInt(value: flushFile(stream: stdoutStream))
+    ignoreInt(value: flushOutput())
     ignoreInt(value: duplicateOnto(source: saved, target: descriptorOf(stream: stdoutStream)))
     ignoreInt(value: closeDescriptor(descriptor: saved))
     clearFile(stream: stdoutStream)

@@ -113,6 +113,10 @@ private func multiByteToWide(codePage: UInt32, flags: UInt32, bytes: Int, byteCo
     wide: Int, wideCount: Int32): Int32
 
 @platform(windows)
+@c_extern(symbol: "GetFileType")
+private func fileType(handle: Int): UInt32
+
+@platform(windows)
 @c_extern(symbol: "GetLastError")
 private func lastError(): UInt32
 
@@ -213,6 +217,16 @@ private func systemRead(data: Int, count: Int): Int {
     return load32(address: scratch) as Int
 }
 
+// Whether the descriptor can be written at all; 0, or the error code. The descriptor is
+// usable when the system has a handle of a known type for it.
+@platform(windows)
+private func systemProbe(descriptor: Int): Int32 {
+    let handle = handleOf(descriptor: descriptor)
+    if handle == 0 || handle == -1 { return 9 }
+    if fileType(handle: handle) == 0 { return 9 }
+    return 0
+}
+
 @platform(windows)
 public func exitProcess(status: Int32): Never {
     exitWindows(status: status as UInt32)
@@ -263,6 +277,13 @@ private func systemTerminal(descriptor: Int): Bool {
     let outcome = systemCall(number: callNumber(x86: 16, arm: 29), first: descriptor, second: 21505,
         third: scratchAddress(), fourth: 0, fifth: 0, sixth: 0)
     return outcome == 0
+}
+
+@platform(linux)
+private func systemProbe(descriptor: Int): Int32 {
+    let outcome = systemWrite(descriptor: descriptor, data: 0, count: 0)
+    if outcome < 0 { return (0 - outcome) as Int32 }
+    return 0
 }
 
 @platform(linux)
@@ -323,6 +344,13 @@ private func systemRead(data: Int, count: Int): Int {
 @platform(macos)
 private func systemTerminal(descriptor: Int): Bool {
     return isTerminal(descriptor: descriptor as Int32) != 0
+}
+
+@platform(macos)
+private func systemProbe(descriptor: Int): Int32 {
+    let outcome = systemWrite(descriptor: descriptor, data: 0, count: 0)
+    if outcome < 0 { return (0 - outcome) as Int32 }
+    return 0
 }
 
 @platform(macos)
@@ -419,6 +447,7 @@ public func stdoutWrite(data: Int, count: Int): Int32 {
 // Standard error is written at once, bypassing the standard output buffer.
 @c_export(symbol: "joyeer_stderr_write")
 public func stderrWrite(data: Int, count: Int): Int32 {
+    if count <= 0 { return systemProbe(descriptor: 2) }
     return writeAll(descriptor: 2, data: data, count: count)
 }
 
@@ -439,4 +468,14 @@ public func stdinReadByte(): Int32 {
     }
     store64(address: base + inputPositionOffset, value: (position + 1) as UInt64)
     return load8(address: base + inputOffset + position) as Int32
+}
+
+// Drops the buffered, unread standard input. A program that points its own standard
+// input somewhere else (a test) calls this so the old input is not read first.
+@c_export(symbol: "joyeer_stdin_discard")
+public func stdinDiscard(): Void {
+    let slot = load64(address: staticSlot(index: stateSlot))
+    if slot == 0 { return }
+    store64(address: (slot as Int) + inputPositionOffset, value: 0)
+    store64(address: (slot as Int) + inputEndOffset, value: 0)
 }

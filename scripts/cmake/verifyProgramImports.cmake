@@ -4,7 +4,8 @@
 # one that does keeps the C startup and imports far more.
 #
 # Inputs: JOYEER_EXECUTABLE, INPUT_FILE, OUTPUT_FILE, READOBJ, COMPILER_ARGS (list), and
-# either EXPECTED_IMPORTS (the exact list, sorted) or MINIMUM_COUNT.
+# one of EXPECTED_IMPORTS (the exact list), FORBIDDEN_IMPORTS (names that must be absent) or
+# MINIMUM_COUNT.
 foreach(variable IN ITEMS JOYEER_EXECUTABLE INPUT_FILE OUTPUT_FILE READOBJ)
     if(NOT DEFINED ${variable})
         message(FATAL_ERROR "${variable} is required")
@@ -36,11 +37,17 @@ if(DEFINED EXPECTED_IMPORTS)
     if(NOT "${imports}" STREQUAL "${EXPECTED_IMPORTS}")
         message(FATAL_ERROR "The program imports:\n  ${imports}\nbut only these are expected:\n  ${EXPECTED_IMPORTS}")
     endif()
+elseif(DEFINED FORBIDDEN_IMPORTS)
+    foreach(name IN LISTS FORBIDDEN_IMPORTS)
+        if(name IN_LIST imports)
+            message(FATAL_ERROR "The program imports ${name}, which only the C runtime needs:\n  ${imports}")
+        endif()
+    endforeach()
 elseif(DEFINED MINIMUM_COUNT)
     if(count LESS MINIMUM_COUNT)
         message(FATAL_ERROR "The program imports ${count} functions (${imports}); expected at least ${MINIMUM_COUNT}")
     endif()
 else()
-    message(FATAL_ERROR "EXPECTED_IMPORTS or MINIMUM_COUNT is required")
+    message(FATAL_ERROR "EXPECTED_IMPORTS, FORBIDDEN_IMPORTS or MINIMUM_COUNT is required")
 endif()
 message(STATUS "program imports (${count}): ${imports}")

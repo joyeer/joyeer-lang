@@ -3,6 +3,10 @@
 - Status: accepted and implemented (decided and built 2026-11-07). Verified on
   Windows x64 Debug and Release; the POSIX variant is empty and type-checks for
   Linux and macOS.
+- Amended by [0011](0011-runtime-without-the-c-library.md): the operations now use the
+  runtime's own streams over the operating system instead of the C library's `FILE*`
+  streams, `errno` and Windows text-mode switch described below. The documented
+  behaviour and error codes are unchanged.
 - Spec: [§18.4](../spec/18-host.md#184-standard-error) and
   [§18.5](../spec/18-host.md#185-standard-input), unchanged. The Joyeer
   functions keep every documented behavior, including the C-runtime `errno`

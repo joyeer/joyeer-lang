@@ -18,8 +18,7 @@ foreach(source IN ITEMS Foundation/text.joyeer Foundation/checksum.joyeer
         System/path.joyeer System/messages.joyeer System/filesystem.joyeer
         System/filesystem_windows.joyeer System/filesystem_posix.joyeer
         System/legacy_file.joyeer System/process.joyeer System/process_windows.joyeer
-        System/process_posix.joyeer System/stdio.joyeer System/stdio_windows.joyeer
-        System/stdio_posix.joyeer System/cruntime.joyeer)
+        System/process_posix.joyeer System/stdio.joyeer System/cruntime.joyeer)
     get_filename_component(module "${source}" DIRECTORY)
     string(APPEND compression_system_args
         "--module-source;${module}=${JOYEER_SRC_DIR}/library/${source};")

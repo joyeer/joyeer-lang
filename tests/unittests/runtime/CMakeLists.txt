@@ -126,7 +126,7 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     # makes system calls and imports nothing else.
     set(joyeer_core_imports "memcmp;memcpy;memset")
     if(WIN32)
-        list(APPEND joyeer_core_imports VirtualAlloc VirtualFree GetStdHandle WriteFile ReadFile
+        list(APPEND joyeer_core_imports VirtualAlloc VirtualFree GetStdHandle GetFileType WriteFile ReadFile
             GetConsoleMode WriteConsoleW MultiByteToWideChar GetLastError ExitProcess _fltused)
     elseif(APPLE)
         list(APPEND joyeer_core_imports mmap munmap write read isatty __error _exit)
@@ -137,7 +137,7 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         COMMAND "${CMAKE_COMMAND}"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DOBJECT=${JOYEER_RUNTIME_CORE_OBJECT}"
-            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_string_destroy_abi;joyeer_byte_to_string_abi;joyeer_string_concat_abi;joyeer_print_string_abi;joyeer_print_int;joyeer_print_uint;joyeer_print_byte;joyeer_print_bool;joyeer_array_create_owned_abi;joyeer_array_clone_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy;joyeer_native_bytes_init;joyeer_native_strings_init;joyeer_native_bytes_assign;joyeer_native_string_assign;joyeer_native_strings_assign;joyeer_dictionary_create_owned_abi;joyeer_dictionary_clone_abi;joyeer_dictionary_set_owned_abi;joyeer_dictionary_find_abi;joyeer_dictionary_at_abi;joyeer_dictionary_destroy_abi;joyeer_print_float;joyeer_print_double;joyeer_format_double_abi;joyeer_format_float_abi;joyeer_stdout_write;joyeer_stdout_flush;joyeer_stderr_write;joyeer_stdin_read_byte"
+            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_string_destroy_abi;joyeer_byte_to_string_abi;joyeer_string_concat_abi;joyeer_print_string_abi;joyeer_print_int;joyeer_print_uint;joyeer_print_byte;joyeer_print_bool;joyeer_array_create_owned_abi;joyeer_array_clone_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy;joyeer_native_bytes_init;joyeer_native_strings_init;joyeer_native_bytes_assign;joyeer_native_string_assign;joyeer_native_strings_assign;joyeer_dictionary_create_owned_abi;joyeer_dictionary_clone_abi;joyeer_dictionary_set_owned_abi;joyeer_dictionary_find_abi;joyeer_dictionary_at_abi;joyeer_dictionary_destroy_abi;joyeer_print_float;joyeer_print_double;joyeer_format_double_abi;joyeer_format_float_abi;joyeer_stdout_write;joyeer_stdout_flush;joyeer_stderr_write;joyeer_stdin_read_byte;joyeer_stdin_discard"
             "-DALLOWED_UNDEFINED=${joyeer_core_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
@@ -208,7 +208,7 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/own-entry-imports.exe"
                 "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry"
-                "-DEXPECTED_IMPORTS=ExitProcess;GetCommandLineW;GetConsoleMode;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
+                "-DEXPECTED_IMPORTS=ExitProcess;GetCommandLineW;GetConsoleMode;GetFileType;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         add_test(NAME RuntimeCRuntimeProgramKeepsTheCStartup
             COMMAND "${CMAKE_COMMAND}"
@@ -221,5 +221,21 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         set_tests_properties(RuntimeOwnEntryImportsOnlySystemFunctions RuntimeCRuntimeProgramKeepsTheCStartup
             PROPERTIES LABELS "runtime;native;entry" TIMEOUT 120)
+        # `System` itself (files, processes, standard streams, the legacy reader) calls only
+        # the operating system on Windows: a program using each part starts at its own entry
+        # point and imports nothing that exists for the C startup or the C heap.
+        foreach(fixture IN ITEMS filesystem process read_file stdin_lines)
+            add_test(NAME RuntimeSystemProgramHasNoCRuntime_${fixture}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                    "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/native/${fixture}.joyeer"
+                    "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-${fixture}.exe"
+                    "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                    "-DCOMPILER_ARGS=-O0;-g0"
+                    "-DFORBIDDEN_IMPORTS=IsProcessorFeaturePresent;GetStartupInfoW;InitializeSListHead;UnhandledExceptionFilter;SetUnhandledExceptionFilter;IsDebuggerPresent;GetProcessHeap;HeapAlloc;HeapFree;GetEnvironmentStringsW"
+                    -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+            set_tests_properties(RuntimeSystemProgramHasNoCRuntime_${fixture}
+                PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
+        endforeach()
     endif()
 endif()
