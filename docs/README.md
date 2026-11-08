@@ -94,6 +94,7 @@ in the spec.
 | [0007](decisions/0007-stdio-in-joyeer.md) | `writeStderr` and `readStdinLine` over the C library's own streams |
 | [0008](decisions/0008-runtime-core-build-shape.md) | The Joyeer runtime core is one module compiled by the build-tree compiler into one object in `JoyeerRuntime` |
 | [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
+| [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 
 ## Conventions
 

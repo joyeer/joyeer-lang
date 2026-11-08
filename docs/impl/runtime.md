@@ -2,11 +2,10 @@
 
 The runtime is declared in `src/runtime/runtime.h`. Almost all of it is Joyeer
 (`src/runtime/joyeer/`): UTF-8 validation, string equality and ordering, owned strings,
-arrays, dictionaries, the native buffer helpers, integer/`Bool`/string `print`,
+arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
 build-tree compiler compiles it into two objects (the core, and the entry with the C
-`main`/`wmain`) in the same archive; `Float` and `Double` printing is still C in
-`runtime.c` ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+`main`/`wmain`) in the same archive; `runtime.c` holds no code now ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -38,7 +37,8 @@ dedicated C runtime operation.
 Scalar printing includes all integer widths, `Float`, and `Double`. Signed
 integers use the existing 64-bit printer after sign extension; unsigned
 integers use an unsigned printer after zero extension. Floating printers use
-9 and 17 significant decimal digits, respectively. These internal printing
+9 and 17 significant decimal digits, respectively, written exactly like the C
+library's `%.9g` and `%.17g` ([decision 0010](../decisions/0010-floating-point-printing.md)). These internal printing
 adaptations do not introduce implicit conversions at explicit C bindings.
 
 Checked `Int` division truncates toward zero; a nonzero remainder has the

@@ -474,6 +474,38 @@ func callbacks(): Int { return addressOfSymbol(name: "local_callback") + address
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
+TEST_F(CInteropTest, LowersFloatingPointBitPatternsToBitCasts) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_double_bits")
+func doubleBits(value: Double): UInt64
+@c_extern(symbol: "joyeer_intrinsic_float_bits")
+func floatBits(value: Float): UInt32
+func bits(wide: Double, narrow: Float): UInt64 { return doubleBits(value: wide) + (floatBits(value: narrow) as UInt64) }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("bitcast double"), std::string::npos);
+    EXPECT_NE(emitted.text.find("bitcast float"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsFloatingPointBitPatternsOfTheWrongType) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_double_bits\")\nfunc f(value: Float): UInt64\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_double_bits\")\nfunc f(value: Double): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_float_bits\")\nfunc f(value: Double): UInt32\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+}
+
 TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {
     // The same code is fine in a runtime unit that is not a core unit.
     check("func f(text: String): Int { return text.count }\n"

@@ -31,6 +31,10 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         }
         return nullptr;
     }
+    if (descriptor.operation == Operation::doubleBits || descriptor.operation == Operation::floatBits) {
+        return builder.CreateBitCast(arguments[0],
+                descriptor.operation == Operation::doubleBits ? builder.getInt64Ty() : builder.getInt32Ty(), temporary());
+    }
     if (descriptor.operation == Operation::staticSlot) {
         // One zeroed table per program: every object that uses slots defines the
         // same linkonce symbol in a comdat, and the linker keeps a single copy.
@@ -136,6 +140,8 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::memoryCopy:
         case Operation::memoryMove:
         case Operation::memoryFill:
+        case Operation::doubleBits:
+        case Operation::floatBits:
             break;
     }
     return nullptr;

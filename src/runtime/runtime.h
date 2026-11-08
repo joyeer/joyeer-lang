@@ -61,8 +61,15 @@ bool joyeer_host_valid_utf8(const uint8_t* data, int64_t count);
 
 void joyeer_print_int(int64_t value);
 void joyeer_print_uint(uint64_t value);
+// `print` of a Float (9 significant digits) or Double (17), written in Joyeer
+// (src/runtime/joyeer/floats.joyeer, print.joyeer).
 void joyeer_print_float(float value);
 void joyeer_print_double(double value);
+// Formats `value` like the C library's `%.<precision>g` (precision 1 to 17, NaN as
+// `nan`) into `buffer`, which must hold 40 bytes, with no terminator. Returns the
+// number of bytes written.
+int64_t joyeer_format_double_abi(char* buffer, int32_t precision, double value);
+int64_t joyeer_format_float_abi(char* buffer, int32_t precision, float value);
 void joyeer_print_bool(bool value);
 void joyeer_print_byte(uint8_t value);
 

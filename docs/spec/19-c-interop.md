@@ -286,6 +286,8 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_memcpy` | `(destination: Int, source: Int, count: Int) -> Void` | Copies `count` bytes (taken as unsigned); the ranges must not overlap. No alignment is required. Lowers to LLVM's `memcpy`, so a small constant count becomes inline moves |
 | `joyeer_intrinsic_memmove` | `(destination: Int, source: Int, count: Int) -> Void` | The same for ranges that may overlap |
 | `joyeer_intrinsic_memset` | `(destination: Int, value: UInt8, count: Int) -> Void` | Stores `value` in `count` bytes |
+| `joyeer_intrinsic_double_bits` | `(value: Double) -> UInt64` | The IEEE 754 bit pattern of `value` |
+| `joyeer_intrinsic_float_bits` | `(value: Float) -> UInt32` | The IEEE 754 bit pattern of `value` |
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
 location. The operations assume a little-endian target; the supported targets

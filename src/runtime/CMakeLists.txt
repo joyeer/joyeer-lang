@@ -16,6 +16,7 @@ set(JOYEER_RUNTIME_CORE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/print.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/arrays.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/dictionaries.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/floats.joyeer"
 )
 # The entry logic is shared with the entry encoding tests, a sibling directory.
 set(JOYEER_RUNTIME_ENTRY_LOGIC "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/entry.joyeer" CACHE INTERNAL "")

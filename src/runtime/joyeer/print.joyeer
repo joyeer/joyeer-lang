@@ -1,11 +1,11 @@
-// `print` for strings, integers, `Bool` and bytes (`joyeer_print_string_abi`,
-// `joyeer_print_{int,uint,bool,byte}`), written to the C library's standard
+// `print` for strings, integers, `Float`, `Double`, `Bool` and bytes
+// (`joyeer_print_string_abi`, `joyeer_print_{int,uint,float,double,bool,byte}`), written to the C library's standard
 // output stream so buffering and ordering stay those of the rest of the program
 // (`System` shares the same stream). A value is followed by one newline.
 //
-// Nothing here allocates: digits go out one `fputc` at a time, most significant
-// first, so no scratch buffer is needed. Floating-point printing is still C
-// (runtime plan stage 8).
+// Integers and strings allocate nothing: digits go out one `fputc` at a time, most
+// significant first. Floating-point values are formatted in scratch memory from
+// the allocator (floats.joyeer).
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only (runtime
 // plan §4).
@@ -15,6 +15,9 @@ private func literalAddress(text: String): Int
 
 @c_extern(symbol: "joyeer_intrinsic_load_u64")
 private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+private func store8(address: Int, value: UInt8): Void
 
 @platform(windows)
 @c_extern(symbol: "__acrt_iob_func")
@@ -105,4 +108,26 @@ public func printBool(value: Bool): Void {
         writeStream(buffer: literalAddress(text: "false"), size: 1, count: 5, stream: stream)
     }
     endLine(stream: stream)
+}
+
+// Writes the `count` bytes of formatted text in `scratch`, then a newline, with
+// one `fwrite`, and gives the scratch memory back.
+private func finishFormatted(scratch: Int, count: Int) {
+    store8(address: scratch + formatTextOffset + count, value: 10)
+    writeStream(buffer: scratch + formatTextOffset, size: 1, count: count + 1, stream: standardOutput())
+    release(address: scratch, size: formatScratchBytes)
+}
+
+// A Double with 17 significant digits.
+@c_export(symbol: "joyeer_print_double")
+public func printDouble(value: Double): Void {
+    let scratch = allocate(size: formatScratchBytes)
+    finishFormatted(scratch: scratch, count: formatDouble(scratch: scratch, precision: 17, value: value))
+}
+
+// A Float with the 9 significant digits that identify it.
+@c_export(symbol: "joyeer_print_float")
+public func printFloat(value: Float): Void {
+    let scratch = allocate(size: formatScratchBytes)
+    finishFormatted(scratch: scratch, count: formatFloat(scratch: scratch, precision: 9, value: value))
 }

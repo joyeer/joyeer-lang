@@ -119,7 +119,7 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 | `joyeer_panic` | every generated trap, all runtime code | done (stage 4), Joyeer |
 | `joyeer_checked_{add,sub,mul,div,rem}_int` | removed in stage 0: generated code checks inline | done |
 | `joyeer_print_{int,uint,bool,byte}`, `joyeer_print_string_abi` | generated `print` | done (stage 5), Joyeer |
-| `joyeer_print_{float,double}` | generated `print` | R4 |
+| `joyeer_print_{float,double}` | generated `print` | done (stage 8), Joyeer |
 | `joyeer_string_{equal,compare}_abi` | generated string operators | done (stage 1.3) |
 | `joyeer_string_concat_abi` | generated string operators | done (stage 5), Joyeer |
 | string byte access | generated `text[index]` | inline in the backend; no runtime function (stage 1.3) |
@@ -552,14 +552,16 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   (`__errno_location`, `__error`, `stdout` and `__stdoutp` data symbols, `environ`,
   `_NSGetEnviron`) are unverified.
 
-### Stage 8: Floating-point printing (R4), parallel track
+### Stage 8: Floating-point printing (R4), done
 
 Start any time after 5.3.
 
-- [ ] 8.1 Decide the algorithm (D6) and build the oracle: a C test that compares
-  Joyeer output with the C library over boundary values and a large random sample.
-- [ ] 8.2 `Double` output byte-identical to `%.17g`.
-- [ ] 8.3 `Float` output byte-identical to `%.9g`.
+- [x] 8.1 Decide the algorithm (D6, [decision 0010](../decisions/0010-floating-point-printing.md))
+  and build the oracle: a C++ test that compares Joyeer output with the C library over
+  boundary values and a large random sample.
+- [x] 8.2 `Double` output byte-identical to `%.17g` (`joyeer/floats.joyeer`). NaN prints
+  `nan` on every platform, the one deliberate difference.
+- [x] 8.3 `Float` output byte-identical to `%.9g`.
 
 ### Stage 9: Remove the C (R9)
 

@@ -39,6 +39,8 @@ enum class Operation {
     memoryCopy,
     memoryMove,
     memoryFill,
+    doubleBits,
+    floatBits,
 };
 
 struct Descriptor {
@@ -53,7 +55,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 18> table {{
+inline constexpr std::array<Descriptor, 20> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -103,6 +105,11 @@ inline constexpr std::array<Descriptor, 18> table {{
       { TypeKind::integer, TypeKind::integer, TypeKind::integer }, 3, false },
     { "joyeer_intrinsic_memset", Operation::memoryFill, TypeKind::voidType,
       { TypeKind::integer, TypeKind::uint8, TypeKind::integer }, 3, false },
+    // The IEEE 754 bit pattern of a Double or a Float, for formatting without a C library.
+    { "joyeer_intrinsic_double_bits", Operation::doubleBits, TypeKind::uint64,
+      { TypeKind::float64, TypeKind::error, TypeKind::error }, 1, false },
+    { "joyeer_intrinsic_float_bits", Operation::floatBits, TypeKind::uint32,
+      { TypeKind::float32, TypeKind::error, TypeKind::error }, 1, false },
 }};
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

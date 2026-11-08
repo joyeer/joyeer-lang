@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
+#include <random>
+#include <vector>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -779,6 +782,126 @@ TEST(RuntimeBlackBoxTest, PrintsFloatingPointWithNineAndSeventeenSignificantDigi
     EXPECT_EQ(capturedStdout([] { joyeer_print_double(1e300); }), "1.0000000000000001e+300\n");
     EXPECT_EQ(capturedStdout([] { joyeer_print_double(-0.0); }), "-0\n");
     EXPECT_EQ(capturedStdout([] { joyeer_print_double(100.0); }), "100\n");
+}
+
+// The oracle for the Joyeer formatter is the C library's own `%.<p>g`.
+std::string cLibraryFormat(int precision, double value) {
+    char text[64];
+    const int count = std::snprintf(text, sizeof(text), "%.*g", precision, value);
+    return std::string(text, static_cast<size_t>(count));
+}
+
+std::string joyeerFormat(int precision, double value) {
+    char text[40];
+    const auto count = joyeer_format_double_abi(text, precision, value);
+    return std::string(text, static_cast<size_t>(count));
+}
+
+std::string joyeerFormat(int precision, float value) {
+    char text[40];
+    const auto count = joyeer_format_float_abi(text, precision, value);
+    return std::string(text, static_cast<size_t>(count));
+}
+
+double doubleFromBits(uint64_t bits) {
+    double value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+float floatFromBits(uint32_t bits) {
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+TEST(RuntimeBlackBoxTest, FormatsSpecialAndBoundaryDoublesLikeTheCLibrary) {
+    EXPECT_EQ(joyeerFormat(17, std::numeric_limits<double>::infinity()), "inf");
+    EXPECT_EQ(joyeerFormat(17, -std::numeric_limits<double>::infinity()), "-inf");
+    // Not-a-number has no sign in Joyeer output, whatever the C library prints.
+    EXPECT_EQ(joyeerFormat(17, std::numeric_limits<double>::quiet_NaN()), "nan");
+    EXPECT_EQ(joyeerFormat(17, -std::numeric_limits<double>::quiet_NaN()), "nan");
+    EXPECT_EQ(joyeerFormat(9, std::numeric_limits<float>::quiet_NaN()), "nan");
+    EXPECT_EQ(joyeerFormat(9, -std::numeric_limits<float>::infinity()), "-inf");
+    EXPECT_EQ(joyeerFormat(17, 0.0), "0");
+    EXPECT_EQ(joyeerFormat(17, -0.0), "-0");
+
+    std::vector<double> values {
+        1.0, -1.0, 0.1, 0.5, 0.3, 1.0 / 3.0, 2.0 / 3.0, 9.5, 99999999999999999.0, 1e15, 1e16, 1e17,
+        1e21, 1e22, 1e23, 123456789012345678.0, 0.0001, 0.00001, 0.00009999999999999999,
+        0.000099999999999999995, 9.999999999999999e22, 100.0, 12345.678, 5e-324, 2.2250738585072014e-308,
+        2.225073858507201e-308, std::numeric_limits<double>::max(), std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::denorm_min(), std::numeric_limits<double>::epsilon(),
+        // 2^-25 has 18 significant digits ending in 5: an exact tie at 17 digits.
+        std::ldexp(1.0, -25), std::ldexp(3.0, -25), std::ldexp(1.0, -26), 0.5 + std::ldexp(1.0, -53),
+    };
+    for (int power = -1074; power <= 1023; ++power) values.push_back(std::ldexp(1.0, power));
+    for (int power = -323; power <= 308; ++power) {
+        values.push_back(std::strtod(("1e" + std::to_string(power)).c_str(), nullptr));
+        values.push_back(std::strtod(("9.9999999999999999e" + std::to_string(power)).c_str(), nullptr));
+    }
+    for (const double value : values) {
+        for (const double signedValue : {value, -value}) {
+            for (int precision = 1; precision <= 17; ++precision) {
+                ASSERT_EQ(joyeerFormat(precision, signedValue), cLibraryFormat(precision, signedValue))
+                        << "precision " << precision << " value " << cLibraryFormat(17, signedValue);
+            }
+        }
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(RuntimeBlackBoxTest, FormatsRandomDoublesLikeTheCLibrary) {
+    std::mt19937_64 random(0x6a6f79656572ULL);
+    for (int sample = 0; sample < 100000; ++sample) {
+        const double value = doubleFromBits(random());
+        if (!std::isfinite(value)) continue;
+        ASSERT_EQ(joyeerFormat(17, value), cLibraryFormat(17, value)) << cLibraryFormat(17, value);
+        ASSERT_EQ(joyeerFormat(9, value), cLibraryFormat(9, value)) << cLibraryFormat(17, value);
+    }
+    // Values written in decimal, whose shortest form is short but exact form long.
+    for (int sample = 0; sample < 50000; ++sample) {
+        const auto digits = static_cast<int64_t>(random() % 100000000000ULL);
+        const int power = static_cast<int>(random() % 80) - 40;
+        const double value = std::strtod(
+                (std::to_string(digits) + "e" + std::to_string(power)).c_str(), nullptr);
+        ASSERT_EQ(joyeerFormat(17, value), cLibraryFormat(17, value)) << cLibraryFormat(17, value);
+        ASSERT_EQ(joyeerFormat(6, value), cLibraryFormat(6, value)) << cLibraryFormat(17, value);
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(RuntimeBlackBoxTest, FormatsFloatsLikeTheCLibrary) {
+    std::vector<float> values {
+        1.0f, 0.1f, 0.5f, 16777216.0f, 16777217.0f, 3.4028235e38f, 1.17549435e-38f, 1.4012985e-45f,
+        std::numeric_limits<float>::epsilon(), 1e-45f, 123456789.0f, 0.3f, 1.0f / 3.0f,
+    };
+    for (int power = -149; power <= 127; ++power) values.push_back(std::ldexp(1.0f, power));
+    for (const float value : values) {
+        for (const float signedValue : {value, -value}) {
+            for (int precision : {1, 6, 9, 17}) {
+                ASSERT_EQ(joyeerFormat(precision, signedValue),
+                          cLibraryFormat(precision, static_cast<double>(signedValue)))
+                        << "precision " << precision << " value " << cLibraryFormat(17, signedValue);
+            }
+        }
+    }
+    std::mt19937 random(12345);
+    for (int sample = 0; sample < 100000; ++sample) {
+        const float value = floatFromBits(random());
+        if (!std::isfinite(value)) continue;
+        ASSERT_EQ(joyeerFormat(9, value), cLibraryFormat(9, static_cast<double>(value)))
+                << cLibraryFormat(17, value);
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
+TEST(RuntimeBlackBoxDeathTest, FormattingRejectsAnInvalidPrecision) {
+    char text[40];
+    EXPECT_EXIT(joyeer_format_double_abi(text, 0, 1.0), testing::ExitedWithCode(1),
+                "Joyeer runtime error: invalid floating-point precision");
+    EXPECT_EXIT(joyeer_format_double_abi(text, 18, 1.0), testing::ExitedWithCode(1),
+                "Joyeer runtime error: invalid floating-point precision");
 }
 
 TEST(RuntimeBlackBoxTest, PrintsStringBytesUntransformedWithOneNewline) {
