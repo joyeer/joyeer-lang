@@ -11,9 +11,9 @@
 |---|---|
 | GoogleTests, compiler | about 460 cases: semantic analysis 78, IR lowering 61, parser 56, LLVM 50, type checking 40, lexer 38, C interop 35, IR 29, module 28, name resolution 26 |
 | GoogleTests, runtime | runtime, host and argument tests; the C filesystem and process tests were removed with that C code, and the host operations are now tested through `SystemTests` |
-| Native fixtures | 79 files in `tests/native`, mostly checked-arithmetic and bounds traps, ownership, and `regression_*` programs |
+| End-to-end fixtures | 79 files in `tests/e2e`, mostly checked-arithmetic and bounds traps, ownership, and `regression_*` programs |
 | Negative fixtures | semantic-analysis 13, type-checking 17, parser 6, native 3, lexer 1, name-resolution 1 |
-| Leak detection | `lib/Runtime/core/entry.joyeer` reads `joyeer_runtime_active_allocations()` at exit, so native fixtures check allocation balance |
+| Leak detection | `lib/Runtime/core/entry.joyeer` reads `joyeer_runtime_active_allocations()` at exit, so end-to-end fixtures check allocation balance |
 | Optimization | one `-O2` script (`scripts/cmake/verifyOptimizedNativeFailure.cmake`) and two fixtures (`optimized_bounds`, `optimized_overflow`) |
 
 This is a solid base. The gaps are mostly in systematic and adversarial testing.
@@ -21,8 +21,8 @@ This is a solid base. The gaps are mostly in systematic and adversarial testing.
 ## Gaps, highest value first
 
 1. **Differential testing across optimization levels (done).**
-   `NativeOptimizationEquivalence_<fixture>` runs 62 self-contained
-   `tests/native` fixtures at `-O0` to `-O3` and requires identical exit
+   `E2EOptimizationEquivalence_<fixture>` runs 62 self-contained
+   `tests/e2e` fixtures at `-O0` to `-O3` and requires identical exit
    status, stdout, and stderr
    ([script](../../scripts/cmake/verifyOptimizationEquivalence.cmake)). Fixtures
    needing arguments, a working directory, or input files are excluded.
@@ -64,7 +64,7 @@ This is a solid base. The gaps are mostly in systematic and adversarial testing.
 
 ## Suggested order
 
-1. Differential `-O0`/`-O2` run over `tests/native` (item 1).
+1. Differential `-O0`/`-O2` run over `tests/e2e` (item 1).
 2. Delete or port the legacy fixtures (item 6, done).
 3. Add a sanitizer option and a validation row (item 3).
 4. Add the parser/lexer fuzzer (item 2).

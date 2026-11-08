@@ -104,7 +104,7 @@ above), and message codes with a table in C.
 ## Consequences
 
 - Stage 3 builds D1, D3, D4, D5, D7 and the bulk-memory intrinsics, each with
-  lowering, misuse and tampered-IR unit tests and a native fixture, as decision
+  lowering, misuse and tampered-IR unit tests and an end-to-end fixture, as decision
   0005 did for the memory intrinsics. Indirect calls need no further work.
 - Core units become a real, enforced subset, so the `RuntimeCoreObjectSymbols`
   gate shrinks to a check of exports and the allowed C library imports.

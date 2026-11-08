@@ -31,7 +31,7 @@ Rules (the language-level ones are in [§12.5](../spec/12-modules.md#125-standar
   never by location or module name. Public APIs wrap internal bindings.
 - Add a module or workspace member only when it has real sources; no empty
   modules.
-- Layout: `lib/<Module>/`, tests in `tests/library/<Module>/`, both
+- Layout: `lib/<Module>/`, tests in `tests/lib/<Module>/`, both
   listed in the root `workspace.toml`.
 
 ## 2. Remaining Library Work

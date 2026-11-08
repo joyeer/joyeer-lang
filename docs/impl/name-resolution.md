@@ -211,7 +211,7 @@ ctest --test-dir build -L name-resolution --output-on-failure
 
 The test target covers forward references, nested shadowing, type/member
 resolution, synthesized initializers, enum cases, labels, match-arm bindings,
-deferred contextual cases, diagnostics, and parser/native fixtures. A CLI
+deferred contextual cases, diagnostics, and parser/end-to-end fixtures. A CLI
 negative test verifies that the default compiler reports resolver failures.
 Module tests cover file-local public short names, shadowing, deterministic
 ambiguity, namespaces, non-re-exports, and constructor/member visibility.

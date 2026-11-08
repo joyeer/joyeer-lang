@@ -564,7 +564,7 @@ Focused tests:
 
 ```pwsh
 ctest --test-dir build -L llvm-backend --output-on-failure
-ctest --test-dir build -L native --output-on-failure
+ctest --test-dir build -L e2e --output-on-failure
 ctest --test-dir build -L optimization --output-on-failure
 ctest --test-dir build -L debug-info --output-on-failure
 ```
@@ -594,17 +594,17 @@ validate no-debug output, Windows PDB source and line records, embedded
 Windows/ELF DWARF sections, platform artifact retention, safe metacharacter
 paths, and refusal to overwrite output/PDB directories.
 
-`NativeExecutableCompilationUnitsO0`, `NativeExecutableCompilationUnitsO1`,
-`NativeExecutableCompilationUnitsO2`, and `NativeExecutableCompilationUnitsO3`
+`E2EExecutableCompilationUnitsO0`, `E2EExecutableCompilationUnitsO1`,
+`E2EExecutableCompilationUnitsO2`, and `E2EExecutableCompilationUnitsO3`
 exercise the explicit source-set graph at each optimization level.
-`NativeExecutableCompilationUnitsDebug` covers the same compilation-unit
+`E2EExecutableCompilationUnitsDebug` covers the same compilation-unit
 boundary with debug information. The fixtures include nested source paths and
 a directory containing spaces while retaining per-file debug identities.
 
 Optimization tests verify the default and all accepted CLI levels, then
 compile at `-O2` and prove checked integer overflow and array bounds still
 terminate with their runtime diagnostics. Runtime traps and ownership-heavy
-native tests are detailed in [runtime validation](runtime.md#limits-and-validation).
+end-to-end tests are detailed in [runtime validation](runtime.md#limits-and-validation).
 
 ---
 

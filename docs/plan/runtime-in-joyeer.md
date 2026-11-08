@@ -309,7 +309,7 @@ unit tests and fern enabled and the unfiltered CTest ([building](../building.md)
   relocated lookup. No fallback runtime ships.
 
 **Behavior**
-- Every existing `runtime_test.cpp`, native fixture and `-O0` to `-O3`
+- Every existing `runtime_test.cpp`, end-to-end fixture and `-O0` to `-O3`
   optimization-equivalence test passes unchanged against the Joyeer archive.
 - Allocation: comparison allocates nothing; concatenation allocates once; zero
   final balance; overflow and allocation-failure paths are checked, never
@@ -413,7 +413,7 @@ except where a box says otherwise.
   by-value string, array and dictionary forms (now `static` helpers inside
   `runtime.c`; the ABI is the flat `_abi` functions). Their tests were deleted
   where the behavior lives in generated code (checked arithmetic and array bounds
-  have native fixtures) and migrated to the `_abi` forms elsewhere.
+  have end-to-end fixtures) and migrated to the `_abi` forms elsewhere.
 - [x] 0.2 `runtime_test.cpp` names only symbols that `runtime.h` declares, so it
   runs unchanged against any provider. Added: printed output of every `print_*`,
   panic text and status, exact `-1/0/1` string ordering over unsigned bytes and
@@ -490,7 +490,7 @@ yet to hand `joyeer_panic` a message from Joyeer; see D7 and §6 item 9.
 
 ### Stage 3: Compiler capabilities (R1), done
 
-Each has unit tests for lowering, misuse and tampered IR, and a native fixture at both
+Each has unit tests for lowering, misuse and tampered IR, and an end-to-end fixture at both
 optimization levels.
 Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 
