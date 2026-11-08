@@ -258,8 +258,9 @@ point.
 
 ### 18.6 TCP networking
 
-> **Status: provisional.** Implemented and tested on Windows only (x64 Debug);
-> on Linux and macOS every operation currently fails with `.Other(38)`. The
+> **Status: provisional.** Implemented and tested on Windows x64 and Linux
+> x86-64 (Debug); the AArch64 system call numbers are untested. On macOS every
+> operation currently fails with `.Other(38)`. The
 > design record is [0012](../decisions/0012-tcp-networking.md). Rules here
 > may change before acceptance. The first version is deliberately small:
 > blocking IPv4 TCP between literal addresses. Names, IPv6, UDP, timeouts,
@@ -412,6 +413,10 @@ On Windows the first network operation starts Winsock (version 2.2) once for
 the process and never cleans it up; a startup failure is `.Other(code)`.
 Windows programs that use any of these operations link `ws2_32`. Program text
 does not name a library ([§19.7](19-c-interop.md)); the toolchain adds it.
+
+On Linux the operations are system calls made directly (decision 0011), with no
+C library or resolver; a program that uses them needs no library beyond the C
+startup that every Linux program already has.
 
 #### Not provided
 

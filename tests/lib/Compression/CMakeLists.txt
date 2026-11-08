@@ -19,7 +19,7 @@ foreach(source IN ITEMS Foundation/text.joyeer Foundation/checksum.joyeer
         System/filesystem_windows.joyeer System/filesystem_posix.joyeer System/filesystem_linux.joyeer
         System/legacy_file.joyeer System/process.joyeer System/process_windows.joyeer
         System/process_posix.joyeer System/process_linux.joyeer System/stdio.joyeer
-        System/network.joyeer System/network_windows.joyeer System/network_posix.joyeer System/cruntime.joyeer)
+        System/network.joyeer System/network_windows.joyeer System/network_linux.joyeer System/network_posix.joyeer System/cruntime.joyeer)
     get_filename_component(module "${source}" DIRECTORY)
     string(APPEND compression_system_args
         "--module-source;${module}=${JOYEER_SOURCE_DIR}/lib/${source};")

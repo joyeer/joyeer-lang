@@ -4,13 +4,16 @@ import Foundation
 // Tests for the TCP operations (spec §18.6) as `System` provides them. Every
 // connection is to a listener of this program on 127.0.0.1: the kernel
 // completes the handshake into the listen backlog, so one thread can listen,
-// connect and accept in turn. The POSIX variants are placeholders (decision
-// 0012), so these tests run on Windows only.
+// connect and accept in turn. The macOS variants are placeholders (decision
+// 0012), so these tests run on Windows and Linux.
 
 @platform(windows)
 private func implemented(): Bool { return true }
 
-@platform(posix)
+@platform(linux)
+private func implemented(): Bool { return true }
+
+@platform(macos)
 private func implemented(): Bool { return false }
 
 private func caseName(error: NetworkError): String {

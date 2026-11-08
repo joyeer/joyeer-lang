@@ -7,10 +7,10 @@ answers; there is nothing to build when a page changes.
 > **Status: runs on Windows.** The server uses the provisional TCP functions of
 > `System` ([spec §18.6](../../docs/spec/18-host.md#186-tcp-networking),
 > [decision 0012](../../docs/decisions/0012-tcp-networking.md)), which are
-> implemented for Windows only; on Linux and macOS they fail with `.Other(38)`,
-> so the server prints a listen error and exits. It was built with the in-tree
-> compiler and checked over real HTTP on Windows x64 Debug (`GET`, `HEAD`,
-> `404`, `405`). The example is deliberately **not** a member of the root
+> implemented for Windows and Linux; on macOS they fail with `.Other(38)`, so
+> the server prints a listen error and exits. It was built with the in-tree
+> compiler and checked over real HTTP on Windows x64 and on Linux x86-64
+> (Ubuntu under WSL2), both Debug (`GET`, `HEAD`, `404`, `405`). The example is deliberately **not** a member of the root
 > workspace, so it does not affect `fern check --workspace` or CTest.
 
 ## Layout

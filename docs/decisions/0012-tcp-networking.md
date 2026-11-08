@@ -3,8 +3,11 @@
 - Status: proposed (2026-11-08); the Windows implementation landed the same
   day and is verified on Windows x64 Debug (loopback tests in `SystemTests`, and
   the [markdown web server example](../../example/markdown-server/README.md)
-  served over real HTTP). Linux and macOS are placeholders that fail with
-  `.Other(38)`; full validation and the role reviews have not run.
+  served over real HTTP). The Linux implementation (raw system calls) followed
+  and is verified on x86-64 Ubuntu under WSL2: `SystemTests`, the compiler
+  module-service and symbol-import gates, and the example over HTTP. macOS is a
+  placeholder that fails with `.Other(38)`; AArch64 Linux is untested; full
+  validation and the role reviews have not run.
 - Spec: [§18.6 TCP networking](../spec/18-host.md#186-tcp-networking)
   (provisional)
 
@@ -131,8 +134,9 @@ Implementation shape (informative, to be confirmed while building):
      resource. Whether to leave this as is, let a pattern binding be consumed
      when the scrutinee is a temporary, or make the close take a borrowed
      handle is open.
-  2. The Linux (raw system calls) and macOS (libSystem) implementations are
-     still to write, and will need the same acceptance steps as the POSIX
+  2. The macOS (libSystem) implementation is still to write, and the Linux
+     AArch64 system call numbers (from memory, like the rest of that table in
+     0011) need a native run; both need the same acceptance steps as the POSIX
      filesystem, which has not run there either.
 
 ## Evidence

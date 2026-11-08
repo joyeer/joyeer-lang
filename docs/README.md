@@ -97,7 +97,7 @@ in the spec.
 | [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 | [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
-| [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
+| [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows and Linux implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
 
 ## Conventions
 
