@@ -30,8 +30,8 @@ name-use NodeId -> declaration SymbolId
 Additional relations record declaration symbols, containing/introduced
 scopes, qualified-name symbols, resolved call targets, and references that
 must wait for type information. The public model is in
-`src/compiler/frontend/semantic.h`; the resolver API is in
-`src/compiler/frontend/nameresolution.h`.
+`compiler/frontend/semantic.h`; the resolver API is in
+`compiler/frontend/nameresolution.h`.
 
 For internal runtime compilation, each `ModuleInput.runtimeContext` is an
 explicit toolchain input. The semantic model records it by source identity

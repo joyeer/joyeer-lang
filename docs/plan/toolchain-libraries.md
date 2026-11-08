@@ -63,8 +63,8 @@ from its own (`toolchain.library-mismatch`).
   `native-bindings`, and its `native-libraries` are linked only when the module
   is imported. Paths must be relative with no parent traversal
   (`toolchain.library-invalid`).
-- Sources: [toolchain.cpp](../../src/compiler/driver/toolchain.cpp) and the
-  module graph in [compiler+service.cpp](../../src/compiler/driver/compiler+service.cpp).
+- Sources: [toolchain.cpp](../../compiler/driver/toolchain.cpp) and the
+  module graph in [compiler+service.cpp](../../compiler/driver/compiler+service.cpp).
 
 ### 2.3 fern
 

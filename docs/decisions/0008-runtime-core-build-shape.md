@@ -29,8 +29,8 @@ providers.
 ## Decision
 
 - The core is the module `runtime.core`, the files listed in
-  `src/runtime/CMakeLists.txt` (`JOYEER_RUNTIME_CORE_SOURCES`, explicit, no
-  discovery), under `src/runtime/joyeer/`.
+  `lib/Runtime/CMakeLists.txt` (`JOYEER_RUNTIME_CORE_SOURCES`, explicit, no
+  discovery), under `lib/Runtime/core/`.
 - A CMake custom command runs the **just-built** `joyeer` with
   `--runtime-module runtime.core --emit-runtime-object` and the files after `--`.
   It depends on `joyeer` and `JoyeerBackend`; nothing in the compiler depends on

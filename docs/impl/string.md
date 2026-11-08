@@ -18,8 +18,8 @@ typedef struct JoyeerString {
 
 Strings are not required to be NUL terminated. The count is authoritative, so
 embedded NUL bytes, such as those `System.readFile(path:)` returns, are preserved. The runtime
-implementation is in `src/runtime/runtime.h` and
-`src/runtime/runtime.c`.
+implementation is in `lib/Runtime/core/strings.joyeer` and `lib/Runtime/core/utf8.joyeer`,
+with the C declarations in `lib/Runtime/include/joyeer/runtime.h`.
 
 The handle occupies 16 bytes on the supported 64-bit layout. The current
 runtime preserves bytes but does not enforce a valid-UTF-8 invariant;

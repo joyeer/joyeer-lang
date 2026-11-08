@@ -1,4 +1,4 @@
-#include "library/Compression/native.h"
+#include "lib/Compression/native.h"
 
 #include <stdio.h>
 #include <stdlib.h>
