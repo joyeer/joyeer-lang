@@ -2086,4 +2086,176 @@ func invalid() {
                     }
                 }
 
+
+// Decision 0015, stage 4: a struct's `deinit` is type-checked as a method body, a type
+// that declares one is noncopyable, noncopyability propagates, and an implicit copy of a
+// noncopyable value is rejected where it happens.
+constexpr const char* handlePrelude =
+        "struct Handle {\n"
+        "    var fd: Int\n"
+        "    deinit() { }\n"
+        "}\n"
+        "func open(): Handle { return Handle(fd: 1) }\n"
+        "func take(handle: consuming Handle) { }\n";
+
+TEST_F(TypeCheckingTest, ADeinitBodyIsTypeChecked) {
+    check("struct Handle {\n"
+          "    var fd: Int\n"
+          "    deinit() { let open: Int = self.fd }\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+
+    check("struct Handle {\n"
+          "    var fd: Int\n"
+          "    deinit() { let open: Bool = self.fd }\n"
+          "}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::typeMismatch));
+}
+
+TEST_F(TypeCheckingTest, ADeinitCannotConsumeSelfOrMoveAFieldOut) {
+    check("struct Inner {\n"
+          "    var n: Int\n"
+          "    deinit() { }\n"
+          "}\n"
+          "struct Outer {\n"
+          "    var inner: Inner\n"
+          "    deinit() { take(inner: consume self) }\n"
+          "}\n"
+          "func take(inner: consuming Outer) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument));
+
+    check("struct Inner {\n"
+          "    var n: Int\n"
+          "    deinit() { }\n"
+          "}\n"
+          "struct Outer {\n"
+          "    var inner: Inner\n"
+          "    deinit() { take(inner: consume self.inner) }\n"
+          "}\n"
+          "func take(inner: consuming Inner) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument));
+}
+
+TEST_F(TypeCheckingTest, ADeinitReceiverIsTheStructAndItsResultIsVoid) {
+    check("struct Handle {\n"
+          "    var fd: Int\n"
+          "    deinit() { }\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto& model = *resolution.model;
+    const auto handle = std::find_if(model.symbols().begin(), model.symbols().end(),
+            [](const auto& symbol) {
+                return symbol.kind == joyeer::semantic::SymbolKind::structure &&
+                       symbol.name == "Handle";
+            });
+    ASSERT_NE(handle, model.symbols().end());
+    const auto declaration = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            model.node(*handle->declaration));
+    const auto symbol = model.declaredSymbol(declaration->deinitializer);
+    ASSERT_TRUE(symbol.has_value());
+    const auto* signature = checking.model->callable(*symbol);
+    ASSERT_NE(signature, nullptr);
+    EXPECT_EQ(signature->result, checking.model->types().voidType());
+    EXPECT_EQ(signature->receiverType, checking.model->types().typeForSymbol(handle->id));
+    EXPECT_TRUE(signature->parameters.empty());
+}
+
+TEST_F(TypeCheckingTest, ANoncopyableTypeIsOneWithADeinitOrANoncopyablePart) {
+    check(std::string(handlePrelude) +
+          "struct Plain { var n: Int }\n"
+          "struct Holder { var inner: Handle }\n"
+          "struct Pair {\n var a: Int\n var b: Plain\n}\n"
+          "enum Slot {\n Full(Handle),\n Empty\n}\n"
+          "enum Mark {\n Set(Int),\n Unset\n}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    auto& model = *checking.model;
+    const auto named = [&](const std::string& name) {
+        const auto found = std::find_if(resolution.model->symbols().begin(),
+                resolution.model->symbols().end(), [&](const auto& symbol) {
+                    return (symbol.kind == joyeer::semantic::SymbolKind::structure ||
+                            symbol.kind == joyeer::semantic::SymbolKind::enumeration) &&
+                           symbol.name == name;
+                });
+        EXPECT_NE(found, resolution.model->symbols().end());
+        return model.types().typeForSymbol(found->id).value();
+    };
+    auto& types = model.types();
+    const auto handle = named("Handle");
+
+    EXPECT_FALSE(model.isCopyable(handle));
+    EXPECT_NE(model.noncopyableReason(handle).value_or("").find("deinit"), std::string::npos);
+    EXPECT_FALSE(model.isCopyable(named("Holder")));
+    EXPECT_FALSE(model.isCopyable(named("Slot")));
+    EXPECT_TRUE(model.isCopyable(named("Plain")));
+    EXPECT_TRUE(model.isCopyable(named("Pair")));
+    EXPECT_TRUE(model.isCopyable(named("Mark")));
+    EXPECT_FALSE(model.noncopyableReason(named("Plain")).has_value());
+
+    EXPECT_FALSE(model.isCopyable(types.arrayType(handle)));
+    EXPECT_FALSE(model.isCopyable(types.optionalType(handle)));
+    EXPECT_FALSE(model.isCopyable(types.dictionaryType(types.stringType(), handle)));
+    EXPECT_FALSE(model.isCopyable(types.resultType(handle, types.stringType())));
+    EXPECT_FALSE(model.isCopyable(types.resultType(types.intType(), handle)));
+    EXPECT_TRUE(model.isCopyable(types.arrayType(named("Plain"))));
+    EXPECT_TRUE(model.isCopyable(types.intType()));
+    EXPECT_TRUE(model.isCopyable(types.stringType()));
+    EXPECT_TRUE(model.isCopyable(types.resultType(types.intType(), types.stringType())));
+}
+
+TEST_F(TypeCheckingTest, RejectsImplicitCopiesOfANoncopyableValueAtTheCopySite) {
+    const std::vector<std::string> copies {
+        // binding and assignment from a place
+        "func f() { let a = open()\n let b = a }\n",
+        "func f() { let a = open()\n var b = open()\n b = a }\n",
+        // returning a borrowed parameter or a field of an owned value
+        "func f(h: Handle): Handle { return h }\n",
+        "struct Holder { var inner: Handle }\n"
+        "func f(h: consuming Holder): Handle { return h.inner }\n",
+        // building an aggregate from a place
+        "struct Holder { var inner: Handle }\n"
+        "func f() { let a = open()\n let h = Holder(inner: a) }\n",
+        "func f() { let a = open()\n let items = [a] }\n",
+        "func f() { let a = open()\n let o: Handle? = .Some(a) }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    check(std::string(handlePrelude) + "func f() { let a = open()\n let b = a }\n");
+    ASSERT_FALSE(checking.diagnostics.empty());
+    EXPECT_NE(checking.diagnostics[0].message.find("Handle"), std::string::npos);
+    EXPECT_NE(checking.diagnostics[0].message.find("deinit"), std::string::npos);
+}
+
+TEST_F(TypeCheckingTest, AllowsMovesTemporariesBorrowsAndCopiesOfCopyableParts) {
+    const std::vector<std::string> allowed {
+        // an owned temporary is not a copy
+        "func f() { let a = open() }\n",
+        "func f() { var a = open()\n a = open() }\n",
+        // `consume` moves; a borrow does not copy
+        "func f() { let a = open()\n take(handle: consume a) }\n",
+        "func peek(h: Handle): Int { return h.fd }\n"
+        "func f() { let a = open()\n let n = peek(h: a) }\n",
+        // returning an owning local or a consuming parameter is a move
+        "func f(): Handle { let a = open()\n return a }\n",
+        "func f(h: consuming Handle): Handle { return h }\n",
+        // reading a copyable field of a noncopyable value copies only the field
+        "func f() { let a = open()\n let n = a.fd }\n",
+        // copyable types are unaffected
+        "struct Plain { var n: Int }\n"
+        "func f() { let a = Plain(n: 1)\n let b = a\n let items = [a, b] }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 } // namespace

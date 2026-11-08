@@ -256,6 +256,7 @@ enum class TypeCheckingDiagnosticId {
     conflictingNativeSymbol,
     invalidNumericLiteral,
     managedTypeInCoreUnit,
+    copyOfNoncopyable,
 };
 
 struct TypeCheckingDiagnostic {
@@ -285,8 +286,18 @@ public:
         [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
             const syntax::NodePtr& node) const;
 
+    // Copyability (spec 4.1.1, decision 0015). A struct that declares `deinit` is noncopyable,
+    // and so is anything that holds one: a struct field, an enum payload, or the element, key,
+    // value, payload or error type of Array, Dict, Optional and Result.
+    [[nodiscard]] bool isCopyable(TypeId type) const;
+    // Why `type` is noncopyable, or nullopt when it is copyable.
+    [[nodiscard]] std::optional<std::string> noncopyableReason(TypeId type) const;
+
 private:
     friend class TypeCheckingBuilder;
+
+    [[nodiscard]] std::optional<std::string> noncopyableReason(
+            TypeId type, std::vector<TypeId>& visiting) const;
 
     explicit TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel);
 

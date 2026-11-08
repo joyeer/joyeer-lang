@@ -137,7 +137,9 @@ the rest as follows.
 ## Implementation outline (the `deinit` feature, stage by stage)
 
 The repository's feature workflow applies: spec, failing tests, then each stage, then
-role reviews and validation. Stages, with what each must do:
+role reviews and validation. Progress: stages 1 to 4 are implemented (verified on
+Linux; a Windows build is still to be run); until stage 6 lowers it, IR lowering
+rejects a struct that declares `deinit`. Stages, with what each must do:
 
 1. **Spec.** Amend §3.7 (the rules above, with an implementation-status note),
    §4.1.1 (propagation and `Copyable`), §4.7 (order with partial moves forbidden) and
@@ -152,7 +154,14 @@ role reviews and validation. Stages, with what each must do:
    consuming `self` and moving a field out of it; record on the struct's type whether
    it has a `deinit`, and compute noncopyability and its propagation to containers and
    aggregates; answer `Copyable` (§20.5) from that. Report a copy of a noncopyable
-   value at its copy site.
+   value at its copy site. *Implemented as* `TypeCheckedModel::isCopyable` and
+   `noncopyableReason`, plus `type-checking.copy-of-noncopyable`, reported in the type
+   checker at the owned contexts: a binding initializer, a plain assignment, a `return`
+   (an owning local or consuming parameter is moved, anything else is a copy), a
+   memberwise-initializer or enum-case argument, `append`, and array and dictionary
+   literal elements. Only a place (a local, a parameter, a stored field, a subscript)
+   copies; a call result or constructed value is a temporary. Cases still to add:
+   the `?` operand and a `match` scrutinee. `Copyable` as a generic bound waits on §20.
 5. **Semantic analysis.** Run the existing initialization and consumption analysis over
    the `deinit` body; reject use of a struct with a `deinit` in a partially consumed
    state (a field moved out), since the destructor needs the whole value.

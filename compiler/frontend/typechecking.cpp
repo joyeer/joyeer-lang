@@ -318,6 +318,94 @@ std::optional<TypeId> TypeCheckedModel::typeOf(semantic::SymbolId symbol) const 
     return found->second;
 }
 
+bool TypeCheckedModel::isCopyable(TypeId type) const {
+    return !noncopyableReason(type).has_value();
+}
+
+std::optional<std::string> TypeCheckedModel::noncopyableReason(TypeId type) const {
+    std::vector<TypeId> visiting;
+    return noncopyableReason(type, visiting);
+}
+
+std::optional<std::string> TypeCheckedModel::noncopyableReason(
+        TypeId id, std::vector<TypeId>& visiting) const {
+    const auto* type = typeContext.type(id);
+    if (type == nullptr) return std::nullopt;
+    // A struct cannot contain itself by value, but guard so a malformed program cannot loop.
+    if (std::find(visiting.begin(), visiting.end(), id) != visiting.end()) return std::nullopt;
+    visiting.push_back(id);
+    std::optional<std::string> reason;
+    const auto name = "'" + typeContext.displayName(id) + "'";
+
+    switch (type->kind) {
+        case TypeKind::array:
+        case TypeKind::dictionary:
+        case TypeKind::optional:
+        case TypeKind::result:
+            for (const auto argument : type->arguments) {
+                if (noncopyableReason(argument, visiting).has_value()) {
+                    reason = name + " holds the noncopyable type '" +
+                            typeContext.displayName(argument) + "'";
+                    break;
+                }
+            }
+            break;
+        case TypeKind::structure: {
+            const auto* symbol = semanticModelValue->symbol(type->symbol);
+            if (symbol == nullptr || !symbol->declaration.has_value()) break;
+            const auto declaration = semanticModelValue->node(*symbol->declaration);
+            if (declaration == nullptr || declaration->kind != syntax::Kind::structDecl) break;
+            const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(declaration);
+            if (structure->deinitializer != nullptr) {
+                reason = name + " declares 'deinit'";
+                break;
+            }
+            for (const auto& field : structure->fields) {
+                const auto fieldSymbol = semanticModelValue->declaredSymbol(field);
+                const auto fieldType = fieldSymbol.has_value()
+                        ? typeOf(*fieldSymbol)
+                        : std::optional<TypeId>();
+                if (fieldType.has_value() &&
+                    noncopyableReason(*fieldType, visiting).has_value()) {
+                    reason = name + " has the noncopyable field '" +
+                            (field->name == nullptr ? std::string() : field->name->rawValue) +
+                            "' of type '" + typeContext.displayName(*fieldType) + "'";
+                    break;
+                }
+            }
+            break;
+        }
+        case TypeKind::enumeration: {
+            const auto* symbol = semanticModelValue->symbol(type->symbol);
+            if (symbol == nullptr || !symbol->declaration.has_value()) break;
+            const auto declaration = semanticModelValue->node(*symbol->declaration);
+            if (declaration == nullptr || declaration->kind != syntax::Kind::enumDecl) break;
+            const auto enumeration = std::static_pointer_cast<syntax::EnumDeclSyntax>(declaration);
+            for (const auto& enumCase : enumeration->cases) {
+                const auto caseSymbol = semanticModelValue->declaredSymbol(enumCase);
+                const auto* signature = caseSymbol.has_value()
+                        ? callable(*caseSymbol)
+                        : nullptr;
+                if (signature == nullptr) continue;
+                for (const auto payload : signature->parameters) {
+                    if (noncopyableReason(payload, visiting).has_value()) {
+                        reason = name + " has a noncopyable payload of type '" +
+                                typeContext.displayName(payload) + "'";
+                        break;
+                    }
+                }
+                if (reason.has_value()) break;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+
+    visiting.pop_back();
+    return reason;
+}
+
 const TypedCallableSignature* TypeCheckedModel::callable(
         semantic::SymbolId symbol) const {
     const auto found = callables.find(symbol);
@@ -640,6 +728,7 @@ private:
                 const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 resolveStructure(declaration);
                 for (const auto& method : declaration->methods) resolveFunction(method);
+                if (declaration->deinitializer != nullptr) resolveFunction(declaration->deinitializer);
                 break;
             }
             case syntax::Kind::enumDecl: {
@@ -1021,6 +1110,7 @@ private:
         std::optional<TypeId> initializer;
         if (declaration->initializer != nullptr) {
             initializer = checkExpression(declaration->initializer, annotation);
+            requireNoImplicitCopy(declaration->initializer, initializer);
         }
 
         TypeId bindingType = model->typeContext.errorType();
@@ -1096,6 +1186,7 @@ private:
             case syntax::Kind::structDecl: {
                 const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 for (const auto& method : structure->methods) checkFunctionBody(method);
+                if (structure->deinitializer != nullptr) checkFunctionBody(structure->deinitializer);
                 for (const auto& field : structure->fields) {
                     if (field->initializer == nullptr) continue;
                     const auto symbol = model->semanticModelValue->declaredSymbol(field);
@@ -1276,6 +1367,7 @@ private:
                     break;
                 }
                 const auto value = checkExpression(assignment->value, target);
+                requireNoImplicitCopy(assignment->value, value);
                 if (target.has_value() && value.has_value()) {
                     requireAssignable(*value, *target, assignment->value->span);
                 }
@@ -1335,6 +1427,10 @@ private:
                     ? model->typeContext.voidType()
                     : checkExpression(returned->value, required).value_or(
                         model->typeContext.errorType());
+                // Returning an owning local or a consuming parameter moves it out.
+                if (returned->value != nullptr) {
+                    requireNoImplicitCopy(returned->value, actual, true);
+                }
                 requireAssignable(
                     actual,
                     required,
@@ -1958,6 +2054,11 @@ private:
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
             const auto actual = checkExpression(argument->value, expected);
+            // A memberwise initializer, an enum case and `append` store their argument, so it
+            // is an owned context; every other parameter borrows or is marked `consume`.
+            if (semanticTarget != nullptr && storesItsArguments(*semanticTarget)) {
+                requireNoImplicitCopy(argument->value, actual);
+            }
             if (semanticTarget != nullptr && parameterIndex.has_value()) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
                 const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
@@ -2539,6 +2640,69 @@ private:
         return "replace '" + std::string(actual) + "' with '" + expected + "'";
     }
 
+    static bool storesItsArguments(const semantic::Symbol& target) {
+        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
+        return target.callable.has_value() &&
+                (target.callable->kind == semantic::CallableKind::structureInitializer ||
+                 target.callable->kind == semantic::CallableKind::enumCase);
+    }
+
+    // A place names existing storage; using one where an owned value is needed copies it.
+    // Anything else (a call result, a literal, a constructed value) is a temporary.
+    bool isPlaceExpression(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        switch (expression->kind) {
+            case syntax::Kind::parenthesizedExpr:
+                return isPlaceExpression(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                                ->expression);
+            case syntax::Kind::subscriptExpr:
+                return true;
+            case syntax::Kind::nameExpr:
+            case syntax::Kind::memberExpr: {
+                // A local, a parameter, or a stored field; not an enum case or a function.
+                const auto referenced = model->referencedSymbol(expression);
+                const auto* symbol = referenced.has_value()
+                        ? model->semanticModelValue->symbol(*referenced)
+                        : nullptr;
+                if (symbol == nullptr) return false;
+                return symbol->kind == semantic::SymbolKind::binding ||
+                        symbol->kind == semantic::SymbolKind::parameter ||
+                        symbol->kind == semantic::SymbolKind::structureField;
+            }
+            default:
+                return false;
+        }
+    }
+
+    // Reports the implicit copy of a noncopyable value at an owned context (decision 0015).
+    // `movesOwningName` lets a bare owning local or consuming parameter be moved instead,
+    // which is what `return` does with it.
+    void requireNoImplicitCopy(
+            const syntax::ExprPtr& expression,
+            std::optional<TypeId> type,
+            bool movesOwningName = false) {
+        if (expression == nullptr || !type.has_value() ||
+            *type == model->typeContext.errorType() || !isPlaceExpression(expression)) {
+            return;
+        }
+        const auto reason = model->noncopyableReason(*type);
+        if (!reason.has_value()) return;
+        if (movesOwningName) {
+            auto bare = expression;
+            while (bare->kind == syntax::Kind::parenthesizedExpr) {
+                bare = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(bare)->expression;
+            }
+            if (bare->kind == syntax::Kind::nameExpr && isConsumable(bare)) return;
+        }
+        report(
+                TypeCheckingDiagnosticId::copyOfNoncopyable,
+                expression->span,
+                "cannot copy a value of type '" + model->typeContext.displayName(*type) +
+                        "': " + *reason,
+                "pass it to a consuming parameter with 'consume', borrow it, or build a new value");
+    }
+
     bool isConsumable(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return false;
         const auto path = storagePath(expression);
@@ -2773,6 +2937,7 @@ private:
                         symbol->name);
             }
             const auto actual = checkExpression(argument->value, expected);
+            requireNoImplicitCopy(argument->value, actual);
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
             }
@@ -3113,6 +3278,7 @@ private:
         for (const auto& element : expression->elements) {
             const auto actual = checkExpression(element, elementType).value_or(
                     model->typeContext.errorType());
+            requireNoImplicitCopy(element, actual);
             if (!elementType.has_value()) {
                 elementType = actual;
             } else {
@@ -3147,6 +3313,8 @@ private:
                     model->typeContext.errorType());
             const auto actualValue = checkExpression(entry->value, valueType).value_or(
                     model->typeContext.errorType());
+            requireNoImplicitCopy(entry->key, actualKey);
+            requireNoImplicitCopy(entry->value, actualValue);
             if (!keyType.has_value()) keyType = actualKey;
             else requireAssignable(actualKey, *keyType, entry->key->span);
             if (!valueType.has_value()) valueType = actualValue;
@@ -3226,6 +3394,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-access-marker";
         case TypeCheckingDiagnosticId::invalidInoutArgument:
             return "type-checking.invalid-inout-argument";
+        case TypeCheckingDiagnosticId::copyOfNoncopyable:
+            return "type-checking.copy-of-noncopyable";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:
