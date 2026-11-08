@@ -1,11 +1,16 @@
-// The C library's per-thread `errno` and the process environment, for the POSIX
-// operations that still call the C library (`fopen`, `readdir_r`, `posix_spawn`).
-// Windows `System` calls only the operating system and has none of this. A Joyeer
-// binding cannot dereference the pointer that `errno` expands to or name a C global
-// as a value, so each platform binds what it offers: a function that returns the
-// address (`__errno_location`, `__error`, `_NSGetEnviron`) or the address of the
-// variable itself (`@c_data`), and the value is read with the runtime-only load
-// intrinsics (spec §19.4.5).
+// What the POSIX operations of `System` need from the platform below them.
+//
+// macOS calls libSystem, its system interface, and reads the C library's `errno` and
+// process environment through the addresses it offers (`__error`, `_NSGetEnviron`):
+// a Joyeer binding cannot dereference the pointer `errno` expands to or name a C
+// global as a value, so the value is read with the runtime-only load intrinsics (spec
+// §19.4.5).
+//
+// Linux calls the kernel directly (decision 0011): the runtime-only system-call
+// intrinsic returns the result unchanged, a value from -4095 to -1 being `-errno`, so
+// there is no `errno` at all, and the environment is the block the process started
+// with, found from the entry's argument vector. Windows `System` calls only the
+// operating system and has none of this.
 
 @c_extern(symbol: "joyeer_intrinsic_load_u32")
 private func load32(address: Int): UInt32
@@ -13,35 +18,75 @@ private func load32(address: Int): UInt32
 @c_extern(symbol: "joyeer_intrinsic_load_u64")
 private func load64(address: Int): UInt64
 
-@platform(linux)
-@c_extern(symbol: "__errno_location")
-private func errnoLocation(): Int
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
 
 @platform(macos)
 @c_extern(symbol: "__error")
 private func errnoLocation(): Int
 
 // The calling thread's `errno`.
-@platform(posix)
+@platform(macos)
 func cErrno(): Int32 {
     return load32(address: errnoLocation()) as Int32
 }
-
-@platform(linux)
-@c_data(symbol: "environ")
-private func environVariable(): Int
 
 @platform(macos)
 @c_extern(symbol: "_NSGetEnviron")
 private func environLocation(): Int
 
-// The address of the process environment block, as `envp` for POSIX spawning.
-@platform(linux)
-func cEnvironment(): Int {
-    return load64(address: environVariable()) as Int
-}
-
+// The address of the process environment block, as `envp` for spawning.
 @platform(macos)
 func cEnvironment(): Int {
     return load64(address: environLocation()) as Int
+}
+
+// The entry stores the environment block's address in static slot 16 before the
+// program runs: it follows the null that ends the argument vector.
+@platform(linux)
+func cEnvironment(): Int {
+    return load64(address: staticSlot(index: 16)) as Int
+}
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+private func rawCall(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int,
+    sixth: Int): Int
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+private func architecture(): Int
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+private func bufferAddress(bytes: inout [UInt8]): Int
+
+// The address of the bytes of an array, which stays valid while the array is neither
+// resized nor destroyed.
+@platform(linux)
+func addressOfBytes(bytes: inout [UInt8]): Int {
+    return bufferAddress(bytes: &bytes)
+}
+
+// A Linux system call: the call numbers differ between x86-64 and AArch64, so both are
+// given. The result is the kernel's: -4095 to -1 is a negated errno.
+@platform(linux)
+func linuxCall(x86: Int, arm: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int,
+    sixth: Int): Int {
+    var number = x86
+    if architecture() == 2 { number = arm }
+    return rawCall(number: number, first: first, second: second, third: third, fourth: fourth,
+        fifth: fifth, sixth: sixth)
+}
+
+// Whether a kernel result is a failure.
+@platform(linux)
+func kernelFailed(outcome: Int): Bool {
+    return outcome < 0 && outcome >= 0 - 4095
+}
+
+// Whether the program was built for AArch64, where a few flag values differ.
+@platform(linux)
+func onArm(): Bool {
+    return architecture() == 2
 }

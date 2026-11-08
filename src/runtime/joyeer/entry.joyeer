@@ -62,6 +62,9 @@ private func load64(address: Int): UInt64
 @c_extern(symbol: "joyeer_intrinsic_store_u8")
 private func store8(address: Int, value: UInt8): Void
 
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
 @c_extern(symbol: "joyeer_intrinsic_call_void1")
 private func callVoid1(target: Int, first: Int): Void
 
@@ -162,9 +165,22 @@ private func createArguments(handle: Int, argc: Int, argv: Int) {
     }
 }
 
+// Static slot 16 is `System`'s: the address of the process environment block, which follows the
+// null that ends the argument vector on POSIX. The Linux process launch reads it for
+// `execve`.
+@platform(posix)
+private func saveEnvironment(argc: Int32, argv: Int) {
+    store64(address: staticSlot(index: 16), value: (argv + ((argc as Int) + 1) * 8) as UInt64)
+}
+
+@platform(windows)
+private func saveEnvironment(argc: Int32, argv: Int) {
+}
+
 @c_export(symbol: "joyeer_entry_run")
 public func entryRun(argc: Int32, argv: Int): Int32 {
     let handle = staticSlot(index: 34)
+    saveEnvironment(argc: argc, argv: argv)
     if programUsesArguments() != 0 { createArguments(handle: handle, argc: argc as Int, argv: argv) }
     let status = programMain(arguments: handle)
     arrayDestroy(array: handle)

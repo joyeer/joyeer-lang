@@ -3,6 +3,6 @@ schema-version = 1
 [module]
 name = "System"
 kind = "source"
-sources = ["path.joyeer", "messages.joyeer", "filesystem.joyeer", "filesystem_windows.joyeer", "filesystem_posix.joyeer", "legacy_file.joyeer", "process.joyeer", "process_windows.joyeer", "process_posix.joyeer", "stdio.joyeer", "cruntime.joyeer"]
+sources = ["path.joyeer", "messages.joyeer", "filesystem.joyeer", "filesystem_windows.joyeer", "filesystem_posix.joyeer", "filesystem_linux.joyeer", "legacy_file.joyeer", "process.joyeer", "process_windows.joyeer", "process_posix.joyeer", "process_linux.joyeer", "stdio.joyeer", "cruntime.joyeer"]
 dependencies = ["Foundation"]
 native-bindings = true

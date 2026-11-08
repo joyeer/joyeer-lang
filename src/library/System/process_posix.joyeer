@@ -14,36 +14,36 @@ private let rangeError: Int = 34
 private let noChild: Int = 10
 private let actionsSize: Int = 256
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "getcwd", pointer: "buffer")
 private func getcwdSpawn(buffer: inout [UInt8], size: Int): Int
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "posix_spawn_file_actions_init", pointer: "actions")
 private func actionsInit(actions: inout [UInt8]): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "posix_spawn_file_actions_destroy", pointer: "actions")
 private func actionsDestroy(actions: inout [UInt8]): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "posix_spawn_file_actions_addchdir_np", pointer: "actions", pointer: "path")
 private func actionsChdir(actions: inout [UInt8], path: [UInt8]): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "posix_spawn", pointer: "pid", pointer: "path", pointer: "actions")
 private func spawnProcess(pid: inout [UInt8], path: [UInt8], actions: [UInt8], attributes: Int,
     argv: Int, environment: Int): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "waitpid", pointer: "status")
 private func waitProcess(pid: Int32, status: inout [UInt8], options: Int32): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
 private func addressOf(bytes: inout [UInt8]): Int
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "joyeer_intrinsic_store_u64")
 private func store64(address: Int, value: UInt64): Void
 
@@ -66,7 +66,7 @@ private func readInteger(bytes: [UInt8], offset: Int, width: Int): Int {
 
 // A relative path becomes absolute against the current directory, so the
 // executable is resolved before the child changes directory.
-@platform(posix)
+@platform(macos)
 private func absolute(text: String): Result<String, ProcessError> {
     if text[0] == b'/' { return .Ok(text) }
     var size = 256
@@ -105,7 +105,7 @@ private func appendCString(block: inout [UInt8], text: String): Int {
     return start
 }
 
-@platform(posix)
+@platform(macos)
 func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
     let fullExecutable = absolute(text: executable)?
     var block: [UInt8] = []
@@ -142,7 +142,7 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
 
 // waitpid's status word: the low seven bits are the terminating signal (zero
 // for a normal exit, 0x7f for a stopped child), the next byte the exit code.
-@platform(posix)
+@platform(macos)
 private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
     var status = zeroBuffer(count: 4)
     var waited = -1

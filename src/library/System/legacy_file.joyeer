@@ -2,51 +2,30 @@
 // Joyeer. Unlike the portable filesystem operations it deliberately opens the path
 // as narrow bytes on every platform, so its path handling and its errno-style error
 // codes match the built-in it mirrors, including the narrow-path behavior on
-// Windows. POSIX calls the C library's `fopen`; Windows calls `CreateFileA`, which
-// reads the path in the same ANSI code page `fopen` does, and gives the codes the C
-// library would have mapped from the system error (decision 0011).
+// Windows. POSIX opens it as bytes through the portable file primitives; Windows calls
+// `CreateFileA`, which reads the path in the same ANSI code page `fopen` does, and gives
+// the codes the C library would have mapped from the system error (decision 0011).
 
 private let readChunk: Int = 65536
 
 // Each primitive returns a result of at least 0 on success (the open one a handle
 // above 0), or the negated errno.
 
-@platform(posix)
-@c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
-private func openStream(path: [UInt8], mode: [UInt8]): Int
-
-@platform(posix)
-@c_extern(symbol: "fread", pointer: "buffer")
-private func readStream(buffer: inout [UInt8], size: Int, count: Int, stream: Int): Int
-
-@platform(posix)
-@c_extern(symbol: "ferror")
-private func streamFailed(stream: Int): Int32
-
-@platform(posix)
-@c_extern(symbol: "fclose")
-private func closeStream(stream: Int): Int32
-
+// POSIX opens the path with the portable primitives (a file descriptor on Linux, a stream on
+// macOS), which return the same negated errno.
 @platform(posix)
 private func openLegacy(path: [UInt8]): Int {
-    let mode: [UInt8] = [b'r', b'b', 0]
-    let stream = openStream(path: path, mode: mode)
-    if stream == 0 { return 0 - (cErrno() as Int) }
-    return stream
+    return nativeOpenRead(path: path)
 }
 
 @platform(posix)
 private func readLegacy(handle: Int, buffer: inout [UInt8], count: Int): Int {
-    let got = readStream(buffer: &buffer, size: 1, count: count, stream: handle)
-    // errno is read before anything else can disturb it.
-    if got < count && streamFailed(stream: handle) != 0 { return 0 - (cErrno() as Int) }
-    return got
+    return nativeRead(handle: handle, buffer: &buffer, count: count)
 }
 
 @platform(posix)
 private func closeLegacy(handle: Int): Int {
-    if closeStream(stream: handle) != 0 { return 0 - (cErrno() as Int) }
-    return 0
+    return nativeClose(handle: handle)
 }
 
 @platform(windows)
@@ -146,7 +125,7 @@ private func drain(handle: Int, data: inout [UInt8]): Int {
             code = 0 - got
             taken = 0
             done = true
-        } else if got < readChunk {
+        } else if got == 0 {
             done = true
         }
         var index = 0

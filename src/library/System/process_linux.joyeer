@@ -1,0 +1,183 @@
+import Foundation
+
+// Linux process launch for process.joyeer, over the kernel's system calls (decision
+// 0011): a fork (clone with only SIGCHLD), then in the child chdir and execve, in the
+// parent wait4. The child inherits the environment and every descriptor that is not
+// close-on-exec; files this module opens are.
+//
+// The step that failed in the child is reported to the parent by a close-on-exec pipe:
+// the child writes the errno of a failed chdir or execve and exits, and a successful
+// execve closes the pipe unwritten. So a bad directory or executable is reported as the
+// errno of the failed step, as posix_spawn does elsewhere.
+//
+// execve takes `argv` as a table of addresses. The argument strings are packed into one
+// byte buffer and the table is filled from its address with the runtime-only
+// intrinsics of spec §19.4.5; both buffers outlive the call.
+
+private let interrupted: Int = 4
+private let rangeError: Int = 34
+private let noChild: Int = 10
+private let closeOnExec: Int = 524288
+private let childSignal: Int = 17
+private let reportBytes: Int = 8
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+// The little-endian integer of `width` bytes at `offset`.
+private func wordAt(bytes: [UInt8], offset: Int, width: Int): Int {
+    var value = 0
+    var index = width
+    while index > 0 {
+        index = index - 1
+        value = (value << 8) | byteToInt(value: bytes[offset + index])
+    }
+    return value
+}
+
+// A relative path becomes absolute against the current directory, so the
+// executable is resolved before the child changes directory.
+@platform(linux)
+private func absolute(text: String): Result<String, ProcessError> {
+    if text[0] == b'/' { return .Ok(text) }
+    var size = 256
+    var outcome: Result<String, ProcessError> = .Err(.LaunchFailed(rangeError))
+    var searching = true
+    while searching {
+        var buffer = zeroBuffer(count: size)
+        // getcwd returns the length of the path including its NUL.
+        let length = linuxCall(x86: 79, arm: 17, first: addressOfBytes(bytes: &buffer), second: size,
+            third: 0, fourth: 0, fifth: 0, sixth: 0)
+        if kernelFailed(outcome: length) {
+            if length == 0 - rangeError {
+                size = size * 2
+            } else {
+                outcome = .Err(classifyProcessError(code: 0 - length))
+                searching = false
+            }
+        } else {
+            let base = stringFromBytes(bytes: buffer, count: length - 1)
+            outcome = .Ok(base + "/" + text)
+            searching = false
+        }
+    }
+    return outcome
+}
+
+// Appends `text` and a NUL; returns the offset it starts at.
+private func appendTerminated(block: inout [UInt8], text: String): Int {
+    let start = block.count
+    var index = 0
+    while index < text.count {
+        &block.append(element: text[index])
+        index = index + 1
+    }
+    &block.append(element: 0)
+    return start
+}
+
+private func closeDescriptor(descriptor: Int) {
+    linuxCall(x86: 3, arm: 57, first: descriptor, second: 0, third: 0, fourth: 0, fifth: 0, sixth: 0)
+}
+
+// The child's end: change directory, replace the process image, and on a failure of
+// either tell the parent which errno and leave. It never returns to the caller's logic.
+private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int): Int {
+    var code = 0
+    let changed = linuxCall(x86: 80, arm: 49, first: directory, second: 0, third: 0, fourth: 0, fifth: 0,
+        sixth: 0)
+    if kernelFailed(outcome: changed) {
+        code = 0 - changed
+    } else {
+        let replaced = linuxCall(x86: 59, arm: 221, first: path, second: argv, third: cEnvironment(),
+            fourth: 0, fifth: 0, sixth: 0)
+        code = 0 - replaced
+    }
+    var report = zeroBuffer(count: reportBytes)
+    store64(address: addressOfBytes(bytes: &report), value: code as UInt64)
+    linuxCall(x86: 1, arm: 64, first: writeEnd, second: addressOfBytes(bytes: &report), third: reportBytes,
+        fourth: 0, fifth: 0, sixth: 0)
+    linuxCall(x86: 231, arm: 94, first: 127, second: 0, third: 0, fourth: 0, fifth: 0, sixth: 0)
+    return code
+}
+
+// wait4's status word: the low seven bits are the terminating signal (zero for a normal
+// exit, 0x7f for a stopped child), the next byte the exit code.
+private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
+    var status = zeroBuffer(count: 4)
+    let address = addressOfBytes(bytes: &status)
+    var waited = 0 - interrupted
+    while waited == 0 - interrupted {
+        waited = linuxCall(x86: 61, arm: 260, first: pid, second: address, third: 0, fourth: 0, fifth: 0,
+            sixth: 0)
+    }
+    if kernelFailed(outcome: waited) { return .Err(.WaitFailed(0 - waited)) }
+    let word = wordAt(bytes: status, offset: 0, width: 4)
+    let signal = word & 127
+    if signal == 0 { return .Ok(.Exited((word >> 8) & 255)) }
+    if signal != 127 { return .Ok(.Signaled(signal)) }
+    return .Err(.WaitFailed(noChild))
+}
+
+@platform(linux)
+func nativeRun(executable: String, arguments: [String], workingDirectory: String): Result<ProcessStatus, ProcessError> {
+    let fullExecutable = absolute(text: executable)?
+    var block: [UInt8] = []
+    var offsets: [Int] = []
+    &offsets.append(element: appendTerminated(block: &block, text: fullExecutable))
+    var position = 0
+    while position < arguments.count {
+        &offsets.append(element: appendTerminated(block: &block, text: arguments[position]))
+        position = position + 1
+    }
+    let base = addressOfBytes(bytes: &block)
+    var table = zeroBuffer(count: (offsets.count + 1) * 8)
+    let tableAddress = addressOfBytes(bytes: &table)
+    var slot = 0
+    while slot < offsets.count {
+        store64(address: tableAddress + slot * 8, value: (base + offsets[slot]) as UInt64)
+        slot = slot + 1
+    }
+    var path = nativePathBytes(text: fullExecutable)
+    var directory = nativePathBytes(text: workingDirectory)
+    let pathAddress = addressOfBytes(bytes: &path)
+    let directoryAddress = addressOfBytes(bytes: &directory)
+
+    var pipeEnds = zeroBuffer(count: 8)
+    let made = linuxCall(x86: 293, arm: 59, first: addressOfBytes(bytes: &pipeEnds), second: closeOnExec,
+        third: 0, fourth: 0, fifth: 0, sixth: 0)
+    if kernelFailed(outcome: made) { return .Err(.LaunchFailed(0 - made)) }
+    let readEnd = wordAt(bytes: pipeEnds, offset: 0, width: 4)
+    let writeEnd = wordAt(bytes: pipeEnds, offset: 4, width: 4)
+
+    // clone(SIGCHLD, 0): a fork. The child gets its own copy of the memory above.
+    let pid = linuxCall(x86: 56, arm: 220, first: childSignal, second: 0, third: 0, fourth: 0, fifth: 0,
+        sixth: 0)
+    if pid == 0 {
+        let failure = runChild(directory: directoryAddress, path: pathAddress, argv: tableAddress,
+            writeEnd: writeEnd)
+        return .Err(.LaunchFailed(failure))
+    }
+    closeDescriptor(descriptor: writeEnd)
+    if kernelFailed(outcome: pid) {
+        closeDescriptor(descriptor: readEnd)
+        return .Err(.LaunchFailed(0 - pid))
+    }
+
+    // Nothing arrives if the execve worked: the pipe closed with it.
+    var report = zeroBuffer(count: reportBytes)
+    let reportAddress = addressOfBytes(bytes: &report)
+    var got = 0 - interrupted
+    while got == 0 - interrupted {
+        got = linuxCall(x86: 0, arm: 63, first: readEnd, second: reportAddress, third: reportBytes,
+            fourth: 0, fifth: 0, sixth: 0)
+    }
+    closeDescriptor(descriptor: readEnd)
+    if got == reportBytes {
+        // The child failed and has exited; collect it.
+        let ignored = waitForChild(pid: pid)
+        return .Err(classifyProcessError(code: wordAt(bytes: report, offset: 0, width: 4)))
+    }
+    return waitForChild(pid: pid)
+}

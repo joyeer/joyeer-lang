@@ -1,13 +1,14 @@
 import Foundation
 
-// POSIX (Linux and macOS) primitives for filesystem.joyeer, over libc. Paths
-// are UTF-8 with a NUL terminator. A handle is an Int (a FILE* or DIR*).
-// Results are >= 0 on success and the negated errno on failure.
+// POSIX primitives for filesystem.joyeer. The names, codes and path rules that Linux and
+// macOS share are here for both; the operations are macOS only, over libSystem, because
+// Linux calls the kernel directly (filesystem_linux.joyeer). Paths are UTF-8 with a NUL
+// terminator. A handle is an Int (a FILE* or DIR*). Results are >= 0 on success and the
+// negated errno on failure.
 //
-// Files use stdio, whose exclusive-create mode "x" (C11) creates a file with
-// the same effect as open(O_CREAT | O_EXCL, 0666) without a variadic call.
-// Struct layouts used below are the same on every supported architecture of
-// each OS: struct statx on Linux, struct stat and struct dirent on macOS.
+// Files use stdio, whose exclusive-create mode "x" (C11) creates a file with the same
+// effect as open(O_CREAT | O_EXCL, 0666) without a variadic call. The struct layouts
+// used below are struct stat and struct dirent on macOS.
 
 private let interrupted: Int = 4
 private let directoryMode: UInt32 = 511
@@ -18,57 +19,53 @@ private let kindFile: Int = 32768
 private let kindDirectory: Int = 16384
 private let kindSymlink: Int = 40960
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
 private func fopenP(path: [UInt8], mode: [UInt8]): Int
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "fread", pointer: "buffer")
 private func freadP(buffer: inout [UInt8], size: Int, count: Int, stream: Int): Int
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "fwrite", pointer: "buffer")
 private func fwriteP(buffer: [UInt8], size: Int, count: Int, stream: Int): Int
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "fclose")
 private func fcloseP(stream: Int): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "ferror")
 private func ferrorP(stream: Int): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "clearerr")
 private func clearerrP(stream: Int): Void
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "mkdir", pointer: "path")
 private func mkdirP(path: [UInt8], mode: UInt32): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "unlink", pointer: "path")
 private func unlinkP(path: [UInt8]): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "rmdir", pointer: "path")
 private func rmdirP(path: [UInt8]): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "opendir", pointer: "path")
 private func opendirP(path: [UInt8]): Int
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "closedir")
 private func closedirP(directory: Int): Int32
 
-@platform(posix)
+@platform(macos)
 @c_extern(symbol: "readdir_r", pointer: "entry", pointer: "found")
 private func readdirP(directory: Int, entry: inout [UInt8], found: inout [UInt8]): Int32
-
-@platform(linux)
-@c_extern(symbol: "statx", pointer: "path", pointer: "buffer")
-private func statxP(directoryFd: Int32, path: [UInt8], flags: Int32, mask: UInt32, buffer: inout [UInt8]): Int32
 
 @platform(macos)
 @c_extern(symbol: "lstat", pointer: "path", pointer: "buffer")
@@ -136,24 +133,24 @@ func needsSeparator(base: String): Bool {
     return base[base.count - 1] != b'/'
 }
 
-@platform(posix)
+@platform(macos)
 private func lastFailure(): Int {
     return 0 - (cErrno() as Int)
 }
 
-@platform(posix)
+@platform(macos)
 private func readMode(): [UInt8] {
     let mode: [UInt8] = [b'r', b'b', 0]
     return mode
 }
 
-@platform(posix)
+@platform(macos)
 private func createMode(): [UInt8] {
     let mode: [UInt8] = [b'w', b'b', b'x', 0]
     return mode
 }
 
-@platform(posix)
+@platform(macos)
 func nativeOpenRead(path: [UInt8]): Int {
     // Bound first: a temporary would be freed before errno is read below.
     let mode = readMode()
@@ -162,7 +159,7 @@ func nativeOpenRead(path: [UInt8]): Int {
     return stream
 }
 
-@platform(posix)
+@platform(macos)
 func nativeOpenNew(path: [UInt8]): Int {
     let mode = createMode()
     let stream = fopenP(path: path, mode: mode)
@@ -171,7 +168,7 @@ func nativeOpenNew(path: [UInt8]): Int {
 }
 
 // A stream's error is retried when it was only an interrupted system call.
-@platform(posix)
+@platform(macos)
 func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
     var outcome = 0
     var retry = true
@@ -193,7 +190,7 @@ func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
     return outcome
 }
 
-@platform(posix)
+@platform(macos)
 func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
     var outcome = 0
     var retry = true
@@ -215,25 +212,25 @@ func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
     return outcome
 }
 
-@platform(posix)
+@platform(macos)
 func nativeClose(handle: Int): Int {
     if fcloseP(stream: handle) != 0 { return lastFailure() }
     return 0
 }
 
-@platform(posix)
+@platform(macos)
 func nativeCreateDirectory(path: [UInt8]): Int {
     if mkdirP(path: path, mode: directoryMode) != 0 { return lastFailure() }
     return 0
 }
 
-@platform(posix)
+@platform(macos)
 func nativeRemoveFile(path: [UInt8]): Int {
     if unlinkP(path: path) != 0 { return lastFailure() }
     return 0
 }
 
-@platform(posix)
+@platform(macos)
 func nativeRemoveDirectory(path: [UInt8]): Int {
     let kind = nativeKind(path: path)
     if kind < 0 { return kind }
@@ -242,7 +239,7 @@ func nativeRemoveDirectory(path: [UInt8]): Int {
     return 0
 }
 
-@platform(posix)
+@platform(macos)
 private func modeKind(mode: Int): Int {
     let format = mode & kindMask
     if format == kindFile { return 0 }
@@ -256,17 +253,6 @@ private func halfWord(bytes: [UInt8], offset: Int): Int {
 }
 
 // Kind tags: 0 file, 1 directory, 2 symlink, 3 other. The leaf is never followed.
-// stx_mode sits at offset 28 of struct statx.
-@platform(linux)
-func nativeKind(path: [UInt8]): Int {
-    var buffer = zeroBuffer(count: statxBufferSize)
-    // AT_FDCWD, AT_SYMLINK_NOFOLLOW, STATX_TYPE
-    if statxP(directoryFd: -100, path: path, flags: 256, mask: 1, buffer: &buffer) != 0 {
-        return lastFailure()
-    }
-    return modeKind(mode: halfWord(bytes: buffer, offset: 28))
-}
-
 // st_mode sits at offset 4 of the 64-bit struct stat.
 @platform(macos)
 func nativeKind(path: [UInt8]): Int {
@@ -275,15 +261,11 @@ func nativeKind(path: [UInt8]): Int {
     return modeKind(mode: halfWord(bytes: buffer, offset: 4))
 }
 
-// Offset of d_name in struct dirent.
-@platform(linux)
-func nameOffset(): Int { return 19 }
-
 @platform(macos)
 func nameOffset(): Int { return 21 }
 
 // Entries until readdir_r reports none: 0 on success, else the error code.
-@platform(posix)
+@platform(macos)
 private func collectEntries(directory: Int, names: inout [String]): Int {
     var entry = zeroBuffer(count: direntBufferSize)
     var found = zeroBuffer(count: 8)
@@ -327,7 +309,7 @@ private func collectEntries(directory: Int, names: inout [String]): Int {
     return code
 }
 
-@platform(posix)
+@platform(macos)
 func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
     let directory = opendirP(path: native)
     if directory == 0 { return .Err(classifyError(code: 0 - lastFailure())) }
