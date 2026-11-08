@@ -2,8 +2,8 @@
 
 - Status: accepted and implemented in stage 10 of the
   [runtime plan](../plan/runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
-  Windows x64 only; the Linux and macOS code is written against the plan's platform table,
-  is not even compiled on a Windows host (`@platform` drops it), and has not run.
+  Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite). Linux AArch64, macOS and Windows
+  ARM64 have not run; the AArch64 system call numbers are from memory.
 - Spec: [§19.4.6](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
   gains the syscall and target-architecture intrinsics when 10.2 lands.
 
@@ -35,10 +35,10 @@ names (`libcmt.lib`); none of them needs the CRT's startup.
 | Linux | raw `mmap` / `munmap` | raw `write`, `read`, `exit_group` | `main` from the C startup |
 | macOS | libSystem `mmap` / `munmap` | libSystem `write`, `read`, `_exit` | `main` from dyld |
 
-Linux keeps the C startup for now because `System`'s POSIX file, directory and
-process operations still call the C library (`fopen`, `readdir_r`, `posix_spawn`);
-a program using them needs libc initialised. Moving those to system calls is
-separate work and is not part of this stage. Windows programs that link a native
+Linux keeps the C startup: it supplies `main`, `argv` and the dynamic loader's hand-off, and a
+own `_start` would buy nothing while the linker still adds libc. `System` on Linux calls
+the kernel directly (below), so a program that uses every part of it needs only that
+startup and the compiler support functions. macOS `System` calls libSystem. Windows programs that link a native
 library (Compression) also need the CRT, so they keep `wmain`.
 
 **D8: the allocator (built in 10.1).** Size classes over memory mapped straight from
@@ -106,7 +106,21 @@ streams: they call the runtime's stream functions (`joyeer_stdout_flush`,
 buffering. The whole-file legacy reader on Windows uses `CreateFileA` and `ReadFile`
 and maps `GetLastError` to the same errno values the C library did (its `_dosmaperr`; an empty path
 is EINVAL as before). Windows `System` then calls `kernel32` only, which the tests check by the
-imports of programs that use each part. POSIX `System` keeps its libc file and process calls (above).
+imports of programs that use each part.
+
+**POSIX `System`.** On Linux the file, directory and process operations are system calls
+(`filesystem_linux.joyeer`, `process_linux.joyeer`): `openat` (always close-on-exec),
+`read`, `write`, `mkdirat`, `unlinkat`, `getdents64`, `statx`, `getcwd`, and for a process
+`pipe2`, `clone` with only `SIGCHLD` (a fork), `chdir`, `execve` and `wait4`. A failed `chdir`
+or `execve` in the child is reported to the parent through the close-on-exec pipe as the
+errno of the step, as `posix_spawn` did, and the child leaves with `exit_group`. The
+environment for `execve` is the block after `argv`, whose address the entry keeps in static
+slot 16. A file descriptor opened by `System` is no longer inherited by a child (the C
+streams were), which is the safer behaviour. macOS keeps its libSystem calls (there is no
+stable system-call ABI to use), so the POSIX files hold the code the platforms share and the
+macOS operations. The tests check with `llvm-nm` that a Linux program using each part of
+`System` needs only `__libc_start_main` and its startup companions and `memcpy`, `memset`,
+`memmove` and `memcmp`.
 `joyeer_stdin_discard` drops buffered input for a program, or a test, that redirects its own.
 
 ## Consequences

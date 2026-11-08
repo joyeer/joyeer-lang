@@ -167,7 +167,8 @@ so user code and `System` share one definition.
 
 `System` reaches the operating system through `@c_extern` bindings, authorized
 by the module's `native-bindings = true` ([§19](../spec/19-c-interop.md)): the
-Win32 API on Windows and libc on POSIX, selected per function by `@platform`.
+Win32 API on Windows, the kernel on Linux and libSystem on macOS, selected per function by
+`@platform`.
 Per-platform files hold the primitives and one portable file holds the logic;
 see [decision 0003](../decisions/0003-pure-joyeer-filesystem.md),
 [0006](../decisions/0006-runprocess-in-joyeer.md) and
@@ -195,7 +196,8 @@ talk to the operating system directly (decision
 mode or `errno` is involved; failures carry errno-style codes (9, 13, 28, 32, 5). On Windows
 the whole of `System` now calls only `kernel32`, including the legacy narrow-path
 `readFile` (`CreateFileA`, with the C library's mapping of system errors to `errno`
-codes); on POSIX the file and process operations still call the C library.
+codes). On Linux the file, directory and process operations are system calls
+(`filesystem_linux.joyeer`, `process_linux.joyeer`); macOS calls libSystem.
 
 ## Limits and validation
 

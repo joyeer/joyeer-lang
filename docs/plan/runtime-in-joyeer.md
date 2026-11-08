@@ -591,11 +591,12 @@ Start any time after 5.3.
   calls libc (decision 0011).
 - [x] 10.4 `System` off the C library's stdio and `errno`: standard error and input use the runtime's
   streams, the legacy reader uses `CreateFileA` on Windows. Windows `System` calls `kernel32` only.
-  The POSIX file and process operations still call libc (`fopen`, `readdir_r`, `posix_spawn`,
-  `errno`); moving them to system calls is separate work, not done.
+  Linux `System` calls the kernel directly (`filesystem_linux.joyeer`, `process_linux.joyeer`);
+  macOS keeps libSystem.
 - [x] 10.5 The Tier 2 `llvm-nm` gate: the per-platform import lists of the three runtime objects
   (Linux: none beyond the compiler support symbols) and `RuntimeSystemProgramHasNoCRuntime_*`, which
-  checks that programs using `System` import nothing that exists for the C startup or heap. Only
-  the Windows lists have run. **Tier 2 is done on Windows x64. On Linux the runtime archive is libc-free
-  by construction but the program still starts at `main` and `System` still calls libc; macOS keeps
-  libSystem. Both are unverified.**
+  checks that programs using `System` import nothing that exists for the C startup or heap, and
+  `RuntimeSystemProgramNeedsOnlyTheCStartup_*` the same on Linux (`llvm-nm`). **Tier 2 is done on Windows
+  x64 and Linux x86-64** (the latter run in Ubuntu under WSL2, whose full suite passes: 1184 tests). On
+  Linux the program still starts at `main`; macOS keeps libSystem and is unverified, as are Linux
+  AArch64 and Windows ARM64.
