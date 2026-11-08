@@ -132,7 +132,7 @@ Option 1, with these rules (normative text: [§11.5](../spec/11-annotations.md#1
 - Tests: selection per target; overlap, signature, collision, and annotation
   rejection; equivalent spellings; private grouping; diagnostic order and
   spans; C binding combinations; service-level target guard, multi-file and
-  dependency selection; a native fixture on the host platform. Debug-info
+  dependency selection; an end-to-end fixture on the host platform. Debug-info
   absence of removed variants is not separately tested: removed functions never
   reach IR, which the LLVM text checks cover.
 - New diagnostics with stable IDs: `platform.invalid-annotation`,

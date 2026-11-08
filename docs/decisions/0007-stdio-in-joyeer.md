@@ -72,7 +72,7 @@ and `fgetc` through `@c_extern`.
   plus one byte" bound is kept.
 - `fgetc` is called once per byte through the binding. Measure against the C
   loop before any program relies on large piped input.
-- **Tests.** `SystemTests` ([stdio.joyeer](../../tests/library/System/stdio.joyeer))
+- **Tests.** `SystemTests` ([stdio.joyeer](../../tests/lib/System/stdio.joyeer))
   runs each scenario through the built-in and through `System`, and also states
   the expected result, so a platform where both fail the same way cannot pass:
   exact bytes with NUL, CR, LF and invalid UTF-8 against a Windows text-mode

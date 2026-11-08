@@ -133,7 +133,7 @@ returned as empty contents. It enforces `maximumEntryBytes` per entry and
 
 The helpers live in `Compression`, not `System`, so `System` does not depend on
 the optional native archive. Coverage uses a small jar built by the JDK `jar`
-tool (`tests/library/Compression/fixtures/hello.jar`: manifest, directories, a
+tool (`tests/lib/Compression/fixtures/hello.jar`: manifest, directories, a
 compiled class, an empty file). It was also checked against Python's `zipfile`
 on the JDK's `jrt-fs.jar` (60 entries) and `src.zip` (15,066 entries, 211 MB of
 source), matching entry counts, sizes and successful CRC-checked reads.

@@ -306,7 +306,7 @@ TEST_F(IRLoweringTest, LowersUnitCallsAndReturnsWithoutLosingEffects) {
 }
 
 TEST_F(IRLoweringTest, LowersUnitNativeFixture) {
-    lower(readFixture("native/unit_values.joyeer"));
+    lower(readFixture("e2e/unit_values.joyeer"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
@@ -327,7 +327,7 @@ TEST_F(IRLoweringTest, DictionaryGetBorrowsInputsAndOwnsItsResultWithoutExtraCop
 }
 
 TEST_F(IRLoweringTest, LowersDictionaryGetNativeFixture) {
-    ASSERT_NO_FATAL_FAILURE(lower(readFixture("native/dictionary_get.joyeer")));
+    ASSERT_NO_FATAL_FAILURE(lower(readFixture("e2e/dictionary_get.joyeer")));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
@@ -800,7 +800,7 @@ print(value: outer)
 }
 
 TEST_F(IRLoweringTest, LowersM006NativeFixture) {
-    ASSERT_NO_FATAL_FAILURE(lower(readFixture("native/control_flow_arithmetic.joyeer")));
+    ASSERT_NO_FATAL_FAILURE(lower(readFixture("e2e/control_flow_arithmetic.joyeer")));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
     EXPECT_EQ(opcodeCount(function("quotient"), joyeer::ir::Opcode::divide), 1u);
@@ -1388,9 +1388,9 @@ match message {
 
 TEST_F(IRLoweringTest, LowersPendingOperandAndCaptureRegressionFixtures) {
     for (const auto* fixture : {
-                "native/regression_lowering_short_circuit.joyeer",
-                "native/regression_lowering_capture.joyeer",
-                "native/regression_lowering_pending_operands.joyeer" }) {
+                "e2e/regression_lowering_short_circuit.joyeer",
+                "e2e/regression_lowering_capture.joyeer",
+                "e2e/regression_lowering_pending_operands.joyeer" }) {
         SCOPED_TRACE(fixture);
         lower(readFixture(fixture));
         ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
