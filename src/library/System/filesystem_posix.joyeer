@@ -19,10 +19,6 @@ private let kindDirectory: Int = 16384
 private let kindSymlink: Int = 40960
 
 @platform(posix)
-@c_extern(symbol: "joyeer_native_errno")
-private func errnoP(): Int32
-
-@platform(posix)
 @c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
 private func fopenP(path: [UInt8], mode: [UInt8]): Int
 
@@ -142,7 +138,7 @@ func needsSeparator(base: String): Bool {
 
 @platform(posix)
 private func lastFailure(): Int {
-    return 0 - (errnoP() as Int)
+    return 0 - (cErrno() as Int)
 }
 
 @platform(posix)

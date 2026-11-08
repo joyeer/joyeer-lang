@@ -11,8 +11,47 @@ import Foundation
 
 private let maxLine: Int = 9223372036854775807
 
-@c_extern(symbol: "joyeer_native_stdio")
-private func streamOf(which: Int32): Int
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@platform(windows)
+@c_extern(symbol: "__acrt_iob_func")
+private func iobFunction(index: UInt32): Int
+
+@platform(linux)
+@c_data(symbol: "stdin")
+private func stdinVariable(): Int
+
+@platform(linux)
+@c_data(symbol: "stdout")
+private func stdoutVariable(): Int
+
+@platform(linux)
+@c_data(symbol: "stderr")
+private func stderrVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdinp")
+private func stdinVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdoutp")
+private func stdoutVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stderrp")
+private func stderrVariable(): Int
+
+// The C FILE* of standard input (0), output (1) or error (2).
+@platform(windows)
+private func streamOf(which: Int32): Int { return iobFunction(index: which as UInt32) }
+
+@platform(posix)
+private func streamOf(which: Int32): Int {
+    if which == 0 { return load64(address: stdinVariable()) as Int }
+    if which == 1 { return load64(address: stdoutVariable()) as Int }
+    return load64(address: stderrVariable()) as Int
+}
 
 @c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
 private func openFile(path: [UInt8], mode: [UInt8]): Int

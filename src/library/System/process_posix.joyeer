@@ -15,14 +15,6 @@ private let noChild: Int = 10
 private let actionsSize: Int = 256
 
 @platform(posix)
-@c_extern(symbol: "joyeer_native_errno")
-private func errnoSpawn(): Int32
-
-@platform(posix)
-@c_extern(symbol: "joyeer_native_environment")
-private func environmentSpawn(): Int
-
-@platform(posix)
 @c_extern(symbol: "getcwd", pointer: "buffer")
 private func getcwdSpawn(buffer: inout [UInt8], size: Int): Int
 
@@ -89,7 +81,7 @@ private func absolute(text: String): Result<String, ProcessError> {
             outcome = .Ok(base + "/" + text)
             searching = false
         } else {
-            let code = errnoSpawn() as Int
+            let code = cErrno() as Int
             if code == rangeError {
                 size = size * 2
             } else {
@@ -142,7 +134,7 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
     }
     var pid = zeroBuffer(count: 4)
     let spawned = spawnProcess(pid: &pid, path: nativePathBytes(text: fullExecutable), actions: actions,
-        attributes: 0, argv: tableAddress, environment: environmentSpawn()) as Int
+        attributes: 0, argv: tableAddress, environment: cEnvironment()) as Int
     actionsDestroy(actions: &actions)
     if spawned != 0 { return .Err(classifyProcessError(code: spawned)) }
     return waitForChild(pid: readInteger(bytes: pid, offset: 0, width: 4))
@@ -158,7 +150,7 @@ private func waitForChild(pid: Int): Result<ProcessStatus, ProcessError> {
     var again = true
     while again {
         waited = waitProcess(pid: pid as Int32, status: &status, options: 0) as Int
-        code = errnoSpawn() as Int
+        code = cErrno() as Int
         again = waited < 0 && code == interrupted
     }
     if waited < 0 { return .Err(.WaitFailed(code)) }

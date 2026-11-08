@@ -11,12 +11,6 @@ private let invalidArgument: Int = 22
 private let newline: Int = 10
 private let carriageReturn: UInt8 = 13
 
-@c_extern(symbol: "joyeer_native_stdio")
-private func standardStream(which: Int32): Int
-
-@c_extern(symbol: "joyeer_native_errno")
-private func errnoStdio(): Int32
-
 @c_extern(symbol: "fwrite", pointer: "buffer")
 private func writeStream(buffer: [UInt8], size: Int, count: Int, stream: Int): Int
 
@@ -34,7 +28,7 @@ private func nextByte(stream: Int): Int32
 
 // The errno of the operation that just failed, or EIO if it supplied none.
 func stdioCode(): Int {
-    let code = errnoStdio() as Int
+    let code = cErrno() as Int
     if code == 0 { return ioError }
     return code
 }
@@ -46,7 +40,7 @@ func flushStdioStream(stream: Int): Int {
 }
 
 public func writeStderr(contents: String): Result<Void, StderrError> {
-    let stream = standardStream(which: 2)
+    let stream = cStandardStream(which: 2)
     let previous = enterStderr(stream: stream)
     if previous < 0 { return .Err(.WriteFailed(0 - previous)) }
     var code = 0
@@ -66,13 +60,13 @@ public func writeStderr(contents: String): Result<Void, StderrError> {
 
 public func readStdinLine(maximumBytes: Int): Result<String, StdinError> {
     if maximumBytes < 0 { return .Err(.ReadFailed(invalidArgument)) }
-    let stream = standardStream(which: 0)
+    let stream = cStandardStream(which: 0)
     let prepared = prepareStdin(stream: stream)
     if prepared != 0 { return .Err(.ReadFailed(prepared)) }
 
     // A peer waiting for a prompt must see earlier output before this blocks.
     // A flush failure is ignored: print has no error path.
-    if flushStdioStream(stream: standardStream(which: 1)) != 0 { }
+    if flushStdioStream(stream: cStandardStream(which: 1)) != 0 { }
 
     // Hold at most maximumBytes + 1 bytes: the extra byte lets a maximal line
     // end in CR before LF. Anything longer is counted as overflow and discarded

@@ -284,6 +284,41 @@ func runtimeCall(input value: Int): Int { return nativeCall(value: value) }
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
+TEST_F(PlatformTest, CombinesWithDataSymbols) {
+    constexpr auto text = R"(
+@platform(linux)
+@c_data(symbol: "stdout")
+func streamAddress(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdoutp")
+func streamAddress(): Int
+
+@platform(windows)
+func streamAddress(): Int { return 0 }
+
+func use(): Int { return streamAddress() }
+)";
+    const std::vector<ModuleInput> modules { module(text, true) };
+    ASSERT_TRUE(select(modules, TargetPlatform::linux).empty());
+    const auto resolution = joyeer::semantic::NameResolver().resolve(modules);
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto checking = joyeer::typing::TypeChecker().check(resolution.model);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(PlatformTest, DataSymbolRulesAreCheckedOnVariantsTheTargetDrops) {
+    for (const char* text : {
+            "@platform(windows)\n@c_data(symbol: \"x\")\nfunc f(): Int { return 1 }\n",
+            "@platform(windows)\n@c_data(symbol: \"not valid\")\nfunc f(): Int\n",
+            "@platform(windows)\n@c_data(symbol: \"x\")\n@c_extern(symbol: \"y\")\nfunc f(): Int\n" }) {
+        for (const auto target : {TargetPlatform::windows, TargetPlatform::linux}) {
+            const std::vector<ModuleInput> modules { module(text, true) };
+            EXPECT_TRUE(has(select(modules, target), PlatformDiagnosticId::invalidAnnotation)) << text;
+        }
+    }
+}
+
 TEST_F(PlatformTest, SelectionGrantsNoNativeAuthorization) {
     const std::vector<ModuleInput> modules { module(R"(
 @platform(posix)

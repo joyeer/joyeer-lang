@@ -13,10 +13,27 @@
 @c_extern(symbol: "joyeer_intrinsic_literal_address")
 private func literalAddress(text: String): Int
 
-// The C `FILE*` of standard output (`joyeer_native_stdio`, until stage 7.2
-// replaces it with a direct binding).
-@c_extern(symbol: "joyeer_native_stdio")
-private func standardStream(which: Int32): Int
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@platform(windows)
+@c_extern(symbol: "__acrt_iob_func")
+private func iobFunction(index: UInt32): Int
+
+@platform(linux)
+@c_data(symbol: "stdout")
+private func stdoutVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdoutp")
+private func stdoutVariable(): Int
+
+// The C `FILE*` of standard output, the stream `System` also writes through.
+@platform(windows)
+private func standardOutput(): Int { return iobFunction(index: 1) }
+
+@platform(posix)
+private func standardOutput(): Int { return load64(address: stdoutVariable()) as Int }
 
 @c_extern(symbol: "fwrite")
 private func writeStream(buffer: Int, size: Int, count: Int, stream: Int): Int
@@ -46,21 +63,21 @@ public func printString(data: Int, count: Int): Void {
     if count < 0 || (count != 0 && data == 0) {
         panic(message: literalAddress(text: "invalid string"))
     }
-    let stream = standardStream(which: 1)
+    let stream = standardOutput()
     if count != 0 { writeStream(buffer: data, size: 1, count: count, stream: stream) }
     endLine(stream: stream)
 }
 
 @c_export(symbol: "joyeer_print_uint")
 public func printUnsigned(value: UInt64): Void {
-    let stream = standardStream(which: 1)
+    let stream = standardOutput()
     putDecimal(stream: stream, value: value)
     endLine(stream: stream)
 }
 
 @c_export(symbol: "joyeer_print_int")
 public func printInteger(value: Int): Void {
-    let stream = standardStream(which: 1)
+    let stream = standardOutput()
     if value < 0 {
         putByte(byte: 45, stream: stream)
         // value + 1 cannot overflow below zero, and the magnitude of Int.min
@@ -74,14 +91,14 @@ public func printInteger(value: Int): Void {
 
 @c_export(symbol: "joyeer_print_byte")
 public func printByte(value: UInt8): Void {
-    let stream = standardStream(which: 1)
+    let stream = standardOutput()
     putDecimal(stream: stream, value: value as UInt64)
     endLine(stream: stream)
 }
 
 @c_export(symbol: "joyeer_print_bool")
 public func printBool(value: Bool): Void {
-    let stream = standardStream(which: 1)
+    let stream = standardOutput()
     if value {
         writeStream(buffer: literalAddress(text: "true"), size: 1, count: 4, stream: stream)
     } else {

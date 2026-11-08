@@ -225,7 +225,7 @@ private:
         for (const auto& attribute : function.attributes) {
             if (isPlatformAttribute(attribute)) continue;
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
-            if (name != "c_extern" && name != "c_export") {
+            if (name != "c_extern" && name != "c_export" && name != "c_data") {
                 report(PlatformDiagnosticId::invalidAnnotation, attribute.span,
                        "unknown annotation '@" + name + "'");
                 valid = false;
@@ -238,7 +238,7 @@ private:
                 continue;
             }
             binding = &attribute;
-            importing = name == "c_extern";
+            importing = name != "c_export";
             valid = checkSymbolArgument(attribute) && valid;
         }
         if (binding == nullptr) {

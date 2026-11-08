@@ -970,23 +970,4 @@ TEST(RuntimeBlackBoxTest, ClonesAnEmptyArrayAndKeepsItIndependent) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
-TEST(RuntimeBlackBoxTest, ExposesTheCRuntimeStateThatNativeBindingsCannotNameDirectly) {
-    errno = ERANGE;
-    EXPECT_EQ(joyeer_native_errno(), ERANGE);
-    errno = 0;
-    EXPECT_EQ(joyeer_native_errno(), 0);
-
-    EXPECT_EQ(joyeer_native_stdio(0), static_cast<int64_t>(reinterpret_cast<intptr_t>(stdin)));
-    EXPECT_EQ(joyeer_native_stdio(1), static_cast<int64_t>(reinterpret_cast<intptr_t>(stdout)));
-    EXPECT_EQ(joyeer_native_stdio(2), static_cast<int64_t>(reinterpret_cast<intptr_t>(stderr)));
-    EXPECT_EQ(joyeer_native_stdio(3), 0);
-    EXPECT_EQ(joyeer_native_stdio(-1), 0);
-
-#if defined(_WIN32)
-    EXPECT_EQ(joyeer_native_environment(), 0);
-#else
-    EXPECT_NE(joyeer_native_environment(), 0);
-#endif
-}
-
 } // namespace

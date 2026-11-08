@@ -1,0 +1,93 @@
+// The C runtime's per-thread `errno`, process environment and standard streams,
+// reached directly. A Joyeer binding cannot dereference the pointer that `errno`
+// expands to or name a C global as a value, so each platform binds what it
+// offers: a function that returns the address (`_errno`, `__errno_location`,
+// `__error`, `__acrt_iob_func`, `_NSGetEnviron`) or the address of the variable
+// itself (`@c_data`), and the value is read with the runtime-only load
+// intrinsics (spec §19.4.5).
+
+@c_extern(symbol: "joyeer_intrinsic_load_u32")
+private func load32(address: Int): UInt32
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@platform(windows)
+@c_extern(symbol: "_errno")
+private func errnoLocation(): Int
+
+@platform(linux)
+@c_extern(symbol: "__errno_location")
+private func errnoLocation(): Int
+
+@platform(macos)
+@c_extern(symbol: "__error")
+private func errnoLocation(): Int
+
+// The calling thread's `errno`.
+func cErrno(): Int32 {
+    return load32(address: errnoLocation()) as Int32
+}
+
+@platform(windows)
+@c_extern(symbol: "__acrt_iob_func")
+private func iobFunction(index: UInt32): Int
+
+@platform(linux)
+@c_data(symbol: "stdin")
+private func stdinVariable(): Int
+
+@platform(linux)
+@c_data(symbol: "stdout")
+private func stdoutVariable(): Int
+
+@platform(linux)
+@c_data(symbol: "stderr")
+private func stderrVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdinp")
+private func stdinVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdoutp")
+private func stdoutVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stderrp")
+private func stderrVariable(): Int
+
+// The C `FILE*` of standard input (0), output (1) or error (2), or 0 for any
+// other value.
+@platform(windows)
+func cStandardStream(which: Int32): Int {
+    if which < 0 || which > 2 { return 0 }
+    return iobFunction(index: which as UInt32)
+}
+
+@platform(posix)
+func cStandardStream(which: Int32): Int {
+    if which == 0 { return load64(address: stdinVariable()) as Int }
+    if which == 1 { return load64(address: stdoutVariable()) as Int }
+    if which == 2 { return load64(address: stderrVariable()) as Int }
+    return 0
+}
+
+@platform(linux)
+@c_data(symbol: "environ")
+private func environVariable(): Int
+
+@platform(macos)
+@c_extern(symbol: "_NSGetEnviron")
+private func environLocation(): Int
+
+// The address of the process environment block, as `envp` for POSIX spawning.
+@platform(linux)
+func cEnvironment(): Int {
+    return load64(address: environVariable()) as Int
+}
+
+@platform(macos)
+func cEnvironment(): Int {
+    return load64(address: environLocation()) as Int
+}

@@ -6,9 +6,6 @@
 
 private let readChunk: Int = 65536
 
-@c_extern(symbol: "joyeer_native_errno")
-private func errnoValue(): Int32
-
 @c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
 private func openStream(path: [UInt8], mode: [UInt8]): Int
 
@@ -40,7 +37,7 @@ private func legacyError(code: Int): IOError {
 }
 
 private func currentError(): Int {
-    return errnoValue() as Int
+    return cErrno() as Int
 }
 
 // Reads to the end of the stream. Returns 0, or the errno of a failed read.

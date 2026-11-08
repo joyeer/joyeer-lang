@@ -123,12 +123,14 @@ get_target_property(JOYEER_RUNTIME_CORE_OBJECT JoyeerRuntime JOYEER_CORE_OBJECT)
 if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     # The C library calls the core may make: memory (allocator), compare, copy and fill (a
     # variable-size memcpy/memset intrinsic lowers to the call, decision 0009 D11), write
-    # and exit (panic), and the C stdout stream (print). Windows spells the write call `_write`.
-    set(joyeer_core_imports "malloc;realloc;free;memcmp;memcpy;memset;_Exit;fwrite;fputc;joyeer_native_stdio")
+    # and exit (panic), and the C stdout stream (print). Each platform spells those differently.
+    set(joyeer_core_imports "malloc;realloc;free;memcmp;memcpy;memset;_Exit;fwrite;fputc")
     if(WIN32)
-        list(APPEND joyeer_core_imports _write)
+        list(APPEND joyeer_core_imports _write __acrt_iob_func)
+    elseif(APPLE)
+        list(APPEND joyeer_core_imports write __stdoutp)
     else()
-        list(APPEND joyeer_core_imports write)
+        list(APPEND joyeer_core_imports write stdout)
     endif()
     add_test(NAME RuntimeCoreObjectSymbols
         COMMAND "${CMAKE_COMMAND}"

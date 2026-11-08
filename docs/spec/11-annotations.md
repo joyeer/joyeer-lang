@@ -138,12 +138,12 @@ Variants may be `main`, in which case §3.2.6 applies to the selected one.
 
 **Restrictions.** `@platform` is valid only on top-level functions, not on
 methods, types, fields, constants, or imports, and appears at most once per
-function. It may be combined with `@c_extern` and `@c_export` in either
+function. It may be combined with `@c_extern`, `@c_export` and `@c_data` in either
 order; their rules in [§19](19-c-interop.md) apply to the selected variant, so
 disjoint variants may name the same C symbol. Selecting a platform grants no
 native-binding authorization. On every variant, selected or not, the compiler
 checks that other annotations beside `@platform` are known, that a function
-without a body carries `@c_extern`, and, for a C annotation, its `symbol:`
+without a body carries `@c_extern` or `@c_data`, and, for a C annotation, its `symbol:`
 argument, body rule, explicit result type, and runtime authorization of the
 unit. Parameter and result type admissibility ([§19.4](19-c-interop.md)) is
 checked only on the selected variant.
