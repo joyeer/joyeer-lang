@@ -47,7 +47,7 @@ add_library(JoyeerCompilerCore OBJECT
 	ir/irlowering.cpp
 	ir/irlowering.h
 )
-target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_SRC_DIR})
+target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_RUNTIME_INCLUDE_DIR})
 target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
 	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"

@@ -9,27 +9,27 @@
 #
 # The Joyeer sources are listed explicitly; add a file here when adding it.
 set(JOYEER_RUNTIME_CORE_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/utf8.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/strings.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/panic.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/streams.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/allocator.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/text.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/print.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/arrays.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/dictionaries.joyeer"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/floats.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/utf8.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/strings.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/panic.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/streams.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/allocator.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/text.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/print.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/arrays.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/dictionaries.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/floats.joyeer"
 )
 # The entry logic is shared with the entry encoding tests, a sibling directory.
-set(JOYEER_RUNTIME_ENTRY_LOGIC "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/entry.joyeer" CACHE INTERNAL "")
+set(JOYEER_RUNTIME_ENTRY_LOGIC "${CMAKE_CURRENT_SOURCE_DIR}/core/entry.joyeer" CACHE INTERNAL "")
 set(JOYEER_RUNTIME_ENTRY_SOURCES
         "${JOYEER_RUNTIME_ENTRY_LOGIC}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/entry_start.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/entry_start.joyeer"
 )
 # The C `main` / `wmain` wrappers are a third object: a Windows program that starts at
 # `joyeer_start` is linked without it, and so without any reference to the C library.
 set(JOYEER_RUNTIME_MAIN_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/entry_main.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/entry_main.joyeer"
 )
 
 # Compiles Joyeer sources as one runtime core module into OBJECT. Optimized in
@@ -73,7 +73,7 @@ add_library(JoyeerRuntime STATIC
         "${JOYEER_RUNTIME_ENTRY_OBJECT}"
         "${JOYEER_RUNTIME_MAIN_OBJECT}"
 )
-target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_SRC_DIR})
+target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_RUNTIME_INCLUDE_DIR})
 # The symbol gates in tests/unittests/runtime read the object paths from here.
 set_target_properties(JoyeerRuntime PROPERTIES
         JOYEER_CORE_OBJECT "${JOYEER_RUNTIME_CORE_OBJECT}"

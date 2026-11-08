@@ -110,23 +110,22 @@ points. The shared library remains `joyeer-backend` with the platform's
 usual prefix/suffix; rebuild compiler clients and the backend together.
 
 ### Source and build boundaries
-
 Headers and implementation files are colocated under the top-level `compiler/`
-directory, `lib/`, and `src/`; there is no separate public-header tree or installed C++
-SDK. `compiler/` contains the driver, frontend, diagnostics, Joyeer IR, and
+and `lib/` directories; there is no separate public-header tree or installed
+C++ SDK. `compiler/` contains the driver, frontend, diagnostics, Joyeer IR, and
 backend-call adapters. These build as one private `JoyeerCompilerCore` object
 target, reused by `joyeer` and the stage-specific C++ unit tests. Only
 `main.cpp` belongs exclusively to the compiler executable. Include paths are
 target-scoped: same-directory headers use their filename, compiler headers use
-paths relative to the repository root (`compiler/...`, `lib/...`), and runtime
-headers use paths relative to `src/`.
+paths relative to the repository root (`compiler/...`, `lib/...`), and the
+runtime C ABI headers are included as `joyeer/runtime.h` and `joyeer/native.h`.
 
 `compiler/backend/` remains the shared `JoyeerBackend` C ABI library. Its LLVM
 dependencies, exception handling, allocation, and Windows `/MT` compilation
 are separate from the compiler core. The verifier in `compiler/ir/ir.cpp`
 is compiled privately into this target with its own CRT and hidden visibility;
 it is the same implementation, not a second verifier or a reused frontend
-object file. `src/runtime/` builds the C11 `JoyeerRuntime` static archive
+object file. `lib/Runtime/` builds the `JoyeerRuntime` static archive
 linked into generated programs. Existing artifact names and install components
 remain unchanged, and the private object target is not installed.
 
@@ -270,7 +269,7 @@ an application `main`. It does not establish a general binary-module ABI.
 unit may use only `Bool`, the integer and floating types and `Void`
 ([§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)),
 and a use of anything else is `type-checking.managed-type-in-core-unit`. The
-Joyeer runtime core (`src/runtime/joyeer/`) is built this way.
+Joyeer runtime core (`lib/Runtime/core/`) is built this way.
 See [C binding coverage](c-interop.md) for signatures, static/shared providers,
 authorization boundaries, and acceptance gates.
 

@@ -13,7 +13,7 @@
 
 **Every line of the runtime is Joyeer.** `JoyeerRuntime` is a static archive built
 only from objects that the Joyeer compiler emits from Joyeer source. No C file of
-ours is compiled into it, and none remains in `src/runtime/`. The runtime also
+ours is compiled into it, and none remains in `lib/Runtime/`. The runtime also
 stops depending on the *C language's* runtime: it owns its allocator, its output,
 its program startup and its argument handling, and talks to the operating system
 through the platform's own system interface, written as Joyeer bindings.
@@ -450,8 +450,8 @@ The §8 performance gate compares against these rows on the same machine.
 
 ### Stage 1: Build shape and pilot, done
 
-- [x] 1.1 The core module `runtime.core` (`src/runtime/joyeer/*.joyeer`, an
-  explicit list in `src/runtime/CMakeLists.txt`) is compiled by the just-built
+- [x] 1.1 The core module `runtime.core` (`lib/Runtime/core/*.joyeer`, an
+  explicit list in `lib/Runtime/CMakeLists.txt`) is compiled by the just-built
   compiler into one object that `JoyeerRuntime` archives beside the C
   ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). A test
   (`RuntimeCoreObjectSymbols`, `llvm-nm`) allows only the approved exports and
@@ -502,7 +502,7 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   only (D4, D7).
 - [x] 3.4 Indirect calls (D2), done in 2.2.
 - [x] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for
-  every unit in `src/runtime/joyeer/`.
+  every unit in `lib/Runtime/core/`.
 - [x] 3.6 Data-symbol imports (D5, `@c_data`).
 - [x] 3.7 The constant-data address intrinsic, for panic messages (D7).
 

@@ -1,6 +1,6 @@
 get_target_property(compression_package JoyeerCompression JOYEER_PACKAGE_DIRECTORY)
 add_executable(CompressionOracle oracle.c)
-target_include_directories(CompressionOracle PRIVATE "${JOYEER_SOURCE_DIR}" "${JOYEER_SRC_DIR}")
+target_include_directories(CompressionOracle PRIVATE "${JOYEER_SOURCE_DIR}" "${JOYEER_RUNTIME_INCLUDE_DIR}")
 target_link_libraries(CompressionOracle PRIVATE JoyeerCompression JoyeerRuntime)
 set_target_properties(CompressionOracle PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)

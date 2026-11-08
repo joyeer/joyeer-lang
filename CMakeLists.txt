@@ -243,7 +243,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 get_filename_component(JOYEER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} REALPATH)
 
-set(JOYEER_SRC_DIR "${JOYEER_SOURCE_DIR}/src")
+# C headers of the runtime ABI; included as <joyeer/runtime.h> and <joyeer/native.h>.
+set(JOYEER_RUNTIME_INCLUDE_DIR "${JOYEER_SOURCE_DIR}/lib/Runtime/include")
 
 set(JOYEER_BIN_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin")
 set(JOYEER_LIB_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib")
@@ -259,7 +260,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 string(TOLOWER "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}" JOYEER_TOOLCHAIN_TARGET)
 set(JOYEER_TOOLCHAIN_VERSION "${PROJECT_VERSION}")
 
-add_subdirectory(src/runtime)
 add_subdirectory(compiler)
 
 # Object generation needs the compiler before a mixed-language runtime exists.
@@ -330,5 +330,5 @@ install(TARGETS JoyeerRuntime
     ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION licenses COMPONENT JoyeerRuntime)
-install(FILES src/runtime/native.h src/runtime/runtime.h
+install(FILES lib/Runtime/include/joyeer/native.h lib/Runtime/include/joyeer/runtime.h
     DESTINATION include/joyeer COMPONENT NativeDevelopment EXCLUDE_FROM_ALL)

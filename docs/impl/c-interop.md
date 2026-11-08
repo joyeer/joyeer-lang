@@ -63,7 +63,7 @@ Only `@c_extern` admits these additional parameter forms:
 
 Counts are byte counts for strings/byte buffers and element counts for
 lists. There is no implicit C-string conversion or NUL terminator.
-The native declarations come from `src/runtime/native.h` and `runtime.h`.
+The native declarations come from `lib/Runtime/include/joyeer/native.h` and `runtime.h`.
 List descriptors expose only borrowed runtime handles: the native function
 must not mutate, retain, or free descriptors or backing storage.
 

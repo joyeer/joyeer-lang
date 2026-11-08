@@ -11,7 +11,7 @@ add_library(JoyeerBackend SHARED
         # compiler-core objects would mix /MD with /MT on Windows.
         ../ir/ir.cpp
 )
-target_include_directories(JoyeerBackend PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_SRC_DIR})
+target_include_directories(JoyeerBackend PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_RUNTIME_INCLUDE_DIR})
 
 separate_arguments(JOYEER_LLVM_DEFINITIONS NATIVE_COMMAND
         "${LLVM_DEFINITIONS}")
