@@ -1,7 +1,9 @@
 # 0013: Concurrency model: share-nothing threads and channels
 
-- Status: proposed (2026-11-08). Design only; nothing is implemented, and no
-  spec chapter changes until this is accepted. Stage 1 below needs no language
+- Status: proposed (2026-11-08), revised the same day after a `language-designer`
+  review. Design only; nothing is implemented, and no spec chapter changes until
+  this is accepted. Items marked *recommended* are the reviewer's and the
+  author's suggested answers, not yet accepted. Stage 1 below needs no language
   change and can be built first.
 - Spec: none yet. When accepted, the rules go in a new chapter next to the
   memory model ([§4](../spec/04-memory.md)) and the reserved keywords in
@@ -20,28 +22,42 @@ What the memory model gives us, and what it forbids:
 - Every value is independently owned. Assignment copies (§4.1); `consume`
   transfers ownership (§4.2.3). There are no reference types, no pointers, no
   `Box`/`Rc`/`Arc`, and no weak references (§4.8).
-- Access is lexical: a borrow or `inout` projection cannot be stored or
-  returned, so it cannot outlive the call, and the spec says a borrow does not
-  escape to another thread (§4.8, "Cross-thread sharing requires a separately
-  specified lifetime and concurrency model").
+- An unqualified parameter is a *borrow*, not a copy (§4.2). Access is lexical:
+  a borrow or `inout` projection cannot be stored or returned, and the spec says
+  a borrow does not escape to another thread (§4.8, "Cross-thread sharing
+  requires a separately specified lifetime and concurrency model").
 - Exclusivity is checked: while a value is borrowed or mutated, no conflicting
   access exists.
 - There is no mutable global storage; top-level `let` constants are immutable
   compile-time data.
-- Destruction is deterministic and compiler-managed. There is no user
-  `deinit` yet, so a resource handle (a socket, a task) cannot release itself.
+- Destruction is deterministic, compiler-managed, and in reverse declaration
+  order (§4.7). There is no user `deinit` yet, so a resource handle cannot
+  release itself.
+- A type is noncopyable only by declaring `deinit` (§4.1.1), and `deinit` is not
+  implemented. The compiler has no noncopyable machinery today.
 
 What the implementation constrains:
 
 - The runtime allocator is single-threaded by design (0011): size-class free
-  lists, 1 MiB regions, no block header (the size arrives with `free`). Only the
-  allocation counter is atomic (`joyeer_intrinsic_atomic_add`, sequentially
-  consistent).
-- Standard output and standard input are shared runtime buffers (0011); the
-  entry keeps `argv`/`envp` in static slots.
-- On Windows and Linux the runtime has no C library (0011), so there is no
-  `pthread`, no `errno`, and no thread-local storage from libc. Linux makes raw
-  system calls; Windows calls `kernel32`; macOS calls libSystem.
+  lists, 1 MiB regions, no block header (the size arrives with `free`). The
+  allocation counter is atomic. The runtime fails a program whose final
+  allocation balance is not zero (runtime.md), which is a fact any exit rule must
+  respect.
+- Runtime state is wider than the allocator: static slots 0 to 1 (counter,
+  allocator), 2 to 10 (streams and 64 bytes of shared scratch) and 32 to 39
+  (entry scratch); slot 16 (`envp`) is written once before the program runs.
+  Standard output has an error state and a console check, and Windows standard
+  input switches to binary mode on first use (§18.5). Lazy first-use
+  initialization is a race unless it is guarded.
+- On Windows the runtime has no C library, so there is no `pthread`. On Linux it
+  keeps the C startup and links libc (0011), though `System` makes raw system
+  calls. macOS calls libSystem.
+- The handle types of `System` (`TcpConnection`, `TcpListener`) are plain
+  structs holding an `Int`, with no `deinit`. By §4.1.1 they are copyable, so
+  nothing stops a program from copying one (0012, open question 1).
+- A `match` pattern binding is not an owning local, so `consume`-ing a value
+  received in a `match` arm is rejected today (0012). Postfix `?` works only
+  between the same error type.
 - Foreign code makes no thread-safety claim, and callbacks and entry from
   foreign threads are separate designs ([§19](../spec/19-c-interop.md)).
 
@@ -53,182 +69,301 @@ check from signatures, and one way to do each thing.
 1. **Shared memory with locks** (`Mutex<T>`, atomics, `Arc`). The conventional
    answer, but it needs shared ownership, which §4.8 removes by design. Adding
    it would reintroduce reference counting and aliasing, the two things the
-   language was shaped to avoid, and every reviewed function would again need
-   its callees traced. Rejected.
+   language was shaped to avoid. Rejected.
 2. **Goroutines on a garbage-collected heap.** Rejected: there is no GC.
 3. **`async`/`await` with colored functions.** The keywords are reserved. It
-   needs closures or function values, user generics (`Future<T>`), and a
-   compiler pass that turns functions into state machines, and it splits every
-   API into two colors. Heavy for the benefit before the simpler tools exist.
+   needs function values, user generics (`Future<T>`), and a compiler pass that
+   turns functions into state machines, and it splits every API into two colors.
    Deferred, not rejected.
 4. **Processes only** (several server processes sharing one port, or
-   `runProcess` workers). Works today with the memory model untouched, and is the
-   right scale-out step for a server. It cannot share work inside one program
-   and has no pipes yet, so it is a stopgap, not the model.
-5. **Single-threaded event loop with readiness polling and timeouts.** Needs no
-   language change and removes the stalled-client problem for I/O-bound
-   servers. It cannot use more than one core, and without closures each
-   connection becomes an explicit state record. Adopted as stage 1.
+   `runProcess` workers). Works today and is a fair scale-out step, but cannot
+   share work inside one program and has no pipes yet. A stopgap, not the model.
+5. **Single-threaded event loop with timeouts and readiness polling.** No
+   language change, removes the stalled-client problem, cannot use more than one
+   core. Adopted as stage 1, with timeouts first.
 6. **Share-nothing OS threads, ownership moved between them, bounded
-   channels.** Because values have no aliases, a moved value is safe to hand to
-   another thread with no `Send`/`Sync` distinction in user code. Adopted as
-   stage 2.
+   channels.** Because values have no aliases, a moved value cannot create one.
+   Adopted as stage 2.
+7. **A protocol-bounded generic `Work` instead of a function reference** (§20.1).
+   The idiom the spec already chose for "no closures": a struct carries its input
+   and has a `consuming func run()`. Cleaner in the end, but it needs §20
+   generics, which are not implemented. Kept as the later form of `spawn`; the
+   v1 special form must be a subset of it.
 
 ## Decision
 
-Joyeer's concurrency is **share-nothing**: threads run concurrently, and the
-only way for data to cross from one to another is to be moved or copied through
-a task argument, a task result, or a channel. There is no shared mutable state
-in user code and no lock.
+Joyeer's concurrency is **share-nothing**: threads run concurrently, and data
+crosses from one to another only by being moved through a task argument, a task
+result, or a channel. There is no shared mutable state in user code and no lock.
 
-### Stage 1: timeouts and readiness (no language change)
+### What "no Send/Sync" does and does not mean
 
-Extend `System`'s networking ([§18.6](../spec/18-host.md#186-tcp-networking))
-with receive and accept timeouts and a readiness wait over a set of handles, for
-example `tcpPoll(connections:, timeoutMillis:)`, backed by `WSAPoll`/IOCP on
-Windows and `ppoll`/`epoll` on Linux. This is a single thread serving many
-connections and is enough to defeat a stalled client. Each connection is an
-explicit state value held in an array. Write this as its own decision when it
-starts; it is listed here because it is the cheapest step and changes nothing
-below.
+Moving a value never creates an alias, so **memory safety needs no `Send`/`Sync`
+distinction**: there is no `&T` two threads can hold, and a borrow cannot escape.
+That claim covers memory only.
+
+- **Handles.** A handle that denotes an operating-system resource is safe to move
+  only if it cannot also be copied; copying it into two tasks would make two owners
+  of one resource, and no check would catch it. Making handles safe is therefore a
+  **prerequisite** of stage 2, not a follow-up: the language needs a rule that
+  some compiler-known types are *noncopyable by decree* (without a user `deinit`),
+  that §4.1.1's propagation then covers arrays, structs and enums containing them,
+  and that the `System` handle types use it (or wrap a noncopyable type). This is
+  the same problem as 0012's open question 1 and should be solved once.
+- **No native-address deny-list.** An earlier draft proposed rejecting values that
+  hold a native address. That cannot be a type rule, because runtime units hold
+  addresses and descriptors as plain `Int` (§4.9, §19.4.5). Native bindings that keep
+  thread-affine state document it themselves (§19.6).
+- **Not covered.** Race freedom is about memory. It does not cover files, ports,
+  the working directory, child processes, or deadlock.
+
+### Stage 1: timeouts, then readiness (no language change)
+
+- **1a, timeouts.** Add receive, send, accept and connect timeouts to
+  [§18.6](../spec/18-host.md#186-tcp-networking) (milliseconds; `.TimedOut` is
+  already a case). This is small and defeats a silent client on its own.
+- **1b, readiness (optional).** A wait over several handles, for example
+  `tcpPoll(connections:, listener:, timeoutMillis:)`, backed by `WSAPoll` on
+  Windows and `ppoll` on Linux. It lets one thread serve many connections, but it
+  is the largest throwaway: stage 2 supersedes the event-loop rewrite of the
+  example, and an event loop needs array element removal and a consuming element
+  accessor that do not exist yet (`Array.removeLast` is unimplemented; §4.5.1 is
+  spec-only). Do it only if a single-threaded server is wanted in its own right.
+
+Write each as its own decision when it starts.
 
 ### Stage 2: threads, tasks and channels
 
-- **Tasks.** `spawn(work, input)` starts a thread that runs a named top-level
-  function. `work` is a non-capturing reference to a function; `input` is passed
-  `consuming`, so the caller loses it (or passes an explicit copy). The result
-  is a `Task<R>` that the caller later `join`s, receiving the function's owned
-  result. A task has no access to its parent's locals, since none can be named.
-- **Channels.** A bounded channel has two noncopyable owned ends, a sender and
-  a receiver. `send(value: consuming T)` moves a value in; `receive()` moves one
-  out. A second sender is made with an explicit `clone` (a new owned end), never
-  by copying, so each end always has exactly one owner. The channel's internal
-  state is the one piece of shared mutable memory and is owned by the runtime,
-  like the allocation counter, behind atomics and a futex or an equivalent.
-- **No `Send`/`Sync`.** Every ordinary Joyeer value is safe to move between
-  threads: it is a tree with no aliases. The only exceptions are values that
-  hold a native address (FFI) or a borrowed projection, and neither can be
-  stored in a value, so the compiler needs a short deny-list, not a trait system.
-- **Compiler-known types.** `Task<R>`, the channel ends, and `spawn` are
-  compiler/runtime builtins in the manner of `Array`, `Dict`, `Optional` and
-  `Result`. They do not wait for, and imply nothing about, user-defined generics.
-- **Server shape.** The accept loop owns the listener and moves each accepted
-  `TcpConnection` through a channel to a fixed pool of worker tasks. The
-  blocking `System` calls are reused unchanged, and a stalled connection ties
-  up one worker, not the program.
+- **Tasks.** `spawn(function: name, input: consume value)` starts a thread that
+  runs a named top-level function. Calls use labels (grammar: `call_arg ::= label
+  ':' [ '&' | 'consume' ] expression`). `name` must resolve to exactly one
+  top-level function that is non-generic, not a method, not `@c_extern` or
+  `@c_export`, not overloaded, not `main`, with **exactly one `consuming`
+  parameter**, and a result type that is not `Never`. A `borrowing`, `inout` or
+  `initializing` parameter is rejected (a borrow cannot outlive `spawn`; the child
+  would mutate the parent's storage). Whether a zero-parameter function is allowed
+  is an open question. The result is a `Task<R>`.
+- **`join`.** `Task<R>` has a consuming `join` returning the function's owned
+  result `R`. A `Task` is noncopyable (by the rule above) and **must be consumed
+  on every path**: a task that is not joined is a compile error
+  (`task-not-joined`), found by the existing initialization and consumption
+  analysis with a linear flag on the builtin. This also settles process exit:
+  every task is finished before `main` returns, so the leak check sees a settled
+  balance. There are no detached tasks.
+- **Not a function value in v1.** The spec has no closures (§20.1) and gives
+  non-generic functions a `function_type` (§2.3), which the compiler does not
+  implement; a generic function cannot be named as a value (§20.4). So the
+  `function:` argument is a distinct syntactic position that the type checker
+  resolves to a function symbol, and is not a general function value. It is
+  specified so that a later `function:` argument of the §2.3 function type, or the
+  `Work` form (option 7), accepts every program it accepts. That keeps the closure
+  question open.
+- **Channels (v1: single sender, single receiver).** A bounded channel has two
+  noncopyable owned ends, each with exactly one owner; capacity is at least 1.
+  `send(value: consume T)` returns `Result<Void, SendError>` whose error carries
+  the unsent value (the value was consumed, so it cannot vanish). `receive()`
+  returns `Result<T, ChannelClosed>` (recommended; an `Optional` is the
+  alternative). Dropping or closing an end closes the channel: a blocked peer wakes
+  with the closed result, and values still queued are destroyed by whichever end
+  drops last, on that thread, through per-type destroy helpers the compiler
+  already generates for builtins. Multi-sender channels need an atomic sender
+  count, which is shared ownership inside the runtime and would be the one named
+  exception to §4.1 and §4.8; they are deferred. The server shape below does not
+  need them.
+- **Compiler-known types.** `Task<R>`, the two channel ends and `spawn` are
+  builtins in the manner of `Array`, `Dict`, `Optional` and `Result`; they do not
+  wait for user generics. Because `Task` is a common name in application code,
+  whether a user declaration of the same name shadows the builtin (recommended: it
+  does) must be specified and tested.
+- **Server shape.** The accept loop owns the listener and one bounded channel per
+  worker, and moves each accepted `TcpConnection` into a worker's channel in
+  round-robin order. Workers close what they own. A slow connection can hold up the
+  queue behind its own worker, which is why a non-blocking try-receive or a small
+  `select` is an open question.
 
 ### Stage 3 (not decided here)
 
-Structured scopes that must join their tasks before exit and may lend read-only
-borrows to children (the exclusivity checker already guarantees no writer while
-a borrow is live), actor syntax as sugar for "a value owned by one task, driven
-by its channel", and async only if tens of thousands of simultaneous
-connections justify it.
+Structured scopes that may lend read-only borrows to children (the exclusivity
+checker already guarantees no writer while a borrow is live), actor syntax as
+sugar for "a value owned by one task, driven by its channel", multi-sender
+channels, and async only if tens of thousands of simultaneous connections justify
+it.
 
 ### Memory-model rules (to become normative on acceptance)
 
-- **Data-race freedom by construction.** No two tasks can name the same storage
-  mutably or at all, except through the runtime-owned channel state.
-- **Ordering.** All of these are sequentially consistent and form
-  happens-before edges: the call to `spawn` before the first statement of the
-  task; the task's last statement before the `join` that returns its result; a
-  `send` before the `receive` that obtains its value. Users get no relaxed
-  atomics and no memory fences.
-- **Moves and copies.** Passing `consuming` transfers the heap storage with no
-  copy. Passing an ordinary argument or result performs the language's normal
-  semantic copy (a deep clone of heap-backed values, §4.1), whose cost is the
-  caller's to see.
-- **Destruction.** A value is destroyed by the task that owns it when it goes
-  out of scope. A task's locals are destroyed when it ends.
-- **Panics.** A trap (checked arithmetic, bounds, explicit panic) in any task
-  terminates the whole process after flushing standard output, as a trap does
-  today. Recovering from a task panic needs unwinding that respects
-  deterministic destruction and is out of scope.
-- **Process exit.** Returning from `main` ends the process. Because a task
-  must be joined to be observed, and the language cannot yet force a join
-  (no `deinit`, no must-consume check), the first implementation either
-  requires every task to be joined through a scope or documents that unjoined
-  tasks are stopped without running destructors. That choice is an open
-  question below.
+- **Data-race freedom for user memory by construction.** No two tasks can name the
+  same storage, except through runtime-owned channel state, which has one owner at
+  each end.
+- **Ordering.** These are sequentially consistent happens-before edges: `spawn`
+  before the first statement of the task; the end of the task, including the
+  destruction of its locals, before the `join` that returns its result; a `send`
+  before the `receive` that obtains its value; closing the sending end, after all
+  earlier sends, before the receiver observes the closed result. Users get no
+  relaxed atomics and no fences. Output from different tasks with no such edge
+  between them has no specified order.
+- **Moves and copies.** A `consume` argument transfers heap storage without
+  cloning, but an aggregate is still copied into the thread's argument block, so
+  "no copy" holds for heap payloads, not for the value's own bytes. This is
+  asserted with the allocation counter. An unqualified argument elsewhere is a
+  borrow and is not allowed for a spawn target. Immutable top-level constants are
+  safe to share, but a constant array passed to `spawn` is cloned, never freed.
+- **Destruction.** A value is destroyed by the task that owns it when it goes out
+  of scope. Reverse declaration order (§4.7) can deadlock a program that joins a
+  task while still holding the sender its loop waits on; the rule is to close the
+  sending end (by consuming it) before the join, and the example demonstrates it.
+  Once user `deinit` exists, a `deinit` may run on a thread other than the one that
+  created the value; that must then be specified.
+- **Traps.** A trap in any task terminates the whole process with no destructors
+  run on any task, as a trap does today (0009, 0011): a global *panicking* flag is
+  set so other tasks cannot print, allocate or write after the flush; the first
+  trap wins when two occur together; output is flushed once; the panic path never
+  takes a lock its caller may already hold (an out-of-memory panic inside the
+  allocator lock). Resources in flight are released only by the operating system.
+- **Exit.** `main` returns only after every task has been consumed (above), so the
+  allocation-balance check runs on a quiescent program and sees no queued or
+  in-flight value.
+- **Blocking.** Receive on a channel with no live sender returns the closed result
+  rather than blocking forever. Bounded channels can still form a wait cycle, which
+  is a deadlock the language does not prevent; this is stated, not hidden.
 - **Native code.** Calling foreign code from a task has no thread-safety
-  guarantee, as §19 already states. A native-binding module that is used from
-  tasks must say so.
+  guarantee (§19). A native-binding module used from tasks documents what it needs.
 
 ### Runtime changes the model requires
 
-- **Allocator.** Blocks have no header, so a block can be freed on a different
-  thread from the one that allocated it, provided the size is correct. First
-  cut: one global lock around the size-class lists. Then per-thread caches over
-  a central pool, with lock-free remote frees, as in mimalloc. The decision
-  point is a benchmark of allocation-heavy programs; the runtime benchmark
-  already covers the single-thread case.
-- **Streams.** `print` and the stdout buffer are guarded so one `print` is
-  atomic with respect to others. Standard input reads are serialized.
-- **Per-thread state.** Anything the runtime keeps per program that a thread
-  must not share (an allocator cache, a panic context) needs thread-local
-  storage. Without a C library that is the thread pointer register (`FS` or `GS`
-  on x86-64, `TPIDR_EL0` on AArch64, `TEB` on Windows) set by whoever creates the
-  thread.
-- **Thread creation and blocking.** Windows: `CreateThread`, `WaitForSingleObject`
-  or `WaitOnAddress`. Linux, with no libc: `clone` with `CLONE_VM | CLONE_THREAD`
-  and the related flags on a stack the runtime maps, `CLONE_SETTLS` for TLS, and
-  `futex` for blocking. macOS: libSystem `pthread`. These are new
-  system-call-level intrinsics beyond the one added in 0011.
+- **Allocator.** Blocks carry no header, so a block can be freed on another thread
+  provided the size is right. First cut: one lock around the size-class lists.
+  Taking it only once a second thread exists adds a load and a branch to every
+  allocation and free, so that is benchmarked against a baseline, not assumed free.
+  Per-thread caches with lock-free remote frees are a later optimization.
+- **Streams and lazy initialization.** One `print` is atomic with respect to
+  others; standard input reads are serialized; flush-before-read and
+  flush-before-panic stay. Every lazily initialized piece of state (stdout error
+  state, the console check, the Windows stdin binary-mode switch, the first socket
+  start) is initialized before the first thread starts or guarded.
+- **Counter ordering.** The counter is described as a relaxed atomic in runtime.md
+  and as sequentially consistent in §19.4.5. Reconcile them; the balance is read
+  only when no other task runs.
+- **Per-thread state.** The panic context, and any allocator cache later, are
+  per thread. Without a runtime TLS they need the thread pointer register (`FS` or
+  `GS` on x86-64, `TPIDR_EL0` on AArch64, the TEB on Windows), set by whoever
+  creates the thread.
+- **Thread creation.**
+  - Windows: `CreateThread` and `WaitOnAddress`.
+  - Linux and macOS, where libc is already linked: `pthread_create`, `pthread_join`
+    and a condition variable or `futex` through libc. This is cheaper and safer than
+    raw `clone`, which would give the thread a TLS block without libc's layout and
+    crash on the first stack-protector load, `errno` access, or support-function
+    call. A raw `clone`/`futex` path, which needs a new inline-assembly trampoline
+    intrinsic because the child resumes on an empty stack, is a later optimization
+    if the C library is ever dropped on Linux.
+  - Thread count and stack size are bounded and documented (open question).
+- **`runProcess`.** On Linux it forks. In a multithreaded process the child
+  inherits locks held by other threads, so the child path must not allocate before
+  `execve`, or the call must be serialized against the allocator lock. Whether
+  `runProcess` is allowed at all in a multithreaded program is an open question.
 
 ## Consequences
 
 - Easier: a reviewer can see from a signature what crosses a thread boundary,
-  because only `consuming` arguments, results, and channel messages do. There is
-  no lock order to audit, no `Mutex` to forget, and no race to reproduce.
-- Harder: programs that want shared mutable data must either own it in one task
-  and talk to it by messages, or copy it. Moving a large structure is cheap
-  (an ownership transfer), but copying is a deep clone and shows up in profiles.
-- Harder: writing event-loop code in stage 1 without closures is verbose. It is
-  explicit and reviewable, which is the stated trade.
-- Risk: raw `clone`/`futex` threads and TLS without libc are the least
-  conventional part, and the AArch64 and macOS paths are the least tested. They
-  are separated so stage 1 and the language rules can be settled first.
-- Tests for stage 2 when it is built: ordering (a result is visible after
-  `join`, a value after `receive`), moved values never observed by the sender,
-  channel bounds and closing, allocator stress with cross-thread frees and the
-  leak counter, panic in a task terminating the process with its output
-  flushed, `print` atomicity, and the symbol-import gates still passing.
-- Diagnostics needed: a spawn target that is not a named top-level function, an
-  argument that is not `consuming` where required, use of a moved value after
-  `spawn` or `send`, a task result that is never joined (if the scope rule is
-  adopted), and a value containing a native address crossing a thread boundary.
+  because only `consuming` arguments, results, and channel messages do, provided
+  handles are noncopyable. There is no lock order to audit and no data race on
+  user memory to reproduce.
+- Harder: programs that want shared mutable data must own it in one task and talk
+  to it by messages, or copy it. Moving a large structure is cheap; copying is a
+  deep clone and shows up in profiles.
+- Harder: stage 1b without closures is verbose. It is explicit and reviewable.
+- Harder: every task must be joined on every path, so an early `return` or `?`
+  between `spawn` and `join` needs a join on that path. Clumsy, but explicit.
+- Risk: pthread threads inside a runtime that has no libc on Windows, and the
+  AArch64 and macOS paths, are the least testable here. They are separated so the
+  language rules can be settled first.
+- Needs first (prerequisites that are not part of this decision): noncopyable
+  compiler-known types and noncopyable handles; consuming a pattern binding or a
+  `?`-free way to own a received value (0012 question 1); and, for any
+  array-of-tasks program, a consuming element accessor or removal from an array.
+- Tests for stage 2, one per rule, each citing its spec section:
+  - Ordering: a result is visible after `join`, a value after `receive`, every
+    spawn input in the child, a closed channel after all earlier sends.
+  - Moves: a `consume`d heap payload is not cloned (allocation counter); a moved
+    binding is a use-after-consume error; a constant array passed to `spawn` is
+    cloned, not freed.
+  - Rejections: one fixture per diagnostic below, with stable IDs.
+  - Noncopyable: copying a task or a channel end is an error; `[Sender<T>]`
+    propagates; a copied `TcpConnection` is rejected once handles are noncopyable.
+  - Exit and traps: a trap in one task flushes once and exits, with no
+    destructors; two simultaneous traps print one message; the leak check passes
+    after every task ends; a channel dropped with queued values has zero balance; a
+    task blocked on receive when its sender drops wakes with the closed result.
+  - Runtime: allocator stress with cross-thread frees returns the counter to zero;
+    `print` atomicity; first-use initialization races from two tasks; a
+    `runProcess` from a task while others allocate.
+  - Names: a user `struct Task` coexists with the builtin.
+  - Deadlock: a cycle of full bounded channels hangs and is documented, or a
+    timeout variant exists.
+  - Gates: the symbol-import gates still allow only the listed names.
+- Diagnostics needed, with stable IDs:
+  - a spawn target that is not a named top-level function;
+  - a target parameter that is not `consuming` (borrowing, `inout`, `initializing`),
+    or zero or several parameters;
+  - a target that is a method, generic, native, overloaded, `main`, or returns `Never`;
+  - use of a moved value after `spawn` or `send` (the existing use-after-consume);
+  - `task-not-joined`;
+  - copying a task or a channel end;
+  - a `function:` argument that is not a function name.
 
 ## Open questions
 
-1. Whether every task must be joined through a structured scope, or detached
-   tasks are allowed and stopped at process exit. Structured is safer and
-   matches deterministic destruction, but needs a must-consume check the
-   language does not have.
-2. Whether the function reference for `spawn` is a general non-capturing
-   function type (a step toward closures) or a compiler special form that only
-   `spawn` understands. The special form is smaller and does not decide the
-   closure question.
-3. Whether `join` yields the result directly or a `Result` for a future
-   recoverable-panic design. Starting with a plain result keeps the door open
-   only if the type can later widen without breaking callers.
-4. How closing works: a channel with no senders left should end the receiver's
-   loop, which needs a way to know the last sender is gone, and a sender has no
-   `deinit` to say so. Explicit `close(consuming sender)` is the likely answer.
-5. Whether a bounded channel suffices or an unbounded one is also needed, given
-   unbounded growth is exactly what a stalled consumer would cause.
-6. How much of this waits on `deinit`, which would make handles and tasks
-   release themselves and could replace several of the explicit-close rules in
-   this record and in 0012.
+Each has a recommendation; none is accepted yet.
+
+1. **Task joining.** Recommended: every task must be consumed on every path, a
+   compile error otherwise; no detached tasks. Detached tasks would fail the leak
+   check.
+2. **Form of the function reference.** Recommended: the restricted `function:`
+   position above, defined as not a value and as a subset of a later `Work` form.
+3. **`join` result.** Recommended: plain `R`. A trap aborts the process, so `join`
+   never observes a failure; widening to `Result` later would break callers, so a
+   recoverable-panic design is a separate, later decision.
+4. **Closing.** Recommended: the compiler-generated drop of an end closes the
+   channel (it needs no user `deinit` because the compiler already generates
+   destroy helpers for builtins), plus an explicit consuming `close`.
+5. **Bounded or unbounded.** Recommended: bounded only, capacity at least 1; an
+   unbounded queue turns a stalled consumer into memory exhaustion.
+6. **`deinit` and noncopyable.** Recommended: `deinit` is not required first, but
+   the noncopyable-builtin rule is a prerequisite of stage 2, and handles become
+   noncopyable before they cross threads.
+7. **Multi-sender channels.** Recommended: not in v1 (shared ownership; see above).
+8. **`receive` result.** `Result<T, ChannelClosed>` (recommended) or `Optional<T>`.
+9. **Zero-parameter spawn targets.** Allowed (a task with no input) or rejected?
+10. **Limits.** Maximum live threads and a stack size, and whether either is
+    configurable.
+11. **Dispatch.** Is a non-blocking try-receive, or a small `select`, needed so the
+    accept loop can pick an idle worker?
+12. **Output ordering.** Is the order of `print` across tasks without a
+    happens-before edge left unspecified (recommended), or serialized?
+13. **`runProcess` in a multithreaded program.** Allowed with the child path
+    constrained (above), or rejected while tasks exist?
+14. **Thread path on Linux.** `pthread` first (recommended) or raw `clone`.
+15. **Name collisions.** Does a user `Task` or `Sender` shadow the builtin
+    (recommended), or is the builtin name reserved? Or choose rarer names such as
+    `JoinHandle`.
+16. **Where does a task's unread result live** if a program is stopped by a trap?
+    Recommended: nowhere; a trap exits the process.
 
 ## Evidence
 
-- §4.8 and its design note: cross-thread sharing is explicitly left to a
-  separate lifetime and concurrency model; this is that proposal.
-- 0011: the allocator is single-threaded on purpose and its counter is atomic
-  only because it already was, which tells us where the first change lands.
-- 0012: the blocking network API makes a stalled client the first concrete
-  problem, and `consuming` close and `?` unwrapping already model one-owner
-  handles.
-- Hylo (mutable value semantics) and Rust's `Send` rules are the reference
-  points in the preamble; the difference here is that the absence of references
-  removes the need for a `Sync` concept altogether.
+- §4.8 and its design note: cross-thread sharing is explicitly left to a separate
+  lifetime and concurrency model; this is that proposal.
+- 0011: the allocator is single-threaded on purpose and its counter is atomic only
+  because it already was; Linux keeps the C startup and libc.
+- 0012: a blocking network API makes a stalled client the first concrete problem,
+  and it shows both that `consuming` close works only on owning locals and that
+  handles are copyable today.
+- The `language-designer` review (2026-11-08) found that the first draft
+  overstated the memory argument for handles, relied on a native-address deny-list
+  that cannot exist, assumed noncopyable and `deinit` machinery that is not
+  implemented, proposed a reference-counted sender, conflicted with the leak
+  check, and wrote an invalid call form. Each is corrected above.
+- Hylo (mutable value semantics) and Rust's `Send` rules are the reference points
+  in the preamble. Rust needs `Sync` because it has shared references and `Arc`;
+  Joyeer's difference is that it has neither, but it still needs handles that
+  cannot be copied, as Rust's `MutexGuard` cannot be sent.
