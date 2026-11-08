@@ -61,7 +61,7 @@ panicked on a mismatch and the whole test suite was run; the callers in the runt
 
 **D10: the system-call intrinsic (10.2).** `joyeer_intrinsic_syscall(number, a1, a2,
 a3, a4, a5, a6): Int` lowers to inline assembly (`syscall` on x86-64, `svc #0` on
-AArch64) and is accepted only when the target is Linux. It returns the kernel's result
+AArch64) and is meaningful only on Linux. It returns the kernel's result
 unchanged: a value from -4095 to -1 is `-errno`. Linux system call numbers differ by
 architecture, so `joyeer_intrinsic_target_architecture(): Int` returns a constant (1
 for x86-64, 2 for AArch64) the runtime selects numbers with. macOS has no supported

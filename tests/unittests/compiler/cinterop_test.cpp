@@ -526,7 +526,7 @@ func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 
     }
 }
 
-TEST_F(CInteropTest, LowersTheArchitectureToAConstantAndTheSystemCallOnlyOnLinux) {
+TEST_F(CInteropTest, LowersTheArchitectureToAConstantAndTheSystemCallToInlineAssembly) {
     ASSERT_NO_FATAL_FAILURE(lower(R"(
 @c_extern(symbol: "joyeer_intrinsic_syscall")
 func call(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int): Int
@@ -542,15 +542,9 @@ func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 
     ASSERT_TRUE(reader.succeeded());
     ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
     const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
-#if defined(__linux__)
     ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
     EXPECT_NE(emitted.text.find("call i64 asm sideeffect"), std::string::npos);
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
-#else
-    // Only the Linux kernel has a stable system call interface.
-    EXPECT_FALSE(emitted.succeeded());
-    EXPECT_NE(joyeer::llvmbackend::dump(emitted.diagnostics).find("requires a Linux"), std::string::npos);
-#endif
 }
 
 TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {

@@ -288,7 +288,7 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_memset` | `(destination: Int, value: UInt8, count: Int) -> Void` | Stores `value` in `count` bytes |
 | `joyeer_intrinsic_double_bits` | `(value: Double) -> UInt64` | The IEEE 754 bit pattern of `value` |
 | `joyeer_intrinsic_float_bits` | `(value: Float) -> UInt32` | The IEEE 754 bit pattern of `value` |
-| `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64) and is a diagnostic on any other target. [Decision 0011](../decisions/0011-runtime-without-the-c-library.md) |
+| `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../decisions/0011-runtime-without-the-c-library.md) |
 | `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned

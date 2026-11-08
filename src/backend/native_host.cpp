@@ -45,15 +45,17 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         return integer(target.getArch() == llvm::Triple::x86_64 ? 1 : target.getArch() == llvm::Triple::aarch64 ? 2 : 0);
     }
     if (descriptor.operation == Operation::systemCall) {
-        // Only the Linux kernel promises a stable system call interface. The call
-        // number and the six arguments go in the architecture's registers; the kernel
+        // Only the Linux kernel promises a stable system call interface, and only a Linux
+        // program can use this (the runtime selects it with `@platform(linux)`), but the IR is
+        // produced for any target so that a Linux unit can be validated on another host. The
+        // call number and the six arguments go in the architecture's registers; the kernel
         // result comes back in the first. Constraint 0 ties the number to the result
         // register (rax) or the first argument to it (x0), which the call overwrites.
         const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
         const bool x86 = target.getArch() == llvm::Triple::x86_64;
-        if (!target.isOSLinux() || (!x86 && target.getArch() != llvm::Triple::aarch64)) {
+        if (!x86 && target.getArch() != llvm::Triple::aarch64) {
             report(DiagnosticId::unsupportedExternal, {},
-                    "joyeer_intrinsic_syscall requires a Linux x86-64 or AArch64 target");
+                    "joyeer_intrinsic_syscall requires an x86-64 or AArch64 target");
             return integer(0);
         }
         auto* integerType = builder.getInt64Ty();
