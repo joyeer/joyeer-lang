@@ -98,6 +98,7 @@ in the spec.
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 | [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
 | [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows and Linux implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
+| [0013](decisions/0013-concurrency-model.md) | Concurrency (proposed): share-nothing threads, ownership moved through tasks and bounded channels, no shared mutable state; timeouts and readiness polling first |
 
 ## Conventions
 

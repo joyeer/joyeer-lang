@@ -102,7 +102,7 @@ Implementation shape (informative, to be confirmed while building):
   library code and can evolve without touching the platform layer.
 - Harder: the API is single-connection-at-a-time. A slow or silent client
   stalls the server. The example documents this and recommends a reverse proxy
-  for anything exposed to untrusted networks. Concurrency is the first item of
+  for anything exposed to untrusted networks. Concurrency (decision [0013](0013-concurrency-model.md)) is the first item of
   the next round and is a language decision, not a library one.
 - Harder: no TLS. Anything exposed beyond loopback should sit behind a TLS
   terminating proxy.
