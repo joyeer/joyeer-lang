@@ -290,8 +290,8 @@ private func systemProbe(descriptor: Int): Int32 {
 public func exitProcess(status: Int32): Never {
     systemCall(number: callNumber(x86: 231, arm: 94), first: status as Int, second: 0, third: 0,
         fourth: 0, fifth: 0, sixth: 0)
-    // exit_group does not return; keep looping if it somehow does.
-    while true { }
+    // exit_group does not return; were it to, ask again.
+    exitProcess(status: status)
 }
 
 // ---- macOS: libSystem -----------------------------------------------------------
