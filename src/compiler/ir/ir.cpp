@@ -1,4 +1,5 @@
 #include "ir.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include <algorithm>
 #include <charconv>
@@ -658,12 +659,20 @@ VerificationResult Verifier::verify(const Module& module) const {
                     function.runtimeContext && isCIdentifier(binding.symbol) &&
                     function.isExternal == importing &&
                     !(function.isRootModule && function.name == "main") &&
-                    (importing || !isCEntrySymbol(binding.symbol));
+                    (!function.coreContext || function.runtimeContext) &&
+                    (importing || !isCEntrySymbol(binding.symbol) ||
+                     (function.coreContext && isCoreEntrySymbol(binding.symbol)));
             const auto scalar = [&](TypeId id) {
                 return types.contains(id) && typing::isNativeScalar(types.at(id)->kind);
             };
             const bool scalarResult = scalar(function.resultType);
-            valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType)) &&
+            // A data symbol is an import with no parameters whose result is its address.
+            valid &= !binding.dataSymbol ||
+                    (importing && function.parameters.empty() && binding.pointerParameters.empty() &&
+                     hasKind(function.resultType, typing::TypeKind::integer) &&
+                     !isCEntrySymbol(binding.symbol) && !intrinsic::reserved(binding.symbol));
+            valid &= (scalarResult || hasKind(function.resultType, typing::TypeKind::voidType) ||
+                       hasKind(function.resultType, typing::TypeKind::never)) &&
                     function.returnsValue == scalarResult;
             const auto bufferKind = [&](TypeId id) {
                 return typing::nativeBufferKind(id, [&](TypeId value) {
@@ -671,8 +680,20 @@ VerificationResult Verifier::verify(const Module& module) const {
                     return found == types.end() ? nullptr : found->second;
                 });
             };
-            for (const auto& parameter : function.parameters) {
+            for (const auto pointer : binding.pointerParameters) {
+                valid &= importing && pointer < function.parameters.size();
+            }
+            for (size_t parameterIndex = 0; parameterIndex < function.parameters.size(); ++parameterIndex) {
+                const auto& parameter = function.parameters[parameterIndex];
                 const auto buffer = bufferKind(parameter.value.type);
+                if (binding.passesPointer(parameterIndex)) {
+                    // A bare data pointer: borrowed bytes, or a mutable byte buffer.
+                    valid &= buffer == typing::NativeBufferKind::bytes &&
+                            !parameter.isConsuming && !parameter.isInitializing && !parameter.acceptsAnyType &&
+                            ((parameter.value.category == ValueCategory::value && !parameter.isMutable) ||
+                             (parameter.value.category == ValueCategory::address && parameter.isMutable));
+                    continue;
+                }
                 const bool borrowed =
                         (scalar(parameter.value.type) ||
                          (importing && buffer != typing::NativeBufferKind::none)) &&
@@ -685,6 +706,22 @@ VerificationResult Verifier::verify(const Module& module) const {
                         parameter.isMutable && parameter.isInitializing &&
                         !parameter.isConsuming && !parameter.acceptsAnyType;
                 valid &= borrowed || output;
+            }
+            if (intrinsic::reserved(binding.symbol)) {
+                // A compiler intrinsic must be a known import with exactly its signature.
+                const auto* descriptor = intrinsic::find(binding.symbol);
+                std::vector<typing::TypeKind> kinds;
+                std::vector<bool> pointers;
+                std::vector<bool> mutables;
+                for (size_t index = 0; index < function.parameters.size(); ++index) {
+                    const auto found = types.find(function.parameters[index].value.type);
+                    kinds.push_back(found == types.end() ? typing::TypeKind::error : found->second->kind);
+                    pointers.push_back(binding.passesPointer(index));
+                    mutables.push_back(function.parameters[index].isMutable);
+                }
+                const auto result = types.find(function.resultType);
+                valid &= importing && descriptor != nullptr && result != types.end() &&
+                        intrinsic::matches(*descriptor, result->second->kind, kinds, pointers, mutables);
             }
             if (!valid) {
                 report(VerificationErrorId::invalidInstruction, functionId, {}, {},
@@ -701,11 +738,14 @@ VerificationResult Verifier::verify(const Module& module) const {
                     return types.contains(a) && types.contains(b) &&
                             typing::sameNativeRepresentation(types.at(a)->kind, types.at(b)->kind);
                 };
-                bool matches = compatible(function.resultType, other.resultType) &&
+                bool matches = binding.dataSymbol == other.nativeBinding->dataSymbol &&
+                        compatible(function.resultType, other.resultType) &&
                         function.parameters.size() == other.parameters.size();
                 for (size_t index = 0; index < std::min(function.parameters.size(), other.parameters.size()); ++index) {
                     matches &= compatible(function.parameters[index].value.type, other.parameters[index].value.type);
                     matches &= function.parameters[index].isInitializing == other.parameters[index].isInitializing;
+                    matches &= function.parameters[index].isMutable == other.parameters[index].isMutable;
+                    matches &= binding.passesPointer(index) == other.nativeBinding->passesPointer(index);
                 }
                 if (!matches) {
                     report(VerificationErrorId::callMismatch, functionId, {}, {},
@@ -2380,6 +2420,7 @@ std::string dump(const Module& module) {
             out << (function.nativeBinding->kind == NativeBindingKind::cImport
                             ? " c_import \"" : " c_export \"")
                 << escape(function.nativeBinding->symbol) << '"';
+            for (const auto pointer : function.nativeBinding->pointerParameters) out << " pointer#" << pointer;
         }
         if (function.isExternal) {
             out << "\n";

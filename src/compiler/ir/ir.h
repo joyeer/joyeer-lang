@@ -225,6 +225,9 @@ struct Function {
     std::vector<DebugVariableBinding> entryDebugVariableBindings;
     bool isRootModule = true;
     bool runtimeContext = false;
+    // From a core unit (spec 19.4.6); implies runtimeContext. Only a core unit may
+    // export the program entry point (main or wmain).
+    bool coreContext = false;
     std::optional<NativeBinding> nativeBinding;
 };
 

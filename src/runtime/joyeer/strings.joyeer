@@ -1,0 +1,37 @@
+// String equality and ordering (`joyeer_string_equal_abi`,
+// `joyeer_string_compare_abi`). A String crosses this ABI as a borrowed data
+// address and a byte count; nothing here allocates. Byte access
+// (`text[index]`) has no runtime function: the backend emits the bounds check
+// and the load inline.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only. It
+// must not use String, arrays, dictionaries or print, which lower to runtime
+// calls (runtime plan §4).
+
+// The C library's memcmp, until the bulk-memory intrinsics (runtime plan stage
+// 3.2) let the compiler emit it inline. Both ranges must hold `count` bytes.
+@c_extern(symbol: "memcmp")
+private func memoryCompare(left: Int, right: Int, count: Int): Int32
+
+@c_export(symbol: "joyeer_string_equal_abi")
+public func stringEqual(leftData: Int, leftCount: Int, rightData: Int, rightCount: Int): Bool {
+    if leftCount != rightCount { return false }
+    if leftCount == 0 { return true }
+    return memoryCompare(left: leftData, right: rightData, count: leftCount) == 0
+}
+
+// -1, 0 or 1: the first differing byte decides (as unsigned bytes), otherwise
+// the shorter string orders first.
+@c_export(symbol: "joyeer_string_compare_abi")
+public func stringCompare(leftData: Int, leftCount: Int, rightData: Int, rightCount: Int): Int {
+    var common = rightCount
+    if leftCount < rightCount { common = leftCount }
+    if common != 0 {
+        let order = memoryCompare(left: leftData, right: rightData, count: common)
+        if order < 0 { return -1 }
+        if order > 0 { return 1 }
+    }
+    if leftCount < rightCount { return -1 }
+    if leftCount > rightCount { return 1 }
+    return 0
+}

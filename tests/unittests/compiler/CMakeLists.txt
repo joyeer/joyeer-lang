@@ -64,6 +64,9 @@ target_link_libraries(CompilerModuleServiceTests PRIVATE
         GTest::gtest_main
         JoyeerCompilerCore
 )
+target_compile_definitions(CompilerModuleServiceTests PRIVATE
+        JOYEER_LIBRARY_SOURCES="${JOYEER_SRC_DIR}/library"
+)
 joyeer_discover_tests(CompilerModuleServiceTests
         PROPERTIES LABELS modules
 )
@@ -98,6 +101,12 @@ add_executable(CompilerCInteropTests cinterop_test.cpp)
 target_link_libraries(CompilerCInteropTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
 joyeer_discover_tests(CompilerCInteropTests
         PROPERTIES LABELS c-interop
+)
+
+add_executable(CompilerPlatformTests platform_test.cpp)
+target_link_libraries(CompilerPlatformTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerPlatformTests
+        PROPERTIES LABELS platform
 )
 
 add_executable(CompilerSemanticAnalysisTests
@@ -714,6 +723,11 @@ if(JOYEER_CLANG_EXECUTABLE)
             "2\n0\n\n3\na b\n" 73
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
             -DCOMPILER_ARGS=-O0)
+    # Quotes and backslashes survive the trip through the command line (the rules of the C
+    # runtime and CommandLineToArgvW, which the Windows entry point implements itself).
+    joyeer_add_entry_case(NativeEntryQuotesAndBackslashes entry_arguments
+            "2\n8\nsay \"hi\"\n7\nC:\\dir\\\n" 73
+            "-DPROGRAM_ARGUMENT_1=say \"hi\"" "-DPROGRAM_ARGUMENT_2=C:\\dir\\")
     joyeer_add_entry_case(NativeEntryLegacyIgnoresArguments hello
             "42\nnative\n8\n42\n" 0
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=ignored")
@@ -847,6 +861,26 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "native;llvm-backend;runtime;ownership;byte-conversion"
     )
 
+    # The compiler targets its host, so each host expects its own variants.
+    if(WIN32)
+        set(platform_selection_output "windows\n\\\n")
+    elseif(APPLE)
+        set(platform_selection_output "macos\n/\n")
+    else()
+        set(platform_selection_output "linux\n/\n")
+    endif()
+    add_test(NAME NativeExecutablePlatformSelection
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/platform_selection.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-platform-selection${CMAKE_EXECUTABLE_SUFFIX}
+                    "-DEXPECTED_OUTPUT=${platform_selection_output}"
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutablePlatformSelection PROPERTIES
+            LABELS "native;llvm-backend;platform"
+    )
+
     add_test(NAME NativeExecutableStringUtf8
             COMMAND ${CMAKE_COMMAND}
                     -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
@@ -857,6 +891,18 @@ if(JOYEER_CLANG_EXECUTABLE)
     )
     set_tests_properties(NativeExecutableStringUtf8 PROPERTIES
             LABELS "native;llvm-backend;runtime;ownership;string;utf8"
+    )
+
+    add_test(NAME NativeExecutableStringIndex
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/native/string_index.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-string-index${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=5\n97\n0\n195\n122\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(NativeExecutableStringIndex PROPERTIES
+            LABELS "native;llvm-backend;runtime;string"
     )
 
     add_test(NAME NativeExecutableJsonParser
@@ -1233,6 +1279,12 @@ abcdabcd
             NativeCheckedArrayWrite checked_array_write_index "array index out of bounds")
     add_joyeer_native_checked_trap(
             NativeCheckedArrayMax checked_array_max_index "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedStringNegative checked_string_negative_index "string index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedStringPastEnd checked_string_index_past_end "string index out of bounds")
+    add_joyeer_native_checked_trap(
+            NativeCheckedStringEmpty checked_string_empty_index "string index out of bounds")
     add_joyeer_native_checked_trap(
             NativeCheckedIndexOverflow checked_index_overflow "integer addition overflow")
     add_joyeer_native_checked_trap(

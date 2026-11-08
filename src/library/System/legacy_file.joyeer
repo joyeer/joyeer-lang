@@ -1,0 +1,156 @@
+// The legacy whole-file reader, `readFile(path:) -> Result<String, IOError>`, in
+// Joyeer. Unlike the portable filesystem operations it deliberately opens the path
+// as narrow bytes on every platform, so its path handling and its errno-style error
+// codes match the built-in it mirrors, including the narrow-path behavior on
+// Windows. POSIX opens it as bytes through the portable file primitives; Windows calls
+// `CreateFileA`, which reads the path in the same ANSI code page `fopen` does, and gives
+// the codes the C library would have mapped from the system error (decision 0011).
+
+private let readChunk: Int = 65536
+
+// Each primitive returns a result of at least 0 on success (the open one a handle
+// above 0), or the negated errno.
+
+// POSIX opens the path with the portable primitives (a file descriptor on Linux, a stream on
+// macOS), which return the same negated errno.
+@platform(posix)
+private func openLegacy(path: [UInt8]): Int {
+    return nativeOpenRead(path: path)
+}
+
+@platform(posix)
+private func readLegacy(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    return nativeRead(handle: handle, buffer: &buffer, count: count)
+}
+
+@platform(posix)
+private func closeLegacy(handle: Int): Int {
+    return nativeClose(handle: handle)
+}
+
+@platform(windows)
+@c_extern(symbol: "CreateFileA", pointer: "path")
+private func createFileA(path: [UInt8], access: UInt32, share: UInt32, security: Int,
+    disposition: UInt32, flags: UInt32, template: Int): Int
+
+@platform(windows)
+@c_extern(symbol: "ReadFile", pointer: "buffer", pointer: "done")
+private func readFileA(handle: Int, buffer: inout [UInt8], count: UInt32, done: inout [UInt8],
+    overlapped: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "CloseHandle")
+private func closeHandleA(handle: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func lastErrorA(): UInt32
+
+// The errno the C library maps a Win32 error to (its `_dosmaperr`), for the codes a
+// file open or read can produce; anything else is EINVAL, as there.
+@platform(windows)
+private func errnoOf(code: Int): Int {
+    if code == 2 || code == 3 || code == 15 || code == 18 || code == 53 || code == 123 || code == 161 ||
+        code == 206 || code == 267 { return 2 }
+    if code == 4 { return 24 }
+    if code == 5 || code == 16 || (code >= 19 && code <= 33) || code == 65 || code == 82 { return 13 }
+    if code == 6 { return 9 }
+    if code == 7 || code == 8 || code == 9 || code == 14 { return 12 }
+    if code == 80 || code == 183 { return 17 }
+    if code == 109 || code == 232 { return 32 }
+    if code == 112 || code == 39 { return 28 }
+    return 22
+}
+
+@platform(windows)
+private func failureOf(code: UInt32): Int {
+    return 0 - errnoOf(code: code as Int)
+}
+
+@platform(windows)
+private func openLegacy(path: [UInt8]): Int {
+    // The C library rejects an empty path as an invalid argument.
+    if path.count <= 1 { return 0 - 22 }
+    // GENERIC_READ, share read and write, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL.
+    let handle = createFileA(path: path, access: 0x80000000, share: 3, security: 0, disposition: 3,
+        flags: 0x80, template: 0)
+    if handle == -1 { return failureOf(code: lastErrorA()) }
+    return handle
+}
+
+@platform(windows)
+private func readLegacy(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    var done: [UInt8] = [0, 0, 0, 0]
+    if readFileA(handle: handle, buffer: &buffer, count: count as UInt32, done: &done, overlapped: 0) == 0 {
+        return failureOf(code: lastErrorA())
+    }
+    let low = byteToInt(value: done[0]) + byteToInt(value: done[1]) * 256
+    let high = byteToInt(value: done[2]) + byteToInt(value: done[3]) * 256
+    return low + high * 65536
+}
+
+@platform(windows)
+private func closeLegacy(handle: Int): Int {
+    if closeHandleA(handle: handle) == 0 { return failureOf(code: lastErrorA()) }
+    return 0
+}
+
+@platform(windows)
+private func nameTooLongCode(): Int { return 38 }
+
+@platform(linux)
+private func nameTooLongCode(): Int { return 36 }
+
+@platform(macos)
+private func nameTooLongCode(): Int { return 63 }
+
+private func legacyError(code: Int): IOError {
+    var value = code
+    if value == 0 { value = 5 }
+    if value == 2 { return .NotFound(value) }
+    if value == 13 || value == 1 { return .PermissionDenied(value) }
+    if value == 22 || value == nameTooLongCode() { return .InvalidPath(value) }
+    return .Other(value)
+}
+
+// Reads to the end of the file. Returns 0, or the errno of a failed read.
+private func drain(handle: Int, data: inout [UInt8]): Int {
+    var chunk = zeroBuffer(count: readChunk)
+    var code = 0
+    var done = false
+    while !done {
+        let got = readLegacy(handle: handle, buffer: &chunk, count: readChunk)
+        var taken = got
+        if got < 0 {
+            code = 0 - got
+            taken = 0
+            done = true
+        } else if got == 0 {
+            done = true
+        }
+        var index = 0
+        while index < taken {
+            &data.append(element: chunk[index])
+            index = index + 1
+        }
+    }
+    return code
+}
+
+public func readFile(path: String): Result<String, IOError> {
+    var index = 0
+    while index < path.count {
+        if path[index] == 0 { return .Err(legacyError(code: 22)) }
+        index = index + 1
+    }
+    var native = path.utf8()
+    &native.append(element: 0)
+    let handle = openLegacy(path: native)
+    if handle < 0 { return .Err(legacyError(code: 0 - handle)) }
+    var data: [UInt8] = []
+    var code = drain(handle: handle, data: &data)
+    let closed = closeLegacy(handle: handle)
+    if closed < 0 && code == 0 { code = 0 - closed }
+    if code != 0 { return .Err(legacyError(code: code)) }
+    return .Ok(stringFromBytes(bytes: data, count: data.count))
+}

@@ -24,6 +24,8 @@ add_library(JoyeerCompilerCore OBJECT
 	frontend/nameresolution.h
 	frontend/parser.cpp
 	frontend/parser.h
+	frontend/platform.cpp
+	frontend/platform.h
 	frontend/semantic.cpp
 	frontend/semantic.h
 	frontend/semanticanalysis.cpp

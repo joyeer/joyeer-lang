@@ -236,6 +236,7 @@ public:
                 indexNode(file);
                 model->sourceModules_[file->span.sourceId] = activeModule;
                 model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
+                model->coreSources_[file->span.sourceId] = modules[index].coreContext;
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;
@@ -781,26 +782,6 @@ private:
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
 
-        CallableSignature readFileSignature {
-            CallableKind::function,
-            true,
-            { CallableParameter {
-                std::string("path"),
-                true,
-                std::nullopt,
-                std::nullopt,
-                stringType,
-            } },
-        };
-        const auto readFile = declareSymbol(
-                model->preludeScope_,
-                SymbolNamespace::value,
-                SymbolKind::builtinFunction,
-                "readFile",
-                {});
-        symbol(readFile).declaredType = resultType;
-        symbol(readFile).callable = std::move(readFileSignature);
-
         CallableSignature byteConversionSignature {
             CallableKind::function,
             true,
@@ -829,22 +810,6 @@ private:
         symbol(byteToString).declaredType = stringType;
         symbol(byteToString).callable = std::move(byteConversionSignature);
 
-        for (const auto& descriptor : hostbuiltins::functions) {
-            CallableSignature signature { CallableKind::function, true, {} };
-            for (const auto& parameter : descriptor.parameters) {
-                signature.parameters.push_back(CallableParameter {
-                    std::string(parameter.name), true, std::nullopt, std::nullopt,
-                    parameter.kind == hostbuiltins::ValueKind::strings
-                            ? arrayType : parameter.kind == hostbuiltins::ValueKind::integer
-                            ? intType : stringType,
-                });
-            }
-            const auto function = declareSymbol(
-                    model->preludeScope_, SymbolNamespace::value,
-                    SymbolKind::builtinFunction, std::string(descriptor.name), {});
-            symbol(function).declaredType = resultType;
-            symbol(function).callable = std::move(signature);
-        }
         for (const auto* name : {"Int8", "Int16", "Int32", "Int64", "UInt",
                 "UInt16", "UInt32", "UInt64", "Float", "Double"}) {
             declareBuiltinType(name);

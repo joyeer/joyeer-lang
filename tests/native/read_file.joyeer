@@ -1,3 +1,5 @@
+import System
+
 func main() {
     let loaded = readFile(path: "read_file_input.txt")
     let copied = loaded

@@ -423,7 +423,9 @@ when running a packaged compiler.
 Release users do not install LLVM or Clang. They still need MSVC Build Tools
 and a Windows SDK to create native executables. Programs already produced by
 Joyeer use the static CRT and Windows system DLLs; running those programs does
-not require the Visual C++ Redistributable.
+not require the Visual C++ Redistributable. A program that calls no C library function
+starts at the runtime's own entry point and links only the static `memcpy` family of the
+CRT (`libvcruntime.lib`) and `kernel32` ([decision 0011](decisions/0011-runtime-without-the-c-library.md)).
 
 Linux and macOS use the corresponding release preset:
 

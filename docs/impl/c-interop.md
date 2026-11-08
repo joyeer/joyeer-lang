@@ -45,8 +45,9 @@ not a variadically promoted `double`. These rules also apply to
 compiler-generated C runtime calls. Native targets outside the admitted
 x86-64/ARM64 Windows MSVC, Linux, and macOS families are diagnosed.
 
-This does not migrate any production runtime algorithm from C to Joyeer.
-Existing host builtins and normal executable generation remain supported.
+The core runtime is mostly still C; its first functions (`joyeer_host_valid_utf8`, string equality and ordering) are Joyeer objects built by [decision 0008](../decisions/0008-runtime-core-build-shape.md). The host operations already use this boundary:
+`System` implements them in Joyeer over `@c_extern` bindings
+([runtime](runtime.md#host-operations)).
 
 ### Buffer imports
 
@@ -76,10 +77,40 @@ allocations into an output handle. Every return, including failure, leaves
 valid destroyable outputs; a status-returning Joyeer wrapper decides whether
 to expose them. Allocation failures follow the existing runtime panic policy.
 
+### Compiler intrinsics
+
+Symbols beginning with `joyeer_intrinsic_` ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics)) are checked against a shared table
+([intrinsics.h](../../src/compiler/frontend/intrinsics.h)) by the type checker
+and the IR verifier, and the backend lowers them inline: `ptrtoint` for
+`address_of`, unaligned `load` and `store`, and `atomicrmw add`. No C function
+is declared. The [fixture](../../tests/c-interop/intrinsics.joyeer) uses them
+with `malloc` and `free` from the C library.
+
+### Bare byte pointers
+
+A `[UInt8]` import parameter named by a `pointer:` annotation argument crosses
+as a single data pointer with no count ([§19.4.4](../spec/19-c-interop.md#1944-bare-byte-pointers)):
+
+```joyeer
+@c_extern(symbol: "ReadFile", pointer: "buffer", pointer: "done")
+func readFileW(handle: Int, buffer: inout [UInt8], count: UInt32,
+    done: inout [UInt8], overlapped: Int): Int32
+```
+
+The type checker records the named parameter indices in `NativeBinding`
+(`pointerParameters`); lowering copies them to the IR function, the verifier
+checks them (bytes only, borrowed value or exclusive address, in range, equal
+across declarations of one symbol), and the backend declares one `ptr` for such
+a parameter and passes the array's data pointer, loading it through the address
+for `inout`. `inout` byte buffers are admitted only this way. The
+[pointer fixture](../../tests/c-interop/pointers.joyeer) covers both forms, a
+pointer between scalars, empty arrays, and allocation balance, in both
+optimization profiles.
+
 Existing exclusivity, definite-initialization and lifetime rules still apply.
-`inout`/`consuming` buffers, nested output byte arrays, buffer return values,
-buffer exports, arbitrary aggregate ABI, escaping pointers and callbacks are
-not supported. Repeated native declarations must agree on buffer shape and
+`consuming` buffers, `inout` buffers without `pointer:`, nested output byte
+arrays, buffer return values, buffer exports, arbitrary aggregate ABI, escaping
+pointers and callbacks are not supported. Repeated native declarations must agree on buffer shape and
 access effect, even when two flattened pointer signatures happen to match.
 The interface is revision-matched to the compiler/runtime; version 1 is
 identified by `JOYEER_NATIVE_BUFFER_ABI_VERSION`, not a stable ABI for every
@@ -166,8 +197,10 @@ library's actual prototype agrees.
 
 The parser stores spanned annotation names and arguments on function syntax.
 It permits an omitted body on an annotated declaration so semantic checking
-can diagnose the actual import/export rule. Ordinary declarations still
-require bodies. This parser support does not implement the proposed
+can diagnose the actual import/export rule. (The `@platform` selection pass
+runs before name resolution and checks body presence itself for functions it
+strips; see [§11.5](../spec/11-annotations.md#115-platform).) Ordinary
+declarations still require bodies. This parser support does not implement the proposed
 `@spec`/`@property` shorthand or DSL.
 
 Type checking validates annotation arguments, explicit results, authorized
@@ -208,7 +241,7 @@ blanket-reserved. This check covers declarations known to the compiler, not
 the prototypes in an external native library.
 
 Object emission uses the existing versioned backend C ABI and opaque module
-handle. The private IR wire format is version 7; the backend C ABI remains
+handle. The private IR wire format is version 10; the backend C ABI remains
 version 1. The compiler and backend must be built/deployed from the same
 revision. macOS objects use the configured deployment target rather than a
 newer default OS version inferred from the host running LLVM.

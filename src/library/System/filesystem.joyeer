@@ -1,0 +1,217 @@
+import Foundation
+
+// The portable filesystem operations of spec §18.2, written in Joyeer. They
+// run over the per-platform primitives in filesystem_windows.joyeer and
+// filesystem_posix.joyeer, which call the operating system directly. Nothing
+// here is specific to one platform.
+//
+// Primitive results are plain Ints: a value >= 0 is success (a handle, a byte
+// count, a kind tag), and a negative value is the negated native error code.
+// A handle is opened once and closed once per operation, with the work between
+// them in a separate function that never returns past the close.
+
+private let chunkSize: Int = 65536
+
+@c_extern(symbol: "joyeer_string_clone_abi", pointer: "bytes")
+private func cloneString(output: initializing String, bytes: [UInt8], count: Int): Void
+
+// The first `count` bytes of `bytes` as an owned String (arbitrary bytes allowed).
+func stringFromBytes(bytes: [UInt8], count: Int): String {
+    var text: String
+    cloneString(output: &text, bytes: bytes, count: count)
+    return text
+}
+
+func zeroBuffer(count: Int): [UInt8] {
+    var buffer: [UInt8] = []
+    var index = 0
+    while index < count {
+        &buffer.append(element: 0)
+        index = index + 1
+    }
+    return buffer
+}
+
+// Validates a path (§18.1) and encodes it for the host: UTF-8 plus a NUL on
+// POSIX, UTF-16LE plus a NUL unit on Windows.
+func encodePath(path: String): Result<[UInt8], FileSystemError> {
+    if path.count == 0 { return .Err(.InvalidPath(invalidInputCode())) }
+    var index = 0
+    while index < path.count {
+        if path[index] == 0 { return .Err(.InvalidPath(invalidInputCode())) }
+        index = index + 1
+    }
+    if !isValidUtf8(text: path) { return .Err(.InvalidPath(invalidEncodingCode())) }
+    return .Ok(nativePathBytes(text: path))
+}
+
+func failure(code: Int): FileSystemError {
+    return classifyError(code: code)
+}
+
+// A close failure counts only when nothing failed before it.
+func firstFailure(work: Int, closed: Int): Int {
+    if work != 0 { return work }
+    if closed < 0 { return 0 - closed }
+    return 0
+}
+
+// Reads from the start until end of file, or until `maximum` bytes when
+// `bounded`. Returns 0, or the native error code.
+func readLoop(handle: Int, data: inout [UInt8], maximum: Int, bounded: Bool): Int {
+    var chunk = zeroBuffer(count: chunkSize)
+    var code = 0
+    var done = false
+    while !done {
+        var wanted = chunkSize
+        if bounded {
+            let remaining = maximum - data.count
+            if remaining <= 0 {
+                done = true
+                continue
+            }
+            if remaining < wanted { wanted = remaining }
+        }
+        let got = nativeRead(handle: handle, buffer: &chunk, count: wanted)
+        if got < 0 {
+            code = 0 - got
+            done = true
+        } else if got == 0 {
+            done = true
+        } else {
+            var index = 0
+            while index < got {
+                &data.append(element: chunk[index])
+                index = index + 1
+            }
+        }
+    }
+    return code
+}
+
+func readFileWithLimit(path: String, maximum: Int, bounded: Bool): Result<String, FileSystemError> {
+    if bounded && maximum < 0 { return .Err(.Other(invalidInputCode())) }
+    let native = encodePath(path: path)?
+    let handle = nativeOpenRead(path: native)
+    if handle < 0 {
+        let code = 0 - handle
+        if opensAsDirectory(path: native, code: code) { return .Err(.IsDirectory(code)) }
+        return .Err(failure(code: code))
+    }
+    var data: [UInt8] = []
+    let work = readLoop(handle: handle, data: &data, maximum: maximum, bounded: bounded)
+    let code = firstFailure(work: work, closed: nativeClose(handle: handle))
+    if code != 0 { return .Err(failure(code: code)) }
+    return .Ok(stringFromBytes(bytes: data, count: data.count))
+}
+
+public func readFileUtf8(path: String): Result<String, FileSystemError> {
+    return readFileWithLimit(path: path, maximum: 0, bounded: false)
+}
+
+public func readFilePrefix(path: String, maximumBytes: Int): Result<String, FileSystemError> {
+    return readFileWithLimit(path: path, maximum: maximumBytes, bounded: true)
+}
+
+// Writes `contents` from the start. A short write is retried from where it
+// stopped; no progress is a write fault. Returns 0, or the native error code.
+func writeLoop(handle: Int, contents: String): Int {
+    var chunk: [UInt8] = []
+    var offset = 0
+    var code = 0
+    while offset < contents.count && code == 0 {
+        var length = contents.count - offset
+        if length > chunkSize { length = chunkSize }
+        chunk = []
+        var index = 0
+        while index < length {
+            &chunk.append(element: contents[offset + index])
+            index = index + 1
+        }
+        let written = nativeWrite(handle: handle, buffer: chunk, count: length)
+        if written < 0 {
+            code = 0 - written
+        } else if written == 0 {
+            code = writeFaultCode()
+        } else {
+            offset = offset + written
+        }
+    }
+    return code
+}
+
+public func writeFileNew(path: String, contents: String): Result<Void, FileSystemError> {
+    let native = encodePath(path: path)?
+    let handle = nativeOpenNew(path: native)
+    if handle < 0 { return .Err(failure(code: 0 - handle)) }
+    let work = writeLoop(handle: handle, contents: contents)
+    let code = firstFailure(work: work, closed: nativeClose(handle: handle))
+    if code != 0 { return .Err(failure(code: code)) }
+    return .Ok(())
+}
+
+public func createDirectory(path: String): Result<Void, FileSystemError> {
+    let native = encodePath(path: path)?
+    let status = nativeCreateDirectory(path: native)
+    if status < 0 { return .Err(failure(code: 0 - status)) }
+    return .Ok(())
+}
+
+public func listDirectory(path: String): Result<[String], FileSystemError> {
+    let native = encodePath(path: path)?
+    return nativeListDirectory(path: path, native: native)
+}
+
+public func fileKind(path: String): Result<FileKind, FileSystemError> {
+    let native = encodePath(path: path)?
+    let tag = nativeKind(path: native)
+    if tag < 0 { return .Err(failure(code: 0 - tag)) }
+    if tag == 0 { return .Ok(.File) }
+    if tag == 1 { return .Ok(.Directory) }
+    if tag == 2 { return .Ok(.Symlink) }
+    return .Ok(.Other)
+}
+
+// A real directory is reported as such where the host's remove fails with a
+// permission-style error, instead of the bare permission failure.
+public func removeFile(path: String): Result<Void, FileSystemError> {
+    let native = encodePath(path: path)?
+    let status = nativeRemoveFile(path: native)
+    if status >= 0 { return .Ok(()) }
+    let code = 0 - status
+    let denied = match failure(code: code) {
+        .PermissionDenied(_) => true,
+        _ => false,
+    }
+    if denied && nativeKind(path: native) == 1 { return .Err(.IsDirectory(code)) }
+    return .Err(failure(code: code))
+}
+
+public func removeDirectory(path: String): Result<Void, FileSystemError> {
+    let native = encodePath(path: path)?
+    let status = nativeRemoveDirectory(path: native)
+    if status < 0 { return .Err(failure(code: 0 - status)) }
+    return .Ok(())
+}
+
+// Lexical join (§18.2): an absolute second path replaces the base; on Windows
+// a drive-qualified second path does too. No filesystem access.
+public func joinPath(base: String, path: String): Result<String, FileSystemError> {
+    if base.count <= 0 || path.count <= 0 { return .Err(.InvalidPath(invalidInputCode())) }
+    if !isValidUtf8(text: base) || !isValidUtf8(text: path) {
+        return .Err(.InvalidPath(invalidEncodingCode()))
+    }
+    var index = 0
+    while index < base.count {
+        if base[index] == 0 { return .Err(.InvalidPath(invalidNameCode())) }
+        index = index + 1
+    }
+    index = 0
+    while index < path.count {
+        if path[index] == 0 { return .Err(.InvalidPath(invalidNameCode())) }
+        index = index + 1
+    }
+    if replacesBase(path: path) { return .Ok(path) }
+    if needsSeparator(base: base) { return .Ok(base + separator() + path) }
+    return .Ok(base + path)
+}

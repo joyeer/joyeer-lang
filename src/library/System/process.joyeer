@@ -1,0 +1,39 @@
+import Foundation
+
+// Synchronous child processes (spec §18.3), written in Joyeer. The portable
+// part validates the text arguments exactly as the host does; process_windows
+// and process_posix launch the child and wait for it through the operating
+// system's own interfaces.
+
+// 0 when `text` can be passed to the host, otherwise the platform error code:
+// an empty or NUL-containing value is invalid input, malformed UTF-8 is an
+// encoding failure.
+func textProblem(text: String, allowEmpty: Bool): Int {
+    if text.count == 0 {
+        if allowEmpty { return 0 }
+        return invalidInputCode()
+    }
+    var index = 0
+    while index < text.count {
+        if text[index] == 0 { return invalidInputCode() }
+        index = index + 1
+    }
+    if !isValidUtf8(text: text) { return invalidEncodingCode() }
+    return 0
+}
+
+public func runProcess(
+    executable: String,
+    arguments: [String],
+    workingDirectory: String
+): Result<ProcessStatus, ProcessError> {
+    var code = textProblem(text: executable, allowEmpty: false)
+    if code == 0 { code = textProblem(text: workingDirectory, allowEmpty: false) }
+    var index = 0
+    while code == 0 && index < arguments.count {
+        code = textProblem(text: arguments[index], allowEmpty: true)
+        index = index + 1
+    }
+    if code != 0 { return .Err(.InvalidInput(code)) }
+    return nativeRun(executable: executable, arguments: arguments, workingDirectory: workingDirectory)
+}

@@ -5,22 +5,18 @@
 #include <span>
 #include <string_view>
 
+// The error and status enumerations that the `System` host operations return.
+// They are prelude types: the compiler declares them so that user code and
+// `System` agree on one definition, but it knows no host function. Every host
+// operation is an ordinary Joyeer function in the `System` standard module.
 namespace joyeer::hostbuiltins {
-
-enum class ValueKind {
-    string,
-    strings,
-    integer,
-    unit,
-    fileKind,
-    processStatus,
-};
 
 struct Enumeration {
     std::string_view name;
     std::span<const std::string_view> cases;
+    // True when every case carries one Int payload (a platform error code or
+    // a status value); false when the cases carry nothing.
     bool integerPayload;
-    int firstAbiTag;
 };
 
 inline constexpr std::array<std::string_view, 7> filesystemErrors {
@@ -46,92 +42,14 @@ inline constexpr std::array<std::string_view, 1> conversionErrors {
     "OutOfRange",
 };
 inline constexpr std::array<Enumeration, 7> enumerations {{
-    { "FileSystemError", filesystemErrors, true, 1 },
-    { "FileKind", fileKinds, false, 0 },
-    { "ProcessStatus", processStatuses, true, 0 },
-    { "ProcessError", processErrors, true, 1 },
-    { "StderrError", stderrErrors, true, 1 },
-    { "StdinError", stdinErrors, true, 1 },
-    { "ConversionError", conversionErrors, false, 0 },
+    { "FileSystemError", filesystemErrors, true },
+    { "FileKind", fileKinds, false },
+    { "ProcessStatus", processStatuses, true },
+    { "ProcessError", processErrors, true },
+    { "StderrError", stderrErrors, true },
+    { "StdinError", stdinErrors, true },
+    { "ConversionError", conversionErrors, false },
 }};
-
-struct Parameter {
-    std::string_view name;
-    ValueKind kind;
-};
-
-inline constexpr std::array<Parameter, 1> pathParameters {{
-    { "path", ValueKind::string },
-}};
-inline constexpr std::array<Parameter, 2> readPrefixParameters {{
-    { "path", ValueKind::string }, { "maximumBytes", ValueKind::integer },
-}};
-inline constexpr std::array<Parameter, 2> writeParameters {{
-    { "path", ValueKind::string }, { "contents", ValueKind::string },
-}};
-inline constexpr std::array<Parameter, 1> stderrParameters {{
-    { "contents", ValueKind::string },
-}};
-inline constexpr std::array<Parameter, 1> stdinLineParameters {{
-    { "maximumBytes", ValueKind::integer },
-}};
-inline constexpr std::array<Parameter, 2> joinParameters {{
-    { "base", ValueKind::string }, { "path", ValueKind::string },
-}};
-inline constexpr std::array<Parameter, 3> processParameters {{
-    { "executable", ValueKind::string },
-    { "arguments", ValueKind::strings },
-    { "workingDirectory", ValueKind::string },
-}};
-
-struct Function {
-    std::string_view name;
-    std::string_view runtimeName;
-    ValueKind result;
-    std::string_view error;
-    std::span<const Parameter> parameters;
-};
-
-inline constexpr std::array<Function, 12> functions {{
-    { "readFileUtf8", "joyeer_fs_read_file_abi", ValueKind::string,
-      "FileSystemError", pathParameters },
-        { "readFilePrefix", "joyeer_fs_read_file_prefix_abi", ValueKind::string,
-            "FileSystemError", readPrefixParameters },
-    { "writeFileNew", "joyeer_fs_write_file_new_abi", ValueKind::unit,
-      "FileSystemError", writeParameters },
-    { "createDirectory", "joyeer_fs_create_directory_abi", ValueKind::unit,
-      "FileSystemError", pathParameters },
-    { "listDirectory", "joyeer_fs_list_directory_abi", ValueKind::strings,
-      "FileSystemError", pathParameters },
-    { "fileKind", "joyeer_fs_file_kind_abi", ValueKind::fileKind,
-      "FileSystemError", pathParameters },
-    { "removeFile", "joyeer_fs_remove_file_abi", ValueKind::unit,
-      "FileSystemError", pathParameters },
-    { "removeDirectory", "joyeer_fs_remove_directory_abi", ValueKind::unit,
-      "FileSystemError", pathParameters },
-    { "joinPath", "joyeer_fs_join_path_abi", ValueKind::string,
-      "FileSystemError", joinParameters },
-    { "runProcess", "joyeer_run_process_abi", ValueKind::processStatus,
-      "ProcessError", processParameters },
-        { "writeStderr", "joyeer_write_stderr_abi", ValueKind::unit,
-            "StderrError", stderrParameters },
-    { "readStdinLine", "joyeer_read_stdin_line_abi", ValueKind::string,
-      "StdinError", stdinLineParameters },
-}};
-
-inline const Function* findFunction(std::string_view name) {
-    for (const auto& function : functions) {
-        if (function.name == name) return &function;
-    }
-    return nullptr;
-}
-
-inline const Enumeration* findEnumeration(std::string_view name) {
-    for (const auto& enumeration : enumerations) {
-        if (enumeration.name == name) return &enumeration;
-    }
-    return nullptr;
-}
 
 }
 

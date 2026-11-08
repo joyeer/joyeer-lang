@@ -28,7 +28,8 @@ ctest --test-dir build --output-on-failure
 
 ## Architectural constraints
 
-The compiler is C++20, the runtime is C11, and the build uses CMake + Ninja.
+The compiler is C++20, the runtime is Joyeer (built by the in-tree compiler; its C headers
+are the ABI for native libraries), and the build uses CMake + Ninja.
 
 ```text
 source -> lexer -> parser -> name resolution -> type checking

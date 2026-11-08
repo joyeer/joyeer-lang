@@ -2,7 +2,7 @@
 #define JOYEER_BACKEND_NATIVE_IR_H
 
 #include "compiler/codegen/llvm.h"
-#include "compiler/frontend/hostbuiltins.h"
+#include "compiler/frontend/intrinsics.h"
 #include "runtime/runtime.h"
 #include "native_module.h"
 
@@ -88,6 +88,8 @@ private:
     void defineTypes();
     llvm::Function* declareFunction(const ir::Function& function);
     llvm::Function* declareNativeFunction(const ir::Function& function);
+    // The external global behind a `@c_data` binding; declared once per symbol.
+    llvm::GlobalVariable* declareDataSymbol(const std::string& symbol);
     llvm::Function* declareCFunction(std::string_view name, llvm::Type* result,
             llvm::ArrayRef<llvm::Type*> parameters,
             llvm::ArrayRef<typing::TypeKind> parameterKinds = {},
@@ -126,15 +128,11 @@ private:
             semantic::SymbolId symbol, size_t index);
     llvm::Value* pattern(const ir::Pattern& pattern, llvm::Value* value);
     llvm::Value* emitCall(const ir::Instruction& instruction);
+    llvm::Value* emitIntrinsic(const intrinsic::Descriptor& descriptor,
+            llvm::ArrayRef<llvm::Value*> arguments);
     bool emitCollection(const ir::Instruction& instruction, llvm::Value*& result);
     int keyKind(ir::TypeId id);
     llvm::Value* dictionaryFind(ir::TypeId id, llvm::Value* dictionary, llvm::Value* key);
-    llvm::Value* emitHostCall(const ir::Function& function,
-            llvm::ArrayRef<llvm::Value*> arguments, const ir::Instruction& instruction);
-        bool matchesHostValue(ir::TypeId id, hostbuiltins::ValueKind kind);
-        std::vector<size_t> enumTags(ir::TypeId id, const hostbuiltins::Enumeration& shape);
-    llvm::Value* hostEnum(ir::TypeId id, llvm::Value* storageAddress,
-            llvm::Value* tag, const hostbuiltins::Enumeration& shape);
 
     // Debug locations are attached to objects as they are built, never by
     // searching or rewriting printed instruction text.

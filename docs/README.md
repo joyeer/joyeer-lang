@@ -20,7 +20,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
-| Plan runtime and public-library development | [Hybrid runtime](plan/hybrid-runtime.md) and [Library modules](plan/library.md) |
+| Plan runtime and public-library development | [Runtime in Joyeer](plan/runtime-in-joyeer.md) and [Library modules](plan/library.md) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/toolchain-libraries.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
@@ -57,7 +57,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
 | [c-interop.md](impl/c-interop.md) | Authorized scalar and buffer C bindings, object generation, explicit native-library inputs, and acceptance gates |
 | [compression.md](impl/compression.md) | Optional miniz-backed ZIP module, limits, ownership, build and packaging |
-| [runtime.md](impl/runtime.md) | Process entry, C runtime, ownership, collections, filesystem, and subprocesses |
+| [runtime.md](impl/runtime.md) | Process entry, the C runtime, ownership, collections, and where the host operations live |
 | [fern.md](impl/fern.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |
 
@@ -69,9 +69,33 @@ work.
 | Document | Topic |
 |---|---|
 | [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
-| [hybrid-runtime.md](plan/hybrid-runtime.md) | Proposed Joyeer/C runtime split, internal storage/ABI capabilities, acyclic bootstrap, string migration, and acceptance gates |
-| [library.md](plan/library.md) | Planned Foundation/System/Collections/Testing modules, source layout, fern management, and installed-library resolution gates |
+| [toolchain-libraries.md](plan/toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
+| [native-link-inputs.md](plan/native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
+| [test-audit.md](plan/test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
+| [runtime-in-joyeer.md](plan/runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
+| [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
+| [library.md](plan/library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
+
+## Decisions
+
+[decisions/](decisions/README.md) records contested or non-obvious choices and
+why the alternatives were rejected. They are not normative; the adopted rule is
+in the spec.
+
+| Record | Decision |
+|---|---|
+| [0001](decisions/0001-stdin-line-reading.md) | Line-oriented standard input with a required byte limit |
+| [0002](decisions/0002-platform-annotation.md) | `@platform` selects per-OS function variants |
+| [0003](decisions/0003-pure-joyeer-filesystem.md) | The filesystem in Joyeer, with bare byte pointers |
+| [0004](decisions/0004-remove-host-builtins.md) | Remove the compiler's host built-ins; `System` is the only provider |
+| [0005](decisions/0005-runtime-unsafe-memory.md) | A runtime-only unsafe memory layer of `Int`-address intrinsics |
+| [0006](decisions/0006-runprocess-in-joyeer.md) | `runProcess` in Joyeer over `CreateProcessW` and `posix_spawn` |
+| [0007](decisions/0007-stdio-in-joyeer.md) | `writeStderr` and `readStdinLine` over the C library's own streams |
+| [0008](decisions/0008-runtime-core-build-shape.md) | The Joyeer runtime core is one module compiled by the build-tree compiler into one object in `JoyeerRuntime` |
+| [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
+| [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
+| [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
 
 ## Conventions
 

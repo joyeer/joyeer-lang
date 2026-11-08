@@ -1,3 +1,5 @@
+import System
+
 func main(args: [String]): Int {
     if args.count == 0 { return 73 }
     if args[0] == "child" {

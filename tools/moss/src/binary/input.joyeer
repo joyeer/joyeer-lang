@@ -1,3 +1,5 @@
+import System
+
 public enum InputError {
     InspectFailed(String, FileSystemError),
     NotRegular(String, FileKind),

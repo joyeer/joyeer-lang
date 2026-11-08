@@ -1,0 +1,449 @@
+import System
+import Foundation
+
+// Tests for writeStderr and readStdinLine (spec §18.4, §18.5) as `System`
+// provides them.
+//
+// Standard error is pointed at a scratch file by duplicating a descriptor onto
+// descriptor 2, so the stream object itself is never replaced and is restored
+// by duplicating the saved descriptor back. Standard input is re-opened from a
+// scratch file with freopen, which also discards any read-ahead.
+
+private let maxLine: Int = 9223372036854775807
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@platform(windows)
+@c_extern(symbol: "__acrt_iob_func")
+private func iobFunction(index: UInt32): Int
+
+@platform(linux)
+@c_data(symbol: "stdin")
+private func stdinVariable(): Int
+
+@platform(linux)
+@c_data(symbol: "stdout")
+private func stdoutVariable(): Int
+
+@platform(linux)
+@c_data(symbol: "stderr")
+private func stderrVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdinp")
+private func stdinVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stdoutp")
+private func stdoutVariable(): Int
+
+@platform(macos)
+@c_data(symbol: "__stderrp")
+private func stderrVariable(): Int
+
+// The C FILE* of standard input (0), output (1) or error (2).
+@platform(windows)
+private func streamOf(which: Int32): Int { return iobFunction(index: which as UInt32) }
+
+@platform(posix)
+private func streamOf(which: Int32): Int {
+    if which == 0 { return load64(address: stdinVariable()) as Int }
+    if which == 1 { return load64(address: stdoutVariable()) as Int }
+    return load64(address: stderrVariable()) as Int
+}
+
+@c_extern(symbol: "fopen", pointer: "path", pointer: "mode")
+private func openFile(path: [UInt8], mode: [UInt8]): Int
+
+@c_extern(symbol: "freopen", pointer: "path", pointer: "mode")
+private func reopenFile(path: [UInt8], mode: [UInt8], stream: Int): Int
+
+@c_extern(symbol: "fclose")
+private func closeFile(stream: Int): Int32
+
+@c_extern(symbol: "fflush")
+private func flushFile(stream: Int): Int32
+
+@c_extern(symbol: "clearerr")
+private func clearFile(stream: Int): Void
+
+@c_extern(symbol: "joyeer_stdin_discard")
+private func discardInput(): Void
+
+@c_extern(symbol: "joyeer_stdout_write", pointer: "buffer")
+private func writeOutput(buffer: [UInt8], count: Int): Int32
+
+@c_extern(symbol: "joyeer_stdout_flush")
+private func flushOutput(): Int32
+
+@platform(windows)
+@c_extern(symbol: "_dup")
+private func dupW(descriptor: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "_dup2")
+private func dup2W(source: Int32, target: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "_close")
+private func closeW(descriptor: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "_fileno")
+private func filenoW(stream: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "_setmode")
+private func setModeW(descriptor: Int32, mode: Int32): Int32
+
+@platform(posix)
+@c_extern(symbol: "dup")
+private func dupP(descriptor: Int32): Int32
+
+@platform(posix)
+@c_extern(symbol: "dup2")
+private func dup2P(source: Int32, target: Int32): Int32
+
+@platform(posix)
+@c_extern(symbol: "close")
+private func closeP(descriptor: Int32): Int32
+
+@platform(posix)
+@c_extern(symbol: "fileno")
+private func filenoP(stream: Int): Int32
+
+@platform(windows)
+private func duplicate(descriptor: Int32): Int32 { return dupW(descriptor: descriptor) }
+@platform(posix)
+private func duplicate(descriptor: Int32): Int32 { return dupP(descriptor: descriptor) }
+
+@platform(windows)
+private func duplicateOnto(source: Int32, target: Int32): Int32 { return dup2W(source: source, target: target) }
+@platform(posix)
+private func duplicateOnto(source: Int32, target: Int32): Int32 { return dup2P(source: source, target: target) }
+
+@platform(windows)
+private func closeDescriptor(descriptor: Int32): Int32 { return closeW(descriptor: descriptor) }
+@platform(posix)
+private func closeDescriptor(descriptor: Int32): Int32 { return closeP(descriptor: descriptor) }
+
+@platform(windows)
+private func descriptorOf(stream: Int): Int32 { return filenoW(stream: stream) }
+@platform(posix)
+private func descriptorOf(stream: Int): Int32 { return filenoP(stream: stream) }
+
+// Windows opens a "t" stream in text mode, which translates newlines unless the
+// operation switches it to binary; POSIX has no such mode.
+@platform(windows)
+private func writeTextMode(): String { return "wt" }
+@platform(posix)
+private func writeTextMode(): String { return "w" }
+
+@platform(windows)
+private func readTextMode(): String { return "rt" }
+@platform(posix)
+private func readTextMode(): String { return "r" }
+
+private func native(text: String): [UInt8] {
+    var bytes = text.utf8()
+    &bytes.append(element: 0)
+    return bytes
+}
+
+private func describeStderr(outcome: Result<Void, StderrError>): String {
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => match error {
+            .WriteFailed(code) => "err:" + decimalString(value: code),
+        },
+    }
+}
+
+private func shown(line: String): String {
+    if line.count > 64 { return "[" + decimalString(value: line.count) + " bytes]" }
+    return "[" + line + "]"
+}
+
+private func describeLine(outcome: Result<String, StdinError>): String {
+    return match outcome {
+        .Ok(line) => shown(line: line),
+        .Err(error) => match error {
+            .EndOfInput(_) => "<end>",
+            .LineTooLong(_) => "<long>",
+            .ReadFailed(code) => "<failed:" + decimalString(value: code) + ">",
+        },
+    }
+}
+
+// The scratch file's contents as exact bytes.
+private func fileText(path: String): String {
+    return describeLegacy(outcome: System.readFile(path: path))
+}
+
+// Points descriptor 2 at `source`, a stream opened by the caller, and returns
+// the saved original, or -1.
+private func redirectStderr(source: Int): Int32 {
+    if source == 0 { return -1 }
+    let stderrStream = streamOf(which: 2)
+    ignoreInt(value: flushFile(stream: stderrStream))
+    let saved = duplicate(descriptor: descriptorOf(stream: stderrStream))
+    if saved < 0 {
+        ignoreInt(value: closeFile(stream: source))
+        return -1
+    }
+    let moved = duplicateOnto(source: descriptorOf(stream: source), target: descriptorOf(stream: stderrStream))
+    ignoreInt(value: closeFile(stream: source))
+    if moved < 0 {
+        ignoreInt(value: closeDescriptor(descriptor: saved))
+        return -1
+    }
+    return saved
+}
+
+private func restoreStderr(saved: Int32) {
+    let stderrStream = streamOf(which: 2)
+    ignoreInt(value: flushFile(stream: stderrStream))
+    ignoreInt(value: duplicateOnto(source: saved, target: descriptorOf(stream: stderrStream)))
+    ignoreInt(value: closeDescriptor(descriptor: saved))
+    clearFile(stream: stderrStream)
+}
+
+private func ignoreInt(value: Int32) {
+}
+
+private func writeVia(contents: String): String {
+    return describeStderr(outcome: System.writeStderr(contents: contents))
+}
+
+// Writes `contents` with standard error redirected to a new file opened in
+// `mode`, and renders the outcome and what the file then holds.
+private func captured(contents: String, path: String, mode: String): String {
+    let saved = redirectStderr(source: openFile(path: native(text: path), mode: native(text: mode)))
+    if saved < 0 { return "SETUP redirect" }
+    let outcome = writeVia(contents: contents)
+    restoreStderr(saved: saved)
+    return outcome + "|" + fileText(path: path)
+}
+
+private func stderrScenario(label: String, contents: String, directory: String, mode: String, expected: String): Int {
+    let actual = captured(contents: contents, path: directory + "/captured", mode: mode)
+    ignoreUnit(outcome: System.removeFile(path: directory + "/captured"))
+    if actual == expected { return 0 }
+    print(value: "UNEXPECTED stderr " + label)
+    print(value: "  expected: " + expected)
+    print(value: "  actual:   " + actual)
+    return 1
+}
+
+// A descriptor that was opened for reading only: every write to it fails.
+private func readOnlyScenario(directory: String): Int {
+    let path = directory + "/readonly"
+    if describeUnit(outcome: System.writeFileNew(path: path, contents: "x")) != "ok" { return 1 }
+    let saved = redirectStderr(source: openFile(path: native(text: path), mode: native(text: "rb")))
+    if saved < 0 { return 1 }
+    let outcome = writeVia(contents: "y")
+    restoreStderr(saved: saved)
+    ignoreUnit(outcome: System.removeFile(path: path))
+    if outcome == "err:9" { return 0 }
+    print(value: "UNEXPECTED stderr read-only descriptor: " + outcome)
+    return 1
+}
+
+// A closed descriptor is a write failure, not a crash.
+private func closedScenario(): Int {
+    var failures = 0
+    for contents in ["", "y"] {
+        let stderrStream = streamOf(which: 2)
+        ignoreInt(value: flushFile(stream: stderrStream))
+        let descriptor = descriptorOf(stream: stderrStream)
+        let saved = duplicate(descriptor: descriptor)
+        if saved < 0 { return failures + 1 }
+        ignoreInt(value: closeDescriptor(descriptor: descriptor))
+        let outcome = writeVia(contents: contents)
+        restoreStderr(saved: saved)
+        if outcome != "err:9" {
+            print(value: "UNEXPECTED stderr closed descriptor (" + decimalString(value: contents.count) + " bytes): " + outcome)
+            failures = failures + 1
+        }
+    }
+    return failures
+}
+
+private func testStderr(): Int {
+    let directory = claimDirectory(prefix: "stdio-test-")
+    if directory == "" { return 1 }
+    let tricky = "J\0\n\r" + byteToString(value: 255) + byteToString(value: 192) + byteToString(value: 175) + "yr"
+    var failures = 0
+    failures = failures + stderrScenario(label: "exact bytes", contents: tricky, directory: directory,
+        mode: writeTextMode(), expected: "ok|ok:9:" + tricky)
+    failures = failures + stderrScenario(label: "newline", contents: "a\nb\n", directory: directory,
+        mode: writeTextMode(), expected: "ok|ok:4:a\nb\n")
+    failures = failures + stderrScenario(label: "empty", contents: "", directory: directory,
+        mode: writeTextMode(), expected: "ok|ok:0:")
+    failures = failures + readOnlyScenario(directory: directory)
+    failures = failures + closedScenario()
+    ignoreUnit(outcome: System.removeFile(path: directory + "/mode"))
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
+    return failures
+}
+
+// Re-opens standard input from a scratch file, discarding any read-ahead. On
+// Windows the stream is opened in text mode, so only the operation's own switch
+// to binary mode makes control-Z and CRLF bytes exact.
+private func feed(path: String, contents: String): Bool {
+    if describeUnit(outcome: System.writeFileNew(path: path, contents: contents)) != "ok" { return false }
+    let reopened = reopenFile(path: native(text: path), mode: native(text: readTextMode()), stream: streamOf(which: 0)) != 0
+    discardInput()
+    return reopened
+}
+
+private func detachInput() {
+    if reopenFile(path: native(text: nullDevice()), mode: native(text: "r"), stream: streamOf(which: 0)) == 0 { }
+    discardInput()
+}
+
+@platform(windows)
+private func nullDevice(): String { return "NUL" }
+@platform(posix)
+private func nullDevice(): String { return "/dev/null" }
+
+// One call per limit, rendered in order.
+private func drain(limits: [Int]): String {
+    var text = ""
+    var index = 0
+    while index < limits.count {
+        text = text + describeLine(outcome: System.readStdinLine(maximumBytes: limits[index]))
+        index = index + 1
+    }
+    return text
+}
+
+private func repeated(limit: Int, times: Int): [Int] {
+    var limits: [Int] = []
+    var index = 0
+    while index < times {
+        &limits.append(element: limit)
+        index = index + 1
+    }
+    return limits
+}
+
+private func stdinScenario(label: String, directory: String, contents: String, limits: [Int], expected: String): Int {
+    let path = directory + "/input"
+    if !feed(path: path, contents: contents) { return 1 }
+    let actual = drain(limits: limits)
+    detachInput()
+    ignoreUnit(outcome: System.removeFile(path: path))
+    if actual == expected { return 0 }
+    print(value: "UNEXPECTED stdin " + label)
+    print(value: "  expected: " + expected)
+    print(value: "  actual:   " + actual)
+    return 1
+}
+
+private func bigLine(): String {
+    var text = "x"
+    var index = 0
+    while index < 17 {
+        text = text + text
+        index = index + 1
+    }
+    return text
+}
+
+// A peer waiting for a response must see earlier output before the read
+// blocks: standard output is pointed at a scratch file and the runtime buffers it
+// (it is not a terminal), so the bytes can only appear there if the read flushed them.
+private func flushScenario(directory: String): Int {
+    let input = directory + "/flush-input"
+    let output = directory + "/flush-output"
+    if !feed(path: input, contents: "go
+") { return 1 }
+    ignoreInt(value: flushOutput())
+    let stdoutStream = streamOf(which: 1)
+    ignoreInt(value: flushFile(stream: stdoutStream))
+    let saved = duplicate(descriptor: descriptorOf(stream: stdoutStream))
+    let target = openFile(path: native(text: output), mode: native(text: "wb"))
+    if saved < 0 || target == 0 { return 1 }
+    ignoreInt(value: duplicateOnto(source: descriptorOf(stream: target), target: descriptorOf(stream: stdoutStream)))
+    ignoreInt(value: closeFile(stream: target))
+    let prompt = native(text: "prompt>")
+    ignoreInt(value: writeOutput(buffer: prompt, count: 7))
+    let line = describeLine(outcome: System.readStdinLine(maximumBytes: 8))
+    // Read the destination while standard output still points at it.
+    let seen = fileText(path: output)
+    ignoreInt(value: flushOutput())
+    ignoreInt(value: duplicateOnto(source: saved, target: descriptorOf(stream: stdoutStream)))
+    ignoreInt(value: closeDescriptor(descriptor: saved))
+    clearFile(stream: stdoutStream)
+    detachInput()
+    ignoreUnit(outcome: System.removeFile(path: input))
+    ignoreUnit(outcome: System.removeFile(path: output))
+    if line == "[go]" && seen == "ok:7:prompt>" { return 0 }
+    print(value: "MISMATCH stdin flush: line " + line + ", output " + seen)
+    return 1
+}
+
+// A closed descriptor is a read failure, not a crash.
+private func closedInputScenario(): Int {
+    let stdinStream = streamOf(which: 0)
+    let descriptor = descriptorOf(stream: stdinStream)
+    let saved = duplicate(descriptor: descriptor)
+    if saved < 0 { return 1 }
+    ignoreInt(value: closeDescriptor(descriptor: descriptor))
+    let outcome = drain(limits: [8])
+    ignoreInt(value: duplicateOnto(source: saved, target: descriptor))
+    ignoreInt(value: closeDescriptor(descriptor: saved))
+    clearFile(stream: stdinStream)
+    if outcome == "<failed:9>" { return 0 }
+    print(value: "UNEXPECTED stdin closed descriptor: " + outcome)
+    return 1
+}
+
+private func testStdin(): Int {
+    let directory = claimDirectory(prefix: "stdin-test-")
+    if directory == "" { return 1 }
+    let big = bigLine()
+    var failures = 0
+    failures = failures + stdinScenario(label: "lines", directory: directory,
+        contents: "one\ntwo\r\n\nthree\r\r\n", limits: repeated(limit: 64, times: 5),
+        expected: "[one][two][][three\r]<end>")
+    failures = failures + stdinScenario(label: "final line", directory: directory,
+        contents: "a\nlast\r", limits: repeated(limit: 64, times: 4),
+        expected: "[a][last\r]<end><end>")
+    failures = failures + stdinScenario(label: "empty stream", directory: directory,
+        contents: "", limits: repeated(limit: 8, times: 2), expected: "<end><end>")
+    failures = failures + stdinScenario(label: "empty line", directory: directory,
+        contents: "\n", limits: repeated(limit: 8, times: 2), expected: "[]<end>")
+    failures = failures + stdinScenario(label: "nul, high bytes, control-z", directory: directory,
+        contents: "a\0" + byteToString(value: 255) + byteToString(value: 26) + "b\nnext\n",
+        limits: repeated(limit: 64, times: 3),
+        expected: "[a\0" + byteToString(value: 255) + byteToString(value: 26) + "b][next]<end>")
+    failures = failures + stdinScenario(label: "limit", directory: directory,
+        contents: "12345\n12345\r\n123456\n1234567890123456789\nok\n", limits: repeated(limit: 5, times: 6),
+        expected: "[12345][12345]<long><long>[ok]<end>")
+    failures = failures + stdinScenario(label: "zero limit", directory: directory,
+        contents: "\nx\n\r\ny", limits: repeated(limit: 0, times: 5),
+        expected: "[]<long>[]<long><end>")
+    failures = failures + stdinScenario(label: "unterminated overlong", directory: directory,
+        contents: "abcdef", limits: repeated(limit: 3, times: 2), expected: "<long><end>")
+    failures = failures + stdinScenario(label: "large lines", directory: directory,
+        contents: big + "\n" + big + "\n", limits: repeated(limit: 131072, times: 3),
+        expected: "[131072 bytes][131072 bytes]<end>")
+    failures = failures + stdinScenario(label: "large lines over limit", directory: directory,
+        contents: big + "\n" + big + "\n", limits: repeated(limit: 131071, times: 3),
+        expected: "<long><long><end>")
+    failures = failures + stdinScenario(label: "negative and maximal limits", directory: directory,
+        contents: "keep\n", limits: [-1, maxLine, maxLine],
+        expected: "<failed:22>[keep]<end>")
+    failures = failures + flushScenario(directory: directory)
+    failures = failures + closedInputScenario()
+    detachInput()
+    ignoreUnit(outcome: System.removeDirectory(path: directory))
+    return failures
+}
+
+public func testStdio(): Int {
+    return testStderr() + testStdin()
+}

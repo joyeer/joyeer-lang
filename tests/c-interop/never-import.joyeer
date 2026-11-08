@@ -1,0 +1,8 @@
+// A C function that does not return, declared with the result type Never.
+@c_extern(symbol: "exit")
+func exitProcess(status: Int32): Never
+
+func main() {
+    print(value: "before exit")
+    exitProcess(status: 3)
+}

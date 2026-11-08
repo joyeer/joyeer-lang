@@ -86,6 +86,9 @@ private:
 
     syntax::NodePtr parseTopLevelItem();
     syntax::AttributeSyntax parseAttribute();
+    // Annotations are valid only on top-level functions. Consumes and reports
+    // any that precede a struct, enum, or extension member.
+    bool rejectMemberAnnotations();
     syntax::BindingDeclSyntax::Ptr parseBindingDecl(bool requireType);
     syntax::FunctionDeclSyntax::Ptr parseFunctionDecl(bool hasAttributes = false);
     syntax::FunctionDeclSyntax::Ptr parseMethodDecl();
@@ -135,6 +138,7 @@ private:
     // `declarationColumn`. A line-leading `func` at or left of that column
     // is the next top-level item of a body missing its `}`, not a member.
     [[nodiscard]] bool isNestedMethodStart(uint32_t declarationColumn) const;
+    [[nodiscard]] bool isNestedAnnotation(uint32_t declarationColumn) const;
     // Column of the first token of the declaration whose keyword is at `keyword`,
     // including a preceding same-line visibility modifier.
     [[nodiscard]] uint32_t declarationColumn(size_t keyword) const;

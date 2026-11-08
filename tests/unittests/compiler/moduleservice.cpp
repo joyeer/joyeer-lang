@@ -468,6 +468,185 @@ TEST_F(ModuleServiceTest, RejectsDependenciesWithoutARootCompilationUnit) {
     EXPECT_TRUE(hasCode("module.missing-root")) << errors();
 }
 
+constexpr auto platformSource =
+        "@platform(windows)\nfunc code(): Int { return 1111 }\n"
+        "@platform(posix)\nfunc code(): Int { return 2222 }\n"
+        "func main() { print(value: code()) }\n";
+
+TEST_F(ModuleServiceTest, SelectsPlatformFunctionsForTheTargetPlatform) {
+    root("main.joyeer", platformSource);
+    std::string windowsIR;
+    std::string linuxIR;
+    for (const auto target : {joyeer::semantic::TargetPlatform::windows,
+                              joyeer::semantic::TargetPlatform::linux}) {
+        options.targetPlatform = target;
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+        const auto& ir = compiler.getLastCompiledSourceFile()->llvmIR;
+        (target == joyeer::semantic::TargetPlatform::windows ? windowsIR : linuxIR) = ir;
+    }
+    EXPECT_NE(windowsIR.find("1111"), std::string::npos);
+    EXPECT_EQ(windowsIR.find("2222"), std::string::npos);
+    EXPECT_NE(linuxIR.find("2222"), std::string::npos);
+    EXPECT_EQ(linuxIR.find("1111"), std::string::npos);
+}
+
+TEST_F(ModuleServiceTest, DefaultsTheTargetPlatformToTheHost) {
+    EXPECT_EQ(options.targetPlatform, joyeer::semantic::hostPlatform());
+    root("main.joyeer", platformSource);
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(ModuleServiceTest, ReportsPlatformDiagnosticsWithTheirStableCodes) {
+    root("main.joyeer",
+         "@platform(posix)\nfunc code(): Int { return 1 }\n"
+         "@platform(linux)\nfunc code(): Int { return 2 }\n"
+         "func main() { print(value: code()) }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_TRUE(hasCode("platform.overlapping-variants")) << errors();
+}
+
+TEST_F(ModuleServiceTest, RejectsANonHostTargetUnlessValidating) {
+    root("main.joyeer", platformSource);
+    const auto other = joyeer::semantic::hostPlatform() == joyeer::semantic::TargetPlatform::windows
+            ? joyeer::semantic::TargetPlatform::linux
+            : joyeer::semantic::TargetPlatform::windows;
+    options.targetPlatform = other;
+    options.outputFile = directory / "out-program";
+    for (const auto mode : {joyeer::OutputMode::executable, joyeer::OutputMode::llvmIR,
+                            joyeer::OutputMode::runtimeObject}) {
+        diagnostics = Diagnostics();
+        options.outputMode = mode;
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        EXPECT_TRUE(hasCode("driver.unsupported-target-platform")) << errors();
+        EXPECT_FALSE(std::filesystem::exists(options.outputFile));
+    }
+    diagnostics = Diagnostics();
+    options.outputMode = joyeer::OutputMode::validate;
+    CompilerService validating(&diagnostics, options);
+    validating.compile();
+    EXPECT_FALSE(diagnostics.hasFailure()) << errors();
+}
+
+TEST_F(ModuleServiceTest, PlatformErrorsStopTheCompilationBeforeNameResolution) {
+    root("a.joyeer",
+         "@platform(posix)\nfunc code(): Int { return 1 }\n@platform(linux)\nfunc code(): Int { return 2 }\n"
+         "func main() { print(value: code()) }\n");
+    root("b.joyeer", "func other(): Int { return missing() }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_TRUE(hasCode("platform.overlapping-variants")) << errors();
+    EXPECT_FALSE(hasCode("name-resolution.undefined-name")) << errors();
+}
+
+TEST_F(ModuleServiceTest, PlatformDiagnosticsNameTheOtherFileWhenTheRelatedDeclarationIsElsewhere) {
+    root("a.joyeer", "@platform(posix)\nfunc code(): Int { return 1 }\nfunc main() { print(value: code()) }\n");
+    root("b.joyeer", "@platform(linux)\nfunc code(): Int { return 2 }\n");
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    ASSERT_TRUE(hasCode("platform.overlapping-variants")) << errors();
+    const auto found = std::find_if(diagnostics.errors.begin(), diagnostics.errors.end(),
+            [](const auto& error) { return error.code == "platform.overlapping-variants"; });
+    EXPECT_NE(found->message.find("a.joyeer"), std::string::npos) << found->message;
+    EXPECT_TRUE(found->help.has_value());
+}
+
+TEST_F(ModuleServiceTest, MissingReturnInASelectedFunctionPointsAtTheFunctionNotTheAnnotation) {
+    const auto missingReturnLine = [&](const std::string& source) {
+        options.sourceFiles.clear();
+        diagnostics = Diagnostics();
+        root("main.joyeer", source);
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        const auto found = std::find_if(diagnostics.errors.begin(), diagnostics.errors.end(),
+                [](const auto& error) { return error.code == "semantic-analysis.missing-return"; });
+        EXPECT_NE(found, diagnostics.errors.end()) << errors();
+        return found == diagnostics.errors.end() ? -1 : found->lineAt;
+    };
+    // The annotated function's error lands on the line the unannotated one
+    // gets when it sits where the annotated function's name is.
+    const auto annotated = missingReturnLine(
+            "@platform(windows, linux, macos)\nfunc broken(): Int { }\nfunc main() { }\n");
+    const auto plain = missingReturnLine("\nfunc broken(): Int { }\nfunc main() { }\n");
+    EXPECT_EQ(annotated, plain);
+}
+
+TEST_F(ModuleServiceTest, PlatformVariantsInADependencyAreSelectedForTheImporter) {
+    root("main.joyeer",
+         "import project.dep\nfunc main() { print(value: project.dep.code()) }\n");
+    dependency("project.dep", "dep.joyeer",
+               "@platform(windows)\npublic func code(): Int { return 1111 }\n"
+               "@platform(posix)\npublic func code(): Int { return 2222 }\n");
+    for (const auto target : {joyeer::semantic::TargetPlatform::windows,
+                              joyeer::semantic::TargetPlatform::macos}) {
+        diagnostics = Diagnostics();
+        options.targetPlatform = target;
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        ASSERT_FALSE(diagnostics.hasFailure()) << errors();
+        const auto& ir = compiler.getLastCompiledSourceFile()->llvmIR;
+        const auto expected = target == joyeer::semantic::TargetPlatform::windows ? "1111" : "2222";
+        EXPECT_NE(ir.find(expected), std::string::npos);
+    }
+}
+
+// The System filesystem is Joyeer code with one variant per platform. Only the
+// host's variant runs here, so compile the real library sources for every
+// target: this type-checks the others' bindings, signatures, and bodies.
+TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
+    const std::filesystem::path library = JOYEER_LIBRARY_SOURCES;
+    root("main.joyeer",
+         "import System\nfunc main() {\n"
+         "    match System.fileKind(path: \".\") {\n"
+         "        .Ok(kind) => print(value: 1),\n"
+         "        .Err(error) => print(value: 0),\n"
+         "    }\n"
+         "    match System.writeStderr(contents: \"x\") {\n"
+         "        .Ok(_) => print(value: 1),\n"
+         "        .Err(error) => print(value: 0),\n"
+         "    }\n"
+         "    match System.readStdinLine(maximumBytes: 8) {\n"
+         "        .Ok(line) => print(value: line),\n"
+         "        .Err(error) => print(value: 0),\n"
+         "    }\n}\n");
+    options.modules.push_back({"Foundation",
+            {library / "Foundation" / "text.joyeer", library / "Foundation" / "checksum.joyeer"}});
+    options.modules.push_back({"System", {
+            library / "System" / "path.joyeer", library / "System" / "messages.joyeer",
+            library / "System" / "filesystem.joyeer", library / "System" / "filesystem_windows.joyeer",
+            library / "System" / "filesystem_posix.joyeer", library / "System" / "filesystem_linux.joyeer",
+            library / "System" / "legacy_file.joyeer",
+            library / "System" / "process.joyeer", library / "System" / "process_windows.joyeer",
+            library / "System" / "process_posix.joyeer", library / "System" / "process_linux.joyeer",
+            library / "System" / "stdio.joyeer",
+            library / "System" / "cruntime.joyeer"}});
+    options.runtimeModules = {"System"};
+    for (const auto target : {joyeer::semantic::TargetPlatform::windows, joyeer::semantic::TargetPlatform::linux,
+                              joyeer::semantic::TargetPlatform::macos}) {
+        diagnostics = Diagnostics();
+        options.targetPlatform = target;
+        CompilerService compiler(&diagnostics, options);
+        compiler.compile();
+        EXPECT_FALSE(diagnostics.hasFailure())
+                << joyeer::semantic::platformName(target) << ":\n" << errors();
+    }
+}
+
+TEST_F(ModuleServiceTest, ReferenceToAFunctionWithoutAVariantForTheTargetFails) {
+    root("main.joyeer",
+         "@platform(windows)\nfunc code(): Int { return 1 }\n"
+         "func main() { print(value: code()) }\n");
+    options.targetPlatform = joyeer::semantic::TargetPlatform::linux;
+    CompilerService compiler(&diagnostics, options);
+    compiler.compile();
+    EXPECT_TRUE(hasCode("name-resolution.undefined-name")) << errors();
+}
+
 // Writes <directory>/toolchain/lib with an index stamped for this compiler.
 class StandardLibraryTest : public ModuleServiceTest {
 protected:

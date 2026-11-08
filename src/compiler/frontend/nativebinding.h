@@ -3,8 +3,10 @@
 
 #include "token.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace joyeer {
 
@@ -18,6 +20,20 @@ struct NativeBinding {
     NativeBindingKind kind = NativeBindingKind::cImport;
     std::string symbol;
     SourceSpan span;
+    // Indices of `[UInt8]` parameters passed as a bare data pointer, with no
+    // count (`pointer: "label"` on the annotation). An `inout` byte buffer is
+    // always one of these.
+    std::vector<uint32_t> pointerParameters;
+    // `@c_data`: a bodyless import whose value is the address of a C data symbol
+    // (spec 19.4.6). No function is declared and nothing is called.
+    bool dataSymbol = false;
+
+    [[nodiscard]] bool passesPointer(size_t parameter) const {
+        for (const auto index : pointerParameters) {
+            if (index == parameter) return true;
+        }
+        return false;
+    }
 };
 
 [[nodiscard]] inline bool isCIdentifier(std::string_view name) {
@@ -30,6 +46,12 @@ struct NativeBinding {
         if (!letter && (index == 0 || character < '0' || character > '9')) return false;
     }
     return true;
+}
+
+// The C entry points a core unit may export (spec 19.4.6): main for POSIX and
+// narrow Windows startup, wmain for the wide Windows startup.
+[[nodiscard]] inline bool isCoreEntrySymbol(std::string_view name) {
+    return name == "main" || name == "wmain";
 }
 
 [[nodiscard]] inline bool isCEntrySymbol(std::string_view name) {

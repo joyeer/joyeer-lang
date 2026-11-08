@@ -1,0 +1,86 @@
+import Foundation
+
+// Standard error and standard input (spec §18.4 and §18.5), written in Joyeer over
+// the runtime's own streams (`joyeer_stderr_write`, `joyeer_stdout_flush`,
+// `joyeer_stdin_read_byte`, runtime/joyeer/streams.joyeer), which talk to the
+// operating system directly: no C library stream, buffer or `errno` is involved
+// (decision 0011). Standard error is written at once; standard input is read through
+// a buffer of the runtime's, a byte at a time, and is never translated.
+//
+// The streams report errno-style codes (9 bad descriptor, 32 broken pipe, 28 disk
+// full, 13 access denied, otherwise 5), the codes this module has always carried.
+
+private let intMax: Int = 9223372036854775807
+private let invalidArgument: Int = 22
+private let newline: Int = 10
+private let carriageReturn: UInt8 = 13
+
+@c_extern(symbol: "joyeer_stderr_write", pointer: "buffer")
+private func writeErrorBytes(buffer: [UInt8], count: Int): Int32
+
+@c_extern(symbol: "joyeer_stdout_flush")
+private func flushOutput(): Int32
+
+@c_extern(symbol: "joyeer_stdin_read_byte")
+private func nextByte(): Int32
+
+public func writeStderr(contents: String): Result<Void, StderrError> {
+    if contents.count != 0 {
+        let bytes = contents.utf8()
+        let code = writeErrorBytes(buffer: bytes, count: bytes.count) as Int
+        if code != 0 { return .Err(.WriteFailed(code)) }
+    }
+    return .Ok(())
+}
+
+public func readStdinLine(maximumBytes: Int): Result<String, StdinError> {
+    if maximumBytes < 0 { return .Err(.ReadFailed(invalidArgument)) }
+
+    // A peer waiting for a prompt must see earlier output before this blocks.
+    // A flush failure is ignored: print has no error path.
+    if flushOutput() != 0 { }
+
+    // Hold at most maximumBytes + 1 bytes: the extra byte lets a maximal line
+    // end in CR before LF. Anything longer is counted as overflow and discarded
+    // through the terminator, so the stream stays line-aligned.
+    var cap = intMax
+    if maximumBytes != intMax { cap = maximumBytes + 1 }
+    var data: [UInt8] = []
+    var overflow = false
+    var sawByte = false
+    var terminated = false
+    var done = false
+    var failure = 0
+    while !done {
+        let next = nextByte() as Int
+        if next == -1 {
+            done = true
+        } else if next < -1 {
+            failure = 0 - next
+            done = true
+        } else {
+            sawByte = true
+            if next == newline {
+                terminated = true
+                done = true
+            } else {
+                if !overflow {
+                    if data.count == cap {
+                        overflow = true
+                    } else {
+                        &data.append(element: next as UInt8)
+                    }
+                }
+            }
+        }
+    }
+
+    if failure != 0 { return .Err(.ReadFailed(failure)) }
+    if !sawByte { return .Err(.EndOfInput(0)) }
+    var length = data.count
+    if terminated && !overflow && length != 0 && data[length - 1] == carriageReturn {
+        length = length - 1
+    }
+    if overflow || length > maximumBytes { return .Err(.LineTooLong(0)) }
+    return .Ok(stringFromBytes(bytes: data, count: length))
+}

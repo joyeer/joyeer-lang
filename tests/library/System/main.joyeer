@@ -34,6 +34,10 @@ func main(args: [String]): Int {
     failures = failures + check(name: "signaled status",
         ok: processStatusMessage(status: .Signaled(9)) == "terminated by signal 9")
 
+    failures = failures + testFileSystem()
+    failures = failures + testProcess()
+    failures = failures + testStdio()
+
     if failures == 0 { print(value: "System tests passed") }
     return failures
 }

@@ -1,0 +1,43 @@
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+func callVoid1(target: Int, first: Int): Void
+
+// A Joyeer function exported from this very unit, reached by name.
+@c_export(symbol: "cinterop_joyeer_mark")
+public func joyeerMark(cell: Int): Void {
+    store64(address: cell, value: 88)
+}
+
+// Slots 0 to 15 belong to the runtime core (the allocation counter is slot 0).
+func exercise(): Int {
+    let cell = slot(index: 40)
+    // A C function in another object.
+    callVoid1(target: addressOfSymbol(name: "cinterop_mark"), first: cell)
+    if load64(address: cell) != 77 { return 1 }
+    // A function defined in this unit.
+    callVoid1(target: addressOfSymbol(name: "cinterop_joyeer_mark"), first: slot(index: 41))
+    if load64(address: slot(index: 41)) != 88 { return 2 }
+    // The same name always gives the same address.
+    if addressOfSymbol(name: "cinterop_mark") != addressOfSymbol(name: "cinterop_mark") { return 3 }
+    return 0
+}
+
+func main() {
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    print(value: "symbol addresses passed")
+}

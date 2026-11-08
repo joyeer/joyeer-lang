@@ -1,0 +1,488 @@
+import System
+import Foundation
+
+// Tests for the filesystem operations of spec §18.2 as `System` provides them.
+// Results are rendered by error case, never by platform code, so one expected
+// value holds on every host unless the platforms genuinely differ; those cases
+// state the Windows value and the POSIX value (or the POSIX alternatives).
+
+func fsCase(error: FileSystemError): String {
+    return match error {
+        .InvalidPath(_) => "InvalidPath",
+        .NotFound(_) => "NotFound",
+        .PermissionDenied(_) => "PermissionDenied",
+        .AlreadyExists(_) => "AlreadyExists",
+        .NotDirectory(_) => "NotDirectory",
+        .IsDirectory(_) => "IsDirectory",
+        .Other(_) => "Other",
+    }
+}
+
+func describeText(outcome: Result<String, FileSystemError>): String {
+    return match outcome {
+        .Ok(text) => "ok:" + decimalString(value: text.count) + ":" + text,
+        .Err(error) => "err:" + fsCase(error: error),
+    }
+}
+
+func describeLegacy(outcome: Result<String, IOError>): String {
+    return match outcome {
+        .Ok(text) => "ok:" + decimalString(value: text.count) + ":" + text,
+        .Err(error) => match error {
+            .NotFound(_) => "err:not-found",
+            .PermissionDenied(_) => "err:denied",
+            .InvalidPath(_) => "err:invalid",
+            .Other(_) => "err:other",
+        },
+    }
+}
+
+func describeUnit(outcome: Result<Void, FileSystemError>): String {
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => "err:" + fsCase(error: error),
+    }
+}
+
+func describeKind(outcome: Result<FileKind, FileSystemError>): String {
+    return match outcome {
+        .Ok(kind) => match kind {
+            .File => "ok:file",
+            .Directory => "ok:directory",
+            .Symlink => "ok:symlink",
+            .Other => "ok:other",
+        },
+        .Err(error) => "err:" + fsCase(error: error),
+    }
+}
+
+func describeNames(outcome: Result<[String], FileSystemError>): String {
+    return match outcome {
+        .Ok(names) => joinNames(names: names),
+        .Err(error) => "err:" + fsCase(error: error),
+    }
+}
+
+func describeJoin(outcome: Result<String, FileSystemError>): String {
+    return match outcome {
+        .Ok(text) => "ok:" + text,
+        .Err(error) => "err:" + fsCase(error: error),
+    }
+}
+
+func joinNames(names: [String]): String {
+    var text = "ok:" + decimalString(value: names.count)
+    var index = 0
+    while index < names.count {
+        text = text + "|" + names[index]
+        index = index + 1
+    }
+    return text
+}
+
+@platform(windows)
+func hostValue(windows: String, posix: String): String { return windows }
+@platform(posix)
+func hostValue(windows: String, posix: String): String { return posix }
+
+@platform(windows)
+func hostValues(windows: [String], posix: [String]): [String] { return windows }
+@platform(posix)
+func hostValues(windows: [String], posix: [String]): [String] { return posix }
+
+func agree(label: String, expected: String, actual: String): Int {
+    if expected == actual { return 0 }
+    print(value: "MISMATCH " + label)
+    print(value: "  expected: " + expected)
+    print(value: "  actual:   " + actual)
+    return 1
+}
+
+// Passes when `actual` is any of `options`: for results the platforms word
+// differently (which error a POSIX call reports for a directory, say).
+func agreeAny(label: String, options: [String], actual: String): Int {
+    for option in options {
+        if option == actual { return 0 }
+    }
+    print(value: "MISMATCH " + label)
+    print(value: "  expected one of: " + joinNames(names: options))
+    print(value: "  actual:          " + actual)
+    return 1
+}
+
+// A name no other test run is using: the exclusive create settles races.
+func claimDirectory(prefix: String): String {
+    var attempt = 0
+    while attempt < 1000 {
+        let name = prefix + decimalString(value: attempt)
+        if describeUnit(outcome: System.createDirectory(path: name)) == "ok" { return name }
+        attempt = attempt + 1
+    }
+    return ""
+}
+
+func ignoreUnit(outcome: Result<Void, FileSystemError>) {
+}
+
+func zeroByte(): String {
+    return byteToString(value: 0)
+}
+
+func sampleBytes(): String {
+    return "line one" + zeroByte() + byteToString(value: 255) + byteToString(value: 200) + "\r\nend"
+}
+
+func largeText(): String {
+    var text = sampleBytes()
+    var round = 0
+    while round < 14 {
+        text = text + text
+        round = round + 1
+    }
+    return text
+}
+
+func pathIn(root: String, name: String): String {
+    return root + "/" + name
+}
+
+func seed(root: String, name: String, contents: String) {
+    ignoreUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: name), contents: contents))
+}
+
+func makeDirectory(root: String, name: String) {
+    ignoreUnit(outcome: System.createDirectory(path: pathIn(root: root, name: name)))
+}
+
+// The first `limit` bytes of `source` (or all of it) must be `outcome`.
+func checkPrefix(label: String, source: String, limit: Int, outcome: Result<String, FileSystemError>): Int {
+    return match outcome {
+        .Ok(text) => checkPrefixBytes(label: label, source: source, limit: limit, text: text),
+        .Err(error) => agree(label: label, expected: "ok", actual: "err:" + fsCase(error: error)),
+    }
+}
+
+func checkPrefixBytes(label: String, source: String, limit: Int, text: String): Int {
+    var want = source.count
+    if limit < want { want = limit }
+    if text.count != want {
+        return agree(label: label + " length", expected: decimalString(value: want), actual: decimalString(value: text.count))
+    }
+    var index = 0
+    while index < want {
+        if text[index] != source[index] {
+            return agree(label: label + " byte " + decimalString(value: index), expected: "same", actual: "different")
+        }
+        index = index + 1
+    }
+    return 0
+}
+
+func testReads(root: String): Int {
+    var failures = 0
+    let sample = sampleBytes()
+    let large = largeText()
+    seed(root: root, name: "data.bin", contents: sample)
+    seed(root: root, name: "empty.txt", contents: "")
+    seed(root: root, name: "large.bin", contents: large)
+    makeDirectory(root: root, name: "folder")
+
+    failures = failures + agree(label: "read data", expected: "ok:16:" + sample,
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "data.bin"))))
+    failures = failures + agree(label: "read empty", expected: "ok:0:",
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "empty.txt"))))
+    failures = failures + agree(label: "read large", expected: "ok:262144:" + large,
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "large.bin"))))
+    failures = failures + agree(label: "read missing", expected: "err:NotFound",
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "missing.bin"))))
+    failures = failures + agree(label: "read directory", expected: "err:IsDirectory",
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "folder"))))
+    failures = failures + agree(label: "read missing parent", expected: "err:NotFound",
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: "nowhere/file"))))
+
+    let size = sample.count
+    let limits: [Int] = [0, 1, size - 1, size, size + 1, 65536, 65537]
+    for limit in limits {
+        let tag = " limit " + decimalString(value: limit)
+        failures = failures + checkPrefix(label: "prefix data" + tag, source: sample, limit: limit,
+            outcome: System.readFilePrefix(path: pathIn(root: root, name: "data.bin"), maximumBytes: limit))
+        failures = failures + checkPrefix(label: "prefix large" + tag, source: large, limit: limit,
+            outcome: System.readFilePrefix(path: pathIn(root: root, name: "large.bin"), maximumBytes: limit))
+        failures = failures + checkPrefix(label: "prefix empty" + tag, source: "", limit: limit,
+            outcome: System.readFilePrefix(path: pathIn(root: root, name: "empty.txt"), maximumBytes: limit))
+    }
+    failures = failures + agree(label: "prefix negative", expected: "err:Other",
+        actual: describeText(outcome: System.readFilePrefix(path: pathIn(root: root, name: "data.bin"), maximumBytes: -1)))
+    failures = failures + agree(label: "prefix missing", expected: "err:NotFound",
+        actual: describeText(outcome: System.readFilePrefix(path: pathIn(root: root, name: "missing.bin"), maximumBytes: 0)))
+    failures = failures + agree(label: "prefix directory", expected: "err:IsDirectory",
+        actual: describeText(outcome: System.readFilePrefix(path: pathIn(root: root, name: "folder"), maximumBytes: 8)))
+    return failures
+}
+
+func testLegacyReads(root: String): Int {
+    var failures = 0
+    let sample = sampleBytes()
+    let large = largeText()
+    seed(root: root, name: "legacy.bin", contents: sample)
+    seed(root: root, name: "legacy-large.bin", contents: large)
+    seed(root: root, name: "legacy-empty.bin", contents: "")
+    failures = failures + agree(label: "legacy read data", expected: "ok:16:" + sample,
+        actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "legacy.bin"))))
+    failures = failures + agree(label: "legacy read large", expected: "ok:262144:" + large,
+        actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "legacy-large.bin"))))
+    failures = failures + agree(label: "legacy read empty", expected: "ok:0:",
+        actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "legacy-empty.bin"))))
+    failures = failures + agree(label: "legacy read missing", expected: "err:not-found",
+        actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "missing.bin"))))
+    failures = failures + agree(label: "legacy read missing parent", expected: "err:not-found",
+        actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "no/such/file"))))
+    // fopen succeeds on a directory on POSIX and the read then fails.
+    failures = failures + agreeAny(label: "legacy read directory",
+        options: hostValues(windows: ["err:denied"], posix: ["err:denied", "err:other"]),
+        actual: describeLegacy(outcome: System.readFile(path: pathIn(root: root, name: "folder"))))
+    failures = failures + agree(label: "legacy read embedded NUL", expected: "err:invalid",
+        actual: describeLegacy(outcome: System.readFile(path: "a" + zeroByte() + "b")))
+    failures = failures + agreeAny(label: "legacy read empty path",
+        options: hostValues(windows: ["err:invalid"], posix: ["err:not-found", "err:invalid"]),
+        actual: describeLegacy(outcome: System.readFile(path: "")))
+    return failures
+}
+
+func testWrites(root: String): Int {
+    var failures = 0
+    let file = pathIn(root: root, name: "new.bin")
+    let large = largeText()
+    failures = failures + agree(label: "write new", expected: "ok",
+        actual: describeUnit(outcome: System.writeFileNew(path: file, contents: large)))
+    failures = failures + agree(label: "written bytes", expected: "ok:262144:" + large,
+        actual: describeText(outcome: System.readFileUtf8(path: file)))
+    failures = failures + agree(label: "write existing", expected: "err:AlreadyExists",
+        actual: describeUnit(outcome: System.writeFileNew(path: file, contents: "x")))
+    failures = failures + agree(label: "existing untouched", expected: "ok:262144:" + large,
+        actual: describeText(outcome: System.readFileUtf8(path: file)))
+    failures = failures + agree(label: "write empty", expected: "ok",
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: "empty.bin"), contents: "")))
+    failures = failures + agree(label: "write missing parent", expected: "err:NotFound",
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: "no/such/file"), contents: "x")))
+    failures = failures + agree(label: "write over directory",
+        expected: hostValue(windows: "err:PermissionDenied", posix: "err:AlreadyExists"),
+        actual: describeUnit(outcome: System.writeFileNew(path: root, contents: "x")))
+    return failures
+}
+
+func testDirectories(root: String): Int {
+    var failures = 0
+    failures = failures + agree(label: "create directory", expected: "ok",
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "dir"))))
+    failures = failures + agree(label: "create existing", expected: "err:AlreadyExists",
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "dir"))))
+    failures = failures + agree(label: "create missing parent", expected: "err:NotFound",
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: "a/b"))))
+
+    seed(root: root, name: "dir/one.txt", contents: "1")
+    seed(root: root, name: "dir/two.txt", contents: "22")
+    failures = failures + agree(label: "list directory", expected: "ok:2|one.txt|two.txt",
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "dir"))))
+    makeDirectory(root: root, name: "hollow")
+    failures = failures + agree(label: "list empty", expected: "ok:0",
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "hollow"))))
+    failures = failures + agree(label: "list missing", expected: "err:NotFound",
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "nowhere"))))
+    failures = failures + agree(label: "list file", expected: "err:NotDirectory",
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: "dir/one.txt"))))
+    return failures
+}
+
+func testKinds(root: String): Int {
+    var failures = 0
+    seed(root: root, name: "plain.txt", contents: "x")
+    makeDirectory(root: root, name: "kinds")
+    failures = failures + agree(label: "kind file", expected: "ok:file",
+        actual: describeKind(outcome: System.fileKind(path: pathIn(root: root, name: "plain.txt"))))
+    failures = failures + agree(label: "kind directory", expected: "ok:directory",
+        actual: describeKind(outcome: System.fileKind(path: pathIn(root: root, name: "kinds"))))
+    failures = failures + agree(label: "kind missing", expected: "err:NotFound",
+        actual: describeKind(outcome: System.fileKind(path: pathIn(root: root, name: "missing"))))
+    failures = failures + agree(label: "kind missing below directory", expected: "err:NotFound",
+        actual: describeKind(outcome: System.fileKind(path: pathIn(root: root, name: "kinds/missing"))))
+    failures = failures + agree(label: "kind below a file",
+        expected: hostValue(windows: "err:NotFound", posix: "err:NotDirectory"),
+        actual: describeKind(outcome: System.fileKind(path: pathIn(root: root, name: "plain.txt/below"))))
+    return failures
+}
+
+func testRemovals(root: String): Int {
+    var failures = 0
+    seed(root: root, name: "doomed.txt", contents: "x")
+    seed(root: root, name: "plain.txt", contents: "x")
+    makeDirectory(root: root, name: "emptydir")
+    makeDirectory(root: root, name: "fulldir")
+    seed(root: root, name: "fulldir/inside.txt", contents: "x")
+    failures = failures + agree(label: "remove file", expected: "ok",
+        actual: describeUnit(outcome: System.removeFile(path: pathIn(root: root, name: "doomed.txt"))))
+    failures = failures + agree(label: "remove missing file", expected: "err:NotFound",
+        actual: describeUnit(outcome: System.removeFile(path: pathIn(root: root, name: "doomed.txt"))))
+    failures = failures + agreeAny(label: "remove file on directory",
+        options: hostValues(windows: ["err:IsDirectory"], posix: ["err:IsDirectory", "err:PermissionDenied"]),
+        actual: describeUnit(outcome: System.removeFile(path: pathIn(root: root, name: "emptydir"))))
+    failures = failures + agree(label: "remove directory on file", expected: "err:NotDirectory",
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "plain.txt"))))
+    failures = failures + agree(label: "remove nonempty directory", expected: "err:Other",
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "fulldir"))))
+    failures = failures + agree(label: "remove empty directory", expected: "ok",
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "emptydir"))))
+    failures = failures + agree(label: "remove missing directory", expected: "err:NotFound",
+        actual: describeUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: "emptydir"))))
+    return failures
+}
+
+// Each of these is rejected before the host is asked: an empty path, an
+// embedded NUL, and two byte sequences that are not UTF-8.
+func testInvalidPaths(): Int {
+    var failures = 0
+    let invalid: [String] = ["", "a" + zeroByte() + "b", "bad" + byteToString(value: 255),
+        byteToString(value: 192) + byteToString(value: 128)]
+    var index = 0
+    while index < invalid.count {
+        let path = invalid[index]
+        let label = "invalid path #" + decimalString(value: index)
+        failures = failures + agree(label: label + " read", expected: "err:InvalidPath",
+            actual: describeText(outcome: System.readFileUtf8(path: path)))
+        failures = failures + agree(label: label + " prefix", expected: "err:InvalidPath",
+            actual: describeText(outcome: System.readFilePrefix(path: path, maximumBytes: 4)))
+        failures = failures + agree(label: label + " write", expected: "err:InvalidPath",
+            actual: describeUnit(outcome: System.writeFileNew(path: path, contents: "x")))
+        failures = failures + agree(label: label + " mkdir", expected: "err:InvalidPath",
+            actual: describeUnit(outcome: System.createDirectory(path: path)))
+        failures = failures + agree(label: label + " list", expected: "err:InvalidPath",
+            actual: describeNames(outcome: System.listDirectory(path: path)))
+        failures = failures + agree(label: label + " kind", expected: "err:InvalidPath",
+            actual: describeKind(outcome: System.fileKind(path: path)))
+        failures = failures + agree(label: label + " remove file", expected: "err:InvalidPath",
+            actual: describeUnit(outcome: System.removeFile(path: path)))
+        failures = failures + agree(label: label + " remove directory", expected: "err:InvalidPath",
+            actual: describeUnit(outcome: System.removeDirectory(path: path)))
+        index = index + 1
+    }
+    return failures
+}
+
+func joinCase(base: String, path: String, windows: String, posix: String): Int {
+    return agree(label: "join " + base + " + " + path, expected: hostValue(windows: windows, posix: posix),
+        actual: describeJoin(outcome: System.joinPath(base: base, path: path)))
+}
+
+func testJoins(): Int {
+    var failures = 0
+    let cafe = "caf" + byteToString(value: 195) + byteToString(value: 169)
+    failures = failures + joinCase(base: "a", path: "b", windows: "ok:a\\b", posix: "ok:a/b")
+    failures = failures + joinCase(base: "a/", path: "b", windows: "ok:a/b", posix: "ok:a/b")
+    failures = failures + joinCase(base: "a\\", path: "b", windows: "ok:a\\b", posix: "ok:a\\/b")
+    failures = failures + joinCase(base: "a", path: "/b", windows: "ok:/b", posix: "ok:/b")
+    failures = failures + joinCase(base: "a", path: "\\b", windows: "ok:\\b", posix: "ok:a/\\b")
+    failures = failures + joinCase(base: "/", path: "b", windows: "ok:/b", posix: "ok:/b")
+    failures = failures + joinCase(base: "C:", path: "child", windows: "ok:C:child", posix: "ok:C:/child")
+    failures = failures + joinCase(base: "C:\\x", path: "D:y", windows: "ok:D:y", posix: "ok:C:\\x/D:y")
+    failures = failures + joinCase(base: "C:x", path: "y", windows: "ok:C:x\\y", posix: "ok:C:x/y")
+    failures = failures + joinCase(base: "a", path: "C:\\b", windows: "ok:C:\\b", posix: "ok:a/C:\\b")
+    failures = failures + joinCase(base: "a", path: "C:/b", windows: "ok:C:/b", posix: "ok:a/C:/b")
+    failures = failures + joinCase(base: "a", path: "C:b", windows: "ok:C:b", posix: "ok:a/C:b")
+    failures = failures + joinCase(base: "a", path: "1:b", windows: "ok:a\\1:b", posix: "ok:a/1:b")
+    failures = failures + joinCase(base: "", path: "b", windows: "err:InvalidPath", posix: "err:InvalidPath")
+    failures = failures + joinCase(base: "a", path: "", windows: "err:InvalidPath", posix: "err:InvalidPath")
+    failures = failures + joinCase(base: "a", path: "b/c", windows: "ok:a\\b/c", posix: "ok:a/b/c")
+    failures = failures + joinCase(base: "a//", path: "b", windows: "ok:a//b", posix: "ok:a//b")
+    failures = failures + joinCase(base: "a" + zeroByte(), path: "b", windows: "err:InvalidPath", posix: "err:InvalidPath")
+    failures = failures + joinCase(base: "a", path: "b" + zeroByte(), windows: "err:InvalidPath", posix: "err:InvalidPath")
+    failures = failures + joinCase(base: "bad" + byteToString(value: 255), path: "b", windows: "err:InvalidPath", posix: "err:InvalidPath")
+    failures = failures + joinCase(base: "a", path: "bad" + byteToString(value: 255), windows: "err:InvalidPath", posix: "err:InvalidPath")
+    failures = failures + joinCase(base: cafe, path: "x", windows: "ok:" + cafe + "\\x", posix: "ok:" + cafe + "/x")
+    return failures
+}
+
+func unicodeName(): String {
+    return "caf" + byteToString(value: 195) + byteToString(value: 169) + "-" +
+        byteToString(value: 230) + byteToString(value: 151) + byteToString(value: 165)
+}
+
+func testUnicodeNames(root: String): Int {
+    var failures = 0
+    let name = unicodeName()
+    failures = failures + agree(label: "unicode mkdir", expected: "ok",
+        actual: describeUnit(outcome: System.createDirectory(path: pathIn(root: root, name: name))))
+    failures = failures + agree(label: "unicode write", expected: "ok",
+        actual: describeUnit(outcome: System.writeFileNew(path: pathIn(root: root, name: name + "/" + name), contents: "u")))
+    failures = failures + agree(label: "unicode list", expected: "ok:1|" + name,
+        actual: describeNames(outcome: System.listDirectory(path: pathIn(root: root, name: name))))
+    failures = failures + agree(label: "unicode read", expected: "ok:1:u",
+        actual: describeText(outcome: System.readFileUtf8(path: pathIn(root: root, name: name + "/" + name))))
+    return failures
+}
+
+// Windows-only behavior: DOS devices, drive-relative paths, and the legacy forms.
+@platform(windows)
+func testHostSpecific(root: String): Int {
+    var failures = 0
+    failures = failures + agree(label: "kind NUL", expected: "ok:other",
+        actual: describeKind(outcome: System.fileKind(path: "NUL")))
+    for path in ["C:", "C:.", "C:\\"] {
+        failures = failures + agree(label: "kind " + path, expected: "ok:directory",
+            actual: describeKind(outcome: System.fileKind(path: path)))
+    }
+    failures = failures + agree(label: "kind device path", expected: "err:InvalidPath",
+        actual: describeKind(outcome: System.fileKind(path: "\\\\.\\NUL")))
+    // A drive root is never empty: "ok:" and a nonzero count with names.
+    let listing = describeNames(outcome: System.listDirectory(path: "C:\\"))
+    var listed = "failed"
+    if listing.count > 4 && listing[0] == b'o' && listing[1] == b'k' { listed = "listed" }
+    failures = failures + agree(label: "list drive root", expected: "listed", actual: listed)
+    return failures
+}
+
+@platform(posix)
+func testHostSpecific(root: String): Int {
+    var failures = 0
+    failures = failures + agree(label: "kind device", expected: "ok:other",
+        actual: describeKind(outcome: System.fileKind(path: "/dev/null")))
+    for path in ["/", "."] {
+        failures = failures + agree(label: "kind " + path, expected: "ok:directory",
+            actual: describeKind(outcome: System.fileKind(path: path)))
+    }
+    return failures
+}
+
+func removeTree(root: String) {
+    // Remove only what these tests made, deepest first.
+    let unicode = unicodeName()
+    for name in [
+            unicode + "/" + unicode, unicode, "dir/one.txt", "dir/two.txt", "dir", "hollow", "kinds", "folder",
+            "data.bin", "empty.txt", "large.bin", "new.bin", "empty.bin", "legacy.bin", "legacy-large.bin",
+            "legacy-empty.bin", "plain.txt", "fulldir/inside.txt", "fulldir", "emptydir", "doomed.txt"] {
+        ignoreUnit(outcome: System.removeFile(path: pathIn(root: root, name: name)))
+        ignoreUnit(outcome: System.removeDirectory(path: pathIn(root: root, name: name)))
+    }
+}
+
+public func testFileSystem(): Int {
+    let root = claimDirectory(prefix: "system-fs-test-")
+    if root == "" {
+        print(value: "FAIL: could not claim a scratch directory")
+        return 1
+    }
+    var failures = 0
+    failures = failures + testReads(root: root)
+    failures = failures + testLegacyReads(root: root)
+    failures = failures + testWrites(root: root)
+    failures = failures + testDirectories(root: root)
+    failures = failures + testKinds(root: root)
+    failures = failures + testRemovals(root: root)
+    failures = failures + testInvalidPaths()
+    failures = failures + testJoins()
+    failures = failures + testUnicodeNames(root: root)
+    failures = failures + testHostSpecific(root: root)
+    removeTree(root: root)
+    ignoreUnit(outcome: System.removeDirectory(path: root))
+    if failures == 0 { print(value: "filesystem tests passed") }
+    return failures
+}
