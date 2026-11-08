@@ -579,8 +579,10 @@ Start any time after 5.3.
 
 ### Stage 10: No C library (Tier 2: R10 to R12)
 
-- [ ] 10.1 D8, then the Joyeer allocator over `VirtualAlloc` / `mmap`, behind the
-  stage 4 contract; stress and fragmentation tests.
+- [x] 10.1 D8, then the Joyeer allocator over `VirtualAlloc` / `mmap`, behind the
+  stage 4 contract; stress and fragmentation tests (`RuntimeBlackBoxTest.Allocator*`).
+  Decision [0011](../decisions/0011-runtime-without-the-c-library.md). POSIX uses libc
+  `mmap` until 10.2.
 - [ ] 10.2 D10, then output and exit straight to the system interface (R11).
 - [ ] 10.3 D9, then our own entry point on Windows and Linux (R12).
 - [ ] 10.4 `System` off the C library's stdio and `errno`, using static state for

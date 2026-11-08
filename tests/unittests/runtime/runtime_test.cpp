@@ -1047,6 +1047,106 @@ TEST(RuntimeBlackBoxTest, AllocatorCountsBlocksAndKeepsTheirContents) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
 }
 
+
+TEST(RuntimeBlackBoxTest, AllocatorBlocksAreAlignedAndReused) {
+    const auto baseline = joyeer_runtime_active_allocations();
+    // Every size class boundary and the page-rounded large sizes.
+    const std::vector<size_t> sizes {1, 15, 16, 17, 255, 256, 511, 512, 513, 640, 641, 1024, 1025, 1280,
+                                     4096, 32767, 32768, 32769, 65536, 100000, 1u << 20, (1u << 20) + 1};
+    for (const size_t size : sizes) {
+        auto* block = static_cast<uint8_t*>(joyeer_alloc(size));
+        ASSERT_NE(block, nullptr) << size;
+        EXPECT_EQ(reinterpret_cast<uintptr_t>(block) % 16, 0u) << size;
+        block[0] = 0x5a;
+        block[size - 1] = 0xa5;
+        joyeer_free(block, size);
+        if (size <= 32768) {
+            // The freed block is the next one served for that size.
+            void* again = joyeer_alloc(size);
+            EXPECT_EQ(again, block) << size;
+            joyeer_free(again, size);
+        }
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST(RuntimeBlackBoxTest, AllocatorSurvivesRandomAllocationReallocationAndFree) {
+    struct Block {
+        uint8_t* data;
+        size_t size;
+        uint8_t seed;
+    };
+    const auto baseline = joyeer_runtime_active_allocations();
+    uint64_t state = 0x9e3779b97f4a7c15ULL;
+    const auto next = [&state] {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    };
+    const auto pickSize = [&next] {
+        switch (next() % 8) {
+            case 0: return static_cast<size_t>(next() % 17);
+            case 1: return static_cast<size_t>(next() % 600);
+            case 2: return static_cast<size_t>(next() % 5000);
+            case 3: return static_cast<size_t>(next() % 40000);
+            case 4: return static_cast<size_t>(next() % 200000);
+            default: return static_cast<size_t>(next() % 300);
+        }
+    };
+    const auto fill = [](Block& block, size_t from) {
+        for (size_t index = from; index < block.size; ++index) {
+            block.data[index] = static_cast<uint8_t>(block.seed + index * 31);
+        }
+    };
+    const auto check = [](const Block& block, size_t count) {
+        for (size_t index = 0; index < count; ++index) {
+            if (block.data[index] != static_cast<uint8_t>(block.seed + index * 31)) return false;
+        }
+        return true;
+    };
+    std::vector<Block> blocks;
+    for (int step = 0; step < 20000; ++step) {
+        const auto action = next() % 3;
+        if (action == 0 || blocks.empty()) {
+            Block block {nullptr, pickSize(), static_cast<uint8_t>(next())};
+            block.data = static_cast<uint8_t*>(joyeer_alloc(block.size));
+            ASSERT_NE(block.data, nullptr);
+            ASSERT_EQ(reinterpret_cast<uintptr_t>(block.data) % 16, 0u);
+            fill(block, 0);
+            blocks.push_back(block);
+        } else if (action == 1) {
+            auto& block = blocks[next() % blocks.size()];
+            const size_t size = pickSize();
+            block.data = static_cast<uint8_t*>(joyeer_realloc(block.data, block.size, size));
+            ASSERT_NE(block.data, nullptr);
+            const size_t kept = std::min(block.size, size);
+            ASSERT_TRUE(check(block, kept)) << "realloc " << block.size << " -> " << size;
+            block.size = size;
+            fill(block, 0);
+        } else {
+            const size_t index = next() % blocks.size();
+            ASSERT_TRUE(check(blocks[index], blocks[index].size)) << "free " << blocks[index].size;
+            joyeer_free(blocks[index].data, blocks[index].size);
+            blocks[index] = blocks.back();
+            blocks.pop_back();
+        }
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline + static_cast<int64_t>(blocks.size()));
+    for (const auto& block : blocks) {
+        ASSERT_TRUE(check(block, block.size));
+        joyeer_free(block.data, block.size);
+    }
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
+TEST(RuntimeBlackBoxDeathTest, AllocatorReportsExhaustedAddressSpace) {
+    EXPECT_EXIT(joyeer_alloc(static_cast<size_t>(1) << 62), testing::ExitedWithCode(1),
+                "Joyeer runtime error: out of memory");
+    EXPECT_EXIT(joyeer_alloc(static_cast<size_t>(1) << 62 | 1), testing::ExitedWithCode(1),
+                "Joyeer runtime error: out of memory");
+}
+
 TEST(RuntimeBlackBoxDeathTest, AllocatorRejectsNegativeSizesAndCounterUnderflow) {
     EXPECT_EXIT(joyeer_alloc(static_cast<size_t>(-1)), testing::ExitedWithCode(1),
                 "Joyeer runtime error: negative allocation size");

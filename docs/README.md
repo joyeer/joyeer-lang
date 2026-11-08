@@ -95,6 +95,7 @@ in the spec.
 | [0008](decisions/0008-runtime-core-build-shape.md) | The Joyeer runtime core is one module compiled by the build-tree compiler into one object in `JoyeerRuntime` |
 | [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
+| [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
 
 ## Conventions
 

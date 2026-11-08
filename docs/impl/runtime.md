@@ -80,7 +80,8 @@ prelude's `byteToInt(value:)` zero-extends `UInt8` to signed 64-bit `Int`;
 `joyeer_byte_to_string_abi`, so normal cleanup applies.
 
 The runtime allocates through `joyeer_alloc`, `joyeer_realloc` and `joyeer_free`
-(Joyeer, `allocator.joyeer`), which call libc and keep the leak counter. Collection allocations retain element
+(Joyeer, `allocator.joyeer`), a size-class allocator over `VirtualAlloc` / `mmap` that keeps the leak counter
+(decision [0011](../decisions/0011-runtime-without-the-c-library.md)). Collection allocations retain element
 layout and clone/destroy callbacks. On the current 64-bit layout, private
 headers occupy 24 bytes for arrays and 72 bytes for dictionaries, before
 payload and allocator overhead. These callbacks can introduce indirect
