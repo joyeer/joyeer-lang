@@ -1,7 +1,10 @@
 # The runtime is a mix while it moves into Joyeer (docs/plan/runtime-in-joyeer.md):
-# the C sources below, and the Joyeer "core" module compiled by the just-built
-# compiler into one object that is archived beside them. A symbol has one
-# provider: when a function moves into joyeer/, its C definition is deleted.
+# the C sources below, and two Joyeer "core" modules compiled by the just-built
+# compiler into objects that are archived beside them: the core (everything but
+# the entry) and the entry (the C `main` / `wmain` and the program startup). They
+# are separate objects so that linking the core into a test executable does not
+# add a second entry point to it. A symbol has one provider: when a function moves
+# into joyeer/, its C definition is deleted.
 #
 # The Joyeer sources are listed explicitly; add a file here when adding it.
 set(JOYEER_RUNTIME_CORE_SOURCES
@@ -14,35 +17,52 @@ set(JOYEER_RUNTIME_CORE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/arrays.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/dictionaries.joyeer"
 )
+# The entry logic is shared with the entry encoding tests, a sibling directory.
+set(JOYEER_RUNTIME_ENTRY_LOGIC "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/entry.joyeer" CACHE INTERNAL "")
+set(JOYEER_RUNTIME_ENTRY_SOURCES
+        "${JOYEER_RUNTIME_ENTRY_LOGIC}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/entry_main.joyeer"
+)
 
-# Optimized in every configuration except Debug, which keeps full debug
-# information so a crash inside the runtime shows Joyeer frames.
+# Compiles Joyeer sources as one runtime core module into OBJECT. Optimized in
+# every configuration except Debug, which keeps full debug information so a crash
+# inside the runtime shows Joyeer frames.
+function(joyeer_runtime_core_object OBJECT MODULE COMMENT)
+    add_custom_command(
+            OUTPUT "${OBJECT}"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
+            COMMAND "$<TARGET_FILE:joyeer>"
+                    --module-name ${MODULE}
+                    --runtime-core-module ${MODULE}
+                    "$<IF:$<CONFIG:Debug>,-O0,-O2>"
+                    "$<IF:$<CONFIG:Debug>,-gfull,-g0>"
+                    --emit-runtime-object "${OBJECT}"
+                    -- ${ARGN}
+            DEPENDS joyeer JoyeerBackend ${ARGN}
+            COMMENT "${COMMENT}"
+            VERBATIM)
+    set_source_files_properties("${OBJECT}" PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+endfunction()
+
 set(JOYEER_RUNTIME_CORE_OBJECT
         "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runtime-core${CMAKE_C_OUTPUT_EXTENSION}")
-add_custom_command(
-        OUTPUT "${JOYEER_RUNTIME_CORE_OBJECT}"
-        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>"
-        COMMAND "$<TARGET_FILE:joyeer>"
-                --module-name runtime.core
-                --runtime-core-module runtime.core
-                "$<IF:$<CONFIG:Debug>,-O0,-O2>"
-                "$<IF:$<CONFIG:Debug>,-gfull,-g0>"
-                --emit-runtime-object "${JOYEER_RUNTIME_CORE_OBJECT}"
-                -- ${JOYEER_RUNTIME_CORE_SOURCES}
-        DEPENDS joyeer JoyeerBackend ${JOYEER_RUNTIME_CORE_SOURCES}
-        COMMENT "Compiling the Joyeer runtime core"
-        VERBATIM)
-set_source_files_properties("${JOYEER_RUNTIME_CORE_OBJECT}"
-        PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+set(JOYEER_RUNTIME_ENTRY_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runtime-entry${CMAKE_C_OUTPUT_EXTENSION}")
+joyeer_runtime_core_object("${JOYEER_RUNTIME_CORE_OBJECT}" runtime.core
+        "Compiling the Joyeer runtime core" ${JOYEER_RUNTIME_CORE_SOURCES})
+joyeer_runtime_core_object("${JOYEER_RUNTIME_ENTRY_OBJECT}" runtime.entry
+        "Compiling the Joyeer runtime entry" ${JOYEER_RUNTIME_ENTRY_SOURCES})
 
 add_library(JoyeerRuntime STATIC
         runtime.c
-        entry.c
         "${JOYEER_RUNTIME_CORE_OBJECT}"
+        "${JOYEER_RUNTIME_ENTRY_OBJECT}"
 )
 target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_SRC_DIR})
-# The symbol gate in tests/unittests/runtime reads the object path from here.
-set_target_properties(JoyeerRuntime PROPERTIES JOYEER_CORE_OBJECT "${JOYEER_RUNTIME_CORE_OBJECT}")
+# The symbol gates in tests/unittests/runtime read the object paths from here.
+set_target_properties(JoyeerRuntime PROPERTIES
+        JOYEER_CORE_OBJECT "${JOYEER_RUNTIME_CORE_OBJECT}"
+        JOYEER_ENTRY_OBJECT "${JOYEER_RUNTIME_ENTRY_OBJECT}")
 
 set_target_properties(JoyeerRuntime PROPERTIES
         C_STANDARD 11

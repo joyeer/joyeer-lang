@@ -538,12 +538,19 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   `[String]` are Joyeer exports whose addresses come from the new symbol-address
   intrinsic (decision 0009).
 
-### Stage 7: Entry and native-library API (R7, R8)
+### Stage 7: Entry and native-library API (R7, R8), done on Windows x64
 
-- [ ] 7.1 `main` / `wmain` in Joyeer: argument conversion, leak check, exit-status
-  range check; all entry tests pass.
-- [ ] 7.2 Replace `joyeer_native_errno`, `joyeer_native_environment` and
-  `joyeer_native_stdio` with direct bindings (D5); update `System`.
+- [x] 7.1 `main` / `wmain` in Joyeer: argument conversion, leak check, exit-status
+  range check; all entry tests pass. `joyeer/entry.joyeer` holds the logic
+  (`joyeer_entry_run`) and `joyeer/entry_main.joyeer` the C entry point; both build into
+  `runtime-entry`, a separate archive member from the core object so a test that links
+  the core does not gain a second entry point. **Run on Windows x64 only: the POSIX
+  `main` path (stage 2.1) is unverified on Linux and macOS.**
+- [x] 7.2 Replace `joyeer_native_errno`, `joyeer_native_environment` and
+  `joyeer_native_stdio` with direct bindings (D5); update `System` (`System/cruntime.joyeer`).
+  `@platform` now combines with `@c_data`. The Linux and macOS variants
+  (`__errno_location`, `__error`, `stdout` and `__stdoutp` data symbols, `environ`,
+  `_NSGetEnviron`) are unverified.
 
 ### Stage 8: Floating-point printing (R4), parallel track
 
@@ -556,8 +563,8 @@ Start any time after 5.3.
 
 ### Stage 9: Remove the C (R9)
 
-- [ ] 9.1 Delete `runtime.c`, `entry.c`, `host.c` and the C-only build settings
-  (`C_STANDARD`, `/experimental:c11atomics`); keep `runtime.h` and `native.h` for
+- [ ] 9.1 Delete `runtime.c`, `host.c` and the C-only build settings
+  (`C_STANDARD`; `entry.c` and `/experimental:c11atomics` are already gone); keep `runtime.h` and `native.h` for
   native libraries.
 - [ ] 9.2 Add the archive check: no object not produced by the Joyeer compiler.
 - [ ] 9.3 Move `JoyeerRuntime.*` into `lib/`

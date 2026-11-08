@@ -18,16 +18,15 @@ joyeer_discover_tests(RuntimeTests
 )
 
 if(WIN32)
+    # The entry logic alone, without the `wmain` wrapper, so the test supplies its
+    # own `joyeer_main` and keeps gtest's entry point.
+    set(JOYEER_TEST_ENTRY_OBJECT
+            "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/test-entry${CMAKE_C_OUTPUT_EXTENSION}")
+    joyeer_runtime_core_object("${JOYEER_TEST_ENTRY_OBJECT}" runtime.entry
+            "Compiling the Joyeer entry logic for the encoding tests" "${JOYEER_RUNTIME_ENTRY_LOGIC}")
     add_executable(NativeEntryEncodingTests
             entry_encoding_test.cpp
-            ${JOYEER_SOURCE_DIR}/src/runtime/entry.c
-    )
-    set_target_properties(NativeEntryEncodingTests PROPERTIES
-            C_STANDARD 11
-            C_STANDARD_REQUIRED ON
-    )
-    target_compile_definitions(NativeEntryEncodingTests PRIVATE
-            wmain=joyeer_test_entry_wmain
+            "${JOYEER_TEST_ENTRY_OBJECT}"
     )
     target_link_libraries(NativeEntryEncodingTests
             GTest::gtest_main
@@ -140,4 +139,24 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             "-DALLOWED_UNDEFINED=${joyeer_core_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+
+    # The entry object defines the program entry point and reaches the core only
+    # through its C ABI.
+    get_target_property(JOYEER_RUNTIME_ENTRY_OBJECT JoyeerRuntime JOYEER_ENTRY_OBJECT)
+    set(joyeer_entry_imports "joyeer_main;joyeer_main_uses_arguments;joyeer_panic;joyeer_alloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_array_create_owned_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy")
+    if(WIN32)
+        list(APPEND joyeer_entry_imports WideCharToMultiByte _write)
+        set(joyeer_entry_point wmain)
+    else()
+        list(APPEND joyeer_entry_imports write)
+        set(joyeer_entry_point main)
+    endif()
+    add_test(NAME RuntimeEntryObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_ENTRY_OBJECT}"
+            "-DEXPECTED_DEFINED=joyeer_entry_run;joyeer_static_slots;${joyeer_entry_point}"
+            "-DALLOWED_UNDEFINED=${joyeer_entry_imports}"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeEntryObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
 endif()

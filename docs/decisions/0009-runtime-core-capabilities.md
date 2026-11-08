@@ -28,7 +28,7 @@ Windows x64 with the static CRT. Two findings:
 - The compiler rejects `@c_export` of `main` and `wmain` today
   (`type-checking.invalid-native-declaration`, `isCEntrySymbol`). The spike
   relaxed that locally and reverted it; stage 3.3 lifts it for core units only.
-- On Windows the runtime archive is linked whole, so `entry.c`'s `wmain` collides
+- On Windows the runtime archive is linked whole, so the former C entry's `wmain` collides
   with a Joyeer one (`lld-link: duplicate symbol: wmain`). The Joyeer entry
   therefore replaces `entry.c` in one change (stage 7.1); the two cannot coexist.
 
@@ -75,7 +75,7 @@ Debug build import the runtime's own array code.
 **D4: Entry point.** In a core unit, `@c_export(symbol: "main")` and
 `"wmain"` are allowed with the platform's C signature (`Int32`, then the `argv`
 address as `Int`). Everywhere else exporting them stays an error, as do the other
-startup symbols and `joyeer_main*`. The Joyeer entry replaces `entry.c` in one
+startup symbols and `joyeer_main*`. The Joyeer entry replaced `entry.c` in one
 change (stage 7.1) and needs arrays and strings first to build the arguments.
 
 **D5: Data symbols.** `@c_data(symbol: "environ")` on a bodyless function
@@ -134,6 +134,12 @@ declares `joyeer_panic` with any other signature is still
 for types that only core functions mention (the literal-address argument is a
 `String` constant that is never materialized); without this a Debug core object
 imported `joyeer_string_clone_abi`.
+
+**The entry object (stage 7).** The Joyeer `main`/`wmain` is in an object of its own,
+not the core one: the archive is linked whole on Windows, but a test that links the
+core object must not also receive a second entry point. The entry logic
+(`joyeer_entry_run`) reaches the core through its C ABI, uses static slots 32 to 39,
+and is built alone for the Windows entry encoding tests.
 
 **Symbol addresses (stage 6).** The native `[String]` buffers a native library fills
 need element clone and destroy callbacks, which are Joyeer functions of the runtime

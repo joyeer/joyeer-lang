@@ -1,0 +1,202 @@
+// The program entry (`joyeer_entry_run`): builds the `[String]` of command line
+// arguments the program asked for, runs the generated `joyeer_main`, destroys the
+// arguments, and turns the result into the process exit status. A leaked
+// allocation or a status outside 0...255 is reported on standard error and exits
+// with status 1.
+//
+// This is its own runtime object, not part of the core one: the C `main` /
+// `wmain` wrapper (entry_main.joyeer) is linked only into programs, and the
+// logic here is built alone for the entry encoding tests, which supply their own
+// `joyeer_main`. It reaches the rest of the runtime through its C ABI.
+//
+// A runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
+// Static slots 32 to 39 are this unit's: a 16-byte String being built (32, 33),
+// the argument array handle (34 to 36) and a one-byte output buffer (37).
+
+@c_extern(symbol: "joyeer_main")
+private func programMain(arguments: Int): Int
+
+@c_extern(symbol: "joyeer_main_uses_arguments")
+private func programUsesArguments(): Int32
+
+@c_extern(symbol: "joyeer_panic")
+private func panic(message: Int): Never
+
+@c_extern(symbol: "joyeer_alloc")
+private func allocate(size: Int): Int
+
+@c_extern(symbol: "joyeer_free")
+private func release(address: Int, size: Int): Void
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+private func activeAllocations(): Int
+
+@c_extern(symbol: "joyeer_string_clone_abi")
+private func stringClone(output: Int, data: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_array_create_owned_abi")
+private func arrayCreate(output: Int, values: Int, count: Int, elementSize: Int,
+    cloneElement: Int, destroyElement: Int): Void
+
+@c_extern(symbol: "joyeer_array_append_owned_abi")
+private func arrayAppend(array: Int, element: Int): Void
+
+@c_extern(symbol: "joyeer_array_destroy_abi")
+private func arrayDestroy(array: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+private func symbolAddress(name: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func load8(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+private func store8(address: Int, value: UInt8): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+private func callVoid1(target: Int, first: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "WideCharToMultiByte")
+private func wideToMultiByte(codePage: UInt32, flags: UInt32, wide: Int, wideCount: Int32,
+    bytes: Int, byteCount: Int32, defaultCharacter: Int, usedDefault: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "_write")
+private func writeW(descriptor: Int32, buffer: Int, count: UInt32): Int32
+
+@platform(posix)
+@c_extern(symbol: "write")
+private func writeP(descriptor: Int32, buffer: Int, count: Int): Int
+
+private let utf8CodePage: UInt32 = 65001
+private let invalidCharacters: UInt32 = 128
+
+private func length(address: Int): Int {
+    var count = 0
+    while load8(address: address + count) != 0 { count = count + 1 }
+    return count
+}
+
+@platform(windows)
+private func writeError(address: Int, count: Int) {
+    var done = 0
+    while done < count {
+        let written = writeW(descriptor: 2, buffer: address + done, count: (count - done) as UInt32)
+        if written <= 0 { return }
+        done = done + (written as Int)
+    }
+}
+
+@platform(posix)
+private func writeError(address: Int, count: Int) {
+    var done = 0
+    while done < count {
+        let written = writeP(descriptor: 2, buffer: address + done, count: count - done)
+        if written <= 0 { return }
+        done = done + written
+    }
+}
+
+private func writeText(address: Int) {
+    writeError(address: address, count: length(address: address))
+}
+
+// Decimal digits, most significant first, one byte at a time through the
+// one-byte buffer.
+private func writeDecimal(value: UInt64) {
+    let buffer = staticSlot(index: 37)
+    var divisor: UInt64 = 1
+    while value / divisor >= 10 { divisor = divisor * 10 }
+    var remaining = value
+    while divisor != 0 {
+        let digit = remaining / divisor
+        store8(address: buffer, value: (48 + digit) as UInt8)
+        writeError(address: buffer, count: 1)
+        remaining = remaining - digit * divisor
+        divisor = divisor / 10
+    }
+}
+
+private func writeNumber(value: Int) {
+    if value < 0 {
+        writeText(address: literalAddress(text: "-"))
+        writeDecimal(value: ((0 - (value + 1)) as UInt64) + 1)
+    } else {
+        writeDecimal(value: value as UInt64)
+    }
+}
+
+// Copies the argument at `argument` (a UTF-16 or byte string, by platform) into
+// the String at `destination`.
+@platform(windows)
+private func copyArgument(destination: Int, argument: Int) {
+    if argument == 0 { panic(message: literalAddress(text: "invalid command line argument")) }
+    let count = wideToMultiByte(codePage: utf8CodePage, flags: invalidCharacters, wide: argument,
+        wideCount: -1, bytes: 0, byteCount: 0, defaultCharacter: 0, usedDefault: 0)
+    if count <= 0 {
+        panic(message: literalAddress(text: "invalid Windows command line argument encoding"))
+    }
+    let size = count as Int
+    let bytes = allocate(size: size)
+    if wideToMultiByte(codePage: utf8CodePage, flags: invalidCharacters, wide: argument,
+        wideCount: -1, bytes: bytes, byteCount: count, defaultCharacter: 0, usedDefault: 0) != count {
+        panic(message: literalAddress(text: "invalid Windows command line argument encoding"))
+    }
+    stringClone(output: destination, data: bytes, count: size - 1)
+    release(address: bytes, size: size)
+}
+
+@platform(posix)
+private func copyArgument(destination: Int, argument: Int) {
+    if argument == 0 { panic(message: literalAddress(text: "invalid command line argument")) }
+    stringClone(output: destination, data: argument, count: length(address: argument))
+}
+
+// Fills the array handle at `handle` with the arguments after the program name.
+private func createArguments(handle: Int, argc: Int, argv: Int) {
+    if argc < 1 || argv == 0 {
+        panic(message: literalAddress(text: "invalid command line arguments"))
+    }
+    arrayCreate(output: handle, values: 0, count: 0, elementSize: 16,
+        cloneElement: symbolAddress(name: "joyeer_native_string_element_clone"),
+        destroyElement: symbolAddress(name: "joyeer_native_string_element_destroy"))
+    let scratch = staticSlot(index: 32)
+    var index = 1
+    while index < argc {
+        copyArgument(destination: scratch, argument: load64(address: argv + index * 8) as Int)
+        arrayAppend(array: handle, element: scratch)
+        index = index + 1
+    }
+}
+
+@c_export(symbol: "joyeer_entry_run")
+public func entryRun(argc: Int32, argv: Int): Int32 {
+    let handle = staticSlot(index: 34)
+    if programUsesArguments() != 0 { createArguments(handle: handle, argc: argc as Int, argv: argv) }
+    let status = programMain(arguments: handle)
+    arrayDestroy(array: handle)
+    let allocations = activeAllocations()
+    if allocations != 0 {
+        writeText(address: literalAddress(text: "Joyeer runtime error: "))
+        writeNumber(value: allocations)
+        writeText(address: literalAddress(text: " leaked allocation(s)\n"))
+        return 1
+    }
+    if status < 0 || status > 255 {
+        writeText(address: literalAddress(text: "Joyeer runtime error: entry returned exit code "))
+        writeNumber(value: status)
+        writeText(address: literalAddress(text: " outside 0..255\n"))
+        return 1
+    }
+    return status as Int32
+}

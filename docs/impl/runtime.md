@@ -1,10 +1,12 @@
 # Runtime Implementation
 
-The runtime is declared in `src/runtime/runtime.h`. Most of it is C under
-`src/runtime/`; the Joyeer core (`src/runtime/joyeer/`: UTF-8 validation, string
-equality and ordering, owned strings, arrays, dictionaries, the native buffer helpers, integer/`Bool`/string
-`print`, `joyeer_panic`, and the allocator with its leak counter) is compiled by the build-tree compiler into one object in
-the same archive ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+The runtime is declared in `src/runtime/runtime.h`. Almost all of it is Joyeer
+(`src/runtime/joyeer/`): UTF-8 validation, string equality and ordering, owned strings,
+arrays, dictionaries, the native buffer helpers, integer/`Bool`/string `print`,
+`joyeer_panic`, the allocator with its leak counter, and the program entry. The
+build-tree compiler compiles it into two objects (the core, and the entry with the C
+`main`/`wmain`) in the same archive; `Float` and `Double` printing is still C in
+`runtime.c` ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -59,7 +61,7 @@ status (zero for parameterless `main`). No collection is passed by value
 across the generated-module/runtime boundary. Missing and invalid entry
 signatures produce compiler diagnostics, not platform linker errors.
 
-The C entry omits the executable name and preserves argument boundaries,
+The entry (`src/runtime/joyeer/entry.joyeer`, Joyeer) omits the executable name and preserves argument boundaries,
 empty arguments, and spaces. POSIX arguments preserve their original bytes.
 Windows uses `wmain` and converts UTF-16 arguments to UTF-8, rejecting invalid
 encoding. The runtime owns the array until the Joyeer function has returned
@@ -88,8 +90,8 @@ relaxed atomic balance counter; this is accounting, not reference counting.
 Joyeer IR `copy`, `take`, and `destroy` operations lower to generated per-type
 LLVM helpers, which recurse through structs and tagged payloads and call
 runtime string/collection operations. Scope lowering destroys owned storage
-and temporaries in reverse order on normal and early-return paths. The C
-entry checks the allocation count after the generated function returns and
+and temporaries in reverse order on normal and early-return paths. The
+Joyeer entry checks the allocation count after the generated function returns and
 its borrowed argument storage is destroyed, making integration-test leaks
 observable. The balance covers runtime-managed storage, not arbitrary future
 unsafe/native allocations; zero outstanding allocations does not mean the

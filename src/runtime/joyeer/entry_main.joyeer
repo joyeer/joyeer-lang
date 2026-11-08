@@ -1,0 +1,17 @@
+// The C entry point of a native program: `wmain` on Windows, `main` elsewhere.
+// Both hand the process arguments to `entryRun` (entry.joyeer). Only a runtime
+// core unit may export these symbols (spec §19.4.7). This file is in the entry
+// object alone, never the core one, so linking the core object into a test
+// executable does not add a second entry point to it.
+
+@platform(windows)
+@c_export(symbol: "wmain")
+public func wideMain(argc: Int32, argv: Int): Int32 {
+    return entryRun(argc: argc, argv: argv)
+}
+
+@platform(posix)
+@c_export(symbol: "main")
+public func byteMain(argc: Int32, argv: Int): Int32 {
+    return entryRun(argc: argc, argv: argv)
+}

@@ -8,7 +8,7 @@ namespace {
 std::string observedArgument;
 }
 
-extern "C" int joyeer_test_entry_wmain(int argc, wchar_t** argv);
+extern "C" int32_t joyeer_entry_run(int32_t argc, wchar_t** argv);
 
 extern "C" int joyeer_main_uses_arguments(void) {
     return 1;
@@ -28,7 +28,7 @@ TEST(NativeEntryEncodingDeathTest, RejectsUnpairedHighSurrogate) {
     wchar_t invalid[] { 0xd800, 0 };
     wchar_t* arguments[] { executable, invalid };
     EXPECT_DEATH(
-            static_cast<void>(joyeer_test_entry_wmain(2, arguments)),
+            static_cast<void>(joyeer_entry_run(2, arguments)),
             "invalid Windows command line argument encoding");
 }
 
@@ -37,7 +37,7 @@ TEST(NativeEntryEncodingDeathTest, RejectsUnpairedLowSurrogate) {
     wchar_t invalid[] { 0xdc00, 0 };
     wchar_t* arguments[] { executable, invalid };
     EXPECT_DEATH(
-            static_cast<void>(joyeer_test_entry_wmain(2, arguments)),
+            static_cast<void>(joyeer_entry_run(2, arguments)),
             "invalid Windows command line argument encoding");
 }
 
@@ -46,7 +46,7 @@ TEST(NativeEntryEncodingTest, PreservesSupplementaryUnicodeAndCleansStorage) {
     wchar_t valid[] { 0xd83d, 0xde00, 0 };
     wchar_t* arguments[] { executable, valid };
     ASSERT_EQ(joyeer_runtime_active_allocations(), 0);
-    EXPECT_EQ(joyeer_test_entry_wmain(2, arguments), 0);
+    EXPECT_EQ(joyeer_entry_run(2, arguments), 0);
     EXPECT_EQ(observedArgument, "\xf0\x9f\x98\x80");
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
