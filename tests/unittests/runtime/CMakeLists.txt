@@ -239,3 +239,22 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
         endforeach()
     endif()
 endif()
+
+# On Linux `System` calls the kernel directly (decision 0011): a program that uses each
+# part of it needs, from the C library, only the startup the linker adds and the compiler
+# support functions.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
+    foreach(fixture IN ITEMS filesystem process read_file stdin_lines)
+        add_test(NAME RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/native/${fixture}.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/system-${fixture}"
+                "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0"
+                "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        set_tests_properties(RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
+            PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
+    endforeach()
+endif()
