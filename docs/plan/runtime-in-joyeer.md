@@ -575,6 +575,8 @@ Start any time after 5.3.
   ([toolchain libraries](toolchain-libraries.md) §3).
 - [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,
   together with the POSIX verification of `System` ([filesystem plan](filesystem.md) §2).
+  Done so far: Windows x64, and Linux x86-64 (Debug and Release, 1188 tests, run in Ubuntu under
+  WSL2). Open: Windows ARM64, Linux AArch64, macOS.
   **Tier 1 is done here.**
 
 ### Stage 10: No C library (Tier 2: R10 to R12)
