@@ -53,6 +53,16 @@ void* joyeer_realloc(void* address, size_t oldSize, size_t newSize);
 void joyeer_free(void* address, size_t size);
 // Blocks allocated and not yet freed.
 int64_t joyeer_runtime_active_allocations(void);
+
+// The process's standard streams, written in Joyeer straight over the operating system
+// (src/runtime/joyeer/streams.joyeer). Standard output is buffered and shared with `print`;
+// standard error is not. Each returns 0 or an errno-style code (9, 13, 28, 32, 5).
+int32_t joyeer_stdout_write(const uint8_t* data, int64_t count);
+int32_t joyeer_stdout_flush(void);
+int32_t joyeer_stderr_write(const uint8_t* data, int64_t count);
+// The next byte of standard input (0 to 255), -1 at the end of the input, or a negated
+// error code (-2 or below).
+int32_t joyeer_stdin_read_byte(void);
 // True when the bytes are strict UTF-8: no overlong sequence, surrogate,
 // truncated sequence or code point beyond U+10FFFF. Null data is valid only for
 // a count of zero; a negative count is invalid. Written in Joyeer

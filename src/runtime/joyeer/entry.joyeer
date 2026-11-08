@@ -70,13 +70,11 @@ private func callVoid1(target: Int, first: Int): Void
 private func wideToMultiByte(codePage: UInt32, flags: UInt32, wide: Int, wideCount: Int32,
     bytes: Int, byteCount: Int32, defaultCharacter: Int, usedDefault: Int): Int32
 
-@platform(windows)
-@c_extern(symbol: "_write")
-private func writeW(descriptor: Int32, buffer: Int, count: UInt32): Int32
+@c_extern(symbol: "joyeer_stderr_write")
+private func stderrWrite(data: Int, count: Int): Int32
 
-@platform(posix)
-@c_extern(symbol: "write")
-private func writeP(descriptor: Int32, buffer: Int, count: Int): Int
+@c_extern(symbol: "joyeer_stdout_flush")
+private func stdoutFlush(): Int32
 
 private let utf8CodePage: UInt32 = 65001
 private let invalidCharacters: UInt32 = 128
@@ -87,24 +85,9 @@ private func length(address: Int): Int {
     return count
 }
 
-@platform(windows)
+// A write that fails is dropped: there is nowhere left to report it.
 private func writeError(address: Int, count: Int) {
-    var done = 0
-    while done < count {
-        let written = writeW(descriptor: 2, buffer: address + done, count: (count - done) as UInt32)
-        if written <= 0 { return }
-        done = done + (written as Int)
-    }
-}
-
-@platform(posix)
-private func writeError(address: Int, count: Int) {
-    var done = 0
-    while done < count {
-        let written = writeP(descriptor: 2, buffer: address + done, count: count - done)
-        if written <= 0 { return }
-        done = done + written
-    }
+    stderrWrite(data: address, count: count)
 }
 
 private func writeText(address: Int) {
@@ -185,6 +168,7 @@ public func entryRun(argc: Int32, argv: Int): Int32 {
     if programUsesArguments() != 0 { createArguments(handle: handle, argc: argc as Int, argv: argv) }
     let status = programMain(arguments: handle)
     arrayDestroy(array: handle)
+    stdoutFlush()
     let allocations = activeAllocations()
     if allocations != 0 {
         writeText(address: literalAddress(text: "Joyeer runtime error: "))

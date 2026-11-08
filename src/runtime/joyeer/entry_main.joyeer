@@ -3,15 +3,31 @@
 // core unit may export these symbols (spec §19.4.7). This file is in the entry
 // object alone, never the core one, so linking the core object into a test
 // executable does not add a second entry point to it.
+//
+// The C startup is present here, so the standard output buffer is registered to be
+// flushed by `exit`: a program that calls the C library's `exit` itself does not lose
+// its output.
+
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+private func symbolAddress(name: String): Int
+
+@c_extern(symbol: "atexit")
+private func registerExit(callback: Int): Int32
+
+private func flushAtExit() {
+    registerExit(callback: symbolAddress(name: "joyeer_stdout_flush"))
+}
 
 @platform(windows)
 @c_export(symbol: "wmain")
 public func wideMain(argc: Int32, argv: Int): Int32 {
+    flushAtExit()
     return entryRun(argc: argc, argv: argv)
 }
 
 @platform(posix)
 @c_export(symbol: "main")
 public func byteMain(argc: Int32, argv: Int): Int32 {
+    flushAtExit()
     return entryRun(argc: argc, argv: argv)
 }

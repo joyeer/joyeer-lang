@@ -108,8 +108,9 @@ keeps its libc file and process calls (above).
   new and untuned. The runtime benchmark covers it.
 - Programs observe one behaviour change (panic flushes standard output) and otherwise
   the same output, ordering and exit codes.
-- A program that exits without returning from the entry (an external `exit`) skips the
-  flush.
+- A program with the C startup registers the flush with `atexit`, so a binding to the C
+  `exit` loses nothing; a program on the own entry point has no `exit` to call. A killed
+  process loses unflushed output, as with the C library.
 
 ## Evidence
 

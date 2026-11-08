@@ -506,6 +506,53 @@ TEST_F(CInteropTest, RejectsFloatingPointBitPatternsOfTheWrongType) {
     }
 }
 
+TEST_F(CInteropTest, ChecksTheSystemCallAndArchitectureIntrinsics) {
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+func call(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int): Int
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+func architecture(): Int
+func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 5, fifth: 6, sixth: 7) + architecture() }
+)");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_syscall\")\nfunc f(number: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_syscall\")\nfunc f(number: Int, first: Int, second: Int, third: Int, "
+            "fourth: Int, fifth: Int, sixth: Int): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_target_architecture\")\nfunc f(first: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_target_architecture\")\nfunc f(): Int32\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+}
+
+TEST_F(CInteropTest, LowersTheArchitectureToAConstantAndTheSystemCallOnlyOnLinux) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+func call(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int): Int
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+func architecture(): Int
+func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 5, fifth: 6, sixth: 7) + architecture() }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+#if defined(__linux__)
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("call i64 asm sideeffect"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+#else
+    // Only the Linux kernel has a stable system call interface.
+    EXPECT_FALSE(emitted.succeeded());
+    EXPECT_NE(joyeer::llvmbackend::dump(emitted.diagnostics).find("requires a Linux"), std::string::npos);
+#endif
+}
+
 TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {
     // The same code is fine in a runtime unit that is not a core unit.
     check("func f(text: String): Int { return text.count }\n"

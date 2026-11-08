@@ -120,22 +120,24 @@ find_program(JOYEER_RUNTIME_NM_EXECUTABLE NAMES llvm-nm llvm-nm.exe
     HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
 get_target_property(JOYEER_RUNTIME_CORE_OBJECT JoyeerRuntime JOYEER_CORE_OBJECT)
 if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
-    # The calls the core may make: the system memory mapping (allocator), compare, copy and fill (a
-    # variable-size memcpy/memset intrinsic lowers to the call, decision 0009 D11), write
-    # and exit (panic), and the C stdout stream (print). Each platform spells those differently.
-    set(joyeer_core_imports "memcmp;memcpy;memset;_Exit;fwrite;fputc")
+    # The calls the core may make: compare, copy and fill (a variable-size
+    # memcpy/memset intrinsic lowers to the call, decision 0009 D11) and the operating
+    # system's own interface for memory, standard streams and exit (decision 0011). Linux
+    # makes system calls and imports nothing else.
+    set(joyeer_core_imports "memcmp;memcpy;memset")
     if(WIN32)
-        list(APPEND joyeer_core_imports VirtualAlloc VirtualFree _write __acrt_iob_func _fltused)
+        list(APPEND joyeer_core_imports VirtualAlloc VirtualFree GetStdHandle WriteFile ReadFile
+            GetConsoleMode WriteConsoleW MultiByteToWideChar GetLastError ExitProcess _fltused)
     elseif(APPLE)
-        list(APPEND joyeer_core_imports mmap munmap write __stdoutp)
+        list(APPEND joyeer_core_imports mmap munmap write read isatty __error _exit)
     else()
-        list(APPEND joyeer_core_imports mmap munmap write stdout)
+        # Linux: system calls only.
     endif()
     add_test(NAME RuntimeCoreObjectSymbols
         COMMAND "${CMAKE_COMMAND}"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DOBJECT=${JOYEER_RUNTIME_CORE_OBJECT}"
-            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_string_destroy_abi;joyeer_byte_to_string_abi;joyeer_string_concat_abi;joyeer_print_string_abi;joyeer_print_int;joyeer_print_uint;joyeer_print_byte;joyeer_print_bool;joyeer_array_create_owned_abi;joyeer_array_clone_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy;joyeer_native_bytes_init;joyeer_native_strings_init;joyeer_native_bytes_assign;joyeer_native_string_assign;joyeer_native_strings_assign;joyeer_dictionary_create_owned_abi;joyeer_dictionary_clone_abi;joyeer_dictionary_set_owned_abi;joyeer_dictionary_find_abi;joyeer_dictionary_at_abi;joyeer_dictionary_destroy_abi;joyeer_print_float;joyeer_print_double;joyeer_format_double_abi;joyeer_format_float_abi"
+            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_string_destroy_abi;joyeer_byte_to_string_abi;joyeer_string_concat_abi;joyeer_print_string_abi;joyeer_print_int;joyeer_print_uint;joyeer_print_byte;joyeer_print_bool;joyeer_array_create_owned_abi;joyeer_array_clone_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy;joyeer_native_bytes_init;joyeer_native_strings_init;joyeer_native_bytes_assign;joyeer_native_string_assign;joyeer_native_strings_assign;joyeer_dictionary_create_owned_abi;joyeer_dictionary_clone_abi;joyeer_dictionary_set_owned_abi;joyeer_dictionary_find_abi;joyeer_dictionary_at_abi;joyeer_dictionary_destroy_abi;joyeer_print_float;joyeer_print_double;joyeer_format_double_abi;joyeer_format_float_abi;joyeer_stdout_write;joyeer_stdout_flush;joyeer_stderr_write;joyeer_stdin_read_byte"
             "-DALLOWED_UNDEFINED=${joyeer_core_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
@@ -159,12 +161,11 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     # The entry object defines the program entry point and reaches the core only
     # through its C ABI.
     get_target_property(JOYEER_RUNTIME_ENTRY_OBJECT JoyeerRuntime JOYEER_ENTRY_OBJECT)
-    set(joyeer_entry_imports "joyeer_main;joyeer_main_uses_arguments;joyeer_panic;joyeer_alloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_array_create_owned_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy")
+    set(joyeer_entry_imports "atexit;joyeer_stderr_write;joyeer_stdout_flush;joyeer_main;joyeer_main_uses_arguments;joyeer_panic;joyeer_alloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_array_create_owned_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy")
     if(WIN32)
-        list(APPEND joyeer_entry_imports WideCharToMultiByte _write)
+        list(APPEND joyeer_entry_imports WideCharToMultiByte)
         set(joyeer_entry_point wmain)
     else()
-        list(APPEND joyeer_entry_imports write)
         set(joyeer_entry_point main)
     endif()
     add_test(NAME RuntimeEntryObjectSymbols

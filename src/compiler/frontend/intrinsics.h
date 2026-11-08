@@ -41,13 +41,15 @@ enum class Operation {
     memoryFill,
     doubleBits,
     floatBits,
+    systemCall,
+    targetArchitecture,
 };
 
 struct Descriptor {
     std::string_view symbol;
     Operation operation;
     typing::TypeKind result;
-    std::array<typing::TypeKind, 3> parameters;
+    std::array<typing::TypeKind, 7> parameters;
     size_t count;
     // The first parameter is a `[UInt8]` passed as a bare data pointer.
     bool bytePointer;
@@ -55,7 +57,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 20> table {{
+inline constexpr std::array<Descriptor, 22> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -110,6 +112,16 @@ inline constexpr std::array<Descriptor, 20> table {{
       { TypeKind::float64, TypeKind::error, TypeKind::error }, 1, false },
     { "joyeer_intrinsic_float_bits", Operation::floatBits, TypeKind::uint32,
       { TypeKind::float32, TypeKind::error, TypeKind::error }, 1, false },
+    // A Linux system call (spec §19.4.6): the number, then six arguments, all addresses or
+    // integers. The result is the kernel's: -4095 to -1 is a negated errno. Accepted only when
+    // the target is Linux on x86-64 or AArch64; the runtime owns the call numbers.
+    { "joyeer_intrinsic_syscall", Operation::systemCall, TypeKind::integer,
+      { TypeKind::integer, TypeKind::integer, TypeKind::integer, TypeKind::integer,
+        TypeKind::integer, TypeKind::integer, TypeKind::integer }, 7, false },
+    // 1 for an x86-64 target, 2 for AArch64, 0 for any other: a constant, so the runtime
+    // can pick the system call numbers of the architecture it was built for.
+    { "joyeer_intrinsic_target_architecture", Operation::targetArchitecture, TypeKind::integer,
+      { TypeKind::error, TypeKind::error, TypeKind::error }, 0, false },
 }};
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

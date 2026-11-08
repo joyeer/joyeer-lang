@@ -362,3 +362,29 @@ foreach(profile IN ITEMS Debug Optimized)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.MemoryIntrinsics${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
 endforeach()
+
+# The target-architecture intrinsic folds to the architecture the program is built for.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|x86_64|X86_64)$")
+    set(joyeer_expected_architecture 1)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64|AARCH64)$")
+    set(joyeer_expected_architecture 2)
+else()
+    set(joyeer_expected_architecture 0)
+endif()
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.TargetArchitecture${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/target-architecture.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/target-architecture-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.target_architecture;--runtime-module;runtime.target_architecture;${compile_flags}"
+            "-DEXPECTED_OUTPUT=${joyeer_expected_architecture}\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.TargetArchitecture${profile}" PROPERTIES
+        LABELS "c-interop;native" TIMEOUT 60)
+endforeach()

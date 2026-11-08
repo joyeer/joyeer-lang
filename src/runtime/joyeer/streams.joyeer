@@ -1,0 +1,442 @@
+// The process's standard streams and its end (`joyeer_stdout_write`,
+// `joyeer_stdout_flush`, `joyeer_stderr_write`, `joyeer_stdin_read_byte`), written
+// straight to the operating system: `WriteFile` / `ReadFile` on Windows, the
+// `write` / `read` system calls on Linux, libSystem's on macOS (decision 0011). No
+// C library stream is involved, so `print`, `System` and a panic share the one
+// buffer below and the order of their output is the order of the calls.
+//
+// Standard output is buffered, 8 KiB, and flushed when it fills, before the program
+// reads standard input or panics, when it ends, and after every `print` while the
+// output is a terminal. Standard error is not buffered. Standard input is read
+// into a 4 KiB buffer a byte at a time. The buffers live in one block mapped
+// straight from the system on first use and never freed: it is not an allocation, so
+// the leak count does not see it.
+//
+// Every failing operation reports an errno-style code (9 bad descriptor, 32 broken
+// pipe, 28 disk full, 13 access denied, otherwise 5), the codes `System` has always
+// reported; 0 means success.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4). The state is in static slot 2.
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func load8(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_load_u32")
+private func load32(address: Int): UInt32
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+private func store8(address: Int, value: UInt8): Void
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+// Slot 2 holds the state block; slots 3 to 10 (64 contiguous bytes) are scratch for the
+// system calls' out parameters, so the panic path needs no mapping.
+private let stateSlot: Int = 2
+private let scratchSlot: Int = 3
+private let outputCountOffset: Int = 0
+private let terminalOffset: Int = 8
+private let inputPositionOffset: Int = 16
+private let inputEndOffset: Int = 24
+private let outputOffset: Int = 4096
+private let outputCapacity: Int = 8192
+private let inputOffset: Int = 12288
+private let inputCapacity: Int = 4096
+private let wideOffset: Int = 16384
+private let stateBytes: Int = 20480
+private let errorUnknown: Int = 5
+
+// Maps the state block on first use; 0 when the system has no memory for it.
+private func tryState(): Int {
+    let slot = staticSlot(index: stateSlot)
+    var base = load64(address: slot) as Int
+    if base == 0 {
+        base = mapPages(size: stateBytes)
+        if base != 0 { store64(address: slot, value: base as UInt64) }
+    }
+    return base
+}
+
+private func state(): Int {
+    let base = tryState()
+    if base == 0 { panic(message: literalAddress(text: "out of memory")) }
+    return base
+}
+
+private func scratchAddress(): Int {
+    return staticSlot(index: scratchSlot)
+}
+
+// ---- The system interface -------------------------------------------------------
+//
+// Four operations per platform, each in terms of a descriptor (1 output, 2 error):
+// `systemWrite` and `systemRead` return the byte count (at least one for a nonzero
+// request, 0 at the end of input) or a negated error code; `systemTerminal` says
+// whether a descriptor is a terminal; `exitProcess` ends the process.
+
+@platform(windows)
+@c_extern(symbol: "GetStdHandle")
+private func standardHandle(kind: UInt32): Int
+
+@platform(windows)
+@c_extern(symbol: "WriteFile")
+private func writeFile(handle: Int, buffer: Int, count: UInt32, written: Int, overlapped: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "ReadFile")
+private func readFile(handle: Int, buffer: Int, count: UInt32, done: Int, overlapped: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetConsoleMode")
+private func consoleMode(handle: Int, mode: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "WriteConsoleW")
+private func writeConsole(handle: Int, buffer: Int, count: UInt32, written: Int, reserved: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "MultiByteToWideChar")
+private func multiByteToWide(codePage: UInt32, flags: UInt32, bytes: Int, byteCount: Int32,
+    wide: Int, wideCount: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func lastError(): UInt32
+
+@platform(windows)
+@c_extern(symbol: "ExitProcess")
+private func exitWindows(status: UInt32): Never
+
+// The Windows codes the C library mapped to errno, and EIO for the rest.
+@platform(windows)
+private func systemCode(code: UInt32): Int {
+    if code == 6 { return 9 }
+    if code == 109 || code == 232 || code == 233 { return 32 }
+    if code == 112 || code == 39 { return 28 }
+    if code == 5 { return 13 }
+    return errorUnknown
+}
+
+@platform(windows)
+private func handleOf(descriptor: Int): Int {
+    // STD_INPUT_HANDLE, STD_OUTPUT_HANDLE and STD_ERROR_HANDLE are -10, -11 and -12.
+    if descriptor == 0 { return standardHandle(kind: 4294967286) }
+    if descriptor == 1 { return standardHandle(kind: 4294967285) }
+    return standardHandle(kind: 4294967284)
+}
+
+@platform(windows)
+private func systemTerminal(descriptor: Int): Bool {
+    return consoleMode(handle: handleOf(descriptor: descriptor), mode: scratchAddress()) != 0
+}
+
+// The number of leading bytes of the `count` at `data` that end on a UTF-8
+// character boundary, or `count` when that would leave nothing.
+@platform(windows)
+private func completePrefix(data: Int, count: Int): Int {
+    var lead = count - 1
+    var back = 0
+    while lead > 0 && back < 3 && load8(address: data + lead) >= 128 && load8(address: data + lead) < 192 {
+        lead = lead - 1
+        back = back + 1
+    }
+    let byte = load8(address: data + lead)
+    var length = 1
+    if byte >= 240 {
+        length = 4
+    } else if byte >= 224 {
+        length = 3
+    } else if byte >= 192 {
+        length = 2
+    }
+    if lead + length > count && lead > 0 { return lead }
+    return count
+}
+
+// Text to a console goes through WriteConsoleW, so it shows as Unicode whatever the
+// console code page is.
+@platform(windows)
+private func writeToConsole(handle: Int, data: Int, count: Int): Int {
+    var chunk = count
+    if chunk > 1024 { chunk = 1024 }
+    chunk = completePrefix(data: data, count: chunk)
+    let base = tryState()
+    if base == 0 { return 0 - errorUnknown }
+    let units = multiByteToWide(codePage: 65001, flags: 0, bytes: data, byteCount: chunk as Int32,
+        wide: base + wideOffset, wideCount: 1024)
+    if units <= 0 { return 0 - errorUnknown }
+    if writeConsole(handle: handle, buffer: base + wideOffset, count: units as UInt32,
+        written: scratchAddress(), reserved: 0) == 0 {
+        return 0 - systemCode(code: lastError())
+    }
+    return chunk
+}
+
+@platform(windows)
+private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
+    let handle = handleOf(descriptor: descriptor)
+    let scratch = scratchAddress()
+    if consoleMode(handle: handle, mode: scratch) != 0 {
+        return writeToConsole(handle: handle, data: data, count: count)
+    }
+    var chunk = count
+    if chunk > 1048576 { chunk = 1048576 }
+    if writeFile(handle: handle, buffer: data, count: chunk as UInt32, written: scratch, overlapped: 0) == 0 {
+        return 0 - systemCode(code: lastError())
+    }
+    return load32(address: scratch) as Int
+}
+
+@platform(windows)
+private func systemRead(data: Int, count: Int): Int {
+    let handle = handleOf(descriptor: 0)
+    let scratch = scratchAddress()
+    if readFile(handle: handle, buffer: data, count: count as UInt32, done: scratch, overlapped: 0) == 0 {
+        let code = lastError()
+        // A closed pipe is the end of the input.
+        if code == 109 { return 0 }
+        return 0 - systemCode(code: code)
+    }
+    return load32(address: scratch) as Int
+}
+
+@platform(windows)
+public func exitProcess(status: Int32): Never {
+    exitWindows(status: status as UInt32)
+}
+
+// ---- Linux: raw system calls ----------------------------------------------------
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+private func systemCall(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int,
+    sixth: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+private func targetArchitecture(): Int
+
+// The call numbers differ between x86-64 (1) and AArch64 (2).
+@platform(linux)
+public func callNumber(x86: Int, arm: Int): Int {
+    if targetArchitecture() == 2 { return arm }
+    return x86
+}
+
+@platform(linux)
+private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
+    var outcome = 0 - 4
+    // EINTR: a signal arrived before anything was written.
+    while outcome == 0 - 4 {
+        outcome = systemCall(number: callNumber(x86: 1, arm: 64), first: descriptor, second: data,
+            third: count, fourth: 0, fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+@platform(linux)
+private func systemRead(data: Int, count: Int): Int {
+    var outcome = 0 - 4
+    while outcome == 0 - 4 {
+        outcome = systemCall(number: callNumber(x86: 0, arm: 63), first: 0, second: data,
+            third: count, fourth: 0, fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+// TCGETS on the descriptor succeeds only for a terminal; the termios structure
+// fits the scratch area.
+@platform(linux)
+private func systemTerminal(descriptor: Int): Bool {
+    let outcome = systemCall(number: callNumber(x86: 16, arm: 29), first: descriptor, second: 21505,
+        third: scratchAddress(), fourth: 0, fifth: 0, sixth: 0)
+    return outcome == 0
+}
+
+@platform(linux)
+public func exitProcess(status: Int32): Never {
+    systemCall(number: callNumber(x86: 231, arm: 94), first: status as Int, second: 0, third: 0,
+        fourth: 0, fifth: 0, sixth: 0)
+    // exit_group does not return; keep looping if it somehow does.
+    while true { }
+}
+
+// ---- macOS: libSystem -----------------------------------------------------------
+
+@platform(macos)
+@c_extern(symbol: "write")
+private func writeDescriptor(descriptor: Int32, buffer: Int, count: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "read")
+private func readDescriptor(descriptor: Int32, buffer: Int, count: Int): Int
+
+@platform(macos)
+@c_extern(symbol: "isatty")
+private func isTerminal(descriptor: Int32): Int32
+
+@platform(macos)
+@c_extern(symbol: "__error")
+private func errorLocation(): Int
+
+@platform(macos)
+@c_extern(symbol: "_exit")
+private func exitSystem(status: Int32): Never
+
+@platform(macos)
+private func failureCode(): Int {
+    return 0 - (load32(address: errorLocation()) as Int)
+}
+
+@platform(macos)
+private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
+    var outcome = writeDescriptor(descriptor: descriptor as Int32, buffer: data, count: count)
+    while outcome < 0 && failureCode() == 0 - 4 {
+        outcome = writeDescriptor(descriptor: descriptor as Int32, buffer: data, count: count)
+    }
+    if outcome < 0 { return failureCode() }
+    return outcome
+}
+
+@platform(macos)
+private func systemRead(data: Int, count: Int): Int {
+    var outcome = readDescriptor(descriptor: 0, buffer: data, count: count)
+    while outcome < 0 && failureCode() == 0 - 4 {
+        outcome = readDescriptor(descriptor: 0, buffer: data, count: count)
+    }
+    if outcome < 0 { return failureCode() }
+    return outcome
+}
+
+@platform(macos)
+private func systemTerminal(descriptor: Int): Bool {
+    return isTerminal(descriptor: descriptor as Int32) != 0
+}
+
+@platform(macos)
+public func exitProcess(status: Int32): Never {
+    exitSystem(status: status)
+}
+
+// ---- Streams ----------------------------------------------------------------------
+
+// Writes all `count` bytes at `data` to `descriptor`; 0, or the first error code.
+private func writeAll(descriptor: Int, data: Int, count: Int): Int32 {
+    var done = 0
+    while done < count {
+        let written = systemWrite(descriptor: descriptor, data: data + done, count: count - done)
+        if written < 0 { return (0 - written) as Int32 }
+        if written == 0 { return errorUnknown as Int32 }
+        done = done + written
+    }
+    return 0
+}
+
+// Writes the buffered standard output and empties the buffer, even on failure.
+@c_export(symbol: "joyeer_stdout_flush")
+public func stdoutFlush(): Int32 {
+    let slot = load64(address: staticSlot(index: stateSlot))
+    if slot == 0 { return 0 }
+    let base = slot as Int
+    let pending = load64(address: base + outputCountOffset) as Int
+    if pending == 0 { return 0 }
+    store64(address: base + outputCountOffset, value: 0)
+    return writeAll(descriptor: 1, data: base + outputOffset, count: pending)
+}
+
+// Appends bytes to standard output; 0, or the code of the first failed write.
+public func putBytes(data: Int, count: Int): Int32 {
+    let base = state()
+    var code: Int32 = 0
+    var done = 0
+    while done < count {
+        var pending = load64(address: base + outputCountOffset) as Int
+        let remaining = count - done
+        if pending == 0 && remaining >= outputCapacity {
+            // Too big to be worth copying.
+            let failure = writeAll(descriptor: 1, data: data + done, count: remaining)
+            if code == 0 { code = failure }
+            return code
+        }
+        var room = outputCapacity - pending
+        if room == 0 {
+            let failure = stdoutFlush()
+            if code == 0 { code = failure }
+            pending = 0
+            room = outputCapacity
+        }
+        var chunk = remaining
+        if chunk > room { chunk = room }
+        copyBytes(destination: base + outputOffset + pending, source: data + done, count: chunk)
+        store64(address: base + outputCountOffset, value: (pending + chunk) as UInt64)
+        done = done + chunk
+    }
+    return code
+}
+
+public func putByte(value: Int) {
+    let base = state()
+    var pending = load64(address: base + outputCountOffset) as Int
+    if pending == outputCapacity {
+        stdoutFlush()
+        pending = 0
+    }
+    store8(address: base + outputOffset + pending, value: value as UInt8)
+    store64(address: base + outputCountOffset, value: (pending + 1) as UInt64)
+}
+
+// Called when one `print` has written its text and newline: an interactive program's
+// output appears at once, a redirected one stays buffered. The terminal check is
+// made once per process.
+public func endPrint() {
+    let base = state()
+    var terminal = load64(address: base + terminalOffset) as Int
+    if terminal == 0 {
+        terminal = 2
+        if systemTerminal(descriptor: 1) { terminal = 1 }
+        store64(address: base + terminalOffset, value: terminal as UInt64)
+    }
+    if terminal == 1 { stdoutFlush() }
+}
+
+@c_export(symbol: "joyeer_stdout_write")
+public func stdoutWrite(data: Int, count: Int): Int32 {
+    return putBytes(data: data, count: count)
+}
+
+// Standard error is written at once, bypassing the standard output buffer.
+@c_export(symbol: "joyeer_stderr_write")
+public func stderrWrite(data: Int, count: Int): Int32 {
+    return writeAll(descriptor: 2, data: data, count: count)
+}
+
+// The next byte of standard input (0 to 255), -1 at the end of the input, or a
+// negated error code (at most -2).
+@c_export(symbol: "joyeer_stdin_read_byte")
+public func stdinReadByte(): Int32 {
+    let base = state()
+    var position = load64(address: base + inputPositionOffset) as Int
+    var end = load64(address: base + inputEndOffset) as Int
+    if position >= end {
+        let count = systemRead(data: base + inputOffset, count: inputCapacity)
+        if count < 0 { return count as Int32 }
+        if count == 0 { return 0 - 1 }
+        position = 0
+        end = count
+        store64(address: base + inputEndOffset, value: end as UInt64)
+    }
+    store64(address: base + inputPositionOffset, value: (position + 1) as UInt64)
+    return load8(address: base + inputOffset + position) as Int32
+}

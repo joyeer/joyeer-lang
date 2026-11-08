@@ -3,6 +3,11 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <vector>
+
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace joyeer::llvmbackend::native {
 
@@ -34,6 +39,30 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
     if (descriptor.operation == Operation::doubleBits || descriptor.operation == Operation::floatBits) {
         return builder.CreateBitCast(arguments[0],
                 descriptor.operation == Operation::doubleBits ? builder.getInt64Ty() : builder.getInt32Ty(), temporary());
+    }
+    if (descriptor.operation == Operation::targetArchitecture) {
+        const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
+        return integer(target.getArch() == llvm::Triple::x86_64 ? 1 : target.getArch() == llvm::Triple::aarch64 ? 2 : 0);
+    }
+    if (descriptor.operation == Operation::systemCall) {
+        // Only the Linux kernel promises a stable system call interface. The call
+        // number and the six arguments go in the architecture's registers; the kernel
+        // result comes back in the first. Constraint 0 ties the number to the result
+        // register (rax) or the first argument to it (x0), which the call overwrites.
+        const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
+        const bool x86 = target.getArch() == llvm::Triple::x86_64;
+        if (!target.isOSLinux() || (!x86 && target.getArch() != llvm::Triple::aarch64)) {
+            report(DiagnosticId::unsupportedExternal, {},
+                    "joyeer_intrinsic_syscall requires a Linux x86-64 or AArch64 target");
+            return integer(0);
+        }
+        auto* integerType = builder.getInt64Ty();
+        auto* assemblyType = llvm::FunctionType::get(integerType, std::vector<llvm::Type*>(7, integerType), false);
+        auto* assembly = llvm::InlineAsm::get(assemblyType, x86 ? "syscall" : "svc #0",
+                x86 ? "={rax},0,{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}"
+                    : "={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}",
+                true);
+        return builder.CreateCall(assemblyType, assembly, arguments, temporary());
     }
     if (descriptor.operation == Operation::staticSlot) {
         // One zeroed table per program: every object that uses slots defines the
@@ -142,6 +171,8 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::memoryFill:
         case Operation::doubleBits:
         case Operation::floatBits:
+        case Operation::systemCall:
+        case Operation::targetArchitecture:
             break;
     }
     return nullptr;

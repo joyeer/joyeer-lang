@@ -207,9 +207,11 @@ See the
 [backend limitations](backend.md#5-known-limitations) and
 [IR verification bounds](ir.md#5-verification) for other gaps.
 
-Panic writes its message to standard error with the platform's `write` call and ends the
-process with C11 `_Exit` and status 1, avoiding platform crash dialogs while remaining
-unrecoverable.
+Panic writes any buffered standard output, then its message to standard error, directly
+through the system interface (`WriteFile`, the Linux `write` system call, libSystem), and ends the
+process with `ExitProcess`, `exit_group` or `_exit` and status 1, avoiding platform crash dialogs
+while remaining unrecoverable. `print` and a panic share one standard output buffer
+([decision 0011](../decisions/0011-runtime-without-the-c-library.md)).
 
 
 Focused test labels include `runtime`, `native`, `file-io`, `filesystem`,

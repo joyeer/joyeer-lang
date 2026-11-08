@@ -735,9 +735,11 @@ TEST(RuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
 
 std::string capturedStdout(void (*produce)()) {
     std::fflush(stdout);
+    joyeer_stdout_flush();
     testing::internal::CaptureStdout();
     produce();
     std::fflush(stdout);
+    joyeer_stdout_flush();
     auto text = testing::internal::GetCapturedStdout();
     text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
     return text;
@@ -907,10 +909,12 @@ TEST(RuntimeBlackBoxDeathTest, FormattingRejectsAnInvalidPrecision) {
 TEST(RuntimeBlackBoxTest, PrintsStringBytesUntransformedWithOneNewline) {
     const std::string text("a\0b\xff", 4);
     std::fflush(stdout);
+    joyeer_stdout_flush();
     testing::internal::CaptureStdout();
     joyeer_print_string_abi(reinterpret_cast<const uint8_t*>(text.data()), 4);
     joyeer_print_string_abi(nullptr, 0);
     std::fflush(stdout);
+    joyeer_stdout_flush();
     auto captured = testing::internal::GetCapturedStdout();
     captured.erase(std::remove(captured.begin(), captured.end(), '\r'), captured.end());
     EXPECT_EQ(captured, text + "\n" + "\n");
@@ -1008,6 +1012,53 @@ TEST(RuntimeBlackBoxDeathTest, PanicPrintsTheMessageAndExitsWithFailure) {
     EXPECT_EXIT(joyeer_panic(nullptr), testing::ExitedWithCode(1),
                 "Joyeer runtime error: unknown error");
     EXPECT_EXIT(joyeer_panic(""), testing::ExitedWithCode(1), "Joyeer runtime error: \n");
+}
+
+TEST(RuntimeBlackBoxTest, StandardOutputIsOneBufferSharedByPrintAndWrite) {
+    std::fflush(stdout);
+    joyeer_stdout_flush();
+    testing::internal::CaptureStdout();
+    joyeer_print_int(1);
+    const uint8_t bytes[] = {'a', 'b'};
+    EXPECT_EQ(joyeer_stdout_write(bytes, 2), 0);
+    joyeer_print_int(2);
+    // A write larger than the buffer, then more small ones after it, keep their order.
+    std::string big(20000, 'x');
+    for (size_t index = 0; index < big.size(); ++index) big[index] = static_cast<char>('a' + index % 26);
+    EXPECT_EQ(joyeer_stdout_write(reinterpret_cast<const uint8_t*>(big.data()), static_cast<int64_t>(big.size())), 0);
+    joyeer_print_bool(true);
+    for (int index = 0; index < 5000; ++index) joyeer_print_int(index);
+    EXPECT_EQ(joyeer_stdout_flush(), 0);
+    auto captured = testing::internal::GetCapturedStdout();
+    captured.erase(std::remove(captured.begin(), captured.end(), '\r'), captured.end());
+    std::string expected = "1\nab2\n" + big + "true\n";
+    for (int index = 0; index < 5000; ++index) expected += std::to_string(index) + "\n";
+    EXPECT_EQ(captured, expected);
+    EXPECT_EQ(joyeer_stdout_flush(), 0);
+}
+
+TEST(RuntimeBlackBoxTest, StandardErrorIsWrittenAtOnceAndIndependentlyOfOutput) {
+    std::fflush(stdout);
+    joyeer_stdout_flush();
+    testing::internal::CaptureStderr();
+    joyeer_print_int(7);
+    const uint8_t text[] = {'e', 'r', 'r'};
+    EXPECT_EQ(joyeer_stderr_write(text, 3), 0);
+    auto captured = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(captured, "err");
+    // The output was still buffered; send it where it can be dropped.
+    testing::internal::CaptureStdout();
+    joyeer_stdout_flush();
+    EXPECT_EQ(testing::internal::GetCapturedStdout().find('7') != std::string::npos, true);
+}
+
+TEST(RuntimeBlackBoxDeathTest, APanicWritesBufferedOutputBeforeItsMessage) {
+    // The message goes to standard error; the death test's child shares its output
+    // stream with the parent, so only the message and status are checked here.
+    EXPECT_EXIT({
+        joyeer_print_int(123);
+        joyeer_panic("flushed first");
+    }, testing::ExitedWithCode(1), "Joyeer runtime error: flushed first");
 }
 
 TEST(RuntimeBlackBoxTest, AllocatorCountsBlocksAndKeepsTheirContents) {
