@@ -193,7 +193,7 @@ text-mode translation, as nothing translates). `writeStderr` writes exactly its
 bytes without a trailing newline, at once. Both use the runtime's own streams, which
 talk to the operating system directly (decision
 [0011](../decisions/0011-runtime-without-the-c-library.md)), so no C library buffer,
-mode or `errno` is involved; failures carry errno-style codes (9, 13, 28, 32, 5). On Windows
+mode or `errno` is involved; failures carry errno-style codes (on Windows 9, 28, 32 and 5, where a handle that is invalid or not open for the operation, such as a read-only standard error, is 9 as the C library and POSIX report it; elsewhere the system's own errno). An empty `writeStderr` still checks that standard error can be written, so a closed descriptor fails even with nothing to send. On Windows
 the whole of `System` now calls only `kernel32`, including the legacy narrow-path
 `readFile` (`CreateFileA`, with the C library's mapping of system errors to `errno`
 codes). On Linux the file, directory and process operations are system calls

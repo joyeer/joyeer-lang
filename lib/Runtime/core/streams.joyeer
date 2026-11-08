@@ -13,8 +13,8 @@
 // the leak count does not see it.
 //
 // Every failing operation reports an errno-style code (9 bad descriptor, 32 broken
-// pipe, 28 disk full, 13 access denied, otherwise 5), the codes `System` has always
-// reported; 0 means success.
+// pipe, 28 disk full, otherwise 5 on Windows; the system's own errno elsewhere), the codes
+// `System` has always reported; 0 means success.
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only (runtime
 // plan §4). The state is in static slot 2.
@@ -124,13 +124,14 @@ private func lastError(): UInt32
 @c_extern(symbol: "ExitProcess")
 private func exitWindows(status: UInt32): Never
 
-// The Windows codes the C library mapped to errno, and EIO for the rest.
+// The Windows codes the C library mapped to errno, and EIO for the rest. A handle that
+// is invalid (6) or not open for the operation (5, access denied) is a bad descriptor (9),
+// as the C library's `_write` and `_read` reported it and as POSIX reports `EBADF`.
 @platform(windows)
 private func systemCode(code: UInt32): Int {
-    if code == 6 { return 9 }
+    if code == 6 || code == 5 { return 9 }
     if code == 109 || code == 232 || code == 233 { return 32 }
     if code == 112 || code == 39 { return 28 }
-    if code == 5 { return 13 }
     return errorUnknown
 }
 

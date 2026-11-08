@@ -8,7 +8,8 @@ import Foundation
 // a buffer of the runtime's, a byte at a time, and is never translated.
 //
 // The streams report errno-style codes (9 bad descriptor, 32 broken pipe, 28 disk
-// full, 13 access denied, otherwise 5), the codes this module has always carried.
+// full, otherwise 5 on Windows; the system's own errno elsewhere), the codes this module
+// has always carried.
 
 private let intMax: Int = 9223372036854775807
 private let invalidArgument: Int = 22
@@ -24,12 +25,12 @@ private func flushOutput(): Int32
 @c_extern(symbol: "joyeer_stdin_read_byte")
 private func nextByte(): Int32
 
+// An empty `contents` still reaches the runtime, which then only checks that standard
+// error can be written: a closed descriptor is a failure even when there is nothing to send.
 public func writeStderr(contents: String): Result<Void, StderrError> {
-    if contents.count != 0 {
-        let bytes = contents.utf8()
-        let code = writeErrorBytes(buffer: bytes, count: bytes.count) as Int
-        if code != 0 { return .Err(.WriteFailed(code)) }
-    }
+    let bytes = contents.utf8()
+    let code = writeErrorBytes(buffer: bytes, count: bytes.count) as Int
+    if code != 0 { return .Err(.WriteFailed(code)) }
     return .Ok(())
 }
 
