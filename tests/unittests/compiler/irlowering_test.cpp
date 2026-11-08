@@ -201,6 +201,18 @@ TEST_F(IRLoweringTest, SharesPublicConstantsAcrossModules) {
     EXPECT_EQ(result.module->constants[0].name, "table");
 }
 
+// Temporary until decision 0015 stage 6: no stage past name resolution runs a `deinit`, so a
+// struct that declares one must not compile silently without ever closing its resource.
+TEST_F(IRLoweringTest, ADeinitIsRejectedUntilLoweringImplementsIt) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"));
+    ASSERT_FALSE(result.succeeded());
+    EXPECT_NE(joyeer::lowering::dump(result.diagnostics).find("'deinit' is not yet implemented"),
+              std::string::npos);
+
+    ASSERT_NO_FATAL_FAILURE(lower("struct Plain { var fd: Int }\n"));
+    EXPECT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+}
+
 TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
     const std::vector<std::pair<std::string, std::string>> cases {
         { "var x: Int = 1\n", "top-level 'var'" },

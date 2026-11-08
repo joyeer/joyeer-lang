@@ -381,6 +381,7 @@ private:
                 const auto value = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 for (const auto& field : value->fields) indexNode(field);
                 for (const auto& method : value->methods) indexNode(method);
+                indexNode(value->deinitializer);
                 break;
             }
             case Kind::extensionDecl: {
@@ -848,7 +849,7 @@ private:
                     const auto declaration =
                             std::static_pointer_cast<syntax::StructDeclSyntax>(item);
                     const auto type = declaredSymbolId(declaration);
-                    if (type.has_value()) collectMethods(*type, declaration->methods);
+                    if (type.has_value()) collectMethods(*type, structureMembers(declaration));
                     break;
                 }
                 case syntax::Kind::enumDecl: {
@@ -865,6 +866,15 @@ private:
                     break;
             }
         }
+    }
+
+    // A struct's `deinit` is a member function with an `inout` receiver and no parameters
+    // (decision 0015). `deinit` is a keyword, so the member cannot be named or called.
+    static std::vector<syntax::FunctionDeclSyntax::Ptr> structureMembers(
+            const syntax::StructDeclSyntax::Ptr& declaration) {
+        auto members = declaration->methods;
+        if (declaration->deinitializer != nullptr) members.push_back(declaration->deinitializer);
+        return members;
     }
 
     void collectExtension(const syntax::ExtensionDeclSyntax::Ptr& extension) {
@@ -964,14 +974,6 @@ private:
 
     void collectStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
         rejectReservedTypeName(declaration->name, declaration->span);
-        // Temporary (decision 0015, stage 3 replaces it): the parser accepts `deinit`, but no
-        // later stage runs it yet, so accepting a struct that declares one would silently
-        // never close its resource.
-        if (declaration->deinitializer != nullptr) {
-            report(NameResolutionDiagnosticId::deinitNotImplemented,
-                   declaration->deinitializer->span,
-                   "'deinit' is parsed but not yet implemented by name resolution and later stages");
-        }
         const auto type = declareSymbol(
                 model->fileScope_,
                 SymbolNamespace::type,
@@ -1249,7 +1251,7 @@ private:
                 const auto declaration =
                         std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 resolveStructureSignature(declaration);
-                resolveMethodSignatures(declaredSymbolId(declaration), declaration->methods);
+                resolveMethodSignatures(declaredSymbolId(declaration), structureMembers(declaration));
                 break;
             }
             case syntax::Kind::enumDecl: {
@@ -1317,7 +1319,7 @@ private:
                 for (const auto& field : declaration->fields) {
                     resolveExpression(field->initializer, memberScope);
                 }
-                resolveMethodBodies(structure, declaration->methods);
+                resolveMethodBodies(structure, structureMembers(declaration));
                 break;
             }
             case syntax::Kind::enumDecl: {
@@ -2186,8 +2188,6 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.self-outside-type";
         case NameResolutionDiagnosticId::reservedName:
             return "name-resolution.reserved-name";
-        case NameResolutionDiagnosticId::deinitNotImplemented:
-            return "name-resolution.deinit-not-implemented";
     }
     return "name-resolution.unknown";
 }

@@ -552,6 +552,16 @@ private:
         forEachMethod(*root, [this](const syntax::FunctionDeclSyntax::Ptr& method) {
             collectFunction(method);
         });
+        // Temporary (decision 0015, stage 6 replaces it): nothing lowers a `deinit` yet, and
+        // accepting one would silently never run it.
+        for (const auto& item : root->items) {
+            if (item->kind != syntax::Kind::structDecl) continue;
+            const auto& deinitializer =
+                    std::static_pointer_cast<syntax::StructDeclSyntax>(item)->deinitializer;
+            if (deinitializer == nullptr) continue;
+            report(DiagnosticId::unsupportedSyntax, deinitializer->span,
+                   "'deinit' is not yet implemented by IR lowering");
+        }
         evaluateConstants();
     }
 

@@ -177,8 +177,9 @@ parameter defaults remain unsupported. See [C binding coverage](c-interop.md).
    `StructDeclSyntax::deinitializer` as a method-like function named `deinit` with
    an `inout` receiver; modifiers, parameters, a return type, a second `deinit`, and a
    `deinit` in an `enum` or `extension` report `parser.invalid-deinit`. Name
-   resolution rejects a struct that declares one (`name-resolution.deinit-not-implemented`)
-   until the later stages implement it. Explicit initializers
+   resolution declares it as a `method` member named `deinit` (unnameable, since
+   `deinit` is a keyword) and resolves its body with `self`. IR lowering rejects a struct
+   that declares one until the later stages implement it. Explicit initializers
    and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.
 5. A parsed `enum` contains one or more cases, followed by methods. Cases do not
