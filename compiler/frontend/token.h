@@ -42,6 +42,7 @@ enum TokenKind {
     kwTry,
     kwIn,
     kwInit,
+    kwDeinit,
     kwSelf,
     kwReturn,
     kwBreak,

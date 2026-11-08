@@ -710,4 +710,15 @@ TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
             }));
 }
 
+
+// Temporary until decision 0015 stage 3: the parser accepts `deinit`, but nothing past name
+// resolution runs it, so a struct that declares one must not compile silently.
+TEST_F(NameResolutionTest, AStructDeinitIsRejectedUntilLaterStagesImplementIt) {
+    resolve("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::deinitNotImplemented));
+
+    resolve("struct Plain { var fd: Int }\n");
+    EXPECT_FALSE(hasDiagnostic(NameResolutionDiagnosticId::deinitNotImplemented));
+}
+
 } // namespace

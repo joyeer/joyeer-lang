@@ -28,6 +28,7 @@ enum class NameResolutionDiagnosticId {
     invalidExtensionTarget,
     selfOutsideType,
     reservedName,
+    deinitNotImplemented,
 };
 
 struct ModuleInput {

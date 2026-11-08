@@ -964,6 +964,14 @@ private:
 
     void collectStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
         rejectReservedTypeName(declaration->name, declaration->span);
+        // Temporary (decision 0015, stage 3 replaces it): the parser accepts `deinit`, but no
+        // later stage runs it yet, so accepting a struct that declares one would silently
+        // never close its resource.
+        if (declaration->deinitializer != nullptr) {
+            report(NameResolutionDiagnosticId::deinitNotImplemented,
+                   declaration->deinitializer->span,
+                   "'deinit' is parsed but not yet implemented by name resolution and later stages");
+        }
         const auto type = declareSymbol(
                 model->fileScope_,
                 SymbolNamespace::type,
@@ -2178,6 +2186,8 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.self-outside-type";
         case NameResolutionDiagnosticId::reservedName:
             return "name-resolution.reserved-name";
+        case NameResolutionDiagnosticId::deinitNotImplemented:
+            return "name-resolution.deinit-not-implemented";
     }
     return "name-resolution.unknown";
 }
