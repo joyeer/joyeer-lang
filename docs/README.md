@@ -75,6 +75,7 @@ work.
 | [test-audit.md](plan/test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [runtime-in-joyeer.md](plan/runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
+| [concurrency.md](plan/concurrency.md) | Concurrency todo list: network timeouts and readiness, a thread-safe runtime, thread primitives, task and channel types, the worker-pool server, and acceptance (proposed) |
 | [library.md](plan/library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
