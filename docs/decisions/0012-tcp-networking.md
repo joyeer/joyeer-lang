@@ -2,7 +2,7 @@
 
 - Status: proposed (2026-11-08); the Windows implementation landed the same
   day and is verified on Windows x64 Debug (loopback tests in `SystemTests`, and
-  the [markdown web server example](../../example/markdown-server/README.md)
+  the [markdown web server example](../../example/web-server/README.md)
   served over real HTTP). The Linux implementation (raw system calls) followed
   and is verified on x86-64 Ubuntu under WSL2: `SystemTests`, the compiler
   module-service and symbol-import gates, and the example over HTTP. macOS is a

@@ -47,7 +47,7 @@ private func parsePort(text: String): Optional<Int> {
 }
 
 private func usage(): String {
-    return "usage: markdown-server [site-directory] [--address a.b.c.d] [--port n]\n" +
+    return "usage: web-server [site-directory] [--address a.b.c.d] [--port n]\n" +
         "  site-directory  folder of .md files (default: site)\n" +
         "  --address       IPv4 address to listen on (default: 127.0.0.1; 0.0.0.0 serves the network)\n" +
         "  --port          TCP port, 0 picks a free one (default: 8080)"
