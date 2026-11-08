@@ -12,10 +12,10 @@ drive rules, native error codes, and API shapes. Joyeer has no way to select cod
 target. Today there are two workarounds:
 
 - Library code takes an explicit flag, as in
-  [path.joyeer](../../src/library/System/path.joyeer) (`windows: Bool`).
+  [path.joyeer](../../lib/System/path.joyeer) (`windows: Bool`).
   Callers must supply it, and runtime wrappers have no way to detect the host.
 - Anything platform-specific lives in C behind `#ifdef`, as in
-  [filesystem.c](../../src/runtime/filesystem.c).
+  `filesystem.c` (since removed; the filesystem is now Joyeer, see [decision 0003](0003-pure-joyeer-filesystem.md)).
 
 The [filesystem plan](../plan/filesystem.md) moves the filesystem into Joyeer
 and needs a way to express the per-OS differences.
@@ -23,7 +23,7 @@ and needs a way to express the per-OS differences.
 Constraints from the current compiler:
 
 - Name resolution keys a scope's functions by name only
-  ([nameresolution.cpp](../../src/compiler/frontend/nameresolution.cpp)). Two
+  ([nameresolution.cpp](../../compiler/frontend/nameresolution.cpp)). Two
   declarations of one name are `name-resolution.duplicate-declaration`.
 - Annotations are already parsed generically, as a name plus arguments on
   `FunctionDeclSyntax`. The type checker rejects any annotation except

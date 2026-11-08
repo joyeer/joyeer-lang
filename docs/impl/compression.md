@@ -17,7 +17,7 @@ cmake --preset arm64-debug -DJOYEER_BUILD_COMPRESSION=ON
 cmake --build --preset arm64-debug
 & .\out\build\arm64-debug\bin\fern.exe test `
     --compiler .\out\build\arm64-debug\bin\joyeer.exe `
-    --workspace .\out\build\arm64-debug\src\library\Compression\package\Debug\workspace.toml
+    --workspace .\out\build\arm64-debug\lib\Compression\package\Debug\workspace.toml
 ```
 
 The test module imports `Compression` from the compiler's standard library,

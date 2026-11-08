@@ -243,7 +243,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 get_filename_component(JOYEER_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR} REALPATH)
 
-set(JOYEER_SRC_DIR "${JOYEER_SOURCE_DIR}/src")
+# C headers of the runtime ABI; included as <joyeer/runtime.h> and <joyeer/native.h>.
+set(JOYEER_RUNTIME_INCLUDE_DIR "${JOYEER_SOURCE_DIR}/lib/Runtime/include")
 
 set(JOYEER_BIN_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/bin")
 set(JOYEER_LIB_OUTPUT_INTDIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib")
@@ -259,14 +260,26 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${JOYEER_BIN_OUTPUT_INTDIR})
 string(TOLOWER "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}" JOYEER_TOOLCHAIN_TARGET)
 set(JOYEER_TOOLCHAIN_VERSION "${PROJECT_VERSION}")
 
-add_subdirectory(src)
+add_subdirectory(compiler)
+
+# Object generation needs the compiler before a mixed-language runtime exists.
+# Stage the usable product separately, rather than making joyeer wait for it.
+add_custom_target(JoyeerToolchain ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "$<TARGET_FILE:JoyeerRuntime>"
+        "$<TARGET_FILE_DIR:joyeer>/$<TARGET_FILE_NAME:JoyeerRuntime>"
+    DEPENDS joyeer JoyeerRuntime
+    COMMENT "Staging the Joyeer compiler/runtime product"
+    VERBATIM)
+
+add_subdirectory(lib)
 
 # Standard modules live in <toolchain>/lib, found by the compiler relative to
 # its own executable. Stage them (and lib/index.toml) next to the build tree's
 # compiler so a development build resolves its own library.
 file(GLOB_RECURSE JOYEER_STDLIB_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/library/Foundation/*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/library/System/*")
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/Foundation/*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/System/*")
 set(JOYEER_STDLIB_DIRECTORY "$<TARGET_FILE_DIR:joyeer>/lib")
 set(JOYEER_STDLIB_STAMP "${CMAKE_CURRENT_BINARY_DIR}/stdlib.stamp")
 set(JOYEER_STDLIB_COMPRESSION "")
@@ -274,16 +287,16 @@ set(JOYEER_STDLIB_EXTRA_DEPENDS "")
 set(JOYEER_STDLIB_DEPENDS joyeer)
 if(JOYEER_BUILD_COMPRESSION)
     set(JOYEER_STDLIB_COMPRESSION
-        "${CMAKE_BINARY_DIR}/src/library/Compression/package/$<CONFIG>/Compression")
+        "${CMAKE_BINARY_DIR}/lib/Compression/package/$<CONFIG>/Compression")
     list(APPEND JOYEER_STDLIB_DEPENDS JoyeerCompression)
     set(JOYEER_STDLIB_EXTRA_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/library/Compression/compression.joyeer")
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/Compression/compression.joyeer")
 endif()
 add_custom_command(
     OUTPUT "${JOYEER_STDLIB_STAMP}"
     COMMAND "${CMAKE_COMMAND}"
         "-DDESTINATION=${JOYEER_STDLIB_DIRECTORY}"
-        "-DLIBRARY_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/library"
+        "-DLIBRARY_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/lib"
         "-DCOMPRESSION_PACKAGE=${JOYEER_STDLIB_COMPRESSION}"
         "-DVERSION=${JOYEER_TOOLCHAIN_VERSION}"
         "-DTARGET=${JOYEER_TOOLCHAIN_TARGET}"
@@ -317,5 +330,5 @@ install(TARGETS JoyeerRuntime
     ARCHIVE DESTINATION . COMPONENT JoyeerRuntime)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     DESTINATION licenses COMPONENT JoyeerRuntime)
-install(FILES src/runtime/native.h src/runtime/runtime.h
+install(FILES lib/Runtime/include/joyeer/native.h lib/Runtime/include/joyeer/runtime.h
     DESTINATION include/joyeer COMPONENT NativeDevelopment EXCLUDE_FROM_ALL)

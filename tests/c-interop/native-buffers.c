@@ -1,4 +1,4 @@
-#include "runtime/native.h"
+#include "joyeer/native.h"
 
 int64_t cinterop_buffers(const uint8_t* input, int64_t count,
         JoyeerArray* bytes, JoyeerString* text, JoyeerArray* names) {

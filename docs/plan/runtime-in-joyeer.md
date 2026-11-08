@@ -1,19 +1,17 @@
 # Runtime in Joyeer: Plan
 
-> **Status:** proposed. The runtime is still C (`src/runtime/runtime.c`,
-> `entry.c`, `host.c`; about 970 lines). The host side is already Joyeer: the
-> filesystem, processes, standard streams and `readFile` live in `System`
-> ([filesystem plan](filesystem.md)), and the compiler has the pieces this plan
-> builds on: `@c_export`, `--emit-runtime-object`, and the memory intrinsics of
-> [decision 0005](../decisions/0005-runtime-unsafe-memory.md). Current
-> behavior: [runtime](../impl/runtime.md), [strings](../impl/string.md). Remove
-> completed work from this plan.
+> **Status:** in progress. The runtime is Joyeer (`lib/Runtime/core/`); only its C
+> declarations remain as C (`lib/Runtime/include/joyeer/`). Tier 1 and Tier 2 are done on
+> Windows x64 and Linux x86-64 (stages 0 to 10 below). Open: moving the archive into the
+> toolchain `lib/` (9.3) and platform acceptance on Windows ARM64, Linux AArch64 and macOS
+> (9.4, 10.5). Current behavior: [runtime](../impl/runtime.md),
+> [strings](../impl/string.md). Remove completed work from this plan.
 
 ## 1. Goal
 
 **Every line of the runtime is Joyeer.** `JoyeerRuntime` is a static archive built
 only from objects that the Joyeer compiler emits from Joyeer source. No C file of
-ours is compiled into it, and none remains in `src/runtime/`. The runtime also
+ours is compiled into it, and none remains in `lib/Runtime/`. The runtime also
 stops depending on the *C language's* runtime: it owns its allocator, its output,
 its program startup and its argument handling, and talks to the operating system
 through the platform's own system interface, written as Joyeer bindings.
@@ -450,8 +448,8 @@ The §8 performance gate compares against these rows on the same machine.
 
 ### Stage 1: Build shape and pilot, done
 
-- [x] 1.1 The core module `runtime.core` (`src/runtime/joyeer/*.joyeer`, an
-  explicit list in `src/runtime/CMakeLists.txt`) is compiled by the just-built
+- [x] 1.1 The core module `runtime.core` (`lib/Runtime/core/*.joyeer`, an
+  explicit list in `lib/Runtime/CMakeLists.txt`) is compiled by the just-built
   compiler into one object that `JoyeerRuntime` archives beside the C
   ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). A test
   (`RuntimeCoreObjectSymbols`, `llvm-nm`) allows only the approved exports and
@@ -502,27 +500,27 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   only (D4, D7).
 - [x] 3.4 Indirect calls (D2), done in 2.2.
 - [x] 3.5 The core-dialect diagnostic (D3, `--runtime-core-module`), turned on for
-  every unit in `src/runtime/joyeer/`.
+  every unit in `lib/Runtime/core/`.
 - [x] 3.6 Data-symbol imports (D5, `@c_data`).
 - [x] 3.7 The constant-data address intrinsic, for panic messages (D7).
 
 ### Stage 4: Substrate (R2), done
 
 - [x] 4.1 `joyeer_panic` in Joyeer (D7): message, exit status and the
-  no-allocation property unchanged (`joyeer/panic.joyeer`). It writes the prefix, the
+  no-allocation property unchanged (`core/panic.joyeer`). It writes the prefix, the
   message and the newline as three `write` calls, not one: a core unit has no buffer
   to join them in without allocating.
-- [x] 4.2 The allocation counter in a static slot (`joyeer/allocator.joyeer`), `alloc` / `realloc` / `free`
+- [x] 4.2 The allocation counter in a static slot (`core/allocator.joyeer`), `alloc` / `realloc` / `free`
   taking sizes, and `joyeer_runtime_active_allocations`. The remaining C calls the
   Joyeer allocator through its exports, so there is one counter.
 
 ### Stage 5: Strings and printing (R3), done
 
 - [x] 5.1 `joyeer_string_clone_abi`, `joyeer_string_destroy_abi`,
-  `joyeer_byte_to_string_abi` (`joyeer/text.joyeer`).
+  `joyeer_byte_to_string_abi` (`core/text.joyeer`).
 - [x] 5.2 `joyeer_string_concat_abi`: one allocation, including for empty input.
 - [x] 5.3 `joyeer_print_string_abi`, and `print` for every integer width, `Bool`
-  and `UInt8` (decimal formatting in Joyeer, `joyeer/print.joyeer`). Output still goes
+  and `UInt8` (decimal formatting in Joyeer, `core/print.joyeer`). Output still goes
   through the C `stdout` stream so ordering with `System` is unchanged; digits are
   written with one `fputc` each, so printing allocates nothing. The stream comes from
   `joyeer_native_stdio` until 7.2.
@@ -530,19 +528,19 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 ### Stage 6: Collections (R5, R6), done
 
 - [x] 6.1 Arrays: create, clone, append with the current growth policy, destroy
-  (`joyeer/arrays.joyeer`; the 24-byte header layout is unchanged).
+  (`core/arrays.joyeer`; the 24-byte header layout is unchanged).
 - [x] 6.2 The native buffer helpers (`joyeer_native_{bytes,strings}_init`,
   `joyeer_native_{bytes,string,strings}_assign`); Compression tests pass.
 - [x] 6.3 Dictionaries: create, set with duplicates, find, at, clone, destroy, for
-  every key kind (`joyeer/dictionaries.joyeer`). The element callbacks of a native
+  every key kind (`core/dictionaries.joyeer`). The element callbacks of a native
   `[String]` are Joyeer exports whose addresses come from the new symbol-address
   intrinsic (decision 0009).
 
 ### Stage 7: Entry and native-library API (R7, R8), done on Windows x64
 
 - [x] 7.1 `main` / `wmain` in Joyeer: argument conversion, leak check, exit-status
-  range check; all entry tests pass. `joyeer/entry.joyeer` holds the logic
-  (`joyeer_entry_run`) and `joyeer/entry_main.joyeer` the C entry point; the first builds into
+  range check; all entry tests pass. `core/entry.joyeer` holds the logic
+  (`joyeer_entry_run`) and `core/entry_main.joyeer` the C entry point; the first builds into
   `runtime-entry` and the second into `runtime-main`, separate archive members from the core object so a test that links
   the core does not gain a second entry point. **Run on Windows x64 only: the POSIX
   `main` path (stage 2.1) is unverified on Linux and macOS.**
@@ -559,7 +557,7 @@ Start any time after 5.3.
 - [x] 8.1 Decide the algorithm (D6, [decision 0010](../decisions/0010-floating-point-printing.md))
   and build the oracle: a C++ test that compares Joyeer output with the C library over
   boundary values and a large random sample.
-- [x] 8.2 `Double` output byte-identical to `%.17g` (`joyeer/floats.joyeer`). NaN prints
+- [x] 8.2 `Double` output byte-identical to `%.17g` (`core/floats.joyeer`). NaN prints
   `nan` on every platform, the one deliberate difference.
 - [x] 8.3 `Float` output byte-identical to `%.9g`.
 

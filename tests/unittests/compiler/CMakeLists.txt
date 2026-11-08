@@ -65,7 +65,7 @@ target_link_libraries(CompilerModuleServiceTests PRIVATE
         JoyeerCompilerCore
 )
 target_compile_definitions(CompilerModuleServiceTests PRIVATE
-        JOYEER_LIBRARY_SOURCES="${JOYEER_SRC_DIR}/library"
+        JOYEER_LIBRARY_SOURCES="${JOYEER_SOURCE_DIR}/lib"
 )
 joyeer_discover_tests(CompilerModuleServiceTests
         PROPERTIES LABELS modules

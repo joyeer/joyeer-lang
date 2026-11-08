@@ -6,7 +6,7 @@
 // build with `cmake --build <dir> --target runtime-benchmark`. Numbers are for
 // comparing two providers on the same machine, not for absolute claims.
 
-#include "runtime/runtime.h"
+#include "joyeer/runtime.h"
 
 #include <algorithm>
 #include <chrono>

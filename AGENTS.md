@@ -53,9 +53,11 @@ source -> lexer -> parser -> name resolution -> type checking
 
 ## Coding rules
 
-- Use four-space indentation and surrounding C++ naming conventions. Headers
-  and implementations live together under `src/`; same-directory includes use
-  the filename, cross-directory includes use paths relative to `src/`.
+  and implementations live together under `compiler/` (the compiler, with the
+  backend in `compiler/backend/`) and `lib/` (standard modules and the runtime
+  in `lib/Runtime/`); same-directory includes use the filename, cross-directory
+  includes use paths relative to the repository root for `compiler/...` and
+  `lib/...`, and `joyeer/runtime.h` / `joyeer/native.h` for the runtime C ABI.
 - Report compiler failures through `Diagnostics` with stable IDs and
   `SourceSpan`; do not write ad hoc errors to `std::cerr`.
 - In Joyeer, prefer `let`, use `var` for mutation, and use `struct` for

@@ -6,8 +6,8 @@
 
 ## Boundary
 
-`LexParser` lives in `src/compiler/frontend/lexparser.h` and
-`src/compiler/frontend/lexparser.cpp`. It accepts a `Diagnostics*`, tokenizes one
+`LexParser` lives in `compiler/frontend/lexparser.h` and
+`compiler/frontend/lexparser.cpp`. It accepts a `Diagnostics*`, tokenizes one
 `SourceFile`, and replaces that file's token and line-start tables on every
 call. It does not own parser, semantic, type, or backend state.
 

@@ -224,8 +224,8 @@ target separately copies `JoyeerRuntime` beside the compiler, and fern
 bootstrap waits for that staged product. Use the default build, or explicitly
 build `JoyeerToolchain`, for a compiler ready to link ordinary executables;
 `--target joyeer` alone is a compiler-construction step, not full staging.
-The production runtime remains C; this separation does not by itself migrate
-algorithms or assemble Joyeer runtime objects into that archive.
+The runtime archive is built from Joyeer sources in `lib/Runtime/core/` by the
+just-built compiler, which is why the `JoyeerRuntime` target depends on `joyeer`.
 
 On macOS, the configured Joyeer deployment target also controls generated
 object metadata. If the active SDK is newer than LLVM/LLD 22.1.8 can read,

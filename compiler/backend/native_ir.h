@@ -3,7 +3,7 @@
 
 #include "compiler/codegen/llvm.h"
 #include "compiler/frontend/intrinsics.h"
-#include "runtime/runtime.h"
+#include "joyeer/runtime.h"
 #include "native_module.h"
 
 #include "llvm/IR/DIBuilder.h"

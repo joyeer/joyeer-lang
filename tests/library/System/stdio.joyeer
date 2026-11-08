@@ -358,8 +358,7 @@ private func bigLine(): String {
 private func flushScenario(directory: String): Int {
     let input = directory + "/flush-input"
     let output = directory + "/flush-output"
-    if !feed(path: input, contents: "go
-") { return 1 }
+    if !feed(path: input, contents: "go\n") { return 1 }
     ignoreInt(value: flushOutput())
     let stdoutStream = streamOf(which: 1)
     ignoreInt(value: flushFile(stream: stdoutStream))

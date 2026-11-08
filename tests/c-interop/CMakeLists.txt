@@ -29,7 +29,7 @@ configure_file(platform-scalars.joyeer.in platform-scalars.joyeer @ONLY)
 add_library(CInteropNativeStatic STATIC native.c native-scalars.c)
 add_library(CInteropNativeShared SHARED native.c native-scalars.c)
 add_library(CInteropBuffers STATIC native-buffers.c)
-target_include_directories(CInteropBuffers PRIVATE "${JOYEER_SRC_DIR}")
+target_include_directories(CInteropBuffers PRIVATE "${JOYEER_RUNTIME_INCLUDE_DIR}")
 set_target_properties(CInteropBuffers PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
 add_library(CInteropPointers STATIC native-pointers.c)

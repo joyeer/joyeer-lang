@@ -1,5 +1,5 @@
 #include "linker.h"
-#include "backend/backend.h"
+#include "compiler/backend/backend.h"
 
 #include <algorithm>
 #include <atomic>

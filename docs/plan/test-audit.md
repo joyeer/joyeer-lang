@@ -13,7 +13,7 @@
 | GoogleTests, runtime | runtime, host and argument tests; the C filesystem and process tests were removed with that C code, and the host operations are now tested through `SystemTests` |
 | Native fixtures | 79 files in `tests/native`, mostly checked-arithmetic and bounds traps, ownership, and `regression_*` programs |
 | Negative fixtures | semantic-analysis 13, type-checking 17, parser 6, native 3, lexer 1, name-resolution 1 |
-| Leak detection | `src/runtime/joyeer/entry.joyeer` reads `joyeer_runtime_active_allocations()` at exit, so native fixtures check allocation balance |
+| Leak detection | `lib/Runtime/core/entry.joyeer` reads `joyeer_runtime_active_allocations()` at exit, so native fixtures check allocation balance |
 | Optimization | one `-O2` script (`scripts/cmake/verifyOptimizedNativeFailure.cmake`) and two fixtures (`optimized_bounds`, `optimized_overflow`) |
 
 This is a solid base. The gaps are mostly in systematic and adversarial testing.

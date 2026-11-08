@@ -37,7 +37,7 @@ Option 2, built as reserved `@c_extern` symbols, not new syntax:
   and `store`, `atomicrmw add`) and declares no C function for it. The type
   checker and the IR verifier require the symbol to be a known one with exactly
   its signature (shared table in
-  [intrinsics.h](../../src/compiler/frontend/intrinsics.h)).
+  [intrinsics.h](../../compiler/frontend/intrinsics.h)).
 - **An address is an `Int`.** `address_of` takes a `[UInt8]` as a bare data
   pointer ([§19.4.4](../spec/19-c-interop.md#1944-bare-byte-pointers)) and
   returns its address; the language does not track the array's lifetime.

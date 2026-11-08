@@ -57,7 +57,7 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 | [backend.md](impl/backend.md) | LLVM emission, backend ABI, platform linking, debug artifacts, and performance measurement |
 | [c-interop.md](impl/c-interop.md) | Authorized scalar and buffer C bindings, object generation, explicit native-library inputs, and acceptance gates |
 | [compression.md](impl/compression.md) | Optional miniz-backed ZIP module, limits, ownership, build and packaging |
-| [runtime.md](impl/runtime.md) | Process entry, the C runtime, ownership, collections, and where the host operations live |
+| [runtime.md](impl/runtime.md) | Process entry, the Joyeer runtime (`lib/Runtime/`), ownership, collections, and where the host operations live |
 | [fern.md](impl/fern.md) | Joyeer-written module/workspace workflow, manifest rules, and bootstrap/self-build |
 | [string.md](impl/string.md) | String representation and operations |
 

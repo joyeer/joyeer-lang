@@ -1,7 +1,7 @@
 #ifndef JOYEER_COMPRESSION_NATIVE_H
 #define JOYEER_COMPRESSION_NATIVE_H
 
-#include "runtime/native.h"
+#include "joyeer/native.h"
 
 #ifdef __cplusplus
 extern "C" {

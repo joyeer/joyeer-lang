@@ -16,7 +16,7 @@ include(GenerateExportHeader)
 generate_export_header(JoyeerCompression BASE_NAME miniz
     EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/miniz_export.h")
 target_include_directories(JoyeerCompression PRIVATE
-    "${JOYEER_SRC_DIR}" "${joyeer_miniz_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+    "${JOYEER_RUNTIME_INCLUDE_DIR}" "${joyeer_miniz_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(JoyeerCompression PRIVATE
     MINIZ_STATIC_DEFINE MINIZ_NO_STDIO MINIZ_NO_TIME MINIZ_NO_ZLIB_COMPATIBLE_NAMES)
 set(package "${CMAKE_CURRENT_BINARY_DIR}/package/$<CONFIG>")
