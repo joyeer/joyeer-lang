@@ -15,7 +15,7 @@ target. Today there are two workarounds:
   [path.joyeer](../../lib/System/path.joyeer) (`windows: Bool`).
   Callers must supply it, and runtime wrappers have no way to detect the host.
 - Anything platform-specific lives in C behind `#ifdef`, as in
-  [filesystem.c](../../src/runtime/filesystem.c).
+  `filesystem.c` (since removed; the filesystem is now Joyeer, see [decision 0003](0003-pure-joyeer-filesystem.md)).
 
 The [filesystem plan](../plan/filesystem.md) moves the filesystem into Joyeer
 and needs a way to express the per-OS differences.

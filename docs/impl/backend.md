@@ -9,7 +9,7 @@
 > User-defined `deinit` and explicit copy initializers are outside the
 > [implemented language surface](supported-features.md).
 
-For the C runtime and process startup, see [Runtime](runtime.md).
+For the runtime and process startup, see [Runtime](runtime.md).
 
 ---
 

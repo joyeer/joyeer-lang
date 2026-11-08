@@ -5,7 +5,7 @@ The runtime is declared in `lib/Runtime/include/joyeer/runtime.h`. Almost all of
 arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
 build-tree compiler compiles it into three objects in the same archive (the core; the entry
-logic with the Windows `joyeer_start`; and the C `main`/`wmain` wrappers); `runtime.c` holds no code now ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+logic with the Windows `joyeer_start`; and the C `main`/`wmain` wrappers); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
