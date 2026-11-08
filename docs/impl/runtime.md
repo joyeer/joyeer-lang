@@ -206,8 +206,9 @@ See the
 [backend limitations](backend.md#5-known-limitations) and
 [IR verification bounds](ir.md#5-verification) for other gaps.
 
-Panic flushes stderr and uses C11 `_Exit` with a nonzero status, avoiding
-platform crash dialogs while remaining unrecoverable.
+Panic writes its message to standard error with the platform's `write` call and ends the
+process with C11 `_Exit` and status 1, avoiding platform crash dialogs while remaining
+unrecoverable.
 
 
 Focused test labels include `runtime`, `native`, `file-io`, `filesystem`,

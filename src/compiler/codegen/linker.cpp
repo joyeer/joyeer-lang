@@ -580,6 +580,9 @@ LinkResult Linker::link(
         "/OUT:" + outputPath,
         objectPath,
         "/WHOLEARCHIVE:" + runtimePath,
+        // The runtime is Joyeer objects, which no longer carry a default-library
+        // directive for the C runtime, so name the static one (/MT) explicitly.
+        "libcmt.lib",
         "kernel32.lib",
     };
     const auto optimizeReferences = options.optimizationLevel == OptimizationLevel::O0

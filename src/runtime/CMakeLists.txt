@@ -1,10 +1,9 @@
-# The runtime is a mix while it moves into Joyeer (docs/plan/runtime-in-joyeer.md):
-# the C sources below, and two Joyeer "core" modules compiled by the just-built
-# compiler into objects that are archived beside them: the core (everything but
-# the entry) and the entry (the C `main` / `wmain` and the program startup). They
-# are separate objects so that linking the core into a test executable does not
-# add a second entry point to it. A symbol has one provider: when a function moves
-# into joyeer/, its C definition is deleted.
+# The runtime is Joyeer (docs/plan/runtime-in-joyeer.md): two "core" modules compiled
+# by the just-built compiler into the two objects the archive holds, the core
+# (everything but the entry) and the entry (the C `main` / `wmain` and the program
+# startup). They are separate objects so that linking the core into a test
+# executable does not add a second entry point to it. runtime.h and native.h stay
+# as the C declarations of its ABI for native libraries.
 #
 # The Joyeer sources are listed explicitly; add a file here when adding it.
 set(JOYEER_RUNTIME_CORE_SOURCES
@@ -54,8 +53,10 @@ joyeer_runtime_core_object("${JOYEER_RUNTIME_CORE_OBJECT}" runtime.core
 joyeer_runtime_core_object("${JOYEER_RUNTIME_ENTRY_OBJECT}" runtime.entry
         "Compiling the Joyeer runtime entry" ${JOYEER_RUNTIME_ENTRY_SOURCES})
 
+# The archive holds the two Joyeer objects and nothing else: there is no C source
+# left, so the target needs its linker language named (tests/unittests/runtime
+# checks the members).
 add_library(JoyeerRuntime STATIC
-        runtime.c
         "${JOYEER_RUNTIME_CORE_OBJECT}"
         "${JOYEER_RUNTIME_ENTRY_OBJECT}"
 )
@@ -64,9 +65,4 @@ target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_SRC_DIR})
 set_target_properties(JoyeerRuntime PROPERTIES
         JOYEER_CORE_OBJECT "${JOYEER_RUNTIME_CORE_OBJECT}"
         JOYEER_ENTRY_OBJECT "${JOYEER_RUNTIME_ENTRY_OBJECT}")
-
-set_target_properties(JoyeerRuntime PROPERTIES
-        C_STANDARD 11
-        C_STANDARD_REQUIRED ON
-        MSVC_RUNTIME_LIBRARY MultiThreaded
-)
+set_target_properties(JoyeerRuntime PROPERTIES LINKER_LANGUAGE C)

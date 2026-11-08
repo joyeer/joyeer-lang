@@ -565,10 +565,12 @@ Start any time after 5.3.
 
 ### Stage 9: Remove the C (R9)
 
-- [ ] 9.1 Delete `runtime.c`, `host.c` and the C-only build settings
-  (`C_STANDARD`; `entry.c` and `/experimental:c11atomics` are already gone); keep `runtime.h` and `native.h` for
-  native libraries.
-- [ ] 9.2 Add the archive check: no object not produced by the Joyeer compiler.
+- [x] 9.1 Delete `runtime.c`, `host.c` and the C-only build settings; keep `runtime.h` and
+  `native.h` for native libraries. The archive has no C source, so the Windows link
+  now names the static C runtime (`libcmt.lib`) itself: it used to arrive through the
+  default-library directive in the C objects.
+- [x] 9.2 Add the archive check: no object not produced by the Joyeer compiler
+  (`RuntimeArchiveMembers`: the archive holds exactly the core and entry objects).
 - [ ] 9.3 Move `JoyeerRuntime.*` into `lib/`
   ([toolchain libraries](toolchain-libraries.md) §3).
 - [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,

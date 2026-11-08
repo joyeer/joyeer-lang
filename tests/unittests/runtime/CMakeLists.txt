@@ -140,6 +140,22 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
 
+    # The archive is the two Joyeer objects and nothing compiled from C.
+    find_program(JOYEER_RUNTIME_AR_EXECUTABLE NAMES llvm-ar llvm-ar.exe
+        HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
+    if(JOYEER_RUNTIME_AR_EXECUTABLE)
+        get_filename_component(core_name "${JOYEER_RUNTIME_CORE_OBJECT}" NAME)
+        get_target_property(entry_object JoyeerRuntime JOYEER_ENTRY_OBJECT)
+        get_filename_component(entry_name "${entry_object}" NAME)
+        add_test(NAME RuntimeArchiveMembers
+            COMMAND "${CMAKE_COMMAND}"
+                "-DAR=${JOYEER_RUNTIME_AR_EXECUTABLE}"
+                "-DARCHIVE=$<TARGET_FILE:JoyeerRuntime>"
+                "-DEXPECTED_MEMBERS=${core_name};${entry_name}"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeArchive.cmake")
+        set_tests_properties(RuntimeArchiveMembers PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+    endif()
+
     # The entry object defines the program entry point and reaches the core only
     # through its C ABI.
     get_target_property(JOYEER_RUNTIME_ENTRY_OBJECT JoyeerRuntime JOYEER_ENTRY_OBJECT)
