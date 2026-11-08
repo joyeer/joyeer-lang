@@ -4,8 +4,8 @@ The runtime is declared in `src/runtime/runtime.h`. Almost all of it is Joyeer
 (`src/runtime/joyeer/`): UTF-8 validation, string equality and ordering, owned strings,
 arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
-build-tree compiler compiles it into two objects (the core, and the entry with the C
-`main`/`wmain`) in the same archive; `runtime.c` holds no code now ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+build-tree compiler compiles it into three objects in the same archive (the core; the entry
+logic with the Windows `joyeer_start`; and the C `main`/`wmain` wrappers); `runtime.c` holds no code now ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -63,8 +63,11 @@ signatures produce compiler diagnostics, not platform linker errors.
 
 The entry (`src/runtime/joyeer/entry.joyeer`, Joyeer) omits the executable name and preserves argument boundaries,
 empty arguments, and spaces. POSIX arguments preserve their original bytes.
-Windows uses `wmain` and converts UTF-16 arguments to UTF-8, rejecting invalid
-encoding. The runtime owns the array until the Joyeer function has returned
+Windows converts UTF-16 arguments to UTF-8, rejecting invalid
+encoding. A Windows program that calls no C library starts at `joyeer_start`, which splits
+`GetCommandLineW` by the C runtime's rules and never initialises the C runtime; one that does,
+or that links a native library, keeps the C startup and `wmain` (the linker reads the program
+object's undefined symbols to decide, [decision 0011](../decisions/0011-runtime-without-the-c-library.md)). The runtime owns the array until the Joyeer function has returned
 and cleaned its local values and temporaries. It then destroys the argument
 storage and checks the runtime-managed allocation balance. Leaks fail the
 process; otherwise an exit status in `0..255` is returned. An out-of-range

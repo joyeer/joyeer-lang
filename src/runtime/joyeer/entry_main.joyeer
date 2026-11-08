@@ -1,12 +1,16 @@
 // The C entry point of a native program: `wmain` on Windows, `main` elsewhere.
-// Both hand the process arguments to `entryRun` (entry.joyeer). Only a runtime
-// core unit may export these symbols (spec §19.4.7). This file is in the entry
-// object alone, never the core one, so linking the core object into a test
-// executable does not add a second entry point to it.
+// Both hand the process arguments to `joyeer_entry_run` (entry.joyeer). Only a runtime
+// core unit may export these symbols (spec §19.4.7). This file is an object of its
+// own, neither the core nor the entry logic: it is linked only into a program that
+// uses the C startup, so a program that starts at `joyeer_start` carries no reference
+// to the C library from here.
 //
 // The C startup is present here, so the standard output buffer is registered to be
 // flushed by `exit`: a program that calls the C library's `exit` itself does not lose
 // its output.
+
+@c_extern(symbol: "joyeer_entry_run")
+private func entryRun(argc: Int32, argv: Int): Int32
 
 @c_extern(symbol: "joyeer_intrinsic_symbol_address")
 private func symbolAddress(name: String): Int

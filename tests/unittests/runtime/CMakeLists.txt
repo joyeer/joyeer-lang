@@ -142,18 +142,20 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
 
-    # The archive is the two Joyeer objects and nothing compiled from C.
+    # The archive is the three Joyeer objects and nothing compiled from C.
     find_program(JOYEER_RUNTIME_AR_EXECUTABLE NAMES llvm-ar llvm-ar.exe
         HINTS "${JOYEER_LLVM_ROOT}/bin" "${joyeer_llvm_bin}")
     if(JOYEER_RUNTIME_AR_EXECUTABLE)
         get_filename_component(core_name "${JOYEER_RUNTIME_CORE_OBJECT}" NAME)
         get_target_property(entry_object JoyeerRuntime JOYEER_ENTRY_OBJECT)
         get_filename_component(entry_name "${entry_object}" NAME)
+        get_target_property(main_object JoyeerRuntime JOYEER_MAIN_OBJECT)
+        get_filename_component(main_name "${main_object}" NAME)
         add_test(NAME RuntimeArchiveMembers
             COMMAND "${CMAKE_COMMAND}"
                 "-DAR=${JOYEER_RUNTIME_AR_EXECUTABLE}"
                 "-DARCHIVE=$<TARGET_FILE:JoyeerRuntime>"
-                "-DEXPECTED_MEMBERS=${core_name};${entry_name}"
+                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeArchive.cmake")
         set_tests_properties(RuntimeArchiveMembers PROPERTIES LABELS "runtime;native" TIMEOUT 30)
     endif()
@@ -161,19 +163,63 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     # The entry object defines the program entry point and reaches the core only
     # through its C ABI.
     get_target_property(JOYEER_RUNTIME_ENTRY_OBJECT JoyeerRuntime JOYEER_ENTRY_OBJECT)
-    set(joyeer_entry_imports "atexit;joyeer_stderr_write;joyeer_stdout_flush;joyeer_main;joyeer_main_uses_arguments;joyeer_panic;joyeer_alloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_array_create_owned_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy")
+    set(joyeer_entry_imports "joyeer_stderr_write;joyeer_stdout_flush;joyeer_main;joyeer_main_uses_arguments;joyeer_panic;joyeer_alloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_array_create_owned_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy")
     if(WIN32)
-        list(APPEND joyeer_entry_imports WideCharToMultiByte)
+        list(APPEND joyeer_entry_imports WideCharToMultiByte GetCommandLineW VirtualAlloc ExitProcess)
         set(joyeer_entry_point wmain)
+        set(joyeer_entry_defined "joyeer_entry_run;joyeer_static_slots;joyeer_start")
     else()
         set(joyeer_entry_point main)
+        set(joyeer_entry_defined "joyeer_entry_run;joyeer_static_slots")
     endif()
     add_test(NAME RuntimeEntryObjectSymbols
         COMMAND "${CMAKE_COMMAND}"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DOBJECT=${JOYEER_RUNTIME_ENTRY_OBJECT}"
-            "-DEXPECTED_DEFINED=joyeer_entry_run;joyeer_static_slots;${joyeer_entry_point}"
+            "-DEXPECTED_DEFINED=${joyeer_entry_defined}"
             "-DALLOWED_UNDEFINED=${joyeer_entry_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeEntryObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+
+    # The C wrappers: the only part of the runtime that names the C library's startup.
+    get_target_property(JOYEER_RUNTIME_MAIN_OBJECT JoyeerRuntime JOYEER_MAIN_OBJECT)
+    add_test(NAME RuntimeMainObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_MAIN_OBJECT}"
+            "-DEXPECTED_DEFINED=${joyeer_entry_point}"
+            "-DALLOWED_UNDEFINED=atexit;joyeer_entry_run;joyeer_stdout_flush"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeMainObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+endif()
+
+# A Windows program that does not call the C library starts at its own entry point and
+# imports the operating system's functions and nothing else; one that calls it keeps
+# the C startup (decision 0011).
+if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
+    get_filename_component(joyeer_nm_directory "${JOYEER_RUNTIME_NM_EXECUTABLE}" DIRECTORY)
+    find_program(JOYEER_RUNTIME_READOBJ_EXECUTABLE NAMES llvm-readobj llvm-readobj.exe
+        HINTS "${joyeer_nm_directory}")
+    if(JOYEER_RUNTIME_READOBJ_EXECUTABLE)
+        add_test(NAME RuntimeOwnEntryImportsOnlySystemFunctions
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/c-interop/target-architecture.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/own-entry-imports.exe"
+                "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry"
+                "-DEXPECTED_IMPORTS=ExitProcess;GetCommandLineW;GetConsoleMode;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        add_test(NAME RuntimeCRuntimeProgramKeepsTheCStartup
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/c-interop/never-import.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/c-startup-imports.exe"
+                "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.never_import;--runtime-module;runtime.never_import"
+                "-DMINIMUM_COUNT=30"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        set_tests_properties(RuntimeOwnEntryImportsOnlySystemFunctions RuntimeCRuntimeProgramKeepsTheCStartup
+            PROPERTIES LABELS "runtime;native;entry" TIMEOUT 120)
+    endif()
 endif()

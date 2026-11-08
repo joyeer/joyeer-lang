@@ -723,6 +723,11 @@ if(JOYEER_CLANG_EXECUTABLE)
             "2\n0\n\n3\na b\n" 73
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=a b"
             -DCOMPILER_ARGS=-O0)
+    # Quotes and backslashes survive the trip through the command line (the rules of the C
+    # runtime and CommandLineToArgvW, which the Windows entry point implements itself).
+    joyeer_add_entry_case(NativeEntryQuotesAndBackslashes entry_arguments
+            "2\n8\nsay \"hi\"\n7\nC:\\dir\\\n" 73
+            "-DPROGRAM_ARGUMENT_1=say \"hi\"" "-DPROGRAM_ARGUMENT_2=C:\\dir\\")
     joyeer_add_entry_case(NativeEntryLegacyIgnoresArguments hello
             "42\nnative\n8\n42\n" 0
             "-DPROGRAM_ARGUMENT_1=" "-DPROGRAM_ARGUMENT_2=ignored")

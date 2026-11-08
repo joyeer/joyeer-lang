@@ -542,8 +542,8 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
 
 - [x] 7.1 `main` / `wmain` in Joyeer: argument conversion, leak check, exit-status
   range check; all entry tests pass. `joyeer/entry.joyeer` holds the logic
-  (`joyeer_entry_run`) and `joyeer/entry_main.joyeer` the C entry point; both build into
-  `runtime-entry`, a separate archive member from the core object so a test that links
+  (`joyeer_entry_run`) and `joyeer/entry_main.joyeer` the C entry point; the first builds into
+  `runtime-entry` and the second into `runtime-main`, separate archive members from the core object so a test that links
   the core does not gain a second entry point. **Run on Windows x64 only: the POSIX
   `main` path (stage 2.1) is unverified on Linux and macOS.**
 - [x] 7.2 Replace `joyeer_native_errno`, `joyeer_native_environment` and
@@ -585,7 +585,10 @@ Start any time after 5.3.
 - [x] 10.2 D10, then output and exit straight to the system interface (R11): the syscall and
   target-architecture intrinsics, `streams.joyeer` (shared stdout buffer, unbuffered stderr, stdin),
   `print` and panic on it. Only Windows has run; the Linux and macOS code is unverified.
-- [ ] 10.3 D9, then our own entry point on Windows and Linux (R12).
+- [x] 10.3 D9, then our own entry point on Windows (R12): `joyeer_start` with its own command-line
+  splitting, chosen by the linker for a program that imports nothing from the C library
+  (`RuntimeOwnEntryImportsOnlySystemFunctions`). Linux keeps `main`: `System` on POSIX still
+  calls libc (decision 0011).
 - [ ] 10.4 `System` off the C library's stdio and `errno`, using static state for
   buffering.
 - [ ] 10.5 The Tier 2 `llvm-nm` gate on Windows and Linux, and the macOS

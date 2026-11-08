@@ -8,6 +8,7 @@
 #include <cwctype>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <system_error>
 #include <vector>
@@ -224,6 +225,58 @@ ProcessResult runProcess(
     return ProcessResult { 1, {} };
 }
 
+#endif
+
+#if defined(_WIN32)
+// Whether the program object calls into the C runtime. The Windows program then keeps
+// the C startup (`wmain`); otherwise it starts at `joyeer_start` and the C runtime is
+// never initialised (decision 0011). The object is read as COFF: an undefined external
+// symbol is C-runtime unless it is one of the runtime's own (`joyeer_`), a compiler
+// support symbol, or a Win32 API name. Win32 functions are named in PascalCase and the
+// C library's in lower case or with a leading underscore, so a name that does not
+// start with an upper-case letter is taken to be the C library: a wrong guess keeps
+// the C startup, which is always correct.
+bool needsCRuntime(const std::filesystem::path& objectFile) {
+    std::ifstream stream(objectFile, std::ios::binary);
+    std::string bytes((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    const auto read = [&](size_t offset, size_t size) -> uint64_t {
+        uint64_t value = 0;
+        for (size_t index = 0; index < size && offset + index < bytes.size(); ++index) {
+            value |= static_cast<uint64_t>(static_cast<unsigned char>(bytes[offset + index])) << (8 * index);
+        }
+        return value;
+    };
+    if (bytes.size() < 20) return true;
+    const auto symbolTable = static_cast<size_t>(read(8, 4));
+    const auto symbolCount = static_cast<size_t>(read(12, 4));
+    constexpr size_t entrySize = 18;
+    const auto stringTable = symbolTable + symbolCount * entrySize;
+    if (symbolTable == 0 || stringTable > bytes.size()) return true;
+    for (size_t index = 0; index < symbolCount; ++index) {
+        const auto entry = symbolTable + index * entrySize;
+        const auto sectionNumber = read(entry + 12, 2);
+        const auto storageClass = read(entry + 16, 1);
+        const auto auxiliary = static_cast<size_t>(read(entry + 17, 1));
+        const auto value = read(entry + 8, 4);
+        std::string name;
+        if (read(entry, 4) == 0) {
+            const auto offset = stringTable + static_cast<size_t>(read(entry + 4, 4));
+            for (auto at = offset; at < bytes.size() && bytes[at] != 0; ++at) name += bytes[at];
+        } else {
+            for (size_t at = 0; at < 8 && bytes[entry + at] != 0; ++at) name += bytes[entry + at];
+        }
+        const bool undefinedExternal = sectionNumber == 0 && storageClass == 2 && value == 0;
+        index += auxiliary;
+        if (!undefinedExternal) continue;
+        if (name.rfind("__imp_", 0) == 0) name.erase(0, 6);
+        static const char* const support[] = {"memcpy", "memmove", "memset", "memcmp", "__chkstk", "_fltused"};
+        if (name.rfind("joyeer_", 0) == 0 || std::find(std::begin(support), std::end(support), name) != std::end(support)) {
+            continue;
+        }
+        if (name.empty() || name[0] < 'A' || name[0] > 'Z') return true;
+    }
+    return false;
+}
 #endif
 
 } // namespace
@@ -570,6 +623,9 @@ LinkResult Linker::link(
 #else
 #error "Unsupported Windows architecture"
 #endif
+    // A program that never calls the C library starts at its own entry point and links
+    // the runtime archive by symbol, which leaves out the C `wmain` wrapper.
+    const bool ownEntry = options.nativeLibraries.empty() && !needsCRuntime(objectFile);
     std::vector<std::string> lldArguments {
         "lld-link",
         "/NOLOGO",
@@ -579,7 +635,7 @@ LinkResult Linker::link(
         "/MANIFESTUAC:level='asInvoker' uiAccess='false'",
         "/OUT:" + outputPath,
         objectPath,
-        "/WHOLEARCHIVE:" + runtimePath,
+        ownEntry ? runtimePath : "/WHOLEARCHIVE:" + runtimePath,
         // The runtime is Joyeer objects, which no longer carry a default-library
         // directive for the C runtime, so name the static one (/MT) explicitly.
         "libcmt.lib",
@@ -591,6 +647,11 @@ LinkResult Linker::link(
     const auto foldIdenticalCode = options.optimizationLevel == OptimizationLevel::O0
             ? "/OPT:NOICF"
             : "/OPT:ICF";
+    if (ownEntry) {
+        // memcpy, memset, memmove and memcmp live in the static VCRuntime, which needs no startup.
+        lldArguments.emplace_back("libvcruntime.lib");
+        lldArguments.emplace_back("/ENTRY:joyeer_start");
+    }
     lldArguments.emplace_back(optimizeReferences);
     lldArguments.emplace_back(foldIdenticalCode);
     if (options.debugInfo.emitLineTables) {
