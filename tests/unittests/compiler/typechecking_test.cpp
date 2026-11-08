@@ -1439,7 +1439,7 @@ func literal(value: Literal): Int {
 }
 
 TEST_F(TypeCheckingTest, AcceptsExhaustiveNestedPayloadMatrices) {
-    ASSERT_NO_FATAL_FAILURE(check(readFixture("native/regression_type_payload_coverage.joyeer")));
+    ASSERT_NO_FATAL_FAILURE(check(readFixture("e2e/regression_type_payload_coverage.joyeer")));
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
@@ -1915,7 +1915,7 @@ TEST_F(TypeCheckingTest, TraversesComputedBorrowingReceiversAndResults) {
 
 TEST_F(TypeCheckingTest, AllowsCompletedEvaluationsSnapshotsAndDisjointFields) {
     ASSERT_NO_FATAL_FAILURE(check(readFixture(
-            "native/regression_type_evaluation_accesses.joyeer")));
+            "e2e/regression_type_evaluation_accesses.joyeer")));
     EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 

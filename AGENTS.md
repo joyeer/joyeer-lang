@@ -84,11 +84,12 @@ source -> lexer -> parser -> name resolution -> type checking
   or a documentation test covers the edit.
 - **Implementation changes:** start with focused tests. C++ unit tests live in
   [tests/unittests/](tests/unittests/); durable Joyeer fixtures live in the
-  stage-specific [tests/](tests/) directories. Label filters are for iteration,
+  stage-specific [tests/](tests/) directories (compile-and-run programs live in
+  `tests/e2e/`). Label filters are for iteration,
   not full acceptance.
 - **User-visible features:** follow the
   [feature workflow](docs/decisions/README.md). Record contested decisions,
-  update the spec, add failing GoogleTests and a durable stage/native fixture,
+  update the spec, add failing GoogleTests and a durable stage or end-to-end fixture,
   implement through every affected pipeline boundary, and run the role
   reviewers separately from the author before full acceptance.
 - **Full feature/platform acceptance:** use

@@ -85,7 +85,7 @@ standard library rather than the core string layout.
 
 ```pwsh
 ctest --test-dir build -L runtime --output-on-failure
-ctest --test-dir build -L native --output-on-failure
+ctest --test-dir build -L e2e --output-on-failure
 ctest --test-dir build -L file-io --output-on-failure
 ```
 

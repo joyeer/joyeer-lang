@@ -15,7 +15,7 @@
   `writeStderr` and `readStdinLine` in Joyeer, with per-platform primitives in
   `*_windows.joyeer` and `*_posix.joyeer` reached through `@c_extern` bindings.
 - Programs write `import System`. fern, moss, the Compression library, the
-  native fixtures and the tests do. The prelude declares only the enumerations
+  end-to-end fixtures and the tests do. The prelude declares only the enumerations
   the operations return (`FileSystemError`, `FileKind`, `ProcessStatus`,
   `ProcessError`, `StderrError`, `StdinError`, `IOError`); keeping them there is
   deliberate, so user code and `System` share one definition.
@@ -24,7 +24,7 @@
   `readStdinLine` ABI functions, together with their C unit tests. What remains
   in the runtime for them is `joyeer_native_errno`, `joyeer_native_environment`,
   `joyeer_native_stdio` and `joyeer_host_valid_utf8` (used by Compression).
-- Verified: Windows x64 Debug, through `fern test`, the native fixtures and the
+- Verified: Windows x64 Debug, through `fern test`, the end-to-end fixtures and the
   unfiltered CTest. **Not verified:** Release, Windows ARM64, Linux and macOS.
 
 ## 2. Verify the POSIX variants (blocks claiming Linux and macOS)
@@ -49,7 +49,7 @@ the first run:
   decoding, and `joyeer_native_environment` against a real `environ`;
 - `writeStderr` and `readStdinLine`: `joyeer_native_stdio` against the real
   `stdin`, `stdout` and `stderr`, and the closed-descriptor cases;
-- the **expected values** in [tests/library/System](../../tests/library/System).
+- the **expected values** in [tests/lib/System](../../tests/lib/System).
   They state the Windows result and the POSIX result (or alternatives) per
   scenario, and the POSIX ones were written from the code, not observed.
 
