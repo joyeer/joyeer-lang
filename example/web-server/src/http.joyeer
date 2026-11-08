@@ -6,6 +6,9 @@ import System
 // request body, no chunked encoding and no TLS.
 
 let maximumHeadBytes: Int = 16384
+// How long one read may wait for the next bytes of a request head. A client that stays
+// silent this long is answered with 408 and dropped, so it cannot hold the server.
+let headTimeoutMillis: Int = 5000
 private let receiveChunk: Int = 4096
 
 struct Request {
@@ -16,6 +19,7 @@ struct Request {
 enum HeadError {
     Closed,
     TooLarge,
+    TimedOut,
     Network(NetworkError),
 }
 
@@ -38,7 +42,7 @@ func readRequestHead(connection: TcpConnection): Result<String, HeadError> {
     var head = ""
     var scanFrom = 0
     while head.count <= maximumHeadBytes {
-        let received = tcpReceive(connection: connection, maximumBytes: receiveChunk)
+        let received = tcpReceive(connection: connection, maximumBytes: receiveChunk, timeoutMillis: headTimeoutMillis)
         match received {
             .Ok(chunk) => {
                 if chunk.count == 0 { return .Err(.Closed) }
@@ -50,7 +54,10 @@ func readRequestHead(connection: TcpConnection): Result<String, HeadError> {
                 if scanFrom < 0 { scanFrom = 0 }
             },
             .Err(error) => {
-                return .Err(.Network(error))
+                match error {
+                    .TimedOut(_) => { return .Err(.TimedOut) },
+                    _ => { return .Err(.Network(error)) },
+                }
             },
         }
     }

@@ -57,6 +57,10 @@ private func receiveW(socket: Int, buffer: inout [UInt8], count: Int32, flags: I
 private func sendW(socket: Int, buffer: [UInt8], count: Int32, flags: Int32): Int32
 
 @platform(windows)
+@c_extern(symbol: "WSAPoll", pointer: "sockets")
+private func pollW(sockets: inout [UInt8], count: UInt32, timeout: Int32): Int32
+
+@platform(windows)
 @c_extern(symbol: "closesocket")
 private func closeW(socket: Int): Int32
 
@@ -95,6 +99,9 @@ private func makeUninheritable(handle: Int): Int {
 
 @platform(windows)
 func networkInvalidCode(): Int { return 10022 }
+
+@platform(windows)
+func networkTimeoutCode(): Int { return 10060 }
 
 @platform(windows)
 func classifyNetworkError(code: Int): NetworkError {
@@ -174,6 +181,25 @@ func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
     let sent = sendW(socket: handle, buffer: buffer, count: count as Int32, flags: 0) as Int
     if sent < 0 { return lastFailure() }
     return sent
+}
+
+// Waits up to `timeoutMillis` for the socket to be readable (a listener: a connection
+// can be accepted). 1 ready, 0 expired, or the negated error. A hangup or error counts as
+// ready, so the following receive reports it. WSAPOLLFD is the socket (8 bytes), the
+// requested events (POLLRDNORM, 0x0100) and the returned events, padded to 16 bytes.
+@platform(windows)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    var entry = zeroBuffer(count: 16)
+    var index = 0
+    while index < 8 {
+        &entry[index] = ((handle >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+    &entry[9] = 1
+    let ready = pollW(sockets: &entry, count: 1, timeout: timeoutMillis as Int32) as Int
+    if ready < 0 { return lastFailure() }
+    if ready == 0 { return 0 }
+    return 1
 }
 
 @platform(windows)

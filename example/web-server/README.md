@@ -70,9 +70,13 @@ and the server never serves a file that is not a `.md` regular file.
 ## Limits to know about
 
 - **One connection at a time.** `System`'s sockets are blocking and the language
-  has no threads yet, so a client that connects and stays silent blocks every
-  other client. Do not expose this directly to the internet; put it behind a
-  reverse proxy that enforces timeouts and terminates TLS.
+  has no threads yet. A client that connects and stays silent holds the server for
+  at most 5 seconds per read ([decision 0014](../../docs/decisions/0014-network-timeouts.md)),
+  then gets `408 Request Timeout`. That is a bound, not a defense: a client that
+  sends a byte every few seconds, or never reads the response, can still tie the
+  server up, because there is no total deadline and no send timeout. Do not expose
+  this directly to the internet; put it behind a reverse proxy that enforces
+  timeouts and terminates TLS.
 - **No TLS**, no keep-alive, no caching headers, no request bodies.
 - **Not CommonMark.** See [`site/docs/markdown.md`](site/docs/markdown.md).
 - It binds `127.0.0.1` unless told otherwise. `--address 0.0.0.0` serves the

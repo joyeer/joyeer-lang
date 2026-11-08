@@ -42,6 +42,19 @@ private func socketAddress(address: Int, port: Int): [UInt8] {
 func networkInvalidCode(): Int { return 22 }
 
 @platform(linux)
+func networkTimeoutCode(): Int { return 110 }
+
+// Stores `value` at `offset` as `width` little-endian bytes.
+@platform(linux)
+private func putInteger(bytes: inout [UInt8], offset: Int, width: Int, value: Int) {
+    var index = 0
+    while index < width {
+        &bytes[offset + index] = ((value >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+}
+
+@platform(linux)
 func classifyNetworkError(code: Int): NetworkError {
     if code == 22 || code == 14 { return .InvalidInput(code) }
     if code == 98 { return .AddressInUse(code) }
@@ -146,6 +159,32 @@ func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
             fourth: noSignal, fifth: 0, sixth: 0)
     }
     return outcome
+}
+
+// Waits up to `timeoutMillis` for the socket to be readable (a listener: a connection can
+// be accepted). 1 ready, 0 expired, or the negated errno. A hangup or error counts as
+// ready, so the following receive reports it: ppoll reports those in revents whatever was
+// requested. struct pollfd is the descriptor (4 bytes), the requested events (POLLIN, 1)
+// and the returned events; the timeout is a struct timespec of seconds and nanoseconds.
+// ppoll(fds, 1, &timeout, NULL, 8)
+@platform(linux)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    var descriptors = zeroBuffer(count: 8)
+    putInteger(bytes: &descriptors, offset: 0, width: 4, value: handle)
+    &descriptors[4] = 1
+    var limit = zeroBuffer(count: 16)
+    putInteger(bytes: &limit, offset: 0, width: 8, value: timeoutMillis / 1000)
+    putInteger(bytes: &limit, offset: 8, width: 8, value: (timeoutMillis % 1000) * 1000000)
+    let descriptorAddress = addressOfBytes(bytes: &descriptors)
+    let limitAddress = addressOfBytes(bytes: &limit)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 271, arm: 73, first: descriptorAddress, second: 1, third: limitAddress,
+            fourth: 0, fifth: 8, sixth: 0)
+    }
+    if kernelFailed(outcome: outcome) { return outcome }
+    if outcome == 0 { return 0 }
+    return 1
 }
 
 @platform(linux)

@@ -7,6 +7,9 @@
 func networkInvalidCode(): Int { return 22 }
 
 @platform(macos)
+func networkTimeoutCode(): Int { return 60 }
+
+@platform(macos)
 func classifyNetworkError(code: Int): NetworkError {
     if code == 22 { return .InvalidInput(code) }
     return .Other(code)
@@ -41,3 +44,6 @@ func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int { return -38 }
 
 @platform(macos)
 func nativeTcpClose(handle: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int { return -38 }

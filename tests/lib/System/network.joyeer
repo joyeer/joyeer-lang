@@ -45,8 +45,8 @@ private func connectCase(address: String, port: Int): String {
     }
 }
 
-private func receiveCase(connection: TcpConnection, maximumBytes: Int): String {
-    let outcome = tcpReceive(connection: connection, maximumBytes: maximumBytes)
+private func receiveCase(connection: TcpConnection, maximumBytes: Int, timeoutMillis: Int): String {
+    let outcome = tcpReceive(connection: connection, maximumBytes: maximumBytes, timeoutMillis: timeoutMillis)
     return match outcome {
         .Ok(_) => "ok",
         .Err(error) => caseName(error: error),
@@ -98,20 +98,20 @@ private func loopback(): Result<Int, NetworkError> {
     failures = failures + check(name: "ephemeral port assigned", ok: port > 0 && port < 65536)
 
     let client = tcpConnect(address: "127.0.0.1", port: port)?
-    let server = tcpAccept(listener: listener)?
+    let server = tcpAccept(listener: listener, timeoutMillis: 5000)?
 
     failures = failures + checkCase(name: "receive bound 0",
-        actual: receiveCase(connection: server, maximumBytes: 0), expected: "InvalidInput")
+        actual: receiveCase(connection: server, maximumBytes: 0, timeoutMillis: 5000), expected: "InvalidInput")
     failures = failures + checkCase(name: "receive bound over 1 MiB",
-        actual: receiveCase(connection: server, maximumBytes: 1048577), expected: "InvalidInput")
+        actual: receiveCase(connection: server, maximumBytes: 1048577, timeoutMillis: 5000), expected: "InvalidInput")
 
     // Both directions, a short read, and an empty send.
     tcpSend(connection: client, contents: "hello\r\n")?
     tcpSend(connection: client, contents: "")?
-    let request = tcpReceive(connection: server, maximumBytes: 64)?
+    let request = tcpReceive(connection: server, maximumBytes: 64, timeoutMillis: 5000)?
     failures = failures + check(name: "server receives request", ok: request == "hello\r\n")
     tcpSend(connection: server, contents: "world")?
-    let reply = tcpReceive(connection: client, maximumBytes: 64)?
+    let reply = tcpReceive(connection: client, maximumBytes: 64, timeoutMillis: 5000)?
     failures = failures + check(name: "client receives reply", ok: reply == "world")
 
     // A bound smaller than the data returns a prefix; the rest arrives next.
@@ -119,7 +119,7 @@ private func loopback(): Result<Int, NetworkError> {
     var assembled = ""
     var reads = 0
     while assembled.count < 6 && reads < 10 {
-        assembled = assembled + tcpReceive(connection: server, maximumBytes: 2)?
+        assembled = assembled + tcpReceive(connection: server, maximumBytes: 2, timeoutMillis: 5000)?
         reads = reads + 1
     }
     failures = failures + check(name: "bounded reads reassemble", ok: assembled == "abcdef")
@@ -130,7 +130,7 @@ private func loopback(): Result<Int, NetworkError> {
     var received = ""
     var passes = 0
     while received.count < payload.count && passes < 100 {
-        let piece = tcpReceive(connection: server, maximumBytes: 4096)?
+        let piece = tcpReceive(connection: server, maximumBytes: 4096, timeoutMillis: 5000)?
         failures = failures + check(name: "piece within bound", ok: piece.count >= 1 && piece.count <= 4096)
         received = received + piece
         passes = passes + 1
@@ -139,9 +139,9 @@ private func loopback(): Result<Int, NetworkError> {
 
     // Closing the client ends the stream for the server, repeatedly.
     tcpCloseConnection(connection: consume client)?
-    let end = tcpReceive(connection: server, maximumBytes: 64)?
+    let end = tcpReceive(connection: server, maximumBytes: 64, timeoutMillis: 5000)?
     failures = failures + check(name: "end of stream is empty", ok: end == "")
-    let again = tcpReceive(connection: server, maximumBytes: 64)?
+    let again = tcpReceive(connection: server, maximumBytes: 64, timeoutMillis: 5000)?
     failures = failures + check(name: "end of stream repeats", ok: again == "")
 
     tcpCloseConnection(connection: consume server)?
@@ -187,7 +187,7 @@ private func testSendToClosedPeer(): Result<Int, NetworkError> {
     let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
     let port = tcpLocalPort(listener: listener)?
     let client = tcpConnect(address: "127.0.0.1", port: port)?
-    let server = tcpAccept(listener: listener)?
+    let server = tcpAccept(listener: listener, timeoutMillis: 5000)?
     tcpCloseConnection(connection: consume client)?
 
     let block = pattern(count: 1024)
@@ -208,9 +208,63 @@ private func testSendToClosedPeer(): Result<Int, NetworkError> {
     return .Ok(failures)
 }
 
+private func acceptCase(listener: TcpListener, timeoutMillis: Int): String {
+    let outcome = tcpAccept(listener: listener, timeoutMillis: timeoutMillis)
+    return match outcome {
+        .Ok(_) => "ok",
+        .Err(error) => caseName(error: error),
+    }
+}
+
+// Receive and accept timeouts (decision 0014). Nothing here measures elapsed time, because
+// System has no clock; it checks which result each call gives.
+private func testTimeouts(): Result<Int, NetworkError> {
+    var failures = 0
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 4)?
+    let port = tcpLocalPort(listener: listener)?
+
+    // Nothing is pending: accept expires, with a wait and without one.
+    failures = failures + checkCase(name: "accept times out",
+        actual: acceptCase(listener: listener, timeoutMillis: 50), expected: "TimedOut")
+    failures = failures + checkCase(name: "accept with zero timeout polls",
+        actual: acceptCase(listener: listener, timeoutMillis: 0), expected: "TimedOut")
+    failures = failures + checkCase(name: "accept timeout below -1",
+        actual: acceptCase(listener: listener, timeoutMillis: -2), expected: "InvalidInput")
+    failures = failures + checkCase(name: "accept timeout above the limit",
+        actual: acceptCase(listener: listener, timeoutMillis: 2147483648), expected: "InvalidInput")
+
+    // A pending connection is ready, so a timed accept returns it.
+    let client = tcpConnect(address: "127.0.0.1", port: port)?
+    let server = tcpAccept(listener: listener, timeoutMillis: 5000)?
+
+    // No data yet: receive expires, and the connection is still usable afterwards.
+    failures = failures + checkCase(name: "receive times out",
+        actual: receiveCase(connection: server, maximumBytes: 64, timeoutMillis: 50), expected: "TimedOut")
+    failures = failures + checkCase(name: "receive with zero timeout polls",
+        actual: receiveCase(connection: server, maximumBytes: 64, timeoutMillis: 0), expected: "TimedOut")
+    failures = failures + checkCase(name: "receive timeout below -1",
+        actual: receiveCase(connection: server, maximumBytes: 64, timeoutMillis: -2), expected: "InvalidInput")
+    failures = failures + checkCase(name: "receive timeout above the limit",
+        actual: receiveCase(connection: server, maximumBytes: 64, timeoutMillis: 2147483648),
+        expected: "InvalidInput")
+    tcpSend(connection: client, contents: "late")?
+    let data = tcpReceive(connection: server, maximumBytes: 64, timeoutMillis: 5000)?
+    failures = failures + check(name: "data after a timeout is not lost", ok: data == "late")
+
+    // End of stream is a result, not a timeout.
+    tcpCloseConnection(connection: consume client)?
+    let end = tcpReceive(connection: server, maximumBytes: 64, timeoutMillis: 5000)?
+    failures = failures + check(name: "closed peer reads as end of stream", ok: end == "")
+
+    tcpCloseConnection(connection: consume server)?
+    tcpCloseListener(listener: consume listener)?
+    return .Ok(failures)
+}
+
 public func testNetwork(): Int {
     if !implemented() { return 0 }
     var failures = testAddressForms()
+    failures = failures + reportLoopback(label: "timeouts", outcome: testTimeouts())
     failures = failures + reportLoopback(label: "loopback", outcome: loopback())
     failures = failures + reportLoopback(label: "address in use", outcome: testAddressInUse())
     failures = failures + reportLoopback(label: "connection refused", outcome: testRefused())

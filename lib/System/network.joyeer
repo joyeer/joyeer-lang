@@ -33,6 +33,7 @@ public struct TcpConnection {
 
 private let maximumReceiveBytes: Int = 1048576
 private let maximumSendChunk: Int = 1073741824
+private let maximumTimeoutMillis: Int = 2147483647
 private let lowestPort: Int = 0
 private let highestPort: Int = 65535
 
@@ -91,7 +92,29 @@ public func tcpListen(address: String, port: Int, backlog: Int): Result<TcpListe
     return .Ok(TcpListener(handle: handle))
 }
 
-public func tcpAccept(listener: TcpListener): Result<TcpConnection, NetworkError> {
+// -1 waits without limit, 0 does not wait, 1...2147483647 is a limit in milliseconds.
+private func validTimeout(timeoutMillis: Int): Bool {
+    return timeoutMillis >= -1 && timeoutMillis <= maximumTimeoutMillis
+}
+
+// Waits for the handle to become ready unless the timeout is -1. Returns .None when
+// the call may go ahead, or the error to report; an expired wait is `.TimedOut`.
+// The primitive's status is 1 ready, 0 expired, or the negated native error code.
+private func waitFailure(handle: Int, timeoutMillis: Int): Optional<NetworkError> {
+    if timeoutMillis < 0 { return .None }
+    let waited = nativeTcpWait(handle: handle, timeoutMillis: timeoutMillis)
+    if waited < 0 { return .Some(failed(status: waited)) }
+    if waited == 0 { return .Some(.TimedOut(networkTimeoutCode())) }
+    return .None
+}
+
+public func tcpAccept(listener: TcpListener, timeoutMillis: Int): Result<TcpConnection, NetworkError> {
+    if !validTimeout(timeoutMillis: timeoutMillis) { return .Err(.InvalidInput(networkInvalidCode())) }
+    let problem = waitFailure(handle: listener.handle, timeoutMillis: timeoutMillis)
+    match problem {
+        .Some(error) => { return .Err(error) },
+        .None => { },
+    }
     let handle = nativeTcpAccept(handle: listener.handle)
     if handle < 0 { return .Err(failed(status: handle)) }
     return .Ok(TcpConnection(handle: handle))
@@ -118,9 +141,15 @@ public func tcpLocalPort(listener: TcpListener): Result<Int, NetworkError> {
     return .Ok(port)
 }
 
-public func tcpReceive(connection: TcpConnection, maximumBytes: Int): Result<String, NetworkError> {
-    if maximumBytes < 1 || maximumBytes > maximumReceiveBytes {
+public func tcpReceive(connection: TcpConnection, maximumBytes: Int,
+    timeoutMillis: Int): Result<String, NetworkError> {
+    if maximumBytes < 1 || maximumBytes > maximumReceiveBytes || !validTimeout(timeoutMillis: timeoutMillis) {
         return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    let problem = waitFailure(handle: connection.handle, timeoutMillis: timeoutMillis)
+    match problem {
+        .Some(error) => { return .Err(error) },
+        .None => { },
     }
     var buffer = zeroBuffer(count: maximumBytes)
     let received = nativeTcpReceive(handle: connection.handle, buffer: &buffer, count: maximumBytes)

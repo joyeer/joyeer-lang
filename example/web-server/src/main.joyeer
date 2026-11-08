@@ -150,6 +150,12 @@ private func serveConnection(connection: TcpConnection, root: String) {
                         body: errorPage(status: 431, message: "Request Header Fields Too Large"),
                         sendBody: true, extraHeaders: "")
                 },
+                .TimedOut => {
+                    response = httpResponse(status: 408, reason: "Request Timeout",
+                        contentType: "text/html; charset=utf-8",
+                        body: errorPage(status: 408, message: "Request Timeout"),
+                        sendBody: true, extraHeaders: "")
+                },
                 .Network(_) => { },
             }
         },
@@ -166,7 +172,7 @@ private func serveConnection(connection: TcpConnection, root: String) {
 // owning local, which `tcpCloseConnection` needs to consume; a pattern binding
 // from `match` is not one.
 private func handleOne(listener: TcpListener, root: String): Result<Void, NetworkError> {
-    let connection = tcpAccept(listener: listener)?
+    let connection = tcpAccept(listener: listener, timeoutMillis: -1)?
     serveConnection(connection: connection, root: root)
     return tcpCloseConnection(connection: consume connection)
 }

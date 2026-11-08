@@ -283,10 +283,10 @@ enum NetworkError {
 }
 
 func tcpListen(address: String, port: Int, backlog: Int): Result<TcpListener, NetworkError>
-func tcpAccept(listener: TcpListener): Result<TcpConnection, NetworkError>
+func tcpAccept(listener: TcpListener, timeoutMillis: Int): Result<TcpConnection, NetworkError>
 func tcpConnect(address: String, port: Int): Result<TcpConnection, NetworkError>
 func tcpLocalPort(listener: TcpListener): Result<Int, NetworkError>
-func tcpReceive(connection: TcpConnection, maximumBytes: Int): Result<String, NetworkError>
+func tcpReceive(connection: TcpConnection, maximumBytes: Int, timeoutMillis: Int): Result<String, NetworkError>
 func tcpSend(connection: TcpConnection, contents: String): Result<Void, NetworkError>
 func tcpCloseConnection(connection: consuming TcpConnection): Result<Void, NetworkError>
 func tcpCloseListener(listener: consuming TcpListener): Result<Void, NetworkError>
@@ -315,6 +315,9 @@ one; only the functions above produce and use it.
   reduced to the host maximum, not an error.
 - `maximumBytes` for `tcpReceive` is `1` to `1048576` (1 MiB). Another value is
   `.InvalidInput`, checked before any system call.
+- `timeoutMillis` for `tcpAccept` and `tcpReceive` is `-1`, `0`, or `1` to
+  `2147483647`; see Timeouts below. Another value is `.InvalidInput`, checked
+  before any system call.
 
 All `.InvalidInput` results are produced before any resource is created.
 
@@ -338,15 +341,37 @@ All `.InvalidInput` results are produced before any resource is created.
 
 #### Accepting
 
-`tcpAccept` blocks until a connection is complete and returns it. An
-interrupted wait is retried internally. Every other failure is returned; the
-program decides whether to continue accepting. The peer's address is not
-reported in this version.
+`tcpAccept` blocks until a connection is complete and returns it, or until its
+timeout expires (see Timeouts). An interrupted wait is retried internally. Every
+other failure is returned; the program decides whether to continue accepting. The
+peer's address is not reported in this version.
+
+#### Timeouts
+
+[Decision 0014](../decisions/0014-network-timeouts.md). `tcpAccept` and
+`tcpReceive` take `timeoutMillis`:
+
+- `-1` waits without limit, as these operations did before this parameter existed.
+- `0` does not wait: the call succeeds only if it can complete now.
+- `1` to `2147483647` waits at most that many milliseconds for readiness, once
+  per call. A listener is ready when a connection can be accepted. A connection is
+  ready when `tcpReceive` can return without blocking, which includes data, end
+  of stream, and an error; the call then returns the data, the empty string, or
+  the error exactly as it would have after an unlimited wait.
+- When the wait expires the call returns `.Err(.TimedOut(code))`, with `code`
+  `WSAETIMEDOUT` (10060) on Windows and `ETIMEDOUT` (110) on POSIX. No data is
+  consumed and the handle stays valid.
+- A wait interrupted by a signal restarts with its full timeout.
+
+The limit bounds one wait, not a sequence of calls: a peer that sends a byte just
+before each timeout still holds a connection that the caller keeps reading. A
+total deadline needs a clock that `System` does not yet provide. `tcpSend` and
+`tcpConnect` have no timeout, because bounding them needs non-blocking sockets.
 
 #### Receiving
 
 `tcpReceive` blocks until at least one byte arrives, the peer finishes sending,
-or an error occurs.
+an error occurs, or its timeout expires.
 
 - Success with `1` to `maximumBytes` bytes is a *short read*: the result is
   whatever the system returned, never padded or waited for, and the contents
@@ -421,9 +446,11 @@ startup that every Linux program already has.
 #### Not provided
 
 Blocking is the only mode. One call that waits stops the whole program, so a
-server built on this API serves one connection at a time, and one idle client
-can hold every other client out. There is no timeout, cancellation,
-non-blocking mode, readiness wait, or thread. There is no one-directional
+server built on this API serves one connection at a time. A receive or accept
+timeout keeps one idle client from holding the others out indefinitely, but a
+slow client that never reads can still stall `tcpSend`. There is no send or
+connect timeout, total deadline, cancellation, non-blocking mode, readiness wait
+over several handles, or thread. There is no one-directional
 `shutdown`, no peer or local address query beyond `tcpLocalPort`, no socket
 options, no host-name resolution, no IPv6, no UDP, no Unix-domain sockets, and
 no TLS. Binding `"0.0.0.0"` exposes the program to the network; these
