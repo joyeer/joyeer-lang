@@ -2,8 +2,8 @@
 
 The runtime is declared in `src/runtime/runtime.h`. Most of it is C under
 `src/runtime/`; the Joyeer core (`src/runtime/joyeer/`: UTF-8 validation, string
-equality and ordering, owned strings, integer/`Bool`/string `print`, `joyeer_panic`, and
-the allocator with its leak counter) is compiled by the build-tree compiler into one object in
+equality and ordering, owned strings, arrays, dictionaries, the native buffer helpers, integer/`Bool`/string
+`print`, `joyeer_panic`, and the allocator with its leak counter) is compiled by the build-tree compiler into one object in
 the same archive ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the

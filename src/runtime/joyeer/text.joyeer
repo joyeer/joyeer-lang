@@ -25,7 +25,7 @@ private func copyBytes(destination: Int, source: Int, count: Int): Void
 
 private let countOffset: Int = 8
 
-private func blockSize(count: Int): Int {
+func stringBlockSize(count: Int): Int {
     if count == 0 { return 1 }
     return count
 }
@@ -41,7 +41,7 @@ public func stringClone(output: Int, data: Int, count: Int): Void {
     if output == 0 || count < 0 || (count != 0 && data == 0) {
         panic(message: literalAddress(text: "invalid string clone"))
     }
-    let copy = allocate(size: blockSize(count: count))
+    let copy = allocate(size: stringBlockSize(count: count))
     if count != 0 { copyBytes(destination: copy, source: data, count: count) }
     assign(output: output, data: copy, count: count)
 }
@@ -51,7 +51,7 @@ public func stringDestroy(value: Int): Void {
     if value == 0 { return }
     let data = load64(address: value) as Int
     let count = load64(address: value + countOffset) as Int
-    release(address: data, size: blockSize(count: count))
+    release(address: data, size: stringBlockSize(count: count))
     assign(output: value, data: 0, count: 0)
 }
 
@@ -71,7 +71,7 @@ public func stringConcat(output: Int, leftData: Int, leftCount: Int, rightData: 
         panic(message: literalAddress(text: "invalid string concatenation"))
     }
     let count = leftCount + rightCount
-    let data = allocate(size: blockSize(count: count))
+    let data = allocate(size: stringBlockSize(count: count))
     if leftCount != 0 { copyBytes(destination: data, source: leftData, count: leftCount) }
     if rightCount != 0 { copyBytes(destination: data + leftCount, source: rightData, count: rightCount) }
     assign(output: output, data: data, count: count)

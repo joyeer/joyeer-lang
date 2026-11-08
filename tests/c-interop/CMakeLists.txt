@@ -237,6 +237,25 @@ foreach(profile IN ITEMS Debug Optimized)
     set_tests_properties("JoyeerCInterop.LiteralAddress${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
 endforeach()
 
+# The address of a named function, stored as a callback (spec 19.4.6).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.SymbolAddress${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/symbol-address.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/symbol-address-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.symbol;--runtime-module;runtime.symbol;--link-library;$<TARGET_FILE:CInteropCallbacks>;${compile_flags}"
+            "-DEXPECTED_OUTPUT=symbol addresses passed
+"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.SymbolAddress${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
 # Static storage: a table of zeroed 8-byte slots shared by every unit in the
 # program (spec 19.4.6), reached by index with a range check.
 foreach(profile IN ITEMS Debug Optimized)

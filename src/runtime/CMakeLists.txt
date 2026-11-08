@@ -11,6 +11,8 @@ set(JOYEER_RUNTIME_CORE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/allocator.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/text.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/print.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/arrays.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/joyeer/dictionaries.joyeer"
 )
 
 # Optimized in every configuration except Debug, which keeps full debug

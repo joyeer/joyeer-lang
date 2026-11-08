@@ -424,7 +424,7 @@ private:
             }
             const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(
                     attribute.arguments.front()->value);
-            if (literal->literal != nullptr && literal->literal->rawValue == "joyeer_intrinsic_literal_address") {
+            if (literal->literal != nullptr && intrinsic::readsLiteral(literal->literal->rawValue)) {
                 return true;
             }
         }
@@ -1929,7 +1929,7 @@ private:
         }
         const bool literalAddressCall = target.has_value() &&
                 model->nativeBinding(*target) != nullptr &&
-                model->nativeBinding(*target)->symbol == "joyeer_intrinsic_literal_address";
+                intrinsic::readsLiteral(model->nativeBinding(*target)->symbol);
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
             const auto& argument = expression->arguments[index];
             if (literalAddressCall && index == 0) {
@@ -1942,7 +1942,7 @@ private:
                     literal->literal->kind != stringLiteral) {
                     report(TypeCheckingDiagnosticId::invalidCallArguments,
                            argument->value != nullptr ? argument->value->span : argument->span,
-                           "joyeer_intrinsic_literal_address requires a string literal argument");
+                           model->nativeBinding(*target)->symbol + " requires a string literal argument");
                 } else {
                     literalAddressArgument = argument->value.get();
                 }

@@ -34,6 +34,7 @@ enum class Operation {
     callVoid1,
     callVoid2,
     literalAddress,
+    symbolAddress,
     staticSlot,
     memoryCopy,
     memoryMove,
@@ -52,7 +53,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 17> table {{
+inline constexpr std::array<Descriptor, 18> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -85,6 +86,11 @@ inline constexpr std::array<Descriptor, 17> table {{
     // String. The argument must be a literal; no String value is created.
     { "joyeer_intrinsic_literal_address", Operation::literalAddress, TypeKind::integer,
       { TypeKind::string, TypeKind::error, TypeKind::error }, 1, false },
+    // The address of the function or data symbol named by the string literal given
+    // as the argument (spec §19.4.6): a runtime function stored as a callback. The
+    // symbol is resolved at link time; nothing checks that it exists or its type.
+    { "joyeer_intrinsic_symbol_address", Operation::symbolAddress, TypeKind::integer,
+      { TypeKind::string, TypeKind::error, TypeKind::error }, 1, false },
     // The address of zero-initialized 8-byte slot `index` of a table of
     // staticSlotCount slots shared by every unit in the program (spec §19.4.6).
     { "joyeer_intrinsic_static_slot", Operation::staticSlot, TypeKind::integer,
@@ -101,6 +107,12 @@ inline constexpr std::array<Descriptor, 17> table {{
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {
     return symbol.substr(0, prefix.size()) == prefix;
+}
+
+// Whether the intrinsic reads its string argument at compile time, so the argument
+// must be a literal and never becomes a String value.
+[[nodiscard]] inline bool readsLiteral(std::string_view symbol) {
+    return symbol == "joyeer_intrinsic_literal_address" || symbol == "joyeer_intrinsic_symbol_address";
 }
 
 [[nodiscard]] inline const Descriptor* find(std::string_view symbol) {

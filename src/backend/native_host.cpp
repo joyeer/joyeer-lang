@@ -52,9 +52,10 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         auto* slot = builder.CreateInBoundsGEP(tableType, table, {zero, arguments[0]}, temporary());
         return builder.CreatePtrToInt(slot, builder.getInt64Ty(), temporary());
     }
-    if (descriptor.operation == Operation::literalAddress) {
+    if (descriptor.operation == Operation::literalAddress || descriptor.operation == Operation::symbolAddress) {
         // The argument is a string literal, so its data is a private constant
-        // global. Re-emit those bytes with a NUL terminator and return the address.
+        // global. A literal address re-emits those bytes with a NUL terminator; a
+        // symbol address reads them as the name of a function or data symbol.
         // The data pointer is either the constant itself or an extractvalue of the
         // literal's constant {pointer, count} struct, depending on folding.
         llvm::Value* pointerValue = arguments[0];
@@ -80,8 +81,16 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         }
         if (!literal) {
             report(DiagnosticId::unsupportedExternal, {},
-                    "joyeer_intrinsic_literal_address requires a string literal argument");
+                    std::string(descriptor.symbol) + " requires a string literal argument");
             return nullptr;
+        }
+        if (descriptor.operation == Operation::symbolAddress) {
+            // A function defined in this module is taken directly; anything else is
+            // an external symbol resolved by the linker.
+            if (auto* function = module().getFunction(bytes)) {
+                return builder.CreatePtrToInt(function, builder.getInt64Ty(), temporary());
+            }
+            return builder.CreatePtrToInt(declareDataSymbol(bytes), builder.getInt64Ty(), temporary());
         }
         auto* terminated = stringLiteral(bytes, true);
         return builder.CreatePtrToInt(terminated, builder.getInt64Ty(), temporary());
@@ -122,6 +131,7 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::callVoid1:
         case Operation::callVoid2:
         case Operation::literalAddress:
+        case Operation::symbolAddress:
         case Operation::staticSlot:
         case Operation::memoryCopy:
         case Operation::memoryMove:

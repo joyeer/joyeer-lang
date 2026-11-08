@@ -435,6 +435,45 @@ func message(): Int { return messageAddress(text: "boom") }
     EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
 }
 
+TEST_F(CInteropTest, RequiresALiteralForTheSymbolAddressIntrinsic) {
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+func callback(): Int { return addressOfSymbol(name: "joyeer_panic") }
+)")}, true, true}});
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+func callback(name: String): Int { return addressOfSymbol(name: name) }
+)");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments));
+    check("@c_extern(symbol: \"joyeer_intrinsic_symbol_address\")\nfunc f(name: String): Int32\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(CInteropTest, LowersTheSymbolAddressToTheNamedFunctionOrAnExternalSymbol) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+@c_export(symbol: "local_callback")
+public func local(cell: Int): Void {}
+func callbacks(): Int { return addressOfSymbol(name: "local_callback") + addressOfSymbol(name: "other_object") }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @local_callback to i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @other_object to i64"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
 TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {
     // The same code is fine in a runtime unit that is not a core unit.
     check("func f(text: String): Int { return text.count }\n"

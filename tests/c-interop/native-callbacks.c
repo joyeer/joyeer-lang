@@ -32,3 +32,7 @@ int64_t cinterop_text_length(int64_t address) {
 int64_t cinterop_data_value = 4242;
 const char cinterop_data_text[] = "data symbol";
 int64_t cinterop_data_read(void) { return cinterop_data_value; }
+
+// A callback reached by its symbol name with the symbol-address intrinsic
+// (spec 19.4.6): it marks the 8-byte cell it is given.
+void cinterop_mark(void* cell) { *(int64_t*)cell = 77; }

@@ -124,9 +124,9 @@ Everything the compiler, the tests and native libraries call. "Phase" is where
 | `joyeer_string_concat_abi` | generated string operators | done (stage 5), Joyeer |
 | string byte access | generated `text[index]` | inline in the backend; no runtime function (stage 1.3) |
 | `joyeer_string_{clone,destroy}_abi`, `joyeer_byte_to_string_abi` | generated ownership code | done (stage 5), Joyeer |
-| `joyeer_array_{create_owned,clone,append_owned,destroy}_abi` | generated array code | R5 |
-| `joyeer_dictionary_{create_owned,clone,set_owned,find,at,destroy}_abi` | generated dictionary code | R6 |
-| `joyeer_native_{bytes,strings}_init`, `joyeer_native_{bytes,string,strings}_assign` | native libraries (Compression), generated `initializing` outputs | R5 |
+| `joyeer_array_{create_owned,clone,append_owned,destroy}_abi` | generated array code | done (stage 6), Joyeer |
+| `joyeer_dictionary_{create_owned,clone,set_owned,find,at,destroy}_abi` | generated dictionary code | done (stage 6), Joyeer |
+| `joyeer_native_{bytes,strings}_init`, `joyeer_native_{bytes,string,strings}_assign` | native libraries (Compression), generated `initializing` outputs | done (stage 6), Joyeer |
 | `joyeer_host_valid_utf8` | Compression's C unit | done (stage 1.2) |
 | `joyeer_native_errno`, `joyeer_native_environment`, `joyeer_native_stdio` | `System` | R8 |
 | `main` / `wmain`, `joyeer_main_uses_arguments` | the C startup | R7 |
@@ -527,13 +527,16 @@ Designs are in [decision 0009](../decisions/0009-runtime-core-capabilities.md).
   written with one `fputc` each, so printing allocates nothing. The stream comes from
   `joyeer_native_stdio` until 7.2.
 
-### Stage 6: Collections (R5, R6)
+### Stage 6: Collections (R5, R6), done
 
-- [ ] 6.1 Arrays: create, clone, append with the current growth policy, destroy.
-- [ ] 6.2 The native buffer helpers (`joyeer_native_{bytes,strings}_init`,
+- [x] 6.1 Arrays: create, clone, append with the current growth policy, destroy
+  (`joyeer/arrays.joyeer`; the 24-byte header layout is unchanged).
+- [x] 6.2 The native buffer helpers (`joyeer_native_{bytes,strings}_init`,
   `joyeer_native_{bytes,string,strings}_assign`); Compression tests pass.
-- [ ] 6.3 Dictionaries: create, set with duplicates, find, at, clone, destroy, for
-  every key kind.
+- [x] 6.3 Dictionaries: create, set with duplicates, find, at, clone, destroy, for
+  every key kind (`joyeer/dictionaries.joyeer`). The element callbacks of a native
+  `[String]` are Joyeer exports whose addresses come from the new symbol-address
+  intrinsic (decision 0009).
 
 ### Stage 7: Entry and native-library API (R7, R8)
 

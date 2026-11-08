@@ -135,6 +135,15 @@ for types that only core functions mention (the literal-address argument is a
 `String` constant that is never materialized); without this a Debug core object
 imported `joyeer_string_clone_abi`.
 
+**Symbol addresses (stage 6).** The native `[String]` buffers a native library fills
+need element clone and destroy callbacks, which are Joyeer functions of the runtime
+itself, and a core unit has no way to name a function. `joyeer_intrinsic_symbol_address(name:)`
+reads a string literal like the literal-address intrinsic and yields the address of
+the function of that name in the same object, or of an external symbol otherwise.
+Rejected: a sentinel in the array header that the runtime interprets (it would make
+the header mean different things to generated and runtime code), and keeping the
+callbacks in C.
+
 **The allocator contract (stage 4).** `joyeer_alloc(size)`,
 `joyeer_realloc(address, oldSize, newSize)` and `joyeer_free(address, size)` are
 Joyeer exports; sizes are those of the last request, so the Tier 2 allocator (D8)
