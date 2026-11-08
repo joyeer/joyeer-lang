@@ -112,13 +112,13 @@ usual prefix/suffix; rebuild compiler clients and the backend together.
 ### Source and build boundaries
 
 Headers and implementation files are colocated under the top-level `compiler/`
-directory and `src/`; there is no separate public-header tree or installed C++
+directory, `lib/`, and `src/`; there is no separate public-header tree or installed C++
 SDK. `compiler/` contains the driver, frontend, diagnostics, Joyeer IR, and
 backend-call adapters. These build as one private `JoyeerCompilerCore` object
 target, reused by `joyeer` and the stage-specific C++ unit tests. Only
 `main.cpp` belongs exclusively to the compiler executable. Include paths are
 target-scoped: same-directory headers use their filename, compiler headers use
-paths relative to the repository root (`compiler/...`), and runtime and library
+paths relative to the repository root (`compiler/...`, `lib/...`), and runtime
 headers use paths relative to `src/`.
 
 `compiler/backend/` remains the shared `JoyeerBackend` C ABI library. Its LLVM

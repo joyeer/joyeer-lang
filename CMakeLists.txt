@@ -272,14 +272,14 @@ add_custom_target(JoyeerToolchain ALL
     COMMENT "Staging the Joyeer compiler/runtime product"
     VERBATIM)
 
-add_subdirectory(src/library)
+add_subdirectory(lib)
 
 # Standard modules live in <toolchain>/lib, found by the compiler relative to
 # its own executable. Stage them (and lib/index.toml) next to the build tree's
 # compiler so a development build resolves its own library.
 file(GLOB_RECURSE JOYEER_STDLIB_SOURCES CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/library/Foundation/*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/library/System/*")
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/Foundation/*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/System/*")
 set(JOYEER_STDLIB_DIRECTORY "$<TARGET_FILE_DIR:joyeer>/lib")
 set(JOYEER_STDLIB_STAMP "${CMAKE_CURRENT_BINARY_DIR}/stdlib.stamp")
 set(JOYEER_STDLIB_COMPRESSION "")
@@ -287,16 +287,16 @@ set(JOYEER_STDLIB_EXTRA_DEPENDS "")
 set(JOYEER_STDLIB_DEPENDS joyeer)
 if(JOYEER_BUILD_COMPRESSION)
     set(JOYEER_STDLIB_COMPRESSION
-        "${CMAKE_BINARY_DIR}/src/library/Compression/package/$<CONFIG>/Compression")
+        "${CMAKE_BINARY_DIR}/lib/Compression/package/$<CONFIG>/Compression")
     list(APPEND JOYEER_STDLIB_DEPENDS JoyeerCompression)
     set(JOYEER_STDLIB_EXTRA_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/library/Compression/compression.joyeer")
+        "${CMAKE_CURRENT_SOURCE_DIR}/lib/Compression/compression.joyeer")
 endif()
 add_custom_command(
     OUTPUT "${JOYEER_STDLIB_STAMP}"
     COMMAND "${CMAKE_COMMAND}"
         "-DDESTINATION=${JOYEER_STDLIB_DIRECTORY}"
-        "-DLIBRARY_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/library"
+        "-DLIBRARY_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/lib"
         "-DCOMPRESSION_PACKAGE=${JOYEER_STDLIB_COMPRESSION}"
         "-DVERSION=${JOYEER_TOOLCHAIN_VERSION}"
         "-DTARGET=${JOYEER_TOOLCHAIN_TARGET}"

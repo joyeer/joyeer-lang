@@ -1,7 +1,7 @@
 # Stage the standard modules and lib/index.toml beside the compiler.
 #
 # Required: DESTINATION (the toolchain's lib directory), LIBRARY_SOURCE
-# (src/library), VERSION, TARGET, CONFIG. Optional: COMPRESSION_PACKAGE (the
+# (lib), VERSION, TARGET, CONFIG. Optional: COMPRESSION_PACKAGE (the
 # generated Compression module directory, including its native archive).
 foreach(name IN ITEMS DESTINATION LIBRARY_SOURCE VERSION TARGET CONFIG)
     if(NOT DEFINED ${name})

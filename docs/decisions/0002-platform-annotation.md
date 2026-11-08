@@ -12,7 +12,7 @@ drive rules, native error codes, and API shapes. Joyeer has no way to select cod
 target. Today there are two workarounds:
 
 - Library code takes an explicit flag, as in
-  [path.joyeer](../../src/library/System/path.joyeer) (`windows: Bool`).
+  [path.joyeer](../../lib/System/path.joyeer) (`windows: Bool`).
   Callers must supply it, and runtime wrappers have no way to detect the host.
 - Anything platform-specific lives in C behind `#ifdef`, as in
   [filesystem.c](../../src/runtime/filesystem.c).
