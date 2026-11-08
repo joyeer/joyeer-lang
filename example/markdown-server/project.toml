@@ -1,7 +1,7 @@
 schema-version = 1
 
 [module]
-name = "example.markdown-server"
+name = "example.markdown_server"
 kind = "bin"
 output = "markdown-server"
 sources = ["src/main.joyeer", "src/http.joyeer", "src/site.joyeer", "src/markdown.joyeer"]
