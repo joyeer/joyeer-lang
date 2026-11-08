@@ -131,6 +131,11 @@ See [fern](fern.md) for current contracts and parser limits.
 
 - User-defined generics, traits/protocols/interfaces, classes, closures, or
   asynchronous/concurrent functions.
+- Networking. Blocking IPv4 TCP in `System` is proposed in
+  [spec §18.6](../spec/18-host.md#186-tcp-networking) and
+  [decision 0012](../decisions/0012-tcp-networking.md) but not implemented;
+  the [Markdown web server example](../../example/markdown-server/README.md)
+  is written against it and does not build yet.
 - User-defined `init` / `deinit` bodies, explicit copy initializers, or
   user-defined accessors.
 - Implicit-`self` field access (write `self.count`, not `count`), extensions of
