@@ -1,4 +1,5 @@
 #include "native_ir.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Verifier.h"
@@ -80,7 +81,11 @@ std::vector<Diagnostic> Builder::build() {
         // Reserve C linkage names first, so private generated helpers can never
         // take a native symbol and force LLVM to rename the public entry.
         for (const auto& function : source.functions) {
-            if (function.nativeBinding.has_value()) declareNativeFunction(function);
+            if (function.nativeBinding.has_value() && function.nativeBinding->dataSymbol) {
+                declareDataSymbol(function.nativeBinding->symbol);
+            } else if (function.nativeBinding.has_value() && !intrinsic::reserved(function.nativeBinding->symbol)) {
+                declareNativeFunction(function);
+            }
         }
         emitOwnership();
         // Declare source functions before emitting their bodies so recursive
@@ -88,7 +93,8 @@ std::vector<Diagnostic> Builder::build() {
         for (const auto& function : source.functions) {
             if (!function.isExternal) {
                 functions.emplace(function.id, declareFunction(function));
-            } else if (function.nativeBinding.has_value()) {
+            } else if (function.nativeBinding.has_value() && !function.nativeBinding->dataSymbol &&
+                       !intrinsic::reserved(function.nativeBinding->symbol)) {
                 functions.emplace(function.id, declareNativeFunction(function));
             }
         }
@@ -280,12 +286,29 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
             "joyeer_fn_" + std::to_string(function.id), module());
 }
 
+llvm::GlobalVariable* Builder::declareDataSymbol(const std::string& symbol) {
+    if (auto* existing = module().getNamedGlobal(symbol)) return existing;
+    if (module().getNamedValue(symbol) != nullptr) {
+        const auto message = "native symbol '" + symbol + "' is declared as both a function and a data symbol";
+        report(DiagnosticId::conflictingNativeSymbol, {}, message);
+        throw std::runtime_error(message);
+    }
+    // The type is a placeholder: only the symbol's address is ever taken.
+    return new llvm::GlobalVariable(module(), builder.getInt8Ty(), false,
+            llvm::GlobalValue::ExternalLinkage, nullptr, symbol);
+}
+
 llvm::Function* Builder::declareNativeFunction(const ir::Function& function) {
     std::vector<llvm::Type*> parameters;
     std::vector<typing::TypeKind> kinds;
-    for (const auto& parameter : function.parameters) {
+    for (size_t index = 0; index < function.parameters.size(); ++index) {
+        const auto& parameter = function.parameters[index];
         const auto kind = type(parameter.value.type).kind;
-        if (parameter.isInitializing) {
+        if (function.nativeBinding->passesPointer(index)) {
+            // A bare data pointer: no count follows.
+            parameters.push_back(pointer());
+            kinds.push_back(typing::TypeKind::voidType);
+        } else if (parameter.isInitializing) {
             parameters.push_back(pointer());
             kinds.push_back(typing::TypeKind::voidType);
         } else if (kind == typing::TypeKind::string || kind == typing::TypeKind::array) {
@@ -310,6 +333,10 @@ llvm::Function* Builder::declareCFunction(std::string_view name, llvm::Type* res
     auto* signature = llvm::FunctionType::get(result, parameters, false);
     const llvm::Triple target(llvm::sys::getDefaultTargetTriple());
     llvm::AttributeList attributes;
+    if (resultKind == typing::TypeKind::never) {
+        // A C function that does not return: the call site is followed by unreachable.
+        attributes = attributes.addFnAttribute(context(), llvm::Attribute::NoReturn);
+    }
     const auto returnExtension = cExtension(target, result, typing::isSignedInteger(resultKind));
     if (returnExtension != llvm::Attribute::None) {
         attributes = attributes.addRetAttribute(context(), returnExtension);

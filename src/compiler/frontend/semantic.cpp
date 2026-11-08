@@ -28,6 +28,11 @@ bool SemanticModel::isRuntimeSource(SourceSpan span) const {
     return found != runtimeSources_.end() && found->second;
 }
 
+bool SemanticModel::isCoreSource(SourceSpan span) const {
+    const auto found = coreSources_.find(span.sourceId);
+    return found != coreSources_.end() && found->second;
+}
+
 std::optional<NodeId> SemanticModel::nodeId(const syntax::NodePtr& node) const {
     if (node == nullptr) return std::nullopt;
     const auto found = nodeIds_.find(node.get());

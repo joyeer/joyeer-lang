@@ -77,7 +77,9 @@ leaves resolution to the compiler. Workspace validation is unchanged.
 1. **Move `JoyeerRuntime.*` into `lib/`.** The first version leaves the runtime
    flat beside the compiler (`JOYEER_RUNTIME_PATH` is exe-relative); moving it
    makes `lib/` hold everything the compiler links or imports. It changes the
-   packaging inventory and `scripts/install-debug.py`.
+   packaging inventory and `scripts/install-debug.py`. Do it with or before
+   R9 of the [runtime plan](runtime-in-joyeer.md), when the archive starts
+   being built by the compiler itself.
 2. **fern and `--sysroot`.** fern derives the library from the compiler path and
    does not pass or honor `--sysroot`. Either have fern run
    `--print-sysroot`, or accept the limitation permanently.
@@ -87,5 +89,6 @@ leaves resolution to the compiler. Workspace validation is unchanged.
    program. A stable module format would avoid that.
 5. **Cross-compilation.** One root per target is assumed; cross builds may need
    `lib/<target>/native/`.
-6. **Release validation.** The change is validated by the full Debug ctest on
-   Windows x64; Release and the other platforms are not yet run.
+6. **Platform validation.** Windows x64 passes the unfiltered CTest in Debug and
+   Release with Compression enabled (2026-11-07, with `System` as the only
+   host provider). Windows ARM64, Linux and macOS are not yet run.

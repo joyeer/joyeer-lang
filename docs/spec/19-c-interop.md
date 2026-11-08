@@ -57,10 +57,11 @@ function declaration (§3.2). They are not permitted on methods, initializers,
 accessors, types, fields, or bindings. A declaration may have exactly one C
 binding annotation: repeats and combining the two are errors.
 
-Each annotation requires exactly one named argument, `symbol:`, whose value
-is a nonempty string literal. Expressions, inferred names, omitted arguments,
-duplicate arguments, and other arguments, including `abi`, `library`, or a
-repeated signature, are errors. The decoded symbol must be an ASCII C
+Each annotation requires a first named argument, `symbol:`, whose value
+is a nonempty string literal. A `@c_extern` may then add `pointer:` arguments,
+each a string literal naming one of its `[UInt8]` parameters (§19.4.4). Expressions,
+inferred names, omitted arguments, duplicate `symbol:` arguments, and other
+arguments, including `abi`, `library`, or a repeated signature, are errors. The decoded symbol must be an ASCII C
 identifier: `[A-Za-z_][A-Za-z0-9_]*`. Embedded NUL, whitespace, and platform
 linker decorations are not allowed.
 
@@ -156,7 +157,8 @@ representation selected for the actual target, not the build host:
 | `size_t` | `UInt64` | `UInt64` |
 | `ptrdiff_t` | `Int64` | `Int64` |
 
-`Int` is always signed 64-bit, not C `int` or an address carrier. `UInt`
+`Int` is always signed 64-bit, not C `int` or an address carrier (runtime units
+may use it as one; see the last rule of §19.5). `UInt`
 is always unsigned 64-bit, not a promise that every C unsigned type has that
 width. The table does not add support for a new target or data model.
 
@@ -228,14 +230,131 @@ in the [buffer ABI implementation contract](../impl/c-interop.md#buffer-imports)
 There is no source-level raw-pointer value, asynchronous retention, callback,
 or general aggregate FFI in this extension.
 
+#### 19.4.4 Bare byte pointers
+
+An import may pass a `[UInt8]` parameter as a bare data pointer, with no count.
+The annotation names it: `@c_extern(symbol: "ReadFile", pointer: "buffer")`
+names the parameter whose label is `buffer`. Each `pointer:` argument names a
+distinct parameter, and the parameter must be a `[UInt8]` that is borrowing or
+`inout`. Without `pointer:`, a borrowed `[UInt8]` keeps the pointer-and-count
+form of §19.4.3, and an `inout` `[UInt8]` is rejected.
+
+```joyeer
+@c_extern(symbol: "read", pointer: "buffer")
+func nativeRead(descriptor: Int32, buffer: inout [UInt8], count: Int): Int
+```
+
+A borrowed buffer crosses as `const uint8_t*`; an `inout` buffer as `uint8_t*`
+to the array's own storage, which native code may write in place. The count of
+bytes valid at that address is the array's `count`; the signature carries any
+length the C function needs as an ordinary scalar parameter, and the binding
+author must not let it exceed the array's count. The native function must not
+retain the pointer, resize the array, or write beyond the count, and the
+compiler cannot check that it does not. An empty array may pass a null pointer.
+No NUL terminator is implied; a caller that needs a C string appends the `0`
+byte itself. Exclusivity and initialization rules for `inout` are those of
+ordinary calls. Repeated declarations of one symbol must agree on which
+parameters are bare pointers and on their access effects.
+
+This lets a binding fill C structures that are laid out in a `[UInt8]` and read
+back with ordinary indexing. It is a deliberately small step toward the
+byte address-and-length pairs of §19.10, remains runtime-only, and adds no
+source-level pointer value, address arithmetic, or dereference.
+
+#### 19.4.5 Compiler intrinsics
+
+A C import whose symbol begins with `joyeer_intrinsic_` names a compiler
+intrinsic. The compiler lowers it to inline instructions and never links a
+symbol of that name, so the declaration is the only place the operation exists.
+Every other rule for `@c_extern` applies unchanged: the declaration must be in
+a unit authorized for native bindings, so ordinary programs cannot use these.
+The symbol must be one of the table below, declared with exactly the listed
+parameter and result types; anything else with the prefix is an error, and
+`@c_export` of such a symbol is rejected. An address is an `Int`.
+
+| Symbol | Declaration | Effect |
+|---|---|---|
+| `joyeer_intrinsic_address_of` | `(bytes: inout [UInt8]) -> Int`, with `pointer: "bytes"` | The address of the array's first element. The parameter must be `inout`: a borrowed array may be a constant in read-only memory, and a store through its address would be undefined |
+| `joyeer_intrinsic_load_u8` / `_u16` / `_u32` / `_u64` | `(address: Int) -> UInt8` / `UInt16` / `UInt32` / `UInt64` | Little-endian load of that width |
+| `joyeer_intrinsic_store_u8` / `_u16` / `_u32` / `_u64` | `(address: Int, value: UInt8` / `UInt16` / `UInt32` / `UInt64`) `-> Void` | Little-endian store of that width |
+| `joyeer_intrinsic_atomic_add` | `(address: Int, delta: Int) -> Int` | Sequentially consistent add; returns the previous value |
+| `joyeer_intrinsic_call_void1` | `(function: Int, first: Int) -> Void` | Calls the C function at `function`, which returns void and takes one address argument, with the target's C calling convention |
+| `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
+| `joyeer_intrinsic_literal_address` | `(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal. No `String` value is created and nothing is allocated; it and `symbol_address` are the only uses of a string literal a core unit (§19.4.7) may make |
+| `joyeer_intrinsic_symbol_address` | `(name: String) -> Int` | The address of the function or data symbol named by the string literal given as `name`, which must be a literal (the same rules as `literal_address`). A function defined in the same program unit is taken directly; any other name is resolved by the linker, and nothing checks that it exists or what type it has. Used to store a runtime function as a callback |
+| `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime plan](../plan/runtime-in-joyeer.md) |
+| `joyeer_intrinsic_memcpy` | `(destination: Int, source: Int, count: Int) -> Void` | Copies `count` bytes (taken as unsigned); the ranges must not overlap. No alignment is required. Lowers to LLVM's `memcpy`, so a small constant count becomes inline moves |
+| `joyeer_intrinsic_memmove` | `(destination: Int, source: Int, count: Int) -> Void` | The same for ranges that may overlap |
+| `joyeer_intrinsic_memset` | `(destination: Int, value: UInt8, count: Int) -> Void` | Stores `value` in `count` bytes |
+| `joyeer_intrinsic_double_bits` | `(value: Double) -> UInt64` | The IEEE 754 bit pattern of `value` |
+| `joyeer_intrinsic_float_bits` | `(value: Float) -> UInt32` | The IEEE 754 bit pattern of `value` |
+| `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../decisions/0011-runtime-without-the-c-library.md) |
+| `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
+
+Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
+location. The operations assume a little-endian target; the supported targets
+are. An address from `address_of` is meaningful only while the array it came
+from is alive and unmodified in size, and the language does not track that.
+Nothing checks that an address points at memory the program may access: these
+operations can read and write anywhere, so a unit that uses them takes on the
+obligations of C. They exist so that the runtime itself can be written in
+Joyeer ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)); they add
+no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
+
+#### 19.4.6 Runtime capabilities still proposed ⏳
+
+One operation the runtime plan ([runtime plan](../plan/runtime-in-joyeer.md)) may
+want has **no decision** yet and is rejected by the compiler: for a runtime that
+does not depend on the C library, a Linux system-call intrinsic. It would follow
+the rules of §19.4.5: a reserved symbol, an exact signature, and authorized units
+only. Byte comparison (`memcmp`) is deliberately not an intrinsic: LLVM has no
+inline form of it, so a runtime unit imports the C library's `memcmp` with
+`@c_extern` until it can compare words itself.
+
+#### 19.4.7 Core units, `Never` results, data symbols and the program entry point
+
+A **core unit**, selected with `--runtime-core-module <name>` (which implies
+`--runtime-module`), may use only `Bool`, the integer and floating types, `Void`,
+`Never` and top-level scalar constants. `String`, arrays, dictionaries,
+`Optional`, `Result`, enums, structs, `print` and string literals (other than as
+the argument of the constant-data intrinsic) are reported as
+`type-checking.managed-type-in-core-unit`, because each lowers to a call into the
+runtime that the core unit is itself part of. None of this changes ordinary
+programs.
+
+A C binding in any runtime unit may have the result type `Never`. On an import
+it declares a C function that does not return (`exit`); the call is followed by
+unreachable code and the declaration is `noreturn`. On an export it declares a
+Joyeer function that never returns (the runtime's panic); the C-callable entry is
+`noreturn` and does not return even if the body is mis-typed.
+
+A **data symbol** is declared with `@c_data(symbol: "name")` on a bodyless
+`func addressName(): Int` with no parameters: the function's value is the address
+of that C data symbol, and nothing is called. It is a C import in every other
+respect: authorized units only, the symbol must be a C identifier and not a
+startup or intrinsic name, repeated declarations must agree, and one symbol
+cannot be both a function (`@c_extern`) and a data symbol. For a C variable that
+holds a pointer, such as glibc's `stdout`, the address yielded is the address of
+the variable, so the pointer is read with the `load_u64` intrinsic.
+
+Only a core unit may export the platform's program entry point:
+`@c_export(symbol: "main")` or `"wmain"`, with the platform's C signature
+(`Int32` argument count, then the `argv` address as an `Int`, returning `Int32`).
+Every other startup symbol (`_start`, `mainCRTStartup`, `WinMain`, `DllMain`,
+`joyeer_main` and the rest) stays rejected, in every unit. The IR carries a core
+flag so that the verifier enforces this too. A program that links a Joyeer entry
+point must not also link another one: the runtime archive is linked whole on
+Windows.
+
 ### 19.5 Invalid signatures
 
 All types and parameter effects not admitted by §19.4 are rejected at this
 boundary. In particular:
 
-- `Void` parameters and `Never` results have no admitted C representation.
-- `inout` and `consuming` parameters are not substitutes for native pointers
-  or ownership transfer. `initializing` is restricted to §19.4.3's outputs.
+- `Void` and `Never` parameters have no admitted C representation. `Void` and `Never` are admitted as results (§19.4.7).
+- `consuming` parameters are not substitutes for ownership transfer, and
+  `inout` is admitted only for a `[UInt8]` named by `pointer:` (§19.4.4).
+  `initializing` is restricted to §19.4.3's outputs.
 - Other array forms, dictionaries, tuples, ordinary structs and enums,
   `Optional`, and `Result` have no implicit C ABI representation.
 - Neither `T?` nor `Optional<T>` denotes a nullable C value or address.
@@ -245,7 +364,10 @@ boundary. In particular:
 - Native addresses and opaque handles that are actually pointers may not
   be disguised as `Int`, `UInt`, or another integer type. A native API whose
   handle is genuinely an integer may use its exact scalar representation;
-  that does not supply resource lifetime or close semantics.
+  that does not supply resource lifetime or close semantics. Runtime units
+  (§19.4.5) are the exception: they carry `FILE*`, `DIR*`, and other addresses
+  as `Int` because they also own the matching close, and the compiler does not
+  enforce this rule. Application code must not follow them.
 
 In particular, `String` is not `char*`: its current implementation preserves
 arbitrary bytes, including NUL and invalid UTF-8. Neither a string's storage
@@ -354,11 +476,12 @@ double joyeer_native_sample(float value, double scale);
 
 ### 19.10 Deferred memory and ABI extensions
 
-No address type, address-taking expression, pointer arithmetic, dereference,
-nullable pointer syntax, or public `unsafe` block is introduced here.
+No address type, address-taking expression, dereference syntax, nullable
+pointer syntax, or public `unsafe` block is introduced here. The runtime-only
+`Int`-address intrinsics of §19.4.5 are not a pointer type.
 The no-reference model in [§4.8](04-memory.md#48-no-reference-types) remains
-unchanged. Raw addresses, read-only/writable byte address-and-length pairs,
-output parameters, and owned native result storage need a separate accepted
+unchanged. Raw addresses, general address-and-length pairs (§19.4.4 admits only
+bare byte pointers), output parameters, and owned native result storage need a separate accepted
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 

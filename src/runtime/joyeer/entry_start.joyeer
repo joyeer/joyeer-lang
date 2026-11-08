@@ -1,0 +1,168 @@
+// The process's own entry point on Windows (`joyeer_start`), in the entry object with
+// the entry logic (entry.joyeer), which it calls directly. Only a runtime core unit may
+// export an entry point (spec §19.4.7).
+//
+// A program that needs no C library (decision 0011) is linked with
+// `/ENTRY:joyeer_start`, so the C runtime's startup never runs. The process starts
+// here: this splits the command line (`GetCommandLineW`) into arguments by the rules
+// of the C runtime and `CommandLineToArgvW` (the program name ends at the first quote
+// or space and has no escapes; then backslashes are literal unless they precede a
+// quote, `"` toggles quoting, and `""` inside quotes is a literal quote), hands the
+// result to `entryRun` as `wmain` would, and ends the process with its status. The
+// buffers come straight from the system and are kept for the life of the process, so
+// they are not allocations the leak check would count.
+
+@platform(windows)
+@c_extern(symbol: "GetCommandLineW")
+private func commandLine(): Int
+
+@platform(windows)
+@c_extern(symbol: "VirtualAlloc")
+private func virtualAlloc(address: Int, size: Int, kind: UInt32, protection: UInt32): Int
+
+@platform(windows)
+@c_extern(symbol: "ExitProcess")
+private func exitSystem(status: UInt32): Never
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_load_u16")
+private func load16(address: Int): UInt16
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_store_u16")
+private func store16(address: Int, value: UInt16): Void
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@platform(windows)
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@platform(windows)
+@c_extern(symbol: "joyeer_panic")
+private func panic(message: Int): Never
+
+@platform(windows)
+private func unit(address: Int): Int {
+    return load16(address: address) as Int
+}
+
+@platform(windows)
+private func putUnit(address: Int, value: Int) {
+    store16(address: address, value: value as UInt16)
+}
+
+@platform(windows)
+private func isBlank(value: Int): Bool {
+    return value == 32 || value == 9
+}
+
+// Splits the command line at `source` into NUL-terminated arguments written from
+// `target`, with a pointer to each stored from `vector` and a null pointer after the
+// last. Returns the argument count.
+@platform(windows)
+private func splitCommandLine(source: Int, target: Int, vector: Int): Int {
+    var read = source
+    var write = target
+    var count = 0
+
+    // The program name.
+    while isBlank(value: unit(address: read)) { read = read + 2 }
+    store64(address: vector, value: write as UInt64)
+    count = 1
+    if unit(address: read) == 34 {
+        read = read + 2
+        while unit(address: read) != 0 && unit(address: read) != 34 {
+            putUnit(address: write, value: unit(address: read))
+            write = write + 2
+            read = read + 2
+        }
+        if unit(address: read) == 34 { read = read + 2 }
+    } else {
+        while unit(address: read) != 0 && !isBlank(value: unit(address: read)) {
+            putUnit(address: write, value: unit(address: read))
+            write = write + 2
+            read = read + 2
+        }
+    }
+    putUnit(address: write, value: 0)
+    write = write + 2
+
+    // The other arguments.
+    var more = true
+    while more {
+        while isBlank(value: unit(address: read)) { read = read + 2 }
+        if unit(address: read) == 0 {
+            more = false
+        } else {
+            store64(address: vector + count * 8, value: write as UInt64)
+            count = count + 1
+            var quoted = false
+            var inArgument = true
+            while inArgument {
+                var backslashes = 0
+                while unit(address: read) == 92 {
+                    backslashes = backslashes + 1
+                    read = read + 2
+                }
+                if unit(address: read) == 34 {
+                    // Half the backslashes survive; an odd one out makes the quote literal.
+                    var kept = backslashes / 2
+                    while kept > 0 {
+                        putUnit(address: write, value: 92)
+                        write = write + 2
+                        kept = kept - 1
+                    }
+                    if backslashes % 2 == 1 {
+                        putUnit(address: write, value: 34)
+                        write = write + 2
+                        read = read + 2
+                    } else if quoted && unit(address: read + 2) == 34 {
+                        putUnit(address: write, value: 34)
+                        write = write + 2
+                        read = read + 4
+                    } else {
+                        quoted = !quoted
+                        read = read + 2
+                    }
+                } else {
+                    while backslashes > 0 {
+                        putUnit(address: write, value: 92)
+                        write = write + 2
+                        backslashes = backslashes - 1
+                    }
+                    let next = unit(address: read)
+                    if next == 0 || (!quoted && isBlank(value: next)) {
+                        inArgument = false
+                    } else {
+                        putUnit(address: write, value: next)
+                        write = write + 2
+                        read = read + 2
+                    }
+                }
+            }
+            putUnit(address: write, value: 0)
+            write = write + 2
+        }
+    }
+    store64(address: vector + count * 8, value: 0)
+    return count
+}
+
+@platform(windows)
+@c_export(symbol: "joyeer_start")
+public func processStart(): Never {
+    let source = commandLine()
+    var length = 0
+    while unit(address: source + length * 2) != 0 { length = length + 1 }
+    // Arguments are never longer than the text they come from, plus one terminator
+    // each; there are at most half as many arguments as characters, plus the name.
+    let textBytes = (length * 2 + 8) * 2
+    let vectorBytes = (length / 2 + 3) * 8
+    let block = virtualAlloc(address: 0, size: textBytes + vectorBytes, kind: 12288, protection: 4)
+    if block == 0 { panic(message: literalAddress(text: "out of memory")) }
+    let count = splitCommandLine(source: source, target: block + vectorBytes, vector: block)
+    exitSystem(status: entryRun(argc: count as Int32, argv: block) as UInt32)
+}

@@ -1,0 +1,205 @@
+import Foundation
+
+// Linux primitives for filesystem.joyeer, over the kernel's system calls (decision
+// 0011): no C library, stream or `errno`. Paths are UTF-8 with a NUL terminator. A handle
+// is a file descriptor. Results are >= 0 on success and the negated errno on failure,
+// which is what the kernel returns.
+//
+// A file opens with O_CLOEXEC, so it is not inherited by a child process the program
+// starts. Exclusive create is open(O_CREAT | O_EXCL, 0666). The struct layouts below are
+// the kernel's, the same on every architecture: struct statx and struct linux_dirent64.
+// Only the system call numbers and O_DIRECTORY differ between x86-64 and AArch64.
+
+private let interrupted: Int = 4
+private let statxBufferSize: Int = 256
+private let entriesBufferSize: Int = 32768
+private let kindMask: Int = 61440
+private let kindFile: Int = 32768
+private let kindDirectory: Int = 16384
+private let kindSymlink: Int = 40960
+private let currentDirectory: Int = 0 - 100
+private let closeOnExec: Int = 524288
+private let createExclusive: Int = 193
+private let writeOnly: Int = 1
+
+// The kernel's O_DIRECTORY differs between architectures.
+@platform(linux)
+private func directoryFlag(): Int {
+    if onArm() { return 16384 }
+    return 65536
+}
+
+// openat(AT_FDCWD, path, flags, mode)
+@platform(linux)
+private func openPath(path: [UInt8], flags: Int, mode: Int): Int {
+    var bytes = path
+    let address = addressOfBytes(bytes: &bytes)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 257, arm: 56, first: currentDirectory, second: address, third: flags,
+            fourth: mode, fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+@platform(linux)
+func nativeOpenRead(path: [UInt8]): Int {
+    return openPath(path: path, flags: closeOnExec, mode: 0)
+}
+
+@platform(linux)
+func nativeOpenNew(path: [UInt8]): Int {
+    return openPath(path: path, flags: createExclusive + writeOnly + closeOnExec, mode: 438)
+}
+
+// A read the kernel interrupted before it transferred anything is repeated.
+@platform(linux)
+func nativeRead(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    let address = addressOfBytes(bytes: &buffer)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 0, arm: 63, first: handle, second: address, third: count, fourth: 0,
+            fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+@platform(linux)
+func nativeWrite(handle: Int, buffer: [UInt8], count: Int): Int {
+    var bytes = buffer
+    let address = addressOfBytes(bytes: &bytes)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 1, arm: 64, first: handle, second: address, third: count, fourth: 0,
+            fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+@platform(linux)
+func nativeClose(handle: Int): Int {
+    let outcome = linuxCall(x86: 3, arm: 57, first: handle, second: 0, third: 0, fourth: 0, fifth: 0,
+        sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+// mkdirat(AT_FDCWD, path, 0777)
+@platform(linux)
+func nativeCreateDirectory(path: [UInt8]): Int {
+    var bytes = path
+    let outcome = linuxCall(x86: 258, arm: 34, first: currentDirectory, second: addressOfBytes(bytes: &bytes),
+        third: 511, fourth: 0, fifth: 0, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+// unlinkat(AT_FDCWD, path, flags): flags 0 removes a file, AT_REMOVEDIR (512) a directory.
+@platform(linux)
+private func unlink(path: [UInt8], flags: Int): Int {
+    var bytes = path
+    let outcome = linuxCall(x86: 263, arm: 35, first: currentDirectory, second: addressOfBytes(bytes: &bytes),
+        third: flags, fourth: 0, fifth: 0, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+@platform(linux)
+func nativeRemoveFile(path: [UInt8]): Int {
+    return unlink(path: path, flags: 0)
+}
+
+@platform(linux)
+func nativeRemoveDirectory(path: [UInt8]): Int {
+    let kind = nativeKind(path: path)
+    if kind < 0 { return kind }
+    if kind != 1 { return -20 }
+    return unlink(path: path, flags: 512)
+}
+
+@platform(linux)
+private func modeKind(mode: Int): Int {
+    let format = mode & kindMask
+    if format == kindFile { return 0 }
+    if format == kindDirectory { return 1 }
+    if format == kindSymlink { return 2 }
+    return 3
+}
+
+// Kind tags: 0 file, 1 directory, 2 symlink, 3 other. The leaf is never followed.
+// statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, STATX_TYPE, buffer); stx_mode sits at
+// offset 28 of struct statx.
+@platform(linux)
+func nativeKind(path: [UInt8]): Int {
+    var bytes = path
+    var buffer = zeroBuffer(count: statxBufferSize)
+    let outcome = linuxCall(x86: 332, arm: 291, first: currentDirectory,
+        second: addressOfBytes(bytes: &bytes), third: 256, fourth: 1,
+        fifth: addressOfBytes(bytes: &buffer), sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return modeKind(mode: halfWord(bytes: buffer, offset: 28))
+}
+
+// The names in one batch of struct linux_dirent64 records (inode 8 bytes, offset 8,
+// length 2 at 16, type 1, then the NUL-terminated name from byte 19). Returns an error
+// code, 0 otherwise.
+@platform(linux)
+private func appendNames(buffer: [UInt8], used: Int, names: inout [String]): Int {
+    var position = 0
+    while position < used {
+        let length = halfWord(bytes: buffer, offset: position + 16)
+        if length < 20 { return 5 }
+        var name: [UInt8] = []
+        var cursor = position + 19
+        while cursor < position + length && buffer[cursor] != 0 {
+            &name.append(element: buffer[cursor])
+            cursor = cursor + 1
+        }
+        let isDot = name.count == 1 && name[0] == b'.'
+        let isDotDot = name.count == 2 && name[0] == b'.' && name[1] == b'.'
+        if !isDot && !isDotDot {
+            let text = stringFromBytes(bytes: name, count: name.count)
+            if !isValidUtf8(text: text) { return encodingErrno() }
+            &names.append(element: text)
+        }
+        position = position + length
+    }
+    return 0
+}
+
+// getdents64 until it reports nothing more: 0 on success, else the error code.
+@platform(linux)
+private func collectEntries(descriptor: Int, names: inout [String]): Int {
+    var buffer = zeroBuffer(count: entriesBufferSize)
+    let address = addressOfBytes(bytes: &buffer)
+    var code = 0
+    var finished = false
+    while !finished {
+        let used = linuxCall(x86: 217, arm: 61, first: descriptor, second: address,
+            third: entriesBufferSize, fourth: 0, fifth: 0, sixth: 0)
+        if used == 0 - interrupted {
+            code = 0
+        } else if kernelFailed(outcome: used) {
+            code = 0 - used
+            finished = true
+        } else if used == 0 {
+            finished = true
+        } else {
+            code = appendNames(buffer: buffer, used: used, names: &names)
+            if code != 0 { finished = true }
+        }
+    }
+    return code
+}
+
+@platform(linux)
+func nativeListDirectory(path: String, native: [UInt8]): Result<[String], FileSystemError> {
+    let descriptor = openPath(path: native, flags: directoryFlag() + closeOnExec, mode: 0)
+    if descriptor < 0 { return .Err(classifyError(code: 0 - descriptor)) }
+    var names: [String] = []
+    var code = collectEntries(descriptor: descriptor, names: &names)
+    let closed = nativeClose(handle: descriptor)
+    if closed < 0 && code == 0 { code = 0 - closed }
+    if code != 0 { return .Err(classifyError(code: code)) }
+    return .Ok(names)
+}

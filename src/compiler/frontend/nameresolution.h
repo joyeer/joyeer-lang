@@ -34,6 +34,8 @@ struct ModuleInput {
     std::string name;
     std::vector<syntax::SourceFileSyntax::Ptr> files;
     bool runtimeContext = false;
+    // A core unit may use only scalars (spec 19.4.6); implies runtimeContext.
+    bool coreContext = false;
 };
 
 struct NameResolutionDiagnostic {

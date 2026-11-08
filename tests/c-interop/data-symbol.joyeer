@@ -1,0 +1,38 @@
+@c_data(symbol: "cinterop_data_value")
+func valueAddress(): Int
+
+@c_data(symbol: "cinterop_data_text")
+func textAddress(): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "cinterop_data_read")
+func readValue(): Int
+
+@c_extern(symbol: "cinterop_text_length")
+func textLength(address: Int): Int
+
+func exercise(): Int {
+    // The address is stable, and reading it sees the C initializer.
+    if valueAddress() != valueAddress() || valueAddress() == 0 { return 1 }
+    if load64(address: valueAddress()) != 4242 { return 2 }
+    // A store through the address is what C reads: it is the one object.
+    store64(address: valueAddress(), value: 7)
+    if readValue() != 7 { return 3 }
+    // A data symbol can be an array, not only a scalar.
+    if textLength(address: textAddress()) != 11 { return 4 }
+    return 0
+}
+
+func main() {
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    print(value: "data symbols passed")
+}

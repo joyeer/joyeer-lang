@@ -1,24 +1,29 @@
 ## §11 Declaration Annotations
 
 **Specification status:** C binding annotations have semantic rules in
-[§19](19-c-interop.md). The `@spec` and `@property` forms below remain
-independent proposals, not additional accepted annotation syntax.
+[§19](19-c-interop.md), and `@platform` in §11.5. The `@spec` and `@property`
+forms below remain independent proposals, not additional accepted annotation
+syntax.
 
-**Implementation status:** the runtime-only `Int`/`Void` C binding subset is
-parsed and checked. `@spec` and `@property` remain unsupported; their proposed
-tooling examples below are not currently compilable programs. See
-[current C binding coverage](../impl/c-interop.md).
+**Implementation status:** the C binding annotations (every §19.4 scalar,
+restricted buffers, bare byte pointers and the intrinsics) and `@platform` are
+parsed and checked. `@spec` and `@property` remain
+unsupported; their proposed tooling examples below are not currently
+compilable programs. See [current C binding coverage](../impl/c-interop.md).
 
 ```
 attribute       ::= '@' identifier '(' [ attribute_arg , ... ] ')'
-attribute_arg   ::= identifier ':' expression
+attribute_arg   ::= [ identifier ':' ] expression
 ```
 
-This is the parenthesized, named-argument production used for C annotations
-in [§17](17-grammar.md). Attribute placement and arguments are checked
-against the named annotation's rules; this production does not authorize
-unknown annotations or silently ignored metadata. It does not include the
-proposed shorthand or quantifier DSL in §11.1 and §11.2.
+This is the parenthesized production of [§17](17-grammar.md). Each annotation
+fixes its own argument shape and rejects any other: `@c_extern`, `@c_export` and `@c_data`
+each take one `symbol:` string literal, `@c_extern` may add `pointer:` arguments
+naming bare-pointer parameters (§19.4.4), and `@platform` takes unlabelled
+platform names. Attribute placement and arguments are checked against the named
+annotation's rules; this production does not authorize unknown annotations or
+silently ignored metadata. It does not include the proposed shorthand or
+quantifier DSL in §11.1 and §11.2.
 
 ### 11.1 `@spec`
 
@@ -69,5 +74,88 @@ and ABI rules have one normative source: [§19 C Interoperation](19-c-interop.md
 They select C ABI without an `abi` argument and must not be ignored as
 tooling-only metadata. Implementing them does not require implementing
 `@spec`, `@property`, or the property quantifier DSL.
+
+### 11.5 `@platform`
+
+```joyeer
+@platform(windows)
+func separator(): UInt8 { return b'\\' }
+
+@platform(posix)
+func separator(): UInt8 { return b'/' }
+```
+
+`@platform(name, ...)` selects a top-level function by target platform. It
+takes one or more unlabelled identifiers, each a platform name or a group.
+Platform names select operating systems only; architectures are not
+selectable.
+
+| Name | Selects |
+|---|---|
+| `windows`, `linux`, `macos` | that operating system |
+| `posix` | every supported platform other than `windows` |
+
+A list is a union, so repeating or overlapping names within one list is
+accepted and harmless. Names are case-sensitive; `unix` is not a name.
+
+**Target platform.** A compilation has one target platform: the operating
+system it generates code for, which is the host. Code generation for any
+other target is rejected (`driver.unsupported-target-platform`); a toolchain
+client may select another target only to validate, without generating code.
+The implementation detail is in
+[the implemented surface](../impl/supported-features.md).
+
+**Selection.** Before names are resolved, a function whose platform list does
+not contain the target is removed from the program; a function that does
+contain it keeps its body and loses the annotation. Removed functions leave
+no symbol, no IR, and no debug information, and their bodies are not
+name-resolved or type-checked. They must still parse, and the annotations on
+them are still checked (see Restrictions). Imports are resolved before
+selection, so `@platform` cannot make an import conditional.
+
+**Variants.** Functions of one name in one module are variants when at least
+one of them carries `@platform`. A `private` function belongs to the variants
+of its own file only, unless a non-private function of that name exists in the
+module. For every module, independent of the target:
+
+- Platform sets must not overlap. An unannotated function of the same name
+  selects every platform, so it overlaps every `@platform` variant.
+- Variants must have the same signature: visibility, argument labels, access
+  effects, parameter types, and result type. Types are compared by canonical
+  spelling, before resolution: an omitted result, `()` and `Void` are one
+  type, as are `[T]` and `Array<T>`, `T?` and `Optional<T>`, and `[K: V]` and
+  `Dict<K, V>`; an omitted access effect is `borrowing`. A module-qualified
+  spelling is a different spelling from an unqualified one. Parameter internal names and bodies may differ.
+  Default argument values would be part of the signature if they were
+  supported.
+- A variant's name must not also name a struct, enum, or top-level constant
+  of the same scope, since that declaration exists on every platform.
+
+Variants need not cover every platform. A reference to a name that has no
+variant for the target is an ordinary unresolved-name error, and the
+`public` interface of a module is the one its selected variants give.
+Variants may be `main`, in which case §3.2.6 applies to the selected one.
+
+**Restrictions.** `@platform` is valid only on top-level functions, not on
+methods, types, fields, constants, or imports, and appears at most once per
+function. It may be combined with `@c_extern`, `@c_export` and `@c_data` in either
+order; their rules in [§19](19-c-interop.md) apply to the selected variant, so
+disjoint variants may name the same C symbol. Selecting a platform grants no
+native-binding authorization. On every variant, selected or not, the compiler
+checks that other annotations beside `@platform` are known, that a function
+without a body carries `@c_extern` or `@c_data`, and, for a C annotation, its `symbol:`
+argument, body rule, explicit result type, and runtime authorization of the
+unit. Parameter and result type admissibility ([§19.4](19-c-interop.md)) is
+checked only on the selected variant.
+
+**Diagnostics.** `platform.invalid-annotation` (empty, labelled,
+non-identifier, repeated, an unknown companion annotation, or a missing body),
+`platform.unknown-name`, `platform.overlapping-variants`,
+`platform.signature-mismatch`, and `platform.name-collision`. A misplaced
+annotation is reported by the parser as `parser.unsupported-syntax`. A
+compilation with any `platform.*` diagnostic reports only those; name
+resolution and later stages do not run.
+
+**Design rationale.** See [decision 0002](../decisions/0002-platform-annotation.md).
 
 ---

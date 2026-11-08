@@ -1,0 +1,78 @@
+// Owned strings (`joyeer_string_clone_abi`, `joyeer_string_destroy_abi`,
+// `joyeer_string_concat_abi`, `joyeer_byte_to_string_abi`). A String is a
+// `{ data, count }` pair of 8-byte fields at the `output` address; this unit
+// reads and writes those fields directly. Every owned string occupies exactly
+// one allocation of `max(count, 1)` bytes, so the empty string still has a
+// unique address and `destroy` knows the size to give back.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+private func store8(address: Int, value: UInt8): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+private let countOffset: Int = 8
+
+func stringBlockSize(count: Int): Int {
+    if count == 0 { return 1 }
+    return count
+}
+
+// Stores the pair into the String at `output`.
+private func assign(output: Int, data: Int, count: Int) {
+    store64(address: output, value: data as UInt64)
+    store64(address: output + countOffset, value: count as UInt64)
+}
+
+@c_export(symbol: "joyeer_string_clone_abi")
+public func stringClone(output: Int, data: Int, count: Int): Void {
+    if output == 0 || count < 0 || (count != 0 && data == 0) {
+        panic(message: literalAddress(text: "invalid string clone"))
+    }
+    let copy = allocate(size: stringBlockSize(count: count))
+    if count != 0 { copyBytes(destination: copy, source: data, count: count) }
+    assign(output: output, data: copy, count: count)
+}
+
+@c_export(symbol: "joyeer_string_destroy_abi")
+public func stringDestroy(value: Int): Void {
+    if value == 0 { return }
+    let data = load64(address: value) as Int
+    let count = load64(address: value + countOffset) as Int
+    release(address: data, size: stringBlockSize(count: count))
+    assign(output: value, data: 0, count: 0)
+}
+
+@c_export(symbol: "joyeer_byte_to_string_abi")
+public func byteToString(output: Int, value: UInt8): Void {
+    if output == 0 { panic(message: literalAddress(text: "byteToString result is null")) }
+    let data = allocate(size: 1)
+    store8(address: data, value: value)
+    assign(output: output, data: data, count: 1)
+}
+
+@c_export(symbol: "joyeer_string_concat_abi")
+public func stringConcat(output: Int, leftData: Int, leftCount: Int, rightData: Int, rightCount: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "string result is null")) }
+    if leftCount < 0 || rightCount < 0 || (leftCount != 0 && leftData == 0) ||
+        (rightCount != 0 && rightData == 0) || leftCount > 9223372036854775807 - rightCount {
+        panic(message: literalAddress(text: "invalid string concatenation"))
+    }
+    let count = leftCount + rightCount
+    let data = allocate(size: stringBlockSize(count: count))
+    if leftCount != 0 { copyBytes(destination: data, source: leftData, count: leftCount) }
+    if rightCount != 0 { copyBytes(destination: data + leftCount, source: rightData, count: rightCount) }
+    assign(output: output, data: data, count: count)
+}

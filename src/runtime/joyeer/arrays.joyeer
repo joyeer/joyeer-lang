@@ -1,0 +1,235 @@
+// Owned arrays (`joyeer_array_*_abi`) and the buffers native libraries fill
+// (`joyeer_native_{bytes,strings}_init`, `joyeer_native_{bytes,string,strings}_assign`).
+//
+// An array is a `{ data, count, capacity }` handle of three 8-byte fields. `data`
+// points just past a 24-byte header holding the element size and the element
+// clone and destroy callbacks (zero for a trivially copyable element):
+//
+//     header + 0   elementSize
+//     header + 8   cloneElement(destination, source)
+//     header + 16  destroyElement(element)
+//     header + 24  element 0 ...
+//
+// One allocation holds the header and `capacity` elements, so freeing a block
+// gives back `24 + capacity * elementSize` bytes. Appending grows from empty to
+// 4, then doubles.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+private func symbolAddress(name: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+private func callVoid1(target: Int, first: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void2")
+private func callVoid2(target: Int, first: Int, second: Int): Void
+
+private let intMax: Int = 9223372036854775807
+private let headerSize: Int = 24
+private let stringSize: Int = 16
+
+private func read(address: Int): Int {
+    return load64(address: address) as Int
+}
+
+private func write(address: Int, value: Int) {
+    store64(address: address, value: value as UInt64)
+}
+
+// `count * stride` bytes, panicking rather than wrapping.
+private func byteCount(count: Int, stride: Int): Int {
+    if count < 0 || stride < 0 { panic(message: literalAddress(text: "negative allocation size")) }
+    if count != 0 && stride > intMax / count {
+        panic(message: literalAddress(text: "allocation size overflow"))
+    }
+    return count * stride
+}
+
+// Bytes in the block of an array with room for `capacity` elements.
+private func storageBytes(capacity: Int, elementSize: Int): Int {
+    let bytes = byteCount(count: capacity, stride: elementSize)
+    if bytes > intMax - headerSize { panic(message: literalAddress(text: "array allocation size overflow")) }
+    return headerSize + bytes
+}
+
+// Allocates an array of `count` elements and fills it from `values`: copied
+// bytes, or cloned element by element when `cloneValues` is set and the element
+// has a clone callback. Returns the address of element 0.
+private func makeArray(values: Int, count: Int, elementSize: Int, cloneElement: Int,
+        destroyElement: Int, cloneValues: Bool): Int {
+    let bytes = byteCount(count: count, stride: elementSize)
+    let storage = allocate(size: storageBytes(capacity: count, elementSize: elementSize))
+    write(address: storage, value: elementSize)
+    write(address: storage + 8, value: cloneElement)
+    write(address: storage + 16, value: destroyElement)
+    let data = storage + headerSize
+    if bytes != 0 {
+        if values == 0 { panic(message: literalAddress(text: "array initializer is null")) }
+        if cloneValues && cloneElement != 0 {
+            var offset = 0
+            while offset < bytes {
+                callVoid2(target: cloneElement, first: data + offset, second: values + offset)
+                offset = offset + elementSize
+            }
+        } else {
+            copyBytes(destination: data, source: values, count: bytes)
+        }
+    }
+    return data
+}
+
+private func store(handle: Int, data: Int, count: Int) {
+    write(address: handle, value: data)
+    write(address: handle + 8, value: count)
+    write(address: handle + 16, value: count)
+}
+
+private func destroy(handle: Int) {
+    if handle == 0 { return }
+    let data = read(address: handle)
+    if data == 0 { return }
+    let header = data - headerSize
+    let elementSize = read(address: header)
+    let destroyElement = read(address: header + 16)
+    if destroyElement != 0 {
+        var index = read(address: handle + 8)
+        while index > 0 {
+            callVoid1(target: destroyElement, first: data + (index - 1) * elementSize)
+            index = index - 1
+        }
+    }
+    let capacity = read(address: handle + 16)
+    release(address: header, size: storageBytes(capacity: capacity, elementSize: elementSize))
+    write(address: handle, value: 0)
+    write(address: handle + 8, value: 0)
+    write(address: handle + 16, value: 0)
+}
+
+@c_export(symbol: "joyeer_array_create_owned_abi")
+public func arrayCreateOwned(output: Int, values: Int, count: Int, elementSize: Int,
+        cloneElement: Int, destroyElement: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "array result is null")) }
+    let data = makeArray(values: values, count: count, elementSize: elementSize,
+        cloneElement: cloneElement, destroyElement: destroyElement, cloneValues: false)
+    store(handle: output, data: data, count: count)
+}
+
+@c_export(symbol: "joyeer_array_clone_abi")
+public func arrayClone(output: Int, data: Int, count: Int): Void {
+    if output == 0 || data == 0 { panic(message: literalAddress(text: "invalid array clone")) }
+    let header = data - headerSize
+    let copy = makeArray(values: data, count: count, elementSize: read(address: header),
+        cloneElement: read(address: header + 8), destroyElement: read(address: header + 16),
+        cloneValues: true)
+    store(handle: output, data: copy, count: count)
+}
+
+@c_export(symbol: "joyeer_array_append_owned_abi")
+public func arrayAppendOwned(array: Int, element: Int): Void {
+    if array == 0 || read(address: array) == 0 || read(address: array + 8) < 0 ||
+        read(address: array + 16) < read(address: array + 8) {
+        panic(message: literalAddress(text: "invalid array append"))
+    }
+    var data = read(address: array)
+    let count = read(address: array + 8)
+    let capacity = read(address: array + 16)
+    let elementSize = read(address: data - headerSize)
+    if elementSize < 0 || (elementSize != 0 && element == 0) || count == intMax {
+        panic(message: literalAddress(text: "invalid array append"))
+    }
+    if count == capacity {
+        var grown = 4
+        if capacity >= 4 {
+            if capacity > intMax / 2 { panic(message: literalAddress(text: "array capacity overflow")) }
+            grown = capacity * 2
+        }
+        let header = reallocate(address: data - headerSize,
+            oldSize: storageBytes(capacity: capacity, elementSize: elementSize),
+            newSize: storageBytes(capacity: grown, elementSize: elementSize))
+        data = header + headerSize
+        write(address: array, value: data)
+        write(address: array + 16, value: grown)
+    }
+    if elementSize != 0 {
+        copyBytes(destination: data + byteCount(count: count, stride: elementSize),
+            source: element, count: elementSize)
+    }
+    write(address: array + 8, value: count + 1)
+}
+
+@c_export(symbol: "joyeer_array_destroy_abi")
+public func arrayDestroy(array: Int): Void {
+    destroy(handle: array)
+}
+
+// The element callbacks of a native `[String]`: a String is a 16-byte
+// `{ data, count }` value that the string functions clone and destroy.
+@c_export(symbol: "joyeer_native_string_element_clone")
+public func nativeStringElementClone(destination: Int, source: Int): Void {
+    stringClone(output: destination, data: read(address: source), count: read(address: source + 8))
+}
+
+@c_export(symbol: "joyeer_native_string_element_destroy")
+public func nativeStringElementDestroy(value: Int): Void {
+    stringDestroy(value: value)
+}
+
+@c_export(symbol: "joyeer_native_bytes_init")
+public func nativeBytesInit(output: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "native byte output is null")) }
+    store(handle: output, data: makeArray(values: 0, count: 0, elementSize: 1, cloneElement: 0,
+        destroyElement: 0, cloneValues: false), count: 0)
+}
+
+@c_export(symbol: "joyeer_native_strings_init")
+public func nativeStringsInit(output: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "native string-list output is null")) }
+    store(handle: output, data: makeArray(values: 0, count: 0, elementSize: stringSize,
+        cloneElement: symbolAddress(name: "joyeer_native_string_element_clone"),
+        destroyElement: symbolAddress(name: "joyeer_native_string_element_destroy"),
+        cloneValues: false), count: 0)
+}
+
+@c_export(symbol: "joyeer_native_bytes_assign")
+public func nativeBytesAssign(output: Int, data: Int, count: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "native byte output is null")) }
+    let copy = makeArray(values: data, count: count, elementSize: 1, cloneElement: 0,
+        destroyElement: 0, cloneValues: false)
+    destroy(handle: output)
+    store(handle: output, data: copy, count: count)
+}
+
+@c_export(symbol: "joyeer_native_string_assign")
+public func nativeStringAssign(output: Int, data: Int, count: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "native string output is null")) }
+    // Clone before releasing the old value, which `data` may point into.
+    let previousData = read(address: output)
+    let previousCount = read(address: output + 8)
+    stringClone(output: output, data: data, count: count)
+    release(address: previousData, size: stringBlockSize(count: previousCount))
+}
+
+@c_export(symbol: "joyeer_native_strings_assign")
+public func nativeStringsAssign(output: Int, data: Int, count: Int): Void {
+    if output == 0 { panic(message: literalAddress(text: "native string-list output is null")) }
+    let copy = makeArray(values: data, count: count, elementSize: stringSize,
+        cloneElement: symbolAddress(name: "joyeer_native_string_element_clone"),
+        destroyElement: symbolAddress(name: "joyeer_native_string_element_destroy"),
+        cloneValues: true)
+    destroy(handle: output)
+    store(handle: output, data: copy, count: count)
+}

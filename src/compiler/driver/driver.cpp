@@ -63,6 +63,7 @@ Driver::Driver(Diagnostics* diagnostics, CommandLineArguments::Ptr arguments):ar
                 arguments->sourceFiles,
                 arguments->modules,
                 arguments->runtimeModules,
+                arguments->coreModules,
                 arguments->nativeLibraries,
                 joyeer::StandardLibrary::libraryDirectoryFor(arguments->sysroot),
                 arguments->standardLibrary,

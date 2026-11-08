@@ -1,0 +1,42 @@
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func load8(address: Int): UInt8
+
+@c_extern(symbol: "cinterop_text_length")
+func textLength(address: Int): Int
+
+@c_extern(symbol: "joyeer_runtime_active_allocations")
+func allocations(): Int
+
+func exercise(): Int {
+    let first = messageAddress(text: "constant data")
+    if first == 0 { return 1 }
+    // NUL-terminated: C sees exactly the literal's bytes.
+    if textLength(address: first) != 13 { return 2 }
+    if load8(address: first) != 99 || load8(address: first + 12) != 97 { return 3 }
+    if load8(address: first + 13) != 0 { return 4 }
+    // The empty literal is a single NUL.
+    let empty = messageAddress(text: "")
+    if load8(address: empty) != 0 { return 5 }
+    // An embedded NUL ends the C string but the bytes are all there.
+    let split = messageAddress(text: "ab\0cd")
+    if textLength(address: split) != 2 || load8(address: split + 3) != 99 { return 6 }
+    return 0
+}
+
+func main() {
+    let before = allocations()
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    // Reading constant data creates no String value and so allocates nothing.
+    if allocations() != before {
+        print(value: 99)
+        return
+    }
+    print(value: "literal addresses passed")
+}

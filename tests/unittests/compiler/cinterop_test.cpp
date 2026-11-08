@@ -144,7 +144,8 @@ TEST_F(CInteropTest, RejectsUnsupportedNativeTypesAndAccessEffects) {
         check("@c_extern(symbol: \"native\")\nfunc native(value: " + parameter + "): Int\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
     }
-    for (const auto& result : {"String", "Int?", "Never"}) {
+    // Never is accepted as a result (it marks a C function that does not return).
+    for (const auto& result : {"String", "Int?", "[Int]"}) {
         SCOPED_TRACE(result);
         check("@c_extern(symbol: \"native\")\nfunc native(): " + std::string(result) + "\n");
         EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
@@ -214,6 +215,634 @@ func output(bytes: initializing [UInt8]): Void
     EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
     borrowed.parameters[0].isMutable = false;
     output.nativeBinding->symbol = borrowed.nativeBinding->symbol;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
+TEST_F(CInteropTest, ImportsBareBytePointersWithoutACount) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "native_pointers", pointer: "text", pointer: "output")
+func nativePointers(text: [UInt8], limit: Int, output: inout [UInt8]): Int
+func use(text: [UInt8]): Int {
+    var output: [UInt8] = []
+    return nativePointers(text: text, limit: 4, output: &output)
+}
+)"));
+    const auto& imported = function("nativePointers");
+    ASSERT_TRUE(imported.nativeBinding.has_value());
+    EXPECT_EQ(imported.nativeBinding->pointerParameters, (std::vector<uint32_t> {0, 2}));
+    EXPECT_NE(joyeer::ir::dump(*module).find("pointer#0 pointer#2"), std::string::npos);
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    EXPECT_EQ(joyeer::ir::dump(decoded), joyeer::ir::dump(*module));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    // A bare pointer contributes one C parameter, not a pointer and a count.
+    EXPECT_NE(emitted.text.find("@native_pointers(ptr, i64, ptr)"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsMisusedPointerAnnotations) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"n\", pointer: \"missing\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"bytes\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"text\")\nfunc f(text: String): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"value\")\nfunc f(value: Int): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"names\")\nfunc f(names: [String]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"out\")\nfunc f(out: initializing [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: \"bytes\")\nfunc f(bytes: consuming [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", pointer: 3)\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", extra: \"bytes\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\", \"bytes\")\nfunc f(bytes: [UInt8]): Void\n",
+            "@c_extern(symbol: \"n\")\nfunc f(bytes: inout [UInt8]): Void\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    check("@c_export(symbol: \"n\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Void {}\n");
+    EXPECT_FALSE(checking.succeeded());
+    // Imports that agree on which buffers are bare pointers may share a symbol.
+    check("@c_extern(symbol: \"n\", pointer: \"bytes\")\nfunc first(bytes: [UInt8]): Void\n"
+          "@c_extern(symbol: \"n\", pointer: \"data\")\nfunc second(data: [UInt8]): Void\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("@c_extern(symbol: \"n\", pointer: \"bytes\")\nfunc first(bytes: [UInt8]): Void\n"
+          "@c_extern(symbol: \"n\")\nfunc second(data: [UInt8]): Void\n");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::conflictingNativeSymbol));
+}
+
+TEST_F(CInteropTest, VerifierRejectsMalformedPointerMetadata) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "native_pointer_borrow", pointer: "bytes")
+func borrowed(bytes: [UInt8]): Void
+@c_extern(symbol: "native_pointer_mutable", pointer: "bytes")
+func mutable(bytes: inout [UInt8]): Void
+@c_extern(symbol: "native_pointer_scalar")
+func scalar(value: Int): Void
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& borrowed = function("borrowed");
+    auto& mutable_ = function("mutable");
+    auto& scalar = function("scalar");
+    scalar.nativeBinding->pointerParameters = {0};
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    scalar.nativeBinding->pointerParameters.clear();
+    borrowed.nativeBinding->pointerParameters = {1};
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.nativeBinding->pointerParameters = {0};
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.parameters[0].isMutable = true;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    borrowed.parameters[0].isMutable = false;
+    mutable_.parameters[0].isMutable = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    mutable_.parameters[0].isMutable = true;
+    mutable_.parameters[0].isConsuming = true;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    mutable_.parameters[0].isConsuming = false;
+    // A symbol shared by imports must agree on bare pointers.
+    mutable_.nativeBinding->symbol = borrowed.nativeBinding->symbol;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
+TEST_F(CInteropTest, LowersCompilerIntrinsicsInlineWithoutDeclaringCFunctions) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+func addressOf(bytes: inout [UInt8]): Int
+@c_extern(symbol: "joyeer_intrinsic_load_u16")
+func load16(address: Int): UInt16
+@c_extern(symbol: "joyeer_intrinsic_store_u32")
+func store32(address: Int, value: UInt32): Void
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+func atomicAdd(address: Int, delta: Int): Int
+func use(): Int {
+    var bytes: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    let location = addressOf(bytes: &bytes)
+    store32(address: location, value: 7)
+    return atomicAdd(address: location, delta: 1) + (load16(address: location) as Int)
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr"), std::string::npos);
+    EXPECT_NE(emitted.text.find("load i16, ptr"), std::string::npos);
+    EXPECT_NE(emitted.text.find("store i32"), std::string::npos);
+    EXPECT_NE(emitted.text.find("atomicrmw add ptr"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+// Core units (spec 19.4.6) may use only scalars, because everything else lowers
+// to a call into the runtime that they are part of.
+TEST_F(CInteropTest, AcceptsScalarOnlyCodeInACoreUnit) {
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func loadByte(address: Int): UInt8
+let limit: Int = 4
+func sum(address: Int, count: Int): Int {
+    var total = 0
+    var index = 0
+    while index < count && index < limit {
+        total = total + (loadByte(address: address + index) as Int)
+        index = index + 1
+    }
+    return total
+}
+func ready(flag: Bool, ratio: Double): Bool { return flag && ratio > 0.5 }
+)")}, true, true}});
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, RejectsEveryManagedTypeInACoreUnit) {
+    for (const auto& source : std::vector<std::string> {
+            "func f(text: String): Int { return 0 }\n",
+            "func f(): Int { let text = \"x\"\n return 0 }\n",
+            "func f(): Int { let values = [1, 2]\n return 0 }\n",
+            "func f(): Int { let values: [Int: Int] = [:]\n return 0 }\n",
+            "func f(): Int? { return nil }\n",
+            "func f(): Result<Int, Int> { return .Ok(1) }\n",
+            "struct Pair { var left: Int }\nfunc f(): Int { let pair = Pair(left: 1)\n return pair.left }\n",
+            "enum Mode { Fast, Slow }\nfunc f(): Int { let mode = Mode.Fast\n return 0 }\n",
+            "func f() { print(value: 1) }\n",
+            "let table: [UInt8] = [1, 2]\n",
+            "func f(): String { return \"x\" }\n" }) {
+        checkModules({{"runtime.core", {parse(source)}, true, true}});
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::managedTypeInCoreUnit)) << source;
+    }
+}
+
+TEST_F(CInteropTest, AllowsAStringLiteralOnlyAsTheArgumentOfTheConstantAddressIntrinsic) {
+    // A core unit names a message with the intrinsic and builds no String.
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(): Int { return messageAddress(text: "boom") }
+)")}, true, true}});
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // Any other String in a core unit is still rejected.
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(): Int {
+    let text = "boom"
+    return messageAddress(text: "boom") + text.count
+}
+)")}, true, true}});
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::managedTypeInCoreUnit));
+}
+
+TEST_F(CInteropTest, RequiresALiteralForTheConstantAddressIntrinsic) {
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(text: String): Int { return messageAddress(text: text) }
+)");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments));
+    // Wrong shapes are not the intrinsic.
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_literal_address\")\nfunc f(text: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_literal_address\")\nfunc f(text: String): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_literal_address\")\nfunc f(text: String, extra: Int): Int\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+}
+
+TEST_F(CInteropTest, LowersTheConstantAddressToNulTerminatedReadOnlyData) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+func messageAddress(text: String): Int
+func message(): Int { return messageAddress(text: "boom") }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("c\"boom\\00\""), std::string::npos);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @.joyeer.panic."), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RequiresALiteralForTheSymbolAddressIntrinsic) {
+    checkModules({{"runtime.core", {parse(R"(
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+func callback(): Int { return addressOfSymbol(name: "joyeer_panic") }
+)")}, true, true}});
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+func callback(name: String): Int { return addressOfSymbol(name: name) }
+)");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments));
+    check("@c_extern(symbol: \"joyeer_intrinsic_symbol_address\")\nfunc f(name: String): Int32\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(CInteropTest, LowersTheSymbolAddressToTheNamedFunctionOrAnExternalSymbol) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+func addressOfSymbol(name: String): Int
+@c_export(symbol: "local_callback")
+public func local(cell: Int): Void {}
+func callbacks(): Int { return addressOfSymbol(name: "local_callback") + addressOfSymbol(name: "other_object") }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @local_callback to i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @other_object to i64"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, LowersFloatingPointBitPatternsToBitCasts) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_double_bits")
+func doubleBits(value: Double): UInt64
+@c_extern(symbol: "joyeer_intrinsic_float_bits")
+func floatBits(value: Float): UInt32
+func bits(wide: Double, narrow: Float): UInt64 { return doubleBits(value: wide) + (floatBits(value: narrow) as UInt64) }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("bitcast double"), std::string::npos);
+    EXPECT_NE(emitted.text.find("bitcast float"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsFloatingPointBitPatternsOfTheWrongType) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_double_bits\")\nfunc f(value: Float): UInt64\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_double_bits\")\nfunc f(value: Double): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_float_bits\")\nfunc f(value: Double): UInt32\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+}
+
+TEST_F(CInteropTest, ChecksTheSystemCallAndArchitectureIntrinsics) {
+    check(R"(
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+func call(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int): Int
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+func architecture(): Int
+func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 5, fifth: 6, sixth: 7) + architecture() }
+)");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_syscall\")\nfunc f(number: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_syscall\")\nfunc f(number: Int, first: Int, second: Int, third: Int, "
+            "fourth: Int, fifth: Int, sixth: Int): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_target_architecture\")\nfunc f(first: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_target_architecture\")\nfunc f(): Int32\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+}
+
+TEST_F(CInteropTest, LowersTheArchitectureToAConstantAndTheSystemCallToInlineAssembly) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+func call(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int): Int
+@c_extern(symbol: "joyeer_intrinsic_target_architecture")
+func architecture(): Int
+func use(): Int { return call(number: 1, first: 2, second: 3, third: 4, fourth: 5, fifth: 6, sixth: 7) + architecture() }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("call i64 asm sideeffect"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, AllowsManagedTypesInOrdinaryRuntimeUnits) {
+    // The same code is fine in a runtime unit that is not a core unit.
+    check("func f(text: String): Int { return text.count }\n"
+          "func g() { print(value: \"x\") }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, LowersIndirectCallIntrinsicsAsCallsThroughAnAddress) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+func callOne(function: Int, first: Int): Void
+@c_extern(symbol: "joyeer_intrinsic_call_void2")
+func callTwo(function: Int, first: Int, second: Int): Void
+func use(function: Int, first: Int, second: Int) {
+    callOne(function: function, first: first)
+    callTwo(function: function, first: first, second: second)
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    // The callee is an integer converted to a pointer, called with the target's
+    // C convention; no function named after the intrinsic is declared.
+    EXPECT_NE(emitted.text.find("inttoptr i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("call void %"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, LowersStaticSlotsToAMergedComdatTableWithARangeCheck) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+func counter(): Int { return slot(index: 3) }
+func variable(index: Int): Int { return slot(index: index) }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    // One zeroed table, merged across objects, indexed after an unsigned range check.
+    EXPECT_NE(emitted.text.find("@joyeer_static_slots = linkonce_odr global [64 x i64] zeroinitializer"),
+              std::string::npos);
+    EXPECT_NE(emitted.text.find("comdat"), std::string::npos);
+    EXPECT_NE(emitted.text.find("icmp uge i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("getelementptr inbounds [64 x i64], ptr @joyeer_static_slots"),
+              std::string::npos);
+    EXPECT_NE(emitted.text.find("static slot index out of range"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, AcceptsNeverAsTheResultOfCBindingsThatDoNotReturn) {
+    check(R"(
+@c_extern(symbol: "exit")
+func exitProcess(status: Int32): Never
+@c_export(symbol: "runtime_fail")
+func fail(code: Int32): Never { exitProcess(status: code) }
+)");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // Never is the only non-scalar result: other result types are still rejected.
+    check("@c_extern(symbol: \"f\")\nfunc f(): Int?\n");
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unsupportedNativeSignature));
+}
+
+TEST_F(CInteropTest, EmitsNoReturnForNeverBindingsAndEndsTheExportInUnreachable) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "exit")
+func exitProcess(status: Int32): Never
+@c_export(symbol: "runtime_fail")
+func fail(code: Int32): Never { exitProcess(status: code) }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("declare void @exit(i32"), std::string::npos);
+    EXPECT_NE(emitted.text.find("noreturn"), std::string::npos);
+    EXPECT_NE(emitted.text.find("define void @runtime_fail(i32"), std::string::npos);
+    EXPECT_NE(emitted.text.find("unreachable"), std::string::npos);
+}
+
+TEST_F(CInteropTest, OnlyCoreUnitsMayExportTheProgramEntryPoint) {
+    const auto entry = [](const std::string& symbol) {
+        return "@c_export(symbol: \"" + symbol + "\")\nfunc entry(argc: Int32, argv: Int): Int32 { return 0 }\n";
+    };
+    for (const auto* symbol : { "main", "wmain" }) {
+        checkModules({{"runtime.core", {parse(entry(symbol))}, true, true}});
+        EXPECT_TRUE(checking.succeeded()) << symbol << joyeer::typing::dump(checking.diagnostics);
+        // A runtime unit that is not a core unit may not.
+        check(entry(symbol));
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidNativeDeclaration)) << symbol;
+    }
+    // No other startup symbol is ever allowed, core or not.
+    for (const auto* symbol : { "_start", "mainCRTStartup", "wmainCRTStartup", "WinMain",
+                                "wWinMain", "DllMain", "joyeer_main", "joyeer_main_uses_arguments" }) {
+        checkModules({{"runtime.core", {parse(entry(symbol))}, true, true}});
+        EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::invalidNativeDeclaration)) << symbol;
+    }
+}
+
+TEST_F(CInteropTest, VerifierTiesTheEntryPointExportToACoreUnit) {
+    // lower() builds a plain runtime unit, so build the core module by hand.
+    checkModules({{"runtime.core", {parse(
+            "@c_export(symbol: \"main\")\nfunc entry(argc: Int32, argv: Int): Int32 { return 0 }\n")}, true, true}});
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto analysis = joyeer::analysis::Analyzer().analyze(checking.model);
+    ASSERT_TRUE(analysis.succeeded()) << joyeer::analysis::dump(analysis.diagnostics);
+    auto lowered = joyeer::lowering::Lowerer().lower(
+            checking.model, "fixture.joyeer",
+            joyeer::ir::SourceInfo { "fixture.joyeer", ".", source->content.size(), source->lineStarts });
+    ASSERT_TRUE(lowered.succeeded()) << joyeer::lowering::dump(lowered.diagnostics);
+    auto entryModule = lowered.module;
+    entryModule->isRuntimeObject = true;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
+    auto& exported = *std::find_if(entryModule->functions.begin(), entryModule->functions.end(),
+            [](const auto& value) { return value.nativeBinding.has_value(); });
+    EXPECT_TRUE(exported.coreContext);
+    exported.coreContext = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
+    exported.coreContext = true;
+    exported.runtimeContext = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*entryModule).succeeded());
+}
+
+TEST_F(CInteropTest, DeclaresAndLowersDataSymbolsAsAddressesNotCalls) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_data(symbol: "environ")
+func environAddress(): Int
+func environment(): Int { return environAddress() }
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("@environ = external global i8"), std::string::npos);
+    EXPECT_NE(emitted.text.find("ptrtoint ptr @environ to i64"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@environ("), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsMalformedDataSymbolDeclarations) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_data(symbol: \"environ\")\nfunc f(value: Int): Int\n",
+            "@c_data(symbol: \"environ\")\nfunc f(): Int32\n",
+            "@c_data(symbol: \"environ\")\nfunc f(): Void\n",
+            "@c_data(symbol: \"environ\")\nfunc f(): Int { return 0 }\n",
+            "@c_data(symbol: \"main\")\nfunc f(): Int\n",
+            "@c_data(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(): Int\n",
+            "@c_data(symbol: \"environ\", pointer: \"bytes\")\nfunc f(): Int\n",
+            "@c_data(symbol: \"environ\")\n@c_extern(symbol: \"environ\")\nfunc f(): Int\n",
+            // One symbol cannot be both a function and a data symbol.
+            "@c_data(symbol: \"environ\")\nfunc a(): Int\n@c_extern(symbol: \"environ\")\nfunc b(): Int\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    // Like every native binding, it is runtime-only.
+    check("@c_data(symbol: \"environ\")\nfunc f(): Int\n", false);
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedNativeBinding));
+    // Two declarations of one data symbol agree.
+    check("@c_data(symbol: \"environ\")\nfunc a(): Int\n@c_data(symbol: \"environ\")\nfunc b(): Int\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, LowersBulkMemoryIntrinsicsToLlvmMemoryOperations) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+func copyBytes(destination: Int, source: Int, count: Int): Void
+@c_extern(symbol: "joyeer_intrinsic_memmove")
+func moveBytes(destination: Int, source: Int, count: Int): Void
+@c_extern(symbol: "joyeer_intrinsic_memset")
+func fillBytes(destination: Int, value: UInt8, count: Int): Void
+func use(a: Int, b: Int, n: Int) {
+    copyBytes(destination: a, source: b, count: n)
+    moveBytes(destination: a, source: b, count: n)
+    fillBytes(destination: a, value: 7, count: n)
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(decoded);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_NE(emitted.text.find("@llvm.memcpy.p0.p0.i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("@llvm.memmove.p0.p0.i64"), std::string::npos);
+    EXPECT_NE(emitted.text.find("@llvm.memset.p0.i64"), std::string::npos);
+    EXPECT_EQ(emitted.text.find("@joyeer_intrinsic"), std::string::npos);
+}
+
+TEST_F(CInteropTest, RejectsUnknownMismatchedOrMisplacedIntrinsics) {
+    for (const auto& declaration : std::vector<std::string> {
+            "@c_extern(symbol: \"joyeer_intrinsic_memcpy\")\nfunc f(destination: Int, source: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memcpy\")\nfunc f(destination: Int, source: Int, count: Int32): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memmove\")\nfunc f(destination: Int, source: Int, count: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memset\")\nfunc f(destination: Int, value: Int, count: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_memset\")\nfunc f(destination: Int, value: UInt8, count: Int, extra: Int): Void\n",
+            "@c_export(symbol: \"joyeer_intrinsic_memcpy\")\nfunc f(destination: Int, source: Int, count: Int): Void { }\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int32): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int, extra: Int): Int\n",
+            "@c_export(symbol: \"joyeer_intrinsic_static_slot\")\nfunc f(index: Int): Int { return index }\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: UInt64): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int, second: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void2\")\nfunc f(function: Int, first: Int): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void2\")\nfunc f(function: Int, first: Int, second: Int32): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_call_void2\")\nfunc f(function: Int, first: Int, second: Int, third: Int): Void\n",
+            "@c_export(symbol: \"joyeer_intrinsic_call_void1\")\nfunc f(function: Int, first: Int): Void { }\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_unknown\")\nfunc f(address: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int, extra: Int): UInt8\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: UInt64): UInt8\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_store_u16\")\nfunc f(address: Int, value: UInt32): Void\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_store_u16\")\nfunc f(address: Int, value: UInt16): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_atomic_add\")\nfunc f(address: Int, delta: Int64): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_address_of\")\nfunc f(bytes: [UInt8]): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_address_of\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Int\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_address_of\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): Int32\n",
+            "@c_extern(symbol: \"joyeer_intrinsic_load_u8\", pointer: \"bytes\")\nfunc f(bytes: [UInt8]): UInt8\n",
+            "@c_export(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): UInt8 { return 0 }\n" }) {
+        check(declaration);
+        EXPECT_FALSE(checking.succeeded()) << declaration;
+    }
+    // Intrinsics are runtime-only, like every native binding.
+    check("@c_extern(symbol: \"joyeer_intrinsic_load_u8\")\nfunc f(address: Int): UInt8\n", false);
+    EXPECT_TRUE(has(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedNativeBinding));
+    // A name that merely resembles the prefix is an ordinary symbol.
+    check("@c_extern(symbol: \"joyeer_intrinsics_other\")\nfunc f(address: Int): UInt8\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CInteropTest, VerifierRejectsTamperedIntrinsicBindings) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+func load8(address: Int): UInt8
+@c_extern(symbol: "native_ordinary")
+func ordinary(address: Int): UInt8
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& ordinary = function("ordinary");
+    ordinary.nativeBinding->symbol = "joyeer_intrinsic_load_u16";
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    ordinary.nativeBinding->symbol = "joyeer_intrinsic_nonexistent";
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    ordinary.nativeBinding->symbol = "native_ordinary";
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    function("load8").nativeBinding->kind = joyeer::NativeBindingKind::cExport;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
+// `address_of` is inout-only, because a borrowed array can be a constant in
+// read-only memory. The shape stays valid as a C binding, so only the
+// intrinsic rule can reject these.
+TEST_F(CInteropTest, VerifierRejectsTamperedIntrinsicShapes) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+@c_extern(symbol: "joyeer_intrinsic_address_of", pointer: "bytes")
+func addressOf(bytes: inout [UInt8]): Int
+@c_extern(symbol: "joyeer_intrinsic_store_u16")
+func store16(address: Int, value: UInt16): Void
+)"));
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& addressOf = function("addressOf");
+    addressOf.parameters[0].isMutable = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    addressOf.parameters[0].isMutable = true;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+    auto& store16 = function("store16");
+    auto removed = store16.parameters.back();
+    store16.parameters.pop_back();
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    store16.parameters.push_back(removed);
+    store16.nativeBinding->pointerParameters = {0};
     EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
 }
 
@@ -591,7 +1220,7 @@ TEST_F(CInteropTest, RejectsNativeSignaturesConflictingWithGeneratedRuntimeCalls
             {"joyeer_print_int", "(): Int", "print(value: 42)"},
             {"joyeer_print_int", "(value: Int): Int", "print(value: 42)"},
             {"joyeer_print_bool", "(value: Int): Void", "print(value: true)"},
-            {"joyeer_panic", "(value: Int): Void", "let sum = value + 1\nprint(value: sum)"},
+            {"joyeer_panic", "(): Int", "let sum = value + 1\nprint(value: sum)"},
             {"joyeer_string_clone_abi", "(): Int", "let text = \"value\"\nprint(value: text)"},
         }) {
         for (const bool importing : {false, true}) {

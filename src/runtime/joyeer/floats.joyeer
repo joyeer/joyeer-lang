@@ -1,0 +1,430 @@
+// Floating-point formatting (`joyeer_format_double_abi`, and the `Float` and
+// `Double` printing built on it in print.joyeer): the C library's `%.<p>g`, for a
+// precision of 1 to 17, produced without the C library. `print` uses 9 digits
+// for a `Float` and 17 for a `Double`.
+//
+// The digits are exact. A finite value is `mantissa * 2^exponent`; it is held as
+// the fraction `r / s` of two big integers scaled so that `r / s` is in [1, 10),
+// and digits are produced by repeated subtraction (Dragon4 without the shortest
+// termination). The last digit is rounded to nearest, and an exact tie to even,
+// by comparing `2r` with `s`, as the C library does. Then `%g` selects fixed or
+// exponential notation, drops trailing zeros, and writes the exponent with at
+// least two digits.
+//
+// A big integer is 40 little-endian 32-bit limbs (1280 bits, enough for the
+// largest scaled value of a Double, about 1135 bits) in scratch memory; only the
+// limbs a value needs are processed. Not-a-number prints as `nan` without a sign,
+// where the C libraries differ (`-nan`, `nan`, `-nan(ind)`).
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime
+// plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_double_bits")
+private func doubleBits(value: Double): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_float_bits")
+private func floatBits(value: Float): UInt32
+
+@c_extern(symbol: "joyeer_intrinsic_load_u32")
+private func load32(address: Int): UInt32
+
+@c_extern(symbol: "joyeer_intrinsic_store_u32")
+private func store32(address: Int, value: UInt32): Void
+
+@c_extern(symbol: "joyeer_intrinsic_load_u8")
+private func load8(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_store_u8")
+private func store8(address: Int, value: UInt8): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memset")
+private func fillBytes(destination: Int, value: UInt8, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+private let limbCapacity: Int = 40
+private let limbBytes: Int = 160
+private let limbBase: UInt64 = 4294967296
+private let maximumPrecision: Int = 17
+
+// Scratch layout: three big integers, the digits, then the text.
+private let sOffset: Int = 160
+private let tOffset: Int = 320
+private let digitsOffset: Int = 480
+let formatTextOffset: Int = 512
+
+// Bytes of scratch memory `formatDouble` needs, and the most text it writes.
+let formatScratchBytes: Int = 576
+let formatTextLimit: Int = 40
+
+private func limb(array: Int, index: Int): UInt64 {
+    return load32(address: array + index * 4) as UInt64
+}
+
+private func setLimb(array: Int, index: Int, value: UInt64) {
+    store32(address: array + index * 4, value: value as UInt32)
+}
+
+private func twoToThe(power: Int): UInt64 {
+    var product: UInt64 = 1
+    var count = 0
+    while count < power {
+        product = product * 2
+        count = count + 1
+    }
+    return product
+}
+
+// array = array * factor, for a factor below 2^32.
+private func multiply(array: Int, count: Int, factor: UInt64) {
+    var carry: UInt64 = 0
+    var index = 0
+    while index < count {
+        let product = limb(array: array, index: index) * factor + carry
+        setLimb(array: array, index: index, value: product % limbBase)
+        carry = product / limbBase
+        index = index + 1
+    }
+}
+
+private func multiplyByPowerOfTen(array: Int, count: Int, power: Int) {
+    var remaining = power
+    while remaining >= 9 {
+        multiply(array: array, count: count, factor: 1000000000)
+        remaining = remaining - 9
+    }
+    var factor: UInt64 = 1
+    while remaining > 0 {
+        factor = factor * 10
+        remaining = remaining - 1
+    }
+    if factor != 1 { multiply(array: array, count: count, factor: factor) }
+}
+
+private func shiftLeft(array: Int, count: Int, bits: Int) {
+    let whole = bits / 32
+    let part = bits % 32
+    let factor = twoToThe(power: part)
+    let back = twoToThe(power: 32 - part)
+    var index = count - 1
+    while index >= 0 {
+        let source = index - whole
+        var value: UInt64 = 0
+        if source >= 0 {
+            value = limb(array: array, index: source) * factor
+            if source >= 1 { value = value + limb(array: array, index: source - 1) / back }
+        }
+        setLimb(array: array, index: index, value: value % limbBase)
+        index = index - 1
+    }
+}
+
+// -1, 0 or 1 as left is below, equal to or above right.
+private func compare(left: Int, right: Int, count: Int): Int {
+    var index = count - 1
+    while index >= 0 {
+        let a = limb(array: left, index: index)
+        let b = limb(array: right, index: index)
+        if a != b {
+            if a > b { return 1 }
+            return -1
+        }
+        index = index - 1
+    }
+    return 0
+}
+
+// left = left - right, where left is not below right.
+private func subtract(left: Int, right: Int, count: Int) {
+    var borrow: UInt64 = 0
+    var index = 0
+    while index < count {
+        let a = limb(array: left, index: index)
+        let b = limb(array: right, index: index) + borrow
+        if a >= b {
+            setLimb(array: left, index: index, value: a - b)
+            borrow = 0
+        } else {
+            setLimb(array: left, index: index, value: a + limbBase - b)
+            borrow = 1
+        }
+        index = index + 1
+    }
+}
+
+private func bitLength(value: UInt64): Int {
+    var rest = value
+    var bits = 0
+    while rest > 0 {
+        rest = rest / 2
+        bits = bits + 1
+    }
+    return bits
+}
+
+// Floor of a / b for a positive b.
+private func floorDivide(a: Int, b: Int): Int {
+    var quotient = a / b
+    if a % b != 0 && a < 0 { quotient = quotient - 1 }
+    return quotient
+}
+
+private func digitAt(address: Int): Int {
+    return load8(address: address) as Int
+}
+
+private func put(position: Int, byte: Int) {
+    store8(address: position, value: byte as UInt8)
+}
+
+// Writes the characters of the NUL-terminated constant at `source` to `position`
+// and returns how many.
+private func putText(position: Int, source: Int): Int {
+    var count = 0
+    while load8(address: source + count) != 0 {
+        store8(address: position + count, value: load8(address: source + count))
+        count = count + 1
+    }
+    return count
+}
+
+// Writes a decimal exponent of at least two digits.
+private func putExponent(position: Int, exponent: Int): Int {
+    var magnitude = exponent
+    var count = 0
+    if exponent < 0 {
+        put(position: position, byte: 45)
+        magnitude = 0 - exponent
+    } else {
+        put(position: position, byte: 43)
+    }
+    count = 1
+    if magnitude >= 100 {
+        put(position: position + count, byte: 48 + magnitude / 100)
+        count = count + 1
+    }
+    put(position: position + count, byte: 48 + (magnitude / 10) % 10)
+    put(position: position + count + 1, byte: 48 + magnitude % 10)
+    return count + 2
+}
+
+// Formats a Double like `%.<precision>g` into the text area of `scratch`, which
+// must hold `formatScratchBytes`, and returns the byte count (at most
+// `formatTextLimit`). The text starts at `scratch + formatTextOffset`.
+func formatDouble(scratch: Int, precision: Int, value: Double): Int {
+    let bits = doubleBits(value: value)
+    let exponentField = ((bits / 4503599627370496) % 2048) as Int
+    let fraction = bits % 4503599627370496
+    let negative = bits >= 9223372036854775808
+    if exponentField == 2047 {
+        var kind = 2
+        if fraction != 0 { kind = 3 }
+        return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: kind,
+            mantissa: 0, exponent: 0)
+    }
+    if exponentField == 0 {
+        if fraction == 0 {
+            return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: 1,
+                mantissa: 0, exponent: 0)
+        }
+        return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: 0,
+            mantissa: fraction, exponent: 1 - 1075)
+    }
+    return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: 0,
+        mantissa: fraction + 4503599627370496, exponent: exponentField - 1075)
+}
+
+// The same for a Float, whose value is exact in the formatting.
+func formatFloat(scratch: Int, precision: Int, value: Float): Int {
+    let bits = floatBits(value: value) as UInt64
+    let exponentField = ((bits / 8388608) % 256) as Int
+    let fraction = bits % 8388608
+    let negative = bits >= 2147483648
+    if exponentField == 255 {
+        var kind = 2
+        if fraction != 0 { kind = 3 }
+        return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: kind,
+            mantissa: 0, exponent: 0)
+    }
+    if exponentField == 0 {
+        if fraction == 0 {
+            return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: 1,
+                mantissa: 0, exponent: 0)
+        }
+        return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: 0,
+            mantissa: fraction, exponent: 1 - 150)
+    }
+    return formatDecoded(scratch: scratch, precision: precision, negative: negative, kind: 0,
+        mantissa: fraction + 8388608, exponent: exponentField - 150)
+}
+
+// `kind` is 0 for a finite nonzero value of `mantissa * 2^exponent`, 1 for zero,
+// 2 for infinity and 3 for not-a-number.
+private func formatDecoded(scratch: Int, precision: Int, negative: Bool, kind: Int,
+        mantissa: UInt64, exponent: Int): Int {
+    if precision < 1 || precision > maximumPrecision {
+        panic(message: literalAddress(text: "invalid floating-point precision"))
+    }
+    let text = scratch + formatTextOffset
+    if kind == 3 { return putText(position: text, source: literalAddress(text: "nan")) }
+    var length = 0
+    if negative {
+        put(position: text, byte: 45)
+        length = 1
+    }
+    if kind == 2 { return length + putText(position: text + length, source: literalAddress(text: "inf")) }
+    if kind == 1 {
+        put(position: text + length, byte: 48)
+        return length + 1
+    }
+
+    // 10^estimate is at most the value, and at most one decade below its power.
+    let magnitudeBits = bitLength(value: mantissa) + exponent
+    var decade = floorDivide(a: (magnitudeBits - 1) * 78913, b: 262144)
+    var spread = decade
+    if spread < 0 { spread = 0 - spread }
+    var shift = exponent
+    if shift < 0 { shift = 0 - shift }
+    var limbs = (64 + shift + 4 * spread) / 32 + 2
+    if limbs > limbCapacity { limbs = limbCapacity }
+
+    let r = scratch
+    let s = scratch + sOffset
+    let t = scratch + tOffset
+    fillBytes(destination: scratch, value: 0, count: 3 * limbBytes)
+    setLimb(array: r, index: 0, value: mantissa % limbBase)
+    setLimb(array: r, index: 1, value: mantissa / limbBase)
+    if exponent >= 0 {
+        shiftLeft(array: r, count: limbs, bits: exponent)
+        setLimb(array: s, index: 0, value: 1)
+    } else {
+        setLimb(array: s, index: (0 - exponent) / 32, value: twoToThe(power: (0 - exponent) % 32))
+    }
+    if decade >= 0 {
+        multiplyByPowerOfTen(array: s, count: limbs, power: decade)
+    } else {
+        multiplyByPowerOfTen(array: r, count: limbs, power: 0 - decade)
+    }
+    // The estimate can be one decade low: r / s is then in [10, 100).
+    copyBytes(destination: t, source: s, count: limbs * 4)
+    multiply(array: t, count: limbs, factor: 10)
+    if compare(left: r, right: t, count: limbs) >= 0 {
+        copyBytes(destination: s, source: t, count: limbs * 4)
+        decade = decade + 1
+    }
+
+    let digits = scratch + digitsOffset
+    var index = 0
+    while index < precision {
+        var digit = 0
+        while compare(left: r, right: s, count: limbs) >= 0 {
+            subtract(left: r, right: s, count: limbs)
+            digit = digit + 1
+        }
+        put(position: digits + index, byte: digit)
+        if index < precision - 1 { multiply(array: r, count: limbs, factor: 10) }
+        index = index + 1
+    }
+    // Round to nearest, a tie to an even last digit.
+    multiply(array: r, count: limbs, factor: 2)
+    let order = compare(left: r, right: s, count: limbs)
+    var roundUp = order > 0
+    if order == 0 && digitAt(address: digits + precision - 1) % 2 == 1 { roundUp = true }
+    if roundUp {
+        var position = precision - 1
+        while position >= 0 && load8(address: digits + position) == 9 {
+            put(position: digits + position, byte: 0)
+            position = position - 1
+        }
+        if position >= 0 {
+            put(position: digits + position, byte: digitAt(address: digits + position) + 1)
+        } else {
+            // 99...9 rounded up: 1 followed by zeros, one decade higher.
+            put(position: digits, byte: 1)
+            decade = decade + 1
+        }
+    }
+
+    // Digits after the last nonzero one are dropped.
+    var last = precision - 1
+    while last > 0 && load8(address: digits + last) == 0 { last = last - 1 }
+
+    if decade < -4 || decade >= precision {
+        put(position: text + length, byte: 48 + digitAt(address: digits))
+        length = length + 1
+        if last > 0 {
+            put(position: text + length, byte: 46)
+            length = length + 1
+            var position = 1
+            while position <= last {
+                put(position: text + length, byte: 48 + digitAt(address: digits + position))
+                length = length + 1
+                position = position + 1
+            }
+        }
+        put(position: text + length, byte: 101)
+        length = length + 1
+        return length + putExponent(position: text + length, exponent: decade)
+    }
+    if decade >= 0 {
+        var position = 0
+        while position <= decade {
+            put(position: text + length, byte: 48 + digitAt(address: digits + position))
+            length = length + 1
+            position = position + 1
+        }
+        if last > decade {
+            put(position: text + length, byte: 46)
+            length = length + 1
+            while position <= last {
+                put(position: text + length, byte: 48 + digitAt(address: digits + position))
+                length = length + 1
+                position = position + 1
+            }
+        }
+        return length
+    }
+    put(position: text + length, byte: 48)
+    put(position: text + length + 1, byte: 46)
+    length = length + 2
+    var zeros = 0 - decade - 1
+    while zeros > 0 {
+        put(position: text + length, byte: 48)
+        length = length + 1
+        zeros = zeros - 1
+    }
+    var position = 0
+    while position <= last {
+        put(position: text + length, byte: 48 + digitAt(address: digits + position))
+        length = length + 1
+        position = position + 1
+    }
+    return length
+}
+
+// Writes `value` formatted like `%.<precision>g` to `buffer`, which must hold
+// 40 bytes (no terminator), and returns the number of bytes written.
+@c_export(symbol: "joyeer_format_double_abi")
+public func formatDoubleAbi(buffer: Int, precision: Int32, value: Double): Int {
+    if buffer == 0 { panic(message: literalAddress(text: "format buffer is null")) }
+    let scratch = allocate(size: formatScratchBytes)
+    let count = formatDouble(scratch: scratch, precision: precision as Int, value: value)
+    copyBytes(destination: buffer, source: scratch + formatTextOffset, count: count)
+    release(address: scratch, size: formatScratchBytes)
+    return count
+}
+
+// The same for a Float.
+@c_export(symbol: "joyeer_format_float_abi")
+public func formatFloatAbi(buffer: Int, precision: Int32, value: Float): Int {
+    if buffer == 0 { panic(message: literalAddress(text: "format buffer is null")) }
+    let scratch = allocate(size: formatScratchBytes)
+    let count = formatFloat(scratch: scratch, precision: precision as Int, value: value)
+    copyBytes(destination: buffer, source: scratch + formatTextOffset, count: count)
+    release(address: scratch, size: formatScratchBytes)
+    return count
+}

@@ -17,13 +17,13 @@ typedef struct JoyeerString {
 ```
 
 Strings are not required to be NUL terminated. The count is authoritative, so
-embedded NUL bytes from `readFile(path:)` are preserved. The runtime
+embedded NUL bytes, such as those `System.readFile(path:)` returns, are preserved. The runtime
 implementation is in `src/runtime/runtime.h` and
 `src/runtime/runtime.c`.
 
 The handle occupies 16 bytes on the supported 64-bit layout. The current
 runtime preserves bytes but does not enforce a valid-UTF-8 invariant;
-`readFile` and `byteToString` can produce arbitrary bytes. Unicode scalar APIs
+`System.readFile` and `byteToString` can produce arbitrary bytes. Unicode scalar APIs
 will need an explicit validation/error policy rather than assuming validity.
 
 ## Ownership
@@ -56,8 +56,6 @@ The current surface includes:
 - `print(value:)`;
 - explicit `byteToInt(value:)` and `byteToString(value:)` conversions;
 - `String.utf8() -> [UInt8]`, producing an independent owned byte array;
-- `readFile(path:) -> Result<String, IOError>` with stable categories and the
-  original platform code;
 - recursive storage inside structs, enums, arrays, and dictionaries.
 
 Byte indexing is deliberate: Joyeer does not currently claim Unicode scalar or

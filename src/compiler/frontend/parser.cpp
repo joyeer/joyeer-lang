@@ -316,6 +316,15 @@ syntax::AttributeSyntax Parser::parseAttribute() {
     return {spanFrom(start), std::move(name), std::move(arguments)};
 }
 
+bool Parser::rejectMemberAnnotations() {
+    if (!cursor.at(atSign)) return false;
+    const size_t start = cursor.position();
+    while (cursor.at(atSign)) parseAttribute();
+    report(DiagnosticId::unsupportedSyntax, spanFrom(start),
+           "declaration annotations are supported only on top-level functions, not on members");
+    return true;
+}
+
 syntax::BindingDeclSyntax::Ptr Parser::parseBindingDecl(bool requireType) {
     const size_t start = cursor.position();
     auto keyword = cursor.advance();
@@ -436,6 +445,10 @@ bool Parser::isNestedMethodStart(uint32_t declarationColumn) const {
            !(cursor.peek()->startsLine && cursor.peek()->columnAt <= declarationColumn);
 }
 
+bool Parser::isNestedAnnotation(uint32_t declarationColumn) const {
+    return cursor.at(atSign) && cursor.peek()->startsLine && cursor.peek()->columnAt > declarationColumn;
+}
+
 uint32_t Parser::declarationColumn(size_t keyword) const {
     const auto token = cursor.tokenAt(keyword);
     if (keyword > 0 && !token->startsLine) {
@@ -512,6 +525,7 @@ syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
             break;
         }
         const size_t before = cursor.position();
+        if (rejectMemberAnnotations()) continue;
         if (isNestedMethodStart(column)) {
             methods.push_back(parseMethodDecl());
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
@@ -549,6 +563,10 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         const size_t before = cursor.position();
+        // An annotation at or left of the struct begins the next top-level
+        // declaration, as in an unclosed body.
+        if (cursor.at(atSign) && cursor.peek()->startsLine && !isNestedAnnotation(column)) break;
+        if (rejectMemberAnnotations()) continue;
         if (isNestedMethodStart(column)) {
             methods.push_back(parseMethodDecl());
             if (cursor.position() == before) cursor.advance();
@@ -634,6 +652,12 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
 
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         if (isNestedMethodStart(column)) break;
+        if (cursor.at(atSign) && (!cursor.peek()->startsLine || isNestedAnnotation(column))) {
+            // Annotated case or method: report once, then parse what follows
+            // as usual (a method ends the case list on the next iteration).
+            rejectMemberAnnotations();
+            continue;
+        }
         if (cursor.peek()->startsLine && isTopLevelStart(cursor.peek())) {
             break;
         }
@@ -653,7 +677,10 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
             if (cursor.at(rightCurly)) break;
             continue;
         }
-        if (cursor.at(rightCurly) || cursor.atEnd() || isNestedMethodStart(column)) break;
+        if (cursor.at(rightCurly) || cursor.atEnd() || isNestedMethodStart(column) ||
+            isNestedAnnotation(column)) {
+            break;
+        }
 
         reportMissingComma("expected ',' between enum cases");
         if (!cursor.at(identifier) || !cursor.peek()->startsLine) {
@@ -670,6 +697,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
             break;
         }
         const size_t before = cursor.position();
+        if (rejectMemberAnnotations()) continue;
         if (isNestedMethodStart(column)) {
             methods.push_back(parseMethodDecl());
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {

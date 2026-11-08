@@ -1,0 +1,15 @@
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+// Reads slot 63 first, so a trap below is from the index and not the table.
+func main(args: [String]): Int {
+    if load64(address: slot(index: 63)) != 0 { return 9 }
+    var index = 64
+    if args[0] == "negative" { index = 0 - 1 }
+    if args[0] == "maximum" { index = 9223372036854775807 }
+    print(value: load64(address: slot(index: index)))
+    return 0
+}

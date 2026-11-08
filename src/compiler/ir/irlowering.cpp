@@ -1,6 +1,5 @@
 #include "irlowering.h"
 #include "constants.h"
-#include "compiler/frontend/hostbuiltins.h"
 
 #include <algorithm>
 #include <bit>
@@ -538,9 +537,7 @@ private:
 
     void collectFunctions() {
         collectPrint();
-        collectReadFile();
         collectByteConversions();
-        collectHostFunctions();
         const auto& semanticModel = *model->semanticModel();
         const auto& root = semanticModel.root();
         if (root == nullptr) return;
@@ -734,64 +731,6 @@ private:
         module->functions.push_back(std::move(function));
     }
 
-    void collectReadFile() {
-        const auto& semanticModel = *model->semanticModel();
-        const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
-        if (prelude == nullptr) return;
-        const auto found = prelude->values.find("readFile");
-        if (found == prelude->values.end()) return;
-        const auto* signature = model->callable(found->second);
-        if (signature == nullptr || signature->parameters.size() != 1) return;
-
-        ir::Function function;
-        function.id = static_cast<ir::FunctionId>(module->functions.size());
-        function.symbol = found->second;
-        function.name = "readFile";
-        function.parameters.push_back(ir::Parameter {
-            ir::Value { 0, signature->parameters[0], ir::ValueCategory::value },
-            std::nullopt,
-            "path",
-            false,
-            {},
-        });
-        function.resultType = signature->result;
-        function.returnsValue = true;
-        function.isExternal = true;
-        functions.emplace(found->second, function.id);
-        module->functions.push_back(std::move(function));
-    }
-
-    void collectHostFunctions() {
-        const auto& semanticModel = *model->semanticModel();
-        const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
-        assert(prelude != nullptr);
-        for (const auto& descriptor : hostbuiltins::functions) {
-            const auto found = prelude->values.find(std::string(descriptor.name));
-            assert(found != prelude->values.end());
-            const auto* signature = model->callable(found->second);
-            assert(signature != nullptr &&
-                   signature->parameters.size() == descriptor.parameters.size());
-            ir::Function function;
-            function.id = static_cast<ir::FunctionId>(module->functions.size());
-            function.symbol = found->second;
-            function.name = descriptor.name;
-            for (size_t index = 0; index < signature->parameters.size(); ++index) {
-                function.parameters.push_back(ir::Parameter {
-                    ir::Value {
-                        static_cast<ir::ValueId>(index), signature->parameters[index],
-                        ir::ValueCategory::value,
-                    },
-                    std::nullopt, std::string(descriptor.parameters[index].name), false, {},
-                });
-            }
-            function.resultType = signature->result;
-            function.returnsValue = true;
-            function.isExternal = true;
-            functions.emplace(found->second, function.id);
-            module->functions.push_back(std::move(function));
-        }
-    }
-
     void collectByteConversions() {
         const auto& semanticModel = *model->semanticModel();
         const auto* prelude = semanticModel.scope(semanticModel.preludeScope());
@@ -850,6 +789,7 @@ private:
         }
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
         function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
+        function.coreContext = semanticModel.isCoreSource(declaration->span);
         if (const auto* binding = model->nativeBinding(*symbol)) {
             function.nativeBinding = *binding;
             function.isExternal = binding->kind == NativeBindingKind::cImport;

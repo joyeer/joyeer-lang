@@ -1,3 +1,5 @@
+import System
+
 struct BuildResult {
     let moduleName: String
     let executable: String

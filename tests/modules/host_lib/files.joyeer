@@ -1,3 +1,5 @@
+import System
+
 public func storeAndRead(path: String): Result<String, FileSystemError> {
     writeFileNew(path: path, contents: "module contents")?
     return readFileUtf8(path: path)
