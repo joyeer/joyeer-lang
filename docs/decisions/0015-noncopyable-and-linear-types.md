@@ -3,7 +3,7 @@
 - Status: proposed (2026-11-08). Phase P2 of the
   [concurrency plan](../plan/concurrency.md). `deinit`, noncopyable types, owning pattern
   bindings and `Array.removeLast` are implemented (P2a, P2b); linear types (P2c) are specified
-  below and not yet implemented.
+  below; their checks are implemented (see "Implemented as" under the stages) except as noted.
   The one fork in it, how a handle closes, was settled the same day in favor of a
   real `deinit` ("The fork"); that revises the answer accepted in
   [0013](0013-concurrency-model.md) question 6, which now says so.
@@ -401,6 +401,22 @@ close-before-join deadlock tests, and the worker-pool trial.
 `task-not-joined` and `Task<R>`: they become `linear-not-consumed` and `JoinHandle<R>`.
 
 ### Stages (P2c)
+
+**Implemented as (stages 2 to 4):** the contextual `linear` modifier before `struct`
+(parser; `StructDeclSyntax::isLinear`), reserved for runtime and core sources
+(`type-checking.linear-reserved`); `TypeCheckedModel::isLinear`, `linearLeafPaths` and
+`isDeclaredLinear`; the type-level rules `linear-in-deinit-type` and `linear-collection-element`
+(a `Dict` key or value, `for-in` over an array, a top-level constant); and in semantic
+analysis `linear-not-consumed` at the end of a block, a match arm, a function, a `return`, the
+failure path of `?`, and `break`/`continue`, with a must-consume intersection over projections,
+`linear-overwrite` for a whole binding, a field path or an array element, and
+`linear-result-dropped` for a statement value and for a `_` over a linear payload. A struct
+declared `linear` ends field by field like any aggregate, with every field a leaf (copyable ones
+included, destructuring), because there is no `discard`; a struct with no field cannot end.
+**Not yet:** the commit order of a `consume` argument before a later `?` (rule 3), a linear
+temporary used as a borrowed argument or receiver (rule 4 beyond a statement), `?`/`!`/`??`/`?.`
+on a linear operand (rule 6), `Array.consumeEmpty()`, a linear `SendError`/channel element
+(no channels yet), and the IR defence in depth.
 
 1. Spec: §4.7, §4.1.1 (linear, `Copyable`), §7.1.2, §2.6 (the four builtin generics, channel
    creation), 0013 amendments.

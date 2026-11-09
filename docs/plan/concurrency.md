@@ -146,21 +146,22 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
       `JoinHandle<R>` is linear; the channel ends are noncopyable and close on drop; a linear
       aggregate ends field by field; the check is "possibly live at an exit"; `defer` stays
       reserved, with the borrow/`inout` idiom documented.
-- [ ] Spec: amend §4.7, §4.1.1 (linear, `Copyable`), §7.1.2 (linear payloads must be bound), and
+- [x] Spec: amend §4.7, §4.1.1 (linear, `Copyable`), §7.1.2 (linear payloads must be bound), and
       0013 (done).
-- [ ] Failing tests first, one set per stage, citing the spec sections.
-- [ ] Parser and name resolution: the toolchain-only `linear` modifier (the test seam).
-- [ ] Type checking: `TypeCheckedModel::isLinear` and propagation; `linear-in-deinit-type`,
-      `linear-collection-element`, `linear-type-argument`, `linear-reserved`.
-- [ ] Semantic analysis: possibly-live, must-consumed projections, exits, temporaries,
+- [x] Failing tests first, one set per stage, citing the spec sections.
+- [x] Parser and name resolution: the toolchain-only `linear` modifier (the test seam).
+- [x] Type checking: `TypeCheckedModel::isLinear` and propagation; `linear-in-deinit-type`,
+      `linear-collection-element`, `linear-reserved` (`linear-type-argument` waits for user generics).
+- [x] Semantic analysis: possibly-live, must-consumed projections, exits, temporaries,
       matches; `linear-not-consumed`, `linear-overwrite`, `linear-result-dropped`.
 - [ ] Later (defence in depth): an IR `linear` bit, no scope-end cleanup for linear bindings, a
       verifier rule, a wire bump, `Array.consumeEmpty()`.
-- [ ] Amend spec §2.6 for the new compiler-known generic builtins (`JoinHandle<R>`,
+- [x] Amend spec §2.6 (2.6.3) for the new compiler-known generic builtins (`JoinHandle<R>`,
       `ChannelSender<T>`, `ChannelReceiver<T>`, `SendError<T>`). Channel creation is
       decided (0013 Q17): `channel(capacity:, sender: &s, receiver: &r)` with two
       `initializing` outputs; specify it, including a capacity below 1.
-- [ ] Fixtures per stage, written failing first, with stable diagnostic IDs.
+- [x] Unit tests per stage with stable diagnostic IDs (stage fixtures under `tests/` follow with the
+      public syntax, since the modifier is reserved for toolchain sources).
 
 ## P3: Thread primitives and a minimal lock (L)
 

@@ -82,8 +82,10 @@ implementation. A `struct` or `enum` that holds a linear field or payload, and a
 key or value may not be. A linear type is noncopyable, so it does not satisfy `Copyable`
 (§20.5), and it may not declare `deinit`; a type with `deinit` may not hold a linear field.
 
-A linear binding must not be **live** at any exit of its scope (§4.7). **Implementation
-status:** specified; not implemented (decision 0015, "Linear types (P2c)").
+A linear binding must not be **live** at any exit of its scope (§4.7.1). **Implementation
+status:** the checks are implemented for a struct declared `linear` in a toolchain-authorized
+source; `JoinHandle` itself arrives with the concurrency phases (decision 0015, "Linear types
+(P2c)").
 
 
 #### 4.1.2 Ownership state vs. access effect (two axes)
@@ -483,8 +485,9 @@ introduced. A call that cannot return, and a trap, are not exits.
 - **`?` and `!`** consume an owned linear operand; `??` and `?.` are rejected on one.
 
 A function that only borrows, or takes `inout`, a linear value has no owning binding to end, so
-the rule does not apply to it. `defer` remains reserved. **Implementation status:** specified;
-not implemented.
+the rule does not apply to it. `defer` remains reserved. **Implementation status:** the exits,
+overwrite, statement-result and match rules are implemented; the commit order of consuming
+arguments, `?`/`!`/`??`/`?.` on a linear operand and borrowed linear temporaries are not yet.
 
 ### 4.8 No reference types
 

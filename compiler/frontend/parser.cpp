@@ -281,6 +281,16 @@ syntax::NodePtr Parser::parseTopLevelItem() {
         return std::make_shared<syntax::ErrorDeclSyntax>(tokenSpan(token));
     }
 
+    // `linear struct`: `linear` is contextual, recognised only directly before `struct`.
+    if (cursor.at(identifier) && cursor.peek()->rawValue == "linear" && cursor.at(kwStruct, 1)) {
+        const auto modifier = cursor.advance();
+        auto declaration = parseStructDecl();
+        declaration->isLinear = true;
+        declaration->linearSpan = modifier->span;
+        declaration->span = coveringSpan(modifier->span, declaration->span);
+        return declaration;
+    }
+
     switch (cursor.peek()->kind) {
         case kwLet:
         case kwVar:
@@ -514,6 +524,14 @@ uint32_t Parser::declarationColumn(size_t keyword) const {
     if (keyword > 0 && !token->startsLine) {
         const auto before = cursor.tokenAt(keyword - 1);
         if (isVisibility(before->kind)) return before->columnAt;
+        // `linear struct`: the declaration starts at the contextual modifier.
+        if (before->kind == identifier && before->rawValue == "linear") {
+            if (keyword > 1 && !before->startsLine) {
+                const auto outer = cursor.tokenAt(keyword - 2);
+                if (isVisibility(outer->kind)) return outer->columnAt;
+            }
+            return before->columnAt;
+        }
     }
     return token->columnAt;
 }

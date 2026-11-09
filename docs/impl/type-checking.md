@@ -122,6 +122,11 @@ The current checker validates:
   the operand of `?`, and `Dict.get`). `consume x` moves an owning local or consuming
   parameter instead, and is accepted wherever a value is stored;
   `type-checking.assignment-to-self-in-deinit` rejects `&self = ...` in a `deinit`;
+- Linear types (decision 0015): `isLinear` and `linearLeafPaths` on the checked model; the
+  `linear` modifier is `type-checking.linear-reserved` outside runtime and core sources;
+  `linear-in-deinit-type` (a type with `deinit` may not be or hold a linear value) and
+  `linear-collection-element` (a `Dict` key or value, `for-in` over an array, a top-level constant
+  of linear type);
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
   primary span identifies the later access and a secondary note identifies the

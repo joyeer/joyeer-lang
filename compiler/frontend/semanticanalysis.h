@@ -21,6 +21,9 @@ enum class DiagnosticId {
     initializingInitializedStorage,
     initializingParameterNotInitialized,
     partialConsumeOfDeinitType,
+    linearNotConsumed,
+    linearOverwrite,
+    linearResultDropped,
     unusedBinding,
 };
 

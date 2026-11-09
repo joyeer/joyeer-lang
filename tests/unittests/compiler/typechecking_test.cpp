@@ -126,6 +126,25 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         ASSERT_NE(checking.model, nullptr);
         }
 
+        // Checks `text` as a toolchain-authorized (runtime) source, where `linear` is allowed.
+        void checkToolchain(const std::string& text) {
+        lexerDiagnostics.errors.clear();
+        source = std::make_shared<SourceFile>(text);
+        LexParser lexer(&lexerDiagnostics);
+        lexer.parse(source);
+        ASSERT_TRUE(lexerDiagnostics.errors.empty());
+
+        joyeer::parser::Parser parser(source->tokens);
+        parseResult = parser.parse();
+        ASSERT_TRUE(parseResult.succeeded()) << joyeer::parser::dump(parseResult.diagnostics);
+
+        resolution = joyeer::semantic::NameResolver().resolve(
+                { { "runtime.fixture", { parseResult.root }, true } });
+        ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+        checking = joyeer::typing::TypeChecker().check(resolution.model);
+        ASSERT_NE(checking.model, nullptr);
+        }
+
         joyeer::typing::TypeId declaredType(const joyeer::syntax::NodePtr& node) const {
         const auto symbol = resolution.model->declaredSymbol(node);
         EXPECT_TRUE(symbol.has_value());
@@ -2464,6 +2483,75 @@ TEST_F(TypeCheckingTest, AWholeNoncopyableScrutineeCannotBeBoundByAPattern) {
     check(std::string(slotPrelude) +
           "func f() { match make() { other => (), } }\n");
     EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Decision 0015, "Linear types": which types are linear, and the type-level rules.
+constexpr const char* linearTypes =
+        "linear struct Token {\n    var id: Int\n}\n"
+        "struct Holder {\n    var token: Token\n}\n"
+        "enum Box {\n    Full(Token),\n    Empty,\n}\n";
+
+TEST_F(TypeCheckingTest, ALinearTypeAndWhatHoldsItAreLinearAndNoncopyable) {
+    checkToolchain(std::string(linearTypes) +
+                   "func f(a: Token, b: Holder, c: Box, d: [Token], e: Token?, g: Result<Token, Int>, h: Int) { }\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items.back());
+    const auto& model = *checking.model;
+    for (size_t index = 0; index < 6; ++index) {
+        const auto type = declaredType(function->parameters[index]);
+        EXPECT_TRUE(model.isLinear(type)) << index;
+        EXPECT_FALSE(model.isCopyable(type)) << index;
+    }
+    EXPECT_FALSE(model.isLinear(declaredType(function->parameters[6])));
+}
+
+TEST_F(TypeCheckingTest, ALinearStructEndsFieldByFieldAndAnAggregateOnlyItsLinearFields) {
+    checkToolchain(std::string(linearTypes) + "func f(a: Token, b: Holder, c: Box) { }\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items.back());
+    const auto& model = *checking.model;
+    // A declared linear struct has every field as a leaf; Holder needs only its Token field;
+    // an enum is consumed whole.
+    EXPECT_EQ(model.linearLeafPaths(declaredType(function->parameters[0])).size(), 1u);
+    const auto holder = model.linearLeafPaths(declaredType(function->parameters[1]));
+    ASSERT_EQ(holder.size(), 1u);
+    EXPECT_EQ(holder[0].size(), 2u);
+    EXPECT_EQ(model.linearLeafPaths(declaredType(function->parameters[2])),
+              (std::vector<std::vector<joyeer::semantic::SymbolId>> { {} }));
+}
+
+TEST_F(TypeCheckingTest, TheLinearModifierIsReservedForToolchainSources) {
+    check("linear struct Token {\n    var id: Int\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearReserved))
+            << joyeer::typing::dump(checking.diagnostics);
+    checkToolchain("linear struct Token {\n    var id: Int\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ALinearValueHasNoDeinitToRun) {
+    checkToolchain("linear struct Token {\n    var id: Int\n    deinit() { }\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearInDeinitType))
+            << joyeer::typing::dump(checking.diagnostics);
+    // a struct with a deinit may not hold a linear field either: its destruction would drop it
+    checkToolchain(std::string(linearTypes) +
+                   "struct Owner {\n    var token: Token\n    deinit() { }\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearInDeinitType))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADictionaryCannotHoldALinearKeyOrValue) {
+    checkToolchain(std::string(linearTypes) + "func f() { var d: [Int: Token] = [:] }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearCollectionElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ForInCannotIterateAnArrayOfLinearValues) {
+    checkToolchain(std::string(linearTypes) +
+                   "func f(items: [Token]) { for item in items { } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearCollectionElement))
             << joyeer::typing::dump(checking.diagnostics);
 }
 

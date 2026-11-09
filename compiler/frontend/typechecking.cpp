@@ -333,6 +333,98 @@ syntax::FunctionDeclSyntax::Ptr TypeCheckedModel::deinitializerOf(TypeId type) c
     return structure == nullptr ? nullptr : structure->deinitializer;
 }
 
+bool TypeCheckedModel::isDeclaredLinear(TypeId type) const {
+    const auto structure = structureDeclaration(type);
+    return structure != nullptr && structure->isLinear;
+}
+
+bool TypeCheckedModel::isLinear(TypeId type) const {
+    std::vector<TypeId> visiting;
+    std::unordered_set<TypeId> clean;
+    return isLinear(type, visiting, clean);
+}
+
+bool TypeCheckedModel::isLinear(
+        TypeId id, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const {
+    const auto* type = typeContext.type(id);
+    if (type == nullptr || clean.contains(id)) return false;
+    if (std::find(visiting.begin(), visiting.end(), id) != visiting.end()) return false;
+    visiting.push_back(id);
+    bool linear = false;
+    switch (type->kind) {
+        case TypeKind::array:
+        case TypeKind::dictionary:
+        case TypeKind::optional:
+        case TypeKind::result:
+            for (const auto argument : type->arguments) {
+                if (isLinear(argument, visiting, clean)) { linear = true; break; }
+            }
+            break;
+        case TypeKind::structure: {
+            const auto structure = structureDeclaration(id);
+            if (structure == nullptr) break;
+            if (structure->isLinear) { linear = true; break; }
+            for (const auto& field : structure->fields) {
+                const auto fieldSymbol = semanticModelValue->declaredSymbol(field);
+                const auto fieldType = fieldSymbol.has_value()
+                        ? typeOf(*fieldSymbol)
+                        : std::optional<TypeId>();
+                if (fieldType.has_value() && isLinear(*fieldType, visiting, clean)) {
+                    linear = true;
+                    break;
+                }
+            }
+            break;
+        }
+        case TypeKind::enumeration: {
+            const auto* symbol = semanticModelValue->symbol(type->symbol);
+            if (symbol == nullptr || !symbol->declaration.has_value()) break;
+            const auto declaration = semanticModelValue->node(*symbol->declaration);
+            if (declaration == nullptr || declaration->kind != syntax::Kind::enumDecl) break;
+            const auto enumeration = std::static_pointer_cast<syntax::EnumDeclSyntax>(declaration);
+            for (const auto& enumCase : enumeration->cases) {
+                const auto caseSymbol = semanticModelValue->declaredSymbol(enumCase);
+                const auto* signature = caseSymbol.has_value() ? callable(*caseSymbol) : nullptr;
+                if (signature == nullptr) continue;
+                for (const auto payload : signature->parameters) {
+                    if (isLinear(payload, visiting, clean)) { linear = true; break; }
+                }
+                if (linear) break;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    visiting.pop_back();
+    if (!linear) clean.insert(id);
+    return linear;
+}
+
+std::vector<std::vector<semantic::SymbolId>> TypeCheckedModel::linearLeafPaths(TypeId type) const {
+    if (!isLinear(type)) return {};
+    const auto structure = structureDeclaration(type);
+    // Any other linear type (an enum, an Optional, an Array, a builtin) is a single leaf: it is
+    // consumed whole.
+    if (structure == nullptr) return { {} };
+    // A struct ends field by field. One declared `linear` has no linear field to point at, so each
+    // of its fields is a leaf, copyable ones included (destructuring); one that is linear only
+    // through its fields needs just those fields consumed.
+    std::vector<std::vector<semantic::SymbolId>> paths;
+    for (const auto& field : structure->fields) {
+        const auto fieldSymbol = semanticModelValue->declaredSymbol(field);
+        const auto fieldType = fieldSymbol.has_value() ? typeOf(*fieldSymbol) : std::optional<TypeId>();
+        if (!fieldSymbol.has_value() || !fieldType.has_value()) continue;
+        auto fieldPaths = linearLeafPaths(*fieldType);
+        if (fieldPaths.empty() && structure->isLinear) fieldPaths.push_back({});
+        for (auto& rest : fieldPaths) {
+            rest.insert(rest.begin(), *fieldSymbol);
+            paths.push_back(std::move(rest));
+        }
+    }
+    return paths;
+}
+
 bool TypeCheckedModel::isCopyable(TypeId type) const {
     return !noncopyableReason(type).has_value();
 }
@@ -374,6 +466,10 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             if (structure == nullptr) break;
             if (structure->deinitializer != nullptr) {
                 reason = name + " declares 'deinit'";
+                break;
+            }
+            if (structure->isLinear) {
+                reason = name + " is linear";
                 break;
             }
             for (const auto& field : structure->fields) {
@@ -1178,6 +1274,22 @@ private:
             }
         }
 
+        // Iterating an array of linear elements would drop them; there is no consuming iteration.
+        if (isForInSourceBinding(declaration) && bindingType != model->typeContext.errorType()) {
+            const auto* sourceType = model->typeContext.type(bindingType);
+            if (sourceType != nullptr && sourceType->kind == TypeKind::array &&
+                sourceType->arguments.size() == 1 && model->isLinear(sourceType->arguments[0])) {
+                report(TypeCheckingDiagnosticId::linearCollectionElement,
+                       declaration->initializer == nullptr ? declaration->span
+                                                           : declaration->initializer->span,
+                       "cannot iterate over an array of linear elements",
+                       "drain it with removeLast instead");
+            }
+        }
+        if (bindingType != model->typeContext.errorType()) {
+            requireNoLinearDictionary(bindingType, declaration->span);
+        }
+
         const auto symbol = model->semanticModelValue->declaredSymbol(declaration);
         if (symbol.has_value()) model->symbolTypes[*symbol] = bindingType;
         recordNodeType(declaration, bindingType);
@@ -1193,12 +1305,62 @@ private:
                 [](unsigned char c) { return std::isdigit(c) != 0; });
     }
 
+    // The type-level rules of linear types (decision 0015): the `linear` modifier is for
+    // toolchain-authorized sources, and a linear value has no `deinit` to run, so a type with a
+    // `deinit` may not be or hold one.
+    void checkLinearStructure(const syntax::StructDeclSyntax::Ptr& structure) {
+        if (structure->isLinear &&
+            !model->semanticModelValue->isRuntimeSource(structure->span) &&
+            !model->semanticModelValue->isCoreSource(structure->span)) {
+            report(TypeCheckingDiagnosticId::linearReserved, structure->linearSpan,
+                   "'linear' is reserved for toolchain-authorized sources");
+        }
+        if (structure->deinitializer == nullptr) return;
+        const auto symbol = model->semanticModelValue->declaredSymbol(structure);
+        const auto type = symbol.has_value() ? model->typeOf(*symbol) : std::optional<TypeId>();
+        if (type.has_value() && model->isLinear(*type)) {
+            report(TypeCheckingDiagnosticId::linearInDeinitType, structure->deinitializer->span,
+                   "a linear value is never destroyed implicitly, so '" +
+                           (structure->name == nullptr ? std::string() : structure->name->rawValue) +
+                           "' cannot declare 'deinit'",
+                   "remove the 'deinit', or end the linear field explicitly instead");
+        }
+    }
+
+    // A Dict cannot hold a linear key or value: nothing could drain it.
+    void requireNoLinearDictionary(TypeId id, SourceSpan span) {
+        const auto* type = model->typeContext.type(id);
+        if (type == nullptr) return;
+        const auto arguments = type->arguments;
+        if (type->kind == TypeKind::dictionary &&
+            std::any_of(arguments.begin(), arguments.end(),
+                        [this](TypeId argument) { return model->isLinear(argument); })) {
+            report(TypeCheckingDiagnosticId::linearCollectionElement, span,
+                   "a dictionary cannot hold a linear key or value ('" +
+                           model->typeContext.displayName(id) + "')",
+                   "use an array and drain it with removeLast");
+            return;
+        }
+        for (const auto argument : arguments) requireNoLinearDictionary(argument, span);
+    }
+
     void checkTopLevelBody(const syntax::NodePtr& node) {
         if (node == nullptr) return;
         switch (node->kind) {
-            case syntax::Kind::bindingDecl:
-                checkBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
+            case syntax::Kind::bindingDecl: {
+                const auto binding = std::static_pointer_cast<syntax::BindingDeclSyntax>(node);
+                checkBinding(binding);
+                // Nothing would ever end a top-level linear constant.
+                const auto symbol = model->semanticModelValue->declaredSymbol(binding);
+                const auto type = symbol.has_value() ? model->typeOf(*symbol) : std::optional<TypeId>();
+                if (type.has_value() && model->isLinear(*type)) {
+                    report(TypeCheckingDiagnosticId::linearCollectionElement, binding->span,
+                           "a top-level constant cannot have the linear type '" +
+                                   model->typeContext.displayName(*type) + "'",
+                           "declare it inside a function, where it can be ended");
+                }
                 break;
+            }
             case syntax::Kind::functionDecl:
                 checkFunctionBody(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node));
                 break;
@@ -1216,6 +1378,7 @@ private:
                 break;
             case syntax::Kind::structDecl: {
                 const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                checkLinearStructure(structure);
                 for (const auto& method : structure->methods) checkFunctionBody(method);
                 if (structure->deinitializer != nullptr) {
                     insideDeinit = true;
@@ -3645,6 +3808,12 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.copy-of-noncopyable";
         case TypeCheckingDiagnosticId::assignmentToSelfInDeinit:
             return "type-checking.assignment-to-self-in-deinit";
+        case TypeCheckingDiagnosticId::linearReserved:
+            return "type-checking.linear-reserved";
+        case TypeCheckingDiagnosticId::linearInDeinitType:
+            return "type-checking.linear-in-deinit-type";
+        case TypeCheckingDiagnosticId::linearCollectionElement:
+            return "type-checking.linear-collection-element";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:
