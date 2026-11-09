@@ -278,6 +278,9 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_load_u8` / `_u16` / `_u32` / `_u64` | `(address: Int) -> UInt8` / `UInt16` / `UInt32` / `UInt64` | Little-endian load of that width |
 | `joyeer_intrinsic_store_u8` / `_u16` / `_u32` / `_u64` | `(address: Int, value: UInt8` / `UInt16` / `UInt32` / `UInt64`) `-> Void` | Little-endian store of that width |
 | `joyeer_intrinsic_atomic_add` | `(address: Int, delta: Int) -> Int` | Sequentially consistent add; returns the previous value |
+| `joyeer_intrinsic_atomic_load` | `(address: Int) -> Int` | Sequentially consistent load of an 8-byte word |
+| `joyeer_intrinsic_atomic_exchange` | `(address: Int, value: Int) -> Int` | Sequentially consistent exchange; stores `value` and returns the previous value |
+| `joyeer_intrinsic_atomic_cmpxchg` | `(address: Int, expected: Int, desired: Int) -> Int` | Sequentially consistent compare-and-swap: stores `desired` if the word equals `expected`; returns the value found (so it succeeded when that equals `expected`) |
 | `joyeer_intrinsic_call_void1` | `(function: Int, first: Int) -> Void` | Calls the C function at `function`, which returns void and takes one address argument, with the target's C calling convention |
 | `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
 | `joyeer_intrinsic_literal_address` | `(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal. No `String` value is created and nothing is allocated; it and `symbol_address` are the only uses of a string literal a core unit (§19.4.7) may make |

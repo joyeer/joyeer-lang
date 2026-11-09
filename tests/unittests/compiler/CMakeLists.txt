@@ -1018,6 +1018,9 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EMatchMovesOnward match_moves_onward
             "100\n1\n1\nname\n3\n2\n")
     add_joyeer_native_regression(
+            E2EConstArrayConsume const_array_consume
+            "41\n41\n58\n6\n")
+    add_joyeer_native_regression(
             E2ERegressionShortCircuit regression_lowering_short_circuit
             "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
     add_joyeer_native_regression(

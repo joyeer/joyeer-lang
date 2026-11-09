@@ -13,6 +13,7 @@
 set(JOYEER_RUNTIME_CORE_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/core/utf8.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/strings.joyeer"
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/locks.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/panic.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/streams.joyeer"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/allocator.joyeer"

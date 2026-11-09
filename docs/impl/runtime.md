@@ -60,9 +60,7 @@ through the C library the program already links. The caller supplies the storage
 thread, 64 for a mutex or condition, all zeroed), so the functions never allocate. A thread runs a
 `void entry(void *argument)` through a private trampoline with the platform's thread-routine
 shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
-once (`JOYEER_THREAD_LIMIT` beyond that). The runtime is **not** thread safe yet (the allocator,
-streams and leak counter are P4's): a function run on a thread started here must not allocate,
-print or panic.
+once (`JOYEER_THREAD_LIMIT` beyond that). The rest of the runtime is thread safe from P4 on (next section).
 
 On Linux and on the Windows own-entry link the object is linked only into a program that
 references it. The Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) load every
@@ -70,6 +68,19 @@ member, so those programs also import the thread functions. The tests are
 `tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
 mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
 operating systems' lock types fit the storage) and the `RuntimeThreadsObjectSymbols` gate.
+
+## Thread safety
+
+Decision [0017](../decisions/0017-runtime-thread-safety.md). Every runtime function may be called
+from any started thread. Locks are taken only while the count of unjoined threads (slot 11) is
+non-zero, so a single-threaded program pays one load and one branch per lock site. The locks
+(`core/locks.joyeer`) sleep: a futex mutex on Linux (built on the atomic compare-and-exchange and
+exchange intrinsics), `SRWLOCK` on Windows, `os_unfair_lock` on macOS. The allocator has one lock
+(slot 12); standard output (slot 13) and standard input (slot 14) have separate locks and state
+blocks. A `print` is atomic. The first panic claims slot 38; later panics, and any thread that
+reaches a lock afterwards, park, so the message appears once with status 1. Returning from `main`
+with an unjoined thread is a runtime error. `RuntimeTestsThreadedMode` reruns the runtime suite with
+a parked thread so every locked path executes.
 
 ## Static slots
 
@@ -80,16 +91,23 @@ Sixty-four eight-byte, zero-initialised words shared by every unit of a program
 |---|---|---|
 | 0 | allocator | the leak counter |
 | 1 | allocator | the allocator state address |
-| 2 | streams | the stream state |
-| 3 to 10 | streams | stream scratch |
+| 2 | streams | the output state block |
+| 3 to 7 | streams | output system-call scratch |
+| 8 | streams | input system-call scratch |
+| 9 | panic | panic scratch |
+| 10 | | free |
 | 11 | threads | the number of unjoined threads |
-| 12 to 15 | core | free (the runtime lock of P4) |
+| 12 | allocator | the allocator lock |
+| 13 | streams | the output lock |
+| 14 | streams | the input lock |
+| 15 | streams | the input state block |
 | 16 | entry | the process environment block address |
 | 17 to 31 | System | reserved for the `System` module |
 | 32 to 33 | entry | string scratch |
 | 34 to 36 | entry | the argument handle |
 | 37 | entry | the byte buffer |
-| 38 to 63 | | free (tests use 40, 41, 60 and above) |
+| 38 | panic | the panic flag |
+| 39 to 63 | | free (tests use 40, 41, 60 and above) |
 
 ## Process entry and exit
 
@@ -131,7 +149,7 @@ layout and clone/destroy callbacks. On the current 64-bit layout, private
 headers occupy 24 bytes for arrays and 72 bytes for dictionaries, before
 payload and allocator overhead. These callbacks can introduce indirect
 calls without source-level protocol dispatch. Allocation/free updates a
-relaxed atomic balance counter; this is accounting, not reference counting.
+sequentially consistent atomic balance counter; this is accounting, not reference counting.
 
 Joyeer IR `copy`, `take`, and `destroy` operations lower to generated per-type
 LLVM helpers, which recurse through structs and tagged payloads and call

@@ -1,7 +1,7 @@
 // The runtime's thread, mutex and condition functions (decision 0016), driven through the
-// exported C ABI with C++ entry functions. The runtime is not thread safe until P4, so no entry
-// function allocates, prints or panics: they use atomics, plain memory under a lock, and the
-// functions under test.
+// exported C ABI with C++ entry functions. These tests keep their entry
+// functions to atomics, plain memory under a lock, and the functions under test; the runtime's own
+// thread safety is tested in thread_safety_test.cpp (decision 0017).
 
 #include "joyeer/runtime.h"
 

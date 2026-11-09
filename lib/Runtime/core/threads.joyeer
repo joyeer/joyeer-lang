@@ -1,8 +1,7 @@
 // Threads, a blocking mutex and a condition variable (decision 0016). This is the runtime's
 // lowest layer for concurrency: it starts a thread, waits for it, and gives the code that
-// follows (tasks and channels, P5 and P6) something to sleep on. It makes nothing else thread
-// safe: the allocator, the streams and the leak counter are P4's, so a function run on a thread
-// started here must not allocate, print or panic yet.
+// follows (tasks and channels, P5 and P6) something to sleep on. The rest of the runtime is
+// made thread safe on top of it (decision 0017, locks.joyeer).
 //
 // Windows uses `CreateThread`, `SRWLOCK` and `CONDITION_VARIABLE`, all in kernel32. Linux and
 // macOS use `pthread` through the C library the program already links for its startup. The

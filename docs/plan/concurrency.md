@@ -44,7 +44,7 @@ P0 design ─ P1a timeouts (done) ─ (P1b readiness, optional)
       rejected while tasks exist (Q13), `pthread` first (Q14), rarer names with a user
       declaration winning (Q15). Limits (Q10) are decided in P3 and dispatch (Q11) in
       P7; output ordering (Q12) stays unspecified.
-- [ ] Reconcile the allocation counter's described ordering: runtime.md says
+- [x] Reconcile the allocation counter's described ordering: runtime.md says
       relaxed, §19.4.5 says sequentially consistent. Do this in P4 with the audit.
 - [x] Mark 0013 `accepted` as a design direction (2026-11-08), with the spec chapter
       still to come. The later decisions (0015 onward) are each marked accepted when
@@ -197,37 +197,37 @@ Decision: [0016](../decisions/0016-thread-primitives.md), proposed; amended afte
       limit; the thread object's symbol gate. The program-import gate is exact on Linux and the
       Windows own-entry link; the Windows C-startup link and macOS load every member (0016).
 
-## P4: Make the runtime thread-safe (M to L)
+## P4: Make the runtime thread-safe (M to L) (done, decision 0017)
 
 Decision to write: 0017, runtime thread safety. Every item must leave a
 single-threaded program's behavior and the leak counter unchanged.
 
-- [ ] Baseline first: record the runtime benchmark, allocation-heavy and `print`-heavy
+- [x] Baseline first: record the runtime benchmark, allocation-heavy and `print`-heavy
       fixtures, and the hello-world binary size, so every later change is measurable.
-- [ ] Audit every runtime global in `lib/Runtime/core/`: static slots 0 to 1
+- [x] Audit every runtime global in `lib/Runtime/core/`: static slots 0 to 1
       (counter, allocator), 2 to 10 (streams and scratch), 32 to 39 (entry scratch),
       slot 16 (write once before any thread); decide per-program, per-thread, or
       locked for each.
-- [ ] Allocator: one lock around the free lists and regions, keeping the block
+- [x] Allocator: one lock around the free lists and regions, keeping the block
       layout. Measure the cost of taking it only once a second thread exists against
       always taking it; cross-thread frees are legal because the size arrives with
       `free`.
-- [ ] Standard streams: one `print` atomic; standard input serialized; flush rules
+- [x] Standard streams: one `print` atomic; standard input serialized; flush rules
       kept. Initialize or guard every lazily initialized piece of state (stdout error
       state, console check, the Windows stdin binary-mode switch, the first
       socket-start call).
-- [ ] Panic and exit: a global panicking flag so other tasks cannot print,
+- [x] Panic and exit: a global panicking flag so other tasks cannot print,
       allocate or write after the flush; the first trap wins; output flushed once; no
       destructors run; the panic path takes no lock its caller may hold, including an
       out-of-memory panic inside the allocator lock.
-- [ ] `runProcess` on Linux forks: keep the child path from allocating before
+- [x] `runProcess` on Linux forks: keep the child path from allocating before
       `execve`, or serialize it against the allocator lock; decide Q13.
-- [ ] Constants: a constant array passed by `consume` is cloned, never freed. Add a
+- [x] Constants: a constant array passed by `consume` is cloned, never freed. Add a
       test.
-- [ ] Spec §19.4.5 gains any new runtime-only intrinsics; update the symbol gates.
-- [ ] Gate: no regression above an agreed threshold on the baseline benchmarks and
+- [x] Spec §19.4.5 gains any new runtime-only intrinsics; update the symbol gates.
+- [x] Gate: no regression above an agreed threshold on the baseline benchmarks and
       no hello-world size growth beyond a stated limit.
-- [ ] Tests: the full existing suite passes unchanged; allocator stress freeing
+- [x] Tests: the full existing suite passes unchanged; allocator stress freeing
       across two threads returns the counter to zero; `print` atomicity; first-use
       initialization races from two tasks.
 

@@ -2,6 +2,7 @@
 add_executable(RuntimeTests
         runtime_test.cpp
         host_test.cpp
+        threaded_mode.cpp
 )
 
 target_include_directories(RuntimeTests PRIVATE
@@ -16,6 +17,14 @@ target_link_libraries(RuntimeTests
 joyeer_discover_tests(RuntimeTests
         PROPERTIES LABELS runtime
 )
+
+# The whole suite again with one thread sleeping for the run, so every runtime function takes its
+# locks (decision 0017): a lock cannot be tested by a program that never starts a thread.
+add_test(NAME RuntimeTestsThreadedMode COMMAND RuntimeTests)
+set_tests_properties(RuntimeTestsThreadedMode PROPERTIES
+        ENVIRONMENT "JOYEER_TEST_THREADED=1"
+        LABELS "runtime;threads"
+        TIMEOUT 300)
 
 if(WIN32)
     # The entry logic alone, without the `wmain` wrapper, so the test supplies its
@@ -127,9 +136,11 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     set(joyeer_core_imports "memcmp;memcpy;memset")
     if(WIN32)
         list(APPEND joyeer_core_imports VirtualAlloc VirtualFree GetStdHandle GetFileType WriteFile ReadFile
-            GetConsoleMode WriteConsoleW MultiByteToWideChar GetLastError ExitProcess _fltused)
+            GetConsoleMode WriteConsoleW MultiByteToWideChar GetLastError ExitProcess _fltused
+            AcquireSRWLockExclusive ReleaseSRWLockExclusive TryAcquireSRWLockExclusive Sleep)
     elseif(APPLE)
-        list(APPEND joyeer_core_imports mmap munmap write read isatty __error _exit)
+        list(APPEND joyeer_core_imports mmap munmap write read isatty __error _exit
+            os_unfair_lock_lock os_unfair_lock_unlock os_unfair_lock_trylock sleep)
     else()
         # Linux: system calls only.
     endif()
@@ -223,7 +234,7 @@ endif()
 # Threads, mutexes and conditions driven from C++ through the exported C ABI. The test starts
 # threads with C++ entry functions that never allocate (the runtime is not thread safe until P4).
 find_package(Threads REQUIRED)
-add_executable(RuntimeThreadTests thread_test.cpp)
+add_executable(RuntimeThreadTests thread_test.cpp thread_safety_test.cpp)
 target_include_directories(RuntimeThreadTests PRIVATE ${JOYEER_RUNTIME_INCLUDE_DIR})
 target_link_libraries(RuntimeThreadTests PRIVATE
         GTest::gtest_main
@@ -248,7 +259,7 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/own-entry-imports.exe"
                 "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry"
-                "-DEXPECTED_IMPORTS=ExitProcess;GetCommandLineW;GetConsoleMode;GetFileType;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
+                "-DEXPECTED_IMPORTS=AcquireSRWLockExclusive;ExitProcess;GetCommandLineW;GetConsoleMode;GetFileType;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;ReleaseSRWLockExclusive;Sleep;TryAcquireSRWLockExclusive;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         add_test(NAME RuntimeCRuntimeProgramKeepsTheCStartup
             COMMAND "${CMAKE_COMMAND}"

@@ -1,0 +1,18 @@
+// Allocation-heavy baseline for the runtime (decision 0017): arrays that grow, strings that
+// are built and dropped. Not a test; see tests/perf/README.md.
+func main() {
+    var total = 0
+    var round = 0
+    while round < 200000 {
+        var items: [Int] = []
+        var index = 0
+        while index < 24 {
+            &items.append(element: index + round)
+            index = index + 1
+        }
+        let text = "item-" + "number" + "-" + "x"
+        total = total + items.count + text.count
+        round = round + 1
+    }
+    print(value: total)
+}

@@ -87,7 +87,7 @@ private func closeDescriptor(descriptor: Int) {
 // The child's end: change directory, replace the process image, and on a failure of
 // either tell the parent which errno and leave. It never returns to the caller's logic.
 @platform(linux)
-private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int): Int {
+private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int, reportAddress: Int): Int {
     var code = 0
     let changed = linuxCall(x86: 80, arm: 49, first: directory, second: 0, third: 0, fourth: 0, fifth: 0,
         sixth: 0)
@@ -98,9 +98,10 @@ private func runChild(directory: Int, path: Int, argv: Int, writeEnd: Int): Int 
             fourth: 0, fifth: 0, sixth: 0)
         code = 0 - replaced
     }
-    var report = zeroBuffer(count: reportBytes)
-    store64(address: addressOfBytes(bytes: &report), value: code as UInt64)
-    linuxCall(x86: 1, arm: 64, first: writeEnd, second: addressOfBytes(bytes: &report), third: reportBytes,
+    // The buffer was allocated before the fork: another thread may have held the allocator lock
+    // when it happened, and a child that allocated would wait for a lock nobody will release.
+    store64(address: reportAddress, value: code as UInt64)
+    linuxCall(x86: 1, arm: 64, first: writeEnd, second: reportAddress, third: reportBytes,
         fourth: 0, fifth: 0, sixth: 0)
     linuxCall(x86: 231, arm: 94, first: 127, second: 0, third: 0, fourth: 0, fifth: 0, sixth: 0)
     return code
@@ -156,12 +157,16 @@ func nativeRun(executable: String, arguments: [String], workingDirectory: String
     let readEnd = wordAt(bytes: pipeEnds, offset: 0, width: 4)
     let writeEnd = wordAt(bytes: pipeEnds, offset: 4, width: 4)
 
+    // The child's error report, allocated before the fork (see runChild).
+    var childReport = zeroBuffer(count: reportBytes)
+    let childReportAddress = addressOfBytes(bytes: &childReport)
+
     // clone(SIGCHLD, 0): a fork. The child gets its own copy of the memory above.
     let pid = linuxCall(x86: 56, arm: 220, first: childSignal, second: 0, third: 0, fourth: 0, fifth: 0,
         sixth: 0)
     if pid == 0 {
         let failure = runChild(directory: directoryAddress, path: pathAddress, argv: tableAddress,
-            writeEnd: writeEnd)
+            writeEnd: writeEnd, reportAddress: childReportAddress)
         return .Err(.LaunchFailed(failure))
     }
     closeDescriptor(descriptor: writeEnd)
