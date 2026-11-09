@@ -102,6 +102,10 @@ in the spec.
 | [0013](decisions/0013-concurrency-model.md) | Concurrency (accepted direction): share-nothing threads, ownership moved through tasks and bounded channels, no shared mutable state; timeouts and readiness polling first |
 | [0014](decisions/0014-network-timeouts.md) | `timeoutMillis` on `tcpAccept` and `tcpReceive` (proposed, implemented on Windows and Linux): a bounded wait per call, no send or connect timeout, no total deadline |
 | [0015](decisions/0015-noncopyable-and-linear-types.md) | Noncopyable and linear types and handles that close (proposed): copy and consume checks, a "must be consumed" analysis, consuming a pattern binding; the open fork is `deinit` versus a restricted resource annotation |
+| [0016](decisions/0016-thread-primitives.md) | Thread, mutex and condition primitives in the runtime (accepted, implemented): runtime-owned trampoline, caller-supplied storage, 8 MiB stacks, at most 256 unjoined threads |
+| [0017](decisions/0017-runtime-thread-safety.md) | Runtime thread safety (accepted, implemented): locks taken only while a second thread exists, OS-assisted sleeping locks, atomic `print`, first-panic-wins |
+| [0018](decisions/0018-tasks.md) | Tasks (accepted design, in implementation): `spawn`, `JoinHandle<R>` and `consume h.join()`, one heap block per task, `Array.consumeEmpty()` |
+| [0019](decisions/0019-channels.md) | Channels (not started): single-sender, single-receiver bounded channels |
 
 ## Conventions
 

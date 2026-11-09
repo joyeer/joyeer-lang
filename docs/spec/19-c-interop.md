@@ -399,8 +399,8 @@ behavior; it must not become a fabricated C success value or an exception
 escaping into C. Callbacks and asynchronous retention require separate designs. Entry from a
 foreign thread does too, with one exception: a function the runtime exports as a thread
 trampoline may be entered by a thread the runtime created through its thread API
-([decision 0016](../decisions/0016-thread-primitives.md)). Such a thread must not allocate, print or
-panic until the runtime is thread safe, and nothing unwinds across the thread boundary.
+([decision 0016](../decisions/0016-thread-primitives.md)). Such a thread may allocate, print and
+panic (decision 0017), and nothing unwinds across the thread boundary.
 
 The binding author must match the real native prototype and its behavioral
 contract. Without a header importer, checking the Joyeer declaration and

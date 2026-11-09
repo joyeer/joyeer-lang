@@ -249,7 +249,7 @@ arguments are understood by the compiler, not by a general parameter mechanism, 
 introduce user-defined generics. A user declaration of the same name takes precedence over the
 builtin in its scope.
 
-- `JoinHandle<R>` is **linear** (§4.1.1): it must be ended, by `join`, on every path (§4.7.1).
+- `JoinHandle<R>` is **linear** (§4.1.1): it must be ended, by `join`, on every path (§4.7.1). Tasks are specified in [§21](21-concurrency.md).
 - `ChannelSender<T>` and `ChannelReceiver<T>` are **noncopyable** and close their channel when
   destroyed, like a handle with a `deinit` (§3.7.1); an explicit consuming `close` also exists.
   `T` may not be linear, because a value queued when the channel closes would be destroyed.
@@ -267,6 +267,16 @@ channel(capacity: 8, sender: &sender, receiver: &receiver)
 **Implementation status:** specified only; these types and `spawn`, `join`, `send` and
 `receive` are implemented in the concurrency phases P5 and P6 of the
 [plan](../plan/concurrency.md).
+
+#### 2.6.4 Ending an empty array: `consumeEmpty()`
+
+`Array<T>.consumeEmpty()` is a **consuming** member (spelled `consume a.consumeEmpty()`). If the array
+is empty it frees the array's storage and the array is ended (§4.2.3); if it is not empty the program
+traps with `array not empty` before any element is touched. It is the only way to end an `Array` of
+**linear** elements (§4.7.1), which `removeLast()` drains first, and may be used on any array. It
+returns `Void`.
+
+**Implementation status:** specified; built as stage 0 of P5a ([decision 0018](../decisions/0018-tasks.md)).
 
 ### 2.8 Type inference
 

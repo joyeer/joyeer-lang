@@ -233,8 +233,11 @@ single-threaded program's behavior and the leak counter unchanged.
 
 ## P5: Compiler support for tasks and channels (L)
 
-Decision to write: 0018, task and channel types in the compiler. Feature workflow:
-spec, failing tests first, every pipeline stage, role reviews, validation.
+Split in two so tasks ship on the P3 and P4 runtime alone: **P5a** tasks (decision 0018, spec
+[§21](../spec/21-concurrency.md): `spawn`, `JoinHandle<R>`, `consume h.join()`) and **P5b** channels
+(decision 0019, with the channel runtime of P6). The list below is the original one; each item is
+done first for tasks. Feature workflow: spec, failing tests first, every pipeline stage, role
+reviews, validation.
 
 - [ ] **First:** the spec chapter. Tasks, single-sender channels, `spawn`, `join`,
       `send`, `receive`, `close`, the `consuming` rules, the memory-model rules from
