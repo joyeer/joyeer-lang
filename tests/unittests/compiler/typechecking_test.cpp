@@ -2555,4 +2555,25 @@ TEST_F(TypeCheckingTest, ForInCannotIterateAnArrayOfLinearValues) {
             << joyeer::typing::dump(checking.diagnostics);
 }
 
+TEST_F(TypeCheckingTest, ALinearStructNeedsAFieldToEnd) {
+    checkToolchain("linear struct Zed {\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearStructWithoutFields))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADictionaryOfLinearValuesIsRejectedInParametersResultsAndFields) {
+    const std::vector<std::string> bodies {
+        "func f(d: [Int: Token]): Int { return 0 }\n",
+        "struct S {\n    var d: [Int: Token]\n}\n",
+        "func g(): [Int: Token] { return [:] }\n",
+    };
+    for (const auto& body : bodies) {
+        SCOPED_TRACE(body);
+        checkToolchain(std::string(linearTypes) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::linearCollectionElement))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 } // namespace

@@ -125,8 +125,8 @@ The current checker validates:
 - Linear types (decision 0015): `isLinear` and `linearLeafPaths` on the checked model; the
   `linear` modifier is `type-checking.linear-reserved` outside runtime and core sources;
   `linear-in-deinit-type` (a type with `deinit` may not be or hold a linear value) and
-  `linear-collection-element` (a `Dict` key or value, `for-in` over an array, a top-level constant
-  of linear type);
+  `linear-collection-element` (a `Dict` key or value in a binding, parameter, result or field,
+  and `for-in` over an array), `linear-top-level-binding` and `linear-struct-without-fields`;
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
   primary span identifies the later access and a secondary note identifies the

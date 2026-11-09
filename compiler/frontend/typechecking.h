@@ -262,6 +262,8 @@ enum class TypeCheckingDiagnosticId {
     linearReserved,
     linearInDeinitType,
     linearCollectionElement,
+    linearTopLevelBinding,
+    linearStructWithoutFields,
 };
 
 struct TypeCheckingDiagnostic {

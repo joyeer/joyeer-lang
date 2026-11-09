@@ -480,14 +480,14 @@ introduced. A call that cannot return, and a trap, are not exits.
 - **Temporaries.** An owned linear temporary must be moved at once: as a binding initialiser, the
   right-hand side of an assignment to an ended place, a `return` value, a consuming argument, an
   aggregate or enum component, an `append`, or a `match` scrutinee. Any other use, including a
-  statement whose value is dropped and `let _ = e`, is `semantic-analysis.linear-result-dropped`.
+  statement whose value is dropped, is `semantic-analysis.linear-result-dropped`.
 - **Matching.** A pattern over a linear scrutinee must bind every linear payload (§7.1.2).
 - **`?` and `!`** consume an owned linear operand; `??` and `?.` are rejected on one.
 
 A function that only borrows, or takes `inout`, a linear value has no owning binding to end, so
 the rule does not apply to it. `defer` remains reserved. **Implementation status:** the exits,
-overwrite, statement-result and match rules are implemented; the commit order of consuming
-arguments, `?`/`!`/`??`/`?.` on a linear operand and borrowed linear temporaries are not yet.
+overwrite, statement-result, borrowed-temporary and match rules are implemented; the commit
+order of consuming arguments and `?`/`!`/`??`/`?.` on a linear operand are not yet.
 
 ### 4.8 No reference types
 

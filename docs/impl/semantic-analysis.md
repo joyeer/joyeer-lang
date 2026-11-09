@@ -33,7 +33,7 @@ LLVM, or native output.
 | `semantic-analysis.partial-consume-of-deinit-type` | error | No part of a struct that declares `deinit` may be consumed, since the destructor needs the whole value; a wrapper without `deinit` may still give up a field. |
 | `semantic-analysis.linear-not-consumed` | error | A binding that may still hold a linear value (possibly initialised, or an aggregate with a linear field path not consumed on every path) must be ended before any exit of its scope: the end of a block, a match arm or a function, `return`, the failure path of `?`, `break` and `continue`. |
 | `semantic-analysis.linear-overwrite` | error | Assigning over a live linear binding, field path or array element would drop it. |
-| `semantic-analysis.linear-result-dropped` | error | A statement value, or a payload ignored with `_`, of linear type would be dropped. |
+| `semantic-analysis.linear-result-dropped` | error | A statement value (including a tail that is not used as a value), an owned temporary that is only borrowed, or a payload ignored with `_` over a moved scrutinee, of linear type, would be dropped. |
 | `semantic-analysis.unused-binding` | warning | A local or pattern binding is never read; names beginning with `_` explicitly suppress this warning. |
 
 `let`/field immutability and `inout` access-marker checks remain type-checker

@@ -340,8 +340,9 @@ exit drops facts today, is the hook.
    initializer, the right-hand side of an assignment to an ended or uninitialized place, a
    `return` value, a consuming argument, an aggregate or enum component, an `append`, or a match
    scrutinee. Anywhere else (a statement `spawn(...)`, `f(g())` with a borrowing `f`, `g().m()`,
-   `let _ = e`) is `semantic-analysis.linear-result-dropped`. `_` ignores nothing: `let _ = e` and
-   a `.Ok(_)` over a linear payload are `linear-result-dropped`.
+   a field read through one) is `semantic-analysis.linear-result-dropped`. `_` ignores nothing: a
+   `.Ok(_)` or `.Some(_)` over a linear payload of a moved scrutinee, and a bare `_` arm over one,
+   are `linear-result-dropped`. (`let _ = e` is not valid syntax, so it needs no rule.)
 5. **`match`.** A pattern over a linear scrutinee must bind every linear payload (a payload no arm
    binds would be destroyed with the scrutinee, which is a drop). Spec 7.1.2's "stay and are
    destroyed" sentence applies to non-linear payloads only. `match consume x` ends `x` once its
@@ -397,7 +398,8 @@ close-before-join deadlock tests, and the worker-pool trial.
 
 `semantic-analysis.linear-not-consumed`, `linear-overwrite`, `linear-result-dropped`;
 `type-checking.linear-in-deinit-type`, `linear-collection-element` (Dict key or value, `for-in`),
-`linear-channel-element`, `linear-type-argument`, `linear-reserved`. 0013 and the plan name
+`linear-top-level-binding`, `linear-struct-without-fields`, `linear-channel-element`,
+`linear-type-argument`, `linear-reserved`. 0013 and the plan name
 `task-not-joined` and `Task<R>`: they become `linear-not-consumed` and `JoinHandle<R>`.
 
 ### Stages (P2c)
@@ -410,12 +412,16 @@ close-before-join deadlock tests, and the worker-pool trial.
 analysis `linear-not-consumed` at the end of a block, a match arm, a function, a `return`, the
 failure path of `?`, and `break`/`continue`, with a must-consume intersection over projections,
 `linear-overwrite` for a whole binding, a field path or an array element, and
-`linear-result-dropped` for a statement value and for a `_` over a linear payload. A struct
+`linear-result-dropped` for a statement value (including a block, `if`, `while` or `match` tail
+that is not used as a value), an owned temporary that is only borrowed (a borrowing argument, a
+field read, a borrowing receiver), and a `_`, `.Some(_)`, `.Ok(_)` or bare `_` arm over a linear
+payload of a moved scrutinee. Peeking at a borrowed scrutinee with `_` is fine. The join of a
+whole consume on one path with per-field consumes on the other counts each field as consumed
+(coverage, not set equality), and an aggregate can be refilled once every leaf was consumed. A struct
 declared `linear` ends field by field like any aggregate, with every field a leaf (copyable ones
 included, destructuring), because there is no `discard`; a struct with no field cannot end.
-**Not yet:** the commit order of a `consume` argument before a later `?` (rule 3), a linear
-temporary used as a borrowed argument or receiver (rule 4 beyond a statement), `?`/`!`/`??`/`?.`
-on a linear operand (rule 6), `Array.consumeEmpty()`, a linear `SendError`/channel element
+**Not yet:** the commit order of a `consume` argument before a later `?` (rule 3),
+`?`/`!`/`??`/`?.` on a linear operand (rule 6), `Array.consumeEmpty()`, a linear `SendError`/channel element
 (no channels yet), and the IR defence in depth.
 
 1. Spec: §4.7, §4.1.1 (linear, `Copyable`), §7.1.2, §2.6 (the four builtin generics, channel

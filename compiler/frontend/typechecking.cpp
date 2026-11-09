@@ -1315,6 +1315,17 @@ private:
             report(TypeCheckingDiagnosticId::linearReserved, structure->linearSpan,
                    "'linear' is reserved for toolchain-authorized sources");
         }
+        if (structure->isLinear && structure->fields.empty()) {
+            report(TypeCheckingDiagnosticId::linearStructWithoutFields, structure->span,
+                   "a linear struct needs at least one field: it ends by consuming its fields",
+                   "add a field, or use a different design");
+        }
+        for (const auto& field : structure->fields) {
+            const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
+            const auto fieldType = fieldSymbol.has_value() ? model->typeOf(*fieldSymbol)
+                                                           : std::optional<TypeId>();
+            if (fieldType.has_value()) requireNoLinearDictionary(*fieldType, field->span);
+        }
         if (structure->deinitializer == nullptr) return;
         const auto symbol = model->semanticModelValue->declaredSymbol(structure);
         const auto type = symbol.has_value() ? model->typeOf(*symbol) : std::optional<TypeId>();
@@ -1354,7 +1365,7 @@ private:
                 const auto symbol = model->semanticModelValue->declaredSymbol(binding);
                 const auto type = symbol.has_value() ? model->typeOf(*symbol) : std::optional<TypeId>();
                 if (type.has_value() && model->isLinear(*type)) {
-                    report(TypeCheckingDiagnosticId::linearCollectionElement, binding->span,
+                    report(TypeCheckingDiagnosticId::linearTopLevelBinding, binding->span,
                            "a top-level constant cannot have the linear type '" +
                                    model->typeContext.displayName(*type) + "'",
                            "declare it inside a function, where it can be ended");
@@ -1408,6 +1419,12 @@ private:
         const auto* signature = functionSymbol.has_value()
             ? model->callable(*functionSymbol)
             : nullptr;
+        if (signature != nullptr) {
+            for (const auto parameter : signature->parameters) {
+                requireNoLinearDictionary(parameter, function->span);
+            }
+            requireNoLinearDictionary(signature->result, function->span);
+        }
         const auto previousReturnType = currentReturnType;
         const auto previousLoopDepth = loopDepth;
         loopDepth = 0;
@@ -3814,6 +3831,10 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.linear-in-deinit-type";
         case TypeCheckingDiagnosticId::linearCollectionElement:
             return "type-checking.linear-collection-element";
+        case TypeCheckingDiagnosticId::linearTopLevelBinding:
+            return "type-checking.linear-top-level-binding";
+        case TypeCheckingDiagnosticId::linearStructWithoutFields:
+            return "type-checking.linear-struct-without-fields";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

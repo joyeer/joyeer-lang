@@ -282,7 +282,8 @@ syntax::NodePtr Parser::parseTopLevelItem() {
     }
 
     // `linear struct`: `linear` is contextual, recognised only directly before `struct`.
-    if (cursor.at(identifier) && cursor.peek()->rawValue == "linear" && cursor.at(kwStruct, 1)) {
+    if (cursor.at(identifier) && cursor.peek()->rawValue == "linear" && cursor.at(kwStruct, 1) &&
+        !cursor.peek(1)->startsLine) {
         const auto modifier = cursor.advance();
         auto declaration = parseStructDecl();
         declaration->isLinear = true;

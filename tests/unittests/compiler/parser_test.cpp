@@ -1312,4 +1312,22 @@ TEST_F(ParserTest, DeinitCannotBeCalledOrNamedAsAnExpression) {
     EXPECT_FALSE(result.succeeded());
 }
 
+// `linear` is a modifier only directly before `struct` on the same line, and an ordinary
+// identifier everywhere else.
+TEST_F(ParserTest, LinearIsAModifierOnlyBeforeStructOnTheSameLine) {
+    parse("linear struct Q {\n    var a: Int\n}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto declaration = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(result.root->items[0]);
+    EXPECT_TRUE(declaration->isLinear);
+
+    parse("public linear struct Q {\n    var a: Int\n    func read(): Int { return self.a }\n}\nfunc f() { }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+
+    parse("linear\nstruct Q {\n    var a: Int\n}\n");
+    EXPECT_FALSE(result.succeeded());
+
+    parse("func linear(): Int { return 1 }\nfunc f() { let linear = linear() }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
 } // namespace

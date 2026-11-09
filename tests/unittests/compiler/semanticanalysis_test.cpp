@@ -1647,5 +1647,129 @@ TEST_F(SemanticAnalysisTest, ANonLinearProgramIsUnaffected) {
     EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearOverwrite));
     EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped));
 }
+// Review findings for the first linear implementation: statement tails, patterns, borrowed
+// temporaries, and the join of a whole consume with per-field consumes.
+TEST_F(SemanticAnalysisTest, TheLastExpressionOfAVoidFunctionDropsALinearValue) {
+    analyzeToolchain(std::string(linearPrelude) + "func run() {\n    mint()\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, TheTailOfAnIfOrWhileStatementDropsALinearValue) {
+    analyzeToolchain(std::string(linearPrelude) + "func run(c: Bool) {\n    if c { mint() }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(n: Int) {\n    var i = 0\n    while i < n {\n        i = i + 1\n        mint()\n    }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, TheTailOfAFunctionThatReturnsAValueIsMovedOn) {
+    analyzeToolchain(std::string(linearPrelude) + "func make(): Token {\n    mint()\n}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func make(c: Bool): Token {\n    if c { mint() } else { mint() }\n}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AWildcardArmDropsALinearPayloadOfAMovedScrutinee) {
+    const std::string box = "enum Box {\n    Full(Token),\n    Empty,\n}\n";
+    analyzeToolchain(std::string(linearPrelude) + box +
+                     "func run(b: consuming Box) { match consume b { .Empty => (), _ => () } }\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) + "func run() { match mint() { _ => () } }\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, SomeAndOkWildcardsDropALinearPayload) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(o: consuming Token?) { match consume o { .Some(_) => (), .None => () } }\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(r: consuming Result<Token, String>) {\n"
+                     "    match consume r { .Ok(_) => (), .Err(e) => () }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, PeekingAtABorrowedLinearEnumWithAWildcardIsAccepted) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "enum Box {\n    Full(Token),\n    Empty,\n}\n"
+                     "func isFull(b: Box): Bool {\n"
+                     "    return match b { .Full(_) => true, .Empty => false }\n}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ABorrowedLinearTemporaryIsDropped) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func peek(t: Token): Int { return t.id }\n"
+                     "func run(): Int {\n    let n = peek(t: mint())\n    return n\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(): Int {\n    let n = mint().id\n    return n\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ALinearTemporaryMovedIntoAnAggregateIsNotBorrowed) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "struct Pair {\n    var a: Token\n    var b: Token\n}\n"
+                     "func endPair(p: consuming Pair): Int {\n"
+                     "    let x = consume p.a.finish()\n    let y = consume p.b.finish()\n    return x + y\n}\n"
+                     "func run(): Int {\n    return endPair(p: consume Pair(a: mint(), b: mint()))\n}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+// `consume p` on one branch and `consume p.a`, `consume p.b` on the other end the same fields.
+TEST_F(SemanticAnalysisTest, AWholeConsumeAndPerFieldConsumesJoinAsEnded) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "struct Pair {\n    var a: Token\n    var b: Token\n}\n"
+                     "func endPair(p: consuming Pair): Int {\n"
+                     "    let x = consume p.a.finish()\n    let y = consume p.b.finish()\n    return x + y\n}\n"
+                     "func run(c: Bool): Int {\n"
+                     "    let p = Pair(a: mint(), b: mint())\n"
+                     "    if c {\n        let x = consume p.a.finish()\n        let y = consume p.b.finish()\n"
+                     "    } else {\n        let z = endPair(p: consume p)\n    }\n"
+                     "    return 0\n}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnAggregateCanBeRefilledAfterEveryLeafWasConsumed) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "struct Pair {\n    var a: Token\n    var b: Token\n}\n"
+                     "func run() {\n"
+                     "    var p = Pair(a: mint(), b: mint())\n"
+                     "    let x = consume p.a.finish()\n    let y = consume p.b.finish()\n"
+                     "    p = Pair(a: mint(), b: mint())\n"
+                     "    let u = consume p.a.finish()\n    let v = consume p.b.finish()\n"
+                     "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearOverwrite))
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnAggregateWithOneLeafLeftCannotBeRefilled) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "struct Pair {\n    var a: Token\n    var b: Token\n}\n"
+                     "func run() {\n"
+                     "    var p = Pair(a: mint(), b: mint())\n"
+                     "    let x = consume p.a.finish()\n"
+                     "    p = Pair(a: mint(), b: mint())\n"
+                     "    let u = consume p.a.finish()\n    let v = consume p.b.finish()\n"
+                     "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearOverwrite))
+            << joyeer::analysis::dump(result.diagnostics);
+}
 
 } // namespace

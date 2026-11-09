@@ -341,6 +341,9 @@ private:
     std::unordered_set<semantic::SymbolId> initializingParameters;
     // Consuming parameters of linear type: owning bindings that must be ended like a local.
     std::vector<semantic::SymbolId> linearParameters;
+    // Set just before analysing an expression that is a statement, so a block, `if` or `match` in
+    // that position knows its tail value is dropped rather than used.
+    bool statementPosition = false;
     std::vector<InitializationState::ProjectionPath*> activePaths;
     std::vector<std::vector<semantic::SymbolId>> localScopes;
     struct LoopFlow {
@@ -377,7 +380,11 @@ private:
                 }
             }
         }
-        analyzeBlock(declaration->body, state);
+        const auto resultType = signatureResult(function);
+        const bool bodyYieldsValue = resultType.has_value() &&
+                *resultType != model->types().voidType() &&
+                *resultType != model->types().neverType();
+        analyzeBlock(declaration->body, state, bodyYieldsValue);
         if (state.reachable) {
             reportUninitializedParameters(declaration->span, state);
             for (const auto symbol : linearParameters) {
@@ -416,8 +423,10 @@ private:
         }
         const auto type = model->typeOf(symbol);
         if (!type.has_value() || !model->isLinear(*type)) return;
-        bool live = false;
-        for (const auto& leaf : model->linearLeafPaths(*type)) {
+        const auto leaves = model->linearLeafPaths(*type);
+        // A linear type with no field to consume has no way to end, so it stays live.
+        bool live = leaves.empty();
+        for (const auto& leaf : leaves) {
             InitializationState::ProjectionPath path { symbol, {} };
             for (const auto field : leaf) {
                 path.projections.push_back({ field, std::nullopt, std::nullopt });
@@ -433,7 +442,7 @@ private:
             "'" + (declaration == nullptr ? std::string() : declaration->name) +
                     "' holds a linear value of type '" + model->types().displayName(*type) +
                     "' that is not consumed before " + where,
-            "consume it on every path first, or borrow it with a function that takes it 'inout'",
+            "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'",
         });
     }
 
@@ -457,15 +466,78 @@ private:
         const bool element = std::any_of(
                 path.projections.begin(), path.projections.end(),
                 [](const auto& projection) { return !projection.field.has_value(); });
-        if (!element && linearPathEnded(path, state)) return;
+        if (!element) {
+            // Live while any linear leaf beneath the target is not consumed on every path.
+            bool live = false;
+            const auto leaves = model->linearLeafPaths(*type);
+            if (leaves.empty()) live = !linearPathEnded(path, state);
+            for (const auto& leaf : leaves) {
+                auto leafPath = path;
+                for (const auto field : leaf) {
+                    leafPath.projections.push_back({ field, std::nullopt, std::nullopt });
+                }
+                if (!linearPathEnded(leafPath, state)) { live = true; break; }
+            }
+            if (!live) return;
+        }
         diagnostics.push_back(Diagnostic {
             DiagnosticId::linearOverwrite,
             Severity::error,
             target->span,
             "assigning here would drop a linear value of type '" +
                     model->types().displayName(*type) + "'",
-            element ? std::optional<std::string>("an array element of a linear type cannot be overwritten")
+            element ? std::optional<std::string>("drain the array with removeLast instead of overwriting an element")
                     : std::optional<std::string>("consume the old value first, then assign"),
+        });
+    }
+
+    // A statement whose value is a linear value that nothing receives drops it.
+    void reportDroppedLinearValue(const syntax::ExprPtr& statement, const InitializationState& state) {
+        if (!state.reachable || statement == nullptr || isPlaceStatement(statement)) return;
+        // A block, `if` or `match` reports for its own tails.
+        if (statement->kind == syntax::Kind::blockExpr || statement->kind == syntax::Kind::ifExpr ||
+            statement->kind == syntax::Kind::matchExpr) {
+            return;
+        }
+        const auto type = model->typeOf(statement);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearResultDropped,
+            Severity::error,
+            statement->span,
+            "this expression produces a linear value of type '" +
+                    model->types().displayName(*type) + "' that is dropped",
+            "bind it to a variable and consume it",
+        });
+    }
+
+    // A memberwise initializer, an enum case and `append` store their arguments, so a linear value
+    // passed to one is moved in, not borrowed.
+    static bool storesItsArguments(const semantic::Symbol& target) {
+        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
+        return target.callable.has_value() &&
+                (target.callable->kind == semantic::CallableKind::structureInitializer ||
+                 target.callable->kind == semantic::CallableKind::enumCase);
+    }
+
+    // An owned linear temporary that is only borrowed (a borrowing argument, a field read, a
+    // borrowing receiver) is destroyed afterwards, which drops it (spec 4.7.1, rule 4).
+    void reportBorrowedLinearTemporary(const syntax::ExprPtr& value, const InitializationState& state) {
+        if (!state.reachable || value == nullptr || storagePath(value).has_value()) return;
+        auto inner = value;
+        while (inner != nullptr && inner->kind == syntax::Kind::parenthesizedExpr) {
+            inner = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(inner)->expression;
+        }
+        if (inner == nullptr || inner->kind == syntax::Kind::accessExpr) return;
+        const auto type = model->typeOf(value);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearResultDropped,
+            Severity::error,
+            value->span,
+            "this linear value of type '" + model->types().displayName(*type) +
+                    "' is only borrowed here and would be dropped",
+            "bind it to a variable, borrow the variable, and consume it afterwards",
         });
     }
 
@@ -480,9 +552,17 @@ private:
         return storagePath(expression).has_value();
     }
 
+    std::optional<typing::TypeId> signatureResult(
+            const std::optional<semantic::SymbolId>& function) const {
+        const auto* signature = function.has_value() ? model->callable(*function) : nullptr;
+        return signature == nullptr ? std::optional<typing::TypeId>() : signature->result;
+    }
+
+    // `valueUsed` is false when the block's last expression is a statement whose value is dropped.
     void analyzeBlock(
             const syntax::BlockExprSyntax::Ptr& block,
-            InitializationState& state) {
+            InitializationState& state,
+            bool valueUsed = true) {
         if (block == nullptr) return;
         localScopes.emplace_back();
         for (const auto& item : block->items) {
@@ -511,28 +591,19 @@ private:
                 analyzeLoopExit(item->kind, state, item->span);
                 continue;
             }
+            const bool isValueItem = valueUsed && item == block->items.back();
             if (item->kind == syntax::Kind::blockExpr) {
-                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state);
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state, isValueItem);
                 continue;
             }
             if (isExpressionKind(item->kind)) {
                 const auto statement = std::static_pointer_cast<syntax::ExprSyntax>(item);
+                statementPosition = !isValueItem;
                 analyzeExpression(statement, state);
-                // A statement's value is dropped, so a linear one would be lost (the block's own
-                // last expression is its value and is moved on by the caller).
-                if (state.reachable && item != block->items.back()) {
-                    const auto type = model->typeOf(statement);
-                    if (type.has_value() && model->isLinear(*type) && !isPlaceStatement(statement)) {
-                        diagnostics.push_back(Diagnostic {
-                            DiagnosticId::linearResultDropped,
-                            Severity::error,
-                            statement->span,
-                            "this expression produces a linear value of type '" +
-                                    model->types().displayName(*type) + "' that is dropped",
-                            "bind it to a variable and consume it",
-                        });
-                    }
-                }
+                statementPosition = false;
+                // A statement's value is dropped, so a linear one would be lost; the last
+                // expression of a block whose value is used is moved on by the caller.
+                if (!isValueItem) reportDroppedLinearValue(statement, state);
             }
         }
         for (const auto symbol : localScopes.back()) {
@@ -566,7 +637,7 @@ private:
             loops.push_back(LoopFlow { localScopes.size(), {}, {} });
             analyzeExpression(statement->condition, entry);
             auto bodyState = entry;
-            analyzeBlock(statement->body, bodyState);
+            analyzeBlock(statement->body, bodyState, false);
             auto flow = std::move(loops.back());
             loops.pop_back();
             flow.continues.push_back(std::move(bodyState));
@@ -593,6 +664,7 @@ private:
     void analyzeExpression(
             const syntax::ExprPtr& expression,
             InitializationState& state) {
+        const bool statement = std::exchange(statementPosition, false);
         if (expression == nullptr || !state.reachable) return;
         switch (expression->kind) {
             case syntax::Kind::nameExpr:
@@ -655,9 +727,11 @@ private:
                     analyzeStorageOperands(expression, state);
                     if (state.reachable) analyzeStorageRead(expression, state);
                 } else {
-                    analyzeExpression(
-                            std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
-                            state);
+                    const auto base =
+                            std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base;
+                    analyzeExpression(base, state);
+                    // Reading through an owned linear temporary borrows it and then drops it.
+                    reportBorrowedLinearTemporary(base, state);
                 }
                 break;
             case syntax::Kind::callExpr: {
@@ -715,6 +789,11 @@ private:
                         if (effect == syntax::AccessEffect::inout) {
                             const auto path = storagePath(argument->value);
                             if (path.has_value()) mutatedArguments.push_back(path->root);
+                        } else if (effect == syntax::AccessEffect::borrowing && callableSymbol != nullptr &&
+                                   !storesItsArguments(*callableSymbol)) {
+                            // A borrowed argument that is an owned linear temporary is dropped
+                            // once the call returns.
+                            reportBorrowedLinearTemporary(argument->value, state);
                         }
                     }
                 }
@@ -777,10 +856,10 @@ private:
                 break;
             }
             case syntax::Kind::blockExpr:
-                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state);
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state, !statement);
                 break;
             case syntax::Kind::ifExpr:
-                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state);
+                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state, statement);
                 break;
             case syntax::Kind::returnExpr: {
                 const auto returned =
@@ -803,7 +882,7 @@ private:
                 break;
             }
             case syntax::Kind::matchExpr:
-                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state);
+                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state, statement);
                 break;
             default:
                 break;
@@ -840,6 +919,8 @@ private:
             state.possiblyInitialized.erase(path->root);
             state.consumed.insert(path->root);
             clearConsumedProjections(path->root, state);
+            // The whole value is consumed, which covers every field path under it at a join.
+            state.definitelyConsumedProjections.push_back({ path->root, {} });
         } else {
             reportPartialConsumeOfDeinitType(expression);
             addConsumedProjection(*path, state);
@@ -1030,35 +1111,69 @@ private:
 
     void analyzeIf(
             const syntax::IfExprSyntax::Ptr& expression,
-            InitializationState& state) {
+            InitializationState& state,
+            bool statement = false) {
         analyzeExpression(expression->condition, state);
         if (!state.reachable) return;
         auto thenState = state;
-        analyzeBlock(expression->thenBranch, thenState);
+        analyzeBlock(expression->thenBranch, thenState, !statement);
         auto elseState = state;
         if (expression->elseBranch != nullptr) {
+            statementPosition = statement;
             analyzeExpression(expression->elseBranch, elseState);
+            statementPosition = false;
         }
         state = merge({ std::move(thenState), std::move(elseState) });
     }
 
+    // The payload types of an enum case pattern: from the case's signature, or for the builtin
+    // Optional and Result cases from the scrutinee's type arguments.
+    std::vector<typing::TypeId> payloadTypesOf(
+            const std::optional<semantic::SymbolId>& caseSymbol,
+            typing::TypeId scrutineeType) const {
+        if (!caseSymbol.has_value()) return {};
+        const auto* signature = model->callable(*caseSymbol);
+        if (signature != nullptr && !signature->parameters.empty()) return signature->parameters;
+        const auto* symbol = model->semanticModel()->symbol(*caseSymbol);
+        const auto* type = model->types().type(scrutineeType);
+        if (symbol == nullptr || type == nullptr) return {};
+        if (symbol->name == "Some" || symbol->name == "Ok") {
+            if (!type->arguments.empty()) return { type->arguments[0] };
+        } else if (symbol->name == "Err") {
+            if (type->arguments.size() > 1) return { type->arguments[1] };
+        }
+        return {};
+    }
+
     // A pattern that skips a linear payload (`_`, a literal) would leave it to be destroyed with the
-    // scrutinee, which is a drop: every linear payload must be bound (spec 7.1.2).
-    void checkLinearPatternDrops(const syntax::PatternPtr& pattern) {
-        if (pattern == nullptr || pattern->kind != syntax::Kind::enumCasePattern) return;
+    // scrutinee, which is a drop: when the scrutinee is moved, every linear payload must be bound
+    // (spec 7.1.2). A borrowed scrutinee stays live, so peeking at it with `_` is fine.
+    void checkLinearPatternDrops(const syntax::PatternPtr& pattern, typing::TypeId scrutineeType, bool top) {
+        if (pattern == nullptr) return;
+        if (pattern->kind != syntax::Kind::enumCasePattern) {
+            if (top && pattern->kind != syntax::Kind::bindingPattern && model->isLinear(scrutineeType)) {
+                diagnostics.push_back(Diagnostic {
+                    DiagnosticId::linearResultDropped,
+                    Severity::error,
+                    pattern->span,
+                    "this pattern ignores a linear value of type '" +
+                            model->types().displayName(scrutineeType) + "'",
+                    "match its cases and bind the linear payloads",
+                });
+            }
+            return;
+        }
         const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
-        const auto caseSymbol = model->referencedSymbol(enumPattern);
-        const auto* signature = caseSymbol.has_value() ? model->callable(*caseSymbol) : nullptr;
+        const auto payloads = payloadTypesOf(model->referencedSymbol(enumPattern), scrutineeType);
         for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
             const auto& payloadPattern = enumPattern->arguments[index]->pattern;
-            if (payloadPattern == nullptr) continue;
+            if (payloadPattern == nullptr || index >= payloads.size()) continue;
             if (payloadPattern->kind == syntax::Kind::enumCasePattern) {
-                checkLinearPatternDrops(payloadPattern);
+                checkLinearPatternDrops(payloadPattern, payloads[index], false);
                 continue;
             }
             if (payloadPattern->kind == syntax::Kind::bindingPattern ||
-                signature == nullptr || index >= signature->parameters.size() ||
-                !model->isLinear(signature->parameters[index])) {
+                !model->isLinear(payloads[index])) {
                 continue;
             }
             diagnostics.push_back(Diagnostic {
@@ -1066,25 +1181,47 @@ private:
                 Severity::error,
                 payloadPattern->span,
                 "this pattern ignores a linear payload of type '" +
-                        model->types().displayName(signature->parameters[index]) + "'",
+                        model->types().displayName(payloads[index]) + "'",
                 "bind the payload to a name and consume it",
             });
         }
     }
 
+    // Whether a match moves its scrutinee: `match consume x` or an owned temporary. A borrowed
+    // place stays where it is.
+    bool matchMovesScrutinee(const syntax::ExprPtr& scrutinee) const {
+        auto current = scrutinee;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        if (current == nullptr) return false;
+        if (current->kind == syntax::Kind::accessExpr) {
+            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(current);
+            return access->marker != nullptr && access->marker->kind == kwConsume;
+        }
+        return !storagePath(current).has_value();
+    }
+
     void analyzeMatch(
             const syntax::MatchExprSyntax::Ptr& expression,
-            InitializationState& state) {
+            InitializationState& state,
+            bool statement = false) {
         analyzeExpression(expression->scrutinee, state);
         if (!state.reachable) return;
+        const auto scrutineeType = model->typeOf(expression->scrutinee);
+        const bool movesLinear = scrutineeType.has_value() && model->isLinear(*scrutineeType) &&
+                matchMovesScrutinee(expression->scrutinee);
         std::vector<InitializationState> armStates;
         armStates.reserve(expression->arms.size());
         for (const auto& arm : expression->arms) {
             auto armState = state;
             localScopes.emplace_back();
-            checkLinearPatternDrops(arm->pattern);
+            if (movesLinear) checkLinearPatternDrops(arm->pattern, *scrutineeType, true);
             initializePattern(arm->pattern, armState, localScopes.back());
+            statementPosition = statement;
             analyzeExpression(arm->body, armState);
+            statementPosition = false;
+            if (statement) reportDroppedLinearValue(arm->body, armState);
             for (const auto symbol : localScopes.back()) {
                 checkLinearEnded(symbol, armState, arm->span, "the end of this match arm");
                 forgetBinding(symbol, armState);
@@ -1353,6 +1490,37 @@ private:
         });
     }
 
+    // True when some projection in `set` is `path` itself or one of its ancestors.
+    static bool coveredBy(
+            const std::vector<InitializationState::ProjectionPath>& set,
+            const InitializationState::ProjectionPath& path) {
+        return std::any_of(set.begin(), set.end(), [&path](const auto& consumed) {
+            return consumed.root == path.root &&
+                    consumed.projections.size() <= path.projections.size() &&
+                    std::equal(consumed.projections.begin(), consumed.projections.end(),
+                               path.projections.begin());
+        });
+    }
+
+    // What both paths consumed: a projection one path consumed counts when the other consumed it or
+    // an ancestor of it, so `consume p` on one branch and `consume p.a`, `consume p.b` on the other
+    // leave both fields consumed.
+    static std::vector<InitializationState::ProjectionPath> intersectByCoverage(
+            const std::vector<InitializationState::ProjectionPath>& left,
+            const std::vector<InitializationState::ProjectionPath>& right) {
+        std::vector<InitializationState::ProjectionPath> result;
+        const auto keep = [&result](const InitializationState::ProjectionPath& path) {
+            if (std::find(result.begin(), result.end(), path) == result.end()) result.push_back(path);
+        };
+        for (const auto& path : left) {
+            if (coveredBy(right, path)) keep(path);
+        }
+        for (const auto& path : right) {
+            if (coveredBy(left, path)) keep(path);
+        }
+        return result;
+    }
+
     InitializationState merge(std::vector<InitializationState> paths) const {
         InitializationState result;
         result.reachable = false;
@@ -1363,11 +1531,8 @@ private:
                 // Scope exits can collapse distinct index identities to the same path.
                 result.consumedProjections.clear();
             } else {
-                std::erase_if(result.definitelyConsumedProjections, [&path](const auto& candidate) {
-                    return std::find(path.definitelyConsumedProjections.begin(),
-                                     path.definitelyConsumedProjections.end(),
-                                     candidate) == path.definitelyConsumedProjections.end();
-                });
+                result.definitelyConsumedProjections = intersectByCoverage(
+                        result.definitelyConsumedProjections, path.definitelyConsumedProjections);
             }
             for (auto symbol = result.initialized.begin();
                  symbol != result.initialized.end();) {
