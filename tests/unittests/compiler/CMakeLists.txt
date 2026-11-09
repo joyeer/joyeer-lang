@@ -1012,6 +1012,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EArrayRemoveLast array_remove_last
             "3\n2\n-1\nbb\n1\n2\n3\n2\n1\n")
     add_joyeer_native_regression(
+            E2EArrayConsumeEmpty array_consume_empty
+            "bb\na\n1\n3\n2\n1\n6\n0\n2\n1\n0\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EMatchMoves match_moves
             "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
     add_joyeer_native_regression(
@@ -1278,6 +1282,8 @@ abcdabcd
     endfunction()
     add_joyeer_native_checked_trap(
             E2EUnitArrayBounds unit_array_bounds "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            E2EArrayConsumeEmptyTrap array_consume_empty_trap "array not empty")
     add_joyeer_native_checked_trap(
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
 

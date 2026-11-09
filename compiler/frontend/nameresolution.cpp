@@ -717,6 +717,20 @@ private:
                 CallableSignature { CallableKind::function, true, {} });
         symbol(removeLast).isMutable = true;
 
+        // `consume a.consumeEmpty()` ends an empty array (spec 2.6.4). The receiver is consumed, so it
+        // is spelled in the signature the way a user method's `consuming` receiver is.
+        declareBuiltinMember(
+                arrayType,
+                SymbolKind::builtinMember,
+                "consumeEmpty",
+                voidType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    {},
+                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
+                });
+
         CallableSignature singlePayload {
             CallableKind::enumCase,
             true,

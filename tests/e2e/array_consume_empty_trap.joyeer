@@ -1,0 +1,9 @@
+// `consumeEmpty` on a non-empty array traps before any element is touched (spec 2.6.4).
+func main() {
+    var numbers: [Int] = [1, 2]
+    let count = numbers.count
+    if count == 2 {
+        consume numbers.consumeEmpty()
+    }
+    print(value: count)
+}

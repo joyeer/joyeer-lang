@@ -1,0 +1,77 @@
+// `consume a.consumeEmpty()` (spec 2.6.4) ends an empty array and frees its storage: the leak
+// counter stays at zero for every element type, including a handle with a `deinit`.
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+struct Holder {
+    var items: [Int]
+}
+
+func drain(items: consuming [Handle]): Int {
+    var total = 0
+    while true {
+        let popped = &items.removeLast()
+        match consume popped {
+            .Some(handle) => { total = total + handle.id }
+            .None => { break }
+        }
+    }
+    consume items.consumeEmpty()
+    return total
+}
+
+func main() {
+    var numbers: [Int] = []
+    consume numbers.consumeEmpty()
+
+    var words: [String] = ["a", "bb"]
+    let first = &words.removeLast()
+    let second = &words.removeLast()
+    match first {
+        .Some(word) => print(value: word),
+        .None => print(value: "none"),
+    }
+    match second {
+        .Some(word) => print(value: word),
+        .None => print(value: "none"),
+    }
+    consume words.consumeEmpty()
+
+    // The binding can be filled again after it ends.
+    numbers = [7]
+    print(value: numbers.count)
+
+    print(value: drain(items: consume [Handle(id: 1), Handle(id: 2), Handle(id: 3)]))
+    print(value: drain(items: consume []))
+
+    // A field of an owned local, refilled afterwards.
+    var holder = Holder(items: [])
+    consume holder.items.consumeEmpty()
+    holder.items = [5, 6]
+    print(value: holder.items.count)
+
+    // Ended and refilled in a loop.
+    var again: [Int] = []
+    var i = 0
+    while i < 3 {
+        consume again.consumeEmpty()
+        again = []
+        i = i + 1
+    }
+    &again.append(element: i)
+    print(value: again.count)
+
+    // A consume on a path that is not taken leaves the array alone.
+    var maybe: [Int] = []
+    let flag = numbers.count == 0
+    if flag {
+        consume maybe.consumeEmpty()
+        maybe = []
+    }
+    print(value: maybe.count)
+}

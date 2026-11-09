@@ -148,6 +148,11 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
                     {argument(0), unit(elementId) ? nullPointer() : spill(argument(1))});
             return true;
         }
+        case Opcode::arrayConsumeEmpty:
+            // Traps when the array is not empty; otherwise frees its storage and zeroes the handle,
+            // so the scope-end destroy of the moved-from binding does nothing.
+            call("joyeer_array_consume_empty_abi", builder.getVoidTy(), {argument(0)});
+            return true;
         case Opcode::arrayRemoveLast: {
             const auto id = instruction.result->type;
             const auto& cases = enumerations.at(id)->cases;

@@ -82,6 +82,7 @@ enum class Opcode {
     constructArray,
     arrayAppend,
     arrayRemoveLast,
+    arrayConsumeEmpty,
     constructDictionary,
     dictionarySet,
     dictionaryGet,

@@ -109,6 +109,8 @@ void joyeer_array_append_owned_abi(
 int64_t joyeer_array_remove_last_abi(
     JoyeerArray* array,
     void* element);
+// Ends an empty array, freeing its storage; traps with `array not empty` otherwise.
+void joyeer_array_consume_empty_abi(JoyeerArray* array);
 void joyeer_array_destroy_abi(JoyeerArray* array);
 
 void joyeer_dictionary_create_owned_abi(

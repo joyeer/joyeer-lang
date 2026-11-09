@@ -274,9 +274,10 @@ channel(capacity: 8, sender: &sender, receiver: &receiver)
 is empty it frees the array's storage and the array is ended (§4.2.3); if it is not empty the program
 traps with `array not empty` before any element is touched. It is the only way to end an `Array` of
 **linear** elements (§4.7.1), which `removeLast()` drains first, and may be used on any array. It
-returns `Void`.
+returns `Void`. In this version the receiver must be a variable, a parameter or a field, not a
+temporary.
 
-**Implementation status:** specified; built as stage 0 of P5a ([decision 0018](../decisions/0018-tasks.md)).
+**Implementation status:** implemented (stage 0 of P5a, [decision 0018](../decisions/0018-tasks.md)): a consuming builtin member, the `array_consume_empty` IR instruction (wire version 13) and `joyeer_array_consume_empty_abi` in the runtime.
 
 ### 2.8 Type inference
 

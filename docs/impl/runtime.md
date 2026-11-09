@@ -169,6 +169,8 @@ element destruction. The built-in
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.
 `values.removeLast()` calls `joyeer_array_remove_last_abi`, which moves the last element's bytes into the
 result payload and shortens the array without destroying the element.
+`consume values.consumeEmpty()` calls `joyeer_array_consume_empty_abi`, which traps (`array not empty`)
+unless the count is zero and otherwise frees the storage and zeroes the handle.
 Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`;
 the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries

@@ -1767,7 +1767,8 @@ bool Parser::isExpressionStart(const Token::Ptr& token) const {
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
             token->kind == minus || token->kind == bang ||
-            token->kind == tilde || token->kind == ampersand);
+            token->kind == tilde || token->kind == ampersand ||
+            token->kind == kwConsume);
 }
 
 bool Parser::isTopLevelStart(const Token::Ptr& token) const {

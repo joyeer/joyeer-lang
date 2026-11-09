@@ -133,6 +133,8 @@ The current instruction set covers:
   (`payload_address`, which a moving `match` binding takes from);
 - mutating `array_append` with an addressable receiver and transferred element;
 - mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
+- `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
+  empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned

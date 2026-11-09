@@ -744,6 +744,16 @@ private:
                 };
                 continue;
             }
+            if (symbol.name == "consumeEmpty" && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.voidType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    {},
+                    model->typeContext.voidType(),
+                };
+                continue;
+            }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
                 const auto result = model->typeContext.arrayType(
                         model->typeContext.uint8Type());
@@ -2115,6 +2125,9 @@ private:
     std::optional<syntax::AccessEffect> receiverEffectOf(const semantic::Symbol* target) const {
         if (target == nullptr) return std::nullopt;
         if (target->kind == semantic::SymbolKind::builtinMember) {
+            if (target->callable.has_value() && target->callable->receiver.has_value()) {
+                return target->callable->receiver->access;
+            }
             return target->isMutable
                     ? syntax::AccessEffect::inout
                     : syntax::AccessEffect::borrowing;
@@ -2202,7 +2215,8 @@ private:
                 : receiverMarker == ReceiverMarker::consume
                         ? syntax::AccessEffect::consuming
                         : syntax::AccessEffect::borrowing;
-        if (requiredReceiver != suppliedReceiver) {
+        // An unknown member already has its own diagnostic; a marker complaint would only cascade.
+        if (requiredReceiver != suppliedReceiver && semanticTarget != nullptr) {
             const bool consumeInvolved = requiredReceiver == syntax::AccessEffect::consuming ||
                     suppliedReceiver == syntax::AccessEffect::consuming;
             report(
@@ -2237,7 +2251,37 @@ private:
                 report(
                         TypeCheckingDiagnosticId::invalidConsumeArgument,
                         member->base->span,
-                        "consuming receiver must be an owning local, consuming parameter, or temporary");
+                        "consuming receiver must be an owning local, consuming parameter, or temporary",
+                        "declare the parameter 'consuming' or the method 'consuming', or bind the "
+                        "value to a local first");
+            } else if (requiredReceiver == syntax::AccessEffect::consuming &&
+                       semanticTarget != nullptr &&
+                       semanticTarget->kind == semantic::SymbolKind::builtinMember) {
+                // A builtin consuming member works on the receiver's storage in place, so it needs a
+                // named place: not a temporary, an array element or a file-scope constant.
+                const auto path = storagePath(member->base);
+                const auto* root = path.has_value()
+                        ? model->semanticModelValue->symbol(path->root)
+                        : nullptr;
+                const auto* rootScope = root != nullptr
+                        ? model->semanticModelValue->scope(root->ownerScope)
+                        : nullptr;
+                const bool elementPath = path.has_value() &&
+                        std::any_of(path->projections.begin(), path->projections.end(),
+                                [](const auto& projection) { return !projection.has_value(); });
+                if (!path.has_value() || elementPath ||
+                    (rootScope != nullptr && (rootScope->kind == semantic::ScopeKind::file ||
+                                              rootScope->kind == semantic::ScopeKind::module))) {
+                    report(
+                            TypeCheckingDiagnosticId::invalidConsumeArgument,
+                            member->base->span,
+                            "'" + semanticTarget->name + "' needs a value stored in a variable, "
+                            "parameter or field, not a temporary, an array element or a top-level constant",
+                            elementPath
+                                    ? "remove the element with '&array.removeLast()' and call '" +
+                                              semanticTarget->name + "' on the result"
+                                    : "bind the value to a 'var' first, then consume that");
+                }
             }
         }
         collectCallReceiverAccess(expression, semanticTarget, accesses);

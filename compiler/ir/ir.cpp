@@ -1917,6 +1917,24 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::arrayConsumeEmpty:
+                        if (requireShape(1, 0) && operands[0] != nullptr) {
+                            const auto* arrayType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            if (operands[0]->category != ValueCategory::address ||
+                                arrayType == nullptr ||
+                                arrayType->kind != typing::TypeKind::array ||
+                                arrayType->arguments.size() != 1) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "array consume-empty requires an array address");
+                            }
+                        }
+                        break;
                     case Opcode::dictionaryGet:
                         if (requireShape(2, 0) && operands[0] != nullptr &&
                             operands[1] != nullptr && instruction.result.has_value()) {
@@ -2340,6 +2358,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::constructArray: return "construct_array";
         case Opcode::arrayAppend: return "array_append";
         case Opcode::arrayRemoveLast: return "array_remove_last";
+        case Opcode::arrayConsumeEmpty: return "array_consume_empty";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -2605,6 +2624,7 @@ std::string dump(const Module& module) {
                         }
                         break;
                     case Opcode::arrayRemoveLast:
+                    case Opcode::arrayConsumeEmpty:
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:

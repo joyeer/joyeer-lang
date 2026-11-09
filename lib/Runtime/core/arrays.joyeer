@@ -194,6 +194,17 @@ public func arrayRemoveLast(array: Int, element: Int): Int {
     return 1
 }
 
+// Ends an array that must be empty (`consume a.consumeEmpty()`, spec 2.6.4): traps before touching
+// any element when it is not, otherwise frees the storage and leaves the handle inert.
+@c_export(symbol: "joyeer_array_consume_empty_abi")
+public func arrayConsumeEmpty(array: Int): Void {
+    if array == 0 || read(address: array + 8) < 0 || read(address: array + 16) < read(address: array + 8) {
+        panic(message: literalAddress(text: "invalid array consume"))
+    }
+    if read(address: array + 8) != 0 { panic(message: literalAddress(text: "array not empty")) }
+    destroy(handle: array)
+}
+
 @c_export(symbol: "joyeer_array_destroy_abi")
 public func arrayDestroy(array: Int): Void {
     destroy(handle: array)

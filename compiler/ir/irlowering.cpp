@@ -2748,6 +2748,11 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "consumeEmpty") {
+            return lowerArrayConsumeEmpty(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "get") {
             return lowerDictionaryGet(expression);
         }
@@ -2882,6 +2887,28 @@ private:
                 ? ValueOwnership::owned
                 : ValueOwnership::trivial);
         return result;
+    }
+
+    // `consume a.consumeEmpty()`: the runtime traps unless the array is empty, then frees its storage
+    // and zeroes the handle, which makes the binding's scope-end destroy a no-op.
+    std::optional<ir::Value> lowerArrayConsumeEmpty(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            !expression->arguments.empty()) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Array.consumeEmpty takes no arguments");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto array = lowerAddress(member->base);
+        if (!array.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::arrayConsumeEmpty, expression->span);
+        instruction.operands = { array->id };
+        emit(std::move(instruction));
+        return emitUnit(expression->span);
     }
 
     std::optional<ir::Value> lowerDictionaryGet(

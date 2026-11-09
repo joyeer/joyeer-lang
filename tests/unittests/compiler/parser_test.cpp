@@ -87,6 +87,20 @@ TEST_F(ParserTest, ParsesUnitTypesValuesAndPatterns) {
     EXPECT_NE(tree.find("unit_pattern"), std::string::npos);
 }
 
+// A consuming call may be a statement and a `return` value: `consume` starts an expression, like `&`.
+TEST_F(ParserTest, ConsumeStartsAnExpressionStatementAndAReturnValue) {
+    parse("func run(items: consuming [Int]): Int {\n"
+          "    consume items.consumeEmpty()\n"
+          "    return consume items.count\n"
+          "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_NE(function->body, nullptr);
+    ASSERT_EQ(function->body->items.size(), 2u);
+    EXPECT_EQ(function->body->items[0]->kind, Kind::accessExpr);
+}
+
 TEST_F(ParserTest, UnitDoesNotEnableEmptyPayloadClausesOrGeneralTuples) {
     for (const auto* text : {
             "func run() { let value = .Ok() }\n",
@@ -1327,6 +1341,30 @@ TEST_F(ParserTest, LinearIsAModifierOnlyBeforeStructOnTheSameLine) {
     EXPECT_FALSE(result.succeeded());
 
     parse("func linear(): Int { return 1 }\nfunc f() { let linear = linear() }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
+
+TEST_F(ParserTest, ReturnFollowedByANewLineConsumeIsABareReturn) {
+    parse("func run(items: consuming [Int]) {\n"
+          "    return\n"
+          "    consume items.consumeEmpty()\n"
+          "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_NE(function->body, nullptr);
+    EXPECT_EQ(function->body->items.size(), 2u);
+}
+
+TEST_F(ParserTest, ConsumeMayBeAMatchArmBodyAndAReturnValueOnTheSameLine) {
+    parse("func run(items: consuming [Int], flag: Bool) {\n"
+          "    match flag {\n"
+          "        true => consume items.consumeEmpty(),\n"
+          "        false => (),\n"
+          "    }\n"
+          "}\n"
+          "func take(value: consuming [Int]): [Int] { return consume value }\n");
     EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
 }
 

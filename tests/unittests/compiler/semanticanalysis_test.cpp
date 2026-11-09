@@ -1772,4 +1772,104 @@ TEST_F(SemanticAnalysisTest, AnAggregateWithOneLeafLeftCannotBeRefilled) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+
+// `consume a.consumeEmpty()` consumes the receiver like a consuming method does.
+TEST_F(SemanticAnalysisTest, ConsumeEmptyEndsTheArray) {
+    analyze("func run(): Int {\n"
+            "    var items: [Int] = []\n"
+            "    consume items.consumeEmpty()\n"
+            "    return items.count\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnArrayEndedByConsumeEmptyCanBeFilledAgain) {
+    analyze("func run(): Int {\n"
+            "    var items: [Int] = []\n"
+            "    consume items.consumeEmpty()\n"
+            "    items = [1]\n"
+            "    return items.count\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+
+// Control flow around `consume a.consumeEmpty()`: it consumes the binding like any consuming call.
+TEST_F(SemanticAnalysisTest, ConsumeEmptyInALoopWithoutReinitialisationIsUseAfterConsume) {
+    analyze("func run() {\n"
+            "    var items: [Int] = []\n"
+            "    var i = 0\n"
+            "    while i < 2 {\n"
+            "        consume items.consumeEmpty()\n"
+            "        i = i + 1\n"
+            "    }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ConsumeEmptyInALoopThatRefillsIsAccepted) {
+    analyze("func run() {\n"
+            "    var items: [Int] = []\n"
+            "    var i = 0\n"
+            "    while i < 2 {\n"
+            "        consume items.consumeEmpty()\n"
+            "        items = []\n"
+            "        i = i + 1\n"
+            "    }\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ConsumeEmptyOnOneBranchLeavesTheBindingConsumedAfterTheJoin) {
+    analyze("func run(flag: Bool): Int {\n"
+            "    var items: [Int] = []\n"
+            "    if flag {\n"
+            "        consume items.consumeEmpty()\n"
+            "    }\n"
+            "    return items.count\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ConsumingOneArrayFieldLeavesItsSiblingReadable) {
+    analyze("struct Box {\n    var xs: [Int]\n    var ys: [Int]\n}\n"
+            "func run(): Int {\n"
+            "    var box = Box(xs: [], ys: [1])\n"
+            "    consume box.xs.consumeEmpty()\n"
+            "    return box.ys.count\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyze("struct Box {\n    var xs: [Int]\n    var ys: [Int]\n}\n"
+            "func run(): Int {\n"
+            "    var box = Box(xs: [], ys: [1])\n"
+            "    consume box.xs.consumeEmpty()\n"
+            "    return box.xs.count\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ConsumeEmptyEndsAnArrayOfLinearElements) {
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run() {\n    var tokens: [Token] = []\n    consume tokens.consumeEmpty()\n}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+    // An array of linear elements that is not ended is still reported.
+    analyzeToolchain(std::string(linearPrelude) + "func run() {\n    var tokens: [Token] = []\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+    // Consumed on one path only: live on the other at the exit.
+    analyzeToolchain(std::string(linearPrelude) +
+                     "func run(flag: Bool) {\n    var tokens: [Token] = []\n"
+                     "    if flag {\n        consume tokens.consumeEmpty()\n    }\n}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 } // namespace

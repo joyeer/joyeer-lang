@@ -2576,4 +2576,87 @@ TEST_F(TypeCheckingTest, ADictionaryOfLinearValuesIsRejectedInParametersResultsA
     }
 }
 
+
+// `Array.consumeEmpty` is a consuming builtin member (spec 2.6.4): it needs `consume` on an owned
+// receiver and returns Void.
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyIsAConsumingMemberReturningVoid) {
+    const std::vector<std::string> allowed {
+        "func f() { var items: [Int] = []\n consume items.consumeEmpty() }\n",
+        "func f(items: consuming [String]) { consume items.consumeEmpty() }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyNeedsConsumeOnAnOwnedReceiver) {
+    check("func f() { var items: [Int] = []\n items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f() { var items: [Int] = []\n &items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    // A borrowed parameter is not owned, so it cannot be consumed.
+    check("func f(items: [Int]) { consume items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(items: inout [Int]) { consume items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A builtin consuming member works on the receiver's own storage: a named place is required (spec 2.6.4).
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyRejectsATemporaryAnElementAndATopLevelConstant) {
+    const std::vector<std::string> rejected {
+        "func make(): [Int] { return [] }\nfunc f() { consume make().consumeEmpty() }\n",
+        "func f() { consume [1].consumeEmpty() }\n",
+        "func f() { var grid: [[Int]] = [[]]\n consume grid[0].consumeEmpty() }\n",
+        "let table: [Int] = []\nfunc f() { consume table.consumeEmpty() }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyAcceptsAFieldALetBindingAndAConsumingMethodsSelf) {
+    const std::vector<std::string> allowed {
+        "struct Box {\n var xs: [Int]\n}\nfunc f() { var box = Box(xs: [])\n consume box.xs.consumeEmpty() }\n",
+        "func f() { let items: [Int] = []\n consume items.consumeEmpty() }\n",
+        "struct Box {\n var xs: [Int]\n consuming func end() { consume self.xs.consumeEmpty() }\n}\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyOnAFieldOfABorrowedStructIsRejected) {
+    const std::vector<std::string> rejected {
+        "struct Box {\n var xs: [Int]\n}\nfunc f(box: Box) { consume box.xs.consumeEmpty() }\n",
+        "struct Box {\n var xs: [Int]\n}\nfunc f(box: inout Box) { consume box.xs.consumeEmpty() }\n",
+        "struct Box {\n var xs: [Int]\n func end() { consume self.xs.consumeEmpty() }\n}\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// An unknown member has its own diagnostic; the receiver marker must not add a second one.
+TEST_F(TypeCheckingTest, AnUnknownMemberUnderConsumeReportsOnlyTheUnknownMember) {
+    check("func f() { var a = 1\n consume a.consumeEmpty() }\n");
+    EXPECT_FALSE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_FALSE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
 } // namespace

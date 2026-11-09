@@ -1934,4 +1934,54 @@ let copy = value
             joyeer::lowering::DiagnosticId::missingReturn);
 }
 
+TEST_F(IRLoweringTest, ConsumeEmptyLowersToOneInstructionOnTheArrayAddress) {
+    ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
+                                  "    var numbers: [Int] = []\n"
+                                  "    consume numbers.consumeEmpty()\n"
+                                  "}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("end"), joyeer::ir::Opcode::arrayConsumeEmpty), 1u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyNeedsExactlyOneArrayOperandAndNoResult) {
+    ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
+                                  "    var numbers: [Int] = []\n"
+                                  "    consume numbers.consumeEmpty()\n"
+                                  "}\n"));
+    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+    EXPECT_TRUE(rejects("end", joyeer::ir::Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+        instruction.operands.push_back(instruction.operands.at(0));
+    }));
+}
+
+
+TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnknownOperand) {
+    ASSERT_NO_FATAL_FAILURE(lower("func end() {\n"
+                                  "    var numbers: [Int] = []\n"
+                                  "    consume numbers.consumeEmpty()\n"
+                                  "}\n"));
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto& module) {
+        const auto intType = typeNamed(module, "Int");
+        for (auto& candidate : module.functions) {
+            for (auto& block : candidate.blocks) {
+                for (auto& other : block.instructions) {
+                    if (other.result.has_value() && other.result->id == instruction.operands.at(0)) {
+                        other.result->type = intType;
+                    }
+                }
+            }
+        }
+    }));
+    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+        instruction.targets.push_back(0);
+    }));
+    EXPECT_TRUE(rejects("end", Opcode::arrayConsumeEmpty, [](auto& instruction, auto&) {
+        instruction.operands.at(0) = 987654;
+    }));
+}
+
 } // namespace

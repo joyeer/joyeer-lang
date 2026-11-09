@@ -745,7 +745,8 @@ private:
                 // A user method's receiver follows the access convention of its
                 // `self` parameter: consuming it consumes the receiver storage.
                 const auto receiverEffect = callableSymbol != nullptr &&
-                        callableSymbol->kind == semantic::SymbolKind::method &&
+                        (callableSymbol->kind == semantic::SymbolKind::method ||
+                         callableSymbol->kind == semantic::SymbolKind::builtinMember) &&
                         callableSymbol->callable.has_value() &&
                         callableSymbol->callable->receiver.has_value() &&
                         call->callee->kind == syntax::Kind::memberExpr
