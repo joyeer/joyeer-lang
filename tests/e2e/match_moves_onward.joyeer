@@ -1,0 +1,54 @@
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+enum Slot {
+    Full(Handle),
+    Empty,
+}
+
+enum Both {
+    Pair(String, Handle),
+    Nope,
+}
+
+enum Outer {
+    Wrap(Both),
+    Plain,
+}
+
+func make(id: Int): Slot {
+    return .Full(Handle(id: id))
+}
+
+func pairOf(id: Int): Outer {
+    return .Wrap(.Pair("name", Handle(id: id)))
+}
+
+func serve(handle: consuming Handle) {
+    print(value: 100)
+}
+
+func main() {
+    match make(id: 1) {
+        .Full(handle) => serve(handle: consume handle),
+        .Empty => (),
+    }
+
+    var list: [Handle] = []
+    match make(id: 2) {
+        .Full(handle) => &list.append(element: consume handle),
+        .Empty => (),
+    }
+    print(value: list.count)
+
+    match pairOf(id: 3) {
+        .Wrap(.Pair(name, handle)) => print(value: name),
+        .Wrap(.Nope) => (),
+        .Plain => (),
+    }
+}

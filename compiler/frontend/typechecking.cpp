@@ -2735,6 +2735,12 @@ private:
                 return isPlaceExpression(
                         std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
                                 ->expression);
+            case syntax::Kind::accessExpr: {
+                // `&x` still names the storage of `x`; only `consume x` moves it.
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+                if (access->marker != nullptr && access->marker->kind == kwConsume) return false;
+                return isPlaceExpression(access->operand);
+            }
             case syntax::Kind::subscriptExpr:
                 return true;
             case syntax::Kind::nameExpr:
@@ -2746,6 +2752,7 @@ private:
                         : nullptr;
                 if (symbol == nullptr) return false;
                 return symbol->kind == semantic::SymbolKind::binding ||
+                        symbol->kind == semantic::SymbolKind::patternBinding ||
                         symbol->kind == semantic::SymbolKind::parameter ||
                         symbol->kind == semantic::SymbolKind::structureField;
             }
@@ -2895,7 +2902,10 @@ private:
         }
         const auto* symbol = model->semanticModelValue->symbol(path->root);
         if (symbol == nullptr) return false;
-        if (symbol->kind == semantic::SymbolKind::binding) return true;
+        if (symbol->kind == semantic::SymbolKind::binding ||
+            symbol->kind == semantic::SymbolKind::patternBinding) {
+            return true;
+        }
         if (symbol->kind != semantic::SymbolKind::parameter ||
             !symbol->declaration.has_value()) {
             return false;
@@ -3197,7 +3207,29 @@ private:
         const auto binds = std::any_of(
                 expression->arms.begin(), expression->arms.end(),
                 [this](const auto& arm) { return patternBindsNoncopyable(arm->pattern); });
-        if (!binds || !isPlaceExpression(expression->scrutinee)) return;
+        if (!binds) return;
+        for (const auto& arm : expression->arms) {
+            // Binding the whole scrutinee would copy or move all of it; match its cases instead.
+            if (arm->pattern != nullptr && arm->pattern->kind == syntax::Kind::bindingPattern &&
+                patternBindsNoncopyable(arm->pattern)) {
+                report(
+                        TypeCheckingDiagnosticId::copyOfNoncopyable,
+                        arm->pattern->span,
+                        "a pattern cannot bind a noncopyable value as a whole",
+                        "match its cases and bind the payloads, or consume the value in a call");
+            }
+        }
+        auto scrutinee = expression->scrutinee;
+        while (scrutinee != nullptr && scrutinee->kind == syntax::Kind::parenthesizedExpr) {
+            scrutinee = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(scrutinee)->expression;
+        }
+        bool consumes = false;
+        if (scrutinee != nullptr && scrutinee->kind == syntax::Kind::accessExpr) {
+            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(scrutinee);
+            consumes = access->marker != nullptr && access->marker->kind == kwConsume;
+            scrutinee = access->operand;
+        }
+        if (consumes || !isPlaceExpression(scrutinee)) return;
         report(
                 TypeCheckingDiagnosticId::copyOfNoncopyable,
                 expression->scrutinee->span,

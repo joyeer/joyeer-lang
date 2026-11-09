@@ -1370,5 +1370,30 @@ TEST_F(SemanticAnalysisTest, AMoveInOneBranchLeavesTheSourceConsumedAfterTheJoin
     EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
             << joyeer::analysis::dump(result.diagnostics);
 }
+// A binding that a pattern moves out owns its value, so moving it onward ends its ownership.
+TEST_F(SemanticAnalysisTest, MovingAMatchBindingOnwardConsumesIt) {
+    analyze("struct Handle {\n    var id: Int\n    deinit() { }\n}\n"
+            "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
+            "func take(handle: consuming Handle) { }\n"
+            "func run(slot: consuming Slot) {\n"
+            "    match consume slot {\n"
+            "        .Full(handle) => { take(handle: consume handle)\n take(handle: consume handle) },\n"
+            "        .Empty => (),\n"
+            "    }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, MatchConsumeEndsTheScrutineesOwnership) {
+    analyze("struct Handle {\n    var id: Int\n    deinit() { }\n}\n"
+            "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
+            "func run(slot: consuming Slot) {\n"
+            "    match consume slot { .Full(_) => (), .Empty => () }\n"
+            "    match consume slot { .Full(_) => (), .Empty => () }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
 
 } // namespace

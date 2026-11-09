@@ -2226,7 +2226,15 @@ private:
         if (movesPayloads) {
             auto operand = expression->scrutinee;
             if (operand->kind == syntax::Kind::accessExpr) {
-                operand = std::static_pointer_cast<syntax::AccessExprSyntax>(operand)->operand;
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(operand);
+                if (access->marker == nullptr || access->marker->kind != kwConsume) {
+                    report(
+                            DiagnosticId::ownershipViolation,
+                            operand->span,
+                            "only 'consume' can move a noncopyable payload out of a place");
+                    return std::nullopt;
+                }
+                operand = access->operand;
             }
             if (isAddressable(operand)) {
                 scrutineeAddress = lowerAddress(operand);
@@ -2445,7 +2453,11 @@ private:
         if (!caseSymbol.has_value()) return;
         for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
             const auto& payloadPattern = enumPattern->arguments[index]->pattern;
-            if (!patternBindsNoncopyable(payloadPattern)) continue;
+            if (payloadPattern == nullptr ||
+                (payloadPattern->kind != syntax::Kind::bindingPattern &&
+                 payloadPattern->kind != syntax::Kind::enumCasePattern)) {
+                continue;
+            }
             const auto payloadType = model->typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
             auto instruction = makeInstruction(ir::Opcode::payloadAddress, payloadPattern->span);
@@ -2458,6 +2470,17 @@ private:
             if (payloadPattern->kind == syntax::Kind::bindingPattern) {
                 const auto symbol = model->semanticModel()->declaredSymbol(payloadPattern);
                 if (!symbol.has_value()) continue;
+                if (model->isCopyable(*payloadType)) {
+                    // A copyable payload beside a moved one still binds by copy.
+                    const auto loaded = emitValue(
+                            ir::Opcode::load,
+                            *payloadType,
+                            ir::ValueCategory::value,
+                            { payloadAddress.id },
+                            payloadPattern->span);
+                    bindPattern(payloadPattern, loaded);
+                    continue;
+                }
                 const auto taken = emitValue(
                         ir::Opcode::take,
                         *payloadType,
@@ -2479,17 +2502,17 @@ private:
         if (pattern == nullptr) return;
         if (address.has_value() && patternBindsNoncopyable(pattern)) {
             bindMovedPayloads(pattern, *address);
+            return;
         }
         if (pattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (!symbol.has_value()) return;
             if (!model->isCopyable(value.type)) {
-                // A binding is a copy of the matched payload; owning it needs the consuming
-                // pattern bindings of decision 0015 (P2b), so refuse instead of destroying twice.
+                // Type checking rejects this; a copy here would destroy the value twice.
                 report(
-                        DiagnosticId::unsupportedSyntax,
+                        DiagnosticId::ownershipViolation,
                         pattern->span,
-                        "a pattern cannot bind a noncopyable value yet");
+                        "a pattern cannot copy a noncopyable value");
                 return;
             }
             if (requiresDestroy(value.type)) {
@@ -2532,8 +2555,6 @@ private:
                 payloadPattern->kind != syntax::Kind::enumCasePattern) {
                 continue;
             }
-            // A payload that is moved out was bound above; the rest bind by copy.
-            if (address.has_value() && patternBindsNoncopyable(payloadPattern)) continue;
             const auto payloadType = model->typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
             const auto payload = emitExtractPayload(

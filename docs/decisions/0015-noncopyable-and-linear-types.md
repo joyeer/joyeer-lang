@@ -185,7 +185,8 @@ what remains of stage 9 is the full `scripts/validate.py` acceptance run (Releas
    then destroys the fields. Source and debug scopes of the body are preserved.
    *Implemented as* a branch on the live flag in the generated destroy helper that calls the
    deinit function, then the existing reverse-order field destruction; helper bodies are
-   emitted after all source functions are declared. The IR wire version is 11.
+   emitted after all source functions are declared. The IR wire version is 11 for the `deinit` change and 12 once the `array_remove_last` and
+   `payload_address` opcodes were added.
 8. **System and the example.** Add `deinit` to the handle structs, adjust their close
    operations, and update the tests and the web server.
    *Implemented as* `deinit` on `TcpListener` and `TcpConnection` (`var handle`, closed by

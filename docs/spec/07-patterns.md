@@ -84,8 +84,10 @@ The binding is an owning local of its arm: it is destroyed when the arm ends
 unless the arm moves it on (`consume connection`). Payloads the pattern does not
 bind, including those matched by `_`, stay in the scrutinee and are destroyed
 with it. Matching a place without `consume` while binding a noncopyable payload
-is `type-checking.copy-of-noncopyable`. A `match consume x` consumes all of `x`:
-`x` may not be read again until it is reinitialized. **Implementation status:**
+is `type-checking.copy-of-noncopyable`, and so is binding the whole noncopyable scrutinee
+with a bare identifier pattern. A `match consume x` ends the ownership of `x`: it may not be read
+again until it is reinitialized, though payloads no arm bound stay in its storage until it is
+reassigned or leaves scope. **Implementation status:**
 implemented for enum payloads, including nested enum patterns.
 
 ### 7.2 Alternative patterns

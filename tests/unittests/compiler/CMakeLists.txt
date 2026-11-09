@@ -1015,6 +1015,9 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EMatchMoves match_moves
             "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
     add_joyeer_native_regression(
+            E2EMatchMovesOnward match_moves_onward
+            "100\n1\n1\nname\n3\n2\n")
+    add_joyeer_native_regression(
             E2ERegressionShortCircuit regression_lowering_short_circuit
             "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
     add_joyeer_native_regression(

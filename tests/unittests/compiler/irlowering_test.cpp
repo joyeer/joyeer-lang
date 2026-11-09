@@ -315,6 +315,106 @@ TEST_F(IRLoweringTest, AMatchThatBindsOnlyCopyablePayloadsStillCopiesThem) {
     EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::payloadAddress), 0u);
 }
 
+// The verifier rules of the array_remove_last and payload_address instructions, one malformed
+// module per rule.
+class NewOpcodeVerifierTest : public IRLoweringTest {
+protected:
+    void lowerPrograms() {
+        ASSERT_NO_FATAL_FAILURE(lower(
+                "struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
+                "func pop(): Int? {\n    var numbers: [Int] = [1]\n    return &numbers.removeLast()\n}\n"
+                "func peek(slot: consuming Slot): Int {\n"
+                "    return match consume slot {\n        .Full(handle) => handle.fd,\n        .Empty => 0,\n    }\n}\n"));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    }
+
+    // True when the verifier rejects the module after `mutate` changed the first `opcode`
+    // instruction of `name`.
+    template<class Mutate>
+    bool rejects(const std::string& name, joyeer::ir::Opcode opcode, Mutate&& mutate) {
+        auto module = *result.module;
+        for (auto& candidate : module.functions) {
+            if (candidate.name != name) continue;
+            for (auto& block : candidate.blocks) {
+                for (auto& instruction : block.instructions) {
+                    if (instruction.opcode != opcode) continue;
+                    mutate(instruction, module);
+                    return !joyeer::ir::Verifier().verify(module).succeeded();
+                }
+            }
+        }
+        ADD_FAILURE() << "no " << name << " instruction to mutate";
+        return false;
+    }
+
+    static joyeer::ir::TypeId typeNamed(const joyeer::ir::Module& module, const std::string& name) {
+        return std::find_if(module.types.begin(), module.types.end(),
+                [&name](const auto& type) { return type.name == name; })->id;
+    }
+};
+
+TEST_F(NewOpcodeVerifierTest, TheLoweredModuleVerifies) {
+    lowerPrograms();
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastNeedsExactlyOneOperand) {
+    lowerPrograms();
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+        instruction.operands.push_back(instruction.operands.front());
+    }));
+}
+
+TEST_F(NewOpcodeVerifierTest, ArrayRemoveLastNeedsAnOptionalOfTheElementType) {
+    lowerPrograms();
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Int");
+    }));
+    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Handle");
+    }));
+    EXPECT_TRUE(rejects("pop", Opcode::arrayRemoveLast, [](auto& instruction, auto&) {
+        instruction.result->category = joyeer::ir::ValueCategory::address;
+    }));
+}
+
+TEST_F(NewOpcodeVerifierTest, PayloadAddressNeedsAKnownCaseAndAValidIndex) {
+    lowerPrograms();
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto&) {
+        instruction.integerValue = 7;
+    }));
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto&) {
+        instruction.integerValue = -1;
+    }));
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto&) {
+        instruction.symbol = 987654;
+    }));
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto&) {
+        instruction.symbol.reset();
+    }));
+}
+
+TEST_F(NewOpcodeVerifierTest, PayloadAddressNeedsAnAddressOfTheEnumAndAnAddressResult) {
+    lowerPrograms();
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto&) {
+        instruction.result->category = joyeer::ir::ValueCategory::value;
+    }));
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Int");
+    }));
+    EXPECT_TRUE(rejects("peek", Opcode::payloadAddress, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+}
+
 TEST_F(IRLoweringTest, TheVerifierRejectsADeinitWithTheWrongSignature) {
     ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
                                   "func other(): Int { return 1 }\n"));

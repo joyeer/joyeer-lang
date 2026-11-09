@@ -2427,4 +2427,44 @@ TEST_F(TypeCheckingTest, AMatchCannotBindANoncopyablePayloadOutOfAPlaceWithoutCo
             << joyeer::typing::dump(checking.diagnostics);
 }
 
+TEST_F(TypeCheckingTest, AMatchBindingOwnsItsPayloadAndCanBeMovedOnward) {
+    const std::vector<std::string> allowed {
+        "func take(handle: consuming Handle) { }\n"
+        "func f() { match make() { .Full(h) => take(handle: consume h), .Empty => () } }\n",
+        "struct Holder { var inner: Handle }\n"
+        "func f(): Holder? { match make() { .Full(h) => return .Some(Holder(inner: consume h)), .Empty => return .None } }\n",
+        "func f() { var items: [Handle] = []\n"
+        " match make() { .Full(h) => &items.append(element: consume h), .Empty => () } }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(std::string(slotPrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AnAmpersandDoesNotHideAPlaceFromTheMovedBindingCheck) {
+    const std::vector<std::string> copies {
+        "func f(slot: Slot): Int { return match &slot { .Full(h) => h.fd, .Empty => 0 } }\n",
+        "func f() { let slot = make()\n match (&slot) { .Full(h) => print(value: h.fd), .Empty => () } }\n",
+        // a bound handle is a place too, so matching or copying it needs `consume`
+        "func f() { match make() { .Full(h) => print(value: h.fd), .Empty => () } }\n"
+        "func g() { let o: Handle? = .Some(Handle(fd: 1))\n match o { .Some(h) => print(value: h.fd), .None => () } }\n",
+        "func f() { match make() { .Full(h) => { let k = h }, .Empty => () } }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(slotPrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AWholeNoncopyableScrutineeCannotBeBoundByAPattern) {
+    check(std::string(slotPrelude) +
+          "func f() { match make() { other => (), } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
 } // namespace
