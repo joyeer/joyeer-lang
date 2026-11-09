@@ -59,12 +59,14 @@ bool producesValue(Opcode opcode) {
         case Opcode::integerFits:
         case Opcode::constructStruct:
         case Opcode::constructArray:
+        case Opcode::arrayRemoveLast:
         case Opcode::constructDictionary:
         case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
         case Opcode::extractField:
         case Opcode::constructEnum:
         case Opcode::extractPayload:
+        case Opcode::payloadAddress:
         case Opcode::stringUtf8:
         case Opcode::count:
         case Opcode::subscript:
@@ -1887,6 +1889,34 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::arrayRemoveLast:
+                        if (requireShape(1, 0) && operands[0] != nullptr && instruction.result.has_value()) {
+                            const auto* arrayType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            const auto* resultType = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type)
+                                    : nullptr;
+                            const auto matches =
+                                    operands[0]->category == ValueCategory::address &&
+                                    instruction.result->category == ValueCategory::value &&
+                                    arrayType != nullptr &&
+                                    arrayType->kind == typing::TypeKind::array &&
+                                    arrayType->arguments.size() == 1 &&
+                                    resultType != nullptr &&
+                                    resultType->kind == typing::TypeKind::optional &&
+                                    resultType->arguments.size() == 1 &&
+                                    resultType->arguments[0] == arrayType->arguments[0];
+                            if (!matches) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "array remove-last requires an array address and an Optional of its element type");
+                            }
+                        }
+                        break;
                     case Opcode::dictionaryGet:
                         if (requireShape(2, 0) && operands[0] != nullptr &&
                             operands[1] != nullptr && instruction.result.has_value()) {
@@ -2002,6 +2032,29 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 block.id,
                                 location,
                                 "enum payload extraction does not match its case definition");
+                        }
+                        break;
+                        }
+                        case Opcode::payloadAddress: {
+                        const auto shapeMatches = requireShape(1, 0);
+                        const auto* enumCase = shapeMatches && operands[0] != nullptr &&
+                            instruction.symbol.has_value()
+                            ? enumCaseFor(operands[0]->type, *instruction.symbol)
+                            : nullptr;
+                        const auto index = instruction.integerValue;
+                        const auto indexIsValid = enumCase != nullptr && index >= 0 &&
+                            static_cast<size_t>(index) < enumCase->payloadTypes.size();
+                        if (!indexIsValid || !instruction.result.has_value() ||
+                            operands[0]->category != ValueCategory::address ||
+                            instruction.result->category != ValueCategory::address ||
+                            instruction.result->type !=
+                                enumCase->payloadTypes[static_cast<size_t>(index)]) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "enum payload address does not match its case definition");
                         }
                         break;
                         }
@@ -2286,6 +2339,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
         case Opcode::arrayAppend: return "array_append";
+        case Opcode::arrayRemoveLast: return "array_remove_last";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -2293,6 +2347,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
         case Opcode::extractPayload: return "extract_payload";
+        case Opcode::payloadAddress: return "payload_address";
         case Opcode::stringUtf8: return "string_utf8";
         case Opcode::count: return "count";
         case Opcode::subscript: return "subscript";
@@ -2549,6 +2604,7 @@ std::string dump(const Module& module) {
                             out << ' ' << valueName(instruction.operands[0]);
                         }
                         break;
+                    case Opcode::arrayRemoveLast:
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
@@ -2602,6 +2658,7 @@ std::string dump(const Module& module) {
                             out << ' ' << valueName(instruction.operands[0]);
                         }
                         break;
+                    case Opcode::payloadAddress:
                     case Opcode::extractPayload:
                         if (!instruction.operands.empty()) {
                             out << ' ' << valueName(instruction.operands[0]);

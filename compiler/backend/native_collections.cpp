@@ -148,6 +148,36 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
                     {argument(0), unit(elementId) ? nullPointer() : spill(argument(1))});
             return true;
         }
+        case Opcode::arrayRemoveLast: {
+            const auto id = instruction.result->type;
+            const auto& cases = enumerations.at(id)->cases;
+            size_t someTag = cases.size();
+            size_t noneTag = cases.size();
+            for (size_t index = 0; index < cases.size(); ++index) {
+                if (cases[index].name == "Some") someTag = index;
+                if (cases[index].name == "None") noneTag = index;
+            }
+            if (someTag == cases.size() || noneTag == cases.size()) return false;
+            const auto arrayId = values.at(instruction.operands[0]).type;
+            const auto elementId = type(arrayId).arguments.at(0);
+            auto* address = stack(resultType());
+            builder.CreateStore(llvm::Constant::getNullValue(resultType()), address);
+            auto* tagAddress = field(resultType(), address, 0);
+            builder.CreateStore(integer(noneTag, 32), tagAddress);
+            // The runtime moves the element's bytes straight into the payload, so ownership
+            // passes to the `Some` without a clone; the tag says whether there was one.
+            auto* removed = call("joyeer_array_remove_last_abi", builder.getInt64Ty(),
+                    {argument(0), unit(elementId) ? nullPointer() : payload(resultType(), address)});
+            auto* some = llvm::BasicBlock::Create(context(), "array.remove.some." + temporary(), activeFunction);
+            auto* done = llvm::BasicBlock::Create(context(), "array.remove.done." + temporary(), activeFunction);
+            builder.CreateCondBr(builder.CreateICmpNE(removed, integer(0), temporary()), some, done);
+            builder.SetInsertPoint(some);
+            builder.CreateStore(integer(someTag, 32), tagAddress);
+            builder.CreateBr(done);
+            builder.SetInsertPoint(done);
+            result = builder.CreateLoad(resultType(), address);
+            return true;
+        }
         case Opcode::constructDictionary: {
             const auto& arguments = type(instruction.result->type).arguments;
             const auto keyId = arguments.at(0);

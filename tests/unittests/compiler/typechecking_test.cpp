@@ -2359,4 +2359,72 @@ TEST_F(TypeCheckingTest, AllowsAnIfOrMatchThatProducesFreshNoncopyableValues) {
     }
 }
 
+// `Array.removeLast` gives back the last element as an Optional of the element type.
+TEST_F(TypeCheckingTest, ArrayRemoveLastReturnsAnOptionalOfTheElementType) {
+    check("func f() {\n"
+          "    var numbers: [Int] = [1, 2]\n"
+          "    let last = &numbers.removeLast()\n"
+          "    var words: [String] = []\n"
+          "    let word = &words.removeLast()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[1])), "Int?");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[3])), "String?");
+}
+
+TEST_F(TypeCheckingTest, ArrayRemoveLastNeedsAMutableReceiver) {
+    check("func f() { let numbers: [Int] = [1]\n let last = &numbers.removeLast() }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func f() { var numbers: [Int] = [1]\n let last = numbers.removeLast() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ArrayRemoveLastGivesBackANoncopyableElementAsATemporary) {
+    check(std::string(handlePrelude) +
+          "func f() { var items: [Handle] = []\n let popped = &items.removeLast() }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // The Optional it returns holds a handle, so copying it is still an error.
+    check(std::string(handlePrelude) +
+          "func f() { var items: [Handle] = []\n let popped = &items.removeLast()\n let again = popped }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A pattern may bind a noncopyable payload only by moving it out of an owned scrutinee.
+constexpr const char* slotPrelude =
+        "struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+        "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
+        "func make(): Slot { return .Full(Handle(fd: 1)) }\n";
+
+TEST_F(TypeCheckingTest, AMatchMayBindANoncopyablePayloadOutOfATemporaryOrAConsumedPlace) {
+    const std::vector<std::string> allowed {
+        "func f(): Int { return match make() { .Full(h) => h.fd, .Empty => 0 } }\n",
+        "func f(slot: consuming Slot): Int { return match consume slot { .Full(h) => h.fd, .Empty => 0 } }\n",
+        "func f() { let slot = make()\n match consume slot { .Full(h) => print(value: h.fd), .Empty => () } }\n",
+        // a wildcard binds nothing, so a place may be matched without moving
+        "func f(slot: Slot): Int { return match slot { .Full(_) => 1, .Empty => 0 } }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(std::string(slotPrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AMatchCannotBindANoncopyablePayloadOutOfAPlaceWithoutConsume) {
+    check(std::string(slotPrelude) +
+          "func f(slot: Slot): Int { return match slot { .Full(h) => h.fd, .Empty => 0 } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+    // `consume` still needs an owning local or consuming parameter.
+    check(std::string(slotPrelude) +
+          "func f(slot: Slot): Int { return match consume slot { .Full(h) => h.fd, .Empty => 0 } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
 } // namespace

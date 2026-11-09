@@ -1009,6 +1009,12 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EDeinitMoves deinit_moves
             "10\n20\n30\n40\n5\n50\n60\n7\n6\n4\n3\n2\n1\n")
     add_joyeer_native_regression(
+            E2EArrayRemoveLast array_remove_last
+            "3\n2\n-1\nbb\n1\n2\n3\n2\n1\n")
+    add_joyeer_native_regression(
+            E2EMatchMoves match_moves
+            "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
+    add_joyeer_native_regression(
             E2ERegressionShortCircuit regression_lowering_short_circuit
             "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
     add_joyeer_native_regression(

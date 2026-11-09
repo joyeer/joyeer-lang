@@ -707,6 +707,16 @@ private:
                 std::move(appendSignature));
         symbol(append).isMutable = true;
 
+        // `removeLast()` gives back the last element as `Optional<T>`, or `.None` when empty; the
+        // element type comes from the receiver, as for `Dict.get`.
+        const auto removeLast = declareBuiltinMember(
+                arrayType,
+                SymbolKind::builtinMember,
+                "removeLast",
+                optionalType,
+                CallableSignature { CallableKind::function, true, {} });
+        symbol(removeLast).isMutable = true;
+
         CallableSignature singlePayload {
             CallableKind::enumCase,
             true,

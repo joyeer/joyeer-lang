@@ -638,6 +638,16 @@ private:
                 };
                 continue;
             }
+            if (symbol.name == "removeLast" && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    {},
+                    model->typeContext.anyType(),
+                };
+                continue;
+            }
             if (symbol.name == "utf8" && symbol.callable.has_value()) {
                 const auto result = model->typeContext.arrayType(
                         model->typeContext.uint8Type());
@@ -2067,6 +2077,11 @@ private:
                 baseType != nullptr && baseType->kind == TypeKind::array &&
                 baseType->arguments.size() == 1) {
                 receiverArgumentType = baseType->arguments[0];
+            } else if (semanticTarget->name == "removeLast" &&
+                       baseType != nullptr && baseType->kind == TypeKind::array &&
+                       baseType->arguments.size() == 1) {
+                const auto elementType = baseType->arguments[0];
+                receiverResultType = model->typeContext.optionalType(elementType);
             } else if (semanticTarget->name == "get" &&
                        baseType != nullptr && baseType->kind == TypeKind::dictionary &&
                        baseType->arguments.size() == 2) {
@@ -3136,6 +3151,8 @@ private:
     TypeId checkMatch(
             const syntax::MatchExprSyntax::Ptr& expression,
             std::optional<TypeId> expected) {
+        // `match consume x` moves the scrutinee into the arms.
+        permitMove(expression->scrutinee);
         const auto scrutinee = checkExpression(expression->scrutinee).value_or(
                 model->typeContext.errorType());
         std::vector<PatternCoverage> coverage;
@@ -3156,7 +3173,36 @@ private:
         }
 
         if (validPatterns) checkMatchExhaustiveness(expression, scrutinee, coverage);
+        requireOwnedScrutineeForMovedBindings(expression);
         return result.value_or(model->typeContext.voidType());
+    }
+
+    bool patternBindsNoncopyable(const syntax::PatternPtr& pattern) const {
+        if (pattern == nullptr) return false;
+        if (pattern->kind == syntax::Kind::bindingPattern) {
+            const auto type = model->typeOf(pattern);
+            return type.has_value() && model->noncopyableReason(*type).has_value();
+        }
+        if (pattern->kind != syntax::Kind::enumCasePattern) return false;
+        for (const auto& argument :
+             std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern)->arguments) {
+            if (patternBindsNoncopyable(argument->pattern)) return true;
+        }
+        return false;
+    }
+
+    // A pattern that binds a noncopyable value takes it out of the scrutinee, so the scrutinee
+    // must be an owned temporary or `consume x`; matching a place would copy the value.
+    void requireOwnedScrutineeForMovedBindings(const syntax::MatchExprSyntax::Ptr& expression) {
+        const auto binds = std::any_of(
+                expression->arms.begin(), expression->arms.end(),
+                [this](const auto& arm) { return patternBindsNoncopyable(arm->pattern); });
+        if (!binds || !isPlaceExpression(expression->scrutinee)) return;
+        report(
+                TypeCheckingDiagnosticId::copyOfNoncopyable,
+                expression->scrutinee->span,
+                "a pattern binds a noncopyable value out of this place, which would copy it",
+                "match on a temporary, or move the value in with 'match consume ...'");
     }
 
     PatternCoverage checkPattern(

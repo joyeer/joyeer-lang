@@ -134,11 +134,11 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
       pattern-binding and `Array` gaps below remain): `Result<TcpConnection, NetworkError>`,
       `Optional` handles and arrays of handles, `System`'s internal copies, the tests, the
       web-server example, and `Copyable` (§20.5).
-- [ ] Resolve 0012's open question 1: let a `match` pattern binding on an owned
-      temporary be consumed, so the worker loop and `tcpCloseConnection(consume ...)` work
-      without `?`.
-- [ ] Add `Array` element removal (`removeLast`) and decide on the consuming element
-      accessor (§4.5.1), which any array of tasks or of connections needs.
+- [x] Resolve 0012's open question 1: a `match` pattern binding on an owned temporary or
+      `match consume x` moves a noncopyable payload (spec 7.1.2), so the worker loop and
+      `tcpCloseConnection(consume ...)` work without `?`.
+- [x] Add `Array.removeLast` (spec 2.6.2). The consuming element accessor (§4.5.1) is deferred;
+      `removeLast` covers taking connections and tasks out of an array.
 
 **P2c: linear types and builtin generics**
 

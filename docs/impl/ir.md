@@ -129,8 +129,10 @@ The current instruction set covers:
 - direct source and external calls, including the external builtins (`print`, byte conversions) and native bindings;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
-- enum construction and payload extraction;
+- enum construction, payload extraction (`extract_payload`), and payload addresses
+  (`payload_address`, which a moving `match` binding takes from);
 - mutating `array_append` with an addressable receiver and transferred element;
+- mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned
@@ -249,6 +251,9 @@ Each arm has its own basic block. Payload bindings use `extract_payload`, then
 a local stack slot. Nontrivial bindings own independent copies, registered for
 cleanup on both normal arm exit and early return. Reassigning the original
 scrutinee cannot invalidate a binding, including nested heap-backed payloads.
+A pattern that binds a noncopyable payload cannot copy it: the scrutinee is stored (the place of
+`match consume x`, or a slot that takes over an owned temporary), the arm takes the payload with
+`payload_address` and `take`, and whatever no arm binds is destroyed with that storage.
 The LLVM backend lowers the high-level pattern list into
 tag and value tests, relying on the type checker's recursive payload coverage.
 It branches on a matching tag before interpreting payloads, and recursively

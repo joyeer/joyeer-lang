@@ -2197,8 +2197,63 @@ private:
                 expression->span);
     }
 
+    // True when a pattern binds a noncopyable value, so the match must move it out of the
+    // scrutinee instead of copying it.
+    bool patternBindsNoncopyable(const syntax::PatternPtr& pattern) const {
+        if (pattern == nullptr) return false;
+        if (pattern->kind == syntax::Kind::bindingPattern) {
+            const auto type = model->typeOf(pattern);
+            return type.has_value() && !model->isCopyable(*type);
+        }
+        if (pattern->kind != syntax::Kind::enumCasePattern) return false;
+        const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        for (const auto& argument : enumPattern->arguments) {
+            if (patternBindsNoncopyable(argument->pattern)) return true;
+        }
+        return false;
+    }
+
     std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
-        const auto scrutinee = lowerExpression(expression->scrutinee);
+        bool movesPayloads = false;
+        for (const auto& arm : expression->arms) {
+            movesPayloads = movesPayloads || patternBindsNoncopyable(arm->pattern);
+        }
+        // With a moving pattern the scrutinee needs storage to move payloads out of: the place
+        // of `match consume x`, or a slot that takes over an owned temporary. Whatever the arms
+        // do not take is destroyed with that storage.
+        std::optional<ir::Value> scrutineeAddress;
+        std::optional<ir::Value> scrutinee;
+        if (movesPayloads) {
+            auto operand = expression->scrutinee;
+            if (operand->kind == syntax::Kind::accessExpr) {
+                operand = std::static_pointer_cast<syntax::AccessExprSyntax>(operand)->operand;
+            }
+            if (isAddressable(operand)) {
+                scrutineeAddress = lowerAddress(operand);
+            } else {
+                const auto temporary = lowerExpression(expression->scrutinee);
+                if (!temporary.has_value()) return std::nullopt;
+                const auto owned = acquireOwned(*temporary, expression->scrutinee->span);
+                if (!owned.has_value()) return std::nullopt;
+                scrutineeAddress = emitValue(
+                        ir::Opcode::stackAllocate,
+                        owned->type,
+                        ir::ValueCategory::address,
+                        {},
+                        expression->scrutinee->span);
+                emitRawStore(*owned, *scrutineeAddress, expression->scrutinee->span);
+                registerOwnedStorage(*scrutineeAddress);
+            }
+            if (!scrutineeAddress.has_value()) return std::nullopt;
+            scrutinee = emitValue(
+                    ir::Opcode::load,
+                    scrutineeAddress->type,
+                    ir::ValueCategory::value,
+                    { scrutineeAddress->id },
+                    expression->scrutinee->span);
+        } else {
+            scrutinee = lowerExpression(expression->scrutinee);
+        }
         const auto resultType = model->typeOf(expression);
         if (!scrutinee.has_value() || !resultType.has_value()) return std::nullopt;
 
@@ -2236,7 +2291,7 @@ private:
                     currentDebugScope,
                     debugScopeForNode(arm, currentFunctionId));
             pushScope();
-            bindPattern(arm->pattern, *scrutinee);
+            bindPattern(arm->pattern, *scrutinee, scrutineeAddress);
             const auto value = lowerExpression(arm->body);
             if (currentBlockTerminated()) {
                 discardScopeAfterTerminator();
@@ -2363,8 +2418,68 @@ private:
         return result;
     }
 
-    void bindPattern(const syntax::PatternPtr& pattern, ir::Value value) {
+    // A binding owns its value from here to the end of the scope that holds it.
+    void storeBinding(
+            const syntax::PatternPtr& pattern,
+            semantic::SymbolId symbol,
+            ir::Value owned) {
+        const auto address = emitValue(
+                ir::Opcode::stackAllocate,
+                owned.type,
+                ir::ValueCategory::address,
+                {},
+                pattern->span,
+                symbol);
+        const auto debugVariable = ensureDebugVariable(symbol, currentFunctionId);
+        emitRawStore(owned, address, pattern->span, symbol, false, debugVariable);
+        slots[symbol] = address;
+        registerOwnedStorage(address);
+    }
+
+    // Moves the payloads that `pattern` binds and cannot copy out of the enum stored at
+    // `address`, leaving each emptied so the storage can still be destroyed whole.
+    void bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value address) {
+        if (pattern == nullptr || pattern->kind != syntax::Kind::enumCasePattern) return;
+        const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        const auto caseSymbol = model->referencedSymbol(enumPattern);
+        if (!caseSymbol.has_value()) return;
+        for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
+            const auto& payloadPattern = enumPattern->arguments[index]->pattern;
+            if (!patternBindsNoncopyable(payloadPattern)) continue;
+            const auto payloadType = model->typeOf(payloadPattern);
+            if (!payloadType.has_value()) continue;
+            auto instruction = makeInstruction(ir::Opcode::payloadAddress, payloadPattern->span);
+            instruction.result = makeValue(*payloadType, ir::ValueCategory::address);
+            instruction.operands = { address.id };
+            instruction.symbol = *caseSymbol;
+            instruction.integerValue = static_cast<int64_t>(index);
+            const auto payloadAddress = *instruction.result;
+            emit(std::move(instruction));
+            if (payloadPattern->kind == syntax::Kind::bindingPattern) {
+                const auto symbol = model->semanticModel()->declaredSymbol(payloadPattern);
+                if (!symbol.has_value()) continue;
+                const auto taken = emitValue(
+                        ir::Opcode::take,
+                        *payloadType,
+                        ir::ValueCategory::value,
+                        { payloadAddress.id },
+                        payloadPattern->span);
+                const auto owned = acquireOwned(taken, payloadPattern->span);
+                if (owned.has_value()) storeBinding(payloadPattern, *symbol, *owned);
+            } else {
+                bindMovedPayloads(payloadPattern, payloadAddress);
+            }
+        }
+    }
+
+    void bindPattern(
+            const syntax::PatternPtr& pattern,
+            ir::Value value,
+            std::optional<ir::Value> address = std::nullopt) {
         if (pattern == nullptr) return;
+        if (address.has_value() && patternBindsNoncopyable(pattern)) {
+            bindMovedPayloads(pattern, *address);
+        }
         if (pattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (!symbol.has_value()) return;
@@ -2417,6 +2532,8 @@ private:
                 payloadPattern->kind != syntax::Kind::enumCasePattern) {
                 continue;
             }
+            // A payload that is moved out was bound above; the rest bind by copy.
+            if (address.has_value() && patternBindsNoncopyable(payloadPattern)) continue;
             const auto payloadType = model->typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
             const auto payload = emitExtractPayload(
@@ -2605,6 +2722,11 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "removeLast") {
+            return lowerArrayRemoveLast(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "get") {
             return lowerDictionaryGet(expression);
         }
@@ -2711,6 +2833,33 @@ private:
                     : ValueOwnership::trivial);
         }
         if (type == model->types().voidType()) return emitUnit(expression->span);
+        return result;
+    }
+
+    std::optional<ir::Value> lowerArrayRemoveLast(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            !expression->arguments.empty()) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Array.removeLast takes no arguments");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto array = lowerAddress(member->base);
+        const auto resultType = model->typeOf(expression);
+        if (!array.has_value() || !resultType.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::arrayRemoveLast, expression->span);
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        instruction.operands = { array->id };
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        // The element moves out of the array into the result, which owns it.
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
         return result;
     }
 

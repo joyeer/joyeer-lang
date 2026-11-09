@@ -107,6 +107,8 @@ Arrays provide construction, checked indexing, mutable element projection,
 ownership-transferring append/growth, recursive clone, and reverse-order
 element destruction. The built-in
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.
+`values.removeLast()` calls `joyeer_array_remove_last_abi`, which moves the last element's bytes into the
+result payload and shortens the array without destroying the element.
 Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`;
 the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries

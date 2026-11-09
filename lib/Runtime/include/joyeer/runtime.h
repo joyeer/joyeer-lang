@@ -105,6 +105,10 @@ void joyeer_array_clone_abi(
 void joyeer_array_append_owned_abi(
     JoyeerArray* array,
     const void* element);
+// Moves the last element into `element` and returns 1, or returns 0 when the array is empty.
+int64_t joyeer_array_remove_last_abi(
+    JoyeerArray* array,
+    void* element);
 void joyeer_array_destroy_abi(JoyeerArray* array);
 
 void joyeer_dictionary_create_owned_abi(

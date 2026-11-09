@@ -275,17 +275,44 @@ TEST_F(IRLoweringTest, ReturningAnOwningLocalOfANoncopyableTypeMovesIt) {
     EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::take), 1u);
 }
 
-TEST_F(IRLoweringTest, ABindingPatternCannotYetOwnANoncopyablePayload) {
+TEST_F(IRLoweringTest, ArrayRemoveLastLowersToOneInstructionWithAnOwnedOptionalResult) {
+    ASSERT_NO_FATAL_FAILURE(lower("func pop(): Int? {\n"
+                                  "    var numbers: [Int] = [1, 2]\n"
+                                  "    return &numbers.removeLast()\n"
+                                  "}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("pop"), joyeer::ir::Opcode::arrayRemoveLast), 1u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, AMatchThatBindsANoncopyablePayloadMovesItOutOfTheScrutinee) {
     ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
                                   "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
-                                  "func peek(slot: borrowing Slot): Int {\n"
-                                  "    return match slot {\n"
+                                  "func peek(slot: consuming Slot): Int {\n"
+                                  "    return match consume slot {\n"
                                   "        .Full(handle) => handle.fd,\n"
                                   "        .Empty => 0,\n"
                                   "    }\n"
                                   "}\n"));
-    ASSERT_FALSE(result.succeeded());
-    EXPECT_NE(joyeer::lowering::dump(result.diagnostics).find("noncopyable"), std::string::npos);
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& peek = function("peek");
+    // The payload is addressed in place and taken out, never copied.
+    EXPECT_EQ(opcodeCount(peek, joyeer::ir::Opcode::payloadAddress), 1u);
+    EXPECT_EQ(opcodeCount(peek, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_GE(opcodeCount(peek, joyeer::ir::Opcode::take), 1u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, AMatchThatBindsOnlyCopyablePayloadsStillCopiesThem) {
+    ASSERT_NO_FATAL_FAILURE(lower("enum Slot {\n    Full(String),\n    Empty,\n}\n"
+                                  "func peek(slot: borrowing Slot): Int {\n"
+                                  "    return match slot {\n"
+                                  "        .Full(text) => text.count,\n"
+                                  "        .Empty => 0,\n"
+                                  "    }\n"
+                                  "}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("peek"), joyeer::ir::Opcode::payloadAddress), 0u);
 }
 
 TEST_F(IRLoweringTest, TheVerifierRejectsADeinitWithTheWrongSignature) {

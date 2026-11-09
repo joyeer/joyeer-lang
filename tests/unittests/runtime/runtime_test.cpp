@@ -248,6 +248,40 @@ TEST(RuntimeTest, TakesAndRecursivelyDestroysAppendedOwnedElements) {
     EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
 }
 
+TEST(RuntimeTest, RemovesTheLastArrayElementWithoutDestroyingIt) {
+    cloneCount = 0;
+    destroyCount = 0;
+    JoyeerArray array {};
+    joyeer_array_create_owned_abi(
+            &array, nullptr, 0, sizeof(JoyeerString), cloneString, destroyString);
+    const auto first = owned(std::string("first"));
+    const auto second = owned(std::string("second"));
+    joyeer_array_append_owned_abi(&array, &first);
+    joyeer_array_append_owned_abi(&array, &second);
+
+    JoyeerString removed {};
+    ASSERT_EQ(joyeer_array_remove_last_abi(&array, &removed), 1);
+    EXPECT_EQ(array.count, 1);
+    // The element moved out: nothing was cloned or destroyed, and the receiver owns it now.
+    EXPECT_EQ(cloneCount, 0);
+    EXPECT_EQ(destroyCount, 0);
+    EXPECT_TRUE(stringsEqual(removed, view(std::string("second"))));
+    joyeer_string_destroy_abi(&removed);
+
+    ASSERT_EQ(joyeer_array_remove_last_abi(&array, &removed), 1);
+    EXPECT_EQ(array.count, 0);
+    joyeer_string_destroy_abi(&removed);
+
+    // An empty array removes nothing and leaves the output alone.
+    JoyeerString untouched {};
+    EXPECT_EQ(joyeer_array_remove_last_abi(&array, &untouched), 0);
+    EXPECT_EQ(untouched.data, nullptr);
+
+    joyeer_array_destroy_abi(&array);
+    EXPECT_EQ(destroyCount, 0);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), 0);
+}
+
 TEST(RuntimeTest, DeepClonesAndRecursivelyDestroysArrayElements) {
     cloneCount = 0;
     destroyCount = 0;

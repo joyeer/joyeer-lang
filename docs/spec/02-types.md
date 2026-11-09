@@ -220,6 +220,26 @@ does not introduce user-defined generic methods or key enumeration. The current
 lookup is linear; owned heap-backed values may require recursive copying and
 allocation. The receiver dictionary itself is not copied by `get`.
 
+#### 2.6.2 Removing the last array element
+
+The builtin `Array<T>.removeLast()` is a mutating method with no arguments. It
+needs a mutable receiver and the `&` marker (§4.3), and returns `Optional<T>`:
+`.Some` holding the last element, which is removed from the array, or `.None`
+when the array is empty.
+
+```joyeer
+var queue: [Int] = [1, 2, 3]
+let last = &queue.removeLast()    // .Some(3); queue is now [1, 2]
+```
+
+The element moves into the result. It is neither copied nor destroyed by the
+call, so `removeLast` works for a noncopyable element (§4.1.1) and is the way to
+take one out of an array: for `[TcpConnection]` it returns an
+`Optional<TcpConnection>` that owns the handle. The result is an owned
+temporary, and a `match` that moves the payload (§7.1.2) can take the element out
+of it. **Implementation status:** implemented; the runtime
+removes the element in constant time and does not shrink the array's capacity.
+
 ### 2.8 Type inference
 
 Local bindings infer their type from the initializer when not annotated:

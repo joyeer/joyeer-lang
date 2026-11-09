@@ -252,6 +252,22 @@ the user's to run.
    descriptor until then. The spec does not define statement-level lifetime. Decide whether
    temporaries should die at the end of their statement before handles are built from them.
 
+## Owning pattern bindings and Array.removeLast (P2b)
+
+Two gaps stopped a program from owning a handle it received. A `match` binding copies its
+payload, and an `Array` could not give an element back.
+
+- **`Array<T>.removeLast()`** (spec 2.6.2) is a mutating builtin returning `Optional<T>`; the
+  element moves into the result. A consuming element accessor (open question 5) is not needed
+  for the first use and stays deferred. IR `array_remove_last`; runtime
+  `joyeer_array_remove_last_abi`.
+- **A pattern that binds a noncopyable payload moves it** (spec 7.1.2). The scrutinee must be an
+  owned temporary or `match consume x`; matching a place without `consume` is
+  `copy-of-noncopyable`. Lowering stores the scrutinee, addresses the payload (`payload_address`),
+  `take`s it into the binding, which owns it for the arm. Unbound payloads stay in the storage and
+  are destroyed with it. This resolves 0012's open question 1: the worker loop can bind a received
+  connection without `?`.
+
 ## Review findings applied
 
 The three role reviews of the first implementation (type system, IR and backend, adversarial)
