@@ -295,8 +295,10 @@ func tcpCloseListener(listener: consuming TcpListener): Result<Void, NetworkErro
 These are public functions of `System`. Arguments are borrowed and evaluated
 once in declaration order. Every successful `String` is independently owned.
 A `TcpListener` or `TcpConnection` is a handle to one operating-system
-resource. Programs must not construct, copy into a second owner, or inspect
-one; only the functions above produce and use it.
+resource. It declares a `deinit` (§3.7), so it is noncopyable (§4.1.1): a program
+cannot copy it into a second owner, and a `Result` or `Optional` that holds one is
+noncopyable too. Programs must not construct or inspect one; only the functions
+above produce and use it.
 
 #### Addresses, ports, and limits
 
@@ -406,9 +408,9 @@ releases the handle; closing again is impossible and not needed.
 
 A normal close of a connection lets bytes already accepted for sending be
 delivered before the connection ends; it neither waits for the peer nor
-discards them. A handle that is never closed stays open until the process ends.
-There is no `deinit` to do it automatically yet (decision 0015 adds one), so a long-running program
-must close every handle on every path, including error paths.
+discards them. A handle that is destroyed without an explicit close, such as one that
+goes out of scope or is dropped on an error path, is closed by its `deinit`, and a
+failure to close is not reported. Close explicitly when the result matters.
 
 #### Errors
 

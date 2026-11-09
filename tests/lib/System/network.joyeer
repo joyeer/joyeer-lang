@@ -261,6 +261,38 @@ private func testTimeouts(): Result<Int, NetworkError> {
     return .Ok(failures)
 }
 
+// Handles close when they are destroyed (decision 0015): a listener or connection that goes
+// out of scope releases its socket without an explicit close.
+private func listenAndDrop(): Result<Int, NetworkError> {
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    return tcpLocalPort(listener: listener)
+}
+
+private func connectAndDrop(port: Int): Result<Void, NetworkError> {
+    let client = tcpConnect(address: "127.0.0.1", port: port)?
+    return tcpSend(connection: client, contents: "")
+}
+
+private func testDroppedHandlesClose(): Result<Int, NetworkError> {
+    var failures = 0
+
+    // The dropped listener released its port, so the same port can be listened on again.
+    let port = listenAndDrop()?
+    failures = failures + checkCase(name: "listen on the port of a dropped listener",
+        actual: listenCase(address: "127.0.0.1", port: port, backlog: 1), expected: "ok")
+
+    // A dropped client closes its end, so the server reads the end of the stream.
+    let listener = tcpListen(address: "127.0.0.1", port: 0, backlog: 1)?
+    let live = tcpLocalPort(listener: listener)?
+    connectAndDrop(port: live)?
+    let server = tcpAccept(listener: listener, timeoutMillis: 5000)?
+    let end = tcpReceive(connection: server, maximumBytes: 64, timeoutMillis: 5000)?
+    failures = failures + checkCase(name: "dropped client ends the stream", actual: end, expected: "")
+    tcpCloseConnection(connection: consume server)?
+    tcpCloseListener(listener: consume listener)?
+    return .Ok(failures)
+}
+
 public func testNetwork(): Int {
     if !implemented() { return 0 }
     var failures = testAddressForms()
@@ -269,5 +301,6 @@ public func testNetwork(): Int {
     failures = failures + reportLoopback(label: "address in use", outcome: testAddressInUse())
     failures = failures + reportLoopback(label: "connection refused", outcome: testRefused())
     failures = failures + reportLoopback(label: "send to closed peer", outcome: testSendToClosedPeer())
+    failures = failures + reportLoopback(label: "dropped handles close", outcome: testDroppedHandlesClose())
     return failures
 }

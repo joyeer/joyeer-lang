@@ -102,33 +102,35 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
 **P2a: `deinit` and noncopyable types**
 
 - [x] Settle the 0015 fork (`deinit`).
-- [ ] Spec: amend §3.7 (struct-only `deinit` rules, implementation status), §4.1.1
+- [x] Spec: amend §3.7 (struct-only `deinit` rules, implementation status), §4.1.1
       (propagation to containers and aggregates; `Copyable` false), §4.7 (no partial moves
       out of a type with a `deinit`) and §18.6 (handles).
-- [ ] Failing tests first, one set per stage, citing the spec sections.
-- [ ] Parser: `deinit() { ... }` in a struct body; reject in an `enum`, an extension, with
+- [x] Failing tests first, one set per stage, citing the spec sections.
+- [x] Parser: `deinit() { ... }` in a struct body; reject in an `enum`, an extension, with
       parameters, with a visibility, or twice.
-- [ ] Name resolution: `self` in the body; one unnameable `deinit` per struct.
-- [ ] Type checking: the body, noncopyability on the type and its propagation, `Copyable`,
+- [x] Name resolution: `self` in the body; one unnameable `deinit` per struct.
+- [x] Type checking: the body, noncopyability on the type and its propagation, `Copyable`,
       a diagnostic at each copy site (assignment, argument, return, aggregate or array
       element), no consuming `self` or moving a field out in the body.
-- [ ] Semantic analysis: the body through the existing analysis; reject a partially
+- [x] Semantic analysis: the body through the existing analysis; reject a partially
       consumed value of a type with a `deinit`.
-- [ ] IR and lowering: lower `deinit` to an internal function; `requiresDestruction`
+- [x] IR and lowering: lower `deinit` to an internal function; `requiresDestruction`
       true; call it once per destruction, before field destruction, on overwrite and at
       scope end; keep `prepareOwned`'s copy as an assertion.
-- [ ] Backend: the generated destroy helper calls it then destroys the fields; debug
+- [x] Backend: the generated destroy helper calls it then destroys the fields; debug
       scopes preserved.
-- [ ] Stable diagnostic IDs for each rejection.
-- [ ] Build and run the compiler tests on Linux in WSL as well as on Windows (a C++
-      change needs a rebuild; the Windows build is run from an MSVC Developer shell).
+- [x] Stable diagnostic IDs for each rejection.
+- [x] Build and run the compiler tests on Linux in WSL (1222 pass).
+- [ ] Build and run them on Windows (a C++ change needs a rebuild; the Windows build is run
+      from an MSVC Developer shell), then the role reviewers and `scripts/validate.py`.
 
 **P2b: handles that close, owning what you receive, array removal**
 
-- [ ] `System`: `deinit` on `TcpConnection` and `TcpListener` that closes an open
+- [x] `System`: `deinit` on `TcpConnection` and `TcpListener` that closes an open
       handle; the explicit close functions close, report, and store an invalid handle so
-      `deinit` finds nothing (0015 question 6 checks that a consumed value may be
-      mutated). Audit what noncopyability changes: `Result<TcpConnection, NetworkError>`,
+      `deinit` finds nothing (done with P2a; a consumed parameter may be mutated). Audit
+      what noncopyability changes (the tests and the web server needed no change; the
+      pattern-binding and `Array` gaps below remain): `Result<TcpConnection, NetworkError>`,
       `Optional` handles and arrays of handles, `System`'s internal copies, the tests, the
       web-server example, and `Copyable` (§20.5).
 - [ ] Resolve 0012's open question 1: let a `match` pattern binding on an owned

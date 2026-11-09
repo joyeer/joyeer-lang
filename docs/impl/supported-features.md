@@ -56,6 +56,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | Aggregates | Concrete structs and payload enums with compiler-managed value copying and destruction |
 | Methods and extensions | Non-generic methods in `struct` and `enum` bodies and in `extension Type { ... }` of a struct or enum declared in the same module; `borrowing` (default), `mutating`, and `consuming` receivers; `self` and `Self`; receiver markers `&recv.m()` and `consume recv.m()`. Fields must be written `self.field`. See [methods](methods.md) |
 | Parameters | Default or explicit `borrowing`, `inout`, `consuming`, and `initializing`, with mandatory access markers and exclusivity checks |
+| `deinit` and noncopyable types | A `struct` may declare one `deinit() { ... }` (no parameters, `self` is a mutable receiver; it cannot be named or called). It runs once when a live value is destroyed, before its fields are destroyed in reverse order, at scope end, on overwrite and when a consumed value ends in its new owner. A struct with `deinit`, and anything that holds one (a field, an enum payload, or an `Array`, `Dict`, `Optional` or `Result` element), is noncopyable: copying it is `type-checking.copy-of-noncopyable`, and moving a field out of a `deinit` type is `semantic-analysis.partial-consume-of-deinit-type`. A `return` of an owning local moves it. Not yet: binding a noncopyable payload in a `match` pattern, taking one out of an array, and a trailing expression that moves a local. See [decision 0015](../decisions/0015-noncopyable-and-linear-types.md) |
 | Containers | Compiler-known `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` |
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
@@ -137,8 +138,8 @@ See [fern](fern.md) for current contracts and parser limits.
   ([spec §18.6](../spec/18-host.md#186-tcp-networking), provisional,
   [decision 0012](../decisions/0012-tcp-networking.md)) work on Windows and Linux;
   on macOS they return `.Other(38)`.
-- User-defined `init` / `deinit` bodies, explicit copy initializers, or
-  user-defined accessors.
+- User-defined `init` bodies, `deinit` on an `enum` or extension, explicit copy
+  initializers, or user-defined accessors.
 - Implicit-`self` field access (write `self.count`, not `count`), extensions of
   builtin types or of a type from another module, generic methods, stored
   properties in extensions, and methods on protocols (there are no protocols).

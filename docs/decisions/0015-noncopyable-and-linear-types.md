@@ -137,9 +137,8 @@ the rest as follows.
 ## Implementation outline (the `deinit` feature, stage by stage)
 
 The repository's feature workflow applies: spec, failing tests, then each stage, then
-role reviews and validation. Progress: stages 1 to 7 are implemented (verified on
-Linux; a Windows build is still to be run); a `deinit` now compiles and runs, but the
-system handles do not use it yet (stage 8). Stages, with what each must do:
+role reviews and validation. Progress: stages 1 to 8 are implemented (verified on
+Linux; a Windows build is still to be run); stage 9 is the review and acceptance run. Stages, with what each must do:
 
 1. **Spec.** Amend §3.7 (the rules above, with an implementation-status note),
    §4.1.1 (propagation and `Copyable`), §4.7 (order with partial moves forbidden) and
@@ -189,6 +188,11 @@ system handles do not use it yet (stage 8). Stages, with what each must do:
    emitted after all source functions are declared. The IR wire version is 11.
 8. **System and the example.** Add `deinit` to the handle structs, adjust their close
    operations, and update the tests and the web server.
+   *Implemented as* `deinit` on `TcpListener` and `TcpConnection` (`var handle`, closed by
+   `discard` unless it is -1); `tcpCloseConnection` and `tcpCloseListener` still close
+   explicitly, to report the result, and store -1 first so the destroy of the consumed
+   parameter does nothing. The tests add dropped-handle cases (a dropped listener frees its
+   port, a dropped client ends the stream), and the web server needed no change.
 9. **Docs and acceptance.** Update `supported-features.md`, the portable skill copy, and
    the decision records; run the role reviewers and `scripts/validate.py`.
 
@@ -233,11 +237,10 @@ the user's to run.
 4. **Partial consumption of a struct that contains a linear field.** Allowed through
    the existing projection tracking, or rejected in v1?
 5. **`removeLast` versus a consuming accessor** as the first array operation.
-6. **Mutating a consumed value to defuse its `deinit`.** Settled by implementation: no
-   sentinel is needed. A consumed value is destroyed once where it ends up, and `take`
-   clears the hidden live flag in the source, so an explicit close is a `consuming`
-   parameter that lets the value be destroyed. The close functions of stage 8 drop the
-   `-1` write.
+6. **Mutating a consumed value to defuse its `deinit`.** Settled by implementation: a
+   consuming parameter is mutable, so a close that reports its result closes the handle,
+   writes `-1`, and lets the parameter be destroyed; the `deinit` skips `-1`. A move needs no
+   sentinel, because `take` clears the hidden live flag in the source.
 7. **Moving a noncopyable value out through a trailing expression.** `return x` is a move;
    a block or function whose last expression is a noncopyable local is still lowered as a
    copy and is refused by `prepareOwned`. Decide whether to treat it as a move or require

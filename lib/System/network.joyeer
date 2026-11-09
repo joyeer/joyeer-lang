@@ -21,14 +21,24 @@ public enum NetworkError {
     Other(Int),
 }
 
-// A listening socket. The handle is not visible outside System.
+// A listening socket. The handle is not visible outside System. A listener owns its socket
+// (decision 0015): it is noncopyable, and destroying it closes the socket. An explicit close
+// stores -1, which tells the `deinit` there is nothing left to close.
 public struct TcpListener {
-    let handle: Int
+    var handle: Int
+
+    deinit() {
+        if self.handle >= 0 { discard(handle: self.handle) }
+    }
 }
 
-// A connected socket. The handle is not visible outside System.
+// A connected socket, owned and closed the same way.
 public struct TcpConnection {
-    let handle: Int
+    var handle: Int
+
+    deinit() {
+        if self.handle >= 0 { discard(handle: self.handle) }
+    }
 }
 
 private let maximumReceiveBytes: Int = 1048576
@@ -70,7 +80,8 @@ private func failed(status: Int): NetworkError {
     return classifyNetworkError(code: 0 - status)
 }
 
-// Closes a socket after another failure, which is the one reported.
+// Closes a socket whose close result is not reported: after another failure, which is the one
+// reported, or when the owning value is destroyed.
 private func discard(handle: Int) {
     if nativeTcpClose(handle: handle) < 0 { }
 }
@@ -186,12 +197,14 @@ public func tcpSend(connection: TcpConnection, contents: String): Result<Void, N
 
 public func tcpCloseConnection(connection: consuming TcpConnection): Result<Void, NetworkError> {
     let status = nativeTcpClose(handle: connection.handle)
+    &connection.handle = -1
     if status < 0 { return .Err(failed(status: status)) }
     return .Ok(())
 }
 
 public func tcpCloseListener(listener: consuming TcpListener): Result<Void, NetworkError> {
     let status = nativeTcpClose(handle: listener.handle)
+    &listener.handle = -1
     if status < 0 { return .Err(failed(status: status)) }
     return .Ok(())
 }
