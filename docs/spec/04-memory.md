@@ -72,6 +72,20 @@ Such a value may still be passed through a consuming boundary or produced as
 an owned temporary. A future explicit copy-initializer design may let a type
 opt back into copying; it is not part of v0.1.
 
+##### Linear types (provisional)
+
+A **linear** type is a noncopyable type whose value must be explicitly ended: it is never
+destroyed implicitly. The builtin `JoinHandle<R>` (§2.6, with the concurrency design in
+[decision 0013](../decisions/0013-concurrency-model.md)) is the only linear type of the first
+implementation. A `struct` or `enum` that holds a linear field or payload, and an `Array`,
+`Optional` or `Result` whose element, payload or error type is linear, is itself linear; a `Dict`
+key or value may not be. A linear type is noncopyable, so it does not satisfy `Copyable`
+(§20.5), and it may not declare `deinit`; a type with `deinit` may not hold a linear field.
+
+A linear binding must not be **live** at any exit of its scope (§4.7). **Implementation
+status:** specified; not implemented (decision 0015, "Linear types (P2c)").
+
+
 #### 4.1.2 Ownership state vs. access effect (two axes)
 
 Two **orthogonal** classifications govern every binding. Keeping them apart
@@ -438,6 +452,39 @@ public func work() {
   // ...
 }  // f.deinit() runs exactly here
 ```
+
+
+#### 4.7.1 Linear values (provisional)
+
+Rule 1 of §4.7 does not apply to a linear value (§4.1.1): leaving the scope of a binding that
+may still hold one is a compile-time error, `semantic-analysis.linear-not-consumed`, reported at
+the exit. A binding is **live** at a point if some path to it has initialised it and not
+consumed it; an aggregate is live while any of its linear field paths is possibly unconsumed. An
+exit is the end of a block, an early `return`, a `?` propagation, a `break` or `continue` out of
+the loop body that contains the binding, and the end of a `match` arm for a binding the arm
+introduced. A call that cannot return, and a trap, are not exits.
+
+- **Ending.** A linear value is consumed by moving it (`consume`, a `consuming` argument, a
+  return, an initializer, an enum payload, an `append`, a binding): the receiver takes on the
+  obligation. It ends only in a builtin consuming operation (`join` for a `JoinHandle`;
+  `consumeEmpty()` for an array, which traps before any effect if the array is not empty).
+  A linear aggregate ends by consuming every linear field path; its remaining fields are
+  destroyed as usual.
+- **Overwrite.** Assigning to a place that is live (a local or a field path) is
+  `semantic-analysis.linear-overwrite`; assigning to an ended or uninitialised place
+  reinitialises it. An array element of linear type cannot be overwritten.
+- **Commit.** A `consume` in an argument or aggregate list takes effect when the call or
+  construction commits, so a later operand that exits (`?`, `return`) leaves the value live.
+- **Temporaries.** An owned linear temporary must be moved at once: as a binding initialiser, the
+  right-hand side of an assignment to an ended place, a `return` value, a consuming argument, an
+  aggregate or enum component, an `append`, or a `match` scrutinee. Any other use, including a
+  statement whose value is dropped and `let _ = e`, is `semantic-analysis.linear-result-dropped`.
+- **Matching.** A pattern over a linear scrutinee must bind every linear payload (§7.1.2).
+- **`?` and `!`** consume an owned linear operand; `??` and `?.` are rejected on one.
+
+A function that only borrows, or takes `inout`, a linear value has no owning binding to end, so
+the rule does not apply to it. `defer` remains reserved. **Implementation status:** specified;
+not implemented.
 
 ### 4.8 No reference types
 

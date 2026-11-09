@@ -38,8 +38,8 @@ P0 design ─ P1a timeouts (done) ─ (P1b readiness, optional)
 - [x] Decide the 0013 open questions that block P5: task joining (Q1), the form of
       the function reference (Q2), closing (Q4), bounded only (Q5), single sender
       (Q7), the `receive` result (Q8), zero-parameter targets rejected (Q9), channel
-      creation through `initializing` outputs (Q17), linear `JoinHandle` and ends
-      (Q18), ticket lock (Q19).
+      creation through `initializing` outputs (Q17), linear `JoinHandle` (Q18, ends
+      noncopyable and closing, amended in P2c), ticket lock (Q19).
 - [x] Decide the questions that can wait but must be recorded: `runProcess`
       rejected while tasks exist (Q13), `pthread` first (Q14), rarer names with a user
       declaration winning (Q15). Limits (Q10) are decided in P3 and dispatch (Q11) in
@@ -142,13 +142,20 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
 
 **P2c: linear types and builtin generics**
 
-- [ ] Specify **linear** (non-droppable) types for `JoinHandle` and the channel ends:
-      amend §4.7, which destroys every owning binding at scope end; define propagation
-      through `Array`, `Optional`, `Result`, structs and enums (the generated destroy
-      helpers must reject a non-empty array of tasks, not drop it); and the inverse of the
-      current analysis, "still initialized at scope exit". Decide how early `return`, `?`,
-      loops and assignment over a live value behave, and whether the reserved `defer` is
-      needed (0013 Q18, 0015 question 2).
+- [x] Design linear types (0015, "Linear types (P2c)", reviewed by the language designer): only
+      `JoinHandle<R>` is linear; the channel ends are noncopyable and close on drop; a linear
+      aggregate ends field by field; the check is "possibly live at an exit"; `defer` stays
+      reserved, with the borrow/`inout` idiom documented.
+- [ ] Spec: amend §4.7, §4.1.1 (linear, `Copyable`), §7.1.2 (linear payloads must be bound), and
+      0013 (done).
+- [ ] Failing tests first, one set per stage, citing the spec sections.
+- [ ] Parser and name resolution: the toolchain-only `linear` modifier (the test seam).
+- [ ] Type checking: `TypeCheckedModel::isLinear` and propagation; `linear-in-deinit-type`,
+      `linear-collection-element`, `linear-type-argument`, `linear-reserved`.
+- [ ] Semantic analysis: possibly-live, must-consumed projections, exits, temporaries,
+      matches; `linear-not-consumed`, `linear-overwrite`, `linear-result-dropped`.
+- [ ] Later (defence in depth): an IR `linear` bit, no scope-end cleanup for linear bindings, a
+      verifier rule, a wire bump, `Array.consumeEmpty()`.
 - [ ] Amend spec §2.6 for the new compiler-known generic builtins (`JoinHandle<R>`,
       `ChannelSender<T>`, `ChannelReceiver<T>`, `SendError<T>`). Channel creation is
       decided (0013 Q17): `channel(capacity:, sender: &s, receiver: &r)` with two
@@ -237,13 +244,13 @@ spec, failing tests first, every pipeline stage, role reviews, validation.
       rule on the `spawn` builtin. Add only what the chosen channel-creation form
       needs; syntax nodes carry spans.
 - [ ] Name resolution: resolve the `function:` argument to a function symbol;
-      define builtin-name shadowing (a user `Task` wins, 0013 Q15).
-- [ ] Type checking: `Task<R>` and the channel ends as compiler-known builtins;
+      define builtin-name shadowing (a user `JoinHandle` wins, 0013 Q15).
+- [ ] Type checking: `JoinHandle<R>` and the channel ends as compiler-known builtins;
       target rules (exactly one `consuming` parameter, non-generic, not a method,
       not native, not overloaded, not `main`, not `Never`); noncopyable ends and
       tasks; moved values dead after `spawn` and `send`.
-- [ ] Semantic analysis: `task-not-joined` using the linear-type rule specified and
-      implemented in P2; use-after-move across `spawn` and `send`.
+- [ ] Semantic analysis: `linear-not-consumed` for a `JoinHandle`, using the linear-type rule
+      implemented in P2c; use-after-move across `spawn` and `send`.
 - [ ] IR and verifier: spawn, join, send, receive, close operations; ownership
       operations stay explicit; debug scopes preserved.
 - [ ] Backend: lower to the P3 and P4 runtime calls; keep the C ABI unchanged.

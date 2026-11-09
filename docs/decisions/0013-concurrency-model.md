@@ -443,12 +443,19 @@ were answered the same day; see "Resolutions" after question 19.
     from those declared types, and the two must agree. A capacity below 1 is a
     runtime-checked error (`InvalidInput`-style trap or `Result`; the spec chapter
     decides which). The ends are then moved with `consume` as any value.
-18. **Linear types.** `JoinHandle`, and the channel ends, are **linear**: they must
+18. **Linear types.** `JoinHandle` is **linear**: it must
     be consumed on every path, and the language gains a "still initialized at scope
     exit" check and an amendment to §4.7. Join-on-drop is rejected for v1 because a
     blocking drop hides the destruction-order deadlock. How early `return`, `?` and
     loops interact, and whether the reserved `defer` is needed, are settled in
     decision 0015 and the spec chapter, not here.
+
+    **Amended 2026-11-09 (decision 0015, "Linear types (P2c)", after a language-design review):**
+    the channel ends are **not** linear. `ChannelSender<T>` and `ChannelReceiver<T>` are
+    noncopyable and close in their destroy helper, like `TcpConnection`; an explicit consuming
+    `close` remains. Only `JoinHandle<R>` is linear, so a worker's `?` needs no close of its ends.
+    A linear type may not be the element type of a channel (a queued value would be dropped when
+    the channel closes). The diagnostic `task-not-joined` is `semantic-analysis.linear-not-consumed`.
 19. **The lock** is a **ticket lock over the existing atomic add**, using the add
     (of zero) as the load; no new intrinsic in v1. A compare-and-swap intrinsic is
     added only if measurement shows the ticket lock's fairness or cost is a

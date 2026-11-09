@@ -240,6 +240,34 @@ temporary, and a `match` that moves the payload (§7.1.2) can take the element o
 of it. **Implementation status:** implemented; the runtime
 removes the element in constant time and does not shrink the array's capacity.
 
+#### 2.6.3 Concurrency builtin types (provisional)
+
+The concurrency design ([decision 0013](../decisions/0013-concurrency-model.md)) adds four
+compiler-known generic types, in the same manner as `Array`, `Dict`, `Optional` and `Result`:
+`JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>` and `SendError<T>`. Their type
+arguments are understood by the compiler, not by a general parameter mechanism, so this does not
+introduce user-defined generics. A user declaration of the same name takes precedence over the
+builtin in its scope.
+
+- `JoinHandle<R>` is **linear** (§4.1.1): it must be ended, by `join`, on every path (§4.7.1).
+- `ChannelSender<T>` and `ChannelReceiver<T>` are **noncopyable** and close their channel when
+  destroyed, like a handle with a `deinit` (§3.7.1); an explicit consuming `close` also exists.
+  `T` may not be linear, because a value queued when the channel closes would be destroyed.
+- A channel is created by `channel(capacity:, sender: &s, receiver: &r)`, a builtin returning
+  `Void` whose two outputs are `initializing` parameters (§4.10), so both variables are declared,
+  uninitialised, with their types, and the element type comes from those types, which must
+  agree. A capacity below 1 traps.
+
+```joyeer
+var sender: ChannelSender<Int>
+var receiver: ChannelReceiver<Int>
+channel(capacity: 8, sender: &sender, receiver: &receiver)
+```
+
+**Implementation status:** specified only; these types and `spawn`, `join`, `send` and
+`receive` are implemented in the concurrency phases P5 and P6 of the
+[plan](../plan/concurrency.md).
+
 ### 2.8 Type inference
 
 Local bindings infer their type from the initializer when not annotated:

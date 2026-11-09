@@ -83,7 +83,8 @@ match tcpAccept(listener: listener, timeoutMillis: 5000) {    // an owned tempor
 The binding is an owning local of its arm: it is destroyed when the arm ends
 unless the arm moves it on (`consume connection`). Payloads the pattern does not
 bind, including those matched by `_`, stay in the scrutinee and are destroyed
-with it. Matching a place without `consume` while binding a noncopyable payload
+with it, unless they are linear (§4.1.1): a pattern over a linear scrutinee must bind every
+linear payload, and `_` over one is `semantic-analysis.linear-result-dropped` (§4.7.1). Matching a place without `consume` while binding a noncopyable payload
 is `type-checking.copy-of-noncopyable`, and so is binding the whole noncopyable scrutinee
 with a bare identifier pattern. A `match consume x` ends the ownership of `x`: it may not be read
 again until it is reinitialized, though payloads no arm bound stay in its storage until it is

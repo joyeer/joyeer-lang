@@ -1,7 +1,9 @@
 # 0015: Noncopyable and linear types, and handles that close
 
 - Status: proposed (2026-11-08). Phase P2 of the
-  [concurrency plan](../plan/concurrency.md). Design only; nothing is implemented.
+  [concurrency plan](../plan/concurrency.md). `deinit`, noncopyable types, owning pattern
+  bindings and `Array.removeLast` are implemented (P2a, P2b); linear types (P2c) are specified
+  below and not yet implemented.
   The one fork in it, how a handle closes, was settled the same day in favor of a
   real `deinit` ("The fork"); that revises the answer accepted in
   [0013](0013-concurrency-model.md) question 6, which now says so.
@@ -111,11 +113,10 @@ the rest as follows.
   implicit duplication of a noncopyable value; the check belongs where the expression
   and its context are known (type checking or semantic analysis), not only in lowering,
   so the diagnostic is precise. `prepareOwned` keeps an assertion as a backstop.
-- **Linearity** is a flag on a builtin type and propagates through containers like
-  noncopyability. The initialization analysis gains the inverse check: when a block or
-  function ends, any linear binding that is initialized and not consumed is
-  `semantic.linear-not-consumed`, using the existing merge at branches and loops. `?`
-  and early `return` are exits and are checked like any other. A destroy helper for an
+- **Linearity** applies to `JoinHandle` and what holds one, and propagates through containers like
+  noncopyability. The initialization analysis gains the inverse check, "possibly live at an
+  exit", specified under "Linear types (P2c)" (a plain "consumed" check over the existing merge
+  would accept a leak on one branch). `?` and early `return` are exits. A destroy helper for an
   aggregate containing a linear value is a compile-time error rather than a drop.
 - **Consuming a pattern binding.** When the scrutinee of a `match` is an owned
   temporary, an arm's payload binding is an owning local, so `consume` on it is
@@ -268,6 +269,154 @@ payload, and an `Array` could not give an element back.
   `take`s it into the binding, which owns it for the arm. Unbound payloads stay in the storage and
   are destroyed with it. This resolves 0012's open question 1: the worker loop can bind a received
   connection without `?`.
+
+## Linear types (P2c)
+
+0013 wanted `JoinHandle` to be consumed on every path. This section settles what that means, how
+the checker enforces it, and how an aggregate ends. It was reviewed by the language designer, and
+the first draft was cut down: it had a user-visible `linear struct`, a `discard` builtin, linear
+channel ends, and an exit check that accepted a leak on one branch. What follows is the smallest
+design that makes `JoinHandle` safe.
+
+### Definition
+
+- A type is **linear** when it is the builtin `JoinHandle<R>`, or holds a linear type: a stored
+  field, an enum payload, or the element, payload or error type of `Array`, `Optional` and
+  `Result`. Linearity propagates exactly as noncopyability does (§4.1.1) and every linear type is
+  noncopyable. `Copyable` is false for it.
+- **Only `JoinHandle` is linear.** `ChannelSender<T>` and `ChannelReceiver<T>` are noncopyable
+  and close in their destroy helper, as `TcpConnection` closes through `deinit`. This **replaces**
+  0013 resolution 18, which made the ends linear: a linear end bought no memory or deadlock
+  safety (the runtime block is freed by the last end, and the checker cannot order a `close`
+  before a `join`) and put two or three closes on every `?` of worker code. The explicit
+  consuming `close` stays for readability.
+- A linear value is **never destroyed implicitly**. Where §4.7 destroys an owning binding at scope
+  end, a linear binding must already be ended, or the program does not compile.
+- **Transfer and end.** Consuming a value moves it (`consume x`, a `consuming` argument, a
+  return, an initializer, an enum payload, `append`, a binding, a match that moves a payload): the
+  receiver takes on the obligation. A linear value **ends** only in a builtin consuming operation:
+  `join` for `JoinHandle` (P5), and, for an `Array` of linear elements, `consumeEmpty()`, which
+  traps before any side effect if the array is not empty; `removeLast` (spec 2.6.2) drains it, last
+  element first.
+- **A linear aggregate ends field by field.** A struct or enum that holds a linear type has no
+  `deinit` (below), so its fields may be moved out of it (partial consumption, already
+  implemented for wrapper structs). The owner must consume every linear field path; the
+  remaining fields are destroyed as usual at scope end. A linear aggregate is **live** while any
+  of its linear field paths is possibly unconsumed.
+- **No `deinit` with a linear field.** A struct that is linear by propagation may not declare
+  `deinit`, and a struct with `deinit` may not hold a linear field: its destruction would drop the
+  field, and a `deinit` body cannot move a field out (§3.7.1). The exit check also runs on
+  `deinit` bodies.
+- **Not allowed in v1:** a linear key or value in `Dict` (it cannot be drained); `for x in` over an
+  array of linear elements (no consuming iteration); a linear element type for
+  `ChannelSender<T>`, `ChannelReceiver<T>` and `SendError<T>` (a queued value would be dropped
+  when the channel closes); a linear type as the type argument of a user type parameter (§20.5
+  makes parameters droppable); a top-level `let` of linear type; overwriting an array element
+  (`&a[i] = h`), because element consumption is not tracked.
+
+### The check: "possibly live", not "consumed"
+
+`InitializationBuilder` merges `consumed` as a union (may-consumed), so a check phrased "must be
+consumed at exit" would accept `if c { join(consume h) }` followed by an exit, and leak on the
+else path. The property is the inverse: a linear binding is **live** at a point when it is in
+`possiblyInitialized`; for an aggregate, live also when any linear field path is not *definitely*
+consumed, which needs a must-consumed intersection over projections (new). At every **exit** of
+the binding's scope a linear binding must not be live. An exit is: the end of a block, an early
+`return`, `?` propagation, `break` and `continue` out of the loop body that contains the binding's
+scope, and the end of a `match` arm for a binding the arm introduced. `forgetBinding`, where scope
+exit drops facts today, is the hook.
+
+1. **Early exit with a live linear binding** is `semantic-analysis.linear-not-consumed`, reported
+   at the exit, naming the binding and its creation site. A `Never` call or a trap needs no end,
+   because the process exits without cleanup.
+2. **Assignment over a live linear value** (a local or a field path) is
+   `semantic-analysis.linear-overwrite`. Assignment into an ended or uninitialized place
+   reinitialises it and is allowed. `&a[i] = v` over a linear element is always `linear-overwrite`.
+3. **A consume takes effect when its call or construction commits.** In `f(a: consume h, b: g()?)`,
+   `[consume h, g()?]` or `W(task: consume h, x: g()?)`, the `?` runs while `h` is still live, so
+   that exit reports `linear-not-consumed`. (Lowering's pending-operand cleanup would otherwise
+   drop it.)
+4. **An owned linear temporary must be moved immediately.** It may appear only as a binding
+   initializer, the right-hand side of an assignment to an ended or uninitialized place, a
+   `return` value, a consuming argument, an aggregate or enum component, an `append`, or a match
+   scrutinee. Anywhere else (a statement `spawn(...)`, `f(g())` with a borrowing `f`, `g().m()`,
+   `let _ = e`) is `semantic-analysis.linear-result-dropped`. `_` ignores nothing: `let _ = e` and
+   a `.Ok(_)` over a linear payload are `linear-result-dropped`.
+5. **`match`.** A pattern over a linear scrutinee must bind every linear payload (a payload no arm
+   binds would be destroyed with the scrutinee, which is a drop). Spec 7.1.2's "stay and are
+   destroyed" sentence applies to non-linear payloads only. `match consume x` ends `x` once its
+   payloads are bound.
+6. **`?`, `!`, `??`, `?.`** on a linear `Optional` or `Result`: `?` and `!` consume an owned
+   operand (a temporary or `consume x`), and a borrowed operand is `copy-of-noncopyable`. `??` and
+   `?.` are rejected on a linear operand in v1; use `match`.
+7. **Loops.** A linear binding declared in a loop body must be ended by the end of the iteration.
+   One declared outside is ended in the body only if the body reinitialises it before the back
+   edge; the existing merge reports the rest as use-after-consume. Shadowing is tracked by symbol.
+8. **An `Optional<L>` local is live even when it holds `.None`.** The idiom to refill one is
+   `match consume slot { .None => (), .Some(h) => ... }`, then assign `slot` again.
+
+### The borrowing idiom, and `defer`
+
+`defer` is not added; it stays reserved. A function that only borrows or takes `inout` a linear
+aggregate has no owning binding, so the exit check does not apply to it, and `?` inside it needs
+no joins:
+
+```joyeer
+func run(pool: inout Pool): Result<Void, NetworkError> { ... freely uses ? ... }
+
+var pool = startPool()
+let result = run(pool: &pool)
+consume pool.shutdown()     // ends every handle once
+```
+
+The diagnostic's help names this idiom. `defer` is re-decided after the P7 worker-pool prototype,
+if a function needs more than one cleanup helper. The check is compatible with it: a deferred
+consume would end the binding on every exit.
+
+### Lowering and the backend
+
+A program that passes the check ends every linear value, so no destroy of one is reachable and
+the ordinary scope-end cleanup (a destroy of storage that has been zero-filled by `take`) does
+nothing for it. Defence in depth is a later stage: an IR `linear` bit on the type, no scope-end
+cleanup for linear bindings, a verifier rule that rejects a destroy of a linear type, and a wire
+version bump; `consumeEmpty()` frees only storage. The runtime allocation balance backstops a
+checker bug.
+
+### Test seam and what waits for threads
+
+`JoinHandle` does not exist until P5, but the rules do not depend on how a type becomes linear.
+For tests, the type checker's `isLinear` also honours a `linear` modifier on a struct declared in
+a **toolchain-authorized** source (a runtime or core unit, the same authorization as native
+bindings); anywhere else the modifier is `type-checking.linear-reserved`. It is not public
+syntax. A public `linear struct` waits for a second use case, such as a user type that must be
+committed or rolled back, or `JoinHandle<R>` written in Joyeer once user generics exist. Waiting
+for threads: the `JoinHandle` and channel runtime, `join`, the channel-element fixtures, the
+close-before-join deadlock tests, and the worker-pool trial.
+
+### Diagnostics
+
+`semantic-analysis.linear-not-consumed`, `linear-overwrite`, `linear-result-dropped`;
+`type-checking.linear-in-deinit-type`, `linear-collection-element` (Dict key or value, `for-in`),
+`linear-channel-element`, `linear-type-argument`, `linear-reserved`. 0013 and the plan name
+`task-not-joined` and `Task<R>`: they become `linear-not-consumed` and `JoinHandle<R>`.
+
+### Stages (P2c)
+
+1. Spec: §4.7, §4.1.1 (linear, `Copyable`), §7.1.2, §2.6 (the four builtin generics, channel
+   creation), 0013 amendments.
+2. Parser and name resolution: the toolchain-only `linear` modifier.
+3. Type checking: `TypeCheckedModel::isLinear` and propagation; the type-level rules above.
+4. Semantic analysis: possibly-live, must-consumed projections, exits, temporaries, matches.
+5. Lowering defence in depth (later), with the verifier rule and wire bump.
+6. Docs and acceptance, with the role reviewers.
+
+### Open questions (P2c, after review)
+
+9. **A public `linear struct`** and its terminal (a `discard`-like builtin or field-by-field).
+   Deferred; see the test seam.
+10. **`consumeEmpty()` versus a `Result`.** The trap is recommended: the compiler cannot prove
+    emptiness, and a `Result` only moves the obligation.
+11. **`defer`.** Re-decide after P7.
 
 ## Review findings applied
 
