@@ -4,8 +4,9 @@ The runtime is declared in `lib/Runtime/include/joyeer/runtime.h`. Almost all of
 (`lib/Runtime/core/`): UTF-8 validation, string equality and ordering, owned strings,
 arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
-build-tree compiler compiles it into three objects in the same archive (the core; the entry
-logic with the Windows `joyeer_start`; and the C `main`/`wmain` wrappers); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+build-tree compiler compiles it into four objects in the same archive (the core; the entry
+logic with the Windows `joyeer_start`; the C `main`/`wmain` wrappers; and the thread, mutex and
+condition functions, [decision 0016](../decisions/0016-thread-primitives.md)); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -48,6 +49,47 @@ the C arithmetic operation. The generated LLVM checks have the same behavior
 at every optimization level. Diagnostics distinguish `integer division by
 zero`, `integer remainder by zero`, `integer division overflow`, and `integer
 remainder overflow`.
+
+## Threads
+
+`lib/Runtime/core/threads.joyeer` is the fourth archive object (decision 0016): thread, mutex and
+condition functions with the C ABI declared in `runtime.h` (`joyeer_thread_start_abi`,
+`joyeer_thread_join_abi`, `joyeer_mutex_*_abi`, `joyeer_condition_*_abi`). Windows uses
+`CreateThread`, `SRWLOCK` and `CONDITION_VARIABLE` from `kernel32`; Linux and macOS use `pthread`
+through the C library the program already links. The caller supplies the storage (128 bytes for a
+thread, 64 for a mutex or condition, all zeroed), so the functions never allocate. A thread runs a
+`void entry(void *argument)` through a private trampoline with the platform's thread-routine
+shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
+once (`JOYEER_THREAD_LIMIT` beyond that). The runtime is **not** thread safe yet (the allocator,
+streams and leak counter are P4's): a function run on a thread started here must not allocate,
+print or panic.
+
+On Linux and on the Windows own-entry link the object is linked only into a program that
+references it. The Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) load every
+member, so those programs also import the thread functions. The tests are
+`tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
+mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
+operating systems' lock types fit the storage) and the `RuntimeThreadsObjectSymbols` gate.
+
+## Static slots
+
+Sixty-four eight-byte, zero-initialised words shared by every unit of a program
+(`joyeer_intrinsic_static_slot`). The assignment, in one place:
+
+| Slots | Owner | Use |
+|---|---|---|
+| 0 | allocator | the leak counter |
+| 1 | allocator | the allocator state address |
+| 2 | streams | the stream state |
+| 3 to 10 | streams | stream scratch |
+| 11 | threads | the number of unjoined threads |
+| 12 to 15 | core | free (the runtime lock of P4) |
+| 16 | entry | the process environment block address |
+| 17 to 31 | System | reserved for the `System` module |
+| 32 to 33 | entry | string scratch |
+| 34 to 36 | entry | the argument handle |
+| 37 | entry | the byte buffer |
+| 38 to 63 | | free (tests use 40, 41, 60 and above) |
 
 ## Process entry and exit
 

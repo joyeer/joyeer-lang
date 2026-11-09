@@ -169,6 +169,36 @@ void* joyeer_dictionary_find_abi(
     int64_t keySize,
     int32_t keyKind);
 
+/* Threads, a blocking mutex and a condition variable (decision 0016). They live in a separate
+ * object of the runtime archive, linked only into a program that references them. The runtime is
+ * not thread safe yet: a function run on a thread started here must not allocate, print or panic.
+ * Every result is >= 0 on success or a negative code: the negated operating-system error, or one
+ * of the two codes below. */
+#define JOYEER_THREAD_BYTES 128 /* zeroed, 8-byte-aligned storage for one thread */
+#define JOYEER_LOCK_BYTES 64    /* zeroed, 8-byte-aligned storage for a mutex or a condition */
+#define JOYEER_MAX_THREADS 256  /* unjoined threads at once */
+#define JOYEER_THREAD_LIMIT ((int64_t)-1073741824)
+#define JOYEER_THREAD_INVALID ((int64_t)-1073741823)
+
+typedef void (*JoyeerThreadEntry)(void* argument);
+
+/* Starts a thread running entry(argument). `thread` must stay valid until joined. */
+int64_t joyeer_thread_start_abi(void* thread, JoyeerThreadEntry entry, void* argument);
+/* Waits for the thread to finish and releases it; every started thread is joined once. */
+int64_t joyeer_thread_join_abi(void* thread);
+
+int64_t joyeer_mutex_init_abi(void* storage);
+int64_t joyeer_mutex_lock_abi(void* storage);
+int64_t joyeer_mutex_unlock_abi(void* storage);
+int64_t joyeer_mutex_destroy_abi(void* storage);
+
+int64_t joyeer_condition_init_abi(void* storage);
+/* Waits with `mutex` held; a wait can wake without a signal, so wait in a loop. */
+int64_t joyeer_condition_wait_abi(void* condition, void* mutex);
+int64_t joyeer_condition_signal_abi(void* condition);
+int64_t joyeer_condition_broadcast_abi(void* condition);
+int64_t joyeer_condition_destroy_abi(void* condition);
+
 #ifdef __cplusplus
 }
 #endif

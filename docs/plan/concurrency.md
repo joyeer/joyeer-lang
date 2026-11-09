@@ -165,12 +165,12 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
 
 ## P3: Thread primitives and a minimal lock (L)
 
-Decision to write: 0016, thread creation and blocking.
+Decision: [0016](../decisions/0016-thread-primitives.md), proposed; amended after a backend review.
 
-- [ ] Windows: `CreateThread`/`ExitThread` with `SRWLOCK` and `CONDITION_VARIABLE`
+- [x] Windows: `CreateThread`/`WaitForSingleObject` with `SRWLOCK` and `CONDITION_VARIABLE`
       for blocking, all in `kernel32`. Not `WaitOnAddress`, which is in
       `Synchronization.lib` and outside the link line and 0011's import gate.
-- [ ] Linux x86-64 and AArch64: `pthread_create`/`pthread_join` and a condition
+- [x] Linux x86-64 and AArch64: `pthread_create`/`pthread_join` and a condition
       variable through libc, which the program already links
       ([0011](../decisions/0011-runtime-without-the-c-library.md)). `pthread_create`
       takes four arguments and returns a value, so bind it with `@c_extern` and `Int`
@@ -179,21 +179,23 @@ Decision to write: 0016, thread creation and blocking.
       untested until it runs natively. Raw `clone` (own stack and TLS, `futex`, and
       an inline-assembly trampoline intrinsic because the child starts on an empty
       stack) is deferred.
-- [ ] macOS: libSystem `pthread`; written, gated until run on a Mac.
-- [ ] No thread-pointer intrinsic and no per-thread runtime state in v1: libc owns
+- [x] macOS: libSystem `pthread`; written, gated until run on a Mac.
+- [x] No thread-pointer intrinsic and no per-thread runtime state in v1: libc owns
       the thread pointer under `pthread`. A task's context travels through its entry
       argument and the panicking flag is global.
-- [ ] A small internal runtime API (create a thread running a runtime function with
-      one argument, join, block and wake on a condition, yield) and a minimal lock.
+- [x] A small internal runtime API (create a thread, join, a blocking mutex and condition) with a
+      runtime-owned trampoline. The ticket lock (Q19) is recorded in 0016 and built in P4 with
+      backoff, where the allocator first needs it.
+- [ ] (Superseded) a small internal runtime API and a minimal lock.
       Decide the lock (0013 Q19): a ticket lock over the existing atomic add (adding
       zero as the load), or a new compare-and-swap or atomic-load intrinsic in
       §19.4.5. Keep the API out of `System`.
-- [ ] Decide stack size, thread-count limit, and whether either is configurable
-      (0013 Q10).
-- [ ] Tests: a thread starts and returns; many short threads; a write before exit is
-      seen after join; wait and wake without a lost wakeup; the symbol-import gates
-      allow exactly the added names, and only for programs that use tasks, on Windows
-      and Linux.
+- [x] Decide stack size (8 MiB on every platform, explicit), thread-count limit (256 unjoined)
+      and that neither is configurable in v1 (0013 Q10).
+- [x] Tests (`thread_test.cpp`): a thread starts and returns; many short threads; a write before
+      exit is seen after join; mutual exclusion; wait and wake without a lost wakeup; the thread
+      limit; the thread object's symbol gate. The program-import gate is exact on Linux and the
+      Windows own-entry link; the Windows C-startup link and macOS load every member (0016).
 
 ## P4: Make the runtime thread-safe (M to L)
 

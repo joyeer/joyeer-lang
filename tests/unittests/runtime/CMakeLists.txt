@@ -151,11 +151,13 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         get_filename_component(entry_name "${entry_object}" NAME)
         get_target_property(main_object JoyeerRuntime JOYEER_MAIN_OBJECT)
         get_filename_component(main_name "${main_object}" NAME)
+        get_target_property(threads_object JoyeerRuntime JOYEER_THREADS_OBJECT)
+        get_filename_component(threads_name "${threads_object}" NAME)
         add_test(NAME RuntimeArchiveMembers
             COMMAND "${CMAKE_COMMAND}"
                 "-DAR=${JOYEER_RUNTIME_AR_EXECUTABLE}"
                 "-DARCHIVE=$<TARGET_FILE:JoyeerRuntime>"
-                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name}"
+                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name};${threads_name}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeArchive.cmake")
         set_tests_properties(RuntimeArchiveMembers PROPERTIES LABELS "runtime;native" TIMEOUT 30)
     endif()
@@ -191,7 +193,45 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             "-DALLOWED_UNDEFINED=atexit;joyeer_entry_run;joyeer_stdout_flush"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeMainObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+    # The thread object (decision 0016) defines the thread, mutex and condition exports and calls
+    # only the operating system's thread interface, plus the panic of a static-slot bounds trap.
+    get_target_property(JOYEER_RUNTIME_THREADS_OBJECT JoyeerRuntime JOYEER_THREADS_OBJECT)
+    set(joyeer_threads_defined "joyeer_static_slots;joyeer_thread_trampoline;joyeer_thread_start_abi;joyeer_thread_join_abi;joyeer_mutex_init_abi;joyeer_mutex_lock_abi;joyeer_mutex_unlock_abi;joyeer_mutex_destroy_abi;joyeer_condition_init_abi;joyeer_condition_wait_abi;joyeer_condition_signal_abi;joyeer_condition_broadcast_abi;joyeer_condition_destroy_abi")
+    set(joyeer_threads_imports "joyeer_panic;memcmp;memcpy;memset")
+    if(WIN32)
+        list(APPEND joyeer_threads_imports CreateThread WaitForSingleObject CloseHandle GetLastError
+            AcquireSRWLockExclusive ReleaseSRWLockExclusive SleepConditionVariableSRW
+            WakeConditionVariable WakeAllConditionVariable _fltused)
+    else()
+        list(APPEND joyeer_threads_imports pthread_attr_init pthread_attr_setstacksize pthread_attr_destroy
+            pthread_create pthread_join pthread_mutex_lock pthread_mutex_unlock pthread_mutex_destroy
+            pthread_cond_wait pthread_cond_signal pthread_cond_broadcast pthread_cond_destroy)
+        if(APPLE)
+            list(APPEND joyeer_threads_imports pthread_mutex_init pthread_cond_init)
+        endif()
+    endif()
+    add_test(NAME RuntimeThreadsObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_THREADS_OBJECT}"
+            "-DEXPECTED_DEFINED=${joyeer_threads_defined}"
+            "-DALLOWED_UNDEFINED=${joyeer_threads_imports}"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeThreadsObjectSymbols PROPERTIES LABELS "runtime;native;threads" TIMEOUT 30)
 endif()
+
+# Threads, mutexes and conditions driven from C++ through the exported C ABI. The test starts
+# threads with C++ entry functions that never allocate (the runtime is not thread safe until P4).
+find_package(Threads REQUIRED)
+add_executable(RuntimeThreadTests thread_test.cpp)
+target_include_directories(RuntimeThreadTests PRIVATE ${JOYEER_RUNTIME_INCLUDE_DIR})
+target_link_libraries(RuntimeThreadTests PRIVATE
+        GTest::gtest_main
+        JoyeerRuntime
+        Threads::Threads)
+joyeer_discover_tests(RuntimeThreadTests
+        PROPERTIES LABELS "runtime\;threads"
+)
 
 # A Windows program that does not call the C library starts at its own entry point and
 # imports the operating system's functions and nothing else; one that calls it keeps
