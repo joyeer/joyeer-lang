@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -257,6 +258,7 @@ enum class TypeCheckingDiagnosticId {
     invalidNumericLiteral,
     managedTypeInCoreUnit,
     copyOfNoncopyable,
+    assignmentToSelfInDeinit,
 };
 
 struct TypeCheckingDiagnostic {
@@ -301,7 +303,7 @@ private:
     friend class TypeCheckingBuilder;
 
     [[nodiscard]] std::optional<std::string> noncopyableReason(
-            TypeId type, std::vector<TypeId>& visiting) const;
+            TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;
 
     explicit TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel);
 

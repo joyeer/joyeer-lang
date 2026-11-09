@@ -30,6 +30,7 @@ LLVM, or native output.
 | `semantic-analysis.use-after-consume` | error | A binding transferred with `consume` cannot be read or consumed again until direct assignment reinitializes it. |
 | `semantic-analysis.initializing-initialized-storage` | error | An `initializing` call requires uninitialized or consumed destination storage. |
 | `semantic-analysis.initializing-parameter-not-initialized` | error | Every normal return path must initialize each `initializing` parameter. |
+| `semantic-analysis.partial-consume-of-deinit-type` | error | No part of a struct that declares `deinit` may be consumed, since the destructor needs the whole value; a wrapper without `deinit` may still give up a field. |
 | `semantic-analysis.unused-binding` | warning | A local or pattern binding is never read; names beginning with `_` explicitly suppress this warning. |
 
 `let`/field immutability and `inout` access-marker checks remain type-checker

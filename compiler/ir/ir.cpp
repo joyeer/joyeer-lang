@@ -418,7 +418,21 @@ VerificationResult Verifier::verify(const Module& module) const {
                         std::nullopt,
                         "field '" + field.name + "' references an unknown type");
             }
-            // The hidden live flag has no source symbol, so it is not a lookup target.
+            // Only the hidden live flag of a `deinit` struct, which is always last, lacks a source
+            // symbol; it is not a lookup target.
+            if (field.symbol == semantic::invalidSymbolId) {
+                const auto isLiveFlag = field.name == liveFieldName &&
+                        structure.deinitializer.has_value() &&
+                        &field == &structure.fields.back();
+                if (!isLiveFlag) {
+                    report(
+                            VerificationErrorId::invalidReference,
+                            std::nullopt,
+                            std::nullopt,
+                            std::nullopt,
+                            "field '" + field.name + "' has no source symbol");
+                }
+            }
             if (field.symbol != semantic::invalidSymbolId &&
                 !fields.emplace(field.symbol, &field).second) {
                 report(
@@ -1918,7 +1932,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     structure->fields.begin(),
                                     structure->fields.end(),
                                     [&instruction](const auto& candidate) {
-                                    return candidate.symbol == *instruction.symbol;
+                                    return candidate.symbol != semantic::invalidSymbolId &&
+                                        candidate.symbol == *instruction.symbol;
                                     });
                                 return found == structure->fields.end() ? nullptr : &*found;
                             }();

@@ -1335,5 +1335,40 @@ TEST_F(SemanticAnalysisTest, ReportsAnUnusedBindingInsideDeinit) {
     EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::unusedBinding))
             << joyeer::analysis::dump(result.diagnostics);
 }
+// A `consume` that moves a value into an aggregate, a binding or an assignment ends the
+// source's ownership like any other consume.
+TEST_F(SemanticAnalysisTest, MovingIntoAnAggregateConsumesTheSource) {
+    analyze("struct Handle {\n    var id: Int\n    deinit() { }\n}\n"
+            "struct Holder { var handle: Handle }\n"
+            "func run() {\n"
+            "    let a = Handle(id: 1)\n"
+            "    let holder = Holder(handle: consume a)\n"
+            "    let again = Holder(handle: consume a)\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, MovingIntoABindingConsumesTheSource) {
+    analyze("struct Handle {\n    var id: Int\n    deinit() { }\n}\n"
+            "func run() {\n"
+            "    let a = Handle(id: 1)\n"
+            "    let b = consume a\n"
+            "    let c = consume a\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AMoveInOneBranchLeavesTheSourceConsumedAfterTheJoin) {
+    analyze("struct Handle {\n    var id: Int\n    deinit() { }\n}\n"
+            "func run(flag: Bool) {\n"
+            "    let a = Handle(id: 1)\n"
+            "    if flag { let b = consume a }\n"
+            "    let c = consume a\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
 
 } // namespace

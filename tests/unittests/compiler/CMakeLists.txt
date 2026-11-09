@@ -966,6 +966,23 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "e2e;llvm-backend;runtime;ownership;consuming;deinit"
     )
 
+    # The destroy helper that runs a `deinit` has no debug scope of its own; at -O1 and above
+    # with full debug info the optimizer crashed until the helper was kept out of line.
+    foreach(level 0 1 2)
+        add_test(NAME E2EExecutableDeinitFullDebugO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/deinit.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deinit-gfull-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O${level};-gfull"
+                        -DEXPECTED_OUTPUT=10\n2\n1\n20\n100\n3\n100\n4\n200\n200\n5\n6\n30\n40\n8\n7\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(E2EExecutableDeinitFullDebugO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;ownership;deinit;debug"
+        )
+    endforeach()
+
     function(add_joyeer_native_regression name fixture expected_output)
         set(levels 0 2)
         if(ARGC GREATER 3)
@@ -988,6 +1005,9 @@ if(JOYEER_CLANG_EXECUTABLE)
         endforeach()
     endfunction()
 
+    add_joyeer_native_regression(
+            E2EDeinitMoves deinit_moves
+            "10\n20\n30\n40\n5\n50\n60\n7\n6\n4\n3\n2\n1\n")
     add_joyeer_native_regression(
             E2ERegressionShortCircuit regression_lowering_short_circuit
             "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
@@ -1645,4 +1665,29 @@ add_test(NAME ParserMvpCliRejectsInvalidSource
 )
 set_tests_properties(ParserMvpCliRejectsInvalidSource PROPERTIES
         LABELS parser
+)
+
+add_test(NAME DiagnosticsCliRejectsCopyOfNoncopyableValue
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/deinit_copy.joyeer
+                "-DEXPECTED_HEADER=deinit_copy.joyeer:8:13: error[type-checking.copy-of-noncopyable]"
+                "-DEXPECTED_SOURCE=    let b = a"
+                "-DEXPECTED_HELP=help: move an owning local or consuming parameter with 'consume'"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsCopyOfNoncopyableValue PROPERTIES
+        LABELS "diagnostics;type-checking;deinit"
+)
+
+add_test(NAME DiagnosticsCliRejectsPartialConsumeOfDeinitType
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/deinit_partial_consume.joyeer
+                "-DEXPECTED_HEADER=deinit_partial_consume.joyeer:10:25: error[semantic-analysis.partial-consume-of-deinit-type]"
+                "-DEXPECTED_SOURCE=    take(value: consume handle.name)"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsPartialConsumeOfDeinitType PROPERTIES
+        LABELS "diagnostics;semantic-analysis;deinit"
 )

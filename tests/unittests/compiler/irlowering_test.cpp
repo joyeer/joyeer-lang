@@ -309,6 +309,84 @@ TEST_F(IRLoweringTest, TheVerifierRejectsADeinitWithoutTheHiddenLiveFlag) {
     EXPECT_FALSE(joyeer::ir::Verifier().verify(module).succeeded());
 }
 
+// Each rule of the structure `deinit` invariants, with the error it must report.
+class DeinitVerifierTest : public IRLoweringTest {
+protected:
+    void lowerHandle(const std::string& extra = "") {
+        ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                      "struct Plain { var fd: Int }\n" + extra));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    }
+
+    bool rejects(joyeer::ir::Module module, joyeer::ir::VerificationErrorId id) const {
+        const auto verification = joyeer::ir::Verifier().verify(module);
+        return std::any_of(verification.errors.begin(), verification.errors.end(),
+                [id](const auto& error) { return error.id == id; });
+    }
+
+    static joyeer::ir::StructureDefinition& named(joyeer::ir::Module& module, const std::string& name) {
+        return *std::find_if(module.structures.begin(), module.structures.end(),
+                [&name](const auto& structure) { return structure.name == name; });
+    }
+};
+
+TEST_F(DeinitVerifierTest, AnUnknownDeinitFunctionIsAnInvalidReference) {
+    lowerHandle();
+    auto module = *result.module;
+    named(module, "Handle").deinitializer = 9999;
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidReference));
+}
+
+TEST_F(DeinitVerifierTest, ADeinitMustTakeTheStructsAddress) {
+    lowerHandle("func byValue(handle: Handle) { }\n");
+    auto module = *result.module;
+    named(module, "Handle").deinitializer = function("byValue").id;
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidInstruction));
+}
+
+TEST_F(DeinitVerifierTest, ADeinitMustNotReturnAValue) {
+    lowerHandle("struct Other {\n    var fd: Int\n    mutating func fetch(): Int { return self.fd }\n}\n");
+    auto module = *result.module;
+    named(module, "Handle").deinitializer = function("Other.fetch").id;
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidInstruction));
+}
+
+TEST_F(DeinitVerifierTest, TheLiveFlagMustBeABoolean) {
+    lowerHandle();
+    auto module = *result.module;
+    auto& handle = named(module, "Handle");
+    handle.fields.back().type = handle.fields.front().type;
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidReference));
+}
+
+TEST_F(DeinitVerifierTest, TheLiveFlagMustBeLast) {
+    lowerHandle();
+    auto module = *result.module;
+    auto& handle = named(module, "Handle");
+    std::swap(handle.fields.front(), handle.fields.back());
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidReference));
+}
+
+TEST_F(DeinitVerifierTest, TheLiveFlagHasNoSourceSymbol) {
+    lowerHandle();
+    auto module = *result.module;
+    named(module, "Handle").fields.back().symbol = 7;
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidReference));
+}
+
+TEST_F(DeinitVerifierTest, AStructWithoutADeinitHasNoLiveFlag) {
+    lowerHandle();
+    auto module = *result.module;
+    auto& plain = named(module, "Plain");
+    plain.fields.push_back(named(module, "Handle").fields.back());
+    EXPECT_TRUE(rejects(module, joyeer::ir::VerificationErrorId::invalidReference));
+}
+
+TEST_F(DeinitVerifierTest, ALoweredModuleVerifiesCleanly) {
+    lowerHandle();
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
 TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
     const std::vector<std::pair<std::string, std::string>> cases {
         { "var x: Int = 1\n", "top-level 'var'" },

@@ -74,6 +74,12 @@ void Builder::emitOwnershipBodies() {
         builder.CreateRetVoid();
     }
     for (const auto& [id, function] : destroys) {
+        // A helper that calls a `deinit` carries no debug scope of its own, so inlining the
+        // `deinit` into it (and it into a caller) corrupts the inlined debug scopes.
+        if (const auto found = structures.find(id);
+            found != structures.end() && found->second->deinitializer.has_value()) {
+            function->addFnAttr(llvm::Attribute::NoInline);
+        }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
@@ -155,6 +161,10 @@ void Builder::emitDestroy(ir::TypeId id) {
             auto* members = llvm::BasicBlock::Create(context(), "members", activeFunction);
             builder.CreateCondBr(builder.CreateIsNotNull(live), run, members);
             builder.SetInsertPoint(run);
+            // Clear the flag first: a `deinit` that overwrites `self` would otherwise destroy the
+            // old value, find it still live, and run itself again without end.
+            builder.CreateStore(llvm::Constant::getNullValue(llvmType(fields.back().type)),
+                    field(llvmType(id), address, static_cast<unsigned>(fields.size() - 1)));
             builder.CreateCall(functions.at(*definition.deinitializer), {address});
             builder.CreateBr(members);
             builder.SetInsertPoint(members);

@@ -2257,5 +2257,106 @@ TEST_F(TypeCheckingTest, AllowsMovesTemporariesBorrowsAndCopiesOfCopyableParts) 
         EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
     }
 }
+// `consume x` moves an owning local or consuming parameter wherever a value is stored.
+TEST_F(TypeCheckingTest, ConsumeMovesANoncopyableValueIntoWhereItIsStored) {
+    const std::vector<std::string> moves {
+        "struct Holder { var inner: Handle }\n"
+        "func f() { let a = open()\n let h = Holder(inner: consume a) }\n",
+        "func f() { let a = open()\n let o: Handle? = .Some(consume a) }\n",
+        "func f() { let a = open()\n let items = [consume a] }\n",
+        "func f() { let a = open()\n var items: [Handle] = []\n &items.append(element: consume a) }\n",
+        "func f() { let a = open()\n let b = consume a }\n",
+        "func f() { let a = open()\n var b = open()\n b = consume a }\n",
+        "struct Holder { var inner: Handle }\n"
+        "func f(h: consuming Handle): Holder { return Holder(inner: consume h) }\n",
+    };
+    for (const auto& body : moves) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ConsumeStillNeedsAnOwningLocalAndAStoringContext) {
+    const std::vector<std::string> rejected {
+        // a borrowed parameter is not owned
+        "struct Holder { var inner: Handle }\n"
+        "func f(h: Handle) { let w = Holder(inner: consume h) }\n",
+        // `consume` on a plain borrowing call argument is still wrong
+        "func use(handle: Handle) { }\n"
+        "func f() { let a = open()\n use(handle: consume a) }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, DictGetCannotCopyANoncopyableValue) {
+    check(std::string(handlePrelude) +
+          "func f() { var d: [Int: Handle] = [:]\n let g = d.get(key: 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADeinitCannotReplaceSelf) {
+    check("struct A {\n    var n: Int\n    deinit() { &self = A(n: 1) }\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::assignmentToSelfInDeinit))
+            << joyeer::typing::dump(checking.diagnostics);
+
+    check("struct A {\n    var n: Int\n    deinit() { &self.n = 1 }\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// The check walks each distinct type once: a type that reuses the same part twice per level
+// must not take time exponential in its depth.
+TEST_F(TypeCheckingTest, NoncopyabilityIsLinearInTheNumberOfDistinctTypes) {
+    std::string text = "struct S0 { var a: Int }\n";
+    for (int level = 1; level <= 26; ++level) {
+        text += "struct S" + std::to_string(level) + " { var a: S" + std::to_string(level - 1) +
+                "\n    var b: S" + std::to_string(level - 1) + " }\n";
+    }
+    text += "func f(p: S26) { let q = p }\n";
+    check(text);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// The copy check looks through the value-producing forms, not only a bare place.
+TEST_F(TypeCheckingTest, ReportsCopiesThroughIfMatchBlockPropagationAndTrailingExpressions) {
+    const std::vector<std::string> copies {
+        "func f(flag: Bool) { let a = open()\n let b = open()\n let c = if flag { a } else { b } }\n",
+        "func f(flag: Bool) { let a = open()\n let b = open()\n"
+        " let items = [if flag { a } else { b }] }\n",
+        "func f(n: Int) { let a = open()\n let c = match n { 1 => a, _ => open() } }\n",
+        "func f(): Handle { let a = open()\n a }\n",
+        "func f(r: Result<Handle, Int>) { let h = r? }\n",
+        "func f(): Result<Handle, Int> { let r: Result<Handle, Int> = .Ok(open())\n let h = r?\n return .Ok(open()) }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AllowsAnIfOrMatchThatProducesFreshNoncopyableValues) {
+    const std::vector<std::string> fresh {
+        "func f(flag: Bool): Handle { return if flag { open() } else { Handle(fd: 2) } }\n",
+        "func f(n: Int): Handle { return match n { 1 => open(), _ => Handle(fd: 3) } }\n",
+        "func f(): Handle { open() }\n",
+    };
+    for (const auto& body : fresh) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
 
 } // namespace

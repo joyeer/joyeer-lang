@@ -478,11 +478,16 @@ private:
                         std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
                         state);
                 break;
-            case syntax::Kind::accessExpr:
-                analyzeExpression(
-                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
-                        state);
+            case syntax::Kind::accessExpr: {
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+                // `consume x` where a value is stored moves it out of `x`.
+                if (access->marker != nullptr && access->marker->kind == kwConsume) {
+                    analyzeConsume(access->operand, state);
+                } else {
+                    analyzeExpression(access->operand, state);
+                }
                 break;
+            }
             case syntax::Kind::propagateExpr: {
                 const auto propagated =
                         std::static_pointer_cast<syntax::PropagateExprSyntax>(expression);
@@ -554,11 +559,18 @@ private:
                 }
                 for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
-                    const auto effect = callableSymbol != nullptr &&
+                    // A `consume` marker on an argument that is stored (initializer, enum case,
+                    // `append`) moves it even though the parameter itself only borrows.
+                    const auto marked = argument->accessMarker != nullptr &&
+                            argument->accessMarker->kind == kwConsume;
+                    auto effect = callableSymbol != nullptr &&
                                         callableSymbol->callable.has_value() &&
                                         index < callableSymbol->callable->parameters.size()
                             ? callableSymbol->callable->parameters[index].access
                             : syntax::AccessEffect::borrowing;
+                    if (marked && effect == syntax::AccessEffect::borrowing) {
+                        effect = syntax::AccessEffect::consuming;
+                    }
                     if (effect == syntax::AccessEffect::consuming) {
                         analyzeConsume(argument->value, state);
                     } else if (effect == syntax::AccessEffect::initializing) {
@@ -621,7 +633,12 @@ private:
                 const auto enumCase =
                         std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
                 for (const auto& argument : enumCase->arguments) {
-                    analyzeExpression(argument->value, state);
+                    if (argument->accessMarker != nullptr &&
+                        argument->accessMarker->kind == kwConsume) {
+                        analyzeConsume(argument->value, state);
+                    } else {
+                        analyzeExpression(argument->value, state);
+                    }
                 }
                 break;
             }

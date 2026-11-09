@@ -300,10 +300,29 @@ private:
         return prepared;
     }
 
+    // Moves the value out of the place `expression` names, leaving the place empty.
+    std::optional<ir::Value> lowerTake(const syntax::ExprPtr& expression) {
+        const auto address = lowerAddress(expression);
+        if (!address.has_value()) return std::nullopt;
+        return emitValue(
+                ir::Opcode::take,
+                address->type,
+                ir::ValueCategory::value,
+                { address->id },
+                expression->span);
+    }
+
+    static bool movesArgument(const syntax::CallArgumentSyntax& argument) {
+        return argument.accessMarker != nullptr && argument.accessMarker->kind == kwConsume;
+    }
+
     std::optional<ir::Value> prepareOperand(
             const syntax::ExprPtr& expression,
-            typing::TypeId destination) {
-        auto value = lowerExpression(expression);
+            typing::TypeId destination,
+            bool moved = false) {
+        auto value = moved && isAddressable(expression)
+                ? lowerTake(expression)
+                : lowerExpression(expression);
         if (!value.has_value()) return std::nullopt;
         value = coerce(*value, destination, expression->span);
         if (!value.has_value()) return std::nullopt;
@@ -1152,9 +1171,15 @@ private:
                         std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
             case syntax::Kind::prefixExpr:
                 return lowerPrefix(std::static_pointer_cast<syntax::PrefixExprSyntax>(expression));
-            case syntax::Kind::accessExpr:
-                return lowerExpression(
-                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::accessExpr: {
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+                // `consume x` in an owned context moves the place out (decision 0015).
+                if (access->marker != nullptr && access->marker->kind == kwConsume &&
+                    isAddressable(access->operand)) {
+                    return lowerTake(access->operand);
+                }
+                return lowerExpression(access->operand);
+            }
             case syntax::Kind::propagateExpr:
                 return lowerPropagation(
                         std::static_pointer_cast<syntax::PropagateExprSyntax>(expression));
@@ -2017,7 +2042,8 @@ private:
         std::vector<ir::Value> payloads;
         for (size_t index = 0; index < arguments.size(); ++index) {
             const auto payload = prepareOperand(
-                    arguments[index]->value, definition->payloadTypes[index]);
+                    arguments[index]->value, definition->payloadTypes[index],
+                    movesArgument(*arguments[index]));
             if (!payload.has_value()) return std::nullopt;
             payloads.push_back(*payload);
         }
@@ -2238,8 +2264,9 @@ private:
         }
         if (!resultAddress.has_value()) return emitUnit(expression->span);
         registerOwnedStorage(*resultAddress);
+        // A noncopyable result moves out of its slot; loading it would copy it.
         return emitValue(
-                ir::Opcode::load,
+                model->isCopyable(resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
                 resultAddress->type,
                 ir::ValueCategory::value,
                 { resultAddress->id },
@@ -2473,8 +2500,9 @@ private:
         }
         if (!resultAddress.has_value()) return emitUnit(expression->span);
         registerOwnedStorage(*resultAddress);
+        // A noncopyable result moves out of its slot; loading it would copy it.
         return emitValue(
-                ir::Opcode::load,
+                model->isCopyable(resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
                 resultAddress->type,
                 ir::ValueCategory::value,
                 { resultAddress->id },
@@ -2711,6 +2739,14 @@ private:
                     "Dict.get receiver has no concrete key/value types");
             return std::nullopt;
         }
+        if (!model->isCopyable(dictionaryType->arguments[1])) {
+            // `get` clones the stored value; type checking rejects this first.
+            report(
+                    DiagnosticId::ownershipViolation,
+                    expression->span,
+                    "Dict.get would copy a noncopyable value");
+            return std::nullopt;
+        }
         auto key = lowerExpression(expression->arguments[0]->value);
         const auto resultType = model->typeOf(expression);
         if (!key.has_value() || !resultType.has_value()) return std::nullopt;
@@ -2781,7 +2817,10 @@ private:
             return std::nullopt;
         }
 
-        auto element = lowerExpression(expression->arguments[0]->value);
+        auto element = movesArgument(*expression->arguments[0]) &&
+                        isAddressable(expression->arguments[0]->value)
+                ? lowerTake(expression->arguments[0]->value)
+                : lowerExpression(expression->arguments[0]->value);
         if (!element.has_value()) return std::nullopt;
         element = coerce(
                 *element,
@@ -2836,7 +2875,8 @@ private:
                         return candidate.name == argument->label->rawValue;
                     });
             if (field == structure->fields.end()) continue;
-            const auto value = prepareOperand(argument->value, field->type);
+            const auto value = prepareOperand(
+                    argument->value, field->type, movesArgument(*argument));
             if (!value.has_value()) return std::nullopt;
             fieldValues[static_cast<size_t>(
                     std::distance(structure->fields.begin(), field))] = *value;

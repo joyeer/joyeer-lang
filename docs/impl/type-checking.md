@@ -113,6 +113,15 @@ The current checker validates:
 - explicit `borrowing` signatures as the marker-free default projection;
 - `initializing` signatures, mandatory `&`, and whole mutable owning-storage
   destination restrictions;
+- `deinit` and noncopyable types (decision 0015): the `deinit` body is checked as a
+  method body; a struct with a `deinit`, and anything holding one, is noncopyable
+  (`TypeCheckedModel::isCopyable`, `noncopyableReason`, memoised per query);
+  `type-checking.copy-of-noncopyable` reports a copy where a value is stored or returned
+  (a binding, an assignment, a `return`, a trailing expression, an initializer, enum-case or
+  `append` argument, an array or dictionary element, the value of an `if`, `match` or block,
+  the operand of `?`, and `Dict.get`). `consume x` moves an owning local or consuming
+  parameter instead, and is accepted wherever a value is stored;
+  `type-checking.assignment-to-self-in-deinit` rejects `&self = ...` in a `deinit`;
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
   primary span identifies the later access and a secondary note identifies the

@@ -339,15 +339,19 @@ bool TypeCheckedModel::isCopyable(TypeId type) const {
 
 std::optional<std::string> TypeCheckedModel::noncopyableReason(TypeId type) const {
     std::vector<TypeId> visiting;
-    return noncopyableReason(type, visiting);
+    std::unordered_set<TypeId> clean;
+    return noncopyableReason(type, visiting, clean);
 }
 
 std::optional<std::string> TypeCheckedModel::noncopyableReason(
-        TypeId id, std::vector<TypeId>& visiting) const {
+        TypeId id, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const {
     const auto* type = typeContext.type(id);
     if (type == nullptr) return std::nullopt;
     // A struct cannot contain itself by value, but guard so a malformed program cannot loop.
     if (std::find(visiting.begin(), visiting.end(), id) != visiting.end()) return std::nullopt;
+    // A type already found copyable in this query is not walked again, so a type that reuses the
+    // same part many times stays linear in the number of distinct types.
+    if (clean.contains(id)) return std::nullopt;
     visiting.push_back(id);
     std::optional<std::string> reason;
     const auto name = "'" + typeContext.displayName(id) + "'";
@@ -358,7 +362,7 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
         case TypeKind::optional:
         case TypeKind::result:
             for (const auto argument : type->arguments) {
-                if (noncopyableReason(argument, visiting).has_value()) {
+                if (noncopyableReason(argument, visiting, clean).has_value()) {
                     reason = name + " holds the noncopyable type '" +
                             typeContext.displayName(argument) + "'";
                     break;
@@ -378,7 +382,7 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                         ? typeOf(*fieldSymbol)
                         : std::optional<TypeId>();
                 if (fieldType.has_value() &&
-                    noncopyableReason(*fieldType, visiting).has_value()) {
+                    noncopyableReason(*fieldType, visiting, clean).has_value()) {
                     reason = name + " has the noncopyable field '" +
                             (field->name == nullptr ? std::string() : field->name->rawValue) +
                             "' of type '" + typeContext.displayName(*fieldType) + "'";
@@ -400,7 +404,7 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                         : nullptr;
                 if (signature == nullptr) continue;
                 for (const auto payload : signature->parameters) {
-                    if (noncopyableReason(payload, visiting).has_value()) {
+                    if (noncopyableReason(payload, visiting, clean).has_value()) {
                         reason = name + " has a noncopyable payload of type '" +
                                 typeContext.displayName(payload) + "'";
                         break;
@@ -415,6 +419,7 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
     }
 
     visiting.pop_back();
+    if (!reason.has_value()) clean.insert(id);
     return reason;
 }
 
@@ -473,6 +478,9 @@ private:
     std::optional<TypeId> currentReturnType;
     size_t loopDepth = 0;
     std::unordered_set<semantic::NodeId> handledDeferredReferences;
+    // `consume` access expressions that appear where a value is stored (see permitMove).
+    std::unordered_set<const syntax::Node*> permittedMoves;
+    bool insideDeinit = false;
 
     void report(
             TypeCheckingDiagnosticId id,
@@ -1121,6 +1129,7 @@ private:
         const auto annotation = declaredAnnotationType(declaration);
         std::optional<TypeId> initializer;
         if (declaration->initializer != nullptr) {
+            permitMove(declaration->initializer);
             initializer = checkExpression(declaration->initializer, annotation);
             requireNoImplicitCopy(declaration->initializer, initializer);
         }
@@ -1198,7 +1207,11 @@ private:
             case syntax::Kind::structDecl: {
                 const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 for (const auto& method : structure->methods) checkFunctionBody(method);
-                if (structure->deinitializer != nullptr) checkFunctionBody(structure->deinitializer);
+                if (structure->deinitializer != nullptr) {
+                    insideDeinit = true;
+                    checkFunctionBody(structure->deinitializer);
+                    insideDeinit = false;
+                }
                 for (const auto& field : structure->fields) {
                     if (field->initializer == nullptr) continue;
                     const auto symbol = model->semanticModelValue->declaredSymbol(field);
@@ -1229,6 +1242,14 @@ private:
             ? model->typeContext.errorType()
             : signature->result;
         checkBlock(function->body);
+        // A trailing expression is the function's value; one that names a noncopyable place copies it.
+        if (function->body != nullptr && !function->body->items.empty() &&
+            currentReturnType.has_value() &&
+            *currentReturnType != model->typeContext.voidType() &&
+            *currentReturnType != model->typeContext.neverType()) {
+            const auto last = std::dynamic_pointer_cast<syntax::ExprSyntax>(function->body->items.back());
+            if (last != nullptr) requireNoImplicitCopy(last, model->typeOf(last));
+        }
         currentReturnType = previousReturnType;
         loopDepth = previousLoopDepth;
     }
@@ -1351,11 +1372,20 @@ private:
                 const auto consumes = access->marker != nullptr &&
                         access->marker->kind == kwConsume;
                 if (consumes && !isMemberCall(access->operand)) {
-                    report(
-                        TypeCheckingDiagnosticId::invalidConsumeArgument,
-                        expression->span,
-                        "'consume' is only valid on an argument to a consuming parameter "
-                        "or the receiver of a consuming method call");
+                    if (!permittedMoves.contains(expression.get())) {
+                        report(
+                            TypeCheckingDiagnosticId::invalidConsumeArgument,
+                            expression->span,
+                            "'consume' is only valid on an argument, the receiver of a consuming "
+                            "method call, or where a value is stored (a binding, an assignment, "
+                            "or an aggregate element)");
+                    } else if (!isConsumable(access->operand)) {
+                        report(
+                            TypeCheckingDiagnosticId::invalidConsumeArgument,
+                            access->operand->span,
+                            "consuming argument must be an owning local, consuming parameter, "
+                            "or temporary");
+                    }
                 }
                 result = checkExpression(
                         access->operand,
@@ -1374,10 +1404,19 @@ private:
                         std::static_pointer_cast<syntax::AssignmentExprSyntax>(expression);
                 const auto target = checkExpression(assignment->target);
                 checkAssignmentAccess(assignment->target);
+                if (insideDeinit && assignsWholeSelf(assignment->target)) {
+                    report(
+                            TypeCheckingDiagnosticId::assignmentToSelfInDeinit,
+                            assignment->target->span,
+                            "a 'deinit' cannot replace 'self'",
+                            "assign to the fields of 'self' instead; replacing the whole value "
+                            "would run a destructor on a value that is being destroyed");
+                }
                 if (assignment->op != nullptr && assignment->op->kind != equal) {
                     result = checkCompoundAssignment(assignment, target);
                     break;
                 }
+                permitMove(assignment->value);
                 const auto value = checkExpression(assignment->value, target);
                 requireNoImplicitCopy(assignment->value, value);
                 if (target.has_value() && value.has_value()) {
@@ -2032,7 +2071,20 @@ private:
                        baseType != nullptr && baseType->kind == TypeKind::dictionary &&
                        baseType->arguments.size() == 2) {
                 receiverArgumentType = baseType->arguments[0];
-                receiverResultType = model->typeContext.optionalType(baseType->arguments[1]);
+                // Copy the value type out first: creating the Optional can grow the type table and
+                // invalidate `baseType`.
+                const auto valueType = baseType->arguments[1];
+                receiverResultType = model->typeContext.optionalType(valueType);
+                if (const auto reason = model->noncopyableReason(valueType)) {
+                    report(
+                            TypeCheckingDiagnosticId::copyOfNoncopyable,
+                            expression->span,
+                            "'get' returns a copy of the stored value, and '" +
+                                    model->typeContext.displayName(valueType) +
+                                    "' is noncopyable: " + *reason,
+                            "a noncopyable element cannot be read without removing it, which "
+                            "is not supported yet");
+                }
             }
         }
         const bool literalAddressCall = target.has_value() &&
@@ -2068,10 +2120,10 @@ private:
             const auto actual = checkExpression(argument->value, expected);
             // A memberwise initializer, an enum case and `append` store their argument, so it
             // is an owned context; every other parameter borrows or is marked `consume`.
-            if (semanticTarget != nullptr && storesItsArguments(*semanticTarget)) {
-                requireNoImplicitCopy(argument->value, actual);
-            }
-            if (semanticTarget != nullptr && parameterIndex.has_value()) {
+            const auto storesArgument = semanticTarget != nullptr && storesItsArguments(*semanticTarget);
+            if (storesArgument) requireStoredArgument(*argument, actual);
+            if (semanticTarget != nullptr && parameterIndex.has_value() &&
+                !(storesArgument && consumesArgument(*argument))) {
                 checkCallArgumentAccess(*semanticTarget, *parameterIndex, *argument);
                 const auto effect = semanticTarget->callable->parameters[*parameterIndex].access;
                 collectCallArgumentAccess(*argument, effect, accesses);
@@ -2687,6 +2739,104 @@ private:
         }
     }
 
+    // True when `target` is `self` itself (through `&` and parentheses), not a field of it.
+    bool assignsWholeSelf(const syntax::ExprPtr& target) const {
+        auto current = target;
+        while (current != nullptr) {
+            if (current->kind == syntax::Kind::parenthesizedExpr) {
+                current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+            } else if (current->kind == syntax::Kind::accessExpr) {
+                current = std::static_pointer_cast<syntax::AccessExprSyntax>(current)->operand;
+            } else {
+                break;
+            }
+        }
+        if (current == nullptr || current->kind != syntax::Kind::nameExpr) return false;
+        const auto referenced = model->referencedSymbol(current);
+        const auto* symbol = referenced.has_value()
+                ? model->semanticModelValue->symbol(*referenced)
+                : nullptr;
+        return symbol != nullptr && symbol->kind == semantic::SymbolKind::parameter &&
+                symbol->name == "self";
+    }
+
+    static bool consumesArgument(const syntax::CallArgumentSyntax& argument) {
+        return argument.accessMarker != nullptr && argument.accessMarker->kind == kwConsume;
+    }
+
+    // `consume x` is a move wherever a value is stored: a binding, an assignment, an aggregate
+    // element. Elsewhere it is only an argument marker or a consuming receiver.
+    void permitMove(const syntax::ExprPtr& expression) {
+        auto current = expression;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        if (current != nullptr && current->kind == syntax::Kind::accessExpr) {
+            permittedMoves.insert(current.get());
+        }
+    }
+
+    // An argument that a memberwise initializer, an enum case or `append` stores: a copy of a
+    // noncopyable place is an error, and `consume` moves an owning local or parameter instead.
+    void requireStoredArgument(
+            const syntax::CallArgumentSyntax& argument,
+            std::optional<TypeId> type) {
+        if (!consumesArgument(argument)) {
+            requireNoImplicitCopy(argument.value, type);
+            return;
+        }
+        if (!isConsumable(argument.value)) {
+            report(
+                    TypeCheckingDiagnosticId::invalidConsumeArgument,
+                    argument.value->span,
+                    "consuming argument must be an owning local, consuming parameter, or temporary");
+        }
+    }
+
+    // The places a value-producing expression copies: the expression itself when it names
+    // storage, or the branch values of an `if`, `match` or block, or the operand of `?`.
+    void collectCopiedPlaces(const syntax::ExprPtr& expression,
+                             std::vector<syntax::ExprPtr>& places) const {
+        if (expression == nullptr) return;
+        switch (expression->kind) {
+            case syntax::Kind::parenthesizedExpr:
+                collectCopiedPlaces(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)
+                                ->expression,
+                        places);
+                return;
+            case syntax::Kind::blockExpr: {
+                const auto block = std::static_pointer_cast<syntax::BlockExprSyntax>(expression);
+                if (block->items.empty()) return;
+                const auto last = std::dynamic_pointer_cast<syntax::ExprSyntax>(block->items.back());
+                collectCopiedPlaces(last, places);
+                return;
+            }
+            case syntax::Kind::ifExpr: {
+                const auto branch = std::static_pointer_cast<syntax::IfExprSyntax>(expression);
+                collectCopiedPlaces(branch->thenBranch, places);
+                collectCopiedPlaces(branch->elseBranch, places);
+                return;
+            }
+            case syntax::Kind::matchExpr:
+                for (const auto& arm :
+                     std::static_pointer_cast<syntax::MatchExprSyntax>(expression)->arms) {
+                    collectCopiedPlaces(arm->body, places);
+                }
+                return;
+            case syntax::Kind::propagateExpr: {
+                // `place?` takes a copy of the whole `Result` or `Optional` it unwraps.
+                const auto operand =
+                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand;
+                if (isPlaceExpression(operand)) places.push_back(operand);
+                return;
+            }
+            default:
+                if (isPlaceExpression(expression)) places.push_back(expression);
+                return;
+        }
+    }
+
     // Reports the implicit copy of a noncopyable value at an owned context (decision 0015).
     // `movesOwningName` lets a bare owning local or consuming parameter be moved instead,
     // which is what `return` does with it.
@@ -2694,25 +2844,30 @@ private:
             const syntax::ExprPtr& expression,
             std::optional<TypeId> type,
             bool movesOwningName = false) {
-        if (expression == nullptr || !type.has_value() ||
-            *type == model->typeContext.errorType() || !isPlaceExpression(expression)) {
-            return;
-        }
-        const auto reason = model->noncopyableReason(*type);
-        if (!reason.has_value()) return;
-        if (movesOwningName) {
-            auto bare = expression;
-            while (bare->kind == syntax::Kind::parenthesizedExpr) {
-                bare = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(bare)->expression;
+        if (expression == nullptr) return;
+        std::vector<syntax::ExprPtr> places;
+        collectCopiedPlaces(expression, places);
+        for (const auto& place : places) {
+            const auto placeType = place == expression ? type : model->typeOf(place);
+            if (!placeType.has_value() || *placeType == model->typeContext.errorType()) continue;
+            const auto reason = model->noncopyableReason(*placeType);
+            if (!reason.has_value()) continue;
+            if (movesOwningName && place == expression) {
+                auto bare = place;
+                while (bare->kind == syntax::Kind::parenthesizedExpr) {
+                    bare = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(bare)
+                                   ->expression;
+                }
+                if (bare->kind == syntax::Kind::nameExpr && isConsumable(bare)) continue;
             }
-            if (bare->kind == syntax::Kind::nameExpr && isConsumable(bare)) return;
+            report(
+                    TypeCheckingDiagnosticId::copyOfNoncopyable,
+                    place->span,
+                    "cannot copy a value of type '" + model->typeContext.displayName(*placeType) +
+                            "': " + *reason,
+                    "move an owning local or consuming parameter with 'consume', borrow it, or "
+                    "build a new value");
         }
-        report(
-                TypeCheckingDiagnosticId::copyOfNoncopyable,
-                expression->span,
-                "cannot copy a value of type '" + model->typeContext.displayName(*type) +
-                        "': " + *reason,
-                "pass it to a consuming parameter with 'consume', borrow it, or build a new value");
     }
 
     bool isConsumable(const syntax::ExprPtr& expression) const {
@@ -2949,7 +3104,7 @@ private:
                         symbol->name);
             }
             const auto actual = checkExpression(argument->value, expected);
-            requireNoImplicitCopy(argument->value, actual);
+            requireStoredArgument(*argument, actual);
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
             }
@@ -3288,6 +3443,7 @@ private:
         }
 
         for (const auto& element : expression->elements) {
+            permitMove(element);
             const auto actual = checkExpression(element, elementType).value_or(
                     model->typeContext.errorType());
             requireNoImplicitCopy(element, actual);
@@ -3321,6 +3477,7 @@ private:
         }
 
         for (const auto& entry : expression->entries) {
+            permitMove(entry->value);
             const auto actualKey = checkExpression(entry->key, keyType).value_or(
                     model->typeContext.errorType());
             const auto actualValue = checkExpression(entry->value, valueType).value_or(
@@ -3408,6 +3565,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-inout-argument";
         case TypeCheckingDiagnosticId::copyOfNoncopyable:
             return "type-checking.copy-of-noncopyable";
+        case TypeCheckingDiagnosticId::assignmentToSelfInDeinit:
+            return "type-checking.assignment-to-self-in-deinit";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

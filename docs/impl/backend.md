@@ -6,8 +6,8 @@
 > The current implementation covers the native acceptance workload and
 > regression cases for conditional evaluation, ownership flow, guarded
 > payloads, and loop storage. Verifier, native ABI, and library gaps remain.
-> User-defined `deinit` and explicit copy initializers are outside the
-> [implemented language surface](supported-features.md).
+> A struct `deinit` is implemented (decision 0015); explicit copy initializers are outside
+> the [implemented language surface](supported-features.md).
 
 For the runtime and process startup, see [Runtime](runtime.md).
 

@@ -245,6 +245,27 @@ the user's to run.
    a block or function whose last expression is a noncopyable local is still lowered as a
    copy and is refused by `prepareOwned`. Decide whether to treat it as a move or require
    `return`.
+   Settled for now: type checking reports it as a copy (`copy-of-noncopyable`) and the
+   author writes `return`.
+8. **When a temporary is destroyed.** A discarded call result, or a temporary read for one
+   field, lives to the end of its enclosing block, so a `TcpConnection` temporary holds its
+   descriptor until then. The spec does not define statement-level lifetime. Decide whether
+   temporaries should die at the end of their statement before handles are built from them.
+
+## Review findings applied
+
+The three role reviews of the first implementation (type system, IR and backend, adversarial)
+found: `Dict.get` cloned a noncopyable value (now rejected, `Dict.get` of a noncopyable value
+type); a noncopyable local could not be moved into any aggregate (`consume x` now moves it
+into a binding, an assignment, an initializer, an enum case, `append` and array or dictionary
+elements); a `deinit` that assigned `self` recursed without end (the destroy helper clears the
+live flag before running the `deinit`, and `&self = ...` is rejected); copies through `if`,
+`match`, blocks, `?` and a trailing expression reached only a lowering error (now type
+errors); an `if` or `match` that yields a fresh noncopyable value was refused (its result
+moves out of its slot); the noncopyability query was exponential in type depth (memoised per
+query); and `-O1` or higher with `-gfull` crashed the compiler on a `deinit` (the destroy
+helper that calls it is kept out of line). The IR verifier now also requires that only the
+hidden live flag lacks a source symbol and that field lookups never resolve to it.
 
 ## Evidence
 

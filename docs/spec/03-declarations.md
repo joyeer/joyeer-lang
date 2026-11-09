@@ -408,8 +408,9 @@ deinit_decl     ::= 'deinit' '(' ')' block
 
 #### 3.7.1 `deinit` rules (provisional)
 
-**Implementation status:** not implemented. The compiler reserves the `deinit`
-keyword and nothing more. These rules fix the first implementation
+**Implementation status:** implemented for structs (parser through the native backend; see
+[supported features](../impl/supported-features.md)). Not implemented: `deinit` on an `enum`, `init`
+declarations, and moving a noncopyable value out of a `match` binding or an array. These rules fix the first implementation
 ([decision 0015](../decisions/0015-noncopyable-and-linear-types.md)): `deinit` for
 structs, so that a handle can close the resource it owns. `init` declarations stay
 unimplemented, and a struct with a `deinit` is constructed with its memberwise
