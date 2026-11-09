@@ -180,7 +180,8 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::structure: {
                 const auto structure = structures.find(id);
                 if (structure != structures.end()) {
-                    result = std::any_of(
+                    result = structure->second->deinitializer.has_value() ||
+                            std::any_of(
                             structure->second->fields.begin(),
                             structure->second->fields.end(),
                             [&visit](const auto& field) { return visit(field.type); });
@@ -417,7 +418,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                         std::nullopt,
                         "field '" + field.name + "' references an unknown type");
             }
-            if (!fields.emplace(field.symbol, &field).second) {
+            // The hidden live flag has no source symbol, so it is not a lookup target.
+            if (field.symbol != semantic::invalidSymbolId &&
+                !fields.emplace(field.symbol, &field).second) {
                 report(
                         VerificationErrorId::duplicateId,
                         std::nullopt,
@@ -494,6 +497,43 @@ VerificationResult Verifier::verify(const Module& module) const {
                     std::nullopt,
                     std::nullopt,
                     "duplicate function id " + std::to_string(function.id));
+        }
+    }
+
+    for (const auto& structure : module.structures) {
+        if (!structure.deinitializer.has_value()) continue;
+        const auto deinitializer = functions.find(*structure.deinitializer);
+        const auto signatureMatches = deinitializer != functions.end() &&
+                deinitializer->second->parameters.size() == 1 &&
+                deinitializer->second->parameters[0].value.type == structure.type &&
+                deinitializer->second->parameters[0].value.category == ValueCategory::address &&
+                !deinitializer->second->returnsValue &&
+                !deinitializer->second->isExternal;
+        if (!signatureMatches) {
+            report(
+                    deinitializer == functions.end()
+                            ? VerificationErrorId::invalidReference
+                            : VerificationErrorId::invalidInstruction,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "deinit of structure '" + structure.name +
+                            "' must be a function taking only the structure's address and "
+                            "returning nothing");
+        }
+        const auto liveFlagIsLast = !structure.fields.empty() &&
+                structure.fields.back().name == liveFieldName &&
+                structure.fields.back().symbol == semantic::invalidSymbolId &&
+                types.contains(structure.fields.back().type) &&
+                types.at(structure.fields.back().type)->kind == typing::TypeKind::boolean;
+        if (!liveFlagIsLast) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "structure '" + structure.name +
+                            "' declares a deinit but does not end with the hidden live flag");
         }
     }
 
@@ -2340,7 +2380,9 @@ std::string dump(const Module& module) {
                 << typeName(types, field.type) << " symbol#" << field.symbol;
             if (field.isMutable) out << " var";
         }
-        out << (structure->fields.empty() ? "}\n" : " }\n");
+        out << (structure->fields.empty() ? "}" : " }");
+        if (structure->deinitializer.has_value()) out << " deinit=@" << *structure->deinitializer;
+        out << '\n';
     }
     for (const auto* enumeration : sortedEnumerations) {
         out << "  enum !" << enumeration->type << " \"" << escape(enumeration->name)

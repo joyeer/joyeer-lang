@@ -98,6 +98,7 @@ std::vector<Diagnostic> Builder::build() {
                 functions.emplace(function.id, declareNativeFunction(function));
             }
         }
+        emitOwnershipBodies();
         for (const auto& function : source.functions) {
             if (!function.isExternal) emitFunction(function);
             if (!diagnostics.empty()) break;

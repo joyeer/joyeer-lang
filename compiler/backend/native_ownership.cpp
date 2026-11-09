@@ -61,6 +61,11 @@ void Builder::emitOwnership() {
         destroys.emplace(type.id, llvm::Function::Create(destroyType,
                 linkage, "joyeer_destroy_type_" + std::to_string(type.id), module()));
     }
+}
+
+// The helper bodies are emitted once every source function is declared, because a destroy
+// helper calls the `deinit` of a struct that declares one.
+void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
@@ -139,7 +144,21 @@ void Builder::emitDestroy(ir::TypeId id) {
         return;
     }
     if (kind == typing::TypeKind::structure) {
-        const auto& fields = structures.at(id)->fields;
+        const auto& definition = *structures.at(id);
+        const auto& fields = definition.fields;
+        if (definition.deinitializer.has_value()) {
+            // The `deinit` runs first, and only for a live value: the hidden last field is
+            // cleared by `take`, by zero-initialization and at the end of this helper.
+            auto* live = builder.CreateLoad(llvmType(fields.back().type),
+                    field(llvmType(id), address, static_cast<unsigned>(fields.size() - 1)), "live");
+            auto* run = llvm::BasicBlock::Create(context(), "deinit", activeFunction);
+            auto* members = llvm::BasicBlock::Create(context(), "members", activeFunction);
+            builder.CreateCondBr(builder.CreateIsNotNull(live), run, members);
+            builder.SetInsertPoint(run);
+            builder.CreateCall(functions.at(*definition.deinitializer), {address});
+            builder.CreateBr(members);
+            builder.SetInsertPoint(members);
+        }
         // Destruction is reverse declaration order, including nested aggregates.
         for (size_t index = fields.size(); index > 0; --index) {
             const auto payloadType = fields[index - 1].type;

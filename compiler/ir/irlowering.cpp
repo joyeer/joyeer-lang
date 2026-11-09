@@ -277,6 +277,15 @@ private:
             }
             return value;
         }
+        // Type checking rejects every source-level copy of a noncopyable value, so reaching
+        // here means a lowering path moves where it should not copy.
+        if (!model->isCopyable(value.type)) {
+            report(
+                    DiagnosticId::ownershipViolation,
+                    span,
+                    "a noncopyable value would be copied");
+            return std::nullopt;
+        }
         return emitValue(
                 ir::Opcode::copyValue,
                 value.type,
@@ -458,6 +467,15 @@ private:
                 semanticField != nullptr && semanticField->isMutable,
             });
         }
+        if (declaration->deinitializer != nullptr) {
+            // See ir::StructureDefinition::deinitializer: the live flag is always last.
+            structure.fields.push_back(ir::FieldDefinition {
+                semantic::invalidSymbolId,
+                ir::liveFieldName,
+                model->types().boolType(),
+                false,
+            });
+        }
         module->structures.push_back(std::move(structure));
     }
 
@@ -552,29 +570,52 @@ private:
         forEachMethod(*root, [this](const syntax::FunctionDeclSyntax::Ptr& method) {
             collectFunction(method);
         });
-        // Temporary (decision 0015, stage 6 replaces it): nothing lowers a `deinit` yet, and
-        // accepting one would silently never run it.
-        for (const auto& item : root->items) {
-            if (item->kind != syntax::Kind::structDecl) continue;
-            const auto& deinitializer =
-                    std::static_pointer_cast<syntax::StructDeclSyntax>(item)->deinitializer;
-            if (deinitializer == nullptr) continue;
-            report(DiagnosticId::unsupportedSyntax, deinitializer->span,
-                   "'deinit' is not yet implemented by IR lowering");
-        }
+        linkDeinitializers(*root);
         evaluateConstants();
     }
 
+    // A `deinit` is collected as a method (see forEachMethod); the structure it belongs to
+    // records which function that is, so destruction can call it.
+    void linkDeinitializers(const syntax::SourceFileSyntax& root) {
+        const auto& semanticModel = *model->semanticModel();
+        for (const auto& item : root.items) {
+            if (item->kind != syntax::Kind::structDecl) continue;
+            const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+            if (declaration->deinitializer == nullptr) continue;
+            const auto structureSymbol = semanticModel.declaredSymbol(declaration);
+            const auto deinitSymbol = semanticModel.declaredSymbol(declaration->deinitializer);
+            const auto function = deinitSymbol.has_value()
+                    ? functions.find(*deinitSymbol)
+                    : functions.end();
+            const auto structure = std::find_if(
+                    module->structures.begin(),
+                    module->structures.end(),
+                    [&structureSymbol](const auto& candidate) {
+                        return structureSymbol.has_value() && candidate.symbol == *structureSymbol;
+                    });
+            if (function == functions.end() || structure == module->structures.end()) {
+                report(DiagnosticId::missingSymbol, declaration->deinitializer->span,
+                       "'deinit' has no lowered function or structure definition");
+                continue;
+            }
+            structure->deinitializer = function->second;
+        }
+        // A `deinit` makes its struct (and anything holding it) need destruction, so the
+        // analysis built from the aggregate definitions alone is out of date.
+        destruction.emplace(*module);
+    }
+
+    // Methods, plus a struct's `deinit`, which is lowered like a method taking `self`.
     template<class Visitor>
     static void forEachMethod(const syntax::SourceFileSyntax& root, Visitor&& visit) {
         for (const auto& item : root.items) {
             switch (item->kind) {
-                case syntax::Kind::structDecl:
-                    for (const auto& method :
-                         std::static_pointer_cast<syntax::StructDeclSyntax>(item)->methods) {
-                        visit(method);
-                    }
+                case syntax::Kind::structDecl: {
+                    const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                    for (const auto& method : structure->methods) visit(method);
+                    if (structure->deinitializer != nullptr) visit(structure->deinitializer);
                     break;
+                }
                 case syntax::Kind::enumDecl:
                     for (const auto& method :
                          std::static_pointer_cast<syntax::EnumDeclSyntax>(item)->methods) {
@@ -2300,6 +2341,15 @@ private:
         if (pattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (!symbol.has_value()) return;
+            if (!model->isCopyable(value.type)) {
+                // A binding is a copy of the matched payload; owning it needs the consuming
+                // pattern bindings of decision 0015 (P2b), so refuse instead of destroying twice.
+                report(
+                        DiagnosticId::unsupportedSyntax,
+                        pattern->span,
+                        "a pattern cannot bind a noncopyable value yet");
+                return;
+            }
             if (requiresDestroy(value.type)) {
                 value = emitValue(
                         ir::Opcode::copyValue,
@@ -2794,6 +2844,15 @@ private:
 
         for (size_t index = 0; index < fieldValues.size(); ++index) {
             if (fieldValues[index].has_value()) continue;
+            if (structure->fields[index].name == ir::liveFieldName) {
+                auto live = makeInstruction(ir::Opcode::booleanConstant, expression->span, true);
+                live.integerValue = 1;
+                live.result = makeValue(structure->fields[index].type, ir::ValueCategory::value);
+                fieldValues[index] = *live.result;
+                emit(std::move(live));
+                recordValue(*fieldValues[index], ValueOwnership::trivial);
+                continue;
+            }
             const auto* fieldSymbol = model->semanticModel()->symbol(
                     structure->fields[index].symbol);
             const auto& declaration = fieldSymbol != nullptr &&
@@ -2842,11 +2901,28 @@ private:
             emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
             return;
         }
-        auto value = lowerExpression(expression->value);
+        auto value = lowerReturnedValue(expression->value);
         if (!value.has_value()) return;
         value = coerce(*value, currentFunction().resultType, expression->value->span);
         if (!value.has_value()) return;
         emitReturnValue(*value, expression->span, expression->value->span);
+    }
+
+    // Returning an owning local of a noncopyable type moves it out (decision 0015): a copy
+    // would leave the local to be destroyed, running the `deinit` of a value that escaped.
+    std::optional<ir::Value> lowerReturnedValue(const syntax::ExprPtr& expression) {
+        const auto type = model->typeOf(expression);
+        if (!type.has_value() || model->isCopyable(*type) || !isAddressable(expression)) {
+            return lowerExpression(expression);
+        }
+        const auto address = lowerAddress(expression);
+        if (!address.has_value()) return std::nullopt;
+        return emitValue(
+                ir::Opcode::take,
+                address->type,
+                ir::ValueCategory::value,
+                { address->id },
+                expression->span);
     }
 
     void emitReturnValue(ir::Value value, SourceSpan span, SourceSpan valueSpan) {

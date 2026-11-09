@@ -954,6 +954,18 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "e2e;llvm-backend;runtime;ownership;consuming;projection-consume"
     )
 
+    add_test(NAME E2EExecutableDeinit
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/deinit.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deinit${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=10\n2\n1\n20\n100\n3\n100\n4\n200\n200\n5\n6\n30\n40\n8\n7\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(E2EExecutableDeinit PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;consuming;deinit"
+    )
+
     function(add_joyeer_native_regression name fixture expected_output)
         set(levels 0 2)
         if(ARGC GREATER 3)

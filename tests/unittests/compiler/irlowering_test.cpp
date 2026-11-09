@@ -201,16 +201,112 @@ TEST_F(IRLoweringTest, SharesPublicConstantsAcrossModules) {
     EXPECT_EQ(result.module->constants[0].name, "table");
 }
 
-// Temporary until decision 0015 stage 6: no stage past name resolution runs a `deinit`, so a
-// struct that declares one must not compile silently without ever closing its resource.
-TEST_F(IRLoweringTest, ADeinitIsRejectedUntilLoweringImplementsIt) {
-    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"));
-    ASSERT_FALSE(result.succeeded());
-    EXPECT_NE(joyeer::lowering::dump(result.diagnostics).find("'deinit' is not yet implemented"),
-              std::string::npos);
+// Decision 0015, stage 6: a `deinit` is lowered like a method taking its struct's address, the
+// structure records it, and destroying a live value runs it before the fields.
+const joyeer::ir::StructureDefinition& structureNamed(
+        const joyeer::ir::Module& module, const std::string& name) {
+    const auto found = std::find_if(module.structures.begin(), module.structures.end(),
+            [&name](const auto& structure) { return structure.name == name; });
+    EXPECT_NE(found, module.structures.end());
+    return *found;
+}
 
+TEST_F(IRLoweringTest, ADeinitIsLoweredAndRecordedOnItsStructure) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+
+    const auto& handle = structureNamed(*result.module, "Handle");
+    ASSERT_TRUE(handle.deinitializer.has_value());
+    const auto& deinitializer = result.module->functions.at(*handle.deinitializer);
+    EXPECT_EQ(deinitializer.name, "Handle.deinit");
+    ASSERT_EQ(deinitializer.parameters.size(), 1u);
+    EXPECT_EQ(deinitializer.parameters[0].value.category, joyeer::ir::ValueCategory::address);
+    EXPECT_EQ(deinitializer.parameters[0].value.type, handle.type);
+    EXPECT_FALSE(deinitializer.returnsValue);
+
+    // The hidden live flag ends the layout, so a moved-from value never runs the `deinit`.
+    ASSERT_EQ(handle.fields.size(), 2u);
+    EXPECT_EQ(handle.fields.back().name, joyeer::ir::liveFieldName);
+    EXPECT_TRUE(joyeer::ir::requiresDestruction(*result.module, handle.type));
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded());
+}
+
+TEST_F(IRLoweringTest, AStructWithoutDeinitKeepsItsLayoutAndNeedsNoDestruction) {
     ASSERT_NO_FATAL_FAILURE(lower("struct Plain { var fd: Int }\n"));
-    EXPECT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& plain = structureNamed(*result.module, "Plain");
+    EXPECT_FALSE(plain.deinitializer.has_value());
+    EXPECT_EQ(plain.fields.size(), 1u);
+    EXPECT_FALSE(joyeer::ir::requiresDestruction(*result.module, plain.type));
+}
+
+TEST_F(IRLoweringTest, AHolderOfADeinitStructRequiresDestruction) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                  "struct Holder { var handle: Handle }\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_TRUE(joyeer::ir::requiresDestruction(
+            *result.module, structureNamed(*result.module, "Holder").type));
+}
+
+TEST_F(IRLoweringTest, ConstructingAStructWithDeinitSetsTheLiveFlag) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                  "func open(fd: Int): Handle { return Handle(fd: fd) }\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    for (const auto& block : function("open").blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::constructStruct) continue;
+            EXPECT_EQ(instruction.operands.size(), 2u);
+            return;
+        }
+    }
+    FAIL() << "no constructStruct in open";
+}
+
+TEST_F(IRLoweringTest, ReturningAnOwningLocalOfANoncopyableTypeMovesIt) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                  "func make(fd: Int): Handle {\n"
+                                  "    let handle = Handle(fd: fd)\n"
+                                  "    return handle\n"
+                                  "}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& make = function("make");
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(make, joyeer::ir::Opcode::take), 1u);
+}
+
+TEST_F(IRLoweringTest, ABindingPatternCannotYetOwnANoncopyablePayload) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                  "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
+                                  "func peek(slot: borrowing Slot): Int {\n"
+                                  "    return match slot {\n"
+                                  "        .Full(handle) => handle.fd,\n"
+                                  "        .Empty => 0,\n"
+                                  "    }\n"
+                                  "}\n"));
+    ASSERT_FALSE(result.succeeded());
+    EXPECT_NE(joyeer::lowering::dump(result.diagnostics).find("noncopyable"), std::string::npos);
+}
+
+TEST_F(IRLoweringTest, TheVerifierRejectsADeinitWithTheWrongSignature) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+                                  "func other(): Int { return 1 }\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    auto module = *result.module;
+    for (auto& structure : module.structures) {
+        if (structure.name == "Handle") structure.deinitializer = function("other").id;
+    }
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(module).succeeded());
+}
+
+TEST_F(IRLoweringTest, TheVerifierRejectsADeinitWithoutTheHiddenLiveFlag) {
+    ASSERT_NO_FATAL_FAILURE(lower("struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    auto module = *result.module;
+    for (auto& structure : module.structures) {
+        if (structure.name == "Handle") structure.fields.pop_back();
+    }
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(module).succeeded());
 }
 
 TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {

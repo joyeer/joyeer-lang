@@ -37,7 +37,8 @@ source table as its fourth argument. The table order must match the
 The module owns:
 
 - a deterministic snapshot of canonical compile-time `TypeId` names;
-- concrete user `struct` field definitions;
+- concrete user `struct` field definitions, and for a struct that declares `deinit` the
+  function that runs it plus a hidden trailing `$live` Bool field (below);
 - user enum and instantiated `Optional<T>` / `Result<T,E>` case definitions;
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
@@ -266,6 +267,8 @@ plus case symbol, including distinct builtin container instantiations.
 - selected load/store, return, operator, call, field, aggregate, and payload
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
+- a structure `deinit` that is not a function taking only the structure's address and returning
+  nothing, or a struct with one that does not end with the hidden live flag;
 - malformed recursive patterns;
 - malformed source maps, unknown source IDs, debug spans outside their own
   file's byte bounds, or locations without module source information;
@@ -338,6 +341,7 @@ Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
 | Loop stack storage | LLVM source and scratch allocations are emitted in a one-time function prologue, not reallocated on every iteration. Initialization and debug-variable bindings remain at their source points. |
 | Builtin enum identity | Case lookup includes concrete `TypeId`; distinct `Optional`/`Result` instantiations do not collide. Failed emission produces diagnostics and no partial success. |
 | Optional binding promotion | Binding initialization applies its destination conversion before storing. |
+| `deinit` (decision 0015) | A struct that declares one records its function (a method-like function taking the struct's address) and ends with a hidden `$live` Bool. Construction sets it; `take`, zero-initialization and the end of destroy clear it, so only a live value runs the `deinit`, once, before its fields are destroyed in reverse order. Returning an owning local of a noncopyable type is lowered as a `take`; binding a noncopyable value in a pattern and copying one are lowering errors. |
 
 These are regression-backed implementation rules, not a complete ownership
 proof. The structural verifier limitations in section 5 and broader

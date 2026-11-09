@@ -106,6 +106,7 @@ private:
     llvm::Constant* decodeConstant(ir::TypeId id, const std::string& data, size_t& offset);
     llvm::Value* helper(ir::TypeId id, bool clone);
     void emitOwnership();
+    void emitOwnershipBodies();
     void emitClone(ir::TypeId id);
     void emitDestroy(ir::TypeId id);
     void copy(ir::TypeId id, llvm::Value* destination, llvm::Value* sourceAddress);

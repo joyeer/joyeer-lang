@@ -137,9 +137,9 @@ the rest as follows.
 ## Implementation outline (the `deinit` feature, stage by stage)
 
 The repository's feature workflow applies: spec, failing tests, then each stage, then
-role reviews and validation. Progress: stages 1 to 5 are implemented (verified on
-Linux; a Windows build is still to be run); until stage 6 lowers it, IR lowering
-rejects a struct that declares `deinit`. Stages, with what each must do:
+role reviews and validation. Progress: stages 1 to 7 are implemented (verified on
+Linux; a Windows build is still to be run); a `deinit` now compiles and runs, but the
+system handles do not use it yet (stage 8). Stages, with what each must do:
 
 1. **Spec.** Amend §3.7 (the rules above, with an implementation-status note),
    §4.1.1 (propagation and `Copyable`), §4.7 (order with partial moves forbidden) and
@@ -173,8 +173,20 @@ rejects a struct that declares `deinit`. Stages, with what each must do:
    address; make `requiresDestruction` true for such a type; make destroy emit the
    `deinit` call before field destruction, once per destruction, on overwrite and at
    scope end. Keep `prepareOwned`'s copy path as an assertion for noncopyable types.
+   *Implemented as* `ir::StructureDefinition::deinitializer` (the lowered function, named
+   `Type.deinit`, taking the address) and `DestructionAnalysis` treating such a struct as
+   needing destruction; lowering rebuilds its analysis once the `deinit` is linked.
+   Moved-from storage must not run the `deinit`, and `take` zero-fills, so the struct gets a
+   hidden trailing `$live` Bool field that construction sets and zeroing clears; this also
+   makes a destroyed or uninitialized value inert. A `return` of an owning local of a
+   noncopyable type is lowered as `take`; `prepareOwned` reports `ownership-violation`
+   instead of emitting a copy, and a `match` binding of a noncopyable payload is rejected
+   (`a pattern cannot bind a noncopyable value yet`, until P2b).
 7. **Backend.** The generated destroy helper for the type calls the `deinit` function,
    then destroys the fields. Source and debug scopes of the body are preserved.
+   *Implemented as* a branch on the live flag in the generated destroy helper that calls the
+   deinit function, then the existing reverse-order field destruction; helper bodies are
+   emitted after all source functions are declared. The IR wire version is 11.
 8. **System and the example.** Add `deinit` to the handle structs, adjust their close
    operations, and update the tests and the web server.
 9. **Docs and acceptance.** Update `supported-features.md`, the portable skill copy, and
@@ -221,11 +233,15 @@ the user's to run.
 4. **Partial consumption of a struct that contains a linear field.** Allowed through
    the existing projection tracking, or rejected in v1?
 5. **`removeLast` versus a consuming accessor** as the first array operation.
-6. **Mutating a consumed value to defuse its `deinit`.** The close functions write
-   `-1` into the handle they consume. Check that the spec lets a `consuming` parameter
-   (or `consuming self`) be mutated before it is destroyed; if not, either allow it for
-   this purpose or make the close a `consuming func` method that the spec's
-   consuming-receiver rules already permit to mutate `self`.
+6. **Mutating a consumed value to defuse its `deinit`.** Settled by implementation: no
+   sentinel is needed. A consumed value is destroyed once where it ends up, and `take`
+   clears the hidden live flag in the source, so an explicit close is a `consuming`
+   parameter that lets the value be destroyed. The close functions of stage 8 drop the
+   `-1` write.
+7. **Moving a noncopyable value out through a trailing expression.** `return x` is a move;
+   a block or function whose last expression is a noncopyable local is still lowered as a
+   copy and is refused by `prepareOwned`. Decide whether to treat it as a move or require
+   `return`.
 
 ## Evidence
 

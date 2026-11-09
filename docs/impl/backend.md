@@ -70,7 +70,7 @@ and `compiler/backend/`:
 | [native_module.h](../../compiler/backend/native_module.h) | Backend-only context/module storage and opaque handle definition |
 | [native_ir.h](../../compiler/backend/native_ir.h) | One lowering session's state, caches, and responsibility declarations |
 | [native_types.cpp](../../compiler/backend/native_types.cpp) | Construction sequence, type/layout mapping, runtime declarations, globals, and stack utilities |
-| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership |
+| [native_ownership.cpp](../../compiler/backend/native_ownership.cpp) | Type-specific clone/destroy helpers and active-payload ownership; a destroy helper calls the struct `deinit` first when the live flag is set. Helper bodies are emitted after every source function is declared |
 | [native_functions.cpp](../../compiler/backend/native_functions.cpp) | Functions, instructions, checked arithmetic, patterns, and runtime entry adapters |
 | [native_collections.cpp](../../compiler/backend/native_collections.cpp) | Arrays, dictionaries, bounds checks, and runtime ownership callbacks |
 | [native_host.cpp](../../compiler/backend/native_host.cpp) | External builtins (`print`, byte conversions), native-binding calls, and the memory intrinsics |

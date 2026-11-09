@@ -252,7 +252,15 @@ struct StructureDefinition {
     TypeId type = typing::invalidTypeId;
     std::string name;
     std::vector<FieldDefinition> fields;
+    // The struct's `deinit` (decision 0015): a function taking the value's address and
+    // returning nothing, run once when a live value is destroyed, before its fields. A
+    // struct with one ends with a hidden Bool field (`liveFieldName`, no source symbol) that
+    // construction sets and `take` clears with the rest of the value, so destroying moved-from
+    // or uninitialized storage never runs the `deinit`.
+    std::optional<FunctionId> deinitializer;
 };
+
+inline constexpr const char* liveFieldName = "$live";
 
 struct EnumCaseDefinition {
     semantic::SymbolId symbol = semantic::invalidSymbolId;
