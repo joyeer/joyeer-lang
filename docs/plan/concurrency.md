@@ -121,7 +121,7 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
       scopes preserved.
 - [x] Stable diagnostic IDs for each rejection.
 - [x] Build and run the compiler tests on Linux in WSL (1222 pass).
-- [x] Build and run them on Windows (x64 Debug with Compression: 1270 of 1270 pass).
+- [x] Build and run them on Windows (x64 Debug and Release with Compression: 1270 of 1270 pass in each).
 - [x] Role reviewers (type system, IR and backend, adversarial); findings applied.
 - [ ] `scripts/validate.py` (Debug and Release, unfiltered CTest and `fern test`).
 
