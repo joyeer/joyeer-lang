@@ -121,8 +121,9 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
       scopes preserved.
 - [x] Stable diagnostic IDs for each rejection.
 - [x] Build and run the compiler tests on Linux in WSL (1222 pass).
-- [ ] Build and run them on Windows (a C++ change needs a rebuild; the Windows build is run
-      from an MSVC Developer shell), then the role reviewers and `scripts/validate.py`.
+- [x] Build and run them on Windows (x64 Debug with Compression: 1270 of 1270 pass).
+- [x] Role reviewers (type system, IR and backend, adversarial); findings applied.
+- [ ] `scripts/validate.py` (Debug and Release, unfiltered CTest and `fern test`).
 
 **P2b: handles that close, owning what you receive, array removal**
 

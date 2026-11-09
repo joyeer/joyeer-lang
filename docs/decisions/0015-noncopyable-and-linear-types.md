@@ -137,8 +137,8 @@ the rest as follows.
 ## Implementation outline (the `deinit` feature, stage by stage)
 
 The repository's feature workflow applies: spec, failing tests, then each stage, then
-role reviews and validation. Progress: stages 1 to 8 are implemented (verified on
-Linux; a Windows build is still to be run); stage 9 is the review and acceptance run. Stages, with what each must do:
+role reviews and validation. Progress: stages 1 to 8 are implemented and reviewed (Linux and Windows x64 Debug pass);
+what remains of stage 9 is the full `scripts/validate.py` acceptance run (Release as well). Stages, with what each must do:
 
 1. **Spec.** Amend §3.7 (the rules above, with an implementation-status note),
    §4.1.1 (propagation and `Copyable`), §4.7 (order with partial moves forbidden) and
