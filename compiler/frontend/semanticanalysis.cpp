@@ -11,8 +11,8 @@ namespace joyeer::analysis {
 namespace {
 
 // Visits every function with a body: top-level functions, then the methods of
-// structs, enums, and extensions. A method is an ordinary function whose first
-// parameter is the implicit receiver, so each analysis treats it like any other.
+// structs, enums, and extensions, and a struct's `deinit`. A method is an ordinary function
+// whose first parameter is the implicit receiver, so each analysis treats it like any other.
 template<class Visitor>
 void forEachFunction(const syntax::SourceFileSyntax::Ptr& root, Visitor&& visit) {
     for (const auto& item : root->items) {
@@ -20,12 +20,12 @@ void forEachFunction(const syntax::SourceFileSyntax::Ptr& root, Visitor&& visit)
             case syntax::Kind::functionDecl:
                 visit(std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
                 break;
-            case syntax::Kind::structDecl:
-                for (const auto& method :
-                     std::static_pointer_cast<syntax::StructDeclSyntax>(item)->methods) {
-                    visit(method);
-                }
+            case syntax::Kind::structDecl: {
+                const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                for (const auto& method : structure->methods) visit(method);
+                if (structure->deinitializer != nullptr) visit(structure->deinitializer);
                 break;
+            }
             case syntax::Kind::enumDecl:
                 for (const auto& method :
                      std::static_pointer_cast<syntax::EnumDeclSyntax>(item)->methods) {
@@ -679,8 +679,43 @@ private:
             state.consumed.insert(path->root);
             clearConsumedProjections(path->root, state);
         } else {
+            reportPartialConsumeOfDeinitType(expression);
             addConsumedProjection(*path, state);
         }
+    }
+
+    // A struct with `deinit` must reach its destructor whole (decision 0015), so no part of
+    // it may be moved out: `deinit` would otherwise run over a value with a hole in it.
+    void reportPartialConsumeOfDeinitType(const syntax::ExprPtr& expression) {
+        auto current = expression;
+        while (current != nullptr) {
+            syntax::ExprPtr base;
+            if (current->kind == syntax::Kind::parenthesizedExpr) {
+                base = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)
+                               ->expression;
+            } else if (current->kind == syntax::Kind::accessExpr) {
+                base = std::static_pointer_cast<syntax::AccessExprSyntax>(current)->operand;
+            } else if (current->kind == syntax::Kind::memberExpr) {
+                base = std::static_pointer_cast<syntax::MemberExprSyntax>(current)->base;
+                reportIfDeinitType(base, current->span);
+            } else if (current->kind == syntax::Kind::subscriptExpr) {
+                base = std::static_pointer_cast<syntax::SubscriptExprSyntax>(current)->base;
+            }
+            current = base;
+        }
+    }
+
+    void reportIfDeinitType(const syntax::ExprPtr& base, SourceSpan span) {
+        const auto type = model->typeOf(base);
+        if (!type.has_value() || model->deinitializerOf(*type) == nullptr) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::partialConsumeOfDeinitType,
+            Severity::error,
+            span,
+            "cannot move a part out of '" + model->types().displayName(*type) +
+                    "' because it declares 'deinit'",
+            "consume the whole value, or read the field and let the value be destroyed",
+        });
     }
 
     std::optional<semantic::SymbolId> analyzeInitialize(
@@ -1459,6 +1494,8 @@ const char* diagnosticName(DiagnosticId id) {
             return "semantic-analysis.initializing-initialized-storage";
         case DiagnosticId::initializingParameterNotInitialized:
             return "semantic-analysis.initializing-parameter-not-initialized";
+        case DiagnosticId::partialConsumeOfDeinitType:
+            return "semantic-analysis.partial-consume-of-deinit-type";
         case DiagnosticId::unusedBinding: return "semantic-analysis.unused-binding";
     }
     return "semantic-analysis.unknown";

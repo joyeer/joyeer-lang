@@ -1239,5 +1239,101 @@ match value {
     EXPECT_EQ(result.diagnostics[0].id, joyeer::analysis::DiagnosticId::unusedBinding);
     EXPECT_NE(result.diagnostics[0].message.find("item"), std::string::npos);
 }
+// Decision 0015, stage 5: a struct with `deinit` is destroyed whole, so no part of it may be
+// moved out, and its `deinit` body gets the same initialization analysis as any method.
+TEST_F(SemanticAnalysisTest, RejectsMovingAFieldOutOfAStructWithDeinit) {
+    analyze("struct Handle {\n"
+            "    var name: String\n"
+            "    deinit() { }\n"
+            "}\n"
+            "func take(value: consuming String) { print(value: value) }\n"
+            "func run() {\n"
+            "    var handle = Handle(name: \"a\")\n"
+            "    take(value: consume handle.name)\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::partialConsumeOfDeinitType))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, RejectsMovingAnElementOutOfAnArrayFieldOfAStructWithDeinit) {
+    analyze("struct Pool {\n"
+            "    var names: [String]\n"
+            "    deinit() { }\n"
+            "}\n"
+            "func take(value: consuming String) { print(value: value) }\n"
+            "func run() {\n"
+            "    var pool = Pool(names: [\"a\"])\n"
+            "    take(value: consume pool.names[0])\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::partialConsumeOfDeinitType))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AllowsMovingAFieldOutOfAStructWithoutDeinit) {
+    analyze("struct Pair {\n"
+            "    var left: String\n"
+            "    var right: String\n"
+            "}\n"
+            "func take(value: consuming String) { print(value: value) }\n"
+            "func run() {\n"
+            "    var pair = Pair(left: \"a\", right: \"b\")\n"
+            "    take(value: consume pair.left)\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::partialConsumeOfDeinitType))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AllowsConsumingAWholeStructWithDeinit) {
+    analyze("struct Handle {\n"
+            "    var name: String\n"
+            "    deinit() { }\n"
+            "}\n"
+            "func take(value: consuming Handle) { print(value: value.name) }\n"
+            "func run() {\n"
+            "    var handle = Handle(name: \"a\")\n"
+            "    take(value: consume handle)\n"
+            "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::partialConsumeOfDeinitType));
+}
+
+TEST_F(SemanticAnalysisTest, AllowsMovingAHandleOutOfAWrapperWithoutDeinit) {
+    analyze("struct Handle {\n"
+            "    var name: String\n"
+            "    deinit() { }\n"
+            "}\n"
+            "struct Wrapper {\n"
+            "    var handle: Handle\n"
+            "    var count: Int\n"
+            "}\n"
+            "func take(value: consuming Handle) { print(value: value.name) }\n"
+            "func run() {\n"
+            "    var wrapper = Wrapper(handle: Handle(name: \"a\"), count: 1)\n"
+            "    take(value: consume wrapper.handle)\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::partialConsumeOfDeinitType))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnalysesTheDeinitBodyForUseBeforeInitialization) {
+    analyze("struct Handle {\n"
+            "    var fd: Int\n"
+            "    deinit() {\n"
+            "        let early: Int\n"
+            "        print(value: early)\n"
+            "    }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useBeforeInitialization))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ReportsAnUnusedBindingInsideDeinit) {
+    analyze("struct Handle {\n"
+            "    var fd: Int\n"
+            "    deinit() { let spare = 1 }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::unusedBinding))
+            << joyeer::analysis::dump(result.diagnostics);
+}
 
 } // namespace

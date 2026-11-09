@@ -292,8 +292,12 @@ public:
     [[nodiscard]] bool isCopyable(TypeId type) const;
     // Why `type` is noncopyable, or nullopt when it is copyable.
     [[nodiscard]] std::optional<std::string> noncopyableReason(TypeId type) const;
+    // The `deinit` declaration of a struct type, or nullptr when `type` has none. Only the type
+    // that declares it qualifies; a struct that merely holds one is not a `deinit` type.
+    [[nodiscard]] syntax::FunctionDeclSyntax::Ptr deinitializerOf(TypeId type) const;
 
 private:
+    [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
     friend class TypeCheckingBuilder;
 
     [[nodiscard]] std::optional<std::string> noncopyableReason(

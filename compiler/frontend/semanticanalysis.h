@@ -20,6 +20,7 @@ enum class DiagnosticId {
     useAfterConsume,
     initializingInitializedStorage,
     initializingParameterNotInitialized,
+    partialConsumeOfDeinitType,
     unusedBinding,
 };
 

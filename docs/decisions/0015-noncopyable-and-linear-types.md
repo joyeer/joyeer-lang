@@ -137,7 +137,7 @@ the rest as follows.
 ## Implementation outline (the `deinit` feature, stage by stage)
 
 The repository's feature workflow applies: spec, failing tests, then each stage, then
-role reviews and validation. Progress: stages 1 to 4 are implemented (verified on
+role reviews and validation. Progress: stages 1 to 5 are implemented (verified on
 Linux; a Windows build is still to be run); until stage 6 lowers it, IR lowering
 rejects a struct that declares `deinit`. Stages, with what each must do:
 
@@ -164,7 +164,11 @@ rejects a struct that declares `deinit`. Stages, with what each must do:
    the `?` operand and a `match` scrutinee. `Copyable` as a generic bound waits on §20.
 5. **Semantic analysis.** Run the existing initialization and consumption analysis over
    the `deinit` body; reject use of a struct with a `deinit` in a partially consumed
-   state (a field moved out), since the destructor needs the whole value.
+   state (a field moved out), since the destructor needs the whole value. *Implemented
+   as* `semantic-analysis.partial-consume-of-deinit-type`, reported when a consumed
+   field or array element has a `deinit` type as the base of its path (a wrapper without
+   a `deinit` may still give up a handle field), and `forEachFunction` visits the
+   `deinit` body. `TypeCheckedModel::deinitializerOf` answers which struct has one.
 6. **IR and lowering.** Lower `deinit` to an internal function taking the value's
    address; make `requiresDestruction` true for such a type; make destroy emit the
    `deinit` call before field destruction, once per destruction, on overwrite and at

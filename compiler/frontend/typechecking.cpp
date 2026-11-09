@@ -318,6 +318,21 @@ std::optional<TypeId> TypeCheckedModel::typeOf(semantic::SymbolId symbol) const 
     return found->second;
 }
 
+syntax::StructDeclSyntax::Ptr TypeCheckedModel::structureDeclaration(TypeId id) const {
+    const auto* type = typeContext.type(id);
+    if (type == nullptr || type->kind != TypeKind::structure) return nullptr;
+    const auto* symbol = semanticModelValue->symbol(type->symbol);
+    if (symbol == nullptr || !symbol->declaration.has_value()) return nullptr;
+    const auto declaration = semanticModelValue->node(*symbol->declaration);
+    if (declaration == nullptr || declaration->kind != syntax::Kind::structDecl) return nullptr;
+    return std::static_pointer_cast<syntax::StructDeclSyntax>(declaration);
+}
+
+syntax::FunctionDeclSyntax::Ptr TypeCheckedModel::deinitializerOf(TypeId type) const {
+    const auto structure = structureDeclaration(type);
+    return structure == nullptr ? nullptr : structure->deinitializer;
+}
+
 bool TypeCheckedModel::isCopyable(TypeId type) const {
     return !noncopyableReason(type).has_value();
 }
@@ -351,11 +366,8 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             }
             break;
         case TypeKind::structure: {
-            const auto* symbol = semanticModelValue->symbol(type->symbol);
-            if (symbol == nullptr || !symbol->declaration.has_value()) break;
-            const auto declaration = semanticModelValue->node(*symbol->declaration);
-            if (declaration == nullptr || declaration->kind != syntax::Kind::structDecl) break;
-            const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(declaration);
+            const auto structure = structureDeclaration(id);
+            if (structure == nullptr) break;
             if (structure->deinitializer != nullptr) {
                 reason = name + " declares 'deinit'";
                 break;
