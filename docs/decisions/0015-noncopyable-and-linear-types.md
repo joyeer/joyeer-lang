@@ -1,6 +1,6 @@
 # 0015: Noncopyable and linear types, and handles that close
 
-- Status: proposed (2026-11-08). Phase P2 of the
+- Status: accepted (2026-11-10), implemented. Phase P2 of the
   [concurrency plan](../plan/concurrency.md). `deinit`, noncopyable types, owning pattern
   bindings and `Array.removeLast` are implemented (P2a, P2b); linear types (P2c) are specified
   below; their checks are implemented (see "Implemented as" under the stages) except as noted.

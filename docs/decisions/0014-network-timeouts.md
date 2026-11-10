@@ -1,6 +1,6 @@
 # 0014: Receive and accept timeouts
 
-- Status: proposed (2026-11-08). First step (1a) of stage 1 in the
+- Status: accepted (2026-11-10). First step (1a) of stage 1 in the
   [concurrency plan](../plan/concurrency.md). Implemented for Windows and Linux
   in the same change and verified on Windows x64 and Linux x86-64 (WSL2) Debug:
   `SystemTests` (the timeout cases) and the web server over real connections,

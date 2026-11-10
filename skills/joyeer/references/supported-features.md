@@ -40,6 +40,9 @@ require a source checkout, internet access, or access to a moving branch.
 | Methods and extensions | Non-generic methods in `struct`/`enum` bodies and in `extension Type { ... }` for a struct or enum of the same module; `borrowing` (default), `mutating`, `consuming` receivers; `self` and `Self`; call markers `&value.m()` and `consume value.m()`; fields are written `self.field` |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
+| Noncopyable types | A struct may declare one `deinit() { ... }`; it runs once when a live value is destroyed. Such a struct, and anything that holds one (field, enum payload, `Array`/`Dict`/`Optional`/`Result` element), is noncopyable: move it with `consume x`, take an element out of an array with `&values.removeLast()` (an `Optional`), and end an empty array with `consume values.consumeEmpty()`. A `match` over an owned temporary or `match consume x` may bind a noncopyable payload |
+| Tasks and channels | `let h = spawn(function: work, input: consume value)` runs a top-level function with one `consuming` parameter on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle must be joined on every path (an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`). `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel; `s.send(value: consume x)` and `r.receive()` give `Result<_, ChannelClosed>` and wait when full or empty; ends are noncopyable and close when dropped, or with `consume end.close()`. Values move between threads; there is no shared mutable state. `runProcess` and `spawn` cannot share a program ([spec §21](../../../docs/spec/21-concurrency.md)) |
+| Networking | Blocking IPv4 TCP in `System` (`tcpListen`, `tcpAccept`, `tcpReceive`, `tcpSend`, handles that close on drop) with timeouts; Windows and Linux ([spec §18.6](../../../docs/spec/18-host.md)) |
 | Dictionary lookup | `get(key:)` returns an owned `Optional<V>`; absence is `.None`, while strict subscripts still trap |
 | Propagation | Postfix `?` on `Result<T, E>` in `Result<U, E>` functions with identical `E`, or on `Optional<T>` in Optional-returning functions |
 | Unit results | `Result<Void, E>` with `.Ok(())`; unit expressions, bindings, fields, container elements, and patterns |
@@ -109,8 +112,8 @@ See [CLI usage](cli.md#local-projects-with-fern).
 ## Do not generate these as supported features
 
 - User-defined generics, traits/protocols/interfaces, classes, closures,
-  concurrency, or async functions.
-- User-defined `init` / `deinit` bodies or explicit copy initializers.
+  `async` functions, multi-sender or unbounded channels, `select`, or detached tasks.
+- User-defined `init` bodies or explicit copy initializers.
 - Implicit-`self` field access (write `self.count`), extensions of builtin
   types or of a type from another module, and generic methods.
 - General user FFI, native pointer/unsafe syntax, output pointers, callbacks,
@@ -126,7 +129,7 @@ See [CLI usage](cli.md#local-projects-with-fern).
   Optional type and postfix failure propagation `expr?` are supported;
   use `match` when handling errors at an `Int` entry point.
 - String interpolation, Unicode scalar/grapheme APIs, general formatting,
-  aggregate printing, streaming file APIs, or an assumed networking library.
+  aggregate printing, or streaming file APIs.
 - `joyeer build`, `run`, `test`, `init`, `toolchain`, `doctor`, `--target`,
   `--version`, or `--help`. These are not compiler commands/options; do not
   confuse them with the separate source-implemented fern CLI.

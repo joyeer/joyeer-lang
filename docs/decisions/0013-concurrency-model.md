@@ -1,14 +1,13 @@
 # 0013: Concurrency model: share-nothing threads and channels
 
-- Status: accepted (2026-11-08) as a design direction, after two `language-designer`
-  reviews. Nothing is implemented, and no spec chapter has changed: the spec chapter
-  is the first step of the compiler phase of the
-  [plan](../plan/concurrency.md). The recommendations marked *recommended* below
-  are accepted as written, and the answers to questions 17 to 19 are recorded under
-  "Resolutions". Stage 1 needs no language change and has begun (0014).
-- Spec: none yet. When accepted, the rules go in a new chapter next to the
-  memory model ([§4](../spec/04-memory.md)) and the reserved keywords in
-  [§15](../spec/15-reserved.md) are revisited.
+- Status: accepted (2026-11-08) after two `language-designer` reviews, and implemented
+  (2026-11-10): tasks by [0018](0018-tasks.md), channels by [0019](0019-channels.md) (which
+  amend two details below), on the runtime of [0016](0016-thread-primitives.md) and
+  [0017](0017-runtime-thread-safety.md). The recommendations marked *recommended* below are
+  accepted as written, and the answers to questions 17 to 19 are recorded under "Resolutions".
+  Question 11 (dispatch) stays open; the web server's pool documents the cost.
+- Spec: [§21 Concurrency](../spec/21-concurrency.md), [§2.6.3](../spec/02-types.md), and the
+  reserved keywords in [§15](../spec/15-reserved.md) (`async`, `await` and `actor` stay reserved).
 
 ## Context
 
@@ -187,7 +186,7 @@ Write each as its own decision when it starts.
   That keeps the closure question open.
 - **Channels (v1: single sender, single receiver).** *(Amended by [0019](0019-channels.md): `send` returns
   `Result<Void, ChannelClosed>` and destroys an unsent value instead of `SendError<T>`, and queued values
-  are destroyed when the receiver closes, under the channel lock.)* A bounded channel has two
+  are destroyed when the receiver closes, outside the channel lock.)* A bounded channel has two
   noncopyable owned ends, each with exactly one owner; capacity is at least 1.
   `send(value: consume T)` returns `Result<Void, SendError>` whose error carries
   the unsent value (the value was consumed, so it cannot vanish). `receive()`

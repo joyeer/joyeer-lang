@@ -280,9 +280,9 @@ binding is uninitialized afterwards and may be assigned again. An end also close
 destroyed, including an end held in an array, a struct field or an `Optional`; to close one element of an
 array, remove it with `removeLast()` first (`consume a[i].close()` is rejected). Closing the sender wakes
 a blocked `receive`; closing the receiver wakes a blocked `send` and destroys every value still queued, on
-the closing thread **while holding the channel's lock**, so the `deinit` of a channel element must not
-wait on that channel. The channel's storage is freed by the second end to close, which is decided under the
-lock. A blocked operation's own end is borrowed for the call, so only the peer can close and wake it.
+the closing thread after it has taken them out of the channel and released its lock, so the `deinit` of a
+channel element may use other channels. The channel's storage is freed by the second end to close, which is
+decided under the lock. A blocked operation's own end is borrowed for the call, so only the peer can close and wake it.
 
 #### 21.9.5 Memory model and limits
 

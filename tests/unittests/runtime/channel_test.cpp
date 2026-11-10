@@ -253,6 +253,37 @@ TEST(ChannelTest, ClosingTheReceiverWakesABlockedSenderAndDestroysTheQueue) {
     joyeer_channel_close_abi(pair.sender);
 }
 
+// A destroy callback may close another end, even one of the same channel: closing the receiver destroys
+// queued values after releasing the channel lock, so this does not deadlock (found by the adversarial
+// review, where two channels held each other's ends).
+namespace {
+
+void* reentrantSender = nullptr;
+
+void closeTheSenderWhileDestroying(void*) {
+    // Each value owns a distinct end in a real program; here the first callback closes the one sender.
+    void* sender = reentrantSender;
+    reentrantSender = nullptr;
+    if (sender != nullptr) joyeer_channel_close_abi(sender);
+    destroyed.fetch_add(1);
+}
+
+} // namespace
+
+TEST(ChannelTest, ADestroyCallbackMayCloseAnEndOfTheSameChannel) {
+    destroyed = 0;
+    const auto baseline = joyeer_runtime_active_allocations();
+    const auto pair = make(4, sizeof(int64_t), alignof(int64_t), closeTheSenderWhileDestroying);
+    reentrantSender = pair.sender;
+    ASSERT_EQ(send(pair.sender, 1), 1);
+    ASSERT_EQ(send(pair.sender, 2), 1);
+    // Destroys both queued values; the first callback closes the sender, which is then the last closer
+    // and frees the channel while the receiver is still destroying the second value.
+    joyeer_channel_close_abi(pair.receiver);
+    EXPECT_EQ(destroyed.load(), 2);
+    EXPECT_EQ(joyeer_runtime_active_allocations(), baseline);
+}
+
 TEST(ChannelDeathTest, InvalidArgumentsTrap) {
     GTEST_FLAG_SET(death_test_style, "threadsafe");
     Pair pair;

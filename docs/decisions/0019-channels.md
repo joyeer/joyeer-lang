@@ -46,7 +46,7 @@ Constraints:
    (0013 Q4).
 4. **Where queued values die.** 0013: by whichever end drops last. **Amended:** when the **receiver**
    closes nobody can read the queue, so its values are destroyed at that moment, on the receiver's
-   thread and **while it holds the channel lock** (see the close protocol); when the sender closes the
+   thread, outside the channel lock (see the close protocol); when the sender closes the
    queue stays for the receiver. The block is freed by the second end to close.
 5. **One object or two.** The channel code is its own archive object (like the thread object),
    referenced only by programs that create a channel, so every other program is unchanged.
@@ -161,12 +161,15 @@ zero-byte ring and no copy. The protocol, which is what makes the two ownership 
    it. Waits are `while (!predicate) wait` loops (spurious wakeups). There is at most one waiter per
    condition (one sender, one receiver), and a close signals the condition of the peer anyway, **before
    the mutex is released**.
-3. Closing the **receiver** sets its flag, wakes the sender, and destroys every queued value through the
-   element destroy callback **while still holding the mutex**. If it unlocked first, a sender that then
-   closes would see both flags set, become the last closer, and free the block under the receiver's feet.
-   An element's `deinit` therefore runs on the receiver's thread with the channel lock held: a `deinit`
-   of a channel element must not wait on that channel or on a task waiting for it (a cycle through
-   mutually recursive user structs that send from `deinit` is contrived, and is documented, not checked).
+3. Closing the **receiver** sets its flag, wakes the sender, and **moves** every queued value that needs
+   destroying into a private buffer while it holds the mutex; it destroys them through the element destroy
+   callback **after unlocking**, then frees the buffer. Moving them first matters: if it unlocked before
+   moving, a sender that then closes would see both flags set, become the last closer, and free the block
+   (and the queue) under the receiver's feet. Destroying after the unlock matters too: a value's destroy
+   can close another channel end (an end sent through a channel), and when two channels hold each other's
+   ends a destroy under the lock closes an end of the same channel and deadlocks on the non-recursive
+   mutex (found by the adversarial review). An element's `deinit` therefore runs on the receiver's thread
+   without the channel lock held, and may use other channels freely.
 4. Closing the **sender** sets its flag and wakes the receiver; queued values stay.
 5. The closer that finds the other flag already set is the last: it unlocks, calls
    `joyeer_mutex_destroy_abi` and `joyeer_condition_destroy_abi`, and frees the block with its computed
@@ -227,7 +230,8 @@ assignability error.
 
 - `send` returns `Result<Void, ChannelClosed>` and destroys an unsent value (0013: `SendError<T>`
   carrying it); the value-returning form is a later, differently named operation.
-- Queued values are destroyed when the **receiver** closes, under the lock, not when the last end closes.
+- Queued values are destroyed when the **receiver** closes (outside the lock, from a private buffer), not
+  when the last end closes.
   The `SendError<T>` builtin of §2.6.3 is dropped from v1.
 
 ## Not in this decision

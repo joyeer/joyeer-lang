@@ -144,7 +144,7 @@ changing evaluation semantics. Do not read consumed/uninitialized storage.
 Ordinary assignment and parameter access are different: storing a heap-backed
 value can clone it, whereas a default borrowing parameter does not take
 ownership just because its type lacks an ampersand. Cleanup is deterministic
-and compiler-managed; do not add `free`, reference counting, or custom `deinit`.
+and compiler-managed; do not add `free` or reference counting. A struct may declare `deinit() { ... }` to release a resource (it makes the struct noncopyable).
 
 See [ownership-and-errors.joyeer](../examples/ownership-and-errors.joyeer).
 

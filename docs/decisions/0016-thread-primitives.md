@@ -1,6 +1,6 @@
 # 0016: Thread primitives
 
-- Status: proposed (2026-11-09), amended the same day after a backend review that ran the
+- Status: accepted (2026-11-09), implemented, amended the same day after a backend review that ran the
   mechanism on Windows x64 and Linux x86-64. Phase P3 of the
   [concurrency plan](../plan/concurrency.md). It decides the runtime's lowest layer for threads;
   there is no language surface here. The language-level tasks and channels are

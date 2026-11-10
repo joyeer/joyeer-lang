@@ -21,11 +21,14 @@
 //
 // The close protocol is what makes the two ownership rules safe: the count, the head, both closed
 // flags and the decision "I am the last closer" are read and written only with the mutex held.
-// Closing the receiver destroys every queued value while still holding the mutex (a sender that
-// closed next would otherwise see both flags set, become the last closer and free the block under
-// it); closing the sender leaves the queue for the receiver. The closer that finds the other flag
-// already set is the last: it unlocks, destroys the mutex and the conditions, and frees the block.
-// The other closer touches nothing of the block after its unlock.
+// Closing the receiver takes the queued values out of the ring into a private buffer while it holds the
+// mutex, and destroys them after it unlocks: a sender that closes next may then be the last closer and
+// free the block, which no longer holds the values. Destroying them outside the lock matters because a
+// value's destroy can close another channel end (an end sent through a channel), and a destroy that
+// closed an end of this same channel would otherwise deadlock on the mutex. Closing the sender leaves
+// the queue for the receiver. The closer that finds the other flag already set is the last: it unlocks,
+// destroys the mutex and the conditions, and frees the block. The other closer touches nothing of the
+// block after its unlock.
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
 
@@ -250,20 +253,36 @@ public func channelClose(end: Int): Void {
     if isReceiver { block = end - 1 }
     lock(block: block)
     var last = false
+    var destroy = 0
+    var stride = 0
+    var pending = 0
+    var pendingCount = 0
+    var pendingBytes = 0
     if isReceiver {
         write(address: block + receiverClosedOffset, value: 1)
         check(status: conditionBroadcast(condition: block + notFullOffset))
-        // Nobody can read the queue any more. The values go now, under the lock.
-        let destroy = read(address: block + destroyOffset)
-        var count = read(address: block + countOffset)
+        // Nobody can read the queue any more. The values that need destroying move into a private buffer
+        // now, under the lock, and are destroyed after it is released (see the header).
+        destroy = read(address: block + destroyOffset)
+        pendingCount = read(address: block + countOffset)
+        stride = read(address: block + strideOffset)
         var head = read(address: block + headOffset)
         let capacity = read(address: block + capacityOffset)
-        while count > 0 {
-            if destroy != 0 { callVoid1(target: destroy, first: ringAddress(block: block, index: head)) }
-            head = (head + 1) % capacity
-            count = count - 1
+        if pendingCount > 0 && destroy != 0 {
+            pendingBytes = pendingCount * stride
+            if pendingBytes < 16 { pendingBytes = 16 }
+            pending = allocate(size: pendingBytes)
+            var index = 0
+            while index < pendingCount {
+                if stride != 0 {
+                    copyBytes(destination: pending + index * stride,
+                        source: ringAddress(block: block, index: head), count: stride)
+                }
+                head = (head + 1) % capacity
+                index = index + 1
+            }
         }
-        write(address: block + headOffset, value: head)
+        write(address: block + headOffset, value: 0)
         write(address: block + countOffset, value: 0)
         last = read(address: block + senderClosedOffset) != 0
     } else {
@@ -273,6 +292,14 @@ public func channelClose(end: Int): Void {
     }
     let size = read(address: block + sizeOffset)
     unlock(block: block)
+    if pending != 0 {
+        var index = 0
+        while index < pendingCount {
+            callVoid1(target: destroy, first: pending + index * stride)
+            index = index + 1
+        }
+        release(address: pending, size: pendingBytes)
+    }
     if last {
         check(status: mutexDestroy(storage: block))
         check(status: conditionDestroy(condition: block + notEmptyOffset))

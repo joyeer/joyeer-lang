@@ -329,7 +329,8 @@ spec §21.9), linked only into a program that creates a channel (which also link
 `-lpthread`). One allocation holds the channel block: a mutex, two conditions, the capacity, stride, head,
 count, element destroy callback, a closed flag per end and the ring buffer; the receiver handle is the block
 address plus one. Everything, including the "last closer frees the block" decision, happens under the mutex;
-closing the receiver destroys queued values while holding it. A wait with no unjoined thread (static slot 11
+closing the receiver moves queued values into a private buffer while holding it and destroys them after
+unlocking. A wait with no unjoined thread (static slot 11
 zero) traps as `channel deadlock`. The tests are `tests/unittests/runtime/channel_test.cpp`.
 
 ## Tasks

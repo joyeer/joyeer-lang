@@ -1032,6 +1032,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             "500500\n1000\n10100\n100\n100\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EChannelCycle channel_cycle
+            "built\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EMatchMoves match_moves
             "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
     add_joyeer_native_regression(
