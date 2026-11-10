@@ -1,0 +1,328 @@
+import Foundation
+import System
+
+// A static web server for a directory of Markdown files, written against the
+// proposed TCP API (spec 18.6, decision 0012). The accept loop hands each connection to a pool of
+// worker tasks through one bounded channel per worker (spec 21, decision 0019); a worker reads one
+// request, sends one response and closes. See ../README.md for how it behaves and how to run it.
+
+struct Settings {
+    let root: String
+    let address: String
+    let port: Int
+    let workers: Int
+}
+
+// How many accepted connections may wait in one worker's queue.
+private let queueCapacity: Int = 4
+private let defaultWorkers: Int = 4
+private let maximumWorkers: Int = 64
+
+private func report(message: String) {
+    match writeStderr(contents: message + "\n") {
+        .Ok(_) => { },
+        .Err(_) => { },
+    }
+}
+
+private func describe(error: NetworkError): String {
+    return match error {
+        .InvalidInput(code) => "invalid address, port or size (platform code " + decimalString(value: code) + ")",
+        .AddressInUse(code) => "address already in use (platform code " + decimalString(value: code) + ")",
+        .AddressNotAvailable(code) => "address not available on this machine (platform code " + decimalString(value: code) + ")",
+        .PermissionDenied(code) => "permission denied (platform code " + decimalString(value: code) + ")",
+        .ConnectionRefused(code) => "connection refused (platform code " + decimalString(value: code) + ")",
+        .ConnectionReset(code) => "connection reset (platform code " + decimalString(value: code) + ")",
+        .TimedOut(code) => "timed out (platform code " + decimalString(value: code) + ")",
+        .Other(code) => "network failure (platform code " + decimalString(value: code) + ")",
+    }
+}
+
+private func parsePort(text: String): Optional<Int> {
+    if text.count == 0 || text.count > 5 { return .None }
+    var number = 0
+    var index = 0
+    while index < text.count {
+        let digit = byteToInt(value: text[index]) - 48
+        if digit < 0 || digit > 9 { return .None }
+        number = number * 10 + digit
+        index = index + 1
+    }
+    if number > 65535 { return .None }
+    return .Some(number)
+}
+
+private func usage(): String {
+    return "usage: web-server [site-directory] [--address a.b.c.d] [--port n] [--workers n]\n" +
+        "  site-directory  folder of .md files (default: site)\n" +
+        "  --address       IPv4 address to listen on (default: 127.0.0.1; 0.0.0.0 serves the network)\n" +
+        "  --port          TCP port, 0 picks a free one (default: 8080)\n" +
+        "  --workers       number of worker tasks, 1 to 64 (default: 4)"
+}
+
+private func parseArguments(args: [String]): Result<Settings, String> {
+    var root = "site"
+    var address = "127.0.0.1"
+    var port = 8080
+    var workers = defaultWorkers
+    var sawRoot = false
+    var index = 0
+    while index < args.count {
+        let option = args[index]
+        if option == "--address" || option == "--port" || option == "--workers" {
+            if index + 1 >= args.count { return .Err(option + " needs a value") }
+            if option == "--address" {
+                address = args[index + 1]
+            } else if option == "--workers" {
+                match parsePort(text: args[index + 1]) {
+                    .Some(value) => {
+                        if value < 1 || value > maximumWorkers { return .Err("--workers must be a number from 1 to 64") }
+                        workers = value
+                    },
+                    .None => { return .Err("--workers must be a number from 1 to 64") },
+                }
+            } else {
+                match parsePort(text: args[index + 1]) {
+                    .Some(value) => { port = value },
+                    .None => { return .Err("--port must be a number from 0 to 65535") },
+                }
+            }
+            index = index + 2
+        } else if startsWith(text: option, prefix: "--") {
+            return .Err("unknown option " + option)
+        } else {
+            if sawRoot { return .Err("only one site directory may be given") }
+            sawRoot = true
+            root = option
+            index = index + 1
+        }
+    }
+    return .Ok(Settings(root: root, address: address, port: port, workers: workers))
+}
+
+private func readPage(path: String): Result<String, FileSystemError> {
+    // One byte over the limit tells "exactly the limit" from "too large".
+    return readFilePrefix(path: path, maximumBytes: 1048577)
+}
+
+// The full response bytes for one request head.
+private func respond(root: String, head: String): String {
+    let parsed = parseRequest(head: head)
+    let request = match parsed {
+        .Some(value) => value,
+        .None => Request(method: "", target: ""),
+    }
+    if request.method.count == 0 {
+        return httpResponse(status: 400, reason: "Bad Request", contentType: "text/html; charset=utf-8",
+            body: errorPage(status: 400, message: "Bad Request"), sendBody: true, extraHeaders: "")
+    }
+    if request.method != "GET" && request.method != "HEAD" {
+        return httpResponse(status: 405, reason: "Method Not Allowed", contentType: "text/html; charset=utf-8",
+            body: errorPage(status: 405, message: "Method Not Allowed"), sendBody: true,
+            extraHeaders: "Allow: GET, HEAD\r\n")
+    }
+    let sendBody = request.method == "GET"
+
+    let found = resolvePage(root: root, target: request.target)
+    let path = match found {
+        .Some(value) => value,
+        .None => "",
+    }
+    if path.count == 0 {
+        return httpResponse(status: 404, reason: "Not Found", contentType: "text/html; charset=utf-8",
+            body: errorPage(status: 404, message: "Not Found"), sendBody: sendBody, extraHeaders: "")
+    }
+
+    let loaded = readPage(path: path)
+    var source = ""
+    var failed = false
+    match loaded {
+        .Ok(text) => { source = text },
+        .Err(_) => { failed = true },
+    }
+    if failed || source.count > 1048576 {
+        return httpResponse(status: 500, reason: "Internal Server Error", contentType: "text/html; charset=utf-8",
+            body: errorPage(status: 500, message: "Internal Server Error"), sendBody: sendBody, extraHeaders: "")
+    }
+    var title = firstHeading(source: source)
+    if title.count == 0 { title = "Untitled" }
+    let body = htmlPage(title: title, body: renderMarkdown(source: source))
+    return httpResponse(status: 200, reason: "OK", contentType: "text/html; charset=utf-8",
+        body: body, sendBody: sendBody, extraHeaders: "")
+}
+
+// Serves one connection and closes it.
+private func serveConnection(connection: TcpConnection, root: String) {
+    var response = ""
+    let head = readRequestHead(connection: connection)
+    match head {
+        .Ok(text) => { response = respond(root: root, head: text) },
+        .Err(error) => {
+            match error {
+                .Closed => { },
+                .TooLarge => {
+                    response = httpResponse(status: 431, reason: "Request Header Fields Too Large",
+                        contentType: "text/html; charset=utf-8",
+                        body: errorPage(status: 431, message: "Request Header Fields Too Large"),
+                        sendBody: true, extraHeaders: "")
+                },
+                .TimedOut => {
+                    response = httpResponse(status: 408, reason: "Request Timeout",
+                        contentType: "text/html; charset=utf-8",
+                        body: errorPage(status: 408, message: "Request Timeout"),
+                        sendBody: true, extraHeaders: "")
+                },
+                .Network(_) => { },
+            }
+        },
+    }
+    if response.count != 0 {
+        match tcpSend(connection: connection, contents: response) {
+            .Ok(_) => { },
+            .Err(failure) => { report(message: "send failed: " + describe(error: failure)) },
+        }
+    }
+}
+
+// What one worker task owns: the receiving end of its queue and the site directory. The task runs
+// until its queue is closed and empty, then returns how many connections it served.
+struct Worker {
+    var inbox: ChannelReceiver<TcpConnection>
+    var root: String
+}
+
+// Serves connections from the queue one at a time. A received connection is moved out of the channel
+// into the match arm, served, and closed there.
+private func work(worker: consuming Worker): Int {
+    var served = 0
+    var running = true
+    while running {
+        match worker.inbox.receive() {
+            .Ok(connection) => {
+                serveConnection(connection: connection, root: worker.root)
+                match tcpCloseConnection(connection: consume connection) {
+                    .Ok(_) => { },
+                    .Err(failure) => { report(message: "close failed: " + describe(error: failure)) },
+                }
+                served = served + 1
+            },
+            .Err(_) => { running = false },
+        }
+    }
+    return served
+}
+
+// Accepts connections and deals them to the workers in turn until accepting itself keeps failing, then
+// closes every queue (each worker finishes what it holds and returns) and joins the workers. The accept
+// loop owns every sender and every connection until it sends one; a worker owns it from then on.
+// `send` waits when the chosen worker's queue is full, so a slow connection can hold the dealer up.
+private func serve(listener: TcpListener, root: String, workerCount: Int): Int {
+    var senders: [ChannelSender<TcpConnection>] = []
+    var workers: [JoinHandle<Int>] = []
+    var created = 0
+    while created < workerCount {
+        var sender: ChannelSender<TcpConnection>
+        var receiver: ChannelReceiver<TcpConnection>
+        channel(capacity: queueCapacity, sender: &sender, receiver: &receiver)
+        &workers.append(element: consume spawn(function: work,
+            input: consume Worker(inbox: consume receiver, root: root)))
+        &senders.append(element: consume sender)
+        created = created + 1
+    }
+
+    var consecutiveFailures = 0
+    var next = 0
+    while consecutiveFailures < 16 {
+        match tcpAccept(listener: listener, timeoutMillis: -1) {
+            .Ok(connection) => {
+                consecutiveFailures = 0
+                match senders[next].send(value: consume connection) {
+                    .Ok(_) => { },
+                    .Err(_) => { report(message: "a worker stopped; dropped a connection") },
+                }
+                next = (next + 1) % workerCount
+            },
+            .Err(failure) => {
+                consecutiveFailures = consecutiveFailures + 1
+                report(message: "connection failed: " + describe(error: failure))
+            },
+        }
+    }
+
+    // Close the queues before joining: a worker waiting on its queue ends only when its sender is gone.
+    while true {
+        let popped = &senders.removeLast()
+        match consume popped {
+            .Some(sender) => { consume sender.close() },
+            .None => { break },
+        }
+    }
+    consume senders.consumeEmpty()
+    var served = 0
+    while true {
+        let popped = &workers.removeLast()
+        match consume popped {
+            .Some(handle) => {
+                let count = consume handle.join()
+                served = served + count
+            },
+            .None => { break },
+        }
+    }
+    consume workers.consumeEmpty()
+    print(value: "Stopped after serving " + decimalString(value: served) + " connection(s)")
+    return 1
+}
+
+// Listens, serves until serving gives up, and closes the listener.
+private func run(settings: Settings): Result<Int, NetworkError> {
+    let listener = tcpListen(address: settings.address, port: settings.port, backlog: 64)?
+    var shown = settings.port
+    match tcpLocalPort(listener: listener) {
+        .Ok(actual) => { shown = actual },
+        .Err(_) => { },
+    }
+    print(value: "Serving " + settings.root + " at http://" + settings.address + ":" +
+        decimalString(value: shown) + "/ with " + decimalString(value: settings.workers) + " workers")
+    let status = serve(listener: listener, root: settings.root, workerCount: settings.workers)
+    match tcpCloseListener(listener: consume listener) {
+        .Ok(_) => { },
+        .Err(_) => { },
+    }
+    return .Ok(status)
+}
+
+func main(args: [String]): Int {
+    var settings = Settings(root: "site", address: "127.0.0.1", port: 8080, workers: defaultWorkers)
+    var invalid = false
+    match parseArguments(args: args) {
+        .Ok(parsed) => { settings = parsed },
+        .Err(message) => {
+            report(message: message)
+            report(message: usage())
+            invalid = true
+        },
+    }
+    if invalid { return 2 }
+
+    let rootIsDirectory = match fileKind(path: settings.root) {
+        .Ok(kind) => match kind {
+            .Directory => true,
+            _ => false,
+        },
+        .Err(_) => false,
+    }
+    if !rootIsDirectory {
+        report(message: "site directory not found: " + settings.root)
+        return 2
+    }
+
+    var status = 1
+    match run(settings: settings) {
+        .Ok(code) => { status = code },
+        .Err(error) => {
+            report(message: "cannot listen on " + settings.address + ": " + describe(error: error))
+        },
+    }
+    return status
+}

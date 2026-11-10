@@ -4,8 +4,9 @@ The runtime is declared in `lib/Runtime/include/joyeer/runtime.h`. Almost all of
 (`lib/Runtime/core/`): UTF-8 validation, string equality and ordering, owned strings,
 arrays, dictionaries, the native buffer helpers, `print` for every scalar,
 `joyeer_panic`, the allocator with its leak counter, and the program entry. The
-build-tree compiler compiles it into three objects in the same archive (the core; the entry
-logic with the Windows `joyeer_start`; and the C `main`/`wmain` wrappers); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
+build-tree compiler compiles it into four objects in the same archive (the core; the entry
+logic with the Windows `joyeer_start`; the C `main`/`wmain` wrappers; and the thread, mutex and
+condition functions, [decision 0016](../decisions/0016-thread-primitives.md)); there is no C source left in the runtime ([decision 0008](../decisions/0008-runtime-core-build-shape.md)). The
 `JoyeerRuntime` static archive is linked into generated programs;
 LLVM and LLD belong to the [compiler backend](backend.md), not the
 program runtime. See [building](../building.md) for platform prerequisites.
@@ -49,6 +50,65 @@ at every optimization level. Diagnostics distinguish `integer division by
 zero`, `integer remainder by zero`, `integer division overflow`, and `integer
 remainder overflow`.
 
+## Threads
+
+`lib/Runtime/core/threads.joyeer` is the fourth archive object (decision 0016): thread, mutex and
+condition functions with the C ABI declared in `runtime.h` (`joyeer_thread_start_abi`,
+`joyeer_thread_join_abi`, `joyeer_mutex_*_abi`, `joyeer_condition_*_abi`). Windows uses
+`CreateThread`, `SRWLOCK` and `CONDITION_VARIABLE` from `kernel32`; Linux and macOS use `pthread`
+through the C library the program already links. The caller supplies the storage (128 bytes for a
+thread, 64 for a mutex or condition, all zeroed), so the functions never allocate. A thread runs a
+`void entry(void *argument)` through a private trampoline with the platform's thread-routine
+shape, with an explicit 8 MiB stack on every platform, and at most 256 threads may be unjoined at
+once (`JOYEER_THREAD_LIMIT` beyond that). The rest of the runtime is thread safe from P4 on (next section).
+
+On Linux and on the Windows own-entry link the object is linked only into a program that
+references it. The Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) load every
+member, so those programs also import the thread functions. The tests are
+`tests/unittests/runtime/thread_test.cpp` (start and join, many threads, visibility after join,
+mutual exclusion, wait and wake, the thread limit, null arguments, and `static_assert`s that the
+operating systems' lock types fit the storage) and the `RuntimeThreadsObjectSymbols` gate.
+
+## Thread safety
+
+Decision [0017](../decisions/0017-runtime-thread-safety.md). Every runtime function may be called
+from any started thread. Locks are taken only while the count of unjoined threads (slot 11) is
+non-zero, so a single-threaded program pays one load and one branch per lock site. The locks
+(`core/locks.joyeer`) sleep: a futex mutex on Linux (built on the atomic compare-and-exchange and
+exchange intrinsics), `SRWLOCK` on Windows, `os_unfair_lock` on macOS. The allocator has one lock
+(slot 12); standard output (slot 13) and standard input (slot 14) have separate locks and state
+blocks. A `print` is atomic. The first panic claims slot 38; later panics, and any thread that
+reaches a lock afterwards, park, so the message appears once with status 1. Returning from `main`
+with an unjoined thread is a runtime error. `RuntimeTestsThreadedMode` reruns the runtime suite with
+a parked thread so every locked path executes.
+
+## Static slots
+
+Sixty-four eight-byte, zero-initialised words shared by every unit of a program
+(`joyeer_intrinsic_static_slot`). The assignment, in one place:
+
+| Slots | Owner | Use |
+|---|---|---|
+| 0 | allocator | the leak counter |
+| 1 | allocator | the allocator state address |
+| 2 | streams | the output state block |
+| 3 to 7 | streams | output system-call scratch |
+| 8 | streams | input system-call scratch |
+| 9 | panic | panic scratch |
+| 10 | | free |
+| 11 | threads | the number of unjoined threads |
+| 12 | allocator | the allocator lock |
+| 13 | streams | the output lock |
+| 14 | streams | the input lock |
+| 15 | streams | the input state block |
+| 16 | entry | the process environment block address |
+| 17 to 31 | System | reserved for the `System` module |
+| 32 to 33 | entry | string scratch |
+| 34 to 36 | entry | the argument handle |
+| 37 | entry | the byte buffer |
+| 38 | panic | the panic flag |
+| 39 to 63 | | free (tests use 40, 41, 60 and above) |
+
 ## Process entry and exit
 
 Native executables require exactly one root-module entry: `func main()`
@@ -89,7 +149,7 @@ layout and clone/destroy callbacks. On the current 64-bit layout, private
 headers occupy 24 bytes for arrays and 72 bytes for dictionaries, before
 payload and allocator overhead. These callbacks can introduce indirect
 calls without source-level protocol dispatch. Allocation/free updates a
-relaxed atomic balance counter; this is accounting, not reference counting.
+sequentially consistent atomic balance counter; this is accounting, not reference counting.
 
 Joyeer IR `copy`, `take`, and `destroy` operations lower to generated per-type
 LLVM helpers, which recurse through structs and tagged payloads and call
@@ -107,6 +167,10 @@ Arrays provide construction, checked indexing, mutable element projection,
 ownership-transferring append/growth, recursive clone, and reverse-order
 element destruction. The built-in
 `&values.append(element: value)` requires an addressable mutable `Array<T>`.
+`values.removeLast()` calls `joyeer_array_remove_last_abi`, which moves the last element's bytes into the
+result payload and shortens the array without destroying the element.
+`consume values.consumeEmpty()` calls `joyeer_array_consume_empty_abi`, which traps (`array not empty`)
+unless the count is zero and otherwise frees the storage and zeroes the handle.
 Lowering transfers a type-correct `T` to `joyeer_array_append_owned_abi`;
 the runtime grows geometrically and retains element clone/destroy callbacks.
 Borrowed heap-backed elements are cloned before transfer; owned temporaries
@@ -257,3 +321,25 @@ run as the complete acceptance suite.
 Moss's `Moss.Serve` test and the live-pipe check in
 [the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
 depend on `readStdinLine` flushing standard output before it blocks.
+
+## Channels
+
+`lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
+spec §21.9), linked only into a program that creates a channel (which also links the thread object and
+`-lpthread`). One allocation holds the channel block: a mutex, two conditions, the capacity, stride, head,
+count, element destroy callback, a closed flag per end and the ring buffer; the receiver handle is the block
+address plus one. Everything, including the "last closer frees the block" decision, happens under the mutex;
+closing the receiver moves queued values into a private buffer while holding it and destroys them after
+unlocking. A wait with no unjoined thread (static slot 11
+zero) traps as `channel deadlock`. The tests are `tests/unittests/runtime/channel_test.cpp`.
+
+## Tasks
+
+A task (decision [0018](../decisions/0018-tasks.md), spec §21) is one heap block from `joyeer_alloc`:
+a zeroed 128-byte thread record (`JOYEER_THREAD_BYTES`), the block's own size, the result, then the
+input. The backend emits a thunk per target that loads the input, calls the function and stores the
+result; `joyeer_thread_start_abi` runs it, and `join` calls `joyeer_thread_join_abi`, moves the result
+out and frees the block with the stored size. A refused thread traps with `too many tasks` or `cannot
+start task`. Because the block is ordinary allocator memory, the leak counter needs no task rule, and
+the generated destroy helper for a handle traps (`task dropped without join`) if one is ever dropped
+live. Linux links `-lpthread` after the runtime archive group for a program that starts a task.

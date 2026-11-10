@@ -2,6 +2,7 @@
 add_executable(RuntimeTests
         runtime_test.cpp
         host_test.cpp
+        threaded_mode.cpp
 )
 
 target_include_directories(RuntimeTests PRIVATE
@@ -16,6 +17,14 @@ target_link_libraries(RuntimeTests
 joyeer_discover_tests(RuntimeTests
         PROPERTIES LABELS runtime
 )
+
+# The whole suite again with one thread sleeping for the run, so every runtime function takes its
+# locks (decision 0017): a lock cannot be tested by a program that never starts a thread.
+add_test(NAME RuntimeTestsThreadedMode COMMAND RuntimeTests)
+set_tests_properties(RuntimeTestsThreadedMode PROPERTIES
+        ENVIRONMENT "JOYEER_TEST_THREADED=1"
+        LABELS "runtime;threads"
+        TIMEOUT 300)
 
 if(WIN32)
     # The entry logic alone, without the `wmain` wrapper, so the test supplies its
@@ -127,9 +136,11 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
     set(joyeer_core_imports "memcmp;memcpy;memset")
     if(WIN32)
         list(APPEND joyeer_core_imports VirtualAlloc VirtualFree GetStdHandle GetFileType WriteFile ReadFile
-            GetConsoleMode WriteConsoleW MultiByteToWideChar GetLastError ExitProcess _fltused)
+            GetConsoleMode WriteConsoleW MultiByteToWideChar GetLastError ExitProcess _fltused
+            AcquireSRWLockExclusive ReleaseSRWLockExclusive TryAcquireSRWLockExclusive Sleep)
     elseif(APPLE)
-        list(APPEND joyeer_core_imports mmap munmap write read isatty __error _exit)
+        list(APPEND joyeer_core_imports mmap munmap write read isatty __error _exit
+            os_unfair_lock_lock os_unfair_lock_unlock os_unfair_lock_trylock sleep)
     else()
         # Linux: system calls only.
     endif()
@@ -137,7 +148,7 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         COMMAND "${CMAKE_COMMAND}"
             "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
             "-DOBJECT=${JOYEER_RUNTIME_CORE_OBJECT}"
-            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_string_destroy_abi;joyeer_byte_to_string_abi;joyeer_string_concat_abi;joyeer_print_string_abi;joyeer_print_int;joyeer_print_uint;joyeer_print_byte;joyeer_print_bool;joyeer_array_create_owned_abi;joyeer_array_clone_abi;joyeer_array_append_owned_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy;joyeer_native_bytes_init;joyeer_native_strings_init;joyeer_native_bytes_assign;joyeer_native_string_assign;joyeer_native_strings_assign;joyeer_dictionary_create_owned_abi;joyeer_dictionary_clone_abi;joyeer_dictionary_set_owned_abi;joyeer_dictionary_find_abi;joyeer_dictionary_at_abi;joyeer_dictionary_destroy_abi;joyeer_print_float;joyeer_print_double;joyeer_format_double_abi;joyeer_format_float_abi;joyeer_stdout_write;joyeer_stdout_flush;joyeer_stderr_write;joyeer_stdin_read_byte;joyeer_stdin_discard"
+            "-DEXPECTED_DEFINED=joyeer_host_valid_utf8;joyeer_string_equal_abi;joyeer_string_compare_abi;joyeer_panic;joyeer_static_slots;joyeer_alloc;joyeer_realloc;joyeer_free;joyeer_runtime_active_allocations;joyeer_string_clone_abi;joyeer_string_destroy_abi;joyeer_byte_to_string_abi;joyeer_string_concat_abi;joyeer_print_string_abi;joyeer_print_int;joyeer_print_uint;joyeer_print_byte;joyeer_print_bool;joyeer_array_create_owned_abi;joyeer_array_clone_abi;joyeer_array_append_owned_abi;joyeer_array_remove_last_abi;joyeer_array_consume_empty_abi;joyeer_array_destroy_abi;joyeer_native_string_element_clone;joyeer_native_string_element_destroy;joyeer_native_bytes_init;joyeer_native_strings_init;joyeer_native_bytes_assign;joyeer_native_string_assign;joyeer_native_strings_assign;joyeer_dictionary_create_owned_abi;joyeer_dictionary_clone_abi;joyeer_dictionary_set_owned_abi;joyeer_dictionary_find_abi;joyeer_dictionary_at_abi;joyeer_dictionary_destroy_abi;joyeer_print_float;joyeer_print_double;joyeer_format_double_abi;joyeer_format_float_abi;joyeer_stdout_write;joyeer_stdout_flush;joyeer_stderr_write;joyeer_stdin_read_byte;joyeer_stdin_discard"
             "-DALLOWED_UNDEFINED=${joyeer_core_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeCoreObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
@@ -151,11 +162,15 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         get_filename_component(entry_name "${entry_object}" NAME)
         get_target_property(main_object JoyeerRuntime JOYEER_MAIN_OBJECT)
         get_filename_component(main_name "${main_object}" NAME)
+        get_target_property(threads_object JoyeerRuntime JOYEER_THREADS_OBJECT)
+        get_filename_component(threads_name "${threads_object}" NAME)
+        get_target_property(channels_object JoyeerRuntime JOYEER_CHANNELS_OBJECT)
+        get_filename_component(channels_name "${channels_object}" NAME)
         add_test(NAME RuntimeArchiveMembers
             COMMAND "${CMAKE_COMMAND}"
                 "-DAR=${JOYEER_RUNTIME_AR_EXECUTABLE}"
                 "-DARCHIVE=$<TARGET_FILE:JoyeerRuntime>"
-                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name}"
+                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name};${threads_name};${channels_name}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeArchive.cmake")
         set_tests_properties(RuntimeArchiveMembers PROPERTIES LABELS "runtime;native" TIMEOUT 30)
     endif()
@@ -191,7 +206,56 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             "-DALLOWED_UNDEFINED=atexit;joyeer_entry_run;joyeer_stdout_flush"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeMainObjectSymbols PROPERTIES LABELS "runtime;native" TIMEOUT 30)
+    # The thread object (decision 0016) defines the thread, mutex and condition exports and calls
+    # only the operating system's thread interface, plus the panic of a static-slot bounds trap.
+    get_target_property(JOYEER_RUNTIME_THREADS_OBJECT JoyeerRuntime JOYEER_THREADS_OBJECT)
+    set(joyeer_threads_defined "joyeer_static_slots;joyeer_thread_trampoline;joyeer_thread_start_abi;joyeer_thread_join_abi;joyeer_mutex_init_abi;joyeer_mutex_lock_abi;joyeer_mutex_unlock_abi;joyeer_mutex_destroy_abi;joyeer_condition_init_abi;joyeer_condition_wait_abi;joyeer_condition_signal_abi;joyeer_condition_broadcast_abi;joyeer_condition_destroy_abi")
+    set(joyeer_threads_imports "joyeer_panic;memcmp;memcpy;memset")
+    if(WIN32)
+        list(APPEND joyeer_threads_imports CreateThread WaitForSingleObject CloseHandle GetLastError
+            AcquireSRWLockExclusive ReleaseSRWLockExclusive SleepConditionVariableSRW
+            WakeConditionVariable WakeAllConditionVariable _fltused)
+    else()
+        list(APPEND joyeer_threads_imports pthread_attr_init pthread_attr_setstacksize pthread_attr_destroy
+            pthread_create pthread_join pthread_mutex_lock pthread_mutex_unlock pthread_mutex_destroy
+            pthread_cond_wait pthread_cond_signal pthread_cond_broadcast pthread_cond_destroy)
+        if(APPLE)
+            list(APPEND joyeer_threads_imports pthread_mutex_init pthread_cond_init)
+        endif()
+    endif()
+    add_test(NAME RuntimeThreadsObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_THREADS_OBJECT}"
+            "-DEXPECTED_DEFINED=${joyeer_threads_defined}"
+            "-DALLOWED_UNDEFINED=${joyeer_threads_imports}"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeThreadsObjectSymbols PROPERTIES LABELS "runtime;native;threads" TIMEOUT 30)
+    # The channel object (decision 0019) defines the four channel exports and calls only the thread
+    # object's mutex and condition, the allocator and the panic.
+    get_target_property(JOYEER_RUNTIME_CHANNELS_OBJECT JoyeerRuntime JOYEER_CHANNELS_OBJECT)
+    add_test(NAME RuntimeChannelsObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_CHANNELS_OBJECT}"
+            "-DEXPECTED_DEFINED=joyeer_static_slots;joyeer_channel_create_abi;joyeer_channel_send_abi;joyeer_channel_receive_abi;joyeer_channel_close_abi"
+            "-DALLOWED_UNDEFINED=joyeer_panic;joyeer_alloc;joyeer_free;joyeer_mutex_init_abi;joyeer_mutex_lock_abi;joyeer_mutex_unlock_abi;joyeer_mutex_destroy_abi;joyeer_condition_init_abi;joyeer_condition_wait_abi;joyeer_condition_signal_abi;joyeer_condition_broadcast_abi;joyeer_condition_destroy_abi;memcmp;memcpy;memset"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeChannelsObjectSymbols PROPERTIES LABELS "runtime;native;channels" TIMEOUT 30)
 endif()
+
+# Threads, mutexes and conditions driven from C++ through the exported C ABI. The test starts
+# threads with C++ entry functions that never allocate (the runtime is not thread safe until P4).
+find_package(Threads REQUIRED)
+add_executable(RuntimeThreadTests thread_test.cpp thread_safety_test.cpp channel_test.cpp)
+target_include_directories(RuntimeThreadTests PRIVATE ${JOYEER_RUNTIME_INCLUDE_DIR})
+target_link_libraries(RuntimeThreadTests PRIVATE
+        GTest::gtest_main
+        JoyeerRuntime
+        Threads::Threads)
+joyeer_discover_tests(RuntimeThreadTests
+        PROPERTIES LABELS "runtime\;threads"
+)
 
 # A Windows program that does not call the C library starts at its own entry point and
 # imports the operating system's functions and nothing else; one that calls it keeps
@@ -208,7 +272,7 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/own-entry-imports.exe"
                 "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
                 "-DCOMPILER_ARGS=-O0;-g0;--module-name;runtime.own_entry;--runtime-module;runtime.own_entry"
-                "-DEXPECTED_IMPORTS=ExitProcess;GetCommandLineW;GetConsoleMode;GetFileType;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
+                "-DEXPECTED_IMPORTS=AcquireSRWLockExclusive;ExitProcess;GetCommandLineW;GetConsoleMode;GetFileType;GetLastError;GetStdHandle;MultiByteToWideChar;ReadFile;ReleaseSRWLockExclusive;Sleep;TryAcquireSRWLockExclusive;VirtualAlloc;VirtualFree;WideCharToMultiByte;WriteConsoleW;WriteFile"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         add_test(NAME RuntimeCRuntimeProgramKeepsTheCStartup
             COMMAND "${CMAKE_COMMAND}"
@@ -237,6 +301,31 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
             set_tests_properties(RuntimeSystemProgramHasNoCRuntime_${fixture}
                 PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
         endforeach()
+        # A program that starts tasks (decision 0018) imports the thread functions from kernel32
+        # and still needs nothing from the C runtime.
+        add_test(NAME RuntimeTaskProgramHasNoCRuntime
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/task_basic.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/task-program.exe"
+                "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0"
+                "-DFORBIDDEN_IMPORTS=IsProcessorFeaturePresent;GetStartupInfoW;InitializeSListHead;UnhandledExceptionFilter;SetUnhandledExceptionFilter;IsDebuggerPresent;GetProcessHeap;HeapAlloc;HeapFree;GetEnvironmentStringsW"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        set_tests_properties(RuntimeTaskProgramHasNoCRuntime
+            PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
+        # A program that only creates a channel pulls the thread object for its mutex and condition.
+        add_test(NAME RuntimeChannelProgramHasNoCRuntime
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/channel_basic.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/channel-program.exe"
+                "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0"
+                "-DFORBIDDEN_IMPORTS=IsProcessorFeaturePresent;GetStartupInfoW;InitializeSListHead;UnhandledExceptionFilter;SetUnhandledExceptionFilter;IsDebuggerPresent;GetProcessHeap;HeapAlloc;HeapFree;GetEnvironmentStringsW"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        set_tests_properties(RuntimeChannelProgramHasNoCRuntime
+            PROPERTIES LABELS "runtime;native;entry;channels" TIMEOUT 120)
     endif()
 endif()
 
@@ -257,4 +346,31 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
         set_tests_properties(RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
             PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
     endforeach()
+    # A program that starts tasks (decision 0018) also needs the thread object's pthread functions
+    # and nothing else from the C library; every other program's gate above is unchanged, which
+    # keeps the thread object out of programs that never start a thread.
+    add_test(NAME RuntimeTaskProgramNeedsOnlyThePthreadFunctions
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/task_basic.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/task-program"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DCOMPILER_ARGS=-O0;-g0"
+            "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp;pthread_attr_init;pthread_attr_setstacksize;pthread_attr_destroy;pthread_create;pthread_join;pthread_mutex_lock;pthread_mutex_unlock;pthread_mutex_destroy;pthread_mutex_init;pthread_cond_wait;pthread_cond_signal;pthread_cond_broadcast;pthread_cond_destroy;pthread_cond_init"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+    set_tests_properties(RuntimeTaskProgramNeedsOnlyThePthreadFunctions
+        PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
+    # A program that only creates a channel links the thread object (its mutex and condition) and
+    # -lpthread, and needs nothing else from the C library.
+    add_test(NAME RuntimeChannelProgramNeedsOnlyThePthreadFunctions
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/channel_basic.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/channel-program"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DCOMPILER_ARGS=-O0;-g0"
+            "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp;pthread_attr_init;pthread_attr_setstacksize;pthread_attr_destroy;pthread_create;pthread_join;pthread_mutex_lock;pthread_mutex_unlock;pthread_mutex_destroy;pthread_mutex_init;pthread_cond_wait;pthread_cond_signal;pthread_cond_broadcast;pthread_cond_destroy;pthread_cond_init"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+    set_tests_properties(RuntimeChannelProgramNeedsOnlyThePthreadFunctions
+        PROPERTIES LABELS "runtime;native;entry;channels" TIMEOUT 120)
 endif()

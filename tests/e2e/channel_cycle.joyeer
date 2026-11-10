@@ -1,0 +1,22 @@
+// Two channels that hold each other's ends: closing one destroys the queued value, which closes an end
+// of the other, and so on. The destroy runs outside the channel lock, so this neither deadlocks nor
+// leaks (adversarial review of decision 0019).
+struct First {
+    var back: ChannelReceiver<Second>
+}
+
+struct Second {
+    var forward: ChannelSender<First>
+}
+
+func main() {
+    var senderA: ChannelSender<First>
+    var receiverA: ChannelReceiver<First>
+    channel(capacity: 1, sender: &senderA, receiver: &receiverA)
+    var senderB: ChannelSender<Second>
+    var receiverB: ChannelReceiver<Second>
+    channel(capacity: 1, sender: &senderB, receiver: &receiverB)
+    let x = senderA.send(value: consume First(back: consume receiverB))
+    let y = senderB.send(value: consume Second(forward: consume senderA))
+    print(value: "built")
+}

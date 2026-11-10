@@ -277,6 +277,15 @@ private:
             }
             return value;
         }
+        // Type checking rejects every source-level copy of a noncopyable value, so reaching
+        // here means a lowering path moves where it should not copy.
+        if (!model->isCopyable(value.type)) {
+            report(
+                    DiagnosticId::ownershipViolation,
+                    span,
+                    "a noncopyable value would be copied");
+            return std::nullopt;
+        }
         return emitValue(
                 ir::Opcode::copyValue,
                 value.type,
@@ -291,10 +300,29 @@ private:
         return prepared;
     }
 
+    // Moves the value out of the place `expression` names, leaving the place empty.
+    std::optional<ir::Value> lowerTake(const syntax::ExprPtr& expression) {
+        const auto address = lowerAddress(expression);
+        if (!address.has_value()) return std::nullopt;
+        return emitValue(
+                ir::Opcode::take,
+                address->type,
+                ir::ValueCategory::value,
+                { address->id },
+                expression->span);
+    }
+
+    static bool movesArgument(const syntax::CallArgumentSyntax& argument) {
+        return argument.accessMarker != nullptr && argument.accessMarker->kind == kwConsume;
+    }
+
     std::optional<ir::Value> prepareOperand(
             const syntax::ExprPtr& expression,
-            typing::TypeId destination) {
-        auto value = lowerExpression(expression);
+            typing::TypeId destination,
+            bool moved = false) {
+        auto value = moved && isAddressable(expression)
+                ? lowerTake(expression)
+                : lowerExpression(expression);
         if (!value.has_value()) return std::nullopt;
         value = coerce(*value, destination, expression->span);
         if (!value.has_value()) return std::nullopt;
@@ -458,6 +486,15 @@ private:
                 semanticField != nullptr && semanticField->isMutable,
             });
         }
+        if (declaration->deinitializer != nullptr) {
+            // See ir::StructureDefinition::deinitializer: the live flag is always last.
+            structure.fields.push_back(ir::FieldDefinition {
+                semantic::invalidSymbolId,
+                ir::liveFieldName,
+                model->types().boolType(),
+                false,
+            });
+        }
         module->structures.push_back(std::move(structure));
     }
 
@@ -552,19 +589,52 @@ private:
         forEachMethod(*root, [this](const syntax::FunctionDeclSyntax::Ptr& method) {
             collectFunction(method);
         });
+        linkDeinitializers(*root);
         evaluateConstants();
     }
 
+    // A `deinit` is collected as a method (see forEachMethod); the structure it belongs to
+    // records which function that is, so destruction can call it.
+    void linkDeinitializers(const syntax::SourceFileSyntax& root) {
+        const auto& semanticModel = *model->semanticModel();
+        for (const auto& item : root.items) {
+            if (item->kind != syntax::Kind::structDecl) continue;
+            const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+            if (declaration->deinitializer == nullptr) continue;
+            const auto structureSymbol = semanticModel.declaredSymbol(declaration);
+            const auto deinitSymbol = semanticModel.declaredSymbol(declaration->deinitializer);
+            const auto function = deinitSymbol.has_value()
+                    ? functions.find(*deinitSymbol)
+                    : functions.end();
+            const auto structure = std::find_if(
+                    module->structures.begin(),
+                    module->structures.end(),
+                    [&structureSymbol](const auto& candidate) {
+                        return structureSymbol.has_value() && candidate.symbol == *structureSymbol;
+                    });
+            if (function == functions.end() || structure == module->structures.end()) {
+                report(DiagnosticId::missingSymbol, declaration->deinitializer->span,
+                       "'deinit' has no lowered function or structure definition");
+                continue;
+            }
+            structure->deinitializer = function->second;
+        }
+        // A `deinit` makes its struct (and anything holding it) need destruction, so the
+        // analysis built from the aggregate definitions alone is out of date.
+        destruction.emplace(*module);
+    }
+
+    // Methods, plus a struct's `deinit`, which is lowered like a method taking `self`.
     template<class Visitor>
     static void forEachMethod(const syntax::SourceFileSyntax& root, Visitor&& visit) {
         for (const auto& item : root.items) {
             switch (item->kind) {
-                case syntax::Kind::structDecl:
-                    for (const auto& method :
-                         std::static_pointer_cast<syntax::StructDeclSyntax>(item)->methods) {
-                        visit(method);
-                    }
+                case syntax::Kind::structDecl: {
+                    const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                    for (const auto& method : structure->methods) visit(method);
+                    if (structure->deinitializer != nullptr) visit(structure->deinitializer);
                     break;
+                }
                 case syntax::Kind::enumDecl:
                     for (const auto& method :
                          std::static_pointer_cast<syntax::EnumDeclSyntax>(item)->methods) {
@@ -1101,9 +1171,15 @@ private:
                         std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(expression)->expression);
             case syntax::Kind::prefixExpr:
                 return lowerPrefix(std::static_pointer_cast<syntax::PrefixExprSyntax>(expression));
-            case syntax::Kind::accessExpr:
-                return lowerExpression(
-                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand);
+            case syntax::Kind::accessExpr: {
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+                // `consume x` in an owned context moves the place out (decision 0015).
+                if (access->marker != nullptr && access->marker->kind == kwConsume &&
+                    isAddressable(access->operand)) {
+                    return lowerTake(access->operand);
+                }
+                return lowerExpression(access->operand);
+            }
             case syntax::Kind::propagateExpr:
                 return lowerPropagation(
                         std::static_pointer_cast<syntax::PropagateExprSyntax>(expression));
@@ -1966,7 +2042,8 @@ private:
         std::vector<ir::Value> payloads;
         for (size_t index = 0; index < arguments.size(); ++index) {
             const auto payload = prepareOperand(
-                    arguments[index]->value, definition->payloadTypes[index]);
+                    arguments[index]->value, definition->payloadTypes[index],
+                    movesArgument(*arguments[index]));
             if (!payload.has_value()) return std::nullopt;
             payloads.push_back(*payload);
         }
@@ -2120,8 +2197,71 @@ private:
                 expression->span);
     }
 
+    // True when a pattern binds a noncopyable value, so the match must move it out of the
+    // scrutinee instead of copying it.
+    bool patternBindsNoncopyable(const syntax::PatternPtr& pattern) const {
+        if (pattern == nullptr) return false;
+        if (pattern->kind == syntax::Kind::bindingPattern) {
+            const auto type = model->typeOf(pattern);
+            return type.has_value() && !model->isCopyable(*type);
+        }
+        if (pattern->kind != syntax::Kind::enumCasePattern) return false;
+        const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        for (const auto& argument : enumPattern->arguments) {
+            if (patternBindsNoncopyable(argument->pattern)) return true;
+        }
+        return false;
+    }
+
     std::optional<ir::Value> lowerMatch(const syntax::MatchExprSyntax::Ptr& expression) {
-        const auto scrutinee = lowerExpression(expression->scrutinee);
+        bool movesPayloads = false;
+        for (const auto& arm : expression->arms) {
+            movesPayloads = movesPayloads || patternBindsNoncopyable(arm->pattern);
+        }
+        // With a moving pattern the scrutinee needs storage to move payloads out of: the place
+        // of `match consume x`, or a slot that takes over an owned temporary. Whatever the arms
+        // do not take is destroyed with that storage.
+        std::optional<ir::Value> scrutineeAddress;
+        std::optional<ir::Value> scrutinee;
+        if (movesPayloads) {
+            auto operand = expression->scrutinee;
+            if (operand->kind == syntax::Kind::accessExpr) {
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(operand);
+                if (access->marker == nullptr || access->marker->kind != kwConsume) {
+                    report(
+                            DiagnosticId::ownershipViolation,
+                            operand->span,
+                            "only 'consume' can move a noncopyable payload out of a place");
+                    return std::nullopt;
+                }
+                operand = access->operand;
+            }
+            if (isAddressable(operand)) {
+                scrutineeAddress = lowerAddress(operand);
+            } else {
+                const auto temporary = lowerExpression(expression->scrutinee);
+                if (!temporary.has_value()) return std::nullopt;
+                const auto owned = acquireOwned(*temporary, expression->scrutinee->span);
+                if (!owned.has_value()) return std::nullopt;
+                scrutineeAddress = emitValue(
+                        ir::Opcode::stackAllocate,
+                        owned->type,
+                        ir::ValueCategory::address,
+                        {},
+                        expression->scrutinee->span);
+                emitRawStore(*owned, *scrutineeAddress, expression->scrutinee->span);
+                registerOwnedStorage(*scrutineeAddress);
+            }
+            if (!scrutineeAddress.has_value()) return std::nullopt;
+            scrutinee = emitValue(
+                    ir::Opcode::load,
+                    scrutineeAddress->type,
+                    ir::ValueCategory::value,
+                    { scrutineeAddress->id },
+                    expression->scrutinee->span);
+        } else {
+            scrutinee = lowerExpression(expression->scrutinee);
+        }
         const auto resultType = model->typeOf(expression);
         if (!scrutinee.has_value() || !resultType.has_value()) return std::nullopt;
 
@@ -2159,7 +2299,7 @@ private:
                     currentDebugScope,
                     debugScopeForNode(arm, currentFunctionId));
             pushScope();
-            bindPattern(arm->pattern, *scrutinee);
+            bindPattern(arm->pattern, *scrutinee, scrutineeAddress);
             const auto value = lowerExpression(arm->body);
             if (currentBlockTerminated()) {
                 discardScopeAfterTerminator();
@@ -2187,8 +2327,9 @@ private:
         }
         if (!resultAddress.has_value()) return emitUnit(expression->span);
         registerOwnedStorage(*resultAddress);
+        // A noncopyable result moves out of its slot; loading it would copy it.
         return emitValue(
-                ir::Opcode::load,
+                model->isCopyable(resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
                 resultAddress->type,
                 ir::ValueCategory::value,
                 { resultAddress->id },
@@ -2285,11 +2426,95 @@ private:
         return result;
     }
 
-    void bindPattern(const syntax::PatternPtr& pattern, ir::Value value) {
+    // A binding owns its value from here to the end of the scope that holds it.
+    void storeBinding(
+            const syntax::PatternPtr& pattern,
+            semantic::SymbolId symbol,
+            ir::Value owned) {
+        const auto address = emitValue(
+                ir::Opcode::stackAllocate,
+                owned.type,
+                ir::ValueCategory::address,
+                {},
+                pattern->span,
+                symbol);
+        const auto debugVariable = ensureDebugVariable(symbol, currentFunctionId);
+        emitRawStore(owned, address, pattern->span, symbol, false, debugVariable);
+        slots[symbol] = address;
+        registerOwnedStorage(address);
+    }
+
+    // Moves the payloads that `pattern` binds and cannot copy out of the enum stored at
+    // `address`, leaving each emptied so the storage can still be destroyed whole.
+    void bindMovedPayloads(const syntax::PatternPtr& pattern, ir::Value address) {
+        if (pattern == nullptr || pattern->kind != syntax::Kind::enumCasePattern) return;
+        const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        const auto caseSymbol = model->referencedSymbol(enumPattern);
+        if (!caseSymbol.has_value()) return;
+        for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
+            const auto& payloadPattern = enumPattern->arguments[index]->pattern;
+            if (payloadPattern == nullptr ||
+                (payloadPattern->kind != syntax::Kind::bindingPattern &&
+                 payloadPattern->kind != syntax::Kind::enumCasePattern)) {
+                continue;
+            }
+            const auto payloadType = model->typeOf(payloadPattern);
+            if (!payloadType.has_value()) continue;
+            auto instruction = makeInstruction(ir::Opcode::payloadAddress, payloadPattern->span);
+            instruction.result = makeValue(*payloadType, ir::ValueCategory::address);
+            instruction.operands = { address.id };
+            instruction.symbol = *caseSymbol;
+            instruction.integerValue = static_cast<int64_t>(index);
+            const auto payloadAddress = *instruction.result;
+            emit(std::move(instruction));
+            if (payloadPattern->kind == syntax::Kind::bindingPattern) {
+                const auto symbol = model->semanticModel()->declaredSymbol(payloadPattern);
+                if (!symbol.has_value()) continue;
+                if (model->isCopyable(*payloadType)) {
+                    // A copyable payload beside a moved one still binds by copy.
+                    const auto loaded = emitValue(
+                            ir::Opcode::load,
+                            *payloadType,
+                            ir::ValueCategory::value,
+                            { payloadAddress.id },
+                            payloadPattern->span);
+                    bindPattern(payloadPattern, loaded);
+                    continue;
+                }
+                const auto taken = emitValue(
+                        ir::Opcode::take,
+                        *payloadType,
+                        ir::ValueCategory::value,
+                        { payloadAddress.id },
+                        payloadPattern->span);
+                const auto owned = acquireOwned(taken, payloadPattern->span);
+                if (owned.has_value()) storeBinding(payloadPattern, *symbol, *owned);
+            } else {
+                bindMovedPayloads(payloadPattern, payloadAddress);
+            }
+        }
+    }
+
+    void bindPattern(
+            const syntax::PatternPtr& pattern,
+            ir::Value value,
+            std::optional<ir::Value> address = std::nullopt) {
         if (pattern == nullptr) return;
+        if (address.has_value() && patternBindsNoncopyable(pattern)) {
+            bindMovedPayloads(pattern, *address);
+            return;
+        }
         if (pattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (!symbol.has_value()) return;
+            if (!model->isCopyable(value.type)) {
+                // Type checking rejects this; a copy here would destroy the value twice.
+                report(
+                        DiagnosticId::ownershipViolation,
+                        pattern->span,
+                        "a pattern cannot copy a noncopyable value");
+                return;
+            }
             if (requiresDestroy(value.type)) {
                 value = emitValue(
                         ir::Opcode::copyValue,
@@ -2413,8 +2638,9 @@ private:
         }
         if (!resultAddress.has_value()) return emitUnit(expression->span);
         registerOwnedStorage(*resultAddress);
+        // A noncopyable result moves out of its slot; loading it would copy it.
         return emitValue(
-                ir::Opcode::load,
+                model->isCopyable(resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
                 resultAddress->type,
                 ir::ValueCategory::value,
                 { resultAddress->id },
@@ -2514,6 +2740,38 @@ private:
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "append") {
             return lowerArrayAppend(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "removeLast") {
+            return lowerArrayRemoveLast(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
+            targetSymbol->name == "channel") {
+            return lowerChannelCreate(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            (targetSymbol->name == "send" || targetSymbol->name == "receive" ||
+             targetSymbol->name == "close") &&
+            isChannelEndReceiver(expression)) {
+            return lowerChannelMember(expression, targetSymbol->name);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
+            targetSymbol->name == "spawn") {
+            return lowerSpawn(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "join") {
+            return lowerTaskJoin(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "consumeEmpty") {
+            return lowerArrayConsumeEmpty(expression);
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
@@ -2626,6 +2884,227 @@ private:
         return result;
     }
 
+    std::optional<ir::Value> lowerArrayRemoveLast(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            !expression->arguments.empty()) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Array.removeLast takes no arguments");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto array = lowerAddress(member->base);
+        const auto resultType = model->typeOf(expression);
+        if (!array.has_value() || !resultType.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::arrayRemoveLast, expression->span);
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        instruction.operands = { array->id };
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        // The element moves out of the array into the result, which owns it.
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `spawn(function: f, input: consume x)`: the input moves into the task exactly as it would into a
+    // direct call of `f`, and the instruction yields the handle (spec 21.2).
+    std::optional<ir::Value> lowerSpawn(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->arguments.size() != 2) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                   "spawn takes a function and an input");
+            return std::nullopt;
+        }
+        const auto named = model->referencedSymbol(expression->arguments[0]->value);
+        const auto resultType = model->typeOf(expression);
+        if (!named.has_value() || !functions.contains(*named) || !resultType.has_value()) {
+            report(DiagnosticId::missingSymbol, expression->span,
+                   "spawn target has no IR function declaration");
+            return std::nullopt;
+        }
+        const auto calleeId = functions.at(*named);
+        const auto& callee = module->functions[calleeId];
+        const auto& argument = expression->arguments[1];
+        std::optional<ir::Value> value;
+        if (isAddressable(argument->value)) {
+            const auto address = lowerAddress(argument->value);
+            if (address.has_value()) {
+                value = emitValue(
+                        ir::Opcode::take,
+                        address->type,
+                        ir::ValueCategory::value,
+                        { address->id },
+                        argument->span);
+            }
+        } else {
+            value = lowerExpression(argument->value);
+        }
+        if (!value.has_value()) return std::nullopt;
+        value = coerce(*value, callee.parameters[0].value.type, argument->value->span);
+        if (!value.has_value()) return std::nullopt;
+        if (requiresDestroy(value->type)) {
+            value = prepareOwned(*value, argument->span);
+            if (!value.has_value()) return std::nullopt;
+            if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
+        }
+        auto instruction = makeInstruction(ir::Opcode::taskSpawn, expression->span);
+        instruction.operands = { value->id };
+        instruction.callee = calleeId;
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `channel(capacity: n, sender: &s, receiver: &r)`: the runtime creates the block and stores both
+    // ends in the two addresses (decision 0019).
+    std::optional<ir::Value> lowerChannelCreate(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->arguments.size() != 3) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                   "channel takes a capacity, a sender and a receiver");
+            return std::nullopt;
+        }
+        auto capacity = lowerExpression(expression->arguments[0]->value);
+        if (!capacity.has_value()) return std::nullopt;
+        capacity = coerce(*capacity, model->types().intType(), expression->arguments[0]->value->span);
+        const auto sender = lowerAddress(expression->arguments[1]->value);
+        const auto receiver = lowerAddress(expression->arguments[2]->value);
+        if (!capacity.has_value() || !sender.has_value() || !receiver.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::channelCreate, expression->span);
+        instruction.operands = { capacity->id, sender->id, receiver->id };
+        emit(std::move(instruction));
+        return emitUnit(expression->span);
+    }
+
+    bool isChannelEndReceiver(const syntax::CallExprSyntax::Ptr& expression) const {
+        if (expression->callee->kind != syntax::Kind::memberExpr) return false;
+        const auto base = model->typeOf(
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
+        const auto* type = base.has_value() ? model->types().type(*base) : nullptr;
+        return type != nullptr && (type->kind == typing::TypeKind::channelSender ||
+                                   type->kind == typing::TypeKind::channelReceiver);
+    }
+
+    // `send`, `receive` and `close` on a channel end. `send` moves its value into the instruction, which
+    // consumes it on both outcomes; `close` leaves the end's storage zeroed.
+    std::optional<ir::Value> lowerChannelMember(
+            const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
+        if (expression->callee->kind != syntax::Kind::memberExpr) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                   "a channel operation requires a receiver expression");
+            return std::nullopt;
+        }
+        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        if (!isAddressable(member->base)) {
+            report(DiagnosticId::unsupportedSyntax, member->base->span,
+                   "a channel operation needs its end stored in a variable, parameter or field, not a temporary");
+            return std::nullopt;
+        }
+        const auto end = lowerAddress(member->base);
+        if (!end.has_value()) return std::nullopt;
+        if (name == "close") {
+            auto instruction = makeInstruction(ir::Opcode::channelClose, expression->span);
+            instruction.operands = { end->id };
+            emit(std::move(instruction));
+            return emitUnit(expression->span);
+        }
+        const auto resultType = model->typeOf(expression);
+        if (!resultType.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(
+                name == "send" ? ir::Opcode::channelSend : ir::Opcode::channelReceive, expression->span);
+        instruction.operands = { end->id };
+        if (name == "send") {
+            if (expression->arguments.size() != 1) {
+                report(DiagnosticId::unsupportedSyntax, expression->span, "send takes one value");
+                return std::nullopt;
+            }
+            const auto& argument = expression->arguments[0];
+            const auto* endType = model->types().type(end->type);
+            if (endType == nullptr || endType->arguments.size() != 1) return std::nullopt;
+            std::optional<ir::Value> value;
+            if (isAddressable(argument->value)) {
+                const auto address = lowerAddress(argument->value);
+                if (address.has_value()) {
+                    value = emitValue(
+                            ir::Opcode::take,
+                            address->type,
+                            ir::ValueCategory::value,
+                            { address->id },
+                            argument->span);
+                }
+            } else {
+                value = lowerExpression(argument->value);
+            }
+            if (!value.has_value()) return std::nullopt;
+            value = coerce(*value, endType->arguments[0], argument->value->span);
+            if (!value.has_value()) return std::nullopt;
+            if (requiresDestroy(value->type)) {
+                value = prepareOwned(*value, argument->span);
+                if (!value.has_value()) return std::nullopt;
+                if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
+            }
+            instruction.operands.push_back(value->id);
+        }
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `consume handle.join()`: waits for the task, moves its result out, and frees the task block. The
+    // handle's storage is zeroed, so the binding's scope-end destroy has nothing to drop.
+    std::optional<ir::Value> lowerTaskJoin(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr || !expression->arguments.empty()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "JoinHandle.join takes no arguments");
+            return std::nullopt;
+        }
+        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto handle = lowerAddress(member->base);
+        const auto resultType = model->typeOf(expression);
+        if (!handle.has_value() || !resultType.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::taskJoin, expression->span);
+        instruction.operands = { handle->id };
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `consume a.consumeEmpty()`: the runtime traps unless the array is empty, then frees its storage
+    // and zeroes the handle, which makes the binding's scope-end destroy a no-op.
+    std::optional<ir::Value> lowerArrayConsumeEmpty(
+            const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr ||
+            !expression->arguments.empty()) {
+            report(
+                    DiagnosticId::unsupportedSyntax,
+                    expression->span,
+                    "Array.consumeEmpty takes no arguments");
+            return std::nullopt;
+        }
+        const auto member =
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto array = lowerAddress(member->base);
+        if (!array.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::arrayConsumeEmpty, expression->span);
+        instruction.operands = { array->id };
+        emit(std::move(instruction));
+        return emitUnit(expression->span);
+    }
+
     std::optional<ir::Value> lowerDictionaryGet(
             const syntax::CallExprSyntax::Ptr& expression) {
         if (expression->callee->kind != syntax::Kind::memberExpr ||
@@ -2649,6 +3128,14 @@ private:
                     DiagnosticId::missingType,
                     expression->span,
                     "Dict.get receiver has no concrete key/value types");
+            return std::nullopt;
+        }
+        if (!model->isCopyable(dictionaryType->arguments[1])) {
+            // `get` clones the stored value; type checking rejects this first.
+            report(
+                    DiagnosticId::ownershipViolation,
+                    expression->span,
+                    "Dict.get would copy a noncopyable value");
             return std::nullopt;
         }
         auto key = lowerExpression(expression->arguments[0]->value);
@@ -2721,7 +3208,10 @@ private:
             return std::nullopt;
         }
 
-        auto element = lowerExpression(expression->arguments[0]->value);
+        auto element = movesArgument(*expression->arguments[0]) &&
+                        isAddressable(expression->arguments[0]->value)
+                ? lowerTake(expression->arguments[0]->value)
+                : lowerExpression(expression->arguments[0]->value);
         if (!element.has_value()) return std::nullopt;
         element = coerce(
                 *element,
@@ -2776,7 +3266,8 @@ private:
                         return candidate.name == argument->label->rawValue;
                     });
             if (field == structure->fields.end()) continue;
-            const auto value = prepareOperand(argument->value, field->type);
+            const auto value = prepareOperand(
+                    argument->value, field->type, movesArgument(*argument));
             if (!value.has_value()) return std::nullopt;
             fieldValues[static_cast<size_t>(
                     std::distance(structure->fields.begin(), field))] = *value;
@@ -2784,6 +3275,15 @@ private:
 
         for (size_t index = 0; index < fieldValues.size(); ++index) {
             if (fieldValues[index].has_value()) continue;
+            if (structure->fields[index].name == ir::liveFieldName) {
+                auto live = makeInstruction(ir::Opcode::booleanConstant, expression->span, true);
+                live.integerValue = 1;
+                live.result = makeValue(structure->fields[index].type, ir::ValueCategory::value);
+                fieldValues[index] = *live.result;
+                emit(std::move(live));
+                recordValue(*fieldValues[index], ValueOwnership::trivial);
+                continue;
+            }
             const auto* fieldSymbol = model->semanticModel()->symbol(
                     structure->fields[index].symbol);
             const auto& declaration = fieldSymbol != nullptr &&
@@ -2832,11 +3332,28 @@ private:
             emit(makeInstruction(ir::Opcode::returnVoid, expression->span));
             return;
         }
-        auto value = lowerExpression(expression->value);
+        auto value = lowerReturnedValue(expression->value);
         if (!value.has_value()) return;
         value = coerce(*value, currentFunction().resultType, expression->value->span);
         if (!value.has_value()) return;
         emitReturnValue(*value, expression->span, expression->value->span);
+    }
+
+    // Returning an owning local of a noncopyable type moves it out (decision 0015): a copy
+    // would leave the local to be destroyed, running the `deinit` of a value that escaped.
+    std::optional<ir::Value> lowerReturnedValue(const syntax::ExprPtr& expression) {
+        const auto type = model->typeOf(expression);
+        if (!type.has_value() || model->isCopyable(*type) || !isAddressable(expression)) {
+            return lowerExpression(expression);
+        }
+        const auto address = lowerAddress(expression);
+        if (!address.has_value()) return std::nullopt;
+        return emitValue(
+                ir::Opcode::take,
+                address->type,
+                ir::ValueCategory::value,
+                { address->id },
+                expression->span);
     }
 
     void emitReturnValue(ir::Value value, SourceSpan span, SourceSpan valueSpan) {

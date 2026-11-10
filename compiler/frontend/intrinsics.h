@@ -31,6 +31,9 @@ enum class Operation {
     store32,
     store64,
     atomicAdd,
+    atomicLoad,
+    atomicExchange,
+    atomicCompareExchange,
     callVoid1,
     callVoid2,
     literalAddress,
@@ -57,7 +60,7 @@ struct Descriptor {
 
 using typing::TypeKind;
 
-inline constexpr std::array<Descriptor, 22> table {{
+inline constexpr std::array<Descriptor, 25> table {{
     { "joyeer_intrinsic_address_of", Operation::addressOf, TypeKind::integer,
       { TypeKind::array, TypeKind::error }, 1, true },
     { "joyeer_intrinsic_load_u8", Operation::load8, TypeKind::uint8,
@@ -78,6 +81,15 @@ inline constexpr std::array<Descriptor, 22> table {{
       { TypeKind::integer, TypeKind::uint64 }, 2, false },
     { "joyeer_intrinsic_atomic_add", Operation::atomicAdd, TypeKind::integer,
       { TypeKind::integer, TypeKind::integer }, 2, false },
+    // The other sequentially consistent atomics (spec §19.4.5) a runtime lock needs: a load, an
+    // exchange that returns the previous value, and a compare-and-swap that returns the value it
+    // found. The address must be 8-byte aligned.
+    { "joyeer_intrinsic_atomic_load", Operation::atomicLoad, TypeKind::integer,
+      { TypeKind::integer, TypeKind::error }, 1, false },
+    { "joyeer_intrinsic_atomic_exchange", Operation::atomicExchange, TypeKind::integer,
+      { TypeKind::integer, TypeKind::integer }, 2, false },
+    { "joyeer_intrinsic_atomic_cmpxchg", Operation::atomicCompareExchange, TypeKind::integer,
+      { TypeKind::integer, TypeKind::integer, TypeKind::integer }, 3, false },
     // Indirect calls (spec §19.4.6): the first argument is the address of a C
     // function returning void that takes one or two address arguments. The
     // runtime uses them for the generated element clone and destroy functions.

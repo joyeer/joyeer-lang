@@ -1,0 +1,12 @@
+import System
+
+func work(value: consuming Int): Int {
+    return value
+}
+
+func main() {
+    let handle = spawn(function: work, input: consume 1)
+    let status = runProcess(executable: "true", arguments: [], workingDirectory: ".")
+    let value = consume handle.join()
+    print(value: value)
+}

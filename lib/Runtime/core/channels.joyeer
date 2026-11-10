@@ -1,0 +1,309 @@
+// Bounded single-sender, single-receiver channels (decision 0019). The compiler lowers
+// `channel(...)`, `send`, `receive` and `close` to the four exports below; this unit is its own
+// object of the runtime archive, linked only into a program that creates a channel.
+//
+// One allocation holds the channel block. Both ends point at it; the receiver's handle has the
+// low bit set (blocks are 16-byte aligned), so a handle is one pointer and `close` needs no extra
+// argument. A null handle is an end that was never initialized or was moved from.
+//
+//     0    mutex (64 bytes)
+//     64   condition: not empty (64 bytes)
+//     128  condition: not full (64 bytes)
+//     192  capacity
+//     200  stride (the element size rounded to its alignment)
+//     208  head index
+//     216  count
+//     224  element destroy callback (0 when the element needs none)
+//     232  sender closed
+//     240  receiver closed
+//     248  the block's total size, for the free
+//     256  the ring buffer, capacity * stride bytes (a multiple of 16)
+//
+// The close protocol is what makes the two ownership rules safe: the count, the head, both closed
+// flags and the decision "I am the last closer" are read and written only with the mutex held.
+// Closing the receiver takes the queued values out of the ring into a private buffer while it holds the
+// mutex, and destroys them after it unlocks: a sender that closes next may then be the last closer and
+// free the block, which no longer holds the values. Destroying them outside the lock matters because a
+// value's destroy can close another channel end (an end sent through a channel), and a destroy that
+// closed an end of this same channel would otherwise deadlock on the mutex. Closing the sender leaves
+// the queue for the receiver. The closer that finds the other flag already set is the last: it unlocks,
+// destroys the mutex and the conditions, and frees the block. The other closer touches nothing of the
+// block after its unlock.
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_load")
+private func atomicLoad(address: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memcpy")
+private func copyBytes(destination: Int, source: Int, count: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+private func callVoid1(target: Int, first: Int): Void
+
+@c_extern(symbol: "joyeer_panic")
+private func panic(message: Int): Never
+
+@c_extern(symbol: "joyeer_alloc")
+private func allocate(size: Int): Int
+
+@c_extern(symbol: "joyeer_free")
+private func release(address: Int, size: Int): Void
+
+@c_extern(symbol: "joyeer_mutex_init_abi")
+private func mutexInit(storage: Int): Int
+
+@c_extern(symbol: "joyeer_mutex_lock_abi")
+private func mutexLock(storage: Int): Int
+
+@c_extern(symbol: "joyeer_mutex_unlock_abi")
+private func mutexUnlock(storage: Int): Int
+
+@c_extern(symbol: "joyeer_mutex_destroy_abi")
+private func mutexDestroy(storage: Int): Int
+
+@c_extern(symbol: "joyeer_condition_init_abi")
+private func conditionInit(storage: Int): Int
+
+@c_extern(symbol: "joyeer_condition_wait_abi")
+private func conditionWait(condition: Int, mutex: Int): Int
+
+@c_extern(symbol: "joyeer_condition_signal_abi")
+private func conditionSignal(condition: Int): Int
+
+@c_extern(symbol: "joyeer_condition_broadcast_abi")
+private func conditionBroadcast(condition: Int): Int
+
+@c_extern(symbol: "joyeer_condition_destroy_abi")
+private func conditionDestroy(condition: Int): Int
+
+private let threadSlot: Int = 11
+private let intMax: Int = 9223372036854775807
+
+private let notEmptyOffset: Int = 64
+private let notFullOffset: Int = 128
+private let capacityOffset: Int = 192
+private let strideOffset: Int = 200
+private let headOffset: Int = 208
+private let countOffset: Int = 216
+private let destroyOffset: Int = 224
+private let senderClosedOffset: Int = 232
+private let receiverClosedOffset: Int = 240
+private let sizeOffset: Int = 248
+private let headerBytes: Int = 256
+
+private func read(address: Int): Int {
+    return load64(address: address) as Int
+}
+
+private func write(address: Int, value: Int) {
+    store64(address: address, value: value as UInt64)
+}
+
+private func roundUp(value: Int, multiple: Int): Int {
+    return (value + multiple - 1) / multiple * multiple
+}
+
+// A nonzero (negative) status from the mutex and condition primitives is a runtime failure.
+private func check(status: Int) {
+    if status < 0 { panic(message: literalAddress(text: "channel synchronization failed")) }
+}
+
+private func lock(block: Int) {
+    check(status: mutexLock(storage: block))
+}
+
+private func unlock(block: Int) {
+    check(status: mutexUnlock(storage: block))
+}
+
+// Waits on `condition` with the block's mutex held. With no other thread alive nothing can ever wake
+// this one (the count of unjoined threads is zero), so it traps instead of hanging. The check is
+// conservative: a finished thread that has not been joined still counts.
+private func wait(block: Int, condition: Int) {
+    if atomicLoad(address: staticSlot(index: threadSlot)) == 0 {
+        panic(message: literalAddress(text: "channel deadlock: nothing can wake this thread"))
+    }
+    check(status: conditionWait(condition: block + condition, mutex: block))
+}
+
+private func ringAddress(block: Int, index: Int): Int {
+    return block + headerBytes + index * read(address: block + strideOffset)
+}
+
+// The block a sender handle names, or the panic for a handle that is not a sender.
+private func senderBlock(end: Int): Int {
+    if end == 0 || end % 2 != 0 { panic(message: literalAddress(text: "invalid channel sender")) }
+    return end
+}
+
+private func receiverBlock(end: Int): Int {
+    if end == 0 || end % 2 == 0 { panic(message: literalAddress(text: "invalid channel receiver")) }
+    return end - 1
+}
+
+// Creates a channel of `capacity` elements of `elementSize` bytes, aligned to `alignment`, and
+// stores the sender handle at `sender` and the receiver handle at `receiver`. `destroy`, when not
+// zero, is called on each queued value that is destroyed unreceived. Traps on a capacity below 1 or
+// a buffer too large to describe.
+@c_export(symbol: "joyeer_channel_create_abi")
+public func channelCreate(capacity: Int, elementSize: Int, alignment: Int, destroy: Int,
+        sender: Int, receiver: Int): Int {
+    if capacity < 1 { panic(message: literalAddress(text: "invalid channel capacity")) }
+    if elementSize < 0 || alignment < 0 || sender == 0 || receiver == 0 {
+        panic(message: literalAddress(text: "invalid channel arguments"))
+    }
+    var step = alignment
+    if step < 1 { step = 1 }
+    let stride = roundUp(value: elementSize, multiple: step)
+    if stride != 0 && capacity > (intMax - 4096) / stride {
+        panic(message: literalAddress(text: "channel too large"))
+    }
+    let size = headerBytes + roundUp(value: capacity * stride, multiple: 16)
+    let block = allocate(size: size)
+    var offset = 0
+    while offset < headerBytes {
+        write(address: block + offset, value: 0)
+        offset = offset + 8
+    }
+    check(status: mutexInit(storage: block))
+    check(status: conditionInit(storage: block + notEmptyOffset))
+    check(status: conditionInit(storage: block + notFullOffset))
+    write(address: block + capacityOffset, value: capacity)
+    write(address: block + strideOffset, value: stride)
+    write(address: block + destroyOffset, value: destroy)
+    write(address: block + sizeOffset, value: size)
+    write(address: sender, value: block)
+    write(address: receiver, value: block + 1)
+    return 0
+}
+
+// Queues the value at `value`. Returns 1 when the channel owns it now, and 0 when the receiver is
+// closed (the caller still owns it). Waits while the queue is full and the receiver is open.
+@c_export(symbol: "joyeer_channel_send_abi")
+public func channelSend(end: Int, value: Int): Int {
+    let block = senderBlock(end: end)
+    lock(block: block)
+    while read(address: block + countOffset) == read(address: block + capacityOffset) &&
+            read(address: block + receiverClosedOffset) == 0 {
+        wait(block: block, condition: notFullOffset)
+    }
+    if read(address: block + receiverClosedOffset) != 0 {
+        unlock(block: block)
+        return 0
+    }
+    let stride = read(address: block + strideOffset)
+    let head = read(address: block + headOffset)
+    let count = read(address: block + countOffset)
+    let capacity = read(address: block + capacityOffset)
+    if stride != 0 {
+        copyBytes(destination: ringAddress(block: block, index: (head + count) % capacity),
+            source: value, count: stride)
+    }
+    write(address: block + countOffset, value: count + 1)
+    check(status: conditionSignal(condition: block + notEmptyOffset))
+    unlock(block: block)
+    return 1
+}
+
+// Moves the oldest queued value into `value` and returns 1, or returns 0 when the queue is empty and
+// the sender is closed. Waits while the queue is empty and the sender is open.
+@c_export(symbol: "joyeer_channel_receive_abi")
+public func channelReceive(end: Int, value: Int): Int {
+    let block = receiverBlock(end: end)
+    lock(block: block)
+    while read(address: block + countOffset) == 0 && read(address: block + senderClosedOffset) == 0 {
+        wait(block: block, condition: notEmptyOffset)
+    }
+    let count = read(address: block + countOffset)
+    if count == 0 {
+        unlock(block: block)
+        return 0
+    }
+    let stride = read(address: block + strideOffset)
+    let head = read(address: block + headOffset)
+    if stride != 0 {
+        copyBytes(destination: value, source: ringAddress(block: block, index: head), count: stride)
+    }
+    write(address: block + headOffset, value: (head + 1) % read(address: block + capacityOffset))
+    write(address: block + countOffset, value: count - 1)
+    check(status: conditionSignal(condition: block + notFullOffset))
+    unlock(block: block)
+    return 1
+}
+
+// Closes an end (a null handle is nothing to close). The second end to close frees the block.
+@c_export(symbol: "joyeer_channel_close_abi")
+public func channelClose(end: Int): Void {
+    if end == 0 { return }
+    let isReceiver = end % 2 != 0
+    var block = end
+    if isReceiver { block = end - 1 }
+    lock(block: block)
+    var last = false
+    var destroy = 0
+    var stride = 0
+    var pending = 0
+    var pendingCount = 0
+    var pendingBytes = 0
+    if isReceiver {
+        write(address: block + receiverClosedOffset, value: 1)
+        check(status: conditionBroadcast(condition: block + notFullOffset))
+        // Nobody can read the queue any more. The values that need destroying move into a private buffer
+        // now, under the lock, and are destroyed after it is released (see the header).
+        destroy = read(address: block + destroyOffset)
+        pendingCount = read(address: block + countOffset)
+        stride = read(address: block + strideOffset)
+        var head = read(address: block + headOffset)
+        let capacity = read(address: block + capacityOffset)
+        if pendingCount > 0 && destroy != 0 {
+            pendingBytes = pendingCount * stride
+            if pendingBytes < 16 { pendingBytes = 16 }
+            pending = allocate(size: pendingBytes)
+            var index = 0
+            while index < pendingCount {
+                if stride != 0 {
+                    copyBytes(destination: pending + index * stride,
+                        source: ringAddress(block: block, index: head), count: stride)
+                }
+                head = (head + 1) % capacity
+                index = index + 1
+            }
+        }
+        write(address: block + headOffset, value: 0)
+        write(address: block + countOffset, value: 0)
+        last = read(address: block + senderClosedOffset) != 0
+    } else {
+        write(address: block + senderClosedOffset, value: 1)
+        check(status: conditionBroadcast(condition: block + notEmptyOffset))
+        last = read(address: block + receiverClosedOffset) != 0
+    }
+    let size = read(address: block + sizeOffset)
+    unlock(block: block)
+    if pending != 0 {
+        var index = 0
+        while index < pendingCount {
+            callVoid1(target: destroy, first: pending + index * stride)
+            index = index + 1
+        }
+        release(address: pending, size: pendingBytes)
+    }
+    if last {
+        check(status: mutexDestroy(storage: block))
+        check(status: conditionDestroy(condition: block + notEmptyOffset))
+        check(status: conditionDestroy(condition: block + notFullOffset))
+        release(address: block, size: size)
+    }
+}

@@ -20,6 +20,11 @@ enum class DiagnosticId {
     useAfterConsume,
     initializingInitializedStorage,
     initializingParameterNotInitialized,
+    partialConsumeOfDeinitType,
+    linearNotConsumed,
+    linearOverwrite,
+    linearResultDropped,
+    runProcessWithTasks,
     unusedBinding,
 };
 

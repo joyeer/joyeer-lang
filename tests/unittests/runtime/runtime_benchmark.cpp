@@ -172,6 +172,39 @@ int main(int argc, char** argv) {
         joyeer_dictionary_destroy_abi(&dictionary);
     }
 
+    {
+        // The raw allocator (decision 0017): a block served from a size class and given back,
+        // and a block grown through every class. These are the paths the thread-safety lock sits on.
+        const int64_t pairs = 2000000 * scale;
+        for (const int64_t size : { int64_t(32), int64_t(512), int64_t(4096) }) {
+            results.push_back(measure("alloc + free, " + std::to_string(size) + " bytes", pairs, [&] {
+                for (int64_t index = 0; index < pairs; ++index) {
+                    void* block = joyeer_alloc(size);
+                    sink = reinterpret_cast<int64_t>(block);
+                    joyeer_free(block, size);
+                }
+            }));
+        }
+        results.push_back(measure("alloc 64 blocks then free them, 128 bytes", 64 * 20000 * scale, [&] {
+            void* blocks[64];
+            for (int64_t round = 0; round < 20000 * scale; ++round) {
+                for (auto& block : blocks) block = joyeer_alloc(128);
+                for (auto& block : blocks) joyeer_free(block, 128);
+            }
+        }));
+        results.push_back(measure("realloc growth 16 to 16384 bytes", 11 * 100000 * scale, [&] {
+            for (int64_t round = 0; round < 100000 * scale; ++round) {
+                int64_t size = 16;
+                void* block = joyeer_alloc(size);
+                while (size < 16384) {
+                    block = joyeer_realloc(block, size, size * 2);
+                    size *= 2;
+                }
+                joyeer_free(block, size);
+            }
+        }));
+    }
+
     std::printf("%-58s %14s\n", "benchmark", "ns per op");
     for (const auto& result : results) {
         std::printf("%-58s %14.2f\n", result.name.c_str(), result.nanosecondsPerOperation);

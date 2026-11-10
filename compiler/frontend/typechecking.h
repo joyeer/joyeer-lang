@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -46,6 +47,11 @@ enum class TypeKind {
     unsignedInteger,
     float32,
     float64,
+    // `JoinHandle<R>`: a running task whose result type is the one argument (spec 21).
+    task,
+    // `ChannelSender<T>` and `ChannelReceiver<T>`: the ends of a channel (decision 0019).
+    channelSender,
+    channelReceiver,
 };
 
 [[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
@@ -155,6 +161,11 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
+    [[nodiscard]] TypeId taskType(TypeId result);
+    [[nodiscard]] TypeId channelSenderType(TypeId element);
+    [[nodiscard]] TypeId channelReceiverType(TypeId element);
+    // `Result<success, ChannelClosed>`, what `send` and `receive` give.
+    [[nodiscard]] TypeId channelResultType(TypeId success);
 
     // Resolves a type declaration symbol plus concrete built-in generic
     // arguments. Invalid arity and non-type symbols return nullopt.
@@ -256,6 +267,21 @@ enum class TypeCheckingDiagnosticId {
     conflictingNativeSymbol,
     invalidNumericLiteral,
     managedTypeInCoreUnit,
+    copyOfNoncopyable,
+    assignmentToSelfInDeinit,
+    linearReserved,
+    linearInDeinitType,
+    linearCollectionElement,
+    linearTopLevelBinding,
+    linearStructWithoutFields,
+    spawnTargetNotFunction,
+    spawnTargetUnsupported,
+    spawnTargetParameters,
+    spawnTargetNever,
+    channelEndTypes,
+    channelCapacity,
+    linearChannelElement,
+    channelElementType,
 };
 
 struct TypeCheckingDiagnostic {
@@ -285,13 +311,46 @@ public:
         [[nodiscard]] std::optional<semantic::SymbolId> callTarget(
             const syntax::NodePtr& node) const;
 
+    // Copyability (spec 4.1.1, decision 0015). A struct that declares `deinit` is noncopyable,
+    // and so is anything that holds one: a struct field, an enum payload, or the element, key,
+    // value, payload or error type of Array, Dict, Optional and Result.
+    [[nodiscard]] bool isCopyable(TypeId type) const;
+    // Why `type` is noncopyable, or nullopt when it is copyable.
+    [[nodiscard]] std::optional<std::string> noncopyableReason(TypeId type) const;
+    // The `deinit` declaration of a struct type, or nullptr when `type` has none. Only the type
+    // that declares it qualifies; a struct that merely holds one is not a `deinit` type.
+    [[nodiscard]] syntax::FunctionDeclSyntax::Ptr deinitializerOf(TypeId type) const;
+    // Linear types (decision 0015, "Linear types"): never destroyed implicitly, so a binding must
+    // be ended before its scope exits. A struct declared `linear` is linear, and so is anything that
+    // holds one (a struct field, an enum payload, or the element, key, value, payload or error type
+    // of Array, Dict, Optional and Result). Every linear type is noncopyable.
+    [[nodiscard]] bool isLinear(TypeId type) const;
+    // The field paths a binding of `type` must consume to be ended. A linear aggregate (a struct
+    // that is linear only because a field is) ends field by field, so each linear field path is
+    // one entry; any other linear type is a single leaf, the empty path. Empty when not linear.
+    [[nodiscard]] std::vector<std::vector<semantic::SymbolId>> linearLeafPaths(TypeId type) const;
+    // True for a struct declared with the `linear` modifier.
+    [[nodiscard]] bool isDeclaredLinear(TypeId type) const;
+    // Where the program starts a task and where it calls System's `runProcess` (spec 21.6).
+    [[nodiscard]] const std::vector<SourceSpan>& spawnCalls() const { return spawnCallSpans; }
+    [[nodiscard]] const std::vector<SourceSpan>& runProcessCalls() const { return runProcessCallSpans; }
+
 private:
+    [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
+    [[nodiscard]] bool isLinear(
+            TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;
     friend class TypeCheckingBuilder;
+
+    [[nodiscard]] std::optional<std::string> noncopyableReason(
+            TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;
 
     explicit TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel);
 
     semantic::SemanticModel::Ptr semanticModelValue;
     TypeContext typeContext;
+    // Where the program starts a task and calls System's `runProcess`; the two cannot meet (spec 21.6).
+    std::vector<SourceSpan> spawnCallSpans;
+    std::vector<SourceSpan> runProcessCallSpans;
     std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
     std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
     std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;

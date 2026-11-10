@@ -220,6 +220,66 @@ does not introduce user-defined generic methods or key enumeration. The current
 lookup is linear; owned heap-backed values may require recursive copying and
 allocation. The receiver dictionary itself is not copied by `get`.
 
+#### 2.6.2 Removing the last array element
+
+The builtin `Array<T>.removeLast()` is a mutating method with no arguments. It
+needs a mutable receiver and the `&` marker (§4.3), and returns `Optional<T>`:
+`.Some` holding the last element, which is removed from the array, or `.None`
+when the array is empty.
+
+```joyeer
+var queue: [Int] = [1, 2, 3]
+let last = &queue.removeLast()    // .Some(3); queue is now [1, 2]
+```
+
+The element moves into the result. It is neither copied nor destroyed by the
+call, so `removeLast` works for a noncopyable element (§4.1.1) and is the way to
+take one out of an array: for `[TcpConnection]` it returns an
+`Optional<TcpConnection>` that owns the handle. The result is an owned
+temporary, and a `match` that moves the payload (§7.1.2) can take the element out
+of it. **Implementation status:** implemented; the runtime
+removes the element in constant time and does not shrink the array's capacity.
+
+#### 2.6.3 Concurrency builtin types (provisional)
+
+The concurrency design ([decision 0013](../decisions/0013-concurrency-model.md)) adds three
+compiler-known generic types, in the same manner as `Array`, `Dict`, `Optional` and `Result`:
+`JoinHandle<R>`, `ChannelSender<T>` and `ChannelReceiver<T>` (the first draft's `SendError<T>` is dropped from
+v1, [decision 0019](../decisions/0019-channels.md)), and the builtin enumeration `ChannelClosed`. Their type
+arguments are understood by the compiler, not by a general parameter mechanism, so this does not
+introduce user-defined generics. A user declaration of the same name takes precedence over the
+builtin in its scope.
+
+- `JoinHandle<R>` is **linear** (§4.1.1): it must be ended, by `join`, on every path (§4.7.1). Tasks are specified in [§21](21-concurrency.md).
+- `ChannelSender<T>` and `ChannelReceiver<T>` are **noncopyable** and close their channel when
+  destroyed, like a handle with a `deinit` (§3.7.1); an explicit consuming `close` also exists.
+  `T` may not be linear, because a value queued when the channel closes would be destroyed; `Any` and
+  `Never` are not element types either ([§21.9](21-concurrency.md#219-channels)).
+- A channel is created by `channel(capacity:, sender: &s, receiver: &r)`, a builtin returning
+  `Void` whose two outputs are `initializing` parameters (§4.10), so both variables are declared,
+  uninitialised, with their types, and the element type comes from those types, which must
+  agree. A capacity below 1 traps, and a literal below 1 is a compile-time error (§21.9.1).
+
+```joyeer
+var sender: ChannelSender<Int>
+var receiver: ChannelReceiver<Int>
+channel(capacity: 8, sender: &sender, receiver: &receiver)
+```
+
+**Implementation status:** `JoinHandle<R>`, `spawn` and `join`, and the channel types, `channel`, `send`,
+`receive` and `close`, are implemented ([§21](21-concurrency.md)).
+
+#### 2.6.4 Ending an empty array: `consumeEmpty()`
+
+`Array<T>.consumeEmpty()` is a **consuming** member (spelled `consume a.consumeEmpty()`). If the array
+is empty it frees the array's storage and the array is ended (§4.2.3); if it is not empty the program
+traps with `array not empty` before any element is touched. It is the only way to end an `Array` of
+**linear** elements (§4.7.1), which `removeLast()` drains first, and may be used on any array. It
+returns `Void`. In this version the receiver must be a variable, a parameter or a field, not a
+temporary.
+
+**Implementation status:** implemented (stage 0 of P5a, [decision 0018](../decisions/0018-tasks.md)): a consuming builtin member, the `array_consume_empty` IR instruction (wire version 13) and `joyeer_array_consume_empty_abi` in the runtime.
+
 ### 2.8 Type inference
 
 Local bindings infer their type from the initializer when not annotated:

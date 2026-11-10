@@ -624,6 +624,8 @@ TEST_F(ModuleServiceTest, TheSystemLibraryChecksForEveryTargetPlatform) {
             library / "System" / "process.joyeer", library / "System" / "process_windows.joyeer",
             library / "System" / "process_posix.joyeer", library / "System" / "process_linux.joyeer",
             library / "System" / "stdio.joyeer",
+            library / "System" / "network.joyeer", library / "System" / "network_windows.joyeer", library / "System" / "network_linux.joyeer",
+            library / "System" / "network_posix.joyeer",
             library / "System" / "cruntime.joyeer"}});
     options.runtimeModules = {"System"};
     for (const auto target : {joyeer::semantic::TargetPlatform::windows, joyeer::semantic::TargetPlatform::linux,

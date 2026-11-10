@@ -37,7 +37,8 @@ source table as its fourth argument. The table order must match the
 The module owns:
 
 - a deterministic snapshot of canonical compile-time `TypeId` names;
-- concrete user `struct` field definitions;
+- concrete user `struct` field definitions, and for a struct that declares `deinit` the
+  function that runs it plus a hidden trailing `$live` Bool field (below);
 - user enum and instantiated `Optional<T>` / `Result<T,E>` case definitions;
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
@@ -128,8 +129,21 @@ The current instruction set covers:
 - direct source and external calls, including the external builtins (`print`, byte conversions) and native bindings;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
-- enum construction and payload extraction;
+- enum construction, payload extraction (`extract_payload`), and payload addresses
+  (`payload_address`, which a moving `match` binding takes from);
 - mutating `array_append` with an addressable receiver and transferred element;
+- mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
+- `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
+  empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
+- `task_spawn` (the target function and one moved input, yielding a `JoinHandle<R>`) and `task_join` (a
+  handle address, yielding `R`): the backend allocates one block per task (zeroed 128-byte thread record,
+  block size, result, input), emits a thunk per target, starts the thread through the runtime thread
+  API, and `task_join` waits, moves the result out, frees the block and zeroes the handle (decision 0018);
+- `channel_create` (a capacity and the addresses of a sender and a receiver of one element type),
+  `channel_send` (a sender address and a moved value, yielding `Result<Void, ChannelClosed>`; the backend
+  destroys the value when the receiver is closed), `channel_receive` (a receiver address, yielding
+  `Result<T, ChannelClosed>`) and `channel_close` (an end address, zeroed afterwards), lowered to the
+  `joyeer_channel_*_abi` runtime calls (decision 0019);
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned
@@ -248,6 +262,9 @@ Each arm has its own basic block. Payload bindings use `extract_payload`, then
 a local stack slot. Nontrivial bindings own independent copies, registered for
 cleanup on both normal arm exit and early return. Reassigning the original
 scrutinee cannot invalidate a binding, including nested heap-backed payloads.
+A pattern that binds a noncopyable payload cannot copy it: the scrutinee is stored (the place of
+`match consume x`, or a slot that takes over an owned temporary), the arm takes the payload with
+`payload_address` and `take`, and whatever no arm binds is destroyed with that storage.
 The LLVM backend lowers the high-level pattern list into
 tag and value tests, relying on the type checker's recursive payload coverage.
 It branches on a matching tag before interpreting payloads, and recursively
@@ -266,6 +283,8 @@ plus case symbol, including distinct builtin container instantiations.
 - selected load/store, return, operator, call, field, aggregate, and payload
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
+- a structure `deinit` that is not a function taking only the structure's address and returning
+  nothing, or a struct with one that does not end with the hidden live flag;
 - malformed recursive patterns;
 - malformed source maps, unknown source IDs, debug spans outside their own
   file's byte bounds, or locations without module source information;
@@ -338,6 +357,7 @@ Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
 | Loop stack storage | LLVM source and scratch allocations are emitted in a one-time function prologue, not reallocated on every iteration. Initialization and debug-variable bindings remain at their source points. |
 | Builtin enum identity | Case lookup includes concrete `TypeId`; distinct `Optional`/`Result` instantiations do not collide. Failed emission produces diagnostics and no partial success. |
 | Optional binding promotion | Binding initialization applies its destination conversion before storing. |
+| `deinit` (decision 0015) | A struct that declares one records its function (a method-like function taking the struct's address) and ends with a hidden `$live` Bool. Construction sets it; `take`, zero-initialization and the end of destroy clear it, so only a live value runs the `deinit`, once, before its fields are destroyed in reverse order. Returning an owning local of a noncopyable type is lowered as a `take`; binding a noncopyable value in a pattern and copying one are lowering errors. |
 
 These are regression-backed implementation rules, not a complete ownership
 proof. The structural verifier limitations in section 5 and broader

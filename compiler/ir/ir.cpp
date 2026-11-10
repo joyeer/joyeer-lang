@@ -59,12 +59,18 @@ bool producesValue(Opcode opcode) {
         case Opcode::integerFits:
         case Opcode::constructStruct:
         case Opcode::constructArray:
+        case Opcode::arrayRemoveLast:
+        case Opcode::taskSpawn:
+        case Opcode::taskJoin:
+        case Opcode::channelSend:
+        case Opcode::channelReceive:
         case Opcode::constructDictionary:
         case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
         case Opcode::extractField:
         case Opcode::constructEnum:
         case Opcode::extractPayload:
+        case Opcode::payloadAddress:
         case Opcode::stringUtf8:
         case Opcode::count:
         case Opcode::subscript:
@@ -175,12 +181,16 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::string:
             case typing::TypeKind::array:
             case typing::TypeKind::dictionary:
+            case typing::TypeKind::task:
+            case typing::TypeKind::channelSender:
+            case typing::TypeKind::channelReceiver:
                 result = true;
                 break;
             case typing::TypeKind::structure: {
                 const auto structure = structures.find(id);
                 if (structure != structures.end()) {
-                    result = std::any_of(
+                    result = structure->second->deinitializer.has_value() ||
+                            std::any_of(
                             structure->second->fields.begin(),
                             structure->second->fields.end(),
                             [&visit](const auto& field) { return visit(field.type); });
@@ -417,7 +427,23 @@ VerificationResult Verifier::verify(const Module& module) const {
                         std::nullopt,
                         "field '" + field.name + "' references an unknown type");
             }
-            if (!fields.emplace(field.symbol, &field).second) {
+            // Only the hidden live flag of a `deinit` struct, which is always last, lacks a source
+            // symbol; it is not a lookup target.
+            if (field.symbol == semantic::invalidSymbolId) {
+                const auto isLiveFlag = field.name == liveFieldName &&
+                        structure.deinitializer.has_value() &&
+                        &field == &structure.fields.back();
+                if (!isLiveFlag) {
+                    report(
+                            VerificationErrorId::invalidReference,
+                            std::nullopt,
+                            std::nullopt,
+                            std::nullopt,
+                            "field '" + field.name + "' has no source symbol");
+                }
+            }
+            if (field.symbol != semantic::invalidSymbolId &&
+                !fields.emplace(field.symbol, &field).second) {
                 report(
                         VerificationErrorId::duplicateId,
                         std::nullopt,
@@ -494,6 +520,43 @@ VerificationResult Verifier::verify(const Module& module) const {
                     std::nullopt,
                     std::nullopt,
                     "duplicate function id " + std::to_string(function.id));
+        }
+    }
+
+    for (const auto& structure : module.structures) {
+        if (!structure.deinitializer.has_value()) continue;
+        const auto deinitializer = functions.find(*structure.deinitializer);
+        const auto signatureMatches = deinitializer != functions.end() &&
+                deinitializer->second->parameters.size() == 1 &&
+                deinitializer->second->parameters[0].value.type == structure.type &&
+                deinitializer->second->parameters[0].value.category == ValueCategory::address &&
+                !deinitializer->second->returnsValue &&
+                !deinitializer->second->isExternal;
+        if (!signatureMatches) {
+            report(
+                    deinitializer == functions.end()
+                            ? VerificationErrorId::invalidReference
+                            : VerificationErrorId::invalidInstruction,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "deinit of structure '" + structure.name +
+                            "' must be a function taking only the structure's address and "
+                            "returning nothing");
+        }
+        const auto liveFlagIsLast = !structure.fields.empty() &&
+                structure.fields.back().name == liveFieldName &&
+                structure.fields.back().symbol == semantic::invalidSymbolId &&
+                types.contains(structure.fields.back().type) &&
+                types.at(structure.fields.back().type)->kind == typing::TypeKind::boolean;
+        if (!liveFlagIsLast) {
+            report(
+                    VerificationErrorId::invalidReference,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "structure '" + structure.name +
+                            "' declares a deinit but does not end with the hidden live flag");
         }
     }
 
@@ -1833,6 +1896,176 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::arrayRemoveLast:
+                        if (requireShape(1, 0) && operands[0] != nullptr && instruction.result.has_value()) {
+                            const auto* arrayType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            const auto* resultType = types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type)
+                                    : nullptr;
+                            const auto matches =
+                                    operands[0]->category == ValueCategory::address &&
+                                    instruction.result->category == ValueCategory::value &&
+                                    arrayType != nullptr &&
+                                    arrayType->kind == typing::TypeKind::array &&
+                                    arrayType->arguments.size() == 1 &&
+                                    resultType != nullptr &&
+                                    resultType->kind == typing::TypeKind::optional &&
+                                    resultType->arguments.size() == 1 &&
+                                    resultType->arguments[0] == arrayType->arguments[0];
+                            if (!matches) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "array remove-last requires an array address and an Optional of its element type");
+                            }
+                        }
+                        break;
+                    case Opcode::taskSpawn: {
+                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
+                        const auto* taskType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        if (!knownCallee) {
+                            report(VerificationErrorId::invalidReference, functionId, block.id, location,
+                                   "task_spawn references an unknown function");
+                            break;
+                        }
+                        const auto& callee = *functions.at(*instruction.callee);
+                        // The target is a Joyeer function with exactly one consuming parameter; the
+                        // handle's argument is the target's result (Void when it returns nothing).
+                        const bool matches = !callee.isExternal && !callee.nativeBinding.has_value() &&
+                                callee.parameters.size() == 1 && callee.parameters[0].isConsuming &&
+                                callee.parameters[0].value.category == ValueCategory::value &&
+                                operands[0]->category == ValueCategory::value &&
+                                operands[0]->type == callee.parameters[0].value.type &&
+                                taskType != nullptr && taskType->kind == typing::TypeKind::task &&
+                                taskType->arguments.size() == 1 &&
+                                instruction.result->category == ValueCategory::value &&
+                                (callee.returnsValue ? taskType->arguments[0] == callee.resultType
+                                                     : types.contains(taskType->arguments[0]) &&
+                                                       types.at(taskType->arguments[0])->kind == typing::TypeKind::voidType);
+                        if (!matches) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "task_spawn requires a Joyeer function with one consuming parameter matching its operand and a task of its result type");
+                        }
+                        break;
+                    }
+                    case Opcode::channelCreate: {
+                        if (!requireShape(3, 0) || operands[0] == nullptr || operands[1] == nullptr ||
+                            operands[2] == nullptr) {
+                            break;
+                        }
+                        const auto* senderType = types.contains(operands[1]->type) ? types.at(operands[1]->type) : nullptr;
+                        const auto* receiverType = types.contains(operands[2]->type) ? types.at(operands[2]->type) : nullptr;
+                        const auto* capacityType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        if (operands[0]->category != ValueCategory::value || capacityType == nullptr ||
+                            capacityType->kind != typing::TypeKind::integer ||
+                            operands[1]->category != ValueCategory::address ||
+                            operands[2]->category != ValueCategory::address ||
+                            senderType == nullptr || receiverType == nullptr ||
+                            senderType->kind != typing::TypeKind::channelSender ||
+                            receiverType->kind != typing::TypeKind::channelReceiver ||
+                            senderType->arguments.size() != 1 || receiverType->arguments.size() != 1 ||
+                            senderType->arguments[0] != receiverType->arguments[0]) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_create requires an Int capacity and the addresses of a sender and a receiver of one element type");
+                        }
+                        break;
+                    }
+                    case Opcode::channelSend: {
+                        if (!requireShape(2, 0) || operands[0] == nullptr || operands[1] == nullptr) break;
+                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
+                            endType->kind != typing::TypeKind::channelSender || endType->arguments.size() != 1 ||
+                            operands[1]->category != ValueCategory::value ||
+                            operands[1]->type != endType->arguments[0] ||
+                            !instruction.result.has_value() || resultType == nullptr ||
+                            resultType->kind != typing::TypeKind::result || resultType->arguments.size() != 2 ||
+                            instruction.result->category != ValueCategory::value ||
+                            !types.contains(resultType->arguments[0]) ||
+                            types.at(resultType->arguments[0])->kind != typing::TypeKind::voidType ||
+                            !types.contains(resultType->arguments[1]) ||
+                            types.at(resultType->arguments[1])->kind != typing::TypeKind::enumeration ||
+                            types.at(resultType->arguments[1])->name != "ChannelClosed") {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_send requires a sender address, a value of its element type, and a Result of Void");
+                        }
+                        break;
+                    }
+                    case Opcode::channelReceive: {
+                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
+                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
+                            endType->kind != typing::TypeKind::channelReceiver || endType->arguments.size() != 1 ||
+                            !instruction.result.has_value() || resultType == nullptr ||
+                            resultType->kind != typing::TypeKind::result || resultType->arguments.size() != 2 ||
+                            instruction.result->category != ValueCategory::value ||
+                            resultType->arguments[0] != endType->arguments[0] ||
+                            !types.contains(resultType->arguments[1]) ||
+                            types.at(resultType->arguments[1])->kind != typing::TypeKind::enumeration ||
+                            types.at(resultType->arguments[1])->name != "ChannelClosed") {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_receive requires a receiver address and a Result of its element type");
+                        }
+                        break;
+                    }
+                    case Opcode::channelClose: {
+                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
+                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
+                            (endType->kind != typing::TypeKind::channelSender &&
+                             endType->kind != typing::TypeKind::channelReceiver)) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_close requires the address of a channel end");
+                        }
+                        break;
+                    }
+                    case Opcode::taskJoin:
+                        if (requireShape(1, 0) && operands[0] != nullptr) {
+                            const auto* taskType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type)
+                                    : nullptr;
+                            if (operands[0]->category != ValueCategory::address || taskType == nullptr ||
+                                taskType->kind != typing::TypeKind::task || taskType->arguments.size() != 1 ||
+                                !instruction.result.has_value() || resultType == nullptr ||
+                                instruction.result->category != ValueCategory::value ||
+                                instruction.result->type != taskType->arguments[0]) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                       "task_join requires a task handle address and yields the task's result type");
+                            }
+                        }
+                        break;
+                    case Opcode::arrayConsumeEmpty:
+                        if (requireShape(1, 0) && operands[0] != nullptr) {
+                            const auto* arrayType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            if (operands[0]->category != ValueCategory::address ||
+                                arrayType == nullptr ||
+                                arrayType->kind != typing::TypeKind::array ||
+                                arrayType->arguments.size() != 1) {
+                                report(
+                                        VerificationErrorId::typeMismatch,
+                                        functionId,
+                                        block.id,
+                                        location,
+                                        "array consume-empty requires an array address");
+                            }
+                        }
+                        break;
                     case Opcode::dictionaryGet:
                         if (requireShape(2, 0) && operands[0] != nullptr &&
                             operands[1] != nullptr && instruction.result.has_value()) {
@@ -1878,7 +2111,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     structure->fields.begin(),
                                     structure->fields.end(),
                                     [&instruction](const auto& candidate) {
-                                    return candidate.symbol == *instruction.symbol;
+                                    return candidate.symbol != semantic::invalidSymbolId &&
+                                        candidate.symbol == *instruction.symbol;
                                     });
                                 return found == structure->fields.end() ? nullptr : &*found;
                             }();
@@ -1947,6 +2181,29 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 block.id,
                                 location,
                                 "enum payload extraction does not match its case definition");
+                        }
+                        break;
+                        }
+                        case Opcode::payloadAddress: {
+                        const auto shapeMatches = requireShape(1, 0);
+                        const auto* enumCase = shapeMatches && operands[0] != nullptr &&
+                            instruction.symbol.has_value()
+                            ? enumCaseFor(operands[0]->type, *instruction.symbol)
+                            : nullptr;
+                        const auto index = instruction.integerValue;
+                        const auto indexIsValid = enumCase != nullptr && index >= 0 &&
+                            static_cast<size_t>(index) < enumCase->payloadTypes.size();
+                        if (!indexIsValid || !instruction.result.has_value() ||
+                            operands[0]->category != ValueCategory::address ||
+                            instruction.result->category != ValueCategory::address ||
+                            instruction.result->type !=
+                                enumCase->payloadTypes[static_cast<size_t>(index)]) {
+                            report(
+                                VerificationErrorId::typeMismatch,
+                                functionId,
+                                block.id,
+                                location,
+                                "enum payload address does not match its case definition");
                         }
                         break;
                         }
@@ -2231,6 +2488,14 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
         case Opcode::arrayAppend: return "array_append";
+        case Opcode::arrayRemoveLast: return "array_remove_last";
+        case Opcode::arrayConsumeEmpty: return "array_consume_empty";
+        case Opcode::taskSpawn: return "task_spawn";
+        case Opcode::taskJoin: return "task_join";
+        case Opcode::channelCreate: return "channel_create";
+        case Opcode::channelSend: return "channel_send";
+        case Opcode::channelReceive: return "channel_receive";
+        case Opcode::channelClose: return "channel_close";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -2238,6 +2503,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::extractField: return "extract_field";
         case Opcode::constructEnum: return "construct_enum";
         case Opcode::extractPayload: return "extract_payload";
+        case Opcode::payloadAddress: return "payload_address";
         case Opcode::stringUtf8: return "string_utf8";
         case Opcode::count: return "count";
         case Opcode::subscript: return "subscript";
@@ -2340,7 +2606,9 @@ std::string dump(const Module& module) {
                 << typeName(types, field.type) << " symbol#" << field.symbol;
             if (field.isMutable) out << " var";
         }
-        out << (structure->fields.empty() ? "}\n" : " }\n");
+        out << (structure->fields.empty() ? "}" : " }");
+        if (structure->deinitializer.has_value()) out << " deinit=@" << *structure->deinitializer;
+        out << '\n';
     }
     for (const auto* enumeration : sortedEnumerations) {
         out << "  enum !" << enumeration->type << " \"" << escape(enumeration->name)
@@ -2492,6 +2760,13 @@ std::string dump(const Module& module) {
                             out << ' ' << valueName(instruction.operands[0]);
                         }
                         break;
+                    case Opcode::arrayRemoveLast:
+                    case Opcode::arrayConsumeEmpty:
+                    case Opcode::taskJoin:
+                    case Opcode::channelCreate:
+                    case Opcode::channelSend:
+                    case Opcode::channelReceive:
+                    case Opcode::channelClose:
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
@@ -2518,6 +2793,7 @@ std::string dump(const Module& module) {
                                 << valueName(instruction.operands[index]);
                         }
                         break;
+                    case Opcode::taskSpawn:
                     case Opcode::call:
                         out << " @" << instruction.callee.value_or(invalidFunctionId) << '(';
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
@@ -2545,6 +2821,7 @@ std::string dump(const Module& module) {
                             out << ' ' << valueName(instruction.operands[0]);
                         }
                         break;
+                    case Opcode::payloadAddress:
                     case Opcode::extractPayload:
                         if (!instruction.operands.empty()) {
                             out << ' ' << valueName(instruction.operands[0]);

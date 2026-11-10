@@ -1,0 +1,84 @@
+// Channels between tasks (spec 21.9): a producer task feeds a consumer through a small queue (the
+// producer blocks when it is full), the sender closes when the producer returns, and a two-stage
+// pipeline passes values through a worker. Ends move into tasks inside a struct input.
+struct Feed {
+    var output: ChannelSender<Int>
+    var count: Int
+}
+
+struct Stage {
+    var input: ChannelReceiver<Int>
+    var output: ChannelSender<Int>
+}
+
+func produce(feed: consuming Feed): Int {
+    var index = 1
+    var delivered = 0
+    while index <= feed.count {
+        let value = index
+        let sent = feed.output.send(value: consume value)
+        match sent {
+            .Ok(_) => { delivered = delivered + 1 },
+            .Err(_) => { return delivered },
+        }
+        index = index + 1
+    }
+    return delivered
+}
+
+func double(stage: consuming Stage): Int {
+    var handled = 0
+    var more = true
+    while more {
+        match stage.input.receive() {
+            .Ok(value) => {
+                let twice = value * 2
+                let sent = stage.output.send(value: consume twice)
+                handled = handled + 1
+            },
+            .Err(_) => { more = false },
+        }
+    }
+    return handled
+}
+
+func drain(receiver: ChannelReceiver<Int>): Int {
+    var total = 0
+    var more = true
+    while more {
+        match receiver.receive() {
+            .Ok(value) => { total = total + value },
+            .Err(_) => { more = false },
+        }
+    }
+    return total
+}
+
+func main() {
+    // A producer and the consumer in main, through a queue of four.
+    var sender: ChannelSender<Int>
+    var receiver: ChannelReceiver<Int>
+    channel(capacity: 4, sender: &sender, receiver: &receiver)
+    let producer = spawn(function: produce, input: consume Feed(output: consume sender, count: 1000))
+    let total = drain(receiver: receiver)
+    let produced = consume producer.join()
+    print(value: total)
+    print(value: produced)
+
+    // producer -> doubler -> main.
+    var firstSender: ChannelSender<Int>
+    var firstReceiver: ChannelReceiver<Int>
+    channel(capacity: 2, sender: &firstSender, receiver: &firstReceiver)
+    var secondSender: ChannelSender<Int>
+    var secondReceiver: ChannelReceiver<Int>
+    channel(capacity: 3, sender: &secondSender, receiver: &secondReceiver)
+    let source = spawn(function: produce, input: consume Feed(output: consume firstSender, count: 100))
+    let middle = spawn(function: double,
+            input: consume Stage(input: consume firstReceiver, output: consume secondSender))
+    let doubled = drain(receiver: secondReceiver)
+    let sourced = consume source.join()
+    let handled = consume middle.join()
+    print(value: doubled)
+    print(value: sourced)
+    print(value: handled)
+}

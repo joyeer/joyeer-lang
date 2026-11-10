@@ -126,6 +126,25 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         ASSERT_NE(checking.model, nullptr);
         }
 
+        // Checks `text` as a toolchain-authorized (runtime) source, where `linear` is allowed.
+        void checkToolchain(const std::string& text) {
+        lexerDiagnostics.errors.clear();
+        source = std::make_shared<SourceFile>(text);
+        LexParser lexer(&lexerDiagnostics);
+        lexer.parse(source);
+        ASSERT_TRUE(lexerDiagnostics.errors.empty());
+
+        joyeer::parser::Parser parser(source->tokens);
+        parseResult = parser.parse();
+        ASSERT_TRUE(parseResult.succeeded()) << joyeer::parser::dump(parseResult.diagnostics);
+
+        resolution = joyeer::semantic::NameResolver().resolve(
+                { { "runtime.fixture", { parseResult.root }, true } });
+        ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+        checking = joyeer::typing::TypeChecker().check(resolution.model);
+        ASSERT_NE(checking.model, nullptr);
+        }
+
         joyeer::typing::TypeId declaredType(const joyeer::syntax::NodePtr& node) const {
         const auto symbol = resolution.model->declaredSymbol(node);
         EXPECT_TRUE(symbol.has_value());
@@ -2085,5 +2104,900 @@ func invalid() {
                         }
                     }
                 }
+
+
+// Decision 0015, stage 4: a struct's `deinit` is type-checked as a method body, a type
+// that declares one is noncopyable, noncopyability propagates, and an implicit copy of a
+// noncopyable value is rejected where it happens.
+constexpr const char* handlePrelude =
+        "struct Handle {\n"
+        "    var fd: Int\n"
+        "    deinit() { }\n"
+        "}\n"
+        "func open(): Handle { return Handle(fd: 1) }\n"
+        "func take(handle: consuming Handle) { }\n";
+
+TEST_F(TypeCheckingTest, ADeinitBodyIsTypeChecked) {
+    check("struct Handle {\n"
+          "    var fd: Int\n"
+          "    deinit() { let open: Int = self.fd }\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+
+    check("struct Handle {\n"
+          "    var fd: Int\n"
+          "    deinit() { let open: Bool = self.fd }\n"
+          "}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::typeMismatch));
+}
+
+TEST_F(TypeCheckingTest, ADeinitCannotConsumeSelfOrMoveAFieldOut) {
+    check("struct Inner {\n"
+          "    var n: Int\n"
+          "    deinit() { }\n"
+          "}\n"
+          "struct Outer {\n"
+          "    var inner: Inner\n"
+          "    deinit() { take(inner: consume self) }\n"
+          "}\n"
+          "func take(inner: consuming Outer) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument));
+
+    check("struct Inner {\n"
+          "    var n: Int\n"
+          "    deinit() { }\n"
+          "}\n"
+          "struct Outer {\n"
+          "    var inner: Inner\n"
+          "    deinit() { take(inner: consume self.inner) }\n"
+          "}\n"
+          "func take(inner: consuming Inner) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument));
+}
+
+TEST_F(TypeCheckingTest, ADeinitReceiverIsTheStructAndItsResultIsVoid) {
+    check("struct Handle {\n"
+          "    var fd: Int\n"
+          "    deinit() { }\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto& model = *resolution.model;
+    const auto handle = std::find_if(model.symbols().begin(), model.symbols().end(),
+            [](const auto& symbol) {
+                return symbol.kind == joyeer::semantic::SymbolKind::structure &&
+                       symbol.name == "Handle";
+            });
+    ASSERT_NE(handle, model.symbols().end());
+    const auto declaration = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            model.node(*handle->declaration));
+    const auto symbol = model.declaredSymbol(declaration->deinitializer);
+    ASSERT_TRUE(symbol.has_value());
+    const auto* signature = checking.model->callable(*symbol);
+    ASSERT_NE(signature, nullptr);
+    EXPECT_EQ(signature->result, checking.model->types().voidType());
+    EXPECT_EQ(signature->receiverType, checking.model->types().typeForSymbol(handle->id));
+    EXPECT_TRUE(signature->parameters.empty());
+}
+
+TEST_F(TypeCheckingTest, ANoncopyableTypeIsOneWithADeinitOrANoncopyablePart) {
+    check(std::string(handlePrelude) +
+          "struct Plain { var n: Int }\n"
+          "struct Holder { var inner: Handle }\n"
+          "struct Pair {\n var a: Int\n var b: Plain\n}\n"
+          "enum Slot {\n Full(Handle),\n Empty\n}\n"
+          "enum Mark {\n Set(Int),\n Unset\n}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    auto& model = *checking.model;
+    const auto named = [&](const std::string& name) {
+        const auto found = std::find_if(resolution.model->symbols().begin(),
+                resolution.model->symbols().end(), [&](const auto& symbol) {
+                    return (symbol.kind == joyeer::semantic::SymbolKind::structure ||
+                            symbol.kind == joyeer::semantic::SymbolKind::enumeration) &&
+                           symbol.name == name;
+                });
+        EXPECT_NE(found, resolution.model->symbols().end());
+        return model.types().typeForSymbol(found->id).value();
+    };
+    auto& types = model.types();
+    const auto handle = named("Handle");
+
+    EXPECT_FALSE(model.isCopyable(handle));
+    EXPECT_NE(model.noncopyableReason(handle).value_or("").find("deinit"), std::string::npos);
+    EXPECT_FALSE(model.isCopyable(named("Holder")));
+    EXPECT_FALSE(model.isCopyable(named("Slot")));
+    EXPECT_TRUE(model.isCopyable(named("Plain")));
+    EXPECT_TRUE(model.isCopyable(named("Pair")));
+    EXPECT_TRUE(model.isCopyable(named("Mark")));
+    EXPECT_FALSE(model.noncopyableReason(named("Plain")).has_value());
+
+    EXPECT_FALSE(model.isCopyable(types.arrayType(handle)));
+    EXPECT_FALSE(model.isCopyable(types.optionalType(handle)));
+    EXPECT_FALSE(model.isCopyable(types.dictionaryType(types.stringType(), handle)));
+    EXPECT_FALSE(model.isCopyable(types.resultType(handle, types.stringType())));
+    EXPECT_FALSE(model.isCopyable(types.resultType(types.intType(), handle)));
+    EXPECT_TRUE(model.isCopyable(types.arrayType(named("Plain"))));
+    EXPECT_TRUE(model.isCopyable(types.intType()));
+    EXPECT_TRUE(model.isCopyable(types.stringType()));
+    EXPECT_TRUE(model.isCopyable(types.resultType(types.intType(), types.stringType())));
+}
+
+TEST_F(TypeCheckingTest, RejectsImplicitCopiesOfANoncopyableValueAtTheCopySite) {
+    const std::vector<std::string> copies {
+        // binding and assignment from a place
+        "func f() { let a = open()\n let b = a }\n",
+        "func f() { let a = open()\n var b = open()\n b = a }\n",
+        // returning a borrowed parameter or a field of an owned value
+        "func f(h: Handle): Handle { return h }\n",
+        "struct Holder { var inner: Handle }\n"
+        "func f(h: consuming Holder): Handle { return h.inner }\n",
+        // building an aggregate from a place
+        "struct Holder { var inner: Handle }\n"
+        "func f() { let a = open()\n let h = Holder(inner: a) }\n",
+        "func f() { let a = open()\n let items = [a] }\n",
+        "func f() { let a = open()\n let o: Handle? = .Some(a) }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+
+    check(std::string(handlePrelude) + "func f() { let a = open()\n let b = a }\n");
+    ASSERT_FALSE(checking.diagnostics.empty());
+    EXPECT_NE(checking.diagnostics[0].message.find("Handle"), std::string::npos);
+    EXPECT_NE(checking.diagnostics[0].message.find("deinit"), std::string::npos);
+}
+
+TEST_F(TypeCheckingTest, AllowsMovesTemporariesBorrowsAndCopiesOfCopyableParts) {
+    const std::vector<std::string> allowed {
+        // an owned temporary is not a copy
+        "func f() { let a = open() }\n",
+        "func f() { var a = open()\n a = open() }\n",
+        // `consume` moves; a borrow does not copy
+        "func f() { let a = open()\n take(handle: consume a) }\n",
+        "func peek(h: Handle): Int { return h.fd }\n"
+        "func f() { let a = open()\n let n = peek(h: a) }\n",
+        // returning an owning local or a consuming parameter is a move
+        "func f(): Handle { let a = open()\n return a }\n",
+        "func f(h: consuming Handle): Handle { return h }\n",
+        // reading a copyable field of a noncopyable value copies only the field
+        "func f() { let a = open()\n let n = a.fd }\n",
+        // copyable types are unaffected
+        "struct Plain { var n: Int }\n"
+        "func f() { let a = Plain(n: 1)\n let b = a\n let items = [a, b] }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+// `consume x` moves an owning local or consuming parameter wherever a value is stored.
+TEST_F(TypeCheckingTest, ConsumeMovesANoncopyableValueIntoWhereItIsStored) {
+    const std::vector<std::string> moves {
+        "struct Holder { var inner: Handle }\n"
+        "func f() { let a = open()\n let h = Holder(inner: consume a) }\n",
+        "func f() { let a = open()\n let o: Handle? = .Some(consume a) }\n",
+        "func f() { let a = open()\n let items = [consume a] }\n",
+        "func f() { let a = open()\n var items: [Handle] = []\n &items.append(element: consume a) }\n",
+        "func f() { let a = open()\n let b = consume a }\n",
+        "func f() { let a = open()\n var b = open()\n b = consume a }\n",
+        "struct Holder { var inner: Handle }\n"
+        "func f(h: consuming Handle): Holder { return Holder(inner: consume h) }\n",
+    };
+    for (const auto& body : moves) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ConsumeStillNeedsAnOwningLocalAndAStoringContext) {
+    const std::vector<std::string> rejected {
+        // a borrowed parameter is not owned
+        "struct Holder { var inner: Handle }\n"
+        "func f(h: Handle) { let w = Holder(inner: consume h) }\n",
+        // `consume` on a plain borrowing call argument is still wrong
+        "func use(handle: Handle) { }\n"
+        "func f() { let a = open()\n use(handle: consume a) }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, DictGetCannotCopyANoncopyableValue) {
+    check(std::string(handlePrelude) +
+          "func f() { var d: [Int: Handle] = [:]\n let g = d.get(key: 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADeinitCannotReplaceSelf) {
+    check("struct A {\n    var n: Int\n    deinit() { &self = A(n: 1) }\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(
+            joyeer::typing::TypeCheckingDiagnosticId::assignmentToSelfInDeinit))
+            << joyeer::typing::dump(checking.diagnostics);
+
+    check("struct A {\n    var n: Int\n    deinit() { &self.n = 1 }\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// The check walks each distinct type once: a type that reuses the same part twice per level
+// must not take time exponential in its depth.
+TEST_F(TypeCheckingTest, NoncopyabilityIsLinearInTheNumberOfDistinctTypes) {
+    std::string text = "struct S0 { var a: Int }\n";
+    for (int level = 1; level <= 26; ++level) {
+        text += "struct S" + std::to_string(level) + " { var a: S" + std::to_string(level - 1) +
+                "\n    var b: S" + std::to_string(level - 1) + " }\n";
+    }
+    text += "func f(p: S26) { let q = p }\n";
+    check(text);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// The copy check looks through the value-producing forms, not only a bare place.
+TEST_F(TypeCheckingTest, ReportsCopiesThroughIfMatchBlockPropagationAndTrailingExpressions) {
+    const std::vector<std::string> copies {
+        "func f(flag: Bool) { let a = open()\n let b = open()\n let c = if flag { a } else { b } }\n",
+        "func f(flag: Bool) { let a = open()\n let b = open()\n"
+        " let items = [if flag { a } else { b }] }\n",
+        "func f(n: Int) { let a = open()\n let c = match n { 1 => a, _ => open() } }\n",
+        "func f(): Handle { let a = open()\n a }\n",
+        "func f(r: Result<Handle, Int>) { let h = r? }\n",
+        "func f(): Result<Handle, Int> { let r: Result<Handle, Int> = .Ok(open())\n let h = r?\n return .Ok(open()) }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AllowsAnIfOrMatchThatProducesFreshNoncopyableValues) {
+    const std::vector<std::string> fresh {
+        "func f(flag: Bool): Handle { return if flag { open() } else { Handle(fd: 2) } }\n",
+        "func f(n: Int): Handle { return match n { 1 => open(), _ => Handle(fd: 3) } }\n",
+        "func f(): Handle { open() }\n",
+    };
+    for (const auto& body : fresh) {
+        SCOPED_TRACE(body);
+        check(std::string(handlePrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// `Array.removeLast` gives back the last element as an Optional of the element type.
+TEST_F(TypeCheckingTest, ArrayRemoveLastReturnsAnOptionalOfTheElementType) {
+    check("func f() {\n"
+          "    var numbers: [Int] = [1, 2]\n"
+          "    let last = &numbers.removeLast()\n"
+          "    var words: [String] = []\n"
+          "    let word = &words.removeLast()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[1])), "Int?");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[3])), "String?");
+}
+
+TEST_F(TypeCheckingTest, ArrayRemoveLastNeedsAMutableReceiver) {
+    check("func f() { let numbers: [Int] = [1]\n let last = &numbers.removeLast() }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func f() { var numbers: [Int] = [1]\n let last = numbers.removeLast() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ArrayRemoveLastGivesBackANoncopyableElementAsATemporary) {
+    check(std::string(handlePrelude) +
+          "func f() { var items: [Handle] = []\n let popped = &items.removeLast() }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // The Optional it returns holds a handle, so copying it is still an error.
+    check(std::string(handlePrelude) +
+          "func f() { var items: [Handle] = []\n let popped = &items.removeLast()\n let again = popped }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A pattern may bind a noncopyable payload only by moving it out of an owned scrutinee.
+constexpr const char* slotPrelude =
+        "struct Handle {\n    var fd: Int\n    deinit() { }\n}\n"
+        "enum Slot {\n    Full(Handle),\n    Empty,\n}\n"
+        "func make(): Slot { return .Full(Handle(fd: 1)) }\n";
+
+TEST_F(TypeCheckingTest, AMatchMayBindANoncopyablePayloadOutOfATemporaryOrAConsumedPlace) {
+    const std::vector<std::string> allowed {
+        "func f(): Int { return match make() { .Full(h) => h.fd, .Empty => 0 } }\n",
+        "func f(slot: consuming Slot): Int { return match consume slot { .Full(h) => h.fd, .Empty => 0 } }\n",
+        "func f() { let slot = make()\n match consume slot { .Full(h) => print(value: h.fd), .Empty => () } }\n",
+        // a wildcard binds nothing, so a place may be matched without moving
+        "func f(slot: Slot): Int { return match slot { .Full(_) => 1, .Empty => 0 } }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(std::string(slotPrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AMatchCannotBindANoncopyablePayloadOutOfAPlaceWithoutConsume) {
+    check(std::string(slotPrelude) +
+          "func f(slot: Slot): Int { return match slot { .Full(h) => h.fd, .Empty => 0 } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+    // `consume` still needs an owning local or consuming parameter.
+    check(std::string(slotPrelude) +
+          "func f(slot: Slot): Int { return match consume slot { .Full(h) => h.fd, .Empty => 0 } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AMatchBindingOwnsItsPayloadAndCanBeMovedOnward) {
+    const std::vector<std::string> allowed {
+        "func take(handle: consuming Handle) { }\n"
+        "func f() { match make() { .Full(h) => take(handle: consume h), .Empty => () } }\n",
+        "struct Holder { var inner: Handle }\n"
+        "func f(): Holder? { match make() { .Full(h) => return .Some(Holder(inner: consume h)), .Empty => return .None } }\n",
+        "func f() { var items: [Handle] = []\n"
+        " match make() { .Full(h) => &items.append(element: consume h), .Empty => () } }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(std::string(slotPrelude) + body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AnAmpersandDoesNotHideAPlaceFromTheMovedBindingCheck) {
+    const std::vector<std::string> copies {
+        "func f(slot: Slot): Int { return match &slot { .Full(h) => h.fd, .Empty => 0 } }\n",
+        "func f() { let slot = make()\n match (&slot) { .Full(h) => print(value: h.fd), .Empty => () } }\n",
+        // a bound handle is a place too, so matching or copying it needs `consume`
+        "func f() { match make() { .Full(h) => print(value: h.fd), .Empty => () } }\n"
+        "func g() { let o: Handle? = .Some(Handle(fd: 1))\n match o { .Some(h) => print(value: h.fd), .None => () } }\n",
+        "func f() { match make() { .Full(h) => { let k = h }, .Empty => () } }\n",
+    };
+    for (const auto& body : copies) {
+        SCOPED_TRACE(body);
+        check(std::string(slotPrelude) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, AWholeNoncopyableScrutineeCannotBeBoundByAPattern) {
+    check(std::string(slotPrelude) +
+          "func f() { match make() { other => (), } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Decision 0015, "Linear types": which types are linear, and the type-level rules.
+constexpr const char* linearTypes =
+        "linear struct Token {\n    var id: Int\n}\n"
+        "struct Holder {\n    var token: Token\n}\n"
+        "enum Box {\n    Full(Token),\n    Empty,\n}\n";
+
+TEST_F(TypeCheckingTest, ALinearTypeAndWhatHoldsItAreLinearAndNoncopyable) {
+    checkToolchain(std::string(linearTypes) +
+                   "func f(a: Token, b: Holder, c: Box, d: [Token], e: Token?, g: Result<Token, Int>, h: Int) { }\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items.back());
+    const auto& model = *checking.model;
+    for (size_t index = 0; index < 6; ++index) {
+        const auto type = declaredType(function->parameters[index]);
+        EXPECT_TRUE(model.isLinear(type)) << index;
+        EXPECT_FALSE(model.isCopyable(type)) << index;
+    }
+    EXPECT_FALSE(model.isLinear(declaredType(function->parameters[6])));
+}
+
+TEST_F(TypeCheckingTest, ALinearStructEndsFieldByFieldAndAnAggregateOnlyItsLinearFields) {
+    checkToolchain(std::string(linearTypes) + "func f(a: Token, b: Holder, c: Box) { }\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items.back());
+    const auto& model = *checking.model;
+    // A declared linear struct has every field as a leaf; Holder needs only its Token field;
+    // an enum is consumed whole.
+    EXPECT_EQ(model.linearLeafPaths(declaredType(function->parameters[0])).size(), 1u);
+    const auto holder = model.linearLeafPaths(declaredType(function->parameters[1]));
+    ASSERT_EQ(holder.size(), 1u);
+    EXPECT_EQ(holder[0].size(), 2u);
+    EXPECT_EQ(model.linearLeafPaths(declaredType(function->parameters[2])),
+              (std::vector<std::vector<joyeer::semantic::SymbolId>> { {} }));
+}
+
+TEST_F(TypeCheckingTest, TheLinearModifierIsReservedForToolchainSources) {
+    check("linear struct Token {\n    var id: Int\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearReserved))
+            << joyeer::typing::dump(checking.diagnostics);
+    checkToolchain("linear struct Token {\n    var id: Int\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ALinearValueHasNoDeinitToRun) {
+    checkToolchain("linear struct Token {\n    var id: Int\n    deinit() { }\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearInDeinitType))
+            << joyeer::typing::dump(checking.diagnostics);
+    // a struct with a deinit may not hold a linear field either: its destruction would drop it
+    checkToolchain(std::string(linearTypes) +
+                   "struct Owner {\n    var token: Token\n    deinit() { }\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearInDeinitType))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADictionaryCannotHoldALinearKeyOrValue) {
+    checkToolchain(std::string(linearTypes) + "func f() { var d: [Int: Token] = [:] }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearCollectionElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ForInCannotIterateAnArrayOfLinearValues) {
+    checkToolchain(std::string(linearTypes) +
+                   "func f(items: [Token]) { for item in items { } }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearCollectionElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ALinearStructNeedsAFieldToEnd) {
+    checkToolchain("linear struct Zed {\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearStructWithoutFields))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ADictionaryOfLinearValuesIsRejectedInParametersResultsAndFields) {
+    const std::vector<std::string> bodies {
+        "func f(d: [Int: Token]): Int { return 0 }\n",
+        "struct S {\n    var d: [Int: Token]\n}\n",
+        "func g(): [Int: Token] { return [:] }\n",
+    };
+    for (const auto& body : bodies) {
+        SCOPED_TRACE(body);
+        checkToolchain(std::string(linearTypes) + body);
+        EXPECT_TRUE(hasMethodDiagnostic(
+                joyeer::typing::TypeCheckingDiagnosticId::linearCollectionElement))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+
+// `Array.consumeEmpty` is a consuming builtin member (spec 2.6.4): it needs `consume` on an owned
+// receiver and returns Void.
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyIsAConsumingMemberReturningVoid) {
+    const std::vector<std::string> allowed {
+        "func f() { var items: [Int] = []\n consume items.consumeEmpty() }\n",
+        "func f(items: consuming [String]) { consume items.consumeEmpty() }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyNeedsConsumeOnAnOwnedReceiver) {
+    check("func f() { var items: [Int] = []\n items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f() { var items: [Int] = []\n &items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    // A borrowed parameter is not owned, so it cannot be consumed.
+    check("func f(items: [Int]) { consume items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(items: inout [Int]) { consume items.consumeEmpty() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A builtin consuming member works on the receiver's own storage: a named place is required (spec 2.6.4).
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyRejectsATemporaryAnElementAndATopLevelConstant) {
+    const std::vector<std::string> rejected {
+        "func make(): [Int] { return [] }\nfunc f() { consume make().consumeEmpty() }\n",
+        "func f() { consume [1].consumeEmpty() }\n",
+        "func f() { var grid: [[Int]] = [[]]\n consume grid[0].consumeEmpty() }\n",
+        "let table: [Int] = []\nfunc f() { consume table.consumeEmpty() }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyAcceptsAFieldALetBindingAndAConsumingMethodsSelf) {
+    const std::vector<std::string> allowed {
+        "struct Box {\n var xs: [Int]\n}\nfunc f() { var box = Box(xs: [])\n consume box.xs.consumeEmpty() }\n",
+        "func f() { let items: [Int] = []\n consume items.consumeEmpty() }\n",
+        "struct Box {\n var xs: [Int]\n consuming func end() { consume self.xs.consumeEmpty() }\n}\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ArrayConsumeEmptyOnAFieldOfABorrowedStructIsRejected) {
+    const std::vector<std::string> rejected {
+        "struct Box {\n var xs: [Int]\n}\nfunc f(box: Box) { consume box.xs.consumeEmpty() }\n",
+        "struct Box {\n var xs: [Int]\n}\nfunc f(box: inout Box) { consume box.xs.consumeEmpty() }\n",
+        "struct Box {\n var xs: [Int]\n func end() { consume self.xs.consumeEmpty() }\n}\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+// An unknown member has its own diagnostic; the receiver marker must not add a second one.
+TEST_F(TypeCheckingTest, AnUnknownMemberUnderConsumeReportsOnlyTheUnknownMember) {
+    check("func f() { var a = 1\n consume a.consumeEmpty() }\n");
+    EXPECT_FALSE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_FALSE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidAccessMarker))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+
+// Tasks (spec 21): `spawn(function:, input:)` has type `JoinHandle<R>`, and `consume h.join()` gives R.
+constexpr const char* taskPrelude =
+        "func square(value: consuming Int): Int { return value * value }\n"
+        "func greet(name: consuming String): String { return name }\n"
+        "func shout(name: consuming String) { }\n"
+        "struct Job {\n    var id: Int\n}\n"
+        "func run(job: consuming Job): Int { return job.id }\n";
+
+TEST_F(TypeCheckingTest, SpawnHasTheJoinHandleTypeOfTheTargetsResult) {
+    check(std::string(taskPrelude) +
+          "func f() {\n"
+          "    let a = spawn(function: square, input: consume 7)\n"
+          "    let b = spawn(function: greet, input: consume \"x\")\n"
+          "    let c = spawn(function: shout, input: consume \"y\")\n"
+          "    let d = spawn(function: run, input: consume Job(id: 3))\n"
+          "    consume a.join()\n"
+          "    consume b.join()\n"
+          "    consume c.join()\n"
+          "    consume d.join()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[5]);
+    auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[0])), "JoinHandle<Int>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[1])), "JoinHandle<String>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[2])), "JoinHandle<Void>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[3])), "JoinHandle<Int>");
+}
+
+TEST_F(TypeCheckingTest, JoinGivesTheResultTypeAndAHandleCanBeNamedInATypePosition) {
+    check(std::string(taskPrelude) +
+          "func wait(handle: consuming JoinHandle<Int>): Int { return consume handle.join() }\n"
+          "func f(): Int {\n"
+          "    let h: JoinHandle<Int> = spawn(function: square, input: consume 2)\n"
+          "    return wait(handle: consume h)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) +
+          "func f() {\n"
+          "    let h = spawn(function: square, input: consume 2)\n"
+          "    let s: String = consume h.join()\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsATargetThatIsNotANamedFunction) {
+    check(std::string(taskPrelude) + "func f() {\n    let n = 1\n    let h = spawn(function: n, input: consume 1)\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetNotFunction))
+            << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) + "func f() {\n    let h = spawn(function: square(value: 1), input: consume 1)\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetNotFunction))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsMainAMethodAndANativeBinding) {
+    check("func main() {\n    let h = spawn(function: main, input: consume 1)\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetUnsupported))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsATargetWithoutExactlyOneConsumingParameter) {
+    const std::vector<std::string> rejected {
+        "func none(): Int { return 1 }\nfunc f() { let h = spawn(function: none, input: consume 1) }\n",
+        "func two(a: consuming Int, b: consuming Int): Int { return a }\nfunc f() { let h = spawn(function: two, input: consume 1) }\n",
+        "func borrowed(a: Int): Int { return a }\nfunc f() { let h = spawn(function: borrowed, input: consume 1) }\n",
+        "func change(a: inout Int) { }\nfunc f() { let h = spawn(function: change, input: consume 1) }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetParameters))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsATargetThatNeverReturns) {
+    check("func forever(a: consuming Int): Never { return forever(a: consume a) }\n"
+          "func f() { let h = spawn(function: forever, input: consume 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetNever))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnNeedsConsumeOnTheInputAndTheRightLabels) {
+    check(std::string(taskPrelude) + "func f() { let h = spawn(function: square, input: 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnInputMustMatchTheTargetsParameterType) {
+    check(std::string(taskPrelude) + "func f() { let h = spawn(function: square, input: consume \"text\") }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, JoinNeedsConsumeAndAnOwnedHandle) {
+    check(std::string(taskPrelude) +
+          "func f() {\n    let h = spawn(function: square, input: consume 1)\n    h.join()\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) +
+          "func f(handle: JoinHandle<Int>) { consume handle.join() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ATaskHandleIsNoncopyable) {
+    check(std::string(taskPrelude) +
+          "func f() {\n    let h = spawn(function: square, input: consume 1)\n    let g = h\n    consume g.join()\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A user declaration of a prelude name wins in its own scope (0013 Q15, spec 21.2).
+TEST_F(TypeCheckingTest, AUserDeclaredSpawnOrJoinHandleWinsOverThePrelude) {
+    check("func spawn(function: Int, input: Int): Int { return function + input }\n"
+          "func f(): Int { return spawn(function: 1, input: 2) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("struct JoinHandle {\n    var id: Int\n}\n"
+          "func f(): Int {\n    let h = JoinHandle(id: 4)\n    return h.id\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+
+TEST_F(TypeCheckingTest, SpawnRejectsAMethodAndABuiltinWithOneDiagnosticEach) {
+    check("struct S {\n    var a: Int\n    func m(value: consuming Int): Int { return value }\n}\n"
+          "func f() { let h = spawn(function: S.m, input: consume 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetUnsupported))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f() { let h = spawn(function: print, input: consume 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetUnsupported))
+            << joyeer::typing::dump(checking.diagnostics);
+    // A member of an instance is read as a name, not checked as a value: exactly one error, and no
+    // leaked "unresolved reference" from the deferred member lookup.
+    check("struct S {\n    var a: Int\n    func m(value: consuming Int): Int { return value }\n}\n"
+          "func f() { let s = S(a: 1)\n let h = spawn(function: s.m, input: consume 1) }\n");
+    EXPECT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnAcceptsAParenthesizedFunctionName) {
+    check(std::string(taskPrelude) +
+          "func f(): Int {\n    let h = spawn(function: (square), input: consume 2)\n    return consume h.join()\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// `consume` covers the receiver of the call it starts (spec 21.3): parenthesize before `?`, and bind a
+// joined result before using it as an argument.
+TEST_F(TypeCheckingTest, JoinBeforeAPostfixQuestionMarkIsParenthesizedAndAnArgumentIsBoundFirst) {
+    check("func fails(value: consuming Int): Result<Int, IOError> { return .Ok(value) }\n"
+          "func g(): Result<Int, IOError> {\n"
+          "    let h = spawn(function: fails, input: consume 1)\n"
+          "    let v = (consume h.join())?\n"
+          "    return .Ok(v)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) +
+          "func g() {\n    let h = spawn(function: square, input: consume 1)\n    print(value: consume h.join())\n}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, ATaskHandleCannotBeAKeyAValueOrAConstantAndCannotBeCompared) {
+    const std::vector<std::string> rejected {
+        "func f(table: [Int: JoinHandle<Int>]) { }\n",
+        "func f(handles: consuming [JoinHandle<Int>]) { for each in handles { } }\n",
+        "func make(value: consuming Int): Int { return value }\n"
+        "let global: JoinHandle<Int> = spawn(function: make, input: consume 1)\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+    check(std::string(taskPrelude) +
+          "func f(): Bool {\n    let a = spawn(function: square, input: consume 1)\n"
+          "    let b = spawn(function: square, input: consume 2)\n    return a == b\n}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+
+// Channels (spec 21.9, decision 0019).
+constexpr const char* channelPrelude =
+        "func make(): Int {\n"
+        "    var sender: ChannelSender<Int>\n"
+        "    var receiver: ChannelReceiver<Int>\n"
+        "    channel(capacity: 4, sender: &sender, receiver: &receiver)\n"
+        "    return 0\n"
+        "}\n";
+
+TEST_F(TypeCheckingTest, ChannelInitializesASenderAndAReceiverOfOneElementType) {
+    check(channelPrelude);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SendAndReceiveHaveResultTypesOverChannelClosed) {
+    check("func f() {\n"
+          "    var sender: ChannelSender<Int>\n"
+          "    var receiver: ChannelReceiver<String>\n"
+          "    var other: ChannelSender<String>\n"
+          "    var third: ChannelReceiver<Int>\n"
+          "    channel(capacity: 2, sender: &sender, receiver: &third)\n"
+          "    channel(capacity: 2, sender: &other, receiver: &receiver)\n"
+          "    let sent = sender.send(value: consume 5)\n"
+          "    let got = third.receive()\n"
+          "    let text = receiver.receive()\n"
+          "    consume sender.close()\n"
+          "    consume other.close()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[0]);
+    auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[6])), "Result<Void, ChannelClosed>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[7])), "Result<Int, ChannelClosed>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[8])), "Result<String, ChannelClosed>");
+}
+
+TEST_F(TypeCheckingTest, ChannelRejectsEndsThatAreNotASenderAndAReceiverOfTheSameType) {
+    const std::vector<std::string> rejected {
+        "func f() { var a: ChannelSender<Int>\n var b: ChannelReceiver<String>\n channel(capacity: 1, sender: &a, receiver: &b) }\n",
+        "func f() { var a: ChannelReceiver<Int>\n var b: ChannelSender<Int>\n channel(capacity: 1, sender: &a, receiver: &b) }\n",
+        "func f() { var a: ChannelSender<Int>\n var b: Int\n channel(capacity: 1, sender: &a, receiver: &b) }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::channelEndTypes))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ChannelNeedsAnInitializingMarkerOnBothEnds) {
+    check("func f() { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n channel(capacity: 1, sender: a, receiver: &b) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidInitializingArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AConstantCapacityBelowOneIsRejected) {
+    for (const auto* capacity : {"0", "-3"}) {
+        SCOPED_TRACE(capacity);
+        check(std::string("func f() { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n channel(capacity: ") +
+              capacity + ", sender: &a, receiver: &b) }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::channelCapacity))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+    check("func f(n: Int) { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n channel(capacity: n, sender: &a, receiver: &b) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AChannelElementCannotBeLinear) {
+    check("func f(c: consuming ChannelSender<JoinHandle<Int>>) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: consuming ChannelReceiver<[JoinHandle<Int>]>) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AChannelElementMayBeVoidAHandleALargeValueOrAnotherEnd) {
+    const std::vector<std::string> allowed {
+        "func f(c: consuming ChannelSender<Void>) { }\n",
+        "struct Handle {\n var fd: Int\n deinit() { }\n}\nfunc f(c: consuming ChannelSender<Handle>) { }\n",
+        "func f(c: consuming ChannelReceiver<[String]>) { }\n",
+        "func f(c: consuming ChannelSender<ChannelSender<Int>>) { }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ChannelEndsAreNoncopyableAndSendAndCloseNeedConsume) {
+    check("func f(c: consuming ChannelSender<Int>) { let d = c }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: ChannelSender<Int>) { c.send(value: 5) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: consuming ChannelSender<Int>) { c.close() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: ChannelSender<Int>) { consume c.close() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SendTakesAValueOfTheElementType) {
+    check("func f(c: ChannelSender<Int>) { c.send(value: consume \"x\") }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, ABorrowedEndCanSendAndReceive) {
+    check("func f(s: ChannelSender<Int>, r: ChannelReceiver<Int>) {\n"
+          "    let a = s.send(value: consume 1)\n"
+          "    let b = r.receive()\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AUserDeclaredChannelWinsOverThePrelude) {
+    check("func channel(capacity: Int): Int { return capacity }\n"
+          "func f(): Int { return channel(capacity: 3) }\n"
+          "struct ChannelSender {\n    var id: Int\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+
+TEST_F(TypeCheckingTest, ALinearChannelElementIsRejectedInAnEnumPayloadToo) {
+    check("enum Message {\n    Hand(ChannelSender<JoinHandle<Int>>),\n    Stop,\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ALinearChannelElementIsRejectedNestedAndInAStructDeclaredLater) {
+    check("struct Holder {\n    var ends: [Optional<ChannelReceiver<Pending>>]\n}\n"
+          "struct Pending {\n    var handle: JoinHandle<Int>\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, TheCapacityArgumentOfChannelFollowsTheOrdinaryMarkerRules) {
+    check("func f(n: Int) { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n"
+          " channel(capacity: consume n, sender: &a, receiver: &b) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ChannelMembersNeedAReceiverValue) {
+    check("func f() { ChannelSender.send(value: consume 1) }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func f() { ChannelReceiver.receive() }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+// A struct or enum comparison has no lowering, so equality on one is a diagnostic, not a compiler crash.
+TEST_F(TypeCheckingTest, EqualityOnAnEnumOrStructIsRejected) {
+    check("enum Kind {\n    A,\n    B,\n}\nfunc f(x: Kind, y: Kind): Bool { return x == y }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("struct P {\n    var n: Int\n}\nfunc f(x: P, y: P): Bool { return x == y }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
 
 } // namespace

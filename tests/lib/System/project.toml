@@ -4,6 +4,6 @@ schema-version = 1
 name = "SystemTests"
 kind = "test"
 output = "system-tests"
-sources = ["main.joyeer", "filesystem.joyeer", "process.joyeer", "stdio.joyeer"]
+sources = ["main.joyeer", "filesystem.joyeer", "process.joyeer", "stdio.joyeer", "network.joyeer"]
 dependencies = ["System", "Foundation"]
 native-bindings = true
