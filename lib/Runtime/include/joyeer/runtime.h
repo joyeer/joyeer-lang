@@ -202,6 +202,31 @@ int64_t joyeer_condition_signal_abi(void* condition);
 int64_t joyeer_condition_broadcast_abi(void* condition);
 int64_t joyeer_condition_destroy_abi(void* condition);
 
+/* Bounded single-sender, single-receiver channels (decision 0019), in their own object of the
+ * archive, linked only into a program that creates a channel. An end is one pointer: the sender
+ * is the channel block's address and the receiver is the same address plus one. A null end is
+ * nothing to close. Waits use the thread object's mutex and condition; with no unjoined thread a
+ * wait that could never end traps (`channel deadlock`). */
+/* Creates a channel of `capacity` elements of `element_size` bytes aligned to `alignment`, and
+ * stores the two ends. `destroy`, when not null, is called on each queued value that is destroyed
+ * unreceived. Traps on a capacity below 1 or a buffer too large to describe. */
+int64_t joyeer_channel_create_abi(
+    int64_t capacity,
+    int64_t element_size,
+    int64_t alignment,
+    JoyeerDestroyValueFn destroy,
+    void** sender,
+    void** receiver);
+/* Queues the bytes at `value`: returns 1 when the channel owns the value now, 0 when the receiver
+ * is closed (the caller still owns it). Waits while the queue is full and the receiver is open. */
+int64_t joyeer_channel_send_abi(void* sender, const void* value);
+/* Moves the oldest value into `value` and returns 1, or returns 0 when the queue is empty and the
+ * sender is closed. Waits while the queue is empty and the sender is open. */
+int64_t joyeer_channel_receive_abi(void* receiver, void* value);
+/* Closes an end. The second end to close frees the channel; closing the receiver destroys the
+ * queued values, under the channel's lock. */
+void joyeer_channel_close_abi(void* end);
+
 #ifdef __cplusplus
 }
 #endif

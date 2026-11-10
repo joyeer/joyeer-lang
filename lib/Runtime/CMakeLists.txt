@@ -40,6 +40,11 @@ set(JOYEER_RUNTIME_THREADS_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/core/threads.joyeer"
 )
 
+# The channel functions are a fifth object, referenced only by programs that create a channel.
+set(JOYEER_RUNTIME_CHANNELS_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/core/channels.joyeer"
+)
+
 # Compiles Joyeer sources as one runtime core module into OBJECT. Optimized in
 # every configuration except Debug, which keeps full debug information so a crash
 # inside the runtime shows Joyeer frames.
@@ -76,8 +81,12 @@ set(JOYEER_RUNTIME_THREADS_OBJECT
         "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runtime-threads${CMAKE_C_OUTPUT_EXTENSION}")
 joyeer_runtime_core_object("${JOYEER_RUNTIME_THREADS_OBJECT}" runtime.threads
         "Compiling the Joyeer runtime threads" ${JOYEER_RUNTIME_THREADS_SOURCES})
+set(JOYEER_RUNTIME_CHANNELS_OBJECT
+        "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/runtime-channels${CMAKE_C_OUTPUT_EXTENSION}")
+joyeer_runtime_core_object("${JOYEER_RUNTIME_CHANNELS_OBJECT}" runtime.channels
+        "Compiling the Joyeer runtime channels" ${JOYEER_RUNTIME_CHANNELS_SOURCES})
 
-# The archive holds the four Joyeer objects and nothing else: there is no C source
+# The archive holds the five Joyeer objects and nothing else: there is no C source
 # left, so the target needs its linker language named (tests/unittests/runtime
 # checks the members).
 add_library(JoyeerRuntime STATIC
@@ -85,6 +94,7 @@ add_library(JoyeerRuntime STATIC
         "${JOYEER_RUNTIME_ENTRY_OBJECT}"
         "${JOYEER_RUNTIME_MAIN_OBJECT}"
         "${JOYEER_RUNTIME_THREADS_OBJECT}"
+        "${JOYEER_RUNTIME_CHANNELS_OBJECT}"
 )
 target_include_directories(JoyeerRuntime PUBLIC ${JOYEER_RUNTIME_INCLUDE_DIR})
 # The symbol gates in tests/unittests/runtime read the object paths from here.
@@ -92,5 +102,6 @@ set_target_properties(JoyeerRuntime PROPERTIES
         JOYEER_CORE_OBJECT "${JOYEER_RUNTIME_CORE_OBJECT}"
         JOYEER_ENTRY_OBJECT "${JOYEER_RUNTIME_ENTRY_OBJECT}"
         JOYEER_MAIN_OBJECT "${JOYEER_RUNTIME_MAIN_OBJECT}"
-        JOYEER_THREADS_OBJECT "${JOYEER_RUNTIME_THREADS_OBJECT}")
+        JOYEER_THREADS_OBJECT "${JOYEER_RUNTIME_THREADS_OBJECT}"
+        JOYEER_CHANNELS_OBJECT "${JOYEER_RUNTIME_CHANNELS_OBJECT}")
 set_target_properties(JoyeerRuntime PROPERTIES LINKER_LANGUAGE C)

@@ -164,11 +164,13 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
         get_filename_component(main_name "${main_object}" NAME)
         get_target_property(threads_object JoyeerRuntime JOYEER_THREADS_OBJECT)
         get_filename_component(threads_name "${threads_object}" NAME)
+        get_target_property(channels_object JoyeerRuntime JOYEER_CHANNELS_OBJECT)
+        get_filename_component(channels_name "${channels_object}" NAME)
         add_test(NAME RuntimeArchiveMembers
             COMMAND "${CMAKE_COMMAND}"
                 "-DAR=${JOYEER_RUNTIME_AR_EXECUTABLE}"
                 "-DARCHIVE=$<TARGET_FILE:JoyeerRuntime>"
-                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name};${threads_name}"
+                "-DEXPECTED_MEMBERS=${core_name};${entry_name};${main_name};${threads_name};${channels_name}"
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeArchive.cmake")
         set_tests_properties(RuntimeArchiveMembers PROPERTIES LABELS "runtime;native" TIMEOUT 30)
     endif()
@@ -229,12 +231,23 @@ if(JOYEER_RUNTIME_NM_EXECUTABLE AND JOYEER_RUNTIME_CORE_OBJECT)
             "-DALLOWED_UNDEFINED=${joyeer_threads_imports}"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
     set_tests_properties(RuntimeThreadsObjectSymbols PROPERTIES LABELS "runtime;native;threads" TIMEOUT 30)
+    # The channel object (decision 0019) defines the four channel exports and calls only the thread
+    # object's mutex and condition, the allocator and the panic.
+    get_target_property(JOYEER_RUNTIME_CHANNELS_OBJECT JoyeerRuntime JOYEER_CHANNELS_OBJECT)
+    add_test(NAME RuntimeChannelsObjectSymbols
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DOBJECT=${JOYEER_RUNTIME_CHANNELS_OBJECT}"
+            "-DEXPECTED_DEFINED=joyeer_static_slots;joyeer_channel_create_abi;joyeer_channel_send_abi;joyeer_channel_receive_abi;joyeer_channel_close_abi"
+            "-DALLOWED_UNDEFINED=joyeer_panic;joyeer_alloc;joyeer_free;joyeer_mutex_init_abi;joyeer_mutex_lock_abi;joyeer_mutex_unlock_abi;joyeer_mutex_destroy_abi;joyeer_condition_init_abi;joyeer_condition_wait_abi;joyeer_condition_signal_abi;joyeer_condition_broadcast_abi;joyeer_condition_destroy_abi;memcmp;memcpy;memset"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyRuntimeCoreObject.cmake")
+    set_tests_properties(RuntimeChannelsObjectSymbols PROPERTIES LABELS "runtime;native;channels" TIMEOUT 30)
 endif()
 
 # Threads, mutexes and conditions driven from C++ through the exported C ABI. The test starts
 # threads with C++ entry functions that never allocate (the runtime is not thread safe until P4).
 find_package(Threads REQUIRED)
-add_executable(RuntimeThreadTests thread_test.cpp thread_safety_test.cpp)
+add_executable(RuntimeThreadTests thread_test.cpp thread_safety_test.cpp channel_test.cpp)
 target_include_directories(RuntimeThreadTests PRIVATE ${JOYEER_RUNTIME_INCLUDE_DIR})
 target_link_libraries(RuntimeThreadTests PRIVATE
         GTest::gtest_main
