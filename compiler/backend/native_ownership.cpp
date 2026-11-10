@@ -61,6 +61,11 @@ void Builder::emitOwnership() {
         destroys.emplace(type.id, llvm::Function::Create(destroyType,
                 linkage, "joyeer_destroy_type_" + std::to_string(type.id), module()));
     }
+}
+
+// The helper bodies are emitted once every source function is declared, because a destroy
+// helper calls the `deinit` of a struct that declares one.
+void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
@@ -69,6 +74,12 @@ void Builder::emitOwnership() {
         builder.CreateRetVoid();
     }
     for (const auto& [id, function] : destroys) {
+        // A helper that calls a `deinit` carries no debug scope of its own, so inlining the
+        // `deinit` into it (and it into a caller) corrupts the inlined debug scopes.
+        if (const auto found = structures.find(id);
+            found != structures.end() && found->second->deinitializer.has_value()) {
+            function->addFnAttr(llvm::Attribute::NoInline);
+        }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
@@ -85,9 +96,16 @@ void Builder::emitClone(ir::TypeId id) {
     destination->setName("destination");
     sourceAddress->setName("source");
     const auto kind = type(id).kind;
+    if (kind == typing::TypeKind::task || kind == typing::TypeKind::channelSender ||
+        kind == typing::TypeKind::channelReceiver) {
+        // A task or a channel end has one owner and is never cloned; reaching this is a compiler bug.
+        trap(builder.getTrue(), kind == typing::TypeKind::task ? "a task cannot be copied" : "a channel end cannot be copied");
+        return;
+    }
     if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
             kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_clone_abi"
+
                 : kind == typing::TypeKind::array ? "joyeer_array_clone_abi" : "joyeer_dictionary_clone_abi";
         auto* value = builder.CreateLoad(llvmType(id), sourceAddress, "value");
         call(name, builder.getVoidTy(), {destination,
@@ -131,15 +149,48 @@ void Builder::emitDestroy(ir::TypeId id) {
     auto* address = activeFunction->getArg(0);
     address->setName("value");
     const auto kind = type(id).kind;
+    if (kind == typing::TypeKind::channelSender || kind == typing::TypeKind::channelReceiver) {
+        // Dropping an end closes it; a null end (never initialized, closed, or moved from) is nothing.
+        auto* end = builder.CreateLoad(pointer(), address, "end");
+        call("joyeer_channel_close_abi", builder.getVoidTy(), {end});
+        builder.CreateStore(nullPointer(), address);
+        return;
+    }
+    if (kind == typing::TypeKind::task) {
+        // `join` zeroes the handle and a moved-from handle is zero, so a live one here was dropped
+        // without being joined: the linear check should have refused the program (defence in depth).
+        auto* block = builder.CreateLoad(pointer(), address, "task");
+        trap(builder.CreateIsNotNull(block), "task dropped without join");
+        return;
+    }
     if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
             kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_destroy_abi"
+
                 : kind == typing::TypeKind::array ? "joyeer_array_destroy_abi" : "joyeer_dictionary_destroy_abi";
         call(name, builder.getVoidTy(), {address});
         return;
     }
     if (kind == typing::TypeKind::structure) {
-        const auto& fields = structures.at(id)->fields;
+        const auto& definition = *structures.at(id);
+        const auto& fields = definition.fields;
+        if (definition.deinitializer.has_value()) {
+            // The `deinit` runs first, and only for a live value: the hidden last field is
+            // cleared by `take`, by zero-initialization and at the end of this helper.
+            auto* live = builder.CreateLoad(llvmType(fields.back().type),
+                    field(llvmType(id), address, static_cast<unsigned>(fields.size() - 1)), "live");
+            auto* run = llvm::BasicBlock::Create(context(), "deinit", activeFunction);
+            auto* members = llvm::BasicBlock::Create(context(), "members", activeFunction);
+            builder.CreateCondBr(builder.CreateIsNotNull(live), run, members);
+            builder.SetInsertPoint(run);
+            // Clear the flag first: a `deinit` that overwrites `self` would otherwise destroy the
+            // old value, find it still live, and run itself again without end.
+            builder.CreateStore(llvm::Constant::getNullValue(llvmType(fields.back().type)),
+                    field(llvmType(id), address, static_cast<unsigned>(fields.size() - 1)));
+            builder.CreateCall(functions.at(*definition.deinitializer), {address});
+            builder.CreateBr(members);
+            builder.SetInsertPoint(members);
+        }
         // Destruction is reverse declaration order, including nested aggregates.
         for (size_t index = fields.size(); index > 0; --index) {
             const auto payloadType = fields[index - 1].type;

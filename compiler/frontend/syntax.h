@@ -347,6 +347,14 @@ struct StructDeclSyntax final : DeclSyntax {
     Token::Ptr name;
     std::vector<StructFieldDeclSyntax::Ptr> fields;
     std::vector<FunctionDeclSyntax::Ptr> methods;
+    // The `deinit() { ... }` member, if any (spec 3.7.1). It is a method-like function
+    // named `deinit` whose receiver is `inout`, kept apart from `methods` because it
+    // cannot be named, called or overloaded.
+    FunctionDeclSyntax::Ptr deinitializer;
+    // Declared with the contextual `linear` modifier (decision 0015, "Linear types"): a value of
+    // the type is never destroyed implicitly. Reserved for toolchain-authorized sources.
+    bool isLinear = false;
+    SourceSpan linearSpan {};
 
     StructDeclSyntax(SourceSpan span,
                      Token::Ptr name,

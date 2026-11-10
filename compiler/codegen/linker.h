@@ -39,6 +39,8 @@ struct LinkOptions {
     // for standalone linker tests and explicit LLVM inspection workflows.
     std::shared_ptr<JoyeerBackendModule> module;
     std::vector<std::filesystem::path> nativeLibraries;
+    // The program starts tasks: Linux links the thread library after the runtime archive group.
+    bool usesThreads = false;
 };
 
 struct LinkResult {

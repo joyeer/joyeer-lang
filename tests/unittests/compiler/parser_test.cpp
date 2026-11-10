@@ -87,6 +87,20 @@ TEST_F(ParserTest, ParsesUnitTypesValuesAndPatterns) {
     EXPECT_NE(tree.find("unit_pattern"), std::string::npos);
 }
 
+// A consuming call may be a statement and a `return` value: `consume` starts an expression, like `&`.
+TEST_F(ParserTest, ConsumeStartsAnExpressionStatementAndAReturnValue) {
+    parse("func run(items: consuming [Int]): Int {\n"
+          "    consume items.consumeEmpty()\n"
+          "    return consume items.count\n"
+          "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_NE(function->body, nullptr);
+    ASSERT_EQ(function->body->items.size(), 2u);
+    EXPECT_EQ(function->body->items[0]->kind, Kind::accessExpr);
+}
+
 TEST_F(ParserTest, UnitDoesNotEnableEmptyPayloadClausesOrGeneralTuples) {
     for (const auto* text : {
             "func run() { let value = .Ok() }\n",
@@ -1220,6 +1234,138 @@ TEST_F(ParserTest, ErrorCorpusMatchesDiagnosticSnapshot) {
         ASSERT_FALSE(result.succeeded());
         EXPECT_EQ(joyeer::parser::dump(result.diagnostics),
                           readFixture("parser/err/recovery.diag.txt"));
+}
+
+
+// `deinit` (spec 3.7.1, decision 0015): a struct member, at most one, no parameters, no
+// modifiers; it is parsed as a method named `deinit` whose receiver can be mutated.
+TEST_F(ParserTest, ParsesAStructDeinitAsAMethodLikeMember) {
+    parse(R"JOYEER(struct Handle {
+    var fd: Int
+    deinit() { print(value: self.fd) }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 1u);
+    const auto structure = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(structure->fields.size(), 1u);
+    EXPECT_TRUE(structure->methods.empty());
+    ASSERT_NE(structure->deinitializer, nullptr);
+    EXPECT_EQ(structure->deinitializer->name->rawValue, "deinit");
+    EXPECT_TRUE(structure->deinitializer->isMethod());
+    ASSERT_EQ(structure->deinitializer->parameters.size(), 1u);
+    ASSERT_NE(structure->deinitializer->parameters[0]->accessKeyword, nullptr);
+    EXPECT_EQ(structure->deinitializer->parameters[0]->accessKeyword->kind, kwInout);
+    ASSERT_NE(structure->deinitializer->body, nullptr);
+}
+
+TEST_F(ParserTest, AStructDeinitSitsBesideFieldsAndMethods) {
+    parse(R"JOYEER(struct Handle {
+    var fd: Int
+    func read(): Int { return self.fd }
+    deinit() { }
+    func other(): Int { return 1 }
+}
+)JOYEER");
+
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto structure = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            result.root->items[0]);
+    EXPECT_EQ(structure->methods.size(), 2u);
+    EXPECT_NE(structure->deinitializer, nullptr);
+}
+
+TEST_F(ParserTest, ADeinitWithParametersOrModifiersIsRejected) {
+    for (const char* text : {
+            "struct A { var x: Int\n deinit(extra: Int) { }\n}\n",
+            "struct A { var x: Int\n public deinit() { }\n}\n",
+            "struct A { var x: Int\n private deinit() { }\n}\n",
+            "struct A { var x: Int\n mutating deinit() { }\n}\n",
+            "struct A { var x: Int\n consuming deinit() { }\n}\n",
+            "struct A { var x: Int\n deinit(): Int { }\n}\n",
+    }) {
+        parse(text);
+        EXPECT_TRUE(hasDiagnostic(DiagnosticId::invalidDeinit))
+                << text << "\n" << joyeer::parser::dump(result.diagnostics);
+    }
+}
+
+TEST_F(ParserTest, AStructMayHaveOnlyOneDeinit) {
+    parse("struct A { var x: Int\n deinit() { }\n deinit() { }\n}\n");
+
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::invalidDeinit))
+            << joyeer::parser::dump(result.diagnostics);
+}
+
+TEST_F(ParserTest, ADeinitIsOnlyAllowedInAStruct) {
+    for (const char* text : {
+            "enum E { A, B\n deinit() { }\n}\n",
+            "struct S { var x: Int }\nextension S {\n deinit() { }\n}\n",
+    }) {
+        parse(text);
+        EXPECT_TRUE(hasDiagnostic(DiagnosticId::invalidDeinit))
+                << text << "\n" << joyeer::parser::dump(result.diagnostics);
+    }
+}
+
+TEST_F(ParserTest, ADeinitNeedsParenthesesAndABody) {
+    for (const char* text : {
+            "struct A { var x: Int\n deinit { }\n}\n",
+            "struct A { var x: Int\n deinit()\n}\n",
+    }) {
+        parse(text);
+        EXPECT_FALSE(result.succeeded()) << text;
+    }
+}
+
+TEST_F(ParserTest, DeinitCannotBeCalledOrNamedAsAnExpression) {
+    parse("struct A { var x: Int }\nfunc f(a: A) { a.deinit() }\n");
+
+    EXPECT_FALSE(result.succeeded());
+}
+
+// `linear` is a modifier only directly before `struct` on the same line, and an ordinary
+// identifier everywhere else.
+TEST_F(ParserTest, LinearIsAModifierOnlyBeforeStructOnTheSameLine) {
+    parse("linear struct Q {\n    var a: Int\n}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto declaration = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(result.root->items[0]);
+    EXPECT_TRUE(declaration->isLinear);
+
+    parse("public linear struct Q {\n    var a: Int\n    func read(): Int { return self.a }\n}\nfunc f() { }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+
+    parse("linear\nstruct Q {\n    var a: Int\n}\n");
+    EXPECT_FALSE(result.succeeded());
+
+    parse("func linear(): Int { return 1 }\nfunc f() { let linear = linear() }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+}
+
+
+TEST_F(ParserTest, ReturnFollowedByANewLineConsumeIsABareReturn) {
+    parse("func run(items: consuming [Int]) {\n"
+          "    return\n"
+          "    consume items.consumeEmpty()\n"
+          "}\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_NE(function->body, nullptr);
+    EXPECT_EQ(function->body->items.size(), 2u);
+}
+
+TEST_F(ParserTest, ConsumeMayBeAMatchArmBodyAndAReturnValueOnTheSameLine) {
+    parse("func run(items: consuming [Int], flag: Bool) {\n"
+          "    match flag {\n"
+          "        true => consume items.consumeEmpty(),\n"
+          "        false => (),\n"
+          "    }\n"
+          "}\n"
+          "func take(value: consuming [Int]): [Int] { return consume value }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
 }
 
 } // namespace

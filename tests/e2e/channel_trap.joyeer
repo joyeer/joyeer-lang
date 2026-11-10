@@ -1,0 +1,21 @@
+// A trap in a task ends the process even while another thread is blocked in a channel receive
+// (spec 21.4, 21.9).
+struct Job {
+    var output: ChannelSender<Int>
+}
+
+func boom(job: consuming Job): Int {
+    var values: [Int] = [1]
+    let index = values.count + 4
+    return values[index]
+}
+
+func main() {
+    var sender: ChannelSender<Int>
+    var receiver: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+    let task = spawn(function: boom, input: consume Job(output: consume sender))
+    let got = receiver.receive()
+    let value = consume task.join()
+    print(value: value)
+}

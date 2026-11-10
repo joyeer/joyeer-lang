@@ -1,0 +1,209 @@
+// Windows primitives for network.joyeer, over ws2_32 and kernel32. A socket is
+// an Int (the SOCKET value; INVALID_SOCKET reads as -1). Results are >= 0 on
+// success and the negated WSAGetLastError() code on failure.
+//
+// Winsock is started on every socket creation: WSAStartup is reference counted
+// and the count is never released, which costs nothing for the life of the
+// process. Sockets are made non-inheritable so a child from runProcess does not
+// share them. SO_REUSEADDR is deliberately not set: on Windows it lets another
+// process bind the same port.
+
+private let familyInet: Int32 = 2
+private let typeStream: Int32 = 1
+private let protocolTcp: Int32 = 6
+private let winsockVersion: UInt32 = 0x0202
+private let startupDataSize: Int = 512
+private let addressSize: Int = 16
+private let handleFlagInherit: UInt32 = 1
+
+@platform(windows)
+@c_extern(symbol: "WSAStartup", pointer: "data")
+private func startupW(version: UInt32, data: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "WSAGetLastError")
+private func lastErrorW(): Int32
+
+@platform(windows)
+@c_extern(symbol: "socket")
+private func socketW(family: Int32, kind: Int32, proto: Int32): Int
+
+@platform(windows)
+@c_extern(symbol: "bind", pointer: "address")
+private func bindW(socket: Int, address: [UInt8], length: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "listen")
+private func listenW(socket: Int, backlog: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "accept")
+private func acceptW(socket: Int, address: Int, length: Int): Int
+
+@platform(windows)
+@c_extern(symbol: "connect", pointer: "address")
+private func connectW(socket: Int, address: [UInt8], length: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "getsockname", pointer: "address", pointer: "length")
+private func nameW(socket: Int, address: inout [UInt8], length: inout [UInt8]): Int32
+
+@platform(windows)
+@c_extern(symbol: "recv", pointer: "buffer")
+private func receiveW(socket: Int, buffer: inout [UInt8], count: Int32, flags: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "send", pointer: "buffer")
+private func sendW(socket: Int, buffer: [UInt8], count: Int32, flags: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "WSAPoll", pointer: "sockets")
+private func pollW(sockets: inout [UInt8], count: UInt32, timeout: Int32): Int32
+
+@platform(windows)
+@c_extern(symbol: "closesocket")
+private func closeW(socket: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "SetHandleInformation")
+private func handleInformationW(handle: Int, mask: UInt32, flags: UInt32): Int32
+
+@platform(windows)
+private func lastFailure(): Int {
+    return 0 - (lastErrorW() as Int)
+}
+
+// sockaddr_in: family (little endian), port and address (network order), padding.
+@platform(windows)
+private func socketAddress(address: Int, port: Int): [UInt8] {
+    var bytes = zeroBuffer(count: addressSize)
+    &bytes[0] = 2
+    &bytes[2] = ((port >> 8) & 255) as UInt8
+    &bytes[3] = (port & 255) as UInt8
+    &bytes[4] = ((address >> 24) & 255) as UInt8
+    &bytes[5] = ((address >> 16) & 255) as UInt8
+    &bytes[6] = ((address >> 8) & 255) as UInt8
+    &bytes[7] = (address & 255) as UInt8
+    return bytes
+}
+
+@platform(windows)
+private func makeUninheritable(handle: Int): Int {
+    if handleInformationW(handle: handle, mask: handleFlagInherit, flags: 0) == 0 {
+        let failure = lastFailure()
+        if closeW(socket: handle) != 0 { }
+        return failure
+    }
+    return handle
+}
+
+@platform(windows)
+func networkInvalidCode(): Int { return 10022 }
+
+@platform(windows)
+func networkTimeoutCode(): Int { return 10060 }
+
+@platform(windows)
+func classifyNetworkError(code: Int): NetworkError {
+    if code == 10022 || code == 10014 { return .InvalidInput(code) }
+    if code == 10048 { return .AddressInUse(code) }
+    if code == 10049 { return .AddressNotAvailable(code) }
+    if code == 10013 { return .PermissionDenied(code) }
+    if code == 10061 { return .ConnectionRefused(code) }
+    if code == 10054 || code == 10053 || code == 10058 { return .ConnectionReset(code) }
+    if code == 10060 { return .TimedOut(code) }
+    return .Other(code)
+}
+
+@platform(windows)
+func nativeTcpOpen(): Int {
+    var data = zeroBuffer(count: startupDataSize)
+    let started = startupW(version: winsockVersion, data: &data)
+    if started != 0 { return 0 - (started as Int) }
+    let handle = socketW(family: familyInet, kind: typeStream, proto: protocolTcp)
+    if handle == -1 { return lastFailure() }
+    return makeUninheritable(handle: handle)
+}
+
+@platform(windows)
+func nativeTcpPrepareListener(handle: Int): Int {
+    return 0
+}
+
+@platform(windows)
+func nativeTcpBind(handle: Int, address: Int, port: Int): Int {
+    let name = socketAddress(address: address, port: port)
+    if bindW(socket: handle, address: name, length: addressSize as Int32) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeTcpListen(handle: Int, backlog: Int): Int {
+    var limit = backlog
+    // 0x7fffffff asks Winsock for the largest backlog it supports.
+    if limit > 2147483647 { limit = 2147483647 }
+    if listenW(socket: handle, backlog: limit as Int32) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeTcpAccept(handle: Int): Int {
+    let accepted = acceptW(socket: handle, address: 0, length: 0)
+    if accepted == -1 { return lastFailure() }
+    return makeUninheritable(handle: accepted)
+}
+
+@platform(windows)
+func nativeTcpConnect(handle: Int, address: Int, port: Int): Int {
+    let name = socketAddress(address: address, port: port)
+    if connectW(socket: handle, address: name, length: addressSize as Int32) != 0 { return lastFailure() }
+    return 0
+}
+
+@platform(windows)
+func nativeTcpPort(handle: Int): Int {
+    var name = zeroBuffer(count: addressSize)
+    var length = zeroBuffer(count: 4)
+    &length[0] = 16
+    if nameW(socket: handle, address: &name, length: &length) != 0 { return lastFailure() }
+    return (byteToInt(value: name[2]) << 8) | byteToInt(value: name[3])
+}
+
+@platform(windows)
+func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    let received = receiveW(socket: handle, buffer: &buffer, count: count as Int32, flags: 0) as Int
+    if received < 0 { return lastFailure() }
+    return received
+}
+
+@platform(windows)
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
+    let sent = sendW(socket: handle, buffer: buffer, count: count as Int32, flags: 0) as Int
+    if sent < 0 { return lastFailure() }
+    return sent
+}
+
+// Waits up to `timeoutMillis` for the socket to be readable (a listener: a connection
+// can be accepted). 1 ready, 0 expired, or the negated error. A hangup or error counts as
+// ready, so the following receive reports it. WSAPOLLFD is the socket (8 bytes), the
+// requested events (POLLRDNORM, 0x0100) and the returned events, padded to 16 bytes.
+@platform(windows)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    var entry = zeroBuffer(count: 16)
+    var index = 0
+    while index < 8 {
+        &entry[index] = ((handle >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+    &entry[9] = 1
+    let ready = pollW(sockets: &entry, count: 1, timeout: timeoutMillis as Int32) as Int
+    if ready < 0 { return lastFailure() }
+    if ready == 0 { return 0 }
+    return 1
+}
+
+@platform(windows)
+func nativeTcpClose(handle: Int): Int {
+    if closeW(socket: handle) != 0 { return lastFailure() }
+    return 0
+}

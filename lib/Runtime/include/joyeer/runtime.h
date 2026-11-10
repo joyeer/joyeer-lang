@@ -105,6 +105,12 @@ void joyeer_array_clone_abi(
 void joyeer_array_append_owned_abi(
     JoyeerArray* array,
     const void* element);
+// Moves the last element into `element` and returns 1, or returns 0 when the array is empty.
+int64_t joyeer_array_remove_last_abi(
+    JoyeerArray* array,
+    void* element);
+// Ends an empty array, freeing its storage; traps with `array not empty` otherwise.
+void joyeer_array_consume_empty_abi(JoyeerArray* array);
 void joyeer_array_destroy_abi(JoyeerArray* array);
 
 void joyeer_dictionary_create_owned_abi(
@@ -164,6 +170,62 @@ void* joyeer_dictionary_find_abi(
     const void* key,
     int64_t keySize,
     int32_t keyKind);
+
+/* Threads, a blocking mutex and a condition variable (decision 0016). They live in a separate
+ * object of the runtime archive, linked only into a program that references them. The rest of the
+ * runtime is thread safe (decision 0017): a function run on a thread started here may allocate,
+ * print and panic.
+ * Every result is >= 0 on success or a negative code: the negated operating-system error, or one
+ * of the two codes below. */
+#define JOYEER_THREAD_BYTES 128 /* zeroed, 8-byte-aligned storage for one thread */
+#define JOYEER_LOCK_BYTES 64    /* zeroed, 8-byte-aligned storage for a mutex or a condition */
+#define JOYEER_MAX_THREADS 256  /* unjoined threads at once */
+#define JOYEER_THREAD_LIMIT ((int64_t)-1073741824)
+#define JOYEER_THREAD_INVALID ((int64_t)-1073741823)
+
+typedef void (*JoyeerThreadEntry)(void* argument);
+
+/* Starts a thread running entry(argument). `thread` must stay valid until joined. */
+int64_t joyeer_thread_start_abi(void* thread, JoyeerThreadEntry entry, void* argument);
+/* Waits for the thread to finish and releases it; every started thread is joined once. */
+int64_t joyeer_thread_join_abi(void* thread);
+
+int64_t joyeer_mutex_init_abi(void* storage);
+int64_t joyeer_mutex_lock_abi(void* storage);
+int64_t joyeer_mutex_unlock_abi(void* storage);
+int64_t joyeer_mutex_destroy_abi(void* storage);
+
+int64_t joyeer_condition_init_abi(void* storage);
+/* Waits with `mutex` held; a wait can wake without a signal, so wait in a loop. */
+int64_t joyeer_condition_wait_abi(void* condition, void* mutex);
+int64_t joyeer_condition_signal_abi(void* condition);
+int64_t joyeer_condition_broadcast_abi(void* condition);
+int64_t joyeer_condition_destroy_abi(void* condition);
+
+/* Bounded single-sender, single-receiver channels (decision 0019), in their own object of the
+ * archive, linked only into a program that creates a channel. An end is one pointer: the sender
+ * is the channel block's address and the receiver is the same address plus one. A null end is
+ * nothing to close. Waits use the thread object's mutex and condition; with no unjoined thread a
+ * wait that could never end traps (`channel deadlock`). */
+/* Creates a channel of `capacity` elements of `element_size` bytes aligned to `alignment`, and
+ * stores the two ends. `destroy`, when not null, is called on each queued value that is destroyed
+ * unreceived. Traps on a capacity below 1 or a buffer too large to describe. */
+int64_t joyeer_channel_create_abi(
+    int64_t capacity,
+    int64_t element_size,
+    int64_t alignment,
+    JoyeerDestroyValueFn destroy,
+    void** sender,
+    void** receiver);
+/* Queues the bytes at `value`: returns 1 when the channel owns the value now, 0 when the receiver
+ * is closed (the caller still owns it). Waits while the queue is full and the receiver is open. */
+int64_t joyeer_channel_send_abi(void* sender, const void* value);
+/* Moves the oldest value into `value` and returns 1, or returns 0 when the queue is empty and the
+ * sender is closed. Waits while the queue is empty and the sender is open. */
+int64_t joyeer_channel_receive_abi(void* receiver, void* value);
+/* Closes an end. The second end to close frees the channel; closing the receiver destroys the
+ * queued values, under the channel's lock. */
+void joyeer_channel_close_abi(void* end);
 
 #ifdef __cplusplus
 }

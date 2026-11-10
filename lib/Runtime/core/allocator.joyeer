@@ -17,8 +17,10 @@
 //   when freed.
 // - Every block is sixteen-byte aligned. A zero-byte request is served as one byte,
 //   so every live block has its own address.
-// - The allocator is not thread safe; the language has no threads yet. The counter
-//   is atomic only because it was.
+// - The allocator is thread safe (decision 0017): one lock, taken only once a second thread
+//   exists (locks.joyeer), covers the size classes and the first region. A large block is its
+//   own mapping and needs none, and the counter is a lock-free atomic add. A block may be freed
+//   on another thread than the one that allocated it.
 //
 // The allocator's state lives in the first bytes of the first region, found
 // through static slot 1: the bump pointer and region end, then one free-list head
@@ -110,9 +112,10 @@ public func unmapPages(address: Int, size: Int): Void {
         fourth: 0, fifth: 0, sixth: 0)
 }
 
-// Runtime plan §5 assigns slots 0 to 15 to the core.
+// Runtime plan §5 assigns slots 0 to 15 to the core (the table is in docs/impl/runtime.md).
 private let counterSlot: Int = 0
 private let stateSlot: Int = 1
+private let lockSlot: Int = 12
 
 private let regionBytes: Int = 1048576
 private let pageBytes: Int = 4096
@@ -189,6 +192,15 @@ private func largeBytes(size: Int): Int {
 }
 
 private func takeSmall(size: Int): Int {
+    let held = threadsActive()
+    if held { lockBlocking(slot: lockSlot) }
+    let address = takeSmallLocked(size: size)
+    if held { lockUnblock(slot: lockSlot) }
+    return address
+}
+
+// Called with the allocator lock held (when a second thread exists).
+private func takeSmallLocked(size: Int): Int {
     let base = state()
     let index = classIndex(size: size)
     let head = base + headsOffset + index * 8
@@ -223,9 +235,12 @@ private func give(address: Int, size: Int): Void {
         unmapPages(address: address, size: largeBytes(size: size))
         return
     }
+    let held = threadsActive()
+    if held { lockBlocking(slot: lockSlot) }
     let head = state() + headsOffset + classIndex(size: size) * 8
     store64(address: address, value: load64(address: head))
     store64(address: head, value: address as UInt64)
+    if held { lockUnblock(slot: lockSlot) }
 }
 
 // Whether two request sizes are served by blocks of the same size.

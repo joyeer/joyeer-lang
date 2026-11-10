@@ -113,6 +113,30 @@ The current checker validates:
 - explicit `borrowing` signatures as the marker-free default projection;
 - `initializing` signatures, mandatory `&`, and whole mutable owning-storage
   destination restrictions;
+- `deinit` and noncopyable types (decision 0015): the `deinit` body is checked as a
+  method body; a struct with a `deinit`, and anything holding one, is noncopyable
+  (`TypeCheckedModel::isCopyable`, `noncopyableReason`, memoised per query);
+  `type-checking.copy-of-noncopyable` reports a copy where a value is stored or returned
+  (a binding, an assignment, a `return`, a trailing expression, an initializer, enum-case or
+  `append` argument, an array or dictionary element, the value of an `if`, `match` or block,
+  the operand of `?`, and `Dict.get`). `consume x` moves an owning local or consuming
+  parameter instead, and is accepted wherever a value is stored;
+  `type-checking.assignment-to-self-in-deinit` rejects `&self = ...` in a `deinit`;
+- Linear types (decision 0015): `isLinear` and `linearLeafPaths` on the checked model; the
+  `linear` modifier is `type-checking.linear-reserved` outside runtime and core sources;
+  `linear-in-deinit-type` (a type with `deinit` may not be or hold a linear value) and
+  `linear-collection-element` (a `Dict` key or value in a binding, parameter, result or field,
+  and `for-in` over an array), `linear-top-level-binding` and `linear-struct-without-fields`;
+- Channels (decision 0019, spec 21.9): `ChannelSender<T>` and `ChannelReceiver<T>` are `TypeKind::channelSender`
+  and `channelReceiver` (noncopyable, not linear); `channel` is checked by `checkChannel` and `send`, `receive`
+  and `close` are builtin members whose results come from the end's element type; the element rules
+  (`linear-channel-element`, `channel-element-type`) run at every type position and enum payload, and
+  `channel-end-types` and `channel-capacity` check the creation call;
+- Tasks (decision 0018, spec 21): `JoinHandle<R>` is `TypeKind::task`, linear and noncopyable;
+  `spawn` is checked by `checkSpawn`, which reads `function:` as a name and reports
+  `spawn-target-not-function`, `spawn-target-unsupported`, `spawn-target-parameters` and
+  `spawn-target-never`; `consume h.join()` is a builtin member with a consuming receiver that gives `R`;
+  the calls to `spawn` and System's `runProcess` are recorded for `semantic-analysis.run-process-with-tasks`;
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
   primary span identifies the later access and a secondary note identifies the

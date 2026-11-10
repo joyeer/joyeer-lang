@@ -1,0 +1,107 @@
+import Foundation
+import System
+
+// Just enough HTTP/1.1 for a static site: one request per connection, GET and
+// HEAD only, every response closes the connection. There is no keep-alive, no
+// request body, no chunked encoding and no TLS.
+
+let maximumHeadBytes: Int = 16384
+// How long one read may wait for the next bytes of a request head. A client that stays
+// silent this long is answered with 408 and dropped, so it cannot hold the server.
+let headTimeoutMillis: Int = 5000
+private let receiveChunk: Int = 4096
+
+struct Request {
+    let method: String
+    let target: String
+}
+
+enum HeadError {
+    Closed,
+    TooLarge,
+    TimedOut,
+    Network(NetworkError),
+}
+
+// Offset just past the first blank line ("\r\n\r\n" or "\n\n") at or after `from`, or -1.
+private func findHeadEnd(text: String, from: Int): Int {
+    var index = from
+    while index < text.count {
+        if text[index] == 10 {
+            if index + 1 < text.count && text[index + 1] == 10 { return index + 2 }
+            if index + 2 < text.count && text[index + 1] == 13 && text[index + 2] == 10 { return index + 3 }
+        }
+        index = index + 1
+    }
+    return -1
+}
+
+// Reads from the connection until the end of the request head. The head is
+// bounded by maximumHeadBytes plus one receive, whatever the peer sends.
+func readRequestHead(connection: TcpConnection): Result<String, HeadError> {
+    var head = ""
+    var scanFrom = 0
+    while head.count <= maximumHeadBytes {
+        let received = tcpReceive(connection: connection, maximumBytes: receiveChunk, timeoutMillis: headTimeoutMillis)
+        match received {
+            .Ok(chunk) => {
+                if chunk.count == 0 { return .Err(.Closed) }
+                head = head + chunk
+                let end = findHeadEnd(text: head, from: scanFrom)
+                if end >= 0 { return .Ok(substring(text: head, start: 0, end: end)) }
+                // A terminator split across two reads starts at most three bytes back.
+                scanFrom = head.count - 3
+                if scanFrom < 0 { scanFrom = 0 }
+            },
+            .Err(error) => {
+                match error {
+                    .TimedOut(_) => { return .Err(.TimedOut) },
+                    _ => { return .Err(.Network(error)) },
+                }
+            },
+        }
+    }
+    return .Err(.TooLarge)
+}
+
+private func indexOfByte(text: String, byte: UInt8, from: Int): Int {
+    var index = from
+    while index < text.count {
+        if text[index] == byte { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+// Parses "METHOD target HTTP/1.x" from the first line. Header fields are ignored.
+func parseRequest(head: String): Optional<Request> {
+    var lineEnd = indexOfByte(text: head, byte: 10, from: 0)
+    if lineEnd < 0 { lineEnd = head.count }
+    if lineEnd > 0 && head[lineEnd - 1] == 13 { lineEnd = lineEnd - 1 }
+    let line = substring(text: head, start: 0, end: lineEnd)
+
+    let firstSpace = indexOfByte(text: line, byte: 32, from: 0)
+    if firstSpace <= 0 { return .None }
+    let secondSpace = indexOfByte(text: line, byte: 32, from: firstSpace + 1)
+    if secondSpace <= firstSpace + 1 { return .None }
+    let version = substring(text: line, start: secondSpace + 1, end: line.count)
+    if !startsWith(text: version, prefix: "HTTP/1.") { return .None }
+    if indexOfByte(text: version, byte: 32, from: 0) >= 0 { return .None }
+    return .Some(Request(
+        method: substring(text: line, start: 0, end: firstSpace),
+        target: substring(text: line, start: firstSpace + 1, end: secondSpace)))
+}
+
+// `extraHeaders` is zero or more complete "Name: value\r\n" lines. With
+// `sendBody` false (HEAD) the headers still describe the body that GET would send.
+func httpResponse(status: Int, reason: String, contentType: String, body: String,
+    sendBody: Bool, extraHeaders: String): String {
+    var head = "HTTP/1.1 " + decimalString(value: status) + " " + reason + "\r\n"
+    head = head + "Content-Type: " + contentType + "\r\n"
+    head = head + "Content-Length: " + decimalString(value: body.count) + "\r\n"
+    head = head + "Connection: close\r\n"
+    head = head + "X-Content-Type-Options: nosniff\r\n"
+    head = head + extraHeaders + "\r\n"
+    if sendBody { return head + body }
+    return head
+}

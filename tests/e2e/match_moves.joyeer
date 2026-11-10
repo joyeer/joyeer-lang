@@ -1,0 +1,53 @@
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+enum Slot {
+    Full(Handle),
+    Empty,
+}
+
+func make(id: Int): Slot {
+    return .Full(Handle(id: id))
+}
+
+func open(): Handle? {
+    return .Some(Handle(id: 9))
+}
+
+func describe(slot: consuming Slot): Int {
+    return match consume slot {
+        .Full(handle) => handle.id,
+        .Empty => 0,
+    }
+}
+
+func main() {
+    print(value: describe(slot: consume make(id: 1)))
+
+    match open() {
+        .Some(handle) => print(value: handle.id),
+        .None => print(value: 0),
+    }
+
+    match make(id: 2) {
+        .Full(_) => print(value: 20),
+        .Empty => print(value: 0),
+    }
+
+    var kept = make(id: 3)
+    match consume kept {
+        .Full(handle) => print(value: 30),
+        .Empty => print(value: 0),
+    }
+
+    let none: Slot = .Empty
+    match consume none {
+        .Full(handle) => print(value: 40),
+        .Empty => print(value: 41),
+    }
+}

@@ -85,7 +85,7 @@ argument, so later use is `use-after-consume`.
   implemented.
 - `extension` accepts only methods, and only for a struct or enum declared in
   the same module. Builtin types (`Int`, `Array<Int>`) cannot be extended.
-- No `init`, `deinit`, subscripts, static members, generic methods or
+- No `init`, subscripts, static members, generic methods or
   protocols.
 - `consume` before a call that is itself an argument, as in
   `f(x: consume a.m())`, is read as the *argument* marker. Write the receiver

@@ -135,6 +135,13 @@ TEST_F(LexerTest, ReservesDeferredWordsButLeavesRemovedEffectsAsIdentifiers) {
     ASSERT_EQ(diagnostics.errors.size(), 3u);
 }
 
+TEST_F(LexerTest, DeinitIsAKeywordNotADeferredWord) {
+    lex("deinit");
+
+    expectKinds({kwDeinit, endOfFile});
+    EXPECT_FALSE(diagnostics.hasFailure());
+}
+
 TEST_F(LexerTest, ScansForInKeywordsAndRangeOperators) {
     lex("for x in 0..<3 for y in 1...n 1...3 a.b");
 

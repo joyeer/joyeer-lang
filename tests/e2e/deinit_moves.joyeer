@@ -1,0 +1,44 @@
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+struct Holder {
+    var handle: Handle
+}
+
+enum Slot {
+    Full(Handle),
+    Empty,
+}
+
+func main() {
+    let a = Handle(id: 1)
+    let holder = Holder(handle: consume a)
+    print(value: 10)
+
+    let b = Handle(id: 2)
+    let moved = consume b
+    print(value: 20)
+
+    var list: [Handle] = []
+    let c = Handle(id: 3)
+    &list.append(element: consume c)
+    print(value: 30)
+
+    let d = Handle(id: 4)
+    let slot: Slot = .Full(consume d)
+    print(value: 40)
+
+    var target = Handle(id: 5)
+    let e = Handle(id: 6)
+    target = consume e
+    print(value: 50)
+
+    let f = Handle(id: 7)
+    let option: Handle? = .Some(consume f)
+    print(value: 60)
+}

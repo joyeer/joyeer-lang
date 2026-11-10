@@ -1,0 +1,405 @@
+import Foundation
+
+// A small Markdown to HTML renderer. Supported blocks: ATX headings, paragraphs,
+// bullet and numbered lists, fenced code, block quotes and horizontal rules.
+// Supported inline forms: `code`, *emphasis*, **strong text**, [links](url) and
+// backslash escapes. Every byte of text is HTML-escaped, so raw HTML in the
+// source is shown as text and never reaches the browser as markup.
+//
+// This is deliberately not CommonMark: no nesting of lists or quotes, no
+// reference links, no tables, no images. Strings here are byte sequences, so
+// all offsets are bytes.
+
+private let tabByte: UInt8 = 9
+private let newlineByte: UInt8 = 10
+private let carriageReturnByte: UInt8 = 13
+private let spaceByte: UInt8 = 32
+private let quoteByte: UInt8 = 34
+private let hashByte: UInt8 = 35
+private let ampersandByte: UInt8 = 38
+private let openParenByte: UInt8 = 40
+private let closeParenByte: UInt8 = 41
+private let starByte: UInt8 = 42
+private let dashByte: UInt8 = 45
+private let dotByte: UInt8 = 46
+private let slashByte: UInt8 = 47
+private let zeroByte: UInt8 = 48
+private let nineByte: UInt8 = 57
+private let colonByte: UInt8 = 58
+private let lessThanByte: UInt8 = 60
+private let greaterThanByte: UInt8 = 62
+private let questionByte: UInt8 = 63
+private let openBracketByte: UInt8 = 91
+private let backslashByte: UInt8 = 92
+private let closeBracketByte: UInt8 = 93
+private let underscoreByte: UInt8 = 95
+private let backtickByte: UInt8 = 96
+
+func startsWith(text: String, prefix: String): Bool {
+    if prefix.count > text.count { return false }
+    var index = 0
+    while index < prefix.count {
+        if text[index] != prefix[index] { return false }
+        index = index + 1
+    }
+    return true
+}
+
+func endsWith(text: String, suffix: String): Bool {
+    if suffix.count > text.count { return false }
+    let offset = text.count - suffix.count
+    var index = 0
+    while index < suffix.count {
+        if text[offset + index] != suffix[index] { return false }
+        index = index + 1
+    }
+    return true
+}
+
+func escapeHtml(text: String): String {
+    var output = ""
+    var runStart = 0
+    var index = 0
+    while index < text.count {
+        let byte = text[index]
+        var replacement = ""
+        if byte == ampersandByte {
+            replacement = "&amp;"
+        } else if byte == lessThanByte {
+            replacement = "&lt;"
+        } else if byte == greaterThanByte {
+            replacement = "&gt;"
+        } else if byte == quoteByte {
+            replacement = "&quot;"
+        }
+        if replacement.count != 0 {
+            output = output + substring(text: text, start: runStart, end: index) + replacement
+            runStart = index + 1
+        }
+        index = index + 1
+    }
+    return output + substring(text: text, start: runStart, end: text.count)
+}
+
+private func findByte(text: String, byte: UInt8, from: Int): Int {
+    var index = from
+    while index < text.count {
+        if text[index] == byte { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+// Index of the first adjacent pair of `byte` at or after `from`, or -1.
+private func findPair(text: String, byte: UInt8, from: Int): Int {
+    var index = from
+    while index + 1 < text.count {
+        if text[index] == byte && text[index + 1] == byte { return index }
+        index = index + 1
+    }
+    return -1
+}
+
+private func isPunctuation(byte: UInt8): Bool {
+    return (byte >= 33 && byte <= 47) || (byte >= 58 && byte <= 64) ||
+        (byte >= 91 && byte <= 96) || (byte >= 123 && byte <= 126)
+}
+
+// Links may be absolute http(s) or mailto URLs, or relative references. Any other
+// scheme (javascript:, data:, ...) is refused, and the link text is shown instead.
+private func isSafeLink(url: String): Bool {
+    if url.count == 0 { return false }
+    if startsWith(text: url, prefix: "http://") || startsWith(text: url, prefix: "https://") ||
+        startsWith(text: url, prefix: "mailto:") {
+        return true
+    }
+    var index = 0
+    while index < url.count {
+        let byte = url[index]
+        if byte == colonByte { return false }
+        if byte == slashByte || byte == questionByte || byte == hashByte { return true }
+        index = index + 1
+    }
+    return true
+}
+
+func renderInline(text: String): String {
+    var output = ""
+    var plainStart = 0
+    var index = 0
+    while index < text.count {
+        let byte = text[index]
+        if byte == backslashByte && index + 1 < text.count && isPunctuation(byte: text[index + 1]) {
+            output = output + escapeHtml(text: substring(text: text, start: plainStart, end: index)) +
+                escapeHtml(text: substring(text: text, start: index + 1, end: index + 2))
+            index = index + 2
+            plainStart = index
+            continue
+        }
+        var consumedTo = 0
+        var html = ""
+        if byte == backtickByte {
+            let close = findByte(text: text, byte: backtickByte, from: index + 1)
+            if close > index + 1 {
+                html = "<code>" + escapeHtml(text: substring(text: text, start: index + 1, end: close)) + "</code>"
+                consumedTo = close + 1
+            }
+        } else if byte == starByte {
+            if index + 1 < text.count && text[index + 1] == starByte {
+                let close = findPair(text: text, byte: starByte, from: index + 2)
+                if close > index + 2 {
+                    html = "<strong>" + renderInline(text: substring(text: text, start: index + 2, end: close)) + "</strong>"
+                    consumedTo = close + 2
+                }
+            } else {
+                let close = findByte(text: text, byte: starByte, from: index + 1)
+                if close > index + 1 {
+                    html = "<em>" + renderInline(text: substring(text: text, start: index + 1, end: close)) + "</em>"
+                    consumedTo = close + 1
+                }
+            }
+        } else if byte == openBracketByte {
+            let labelEnd = findByte(text: text, byte: closeBracketByte, from: index + 1)
+            if labelEnd > index + 1 && labelEnd + 1 < text.count && text[labelEnd + 1] == openParenByte {
+                let urlEnd = findByte(text: text, byte: closeParenByte, from: labelEnd + 2)
+                if urlEnd > labelEnd + 2 {
+                    let url = substring(text: text, start: labelEnd + 2, end: urlEnd)
+                    if isSafeLink(url: url) {
+                        html = "<a href=\"" + escapeHtml(text: url) + "\">" +
+                            renderInline(text: substring(text: text, start: index + 1, end: labelEnd)) + "</a>"
+                        consumedTo = urlEnd + 1
+                    }
+                }
+            }
+        }
+        if consumedTo != 0 {
+            output = output + escapeHtml(text: substring(text: text, start: plainStart, end: index)) + html
+            index = consumedTo
+            plainStart = index
+        } else {
+            index = index + 1
+        }
+    }
+    return output + escapeHtml(text: substring(text: text, start: plainStart, end: text.count))
+}
+
+// Lines without their terminators. "\r\n" and "\n" both end a line; a final
+// unterminated line is kept.
+func splitLines(source: String): [String] {
+    var lines: [String] = []
+    var start = 0
+    var index = 0
+    while index <= source.count {
+        if index == source.count || source[index] == newlineByte {
+            var end = index
+            if end > start && source[end - 1] == carriageReturnByte { end = end - 1 }
+            if index < source.count || end > start {
+                &lines.append(element: substring(text: source, start: start, end: end))
+            }
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return lines
+}
+
+// Number of leading '#' (1...6) when followed by a space, otherwise 0.
+private func headingLevel(line: String): Int {
+    var level = 0
+    while level < line.count && line[level] == hashByte { level = level + 1 }
+    if level == 0 || level > 6 { return 0 }
+    if level < line.count && line[level] == spaceByte { return level }
+    return 0
+}
+
+// Offset of the item text after "- " or "* ", or -1.
+private func bulletOffset(line: String): Int {
+    if line.count >= 2 && (line[0] == dashByte || line[0] == starByte) && line[1] == spaceByte { return 2 }
+    return -1
+}
+
+// Offset of the item text after "12. ", or -1.
+private func numberedOffset(line: String): Int {
+    var digits = 0
+    while digits < line.count && line[digits] >= zeroByte && line[digits] <= nineByte { digits = digits + 1 }
+    if digits == 0 || digits > 9 { return -1 }
+    if digits + 1 < line.count && line[digits] == dotByte && line[digits + 1] == spaceByte { return digits + 2 }
+    return -1
+}
+
+// Offset of the quoted text after ">" and an optional space, or -1.
+private func quoteOffset(line: String): Int {
+    if line.count == 0 || line[0] != greaterThanByte { return -1 }
+    if line.count > 1 && line[1] == spaceByte { return 2 }
+    return 1
+}
+
+// Three or more of one of '-', '*' or '_' and nothing else.
+private func isRule(line: String): Bool {
+    if line.count < 3 { return false }
+    let first = line[0]
+    if first != dashByte && first != starByte && first != underscoreByte { return false }
+    var index = 1
+    while index < line.count {
+        if line[index] != first { return false }
+        index = index + 1
+    }
+    return true
+}
+
+private func isBlank(line: String): Bool {
+    var index = 0
+    while index < line.count {
+        if line[index] != spaceByte && line[index] != tabByte { return false }
+        index = index + 1
+    }
+    return true
+}
+
+struct Renderer {
+    var html: String
+    var paragraph: String
+    var quote: String
+    // 0 when no list is open, 1 for a bullet list, 2 for a numbered list.
+    var listKind: Int
+    var inFence: Bool
+
+    mutating func flushParagraph() {
+        if self.paragraph.count != 0 {
+            &self.html = self.html + "<p>" + renderInline(text: self.paragraph) + "</p>\n"
+            &self.paragraph = ""
+        }
+    }
+
+    mutating func flushQuote() {
+        if self.quote.count != 0 {
+            &self.html = self.html + "<blockquote><p>" + renderInline(text: self.quote) + "</p></blockquote>\n"
+            &self.quote = ""
+        }
+    }
+
+    mutating func closeList() {
+        if self.listKind == 1 { &self.html = self.html + "</ul>\n" }
+        if self.listKind == 2 { &self.html = self.html + "</ol>\n" }
+        &self.listKind = 0
+    }
+
+    mutating func closeBlocks() {
+        &self.flushParagraph()
+        &self.flushQuote()
+        &self.closeList()
+    }
+
+    mutating func openList(kind: Int) {
+        if self.listKind != kind {
+            &self.closeBlocks()
+            if kind == 1 {
+                &self.html = self.html + "<ul>\n"
+            } else {
+                &self.html = self.html + "<ol>\n"
+            }
+            &self.listKind = kind
+        }
+    }
+
+    mutating func addLine(line: String) {
+        if self.inFence {
+            if startsWith(text: line, prefix: "```") {
+                &self.html = self.html + "</code></pre>\n"
+                &self.inFence = false
+            } else {
+                &self.html = self.html + escapeHtml(text: line) + "\n"
+            }
+            return
+        }
+        if startsWith(text: line, prefix: "```") {
+            &self.closeBlocks()
+            &self.html = self.html + "<pre><code>"
+            &self.inFence = true
+            return
+        }
+        if isBlank(line: line) {
+            &self.closeBlocks()
+            return
+        }
+        let level = headingLevel(line: line)
+        if level != 0 {
+            &self.closeBlocks()
+            let text = substring(text: line, start: level + 1, end: line.count)
+            let tag = "h" + decimalString(value: level)
+            &self.html = self.html + "<" + tag + ">" + renderInline(text: text) + "</" + tag + ">\n"
+            return
+        }
+        if isRule(line: line) {
+            &self.closeBlocks()
+            &self.html = self.html + "<hr>\n"
+            return
+        }
+        let bullet = bulletOffset(line: line)
+        if bullet >= 0 {
+            &self.openList(kind: 1)
+            &self.html = self.html + "<li>" + renderInline(text: substring(text: line, start: bullet, end: line.count)) + "</li>\n"
+            return
+        }
+        let numbered = numberedOffset(line: line)
+        if numbered >= 0 {
+            &self.openList(kind: 2)
+            &self.html = self.html + "<li>" + renderInline(text: substring(text: line, start: numbered, end: line.count)) + "</li>\n"
+            return
+        }
+        let quoted = quoteOffset(line: line)
+        if quoted >= 0 {
+            &self.flushParagraph()
+            &self.closeList()
+            let text = substring(text: line, start: quoted, end: line.count)
+            if self.quote.count == 0 {
+                &self.quote = text
+            } else {
+                &self.quote = self.quote + " " + text
+            }
+            return
+        }
+        &self.flushQuote()
+        &self.closeList()
+        if self.paragraph.count == 0 {
+            &self.paragraph = line
+        } else {
+            &self.paragraph = self.paragraph + " " + line
+        }
+    }
+
+    mutating func finish() {
+        &self.closeBlocks()
+        if self.inFence {
+            &self.html = self.html + "</code></pre>\n"
+            &self.inFence = false
+        }
+    }
+}
+
+// The HTML body for a Markdown document.
+func renderMarkdown(source: String): String {
+    var renderer = Renderer(html: "", paragraph: "", quote: "", listKind: 0, inFence: false)
+    let lines = splitLines(source: source)
+    var index = 0
+    while index < lines.count {
+        &renderer.addLine(line: lines[index])
+        index = index + 1
+    }
+    &renderer.finish()
+    return renderer.html
+}
+
+// The text of the first level-one heading, or "" when the document has none.
+func firstHeading(source: String): String {
+    let lines = splitLines(source: source)
+    var index = 0
+    while index < lines.count {
+        let line = lines[index]
+        if headingLevel(line: line) == 1 {
+            return substring(text: line, start: 2, end: line.count)
+        }
+        index = index + 1
+    }
+    return ""
+}

@@ -10,8 +10,9 @@
 // `joyeer_main`. It reaches the rest of the runtime through its C ABI.
 //
 // A runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
-// Static slots 32 to 39 are this unit's: a 16-byte String being built (32, 33),
-// the argument array handle (34 to 36) and a one-byte output buffer (37).
+// Static slots 32 to 37 are this unit's: a 16-byte String being built (32, 33),
+// the argument array handle (34 to 36) and a one-byte output buffer (37); all are written by the
+// main thread before any other thread can exist. Slots 38 and 39 are the panic's (panic.joyeer).
 
 @c_extern(symbol: "joyeer_main")
 private func programMain(arguments: Int): Int
@@ -78,6 +79,9 @@ private func stderrWrite(data: Int, count: Int): Int32
 
 @c_extern(symbol: "joyeer_stdout_flush")
 private func stdoutFlush(): Int32
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_load")
+private func atomicLoad(address: Int): Int
 
 private let utf8CodePage: UInt32 = 65001
 private let invalidCharacters: UInt32 = 128
@@ -184,7 +188,17 @@ public func entryRun(argc: Int32, argv: Int): Int32 {
     if programUsesArguments() != 0 { createArguments(handle: handle, argc: argc as Int, argv: argv) }
     let status = programMain(arguments: handle)
     arrayDestroy(array: handle)
+    // With another thread panicking this parks (the flush takes a lock), so the exit status is the
+    // panic's, never this thread's.
     stdoutFlush()
+    // Every thread must have been joined, or the allocation balance below is not final.
+    let unjoined = atomicLoad(address: staticSlot(index: 11))
+    if unjoined != 0 {
+        writeText(address: literalAddress(text: "Joyeer runtime error: "))
+        writeNumber(value: unjoined)
+        writeText(address: literalAddress(text: " thread(s) not joined\n"))
+        return 1
+    }
     let allocations = activeAllocations()
     if allocations != 0 {
         writeText(address: literalAddress(text: "Joyeer runtime error: "))

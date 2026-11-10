@@ -48,7 +48,7 @@ it to a supplied module rather than traversing folders or implicit submodules.
 The parser deliberately does **not** implement:
 
 - name resolution, type inference, exhaustiveness, ownership checking, or IR;
-- `class`, explicit `init` / `deinit`,
+- `class`, explicit `init`,
   subscript declarations, or user-defined generics;
 - `indirect`, `where`, or `yield`;
 - tuple/function types, tuple destructuring, match guards, alternative/range
@@ -172,7 +172,14 @@ parameter defaults remain unsupported. See [C binding coverage](c-interop.md).
 3. All four parameter access effects are implemented; borrowing is also
   the implicit default. Calls spell `&` for inout/initializing and `consume`
   for consuming; borrowing has no marker.
-4. A parsed `struct` contains stored fields and methods. Explicit initializers
+4. A parsed `struct` contains stored fields, methods, and at most one
+   `deinit() { ... }` (spec §3.7.1, decision 0015). The `deinit` is kept in
+   `StructDeclSyntax::deinitializer` as a method-like function named `deinit` with
+   an `inout` receiver; modifiers, parameters, a return type, a second `deinit`, and a
+   `deinit` in an `enum` or `extension` report `parser.invalid-deinit`. Name
+   resolution declares it as a `method` member named `deinit` (unnameable, since
+   `deinit` is a keyword) and resolves its body with `self`. IR lowering rejects a struct
+   that declares one until the later stages implement it. Explicit initializers
    and subscripts are later syntax phases; construction resolves to a
    synthesized memberwise initializer.
 5. A parsed `enum` contains one or more cases, followed by methods. Cases do not

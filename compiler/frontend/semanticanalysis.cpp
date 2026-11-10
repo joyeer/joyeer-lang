@@ -11,8 +11,8 @@ namespace joyeer::analysis {
 namespace {
 
 // Visits every function with a body: top-level functions, then the methods of
-// structs, enums, and extensions. A method is an ordinary function whose first
-// parameter is the implicit receiver, so each analysis treats it like any other.
+// structs, enums, and extensions, and a struct's `deinit`. A method is an ordinary function
+// whose first parameter is the implicit receiver, so each analysis treats it like any other.
 template<class Visitor>
 void forEachFunction(const syntax::SourceFileSyntax::Ptr& root, Visitor&& visit) {
     for (const auto& item : root->items) {
@@ -20,12 +20,12 @@ void forEachFunction(const syntax::SourceFileSyntax::Ptr& root, Visitor&& visit)
             case syntax::Kind::functionDecl:
                 visit(std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
                 break;
-            case syntax::Kind::structDecl:
-                for (const auto& method :
-                     std::static_pointer_cast<syntax::StructDeclSyntax>(item)->methods) {
-                    visit(method);
-                }
+            case syntax::Kind::structDecl: {
+                const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                for (const auto& method : structure->methods) visit(method);
+                if (structure->deinitializer != nullptr) visit(structure->deinitializer);
                 break;
+            }
             case syntax::Kind::enumDecl:
                 for (const auto& method :
                      std::static_pointer_cast<syntax::EnumDeclSyntax>(item)->methods) {
@@ -312,6 +312,9 @@ struct InitializationState {
         bool operator==(const ProjectionPath& other) const = default;
     };
     std::vector<ProjectionPath> consumedProjections;
+    // The projections consumed on every path to this point (consumedProjections is the union).
+    // A linear aggregate is ended once all of its linear field paths are in here.
+    std::vector<ProjectionPath> definitelyConsumedProjections;
     bool reachable = true;
 
     bool operator==(const InitializationState& other) const = default;
@@ -336,6 +339,15 @@ private:
     std::vector<Diagnostic> diagnostics;
     std::unordered_set<semantic::SymbolId> tracked;
     std::unordered_set<semantic::SymbolId> initializingParameters;
+    // Consuming parameters of linear type: owning bindings that must be ended like a local.
+    std::vector<semantic::SymbolId> linearParameters;
+    // Linear values moved into the call or construction being analyzed, whose earlier operands have
+    // been evaluated but which has not committed yet (decision 0015, rule 3): an early exit in a later
+    // operand would leave them to be dropped.
+    size_t pendingLinearMoves = 0;
+    // Set just before analysing an expression that is a statement, so a block, `if` or `match` in
+    // that position knows its tail value is dropped rather than used.
+    bool statementPosition = false;
     std::vector<InitializationState::ProjectionPath*> activePaths;
     std::vector<std::vector<semantic::SymbolId>> localScopes;
     struct LoopFlow {
@@ -351,6 +363,7 @@ private:
         assert(loops.empty());
         tracked.clear();
         initializingParameters.clear();
+        linearParameters.clear();
         const auto function = model->semanticModel()->declaredSymbol(declaration);
         const auto* binding = function.has_value() ? model->nativeBinding(*function) : nullptr;
         if (binding != nullptr && binding->kind == NativeBindingKind::cImport) return;
@@ -364,15 +377,196 @@ private:
             } else {
                 state.initialized.insert(*symbol);
                 state.possiblyInitialized.insert(*symbol);
+                const auto parameterType = model->typeOf(*symbol);
+                if (parameter->accessEffect() == syntax::AccessEffect::consuming &&
+                    parameterType.has_value() && model->isLinear(*parameterType)) {
+                    linearParameters.push_back(*symbol);
+                }
             }
         }
-        analyzeBlock(declaration->body, state);
-        if (state.reachable) reportUninitializedParameters(declaration->span, state);
+        const auto resultType = signatureResult(function);
+        const bool bodyYieldsValue = resultType.has_value() &&
+                *resultType != model->types().voidType() &&
+                *resultType != model->types().neverType();
+        analyzeBlock(declaration->body, state, bodyYieldsValue);
+        if (state.reachable) {
+            reportUninitializedParameters(declaration->span, state);
+            for (const auto symbol : linearParameters) {
+                checkLinearEnded(symbol, state, declaration->span, "the end of the function");
+            }
+        }
     }
 
+    // True when the definitely-consumed projections cover `path`: some consumed projection is
+    // `path` itself or one of its ancestors.
+    bool linearPathEnded(
+            const InitializationState::ProjectionPath& path,
+            const InitializationState& state) const {
+        return std::any_of(
+                state.definitelyConsumedProjections.begin(),
+                state.definitelyConsumedProjections.end(),
+                [&path](const auto& consumed) {
+                    return consumed.root == path.root &&
+                            consumed.projections.size() <= path.projections.size() &&
+                            std::equal(consumed.projections.begin(), consumed.projections.end(),
+                                       path.projections.begin());
+                });
+    }
+
+    // Reports `symbol` when it may still hold a linear value that was never ended: the binding is
+    // possibly initialised (so not consumed on every path) and, for an aggregate, some linear field
+    // path is not consumed on every path (decision 0015, "The check").
+    void checkLinearEnded(
+            semantic::SymbolId symbol,
+            const InitializationState& state,
+            SourceSpan span,
+            const char* where) {
+        if (!state.reachable || !tracked.contains(symbol) ||
+            !state.possiblyInitialized.contains(symbol)) {
+            return;
+        }
+        const auto type = model->typeOf(symbol);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        const auto leaves = model->linearLeafPaths(*type);
+        // A linear type with no field to consume has no way to end, so it stays live.
+        bool live = leaves.empty();
+        for (const auto& leaf : leaves) {
+            InitializationState::ProjectionPath path { symbol, {} };
+            for (const auto field : leaf) {
+                path.projections.push_back({ field, std::nullopt, std::nullopt });
+            }
+            if (!linearPathEnded(path, state)) { live = true; break; }
+        }
+        if (!live) return;
+        const auto* declaration = model->semanticModel()->symbol(symbol);
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearNotConsumed,
+            Severity::error,
+            span,
+            "'" + (declaration == nullptr ? std::string() : declaration->name) +
+                    "' holds a linear value of type '" + model->types().displayName(*type) +
+                    "' that is not consumed before " + where,
+            "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'",
+        });
+    }
+
+    // Every owning binding in scope, innermost first, and the consuming parameters: an exit of the
+    // whole function (`return`, or the failure path of `?`).
+    void checkAllLinearEnded(const InitializationState& state, SourceSpan span, const char* where) {
+        for (auto scope = localScopes.rbegin(); scope != localScopes.rend(); ++scope) {
+            for (const auto symbol : *scope) checkLinearEnded(symbol, state, span, where);
+        }
+        for (const auto symbol : linearParameters) checkLinearEnded(symbol, state, span, where);
+    }
+
+    // Assigning over a place that may still hold a linear value would drop it.
+    void checkLinearOverwrite(
+            const syntax::ExprPtr& target,
+            const InitializationState::ProjectionPath& path,
+            const InitializationState& state) {
+        if (!state.reachable || !state.possiblyInitialized.contains(path.root)) return;
+        const auto type = model->typeOf(target);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        const bool element = std::any_of(
+                path.projections.begin(), path.projections.end(),
+                [](const auto& projection) { return !projection.field.has_value(); });
+        if (!element) {
+            // Live while any linear leaf beneath the target is not consumed on every path.
+            bool live = false;
+            const auto leaves = model->linearLeafPaths(*type);
+            if (leaves.empty()) live = !linearPathEnded(path, state);
+            for (const auto& leaf : leaves) {
+                auto leafPath = path;
+                for (const auto field : leaf) {
+                    leafPath.projections.push_back({ field, std::nullopt, std::nullopt });
+                }
+                if (!linearPathEnded(leafPath, state)) { live = true; break; }
+            }
+            if (!live) return;
+        }
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearOverwrite,
+            Severity::error,
+            target->span,
+            "assigning here would drop a linear value of type '" +
+                    model->types().displayName(*type) + "'",
+            element ? std::optional<std::string>("drain the array with removeLast instead of overwriting an element")
+                    : std::optional<std::string>("consume the old value first, then assign"),
+        });
+    }
+
+    // A statement whose value is a linear value that nothing receives drops it.
+    void reportDroppedLinearValue(const syntax::ExprPtr& statement, const InitializationState& state) {
+        if (!state.reachable || statement == nullptr || isPlaceStatement(statement)) return;
+        // A block, `if` or `match` reports for its own tails.
+        if (statement->kind == syntax::Kind::blockExpr || statement->kind == syntax::Kind::ifExpr ||
+            statement->kind == syntax::Kind::matchExpr) {
+            return;
+        }
+        const auto type = model->typeOf(statement);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearResultDropped,
+            Severity::error,
+            statement->span,
+            "this expression produces a linear value of type '" +
+                    model->types().displayName(*type) + "' that is dropped",
+            "bind it to a variable and consume it",
+        });
+    }
+
+    // A memberwise initializer, an enum case and `append` store their arguments, so a linear value
+    // passed to one is moved in, not borrowed.
+    static bool storesItsArguments(const semantic::Symbol& target) {
+        if (target.kind == semantic::SymbolKind::builtinMember) return target.name == "append";
+        return target.callable.has_value() &&
+                (target.callable->kind == semantic::CallableKind::structureInitializer ||
+                 target.callable->kind == semantic::CallableKind::enumCase);
+    }
+
+    // An owned linear temporary that is only borrowed (a borrowing argument, a field read, a
+    // borrowing receiver) is destroyed afterwards, which drops it (spec 4.7.1, rule 4).
+    void reportBorrowedLinearTemporary(const syntax::ExprPtr& value, const InitializationState& state) {
+        if (!state.reachable || value == nullptr || storagePath(value).has_value()) return;
+        auto inner = value;
+        while (inner != nullptr && inner->kind == syntax::Kind::parenthesizedExpr) {
+            inner = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(inner)->expression;
+        }
+        if (inner == nullptr || inner->kind == syntax::Kind::accessExpr) return;
+        const auto type = model->typeOf(value);
+        if (!type.has_value() || !model->isLinear(*type)) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearResultDropped,
+            Severity::error,
+            value->span,
+            "this linear value of type '" + model->types().displayName(*type) +
+                    "' is only borrowed here and would be dropped",
+            "bind it to a variable, borrow the variable, and consume it afterwards",
+        });
+    }
+
+    // A bare name or field read used as a statement is not a produced value.
+    bool isPlaceStatement(const syntax::ExprPtr& expression) const {
+        if (expression == nullptr) return false;
+        // `consume x;` with nothing to receive the value drops it.
+        if (expression->kind == syntax::Kind::accessExpr) {
+            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+            if (access->marker != nullptr && access->marker->kind == kwConsume) return false;
+        }
+        return storagePath(expression).has_value();
+    }
+
+    std::optional<typing::TypeId> signatureResult(
+            const std::optional<semantic::SymbolId>& function) const {
+        const auto* signature = function.has_value() ? model->callable(*function) : nullptr;
+        return signature == nullptr ? std::optional<typing::TypeId>() : signature->result;
+    }
+
+    // `valueUsed` is false when the block's last expression is a statement whose value is dropped.
     void analyzeBlock(
             const syntax::BlockExprSyntax::Ptr& block,
-            InitializationState& state) {
+            InitializationState& state,
+            bool valueUsed = true) {
         if (block == nullptr) return;
         localScopes.emplace_back();
         for (const auto& item : block->items) {
@@ -398,29 +592,40 @@ private:
             }
             if (item->kind == syntax::Kind::breakStmt ||
                 item->kind == syntax::Kind::continueStmt) {
-                analyzeLoopExit(item->kind, state);
+                analyzeLoopExit(item->kind, state, item->span);
                 continue;
             }
+            const bool isValueItem = valueUsed && item == block->items.back();
             if (item->kind == syntax::Kind::blockExpr) {
-                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state);
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(item), state, isValueItem);
                 continue;
             }
             if (isExpressionKind(item->kind)) {
-                analyzeExpression(std::static_pointer_cast<syntax::ExprSyntax>(item), state);
+                const auto statement = std::static_pointer_cast<syntax::ExprSyntax>(item);
+                statementPosition = !isValueItem;
+                analyzeExpression(statement, state);
+                statementPosition = false;
+                // A statement's value is dropped, so a linear one would be lost; the last
+                // expression of a block whose value is used is moved on by the caller.
+                if (!isValueItem) reportDroppedLinearValue(statement, state);
             }
         }
         for (const auto symbol : localScopes.back()) {
+
+            checkLinearEnded(symbol, state, block->span, "the end of its block");
             forgetBinding(symbol, state);
         }
         localScopes.pop_back();
     }
 
-    void analyzeLoopExit(syntax::Kind kind, InitializationState& state) {
+    void analyzeLoopExit(syntax::Kind kind, InitializationState& state, SourceSpan span) {
         assert(!loops.empty());
         auto edge = state;
         auto& loop = loops.back();
         for (size_t scope = loop.scopeDepth; scope < localScopes.size(); ++scope) {
             for (const auto symbol : localScopes[scope]) {
+                checkLinearEnded(symbol, edge, span,
+                                 kind == syntax::Kind::breakStmt ? "this 'break'" : "this 'continue'");
                 forgetBinding(symbol, edge);
             }
         }
@@ -436,7 +641,7 @@ private:
             loops.push_back(LoopFlow { localScopes.size(), {}, {} });
             analyzeExpression(statement->condition, entry);
             auto bodyState = entry;
-            analyzeBlock(statement->body, bodyState);
+            analyzeBlock(statement->body, bodyState, false);
             auto flow = std::move(loops.back());
             loops.pop_back();
             flow.continues.push_back(std::move(bodyState));
@@ -463,6 +668,7 @@ private:
     void analyzeExpression(
             const syntax::ExprPtr& expression,
             InitializationState& state) {
+        const bool statement = std::exchange(statementPosition, false);
         if (expression == nullptr || !state.reachable) return;
         switch (expression->kind) {
             case syntax::Kind::nameExpr:
@@ -478,15 +684,34 @@ private:
                         std::static_pointer_cast<syntax::PrefixExprSyntax>(expression)->operand,
                         state);
                 break;
-            case syntax::Kind::accessExpr:
-                analyzeExpression(
-                        std::static_pointer_cast<syntax::AccessExprSyntax>(expression)->operand,
-                        state);
+            case syntax::Kind::accessExpr: {
+                const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(expression);
+                // `consume x` where a value is stored moves it out of `x`.
+                if (access->marker != nullptr && access->marker->kind == kwConsume) {
+                    analyzeConsume(access->operand, state);
+                } else {
+                    analyzeExpression(access->operand, state);
+                }
                 break;
+            }
             case syntax::Kind::propagateExpr: {
                 const auto propagated =
                         std::static_pointer_cast<syntax::PropagateExprSyntax>(expression);
                 analyzeExpression(propagated->operand, state);
+                // The failure path of `?` leaves the function, so nothing linear may be live.
+                if (state.reachable) {
+                    checkAllLinearEnded(state, expression->span, "this '?' returns early");
+                }
+                if (state.reachable && pendingLinearMoves > 0) {
+                    diagnostics.push_back(Diagnostic {
+                        DiagnosticId::linearNotConsumed,
+                        Severity::error,
+                        expression->span,
+                        "a linear value already moved into the enclosing call would be dropped if this '?' returns early",
+                        "evaluate the '?' first and bind its result, then make the call: let r = f()?",
+                    });
+                }
+
                 if (state.reachable) {
                     const auto operandType = model->typeOf(propagated->operand);
                     const auto* container = operandType.has_value()
@@ -516,9 +741,11 @@ private:
                     analyzeStorageOperands(expression, state);
                     if (state.reachable) analyzeStorageRead(expression, state);
                 } else {
-                    analyzeExpression(
-                            std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base,
-                            state);
+                    const auto base =
+                            std::static_pointer_cast<syntax::MemberExprSyntax>(expression)->base;
+                    analyzeExpression(base, state);
+                    // Reading through an owned linear temporary borrows it and then drops it.
+                    reportBorrowedLinearTemporary(base, state);
                 }
                 break;
             case syntax::Kind::callExpr: {
@@ -532,7 +759,8 @@ private:
                 // A user method's receiver follows the access convention of its
                 // `self` parameter: consuming it consumes the receiver storage.
                 const auto receiverEffect = callableSymbol != nullptr &&
-                        callableSymbol->kind == semantic::SymbolKind::method &&
+                        (callableSymbol->kind == semantic::SymbolKind::method ||
+                         callableSymbol->kind == semantic::SymbolKind::builtinMember) &&
                         callableSymbol->callable.has_value() &&
                         callableSymbol->callable->receiver.has_value() &&
                         call->callee->kind == syntax::Kind::memberExpr
@@ -552,13 +780,21 @@ private:
                         if (path.has_value()) mutatedArguments.push_back(path->root);
                     }
                 }
+                size_t countedPendingMoves = 0;
                 for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
-                    const auto effect = callableSymbol != nullptr &&
+                    // A `consume` marker on an argument that is stored (initializer, enum case,
+                    // `append`) moves it even though the parameter itself only borrows.
+                    const auto marked = argument->accessMarker != nullptr &&
+                            argument->accessMarker->kind == kwConsume;
+                    auto effect = callableSymbol != nullptr &&
                                         callableSymbol->callable.has_value() &&
                                         index < callableSymbol->callable->parameters.size()
                             ? callableSymbol->callable->parameters[index].access
                             : syntax::AccessEffect::borrowing;
+                    if (marked && effect == syntax::AccessEffect::borrowing) {
+                        effect = syntax::AccessEffect::consuming;
+                    }
                     if (effect == syntax::AccessEffect::consuming) {
                         analyzeConsume(argument->value, state);
                     } else if (effect == syntax::AccessEffect::initializing) {
@@ -569,11 +805,26 @@ private:
                         if (effect == syntax::AccessEffect::inout) {
                             const auto path = storagePath(argument->value);
                             if (path.has_value()) mutatedArguments.push_back(path->root);
+                        } else if (effect == syntax::AccessEffect::borrowing && callableSymbol != nullptr &&
+                                   !storesItsArguments(*callableSymbol)) {
+                            // A borrowed argument that is an owned linear temporary is dropped
+                            // once the call returns.
+                            reportBorrowedLinearTemporary(argument->value, state);
                         }
                     }
+                    // An argument that moves a linear value is pending until the call commits.
+                    const auto argumentType = model->typeOf(argument->value);
+                    if (state.reachable && argumentType.has_value() && model->isLinear(*argumentType) &&
+                        (effect == syntax::AccessEffect::consuming ||
+                         !storagePath(argument->value).has_value())) {
+                        ++pendingLinearMoves;
+                        ++countedPendingMoves;
+                    }
                 }
+                pendingLinearMoves -= countedPendingMoves;
                 if (state.reachable &&
                     model->typeOf(expression) != model->types().neverType()) {
+
                     if (callableSymbol != nullptr && callableSymbol->isMutable) {
                         const auto receiver = storagePath(call->callee);
                         if (receiver.has_value()) {
@@ -621,27 +872,43 @@ private:
                 const auto enumCase =
                         std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
                 for (const auto& argument : enumCase->arguments) {
-                    analyzeExpression(argument->value, state);
+                    if (argument->accessMarker != nullptr &&
+                        argument->accessMarker->kind == kwConsume) {
+                        analyzeConsume(argument->value, state);
+                    } else {
+                        analyzeExpression(argument->value, state);
+                    }
                 }
                 break;
             }
             case syntax::Kind::blockExpr:
-                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state);
+                analyzeBlock(std::static_pointer_cast<syntax::BlockExprSyntax>(expression), state, !statement);
                 break;
             case syntax::Kind::ifExpr:
-                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state);
+                analyzeIf(std::static_pointer_cast<syntax::IfExprSyntax>(expression), state, statement);
                 break;
-            case syntax::Kind::returnExpr:
-                analyzeExpression(
-                        std::static_pointer_cast<syntax::ReturnExprSyntax>(expression)->value,
-                        state);
+            case syntax::Kind::returnExpr: {
+                const auto returned =
+                        std::static_pointer_cast<syntax::ReturnExprSyntax>(expression)->value;
+                // Returning a linear local moves it out, so it is no longer live at this exit.
+                const auto returnedType = returned == nullptr
+                        ? std::optional<typing::TypeId>()
+                        : model->typeOf(returned);
+                if (returned != nullptr && returnedType.has_value() &&
+                    model->isLinear(*returnedType) && storagePath(returned).has_value()) {
+                    analyzeConsume(returned, state);
+                } else {
+                    analyzeExpression(returned, state);
+                }
                 if (state.reachable) {
+                    checkAllLinearEnded(state, expression->span, "this 'return'");
                     reportUninitializedParameters(expression->span, state);
                 }
                 state.reachable = false;
                 break;
+            }
             case syntax::Kind::matchExpr:
-                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state);
+                analyzeMatch(std::static_pointer_cast<syntax::MatchExprSyntax>(expression), state, statement);
                 break;
             default:
                 break;
@@ -678,9 +945,46 @@ private:
             state.possiblyInitialized.erase(path->root);
             state.consumed.insert(path->root);
             clearConsumedProjections(path->root, state);
+            // The whole value is consumed, which covers every field path under it at a join.
+            state.definitelyConsumedProjections.push_back({ path->root, {} });
         } else {
+            reportPartialConsumeOfDeinitType(expression);
             addConsumedProjection(*path, state);
         }
+    }
+
+    // A struct with `deinit` must reach its destructor whole (decision 0015), so no part of
+    // it may be moved out: `deinit` would otherwise run over a value with a hole in it.
+    void reportPartialConsumeOfDeinitType(const syntax::ExprPtr& expression) {
+        auto current = expression;
+        while (current != nullptr) {
+            syntax::ExprPtr base;
+            if (current->kind == syntax::Kind::parenthesizedExpr) {
+                base = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)
+                               ->expression;
+            } else if (current->kind == syntax::Kind::accessExpr) {
+                base = std::static_pointer_cast<syntax::AccessExprSyntax>(current)->operand;
+            } else if (current->kind == syntax::Kind::memberExpr) {
+                base = std::static_pointer_cast<syntax::MemberExprSyntax>(current)->base;
+                reportIfDeinitType(base, current->span);
+            } else if (current->kind == syntax::Kind::subscriptExpr) {
+                base = std::static_pointer_cast<syntax::SubscriptExprSyntax>(current)->base;
+            }
+            current = base;
+        }
+    }
+
+    void reportIfDeinitType(const syntax::ExprPtr& base, SourceSpan span) {
+        const auto type = model->typeOf(base);
+        if (!type.has_value() || model->deinitializerOf(*type) == nullptr) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::partialConsumeOfDeinitType,
+            Severity::error,
+            span,
+            "cannot move a part out of '" + model->types().displayName(*type) +
+                    "' because it declares 'deinit'",
+            "consume the whole value, or read the field and let the value be destroyed",
+        });
     }
 
     std::optional<semantic::SymbolId> analyzeInitialize(
@@ -762,6 +1066,7 @@ private:
         analyzeExpression(expression->value, state);
         if (assigned.has_value()) activePaths.pop_back();
         if (state.reachable && assigned.has_value() && tracked.contains(assigned->root)) {
+            checkLinearOverwrite(expression->target, *assigned, state);
             markInitialized(*assigned, state);
         }
     }
@@ -832,31 +1137,119 @@ private:
 
     void analyzeIf(
             const syntax::IfExprSyntax::Ptr& expression,
-            InitializationState& state) {
+            InitializationState& state,
+            bool statement = false) {
         analyzeExpression(expression->condition, state);
         if (!state.reachable) return;
         auto thenState = state;
-        analyzeBlock(expression->thenBranch, thenState);
+        analyzeBlock(expression->thenBranch, thenState, !statement);
         auto elseState = state;
         if (expression->elseBranch != nullptr) {
+            statementPosition = statement;
             analyzeExpression(expression->elseBranch, elseState);
+            statementPosition = false;
         }
         state = merge({ std::move(thenState), std::move(elseState) });
     }
 
+    // The payload types of an enum case pattern: from the case's signature, or for the builtin
+    // Optional and Result cases from the scrutinee's type arguments.
+    std::vector<typing::TypeId> payloadTypesOf(
+            const std::optional<semantic::SymbolId>& caseSymbol,
+            typing::TypeId scrutineeType) const {
+        if (!caseSymbol.has_value()) return {};
+        const auto* signature = model->callable(*caseSymbol);
+        if (signature != nullptr && !signature->parameters.empty()) return signature->parameters;
+        const auto* symbol = model->semanticModel()->symbol(*caseSymbol);
+        const auto* type = model->types().type(scrutineeType);
+        if (symbol == nullptr || type == nullptr) return {};
+        if (symbol->name == "Some" || symbol->name == "Ok") {
+            if (!type->arguments.empty()) return { type->arguments[0] };
+        } else if (symbol->name == "Err") {
+            if (type->arguments.size() > 1) return { type->arguments[1] };
+        }
+        return {};
+    }
+
+    // A pattern that skips a linear payload (`_`, a literal) would leave it to be destroyed with the
+    // scrutinee, which is a drop: when the scrutinee is moved, every linear payload must be bound
+    // (spec 7.1.2). A borrowed scrutinee stays live, so peeking at it with `_` is fine.
+    void checkLinearPatternDrops(const syntax::PatternPtr& pattern, typing::TypeId scrutineeType, bool top) {
+        if (pattern == nullptr) return;
+        if (pattern->kind != syntax::Kind::enumCasePattern) {
+            if (top && pattern->kind != syntax::Kind::bindingPattern && model->isLinear(scrutineeType)) {
+                diagnostics.push_back(Diagnostic {
+                    DiagnosticId::linearResultDropped,
+                    Severity::error,
+                    pattern->span,
+                    "this pattern ignores a linear value of type '" +
+                            model->types().displayName(scrutineeType) + "'",
+                    "match its cases and bind the linear payloads",
+                });
+            }
+            return;
+        }
+        const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
+        const auto payloads = payloadTypesOf(model->referencedSymbol(enumPattern), scrutineeType);
+        for (size_t index = 0; index < enumPattern->arguments.size(); ++index) {
+            const auto& payloadPattern = enumPattern->arguments[index]->pattern;
+            if (payloadPattern == nullptr || index >= payloads.size()) continue;
+            if (payloadPattern->kind == syntax::Kind::enumCasePattern) {
+                checkLinearPatternDrops(payloadPattern, payloads[index], false);
+                continue;
+            }
+            if (payloadPattern->kind == syntax::Kind::bindingPattern ||
+                !model->isLinear(payloads[index])) {
+                continue;
+            }
+            diagnostics.push_back(Diagnostic {
+                DiagnosticId::linearResultDropped,
+                Severity::error,
+                payloadPattern->span,
+                "this pattern ignores a linear payload of type '" +
+                        model->types().displayName(payloads[index]) + "'",
+                "bind the payload to a name and consume it",
+            });
+        }
+    }
+
+    // Whether a match moves its scrutinee: `match consume x` or an owned temporary. A borrowed
+    // place stays where it is.
+    bool matchMovesScrutinee(const syntax::ExprPtr& scrutinee) const {
+        auto current = scrutinee;
+        while (current != nullptr && current->kind == syntax::Kind::parenthesizedExpr) {
+            current = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(current)->expression;
+        }
+        if (current == nullptr) return false;
+        if (current->kind == syntax::Kind::accessExpr) {
+            const auto access = std::static_pointer_cast<syntax::AccessExprSyntax>(current);
+            return access->marker != nullptr && access->marker->kind == kwConsume;
+        }
+        return !storagePath(current).has_value();
+    }
+
     void analyzeMatch(
             const syntax::MatchExprSyntax::Ptr& expression,
-            InitializationState& state) {
+            InitializationState& state,
+            bool statement = false) {
         analyzeExpression(expression->scrutinee, state);
         if (!state.reachable) return;
+        const auto scrutineeType = model->typeOf(expression->scrutinee);
+        const bool movesLinear = scrutineeType.has_value() && model->isLinear(*scrutineeType) &&
+                matchMovesScrutinee(expression->scrutinee);
         std::vector<InitializationState> armStates;
         armStates.reserve(expression->arms.size());
         for (const auto& arm : expression->arms) {
             auto armState = state;
             localScopes.emplace_back();
+            if (movesLinear) checkLinearPatternDrops(arm->pattern, *scrutineeType, true);
             initializePattern(arm->pattern, armState, localScopes.back());
+            statementPosition = statement;
             analyzeExpression(arm->body, armState);
+            statementPosition = false;
+            if (statement) reportDroppedLinearValue(arm->body, armState);
             for (const auto symbol : localScopes.back()) {
+                checkLinearEnded(symbol, armState, arm->span, "the end of this match arm");
                 forgetBinding(symbol, armState);
             }
             localScopes.pop_back();
@@ -1061,6 +1454,11 @@ private:
         std::erase_if(state.consumedProjections, [&](const auto& candidate) {
             return pathIsPrefix(path, candidate);
         });
+        if (std::find(state.definitelyConsumedProjections.begin(),
+                      state.definitelyConsumedProjections.end(), path) ==
+            state.definitelyConsumedProjections.end()) {
+            state.definitelyConsumedProjections.push_back(path);
+        }
         state.consumedProjections.push_back(std::move(path));
     }
 
@@ -1078,6 +1476,9 @@ private:
         std::erase_if(state.consumedProjections, [&](const auto& candidate) {
             return pathIsPrefix(path, candidate);
         });
+        std::erase_if(state.definitelyConsumedProjections, [&](const auto& candidate) {
+            return pathIsPrefix(path, candidate);
+        });
     }
 
     void invalidateIndexIdentity(
@@ -1089,6 +1490,7 @@ private:
             }
         };
         for (auto& path : state.consumedProjections) invalidate(path);
+        for (auto& path : state.definitelyConsumedProjections) invalidate(path);
         // Captured assignment destinations must not acquire a later index value's identity.
         for (auto* path : activePaths) invalidate(*path);
     }
@@ -1109,6 +1511,40 @@ private:
         std::erase_if(state.consumedProjections, [root](const auto& path) {
             return path.root == root;
         });
+        std::erase_if(state.definitelyConsumedProjections, [root](const auto& path) {
+            return path.root == root;
+        });
+    }
+
+    // True when some projection in `set` is `path` itself or one of its ancestors.
+    static bool coveredBy(
+            const std::vector<InitializationState::ProjectionPath>& set,
+            const InitializationState::ProjectionPath& path) {
+        return std::any_of(set.begin(), set.end(), [&path](const auto& consumed) {
+            return consumed.root == path.root &&
+                    consumed.projections.size() <= path.projections.size() &&
+                    std::equal(consumed.projections.begin(), consumed.projections.end(),
+                               path.projections.begin());
+        });
+    }
+
+    // What both paths consumed: a projection one path consumed counts when the other consumed it or
+    // an ancestor of it, so `consume p` on one branch and `consume p.a`, `consume p.b` on the other
+    // leave both fields consumed.
+    static std::vector<InitializationState::ProjectionPath> intersectByCoverage(
+            const std::vector<InitializationState::ProjectionPath>& left,
+            const std::vector<InitializationState::ProjectionPath>& right) {
+        std::vector<InitializationState::ProjectionPath> result;
+        const auto keep = [&result](const InitializationState::ProjectionPath& path) {
+            if (std::find(result.begin(), result.end(), path) == result.end()) result.push_back(path);
+        };
+        for (const auto& path : left) {
+            if (coveredBy(right, path)) keep(path);
+        }
+        for (const auto& path : right) {
+            if (coveredBy(left, path)) keep(path);
+        }
+        return result;
     }
 
     InitializationState merge(std::vector<InitializationState> paths) const {
@@ -1120,6 +1556,9 @@ private:
                 result = path;
                 // Scope exits can collapse distinct index identities to the same path.
                 result.consumedProjections.clear();
+            } else {
+                result.definitelyConsumedProjections = intersectByCoverage(
+                        result.definitelyConsumedProjections, path.definitelyConsumedProjections);
             }
             for (auto symbol = result.initialized.begin();
                  symbol != result.initialized.end();) {
@@ -1444,6 +1883,19 @@ Result Analyzer::analyze(const typing::TypeCheckedModel::Ptr& model) const {
             result.diagnostics.end(),
             usage.diagnostics.begin(),
             usage.diagnostics.end());
+    // `runProcess` forks on Linux, and a task program has other threads (spec 21.6). The test is
+    // textual over the whole program: any `spawn` and any System `runProcess`, reachable or not.
+    if (!model->spawnCalls().empty()) {
+        for (const auto& span : model->runProcessCalls()) {
+            result.diagnostics.push_back(Diagnostic {
+                DiagnosticId::runProcessWithTasks,
+                Severity::error,
+                span,
+                "'runProcess' cannot be used in a program that starts tasks",
+                std::string("this program also calls spawn; start child processes from a program that does not use tasks"),
+            });
+        }
+    }
     return result;
 }
 
@@ -1459,6 +1911,16 @@ const char* diagnosticName(DiagnosticId id) {
             return "semantic-analysis.initializing-initialized-storage";
         case DiagnosticId::initializingParameterNotInitialized:
             return "semantic-analysis.initializing-parameter-not-initialized";
+        case DiagnosticId::partialConsumeOfDeinitType:
+            return "semantic-analysis.partial-consume-of-deinit-type";
+        case DiagnosticId::linearNotConsumed:
+            return "semantic-analysis.linear-not-consumed";
+        case DiagnosticId::linearOverwrite:
+            return "semantic-analysis.linear-overwrite";
+        case DiagnosticId::linearResultDropped:
+            return "semantic-analysis.linear-result-dropped";
+        case DiagnosticId::runProcessWithTasks:
+            return "semantic-analysis.run-process-with-tasks";
         case DiagnosticId::unusedBinding: return "semantic-analysis.unused-binding";
     }
     return "semantic-analysis.unknown";
