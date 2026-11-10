@@ -288,6 +288,19 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
             set_tests_properties(RuntimeSystemProgramHasNoCRuntime_${fixture}
                 PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
         endforeach()
+        # A program that starts tasks (decision 0018) imports the thread functions from kernel32
+        # and still needs nothing from the C runtime.
+        add_test(NAME RuntimeTaskProgramHasNoCRuntime
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/task_basic.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/task-program.exe"
+                "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0"
+                "-DFORBIDDEN_IMPORTS=IsProcessorFeaturePresent;GetStartupInfoW;InitializeSListHead;UnhandledExceptionFilter;SetUnhandledExceptionFilter;IsDebuggerPresent;GetProcessHeap;HeapAlloc;HeapFree;GetEnvironmentStringsW"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        set_tests_properties(RuntimeTaskProgramHasNoCRuntime
+            PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
     endif()
 endif()
 
@@ -308,4 +321,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
         set_tests_properties(RuntimeSystemProgramNeedsOnlyTheCStartup_${fixture}
             PROPERTIES LABELS "runtime;native;entry;host" TIMEOUT 120)
     endforeach()
+    # A program that starts tasks (decision 0018) also needs the thread object's pthread functions
+    # and nothing else from the C library; every other program's gate above is unchanged, which
+    # keeps the thread object out of programs that never start a thread.
+    add_test(NAME RuntimeTaskProgramNeedsOnlyThePthreadFunctions
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/task_basic.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/task-program"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DCOMPILER_ARGS=-O0;-g0"
+            "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp;pthread_attr_init;pthread_attr_setstacksize;pthread_attr_destroy;pthread_create;pthread_join;pthread_mutex_lock;pthread_mutex_unlock;pthread_mutex_destroy;pthread_mutex_init;pthread_cond_wait;pthread_cond_signal;pthread_cond_broadcast;pthread_cond_destroy;pthread_cond_init"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+    set_tests_properties(RuntimeTaskProgramNeedsOnlyThePthreadFunctions
+        PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
 endif()

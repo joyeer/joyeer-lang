@@ -12,6 +12,10 @@
 #include <cstdint>
 #include <vector>
 
+// The compiler's task block (decision 0018, taskRecordBytes in compiler/backend/native_collections.cpp)
+// reserves exactly this many bytes for the thread record; change them together.
+static_assert(JOYEER_THREAD_BYTES == 128, "update taskRecordBytes in the backend with this value");
+
 #ifdef _WIN32
 #include <windows.h>
 static_assert(sizeof(SRWLOCK) <= JOYEER_LOCK_BYTES && alignof(SRWLOCK) <= 8,

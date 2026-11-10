@@ -775,4 +775,15 @@ TEST_F(NameResolutionTest, ADeinitIntroducesAFunctionScopeWithTheReceiver) {
     EXPECT_TRUE(resolution.model->scope(*scope)->values.contains("self"));
 }
 
+
+// The labels, their order and the argument count of `spawn` are name resolution's ordinary call rules.
+TEST_F(NameResolutionTest, SpawnLabelsOrderAndCountAreCheckedLikeAnyCall) {
+    resolve(std::string("func square(value: consuming Int): Int { return value }\n") +
+            "func f() { let h = spawn(input: consume 1, function: square) }\n");
+    EXPECT_FALSE(resolution.succeeded());
+    resolve(std::string("func square(value: consuming Int): Int { return value }\n") +
+            "func f() { let h = spawn(function: square) }\n");
+    EXPECT_FALSE(resolution.succeeded());
+}
+
 } // namespace

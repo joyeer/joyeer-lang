@@ -321,3 +321,14 @@ run as the complete acceptance suite.
 Moss's `Moss.Serve` test and the live-pipe check in
 [the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
 depend on `readStdinLine` flushing standard output before it blocks.
+
+## Tasks
+
+A task (decision [0018](../decisions/0018-tasks.md), spec §21) is one heap block from `joyeer_alloc`:
+a zeroed 128-byte thread record (`JOYEER_THREAD_BYTES`), the block's own size, the result, then the
+input. The backend emits a thunk per target that loads the input, calls the function and stores the
+result; `joyeer_thread_start_abi` runs it, and `join` calls `joyeer_thread_join_abi`, moves the result
+out and frees the block with the stored size. A refused thread traps with `too many tasks` or `cannot
+start task`. Because the block is ordinary allocator memory, the leak counter needs no task rule, and
+the generated destroy helper for a handle traps (`task dropped without join`) if one is ever dropped
+live. Linux links `-lpthread` after the runtime archive group for a program that starts a task.

@@ -1984,4 +1984,79 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
     }));
 }
 
+
+// Tasks (spec 21): `spawn` lowers to one task_spawn naming the target and `join` to one task_join on the
+// handle's address; the verifier checks both against the target's signature.
+TEST_F(IRLoweringTest, SpawnAndJoinLowerToOneInstructionEach) {
+    ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
+                                  "func run(): Int {\n"
+                                  "    let handle = spawn(function: square, input: consume 4)\n"
+                                  "    return consume handle.join()\n"
+                                  "}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::taskSpawn), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::taskJoin), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(NewOpcodeVerifierTest, TaskSpawnAndJoinAreCheckedAgainstTheTargetSignature) {
+    ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
+                                  "func run(): Int {\n"
+                                  "    let handle = spawn(function: square, input: consume 4)\n"
+                                  "    return consume handle.join()\n"
+                                  "}\n"));
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+        instruction.callee = 987654;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Int");
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "String");
+    }));
+}
+
+
+TEST_F(NewOpcodeVerifierTest, TaskSpawnRejectsAMalformedTargetOrResult) {
+    ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
+                                  "func run(): Int {\n"
+                                  "    let handle = spawn(function: square, input: consume 4)\n"
+                                  "    return consume handle.join()\n"
+                                  "}\n"));
+    using joyeer::ir::Opcode;
+    using joyeer::ir::ValueCategory;
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+        instruction.result->category = ValueCategory::address;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].parameters[0].isConsuming = false;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].isExternal = true;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].parameters.clear();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].resultType = typeNamed(module, "String");
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].returnsValue = false;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
+        instruction.result->category = ValueCategory::address;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
+        instruction.result.reset();
+    }));
+}
+
 } // namespace

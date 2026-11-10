@@ -104,6 +104,7 @@ int Driver::run() {
                         source->getAbstractPath(),
                         source->llvmModule,
                         linkLibraries,
+                        source->llvmUsesThreads,
                     };
             const auto linking = arguments->outputMode == joyeer::OutputMode::runtimeObject
                     ? joyeer::native::Linker().emitObject(source->llvmIR, options)

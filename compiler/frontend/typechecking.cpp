@@ -62,6 +62,7 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     registerGenericBuiltin("Optional", TypeKind::optional, 1);
     registerGenericBuiltin("Result", TypeKind::result, 2);
+    registerGenericBuiltin("JoinHandle", TypeKind::task, 1);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
             {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
@@ -130,6 +131,12 @@ TypeId TypeContext::optionalType(TypeId wrapped) {
     const auto symbol = builtinSymbol("Optional");
     assert(symbol.has_value());
     return typeForSymbol(*symbol, { wrapped }).value_or(errorTypeId);
+}
+
+TypeId TypeContext::taskType(TypeId result) {
+    const auto symbol = builtinSymbol("JoinHandle");
+    assert(symbol.has_value());
+    return typeForSymbol(*symbol, { result }).value_or(errorTypeId);
 }
 
 TypeId TypeContext::resultType(TypeId success, TypeId failure) {
@@ -225,6 +232,8 @@ std::string TypeContext::displayName(TypeId id) const {
         case TypeKind::result:
             return "Result<" + displayName(value->arguments[0]) + ", " +
                     displayName(value->arguments[1]) + ">";
+        case TypeKind::task:
+            return "JoinHandle<" + displayName(value->arguments[0]) + ">";
         default: {
             const auto* declaration = model.symbol(value->symbol);
             return declaration == nullptr ? "<invalid-type>" : declaration->name;
@@ -360,6 +369,10 @@ bool TypeCheckedModel::isLinear(
                 if (isLinear(argument, visiting, clean)) { linear = true; break; }
             }
             break;
+        case TypeKind::task:
+            // A running task must be joined, never dropped (spec 21.3).
+            linear = true;
+            break;
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
@@ -460,6 +473,9 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                     break;
                 }
             }
+            break;
+        case TypeKind::task:
+            reason = name + " is a task handle, which has exactly one owner";
             break;
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
@@ -735,6 +751,16 @@ private:
                 continue;
             }
             if (symbol.name == "removeLast" && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    {},
+                    model->typeContext.anyType(),
+                };
+                continue;
+            }
+            if (symbol.name == "join" && symbol.callable.has_value()) {
                 model->symbolTypes[symbol.id] = model->typeContext.anyType();
                 model->callables[symbol.id] = TypedCallableSignature {
                     semantic::CallableKind::function,
@@ -1949,7 +1975,9 @@ private:
                 break;
             case equalEqual:
             case notEqual:
-                if (left == right && left != model->typeContext.voidType()) {
+                // A noncopyable value (a task handle, a handle with `deinit`) cannot be compared: the
+                // comparison would have to copy it.
+                if (left == right && left != model->typeContext.voidType() && model->isCopyable(left)) {
                     return model->typeContext.boolType();
                 }
                 break;
@@ -2180,10 +2208,21 @@ private:
         const auto* semanticTarget = target.has_value()
                 ? model->semanticModelValue->symbol(*target)
                 : nullptr;
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::function &&
+            semanticTarget->name == "runProcess" && !semanticTarget->isRootModule) {
+            const auto* module = model->semanticModelValue->moduleName(semanticTarget->moduleId);
+            if (module != nullptr && *module == "System") model->runProcessCallSpans.push_back(expression->span);
+        }
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
-            semanticTarget->name == "print" && model->semanticModelValue->isCoreSource(expression->span)) {
+            semanticTarget->name == "print"
+ && model->semanticModelValue->isCoreSource(expression->span)) {
             report(TypeCheckingDiagnosticId::managedTypeInCoreUnit, expression->span,
                    "a runtime core unit must not call print, which is implemented by the runtime");
+        }
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
+            semanticTarget->name == "spawn") {
+            model->spawnCallSpans.push_back(expression->span);
+            return checkSpawn(expression);
         }
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::method) {
             // A method needs a receiver value; `Type.method(...)` has none.
@@ -2230,7 +2269,13 @@ private:
                                     ? "consuming method call requires 'consume' on the receiver"
                                     : suppliedReceiver == syntax::AccessEffect::inout
                                             ? "non-mutating call must not use '&' on the receiver"
-                                            : "non-consuming call must not use 'consume' on the receiver");
+                                            : "non-consuming call must not use 'consume' on the receiver",
+                    requiredReceiver == syntax::AccessEffect::consuming
+                            ? std::optional<std::string>(
+                                      "write 'consume' before the receiver, as in 'let v = consume h.join()'; "
+                                      "to use the result as an argument or before '?', bind or parenthesize it first")
+                            : std::nullopt);
+
         }
 
         std::vector<CallAccess> accesses;
@@ -2306,6 +2351,10 @@ private:
                        baseType->arguments.size() == 1) {
                 const auto elementType = baseType->arguments[0];
                 receiverResultType = model->typeContext.optionalType(elementType);
+            } else if (semanticTarget->name == "join" &&
+                       baseType != nullptr && baseType->kind == TypeKind::task &&
+                       baseType->arguments.size() == 1) {
+                receiverResultType = baseType->arguments[0];
             } else if (semanticTarget->name == "get" &&
                        baseType != nullptr && baseType->kind == TypeKind::dictionary &&
                        baseType->arguments.size() == 2) {
@@ -2388,6 +2437,92 @@ private:
         }
         return receiverResultType.value_or(
                 signature == nullptr ? model->typeContext.errorType() : signature->result);
+    }
+
+    // `spawn(function: f, input: consume x)` (spec 21.2): `f` must name one top-level function with a
+    // single consuming parameter; the call has type `JoinHandle<R>` for the function's result `R`.
+    TypeId checkSpawn(const syntax::CallExprSyntax::Ptr& expression) {
+        const auto error = model->typeContext.errorType();
+        // Labels, their order and the argument count are checked with the ordinary call rules.
+        if (expression->arguments.size() != 2) return error;
+        const auto& functionArgument = expression->arguments[0];
+        const auto& inputArgument = expression->arguments[1];
+        const auto span = functionArgument->value != nullptr ? functionArgument->value->span : functionArgument->span;
+
+        // `function:` is read as a name, not checked as a value, so a member reference that name
+        // resolution deferred (an instance's member) must be marked handled here or it is reported twice.
+        auto functionExpression = functionArgument->value;
+        while (functionExpression != nullptr && functionExpression->kind == syntax::Kind::parenthesizedExpr) {
+            functionExpression = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(functionExpression)->expression;
+        }
+        if (functionExpression != nullptr) markDeferredReferenceHandled(functionExpression);
+        std::optional<semantic::SymbolId> named;
+        if (functionExpression != nullptr &&
+            (functionExpression->kind == syntax::Kind::nameExpr ||
+             functionExpression->kind == syntax::Kind::memberExpr)) {
+            named = model->referencedSymbol(functionExpression);
+        }
+
+        const auto* target = named.has_value() ? model->semanticModelValue->symbol(*named) : nullptr;
+        if (target == nullptr || (target->kind != semantic::SymbolKind::function &&
+                                  target->kind != semantic::SymbolKind::method &&
+                                  target->kind != semantic::SymbolKind::builtinFunction)) {
+            // An unknown name is name resolution's diagnostic; this is a name that is not a function
+            // (a variable, a call, any other expression).
+            if (functionExpression != nullptr && !model->referencedSymbol(functionExpression).has_value() &&
+                functionExpression->kind == syntax::Kind::nameExpr) {
+                return error;
+            }
+            report(TypeCheckingDiagnosticId::spawnTargetNotFunction, span,
+                   "'function:' must name a function; a variable or an expression is not a function value",
+                   "pass the name of a top-level function, for example spawn(function: work, input: consume value)");
+            return error;
+        }
+        const bool isMain = target->isRootModule && target->name == "main";
+        if (target->kind != semantic::SymbolKind::function || isMain ||
+            model->nativeBinding(*named) != nullptr) {
+            report(TypeCheckingDiagnosticId::spawnTargetUnsupported, span,
+                   "'" + target->name + "' cannot be a task: " +
+                           (target->kind == semantic::SymbolKind::method ? "it is a method"
+                            : isMain ? "it is the program entry point"
+                            : target->kind == semantic::SymbolKind::builtinFunction ? "it is a builtin function"
+                                                                                    : "it is a native binding"),
+                   "a task runs a top-level Joyeer function other than 'main'");
+            return error;
+        }
+        const auto* signature = model->callable(*named);
+        const auto& parameters = target->callable.has_value()
+                ? target->callable->parameters
+                : std::vector<semantic::CallableParameter> {};
+        if (signature == nullptr || parameters.size() != 1 ||
+            parameters[0].access != syntax::AccessEffect::consuming) {
+            const bool wrongCount = parameters.size() != 1;
+            report(TypeCheckingDiagnosticId::spawnTargetParameters, span,
+                   "'" + target->name + "' must have exactly one parameter, and it must be 'consuming'; it has " +
+                           (wrongCount ? std::to_string(parameters.size()) + " parameter(s)"
+                                       : std::string("one parameter that is not 'consuming'")),
+                   wrongCount
+                           ? "wrap the input in a struct (an empty struct if there is none) and take it as the one consuming parameter"
+                           : "declare the parameter 'consuming'; a borrowed or inout parameter cannot cross to another thread");
+
+            return error;
+        }
+        if (signature->result == model->typeContext.neverType()) {
+            report(TypeCheckingDiagnosticId::spawnTargetNever, span,
+                   "'" + target->name + "' never returns, so its task could not be joined",
+                   "declare a result type, or call the function directly");
+            return error;
+        }
+
+        // The input is the target's one consuming argument, checked as for a direct call.
+        const auto expected = signature->parameters.at(0);
+        const auto actual = checkExpression(inputArgument->value, expected);
+        checkCallArgumentAccess(*target, 0, *inputArgument);
+        if (actual.has_value()) requireAssignable(*actual, expected, inputArgument->value->span);
+        std::vector<CallAccess> accesses;
+        collectCallArgumentAccess(*inputArgument, syntax::AccessEffect::consuming, accesses);
+        validateCallExclusivity(accesses);
+        return model->typeContext.taskType(signature->result);
     }
 
     void collectCallReceiverAccess(
@@ -3817,6 +3952,7 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::dictionary: return "dictionary";
         case TypeKind::optional: return "optional";
         case TypeKind::result: return "result";
+        case TypeKind::task: return "task";
         case TypeKind::int8: return "int8";
         case TypeKind::int16: return "int16";
         case TypeKind::int32: return "int32";
@@ -3879,6 +4015,14 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.linear-top-level-binding";
         case TypeCheckingDiagnosticId::linearStructWithoutFields:
             return "type-checking.linear-struct-without-fields";
+        case TypeCheckingDiagnosticId::spawnTargetNotFunction:
+            return "type-checking.spawn-target-not-function";
+        case TypeCheckingDiagnosticId::spawnTargetUnsupported:
+            return "type-checking.spawn-target-unsupported";
+        case TypeCheckingDiagnosticId::spawnTargetParameters:
+            return "type-checking.spawn-target-parameters";
+        case TypeCheckingDiagnosticId::spawnTargetNever:
+            return "type-checking.spawn-target-never";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

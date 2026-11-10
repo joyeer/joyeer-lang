@@ -421,7 +421,7 @@ whole consume on one path with per-field consumes on the other counts each field
 declared `linear` ends field by field like any aggregate, with every field a leaf (copyable ones
 included, destructuring), because there is no `discard`; a struct with no field cannot end.
 **Not yet:** the commit order of a `consume` argument before a later `?` (rule 3),
-`?`/`!`/`??`/`?.` on a linear operand (rule 6), `Array.consumeEmpty()` (done in P5a stage 0), a linear `SendError`/channel element
+`?`/`!`/`??`/`?.` on a linear operand (rule 6), `Array.consumeEmpty()` (done in P5a stage 0), the consume commit order for call and initializer operands (done in P5a stage 1; array literals and enum payloads remain), a linear `SendError`/channel element
 (no channels yet), and the IR defence in depth.
 
 1. Spec: §4.7, §4.1.1 (linear, `Copyable`), §7.1.2, §2.6 (the four builtin generics, channel

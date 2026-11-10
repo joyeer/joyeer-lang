@@ -99,7 +99,7 @@ interfaces change. This is not a backward-compatibility promise between
 development revisions: rebuild and deploy the compiler and backend together
 from the same revision. The interface includes module construction, printing,
 destruction, and the object options' module handle. The private IR wire version
-is version 2. Numeric fields use 64-bit little-endian encoding; strings are
+is version 14. Numeric fields use 64-bit little-endian encoding; strings are
 length-prefixed arbitrary bytes.
 Inputs and callback messages are borrowed only during a call. Callbacks must
 not throw, and clients must never delete or interpret the opaque handle.

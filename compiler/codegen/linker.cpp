@@ -721,6 +721,9 @@ LinkResult Linker::link(
     // Native libraries can reference runtime allocation helpers.
     lldArguments.push_back(runtimePath);
     lldArguments.emplace_back("-Wl,--end-group");
+    // Tasks start threads through pthread. glibc 2.34 and later and musl keep it in libc and the
+    // library is empty there; older glibc needs it (decision 0018).
+    if (options.usesThreads) lldArguments.emplace_back("-lpthread");
 #endif
     std::vector<const char*> rawLldArguments;
     rawLldArguments.reserve(lldArguments.size());

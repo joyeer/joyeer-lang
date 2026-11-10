@@ -60,6 +60,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::arrayRemoveLast:
+        case Opcode::taskSpawn:
+        case Opcode::taskJoin:
         case Opcode::constructDictionary:
         case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
@@ -177,6 +179,7 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::string:
             case typing::TypeKind::array:
             case typing::TypeKind::dictionary:
+            case typing::TypeKind::task:
                 result = true;
                 break;
             case typing::TypeKind::structure: {
@@ -1917,6 +1920,54 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::taskSpawn: {
+                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
+                        const auto* taskType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        if (!knownCallee) {
+                            report(VerificationErrorId::invalidReference, functionId, block.id, location,
+                                   "task_spawn references an unknown function");
+                            break;
+                        }
+                        const auto& callee = *functions.at(*instruction.callee);
+                        // The target is a Joyeer function with exactly one consuming parameter; the
+                        // handle's argument is the target's result (Void when it returns nothing).
+                        const bool matches = !callee.isExternal && !callee.nativeBinding.has_value() &&
+                                callee.parameters.size() == 1 && callee.parameters[0].isConsuming &&
+                                callee.parameters[0].value.category == ValueCategory::value &&
+                                operands[0]->category == ValueCategory::value &&
+                                operands[0]->type == callee.parameters[0].value.type &&
+                                taskType != nullptr && taskType->kind == typing::TypeKind::task &&
+                                taskType->arguments.size() == 1 &&
+                                instruction.result->category == ValueCategory::value &&
+                                (callee.returnsValue ? taskType->arguments[0] == callee.resultType
+                                                     : types.contains(taskType->arguments[0]) &&
+                                                       types.at(taskType->arguments[0])->kind == typing::TypeKind::voidType);
+                        if (!matches) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "task_spawn requires a Joyeer function with one consuming parameter matching its operand and a task of its result type");
+                        }
+                        break;
+                    }
+                    case Opcode::taskJoin:
+                        if (requireShape(1, 0) && operands[0] != nullptr) {
+                            const auto* taskType = types.contains(operands[0]->type)
+                                    ? types.at(operands[0]->type)
+                                    : nullptr;
+                            const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                    ? types.at(instruction.result->type)
+                                    : nullptr;
+                            if (operands[0]->category != ValueCategory::address || taskType == nullptr ||
+                                taskType->kind != typing::TypeKind::task || taskType->arguments.size() != 1 ||
+                                !instruction.result.has_value() || resultType == nullptr ||
+                                instruction.result->category != ValueCategory::value ||
+                                instruction.result->type != taskType->arguments[0]) {
+                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                       "task_join requires a task handle address and yields the task's result type");
+                            }
+                        }
+                        break;
                     case Opcode::arrayConsumeEmpty:
                         if (requireShape(1, 0) && operands[0] != nullptr) {
                             const auto* arrayType = types.contains(operands[0]->type)
@@ -2359,6 +2410,8 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::arrayAppend: return "array_append";
         case Opcode::arrayRemoveLast: return "array_remove_last";
         case Opcode::arrayConsumeEmpty: return "array_consume_empty";
+        case Opcode::taskSpawn: return "task_spawn";
+        case Opcode::taskJoin: return "task_join";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -2625,6 +2678,7 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::arrayRemoveLast:
                     case Opcode::arrayConsumeEmpty:
+                    case Opcode::taskJoin:
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
@@ -2651,6 +2705,7 @@ std::string dump(const Module& module) {
                                 << valueName(instruction.operands[index]);
                         }
                         break;
+                    case Opcode::taskSpawn:
                     case Opcode::call:
                         out << " @" << instruction.callee.value_or(invalidFunctionId) << '(';
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {

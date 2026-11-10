@@ -1,0 +1,93 @@
+// Tasks (spec 21): spawn runs a function on its own thread with a moved input, and join gives
+// back its owned result. Every value kind round-trips and the leak check ends at zero.
+struct Job {
+    var id: Int
+    var label: String
+}
+
+struct Quiet {
+}
+
+func square(value: consuming Int): Int {
+    return value * value
+}
+
+func shout(text: consuming String): String {
+    return text + "!"
+}
+
+func describe(job: consuming Job): String {
+    return job.label
+}
+
+func numbers(count: consuming Int): [Int] {
+    var values: [Int] = []
+    var index = 0
+    while index < count {
+        &values.append(element: index)
+        index = index + 1
+    }
+    return values
+}
+
+func total(values: consuming [Int]): Int {
+    var sum = 0
+    var index = 0
+    while index < values.count {
+        sum = sum + values[index]
+        index = index + 1
+    }
+    return sum
+}
+
+// A `deinit` runs on the thread that owns the value: this one in the task, before join returns.
+struct Guard {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+func hold(guard: consuming Guard): Int {
+    return guard.id
+}
+
+func announce(value: consuming Int) {
+    print(value: value)
+}
+
+func ignore(quiet: consuming Quiet): Int {
+    return 5
+}
+
+func main() {
+    let note = spawn(function: announce, input: consume 99)
+    consume note.join()
+
+    let a = spawn(function: square, input: consume 7)
+    let b = spawn(function: shout, input: consume "hi")
+    let c = spawn(function: describe, input: consume Job(id: 1, label: "job"))
+    let d = spawn(function: numbers, input: consume 4)
+    let e = spawn(function: ignore, input: consume Quiet())
+    let first = consume a.join()
+    let second = consume b.join()
+    let third = consume c.join()
+    let fourth = consume d.join()
+    let fifth = consume e.join()
+    print(value: first)
+    print(value: second)
+    print(value: third)
+    print(value: fourth.count)
+    print(value: fifth)
+
+    let g = spawn(function: hold, input: consume Guard(id: 8))
+    let held = consume g.join()
+    print(value: held)
+
+    // The input may be a named value; it moves into the task.
+    var items: [Int] = [1, 2, 3, 4]
+    let sum = spawn(function: total, input: consume items)
+    let answer = consume sum.join()
+    print(value: answer)
+}

@@ -2659,4 +2659,182 @@ TEST_F(TypeCheckingTest, AnUnknownMemberUnderConsumeReportsOnlyTheUnknownMember)
             << joyeer::typing::dump(checking.diagnostics);
 }
 
+
+// Tasks (spec 21): `spawn(function:, input:)` has type `JoinHandle<R>`, and `consume h.join()` gives R.
+constexpr const char* taskPrelude =
+        "func square(value: consuming Int): Int { return value * value }\n"
+        "func greet(name: consuming String): String { return name }\n"
+        "func shout(name: consuming String) { }\n"
+        "struct Job {\n    var id: Int\n}\n"
+        "func run(job: consuming Job): Int { return job.id }\n";
+
+TEST_F(TypeCheckingTest, SpawnHasTheJoinHandleTypeOfTheTargetsResult) {
+    check(std::string(taskPrelude) +
+          "func f() {\n"
+          "    let a = spawn(function: square, input: consume 7)\n"
+          "    let b = spawn(function: greet, input: consume \"x\")\n"
+          "    let c = spawn(function: shout, input: consume \"y\")\n"
+          "    let d = spawn(function: run, input: consume Job(id: 3))\n"
+          "    consume a.join()\n"
+          "    consume b.join()\n"
+          "    consume c.join()\n"
+          "    consume d.join()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[5]);
+    auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[0])), "JoinHandle<Int>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[1])), "JoinHandle<String>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[2])), "JoinHandle<Void>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[3])), "JoinHandle<Int>");
+}
+
+TEST_F(TypeCheckingTest, JoinGivesTheResultTypeAndAHandleCanBeNamedInATypePosition) {
+    check(std::string(taskPrelude) +
+          "func wait(handle: consuming JoinHandle<Int>): Int { return consume handle.join() }\n"
+          "func f(): Int {\n"
+          "    let h: JoinHandle<Int> = spawn(function: square, input: consume 2)\n"
+          "    return wait(handle: consume h)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) +
+          "func f() {\n"
+          "    let h = spawn(function: square, input: consume 2)\n"
+          "    let s: String = consume h.join()\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsATargetThatIsNotANamedFunction) {
+    check(std::string(taskPrelude) + "func f() {\n    let n = 1\n    let h = spawn(function: n, input: consume 1)\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetNotFunction))
+            << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) + "func f() {\n    let h = spawn(function: square(value: 1), input: consume 1)\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetNotFunction))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsMainAMethodAndANativeBinding) {
+    check("func main() {\n    let h = spawn(function: main, input: consume 1)\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetUnsupported))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsATargetWithoutExactlyOneConsumingParameter) {
+    const std::vector<std::string> rejected {
+        "func none(): Int { return 1 }\nfunc f() { let h = spawn(function: none, input: consume 1) }\n",
+        "func two(a: consuming Int, b: consuming Int): Int { return a }\nfunc f() { let h = spawn(function: two, input: consume 1) }\n",
+        "func borrowed(a: Int): Int { return a }\nfunc f() { let h = spawn(function: borrowed, input: consume 1) }\n",
+        "func change(a: inout Int) { }\nfunc f() { let h = spawn(function: change, input: consume 1) }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetParameters))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, SpawnRejectsATargetThatNeverReturns) {
+    check("func forever(a: consuming Int): Never { return forever(a: consume a) }\n"
+          "func f() { let h = spawn(function: forever, input: consume 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetNever))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnNeedsConsumeOnTheInputAndTheRightLabels) {
+    check(std::string(taskPrelude) + "func f() { let h = spawn(function: square, input: 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnInputMustMatchTheTargetsParameterType) {
+    check(std::string(taskPrelude) + "func f() { let h = spawn(function: square, input: consume \"text\") }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, JoinNeedsConsumeAndAnOwnedHandle) {
+    check(std::string(taskPrelude) +
+          "func f() {\n    let h = spawn(function: square, input: consume 1)\n    h.join()\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) +
+          "func f(handle: JoinHandle<Int>) { consume handle.join() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ATaskHandleIsNoncopyable) {
+    check(std::string(taskPrelude) +
+          "func f() {\n    let h = spawn(function: square, input: consume 1)\n    let g = h\n    consume g.join()\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A user declaration of a prelude name wins in its own scope (0013 Q15, spec 21.2).
+TEST_F(TypeCheckingTest, AUserDeclaredSpawnOrJoinHandleWinsOverThePrelude) {
+    check("func spawn(function: Int, input: Int): Int { return function + input }\n"
+          "func f(): Int { return spawn(function: 1, input: 2) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("struct JoinHandle {\n    var id: Int\n}\n"
+          "func f(): Int {\n    let h = JoinHandle(id: 4)\n    return h.id\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+
+TEST_F(TypeCheckingTest, SpawnRejectsAMethodAndABuiltinWithOneDiagnosticEach) {
+    check("struct S {\n    var a: Int\n    func m(value: consuming Int): Int { return value }\n}\n"
+          "func f() { let h = spawn(function: S.m, input: consume 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetUnsupported))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f() { let h = spawn(function: print, input: consume 1) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::spawnTargetUnsupported))
+            << joyeer::typing::dump(checking.diagnostics);
+    // A member of an instance is read as a name, not checked as a value: exactly one error, and no
+    // leaked "unresolved reference" from the deferred member lookup.
+    check("struct S {\n    var a: Int\n    func m(value: consuming Int): Int { return value }\n}\n"
+          "func f() { let s = S(a: 1)\n let h = spawn(function: s.m, input: consume 1) }\n");
+    EXPECT_EQ(checking.diagnostics.size(), 1u) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SpawnAcceptsAParenthesizedFunctionName) {
+    check(std::string(taskPrelude) +
+          "func f(): Int {\n    let h = spawn(function: (square), input: consume 2)\n    return consume h.join()\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// `consume` covers the receiver of the call it starts (spec 21.3): parenthesize before `?`, and bind a
+// joined result before using it as an argument.
+TEST_F(TypeCheckingTest, JoinBeforeAPostfixQuestionMarkIsParenthesizedAndAnArgumentIsBoundFirst) {
+    check("func fails(value: consuming Int): Result<Int, IOError> { return .Ok(value) }\n"
+          "func g(): Result<Int, IOError> {\n"
+          "    let h = spawn(function: fails, input: consume 1)\n"
+          "    let v = (consume h.join())?\n"
+          "    return .Ok(v)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check(std::string(taskPrelude) +
+          "func g() {\n    let h = spawn(function: square, input: consume 1)\n    print(value: consume h.join())\n}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, ATaskHandleCannotBeAKeyAValueOrAConstantAndCannotBeCompared) {
+    const std::vector<std::string> rejected {
+        "func f(table: [Int: JoinHandle<Int>]) { }\n",
+        "func f(handles: consuming [JoinHandle<Int>]) { for each in handles { } }\n",
+        "func make(value: consuming Int): Int { return value }\n"
+        "let global: JoinHandle<Int> = spawn(function: make, input: consume 1)\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_FALSE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+    check(std::string(taskPrelude) +
+          "func f(): Bool {\n    let a = spawn(function: square, input: consume 1)\n"
+          "    let b = spawn(function: square, input: consume 2)\n    return a == b\n}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
 } // namespace

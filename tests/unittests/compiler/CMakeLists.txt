@@ -1016,6 +1016,14 @@ if(JOYEER_CLANG_EXECUTABLE)
             "bb\na\n1\n3\n2\n1\n6\n0\n2\n1\n0\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2ETaskBasic task_basic
+            "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ETaskFanout task_fanout
+            "338350\n37\n60\n3\n3\n9\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EMatchMoves match_moves
             "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
     add_joyeer_native_regression(
@@ -1284,6 +1292,10 @@ abcdabcd
             E2EUnitArrayBounds unit_array_bounds "array index out of bounds")
     add_joyeer_native_checked_trap(
             E2EArrayConsumeEmptyTrap array_consume_empty_trap "array not empty")
+    add_joyeer_native_checked_trap(
+            E2ETaskTrap task_trap "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            E2ETaskLimit task_limit "too many tasks")
     add_joyeer_native_checked_trap(
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
 
@@ -1696,6 +1708,19 @@ add_test(NAME DiagnosticsCliRejectsCopyOfNoncopyableValue
 )
 set_tests_properties(DiagnosticsCliRejectsCopyOfNoncopyableValue PROPERTIES
         LABELS "diagnostics;type-checking;deinit"
+)
+
+add_test(NAME DiagnosticsCliRejectsRunProcessWithTasks
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/run_process_with_tasks.joyeer
+                "-DEXPECTED_HEADER=run_process_with_tasks.joyeer:9:18: error[semantic-analysis.run-process-with-tasks]"
+                "-DEXPECTED_SOURCE=    let status = runProcess(executable: \"true\", arguments: [], workingDirectory: \".\")"
+                "-DEXPECTED_HELP=help: this program also calls spawn"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsRunProcessWithTasks PROPERTIES
+        LABELS "diagnostics;semantic-analysis;tasks"
 )
 
 add_test(NAME DiagnosticsCliRejectsPartialConsumeOfDeinitType

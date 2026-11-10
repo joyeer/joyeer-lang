@@ -2747,6 +2747,16 @@ private:
             return lowerArrayRemoveLast(expression);
         }
         if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
+            targetSymbol->name == "spawn") {
+            return lowerSpawn(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            targetSymbol->name == "join") {
+            return lowerTaskJoin(expression);
+        }
+        if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "consumeEmpty") {
             return lowerArrayConsumeEmpty(expression);
@@ -2883,6 +2893,80 @@ private:
         const auto result = *instruction.result;
         emit(std::move(instruction));
         // The element moves out of the array into the result, which owns it.
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `spawn(function: f, input: consume x)`: the input moves into the task exactly as it would into a
+    // direct call of `f`, and the instruction yields the handle (spec 21.2).
+    std::optional<ir::Value> lowerSpawn(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->arguments.size() != 2) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                   "spawn takes a function and an input");
+            return std::nullopt;
+        }
+        const auto named = model->referencedSymbol(expression->arguments[0]->value);
+        const auto resultType = model->typeOf(expression);
+        if (!named.has_value() || !functions.contains(*named) || !resultType.has_value()) {
+            report(DiagnosticId::missingSymbol, expression->span,
+                   "spawn target has no IR function declaration");
+            return std::nullopt;
+        }
+        const auto calleeId = functions.at(*named);
+        const auto& callee = module->functions[calleeId];
+        const auto& argument = expression->arguments[1];
+        std::optional<ir::Value> value;
+        if (isAddressable(argument->value)) {
+            const auto address = lowerAddress(argument->value);
+            if (address.has_value()) {
+                value = emitValue(
+                        ir::Opcode::take,
+                        address->type,
+                        ir::ValueCategory::value,
+                        { address->id },
+                        argument->span);
+            }
+        } else {
+            value = lowerExpression(argument->value);
+        }
+        if (!value.has_value()) return std::nullopt;
+        value = coerce(*value, callee.parameters[0].value.type, argument->value->span);
+        if (!value.has_value()) return std::nullopt;
+        if (requiresDestroy(value->type)) {
+            value = prepareOwned(*value, argument->span);
+            if (!value.has_value()) return std::nullopt;
+            if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
+        }
+        auto instruction = makeInstruction(ir::Opcode::taskSpawn, expression->span);
+        instruction.operands = { value->id };
+        instruction.callee = calleeId;
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `consume handle.join()`: waits for the task, moves its result out, and frees the task block. The
+    // handle's storage is zeroed, so the binding's scope-end destroy has nothing to drop.
+    std::optional<ir::Value> lowerTaskJoin(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->callee->kind != syntax::Kind::memberExpr || !expression->arguments.empty()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "JoinHandle.join takes no arguments");
+            return std::nullopt;
+        }
+        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        const auto handle = lowerAddress(member->base);
+        const auto resultType = model->typeOf(expression);
+        if (!handle.has_value() || !resultType.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::taskJoin, expression->span);
+        instruction.operands = { handle->id };
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
         recordValue(result, requiresDestroy(result.type)
                 ? ValueOwnership::owned
                 : ValueOwnership::trivial);

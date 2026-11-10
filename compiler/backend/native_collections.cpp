@@ -11,6 +11,46 @@ size_t alignTo(size_t size, size_t alignment) {
 }
 }
 
+// The thread record is JOYEER_THREAD_BYTES (runtime.h); a test keeps the two equal.
+constexpr size_t taskRecordBytes = 128;
+
+TaskLayout Builder::taskLayout(ir::TypeId input, ir::TypeId result) {
+    const auto resultLayout = unit(result) ? Layout {} : layout(result);
+    const auto inputLayout = unit(input) ? Layout {} : layout(input);
+    TaskLayout out;
+    out.resultOffset = alignTo(taskRecordBytes + 8, resultLayout.alignment);
+    out.inputOffset = alignTo(out.resultOffset + resultLayout.size, inputLayout.alignment);
+    out.size = alignTo(out.inputOffset + inputLayout.size, 16);
+    return out;
+}
+
+// The thread entry for one task target: it loads the moved input from the block, calls the target as
+// a direct call would, and stores the result. The runtime calls it with the block as its argument.
+llvm::Function* Builder::taskThunk(const ir::Function& callee) {
+    if (const auto found = taskThunks.find(callee.id); found != taskThunks.end()) return found->second;
+    auto* thunkType = llvm::FunctionType::get(builder.getVoidTy(), {pointer()}, false);
+    auto* thunk = llvm::Function::Create(thunkType, llvm::GlobalValue::InternalLinkage,
+            "joyeer_task_thunk_" + std::to_string(callee.id), module());
+    // No debug scope of its own: inlining it into a caller with line tables would corrupt them.
+    thunk->addFnAttr(llvm::Attribute::NoInline);
+    taskThunks.emplace(callee.id, thunk);
+
+    llvm::IRBuilderBase::InsertPointGuard guard(builder);
+    builder.SetCurrentDebugLocation(llvm::DebugLoc());
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context(), "entry", thunk));
+    const auto input = callee.parameters.at(0).value.type;
+    const auto info = taskLayout(input, callee.resultType);
+    auto* block = thunk->getArg(0);
+    block->setName("block");
+    auto* argument = builder.CreateLoad(llvmType(input), bytes(block, integer(info.inputOffset)), "input");
+    auto* invocation = builder.CreateCall(functions.at(callee.id), {argument});
+    if (callee.returnsValue && !unit(callee.resultType)) {
+        builder.CreateStore(invocation, bytes(block, integer(info.resultOffset)));
+    }
+    builder.CreateRetVoid();
+    return thunk;
+}
+
 int Builder::keyKind(ir::TypeId id) {
     switch (type(id).kind) {
         case typing::TypeKind::integer: return 1;
@@ -146,6 +186,41 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
             const auto elementId = values.at(instruction.operands[1]).type;
             call("joyeer_array_append_owned_abi", builder.getVoidTy(),
                     {argument(0), unit(elementId) ? nullPointer() : spill(argument(1))});
+            return true;
+        }
+        case Opcode::taskSpawn: {
+            const auto& callee = *sourceFunctions.at(*instruction.callee);
+            const auto input = callee.parameters.at(0).value.type;
+            const auto info = taskLayout(input, callee.resultType);
+            auto* block = call("joyeer_alloc", pointer(), {integer(info.size)});
+            // The runtime requires the thread record zeroed, and a recycled block is not.
+            builder.CreateMemSet(block, builder.getInt8(0), taskRecordBytes, llvm::MaybeAlign(8));
+            builder.CreateStore(integer(info.size), bytes(block, integer(taskRecordBytes)));
+            builder.CreateStore(argument(0), bytes(block, integer(info.inputOffset)));
+            auto* started = call("joyeer_thread_start_abi", builder.getInt64Ty(),
+                    {block, taskThunk(callee), block});
+            // -1073741824 is JOYEER_THREAD_LIMIT; any other negative code is the system's refusal.
+            trap(builder.CreateICmpEQ(started, builder.getInt64(static_cast<uint64_t>(-1073741824LL)),
+                         temporary()), "too many tasks");
+            trap(builder.CreateICmpSLT(started, integer(0), temporary()), "cannot start task");
+            result = block;
+            return true;
+        }
+        case Opcode::taskJoin: {
+            const auto resultId = instruction.result->type;
+            auto* slot = argument(0);
+            auto* block = builder.CreateLoad(pointer(), slot, temporary());
+            auto* joined = call("joyeer_thread_join_abi", builder.getInt64Ty(), {block});
+            trap(builder.CreateICmpSLT(joined, integer(0), temporary()), "cannot join task");
+            const auto resultLayout = unit(resultId) ? Layout {} : layout(resultId);
+            const auto resultOffset = alignTo(taskRecordBytes + 8, resultLayout.alignment);
+            llvm::Value* value = unit(resultId)
+                    ? static_cast<llvm::Value*>(llvm::Constant::getNullValue(llvmType(resultId)))
+                    : builder.CreateLoad(llvmType(resultId), bytes(block, integer(resultOffset)), temporary());
+            auto* size = builder.CreateLoad(builder.getInt64Ty(), bytes(block, integer(taskRecordBytes)), temporary());
+            call("joyeer_free", builder.getVoidTy(), {block, size});
+            builder.CreateStore(nullPointer(), slot);
+            result = value;
             return true;
         }
         case Opcode::arrayConsumeEmpty:

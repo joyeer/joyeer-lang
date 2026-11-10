@@ -22,6 +22,15 @@ struct Layout {
     size_t alignment = 1;
 };
 
+// The heap block behind a task handle (decision 0018): a zeroed thread record, the block's own size,
+// the result, then the input. `join` finds the result from the result type alone and frees the block
+// with the stored size, because the allocator keeps no header.
+struct TaskLayout {
+    size_t resultOffset = 0;
+    size_t inputOffset = 0;
+    size_t size = 0;
+};
+
 // One lowering session owns all caches and insertion state. The translation
 // units implement separate responsibilities, rather than separate IR models.
 class Builder {
@@ -57,6 +66,7 @@ private:
     std::unordered_map<ir::BlockId, llvm::BasicBlock*> blocks;
     std::map<ir::TypeId, llvm::Function*> clones;
     std::map<ir::TypeId, llvm::Function*> destroys;
+    std::unordered_map<ir::FunctionId, llvm::Function*> taskThunks;
     std::vector<llvm::DIFile*> debugFiles;
     std::unordered_map<ir::DebugScopeId, const ir::DebugScope*> sourceDebugScopes;
     std::unordered_map<ir::DebugVariableId, const ir::DebugVariable*> sourceDebugVariables;
@@ -105,6 +115,8 @@ private:
     llvm::Constant* constantArray(const ir::Constant& constant);
     llvm::Constant* decodeConstant(ir::TypeId id, const std::string& data, size_t& offset);
     llvm::Value* helper(ir::TypeId id, bool clone);
+    TaskLayout taskLayout(ir::TypeId input, ir::TypeId result);
+    llvm::Function* taskThunk(const ir::Function& callee);
     void emitOwnership();
     void emitOwnershipBodies();
     void emitClone(ir::TypeId id);

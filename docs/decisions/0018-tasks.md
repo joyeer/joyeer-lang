@@ -1,8 +1,9 @@
 # 0018: Tasks: `spawn`, `JoinHandle` and `join`
 
-- Status: accepted as a design (2026-11-09), after a `language-designer` review whose findings are
-  folded in below. Phase P5a of the [concurrency plan](../plan/concurrency.md), the first half of
-  the compiler work in [0013](0013-concurrency-model.md). Nothing is implemented. Channels are
+- Status: accepted (2026-11-09), after a `language-designer` review whose findings are folded in
+  below. Phase P5a of the [concurrency plan](../plan/concurrency.md), the first half of the compiler
+  work in [0013](0013-concurrency-model.md). Implemented: stage 0 (`consumeEmpty`) and stage 1
+  (`JoinHandle`, `spawn`, `join`) on Linux and Windows. Channels are
   [0019](0019-channels.md) (P5b with the runtime of P6), so tasks ship on the P3 and P4 runtime alone.
 - Spec: [§21 Concurrency](../spec/21-concurrency.md) (new), [§2.6.3](../spec/02-types.md#263-concurrency-builtin-types-provisional)
   and, as the first stage, `Array.consumeEmpty()` (§2.6.4, new).
@@ -37,10 +38,11 @@ Constraints, from 0013 and the compiler as it is:
    0013 and 0015 wrote and reads like §3.2.4's `consume b.build()`. Adopted. It is more than a flag
    (see "What the compiler must grow").
 4. **Thunk in the runtime, the backend, or IR lowering.** The entry must call one specific function with
-   one specific argument and result layout, so something is generated per target. Adopted: **IR
-   lowering emits it as an ordinary IR function**, so the verifier checks it, it appears in IR dumps and
-   debug scopes, and the backend only needs a "function address" operand on `task_spawn`. A backend-only
-   thunk would be invisible to the verifier.
+   one specific argument and result layout, so something is generated per target. Adopted: **the backend
+   emits it** next to the `task_spawn` it serves. The first draft put it in IR lowering so the verifier
+   would check it, but IR has no raw-pointer load or offset operation to read the input out of the block,
+   so such a thunk cannot be written in IR. The IR verifier checks the `task_spawn` instead (the target's
+   signature), and LLVM's verifier checks the thunk.
 5. **Result slot in a runtime object versus in the task block.** One heap block holds the thread record,
    the result and the input, so one allocation and one free serve a task and the leak counter needs no
    new rule. Adopted.
@@ -57,8 +59,8 @@ let answer = consume handle.join()                       // 49
 ```
 
 - `spawn` is declared in the prelude with the parameters `function` and `input`; labels and their
-  order are checked by the ordinary call rules (`type-checking.invalid-call-arguments`), so there is
-  no new arguments diagnostic. `function:` is a name expression that resolves to one function (an
+  order are checked by name resolution's ordinary call rules (`name-resolution.argument-out-of-order`,
+  `argument-count-mismatch`, `unexpected-argument-label`), so there is no new arguments diagnostic. `function:` is a name expression that resolves to one function (an
   identifier or a module-qualified identifier) and is **not** type-checked as a value (a bare function
   name used as a value is rejected today). `input:` is the argument for the target's single `consuming`
   parameter and, as for any consuming argument (§4.3), **must be written with `consume`**, a literal or
@@ -74,9 +76,9 @@ let answer = consume handle.join()                       // 49
 
 The target must be a **top-level function** that is not `@c_extern`/`@c_export`, not `main`, has
 **exactly one parameter, `consuming`**, and does not return `Never`. "Not generic" holds trivially:
-user generic functions do not exist yet (§3.2.3), so that case has no test until they do. Overloaded
-means more than one function of that name active on the target platform (a same-named function under
-another `@platform` does not count). A public function of a source dependency is a valid target; a
+user generic functions do not exist yet (§3.2.3), so that case has no test until they do. Two
+functions of one name cannot coexist in a scope (name resolution reports a duplicate declaration), so there is no
+overload case. A public function of a source dependency is a valid target; a
 private one is not visible (§12). `let f = square; spawn(function: f, ...)` is not a function name
 (§20.1).
 
@@ -96,9 +98,14 @@ later redeclared as a generic builtin: every program it accepts stays valid.
   returned from a task and joined elsewhere) and a handle can be an `input`. `join` ends a handle in a
   struct field field by field (`consume w.handle.join()`); a struct holding one cannot declare `deinit`.
 - A `?` between `spawn` and `join` leaves the handle live and is `linear-not-consumed`; the borrowing
-  idiom of 0015 applies. `consume h.join()?` is fine when `R` is a `Result`. (0015's "consume commit
-  order before a later `?`" concerns multi-argument calls; `spawn`'s other argument is a name with no
-  effects, so it never applies here.)
+  idiom of 0015 applies. `(consume h.join())?` is fine when `R` is a `Result`.
+- **A handle moved into a call is pending until the call commits** (0015 rule 3, implemented here
+  because `JoinHandle` makes it reachable): in `take(handle: consume spawn(...), extra: f()?)`, or an
+  initializer `Holder(handle: spawn(...), extra: f()?)`, the `?` runs after the task has started and
+  would drop the handle on its error path, so it is `semantic-analysis.linear-not-consumed` at the `?`,
+  and the help says to evaluate the `?` first. The first review found this program compiling and dying
+  at run time with `task dropped without join`; the trap stays as defence in depth. Array and
+  dictionary literals and enum payloads are not covered yet.
 - An input that is a partial move (`consume pair.first`) follows the ordinary partial-move rules; a
   `deinit` type cannot be partially moved.
 - Name resolution: `spawn` and `JoinHandle` are in the prelude scope; see option 2.
@@ -142,25 +149,28 @@ later redeclared as a generic builtin: every program it accepts stays valid.
   with the stored size (the allocator has no header, so `joyeer_free` needs the exact size). The 128 is
   `JOYEER_THREAD_BYTES`, taken from one shared definition in the compiler, with a test that it equals the
   runtime header's value. A `Void` result and a zero-size input occupy no bytes.
-- **The thunk** is an IR function per distinct target, `ccc`, `void(ptr block)`, `internal`, with a
-  stable mangled name and its own debug subprogram. It passes the input to the target by the address
-  inside the block when consuming aggregates are passed by address (no second copy) and otherwise loads
-  it; it stores the result at the result offset (or passes the result slot as the target's return
-  address). The runtime trampoline calls it with one pointer.
+- **The thunk** is one internal LLVM function `void(ptr block)` per distinct target, created by the backend
+  with the first `task_spawn` that names the target. It loads the input from the block (consuming
+  parameters are passed by value in this compiler), calls the target exactly as a direct call does, and
+  stores the result at the result offset. It has no debug scope of its own and is `noinline`, so it
+  cannot corrupt a caller's line tables. The runtime trampoline calls it with one pointer.
 - **Destroy helper.** The generated destroy helper for a `task<R>` leaf (reached through an
   `Optional`, an array, or a struct field that the linear check did not cover) **traps** with
-  `task dropped without join`: the defence in depth deferred in 0015. The IR verifier rejects an
-  explicit `destroy` of `task<R>` in lowering output; only helpers may reach the trap.
+  `task dropped without join`: the defence in depth deferred in 0015. (Lowering emits an ordinary
+  scope-end `destroy` of every handle slot, so the verifier cannot reject a `destroy` of `task<R>`; the
+  helper is a no-op on a joined or moved-from handle because both are zero.)
 - **Link.** The program object references the thread functions, so the thread archive member is linked
-  (lazy on Linux and the Windows own-entry link). The backend option struct gains `usesThreads`,
-  computed from the IR (any `task_spawn`) before code generation, so the **backend C ABI version is
-  bumped** as well as the IR wire version. On Linux a task program is linked with `-lpthread` after the
+  (lazy on Linux and the Windows own-entry link). The compiler computes `usesThreads` from the IR (any
+  `task_spawn`) and passes it in its own `LinkOptions`; the backend C ABI is unchanged because `-lpthread`
+  is one more linker argument, and only the IR wire version changes. On Linux a task program is linked
+  with `-lpthread` after the
   archive group, always (an empty library on glibc 2.34 and later and on musl; 0016 documented 2.34 as
   the minimum without it). macOS needs nothing. The import gate for a task program allows exactly the
   thread object's per-platform imports; every other program's gate is unchanged.
 - **`runProcess`** (0013 Q13, kept): `semantic-analysis.run-process-with-tasks` is reported at a call to
   System's `runProcess` when the compiled program (root plus every source dependency) also contains a
-  call to the prelude `spawn`. The definition is textual, not reachability, and a user function that
+  call to the prelude `spawn`. "System's" means a function named `runProcess` in the module named `System`
+  (the semantic model records module names). The definition is textual, not reachability, and a user function that
   happens to be named `runProcess` does not count. It is **not modular**: a library that calls
   `runProcess` (Fern's executor) becomes uncompilable once a consumer adds a `spawn`, and the error is
   reported inside code its author may not own, so the diagnostic cites one `spawn`. The 0013 rationale
@@ -194,8 +204,9 @@ consuming builtin member above, so the two are built together.
 
 `type-checking.`: `spawn-target-not-function` (not a name, or a variable; an unknown name is name
 resolution's), `spawn-target-unsupported` (a method, `@c_extern`/`@c_export` or `main`; the message names
-which), `spawn-target-overloaded`, `spawn-target-parameters` (not exactly one parameter, or not
-`consuming`), `spawn-target-never`. Reused: `invalid-call-arguments`, `invalid-consume-argument`,
+which), `spawn-target-parameters` (not exactly one parameter, or not `consuming`),
+`spawn-target-never`. There is no overload diagnostic: two functions of one name are already
+`name-resolution.duplicate-declaration`. Reused: `invalid-consume-argument`,
 `copy-of-noncopyable`, the generic-arity diagnostic, `linear-collection-element`,
 `linear-top-level-binding`, `linear-in-deinit-type`. `semantic-analysis.`: `run-process-with-tasks`,
 `use-after-consume`, `linear-not-consumed`, `linear-overwrite`, `linear-result-dropped`.

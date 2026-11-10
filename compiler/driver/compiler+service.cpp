@@ -613,6 +613,13 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
             });
     sourcefile->llvmIR = llvm.text;
     sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
+    for (const auto& function : lowering.module->functions) {
+        for (const auto& block : function.blocks) {
+            for (const auto& instruction : block.instructions) {
+                if (instruction.opcode == joyeer::ir::Opcode::taskSpawn) sourcefile->llvmUsesThreads = true;
+            }
+        }
+    }
     sourcefile->llvmModule = llvm.module;
     for (const auto& diagnostic : llvm.diagnostics) {
         reportSpannedDiagnostic(

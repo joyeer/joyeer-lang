@@ -1,8 +1,7 @@
-## §21 Concurrency: Tasks ⏳
+## §21 Concurrency: Tasks
 
-> **Status:** specified, being implemented in phase P5a of the
-> [concurrency plan](../plan/concurrency.md). Until the implementation lands, the compiler rejects
-> `spawn` and `JoinHandle` as unknown names. Channels are specified with
+> **Status:** implemented (phase P5a of the [concurrency plan](../plan/concurrency.md), stages 0
+> and 1) on Linux and Windows. Channels are specified with
 > [decision 0019](../decisions/0019-channels.md) and join this chapter when they are built. The
 > design record is [decision 0018](../decisions/0018-tasks.md); the model it builds on is
 > [decision 0013](../decisions/0013-concurrency-model.md).
@@ -33,7 +32,7 @@ func main() {
 
 `spawn` is a builtin function in the prelude, not a keyword, declared with the parameters `function`
 and `input`. The ordinary call rules check the labels and their order
-(`type-checking.invalid-call-arguments`). A declaration of the name in the current module, file or
+(`name-resolution.argument-out-of-order`, `argument-count-mismatch`). A declaration of the name in the current module, file or
 lexical scope takes precedence over it; a name imported from another module does not (§12.3).
 
 - `function:` is a name that resolves to one function (an identifier, or a module-qualified
@@ -51,7 +50,6 @@ The function must be:
 
 - a top-level function (not any method);
 - not `@c_extern` or `@c_export` (§19), and not `main` (`spawn-target-unsupported`);
-- the only function of its name active on the target platform (`spawn-target-overloaded`);
 - declared with **exactly one parameter**, and that parameter is `consuming` (§4.2)
   (`spawn-target-parameters`). A `borrowing`, `inout` or `initializing` parameter is rejected because a
   borrow cannot outlive the call and a child would otherwise mutate its parent's storage. A function
@@ -97,7 +95,12 @@ Consequences of the linear rules:
 - a `spawn(...)` statement whose handle is not used is `linear-result-dropped`;
 - a `?` between `spawn` and `join` leaves the handle live, which is an error. A function that must use
   `?` takes its state by `inout` and joins in its caller (the borrowing idiom of §4.7.1), or joins first:
-  `consume h.join()?` is accepted when `R` is a `Result`;
+  `(consume h.join())?` is accepted when `R` is a `Result` (a `consume` marker covers the receiver of the call
+  it starts, so it is parenthesized before a postfix `?`);
+- a joined result is not an argument: `print(value: consume h.join())` is rejected because the argument
+  marker and the receiver marker would both be `consume`; write `let v = consume h.join()` first, then use `v`;
+- the handle must be stored in a variable before it is joined: `spawn(...).join()` is rejected, because
+  `join` consumes its receiver in place;
 - a struct field holding a handle ends field by field (`consume worker.handle.join()`), and a struct
   holding one cannot declare `deinit`;
 - `Dict`, `for-in` and a top-level `let` cannot hold a handle.
@@ -110,12 +113,13 @@ func total(count: Int): Int {
     var handles: [JoinHandle<Int>] = []
     var index = 0
     while index < count {
-        &handles.append(element: spawn(function: square, input: consume index))
+        &handles.append(element: consume spawn(function: square, input: consume (index + 1)))
         index = index + 1
     }
     var sum = 0
     while true {
-        match consume handles.removeLast() {
+        let popped = &handles.removeLast()
+        match consume popped {
             .Some(handle) => { sum = sum + consume handle.join() }
             .None => { break }
         }
@@ -179,10 +183,9 @@ Type checking unless noted.
 |---|---|
 | `spawn-target-not-function` | `function:` is not a name that resolves to a function (a variable, an expression) |
 | `spawn-target-unsupported` | the target is a method, `@c_extern`/`@c_export` or `main` |
-| `spawn-target-overloaded` | the name resolves to more than one active function |
 | `spawn-target-parameters` | the target does not have exactly one parameter, or it is not `consuming` |
 | `spawn-target-never` | the target returns `Never` |
-| `invalid-call-arguments` | wrong labels, order, or a missing or extra argument of `spawn` |
+| `name-resolution.argument-out-of-order`, `argument-count-mismatch`, `unexpected-argument-label` | wrong labels, order, or a missing or extra argument of `spawn` |
 | `invalid-consume-argument` | `input:` without `consume`; `join` without `consume`, or on a borrowed or `inout` handle |
 | `copy-of-noncopyable` | copying a `JoinHandle` |
 | `linear-collection-element`, `linear-top-level-binding`, `linear-in-deinit-type` | a handle in a `Dict` or `for-in`, a top-level `let`, or a `deinit` type |

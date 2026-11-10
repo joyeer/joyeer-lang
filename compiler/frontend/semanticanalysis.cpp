@@ -341,6 +341,10 @@ private:
     std::unordered_set<semantic::SymbolId> initializingParameters;
     // Consuming parameters of linear type: owning bindings that must be ended like a local.
     std::vector<semantic::SymbolId> linearParameters;
+    // Linear values moved into the call or construction being analyzed, whose earlier operands have
+    // been evaluated but which has not committed yet (decision 0015, rule 3): an early exit in a later
+    // operand would leave them to be dropped.
+    size_t pendingLinearMoves = 0;
     // Set just before analysing an expression that is a statement, so a block, `if` or `match` in
     // that position knows its tail value is dropped rather than used.
     bool statementPosition = false;
@@ -698,6 +702,16 @@ private:
                 if (state.reachable) {
                     checkAllLinearEnded(state, expression->span, "this '?' returns early");
                 }
+                if (state.reachable && pendingLinearMoves > 0) {
+                    diagnostics.push_back(Diagnostic {
+                        DiagnosticId::linearNotConsumed,
+                        Severity::error,
+                        expression->span,
+                        "a linear value already moved into the enclosing call would be dropped if this '?' returns early",
+                        "evaluate the '?' first and bind its result, then make the call: let r = f()?",
+                    });
+                }
+
                 if (state.reachable) {
                     const auto operandType = model->typeOf(propagated->operand);
                     const auto* container = operandType.has_value()
@@ -766,6 +780,7 @@ private:
                         if (path.has_value()) mutatedArguments.push_back(path->root);
                     }
                 }
+                size_t countedPendingMoves = 0;
                 for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
                     // A `consume` marker on an argument that is stored (initializer, enum case,
@@ -797,9 +812,19 @@ private:
                             reportBorrowedLinearTemporary(argument->value, state);
                         }
                     }
+                    // An argument that moves a linear value is pending until the call commits.
+                    const auto argumentType = model->typeOf(argument->value);
+                    if (state.reachable && argumentType.has_value() && model->isLinear(*argumentType) &&
+                        (effect == syntax::AccessEffect::consuming ||
+                         !storagePath(argument->value).has_value())) {
+                        ++pendingLinearMoves;
+                        ++countedPendingMoves;
+                    }
                 }
+                pendingLinearMoves -= countedPendingMoves;
                 if (state.reachable &&
                     model->typeOf(expression) != model->types().neverType()) {
+
                     if (callableSymbol != nullptr && callableSymbol->isMutable) {
                         const auto receiver = storagePath(call->callee);
                         if (receiver.has_value()) {
@@ -1858,6 +1883,19 @@ Result Analyzer::analyze(const typing::TypeCheckedModel::Ptr& model) const {
             result.diagnostics.end(),
             usage.diagnostics.begin(),
             usage.diagnostics.end());
+    // `runProcess` forks on Linux, and a task program has other threads (spec 21.6). The test is
+    // textual over the whole program: any `spawn` and any System `runProcess`, reachable or not.
+    if (!model->spawnCalls().empty()) {
+        for (const auto& span : model->runProcessCalls()) {
+            result.diagnostics.push_back(Diagnostic {
+                DiagnosticId::runProcessWithTasks,
+                Severity::error,
+                span,
+                "'runProcess' cannot be used in a program that starts tasks",
+                std::string("this program also calls spawn; start child processes from a program that does not use tasks"),
+            });
+        }
+    }
     return result;
 }
 
@@ -1881,6 +1919,8 @@ const char* diagnosticName(DiagnosticId id) {
             return "semantic-analysis.linear-overwrite";
         case DiagnosticId::linearResultDropped:
             return "semantic-analysis.linear-result-dropped";
+        case DiagnosticId::runProcessWithTasks:
+            return "semantic-analysis.run-process-with-tasks";
         case DiagnosticId::unusedBinding: return "semantic-analysis.unused-binding";
     }
     return "semantic-analysis.unknown";

@@ -47,6 +47,8 @@ enum class TypeKind {
     unsignedInteger,
     float32,
     float64,
+    // `JoinHandle<R>`: a running task whose result type is the one argument (spec 21).
+    task,
 };
 
 [[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
@@ -156,6 +158,7 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
+    [[nodiscard]] TypeId taskType(TypeId result);
 
     // Resolves a type declaration symbol plus concrete built-in generic
     // arguments. Invalid arity and non-type symbols return nullopt.
@@ -264,6 +267,10 @@ enum class TypeCheckingDiagnosticId {
     linearCollectionElement,
     linearTopLevelBinding,
     linearStructWithoutFields,
+    spawnTargetNotFunction,
+    spawnTargetUnsupported,
+    spawnTargetParameters,
+    spawnTargetNever,
 };
 
 struct TypeCheckingDiagnostic {
@@ -313,6 +320,9 @@ public:
     [[nodiscard]] std::vector<std::vector<semantic::SymbolId>> linearLeafPaths(TypeId type) const;
     // True for a struct declared with the `linear` modifier.
     [[nodiscard]] bool isDeclaredLinear(TypeId type) const;
+    // Where the program starts a task and where it calls System's `runProcess` (spec 21.6).
+    [[nodiscard]] const std::vector<SourceSpan>& spawnCalls() const { return spawnCallSpans; }
+    [[nodiscard]] const std::vector<SourceSpan>& runProcessCalls() const { return runProcessCallSpans; }
 
 private:
     [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
@@ -327,6 +337,9 @@ private:
 
     semantic::SemanticModel::Ptr semanticModelValue;
     TypeContext typeContext;
+    // Where the program starts a task and calls System's `runProcess`; the two cannot meet (spec 21.6).
+    std::vector<SourceSpan> spawnCallSpans;
+    std::vector<SourceSpan> runProcessCallSpans;
     std::unordered_map<semantic::NodeId, TypeId> nodeTypes;
     std::unordered_map<semantic::SymbolId, TypeId> symbolTypes;
     std::unordered_map<semantic::SymbolId, TypedCallableSignature> callables;

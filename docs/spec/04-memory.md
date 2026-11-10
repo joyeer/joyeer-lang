@@ -84,8 +84,7 @@ key or value may not be. A linear type is noncopyable, so it does not satisfy `C
 
 A linear binding must not be **live** at any exit of its scope (§4.7.1). **Implementation
 status:** the checks are implemented for a struct declared `linear` in a toolchain-authorized
-source; `JoinHandle` itself arrives with the concurrency phases (decision 0015, "Linear types
-(P2c)").
+source, and for `JoinHandle<R>` ([§21](21-concurrency.md), decision 0015 "Linear types (P2c)").
 
 
 #### 4.1.2 Ownership state vs. access effect (two axes)

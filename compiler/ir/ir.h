@@ -83,6 +83,9 @@ enum class Opcode {
     arrayAppend,
     arrayRemoveLast,
     arrayConsumeEmpty,
+    // Starts a task running `callee(input)` and yields its handle; `taskJoin` waits for it (spec 21).
+    taskSpawn,
+    taskJoin,
     constructDictionary,
     dictionarySet,
     dictionaryGet,

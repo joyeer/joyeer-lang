@@ -135,6 +135,10 @@ The current instruction set covers:
 - mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
 - `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
   empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
+- `task_spawn` (the target function and one moved input, yielding a `JoinHandle<R>`) and `task_join` (a
+  handle address, yielding `R`): the backend allocates one block per task (zeroed 128-byte thread record,
+  block size, result, input), emits a thunk per target, starts the thread through the runtime thread
+  API, and `task_join` waits, moves the result out, frees the block and zeroes the handle (decision 0018);
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned

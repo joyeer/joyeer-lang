@@ -264,8 +264,8 @@ var receiver: ChannelReceiver<Int>
 channel(capacity: 8, sender: &sender, receiver: &receiver)
 ```
 
-**Implementation status:** specified only; these types and `spawn`, `join`, `send` and
-`receive` are implemented in the concurrency phases P5 and P6 of the
+**Implementation status:** `JoinHandle<R>`, `spawn` and `join` are implemented ([§21](21-concurrency.md));
+the channel types, `channel`, `send` and `receive` are specified only and arrive with P5b and P6 of the
 [plan](../plan/concurrency.md).
 
 #### 2.6.4 Ending an empty array: `consumeEmpty()`

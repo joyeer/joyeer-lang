@@ -24,6 +24,7 @@ enum class DiagnosticId {
     linearNotConsumed,
     linearOverwrite,
     linearResultDropped,
+    runProcessWithTasks,
     unusedBinding,
 };
 

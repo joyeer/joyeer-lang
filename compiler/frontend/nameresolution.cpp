@@ -222,6 +222,7 @@ public:
         for (const auto& module : modules) {
             const auto id = createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
             moduleScopes.push_back(id);
+            model->moduleNames_.push_back(module.name);
             namedModules.emplace(module.name, id);
         }
         struct FileContext {
@@ -660,6 +661,7 @@ private:
         const auto dictionaryType = declareBuiltinType("Dict");
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
+        const auto joinHandleType = declareBuiltinType("JoinHandle");
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
@@ -723,6 +725,21 @@ private:
                 arrayType,
                 SymbolKind::builtinMember,
                 "consumeEmpty",
+                voidType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    {},
+                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
+                });
+
+        // `consume handle.join()` waits for the task and gives back its result (spec 21.3). Like
+        // `consumeEmpty`, the receiver is consumed; the result type is the handle's argument, computed
+        // by the type checker.
+        declareBuiltinMember(
+                joinHandleType,
+                SymbolKind::builtinMember,
+                "join",
                 voidType,
                 CallableSignature {
                     CallableKind::function,
@@ -806,6 +823,28 @@ private:
                 {});
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
+
+        // `spawn(function: f, input: consume x)` starts a task (spec 21.2). Its parameters only fix the
+        // labels, their order and that `input` is consumed; the type checker derives the result type from
+        // the named function.
+        CallableSignature spawnSignature {
+            CallableKind::function,
+            true,
+            {
+                CallableParameter { std::string("function"), true, std::nullopt, std::nullopt, std::nullopt },
+                CallableParameter {
+                    std::string("input"), true, std::nullopt, std::nullopt, std::nullopt,
+                    syntax::AccessEffect::consuming },
+            },
+        };
+        const auto spawn = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "spawn",
+                {});
+        symbol(spawn).declaredType = voidType;
+        symbol(spawn).callable = std::move(spawnSignature);
 
         CallableSignature byteConversionSignature {
             CallableKind::function,

@@ -96,9 +96,15 @@ void Builder::emitClone(ir::TypeId id) {
     destination->setName("destination");
     sourceAddress->setName("source");
     const auto kind = type(id).kind;
+    if (kind == typing::TypeKind::task) {
+        // A task has one owner and is never cloned; reaching this is a compiler bug.
+        trap(builder.getTrue(), "a task cannot be copied");
+        return;
+    }
     if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
             kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_clone_abi"
+
                 : kind == typing::TypeKind::array ? "joyeer_array_clone_abi" : "joyeer_dictionary_clone_abi";
         auto* value = builder.CreateLoad(llvmType(id), sourceAddress, "value");
         call(name, builder.getVoidTy(), {destination,
@@ -142,9 +148,17 @@ void Builder::emitDestroy(ir::TypeId id) {
     auto* address = activeFunction->getArg(0);
     address->setName("value");
     const auto kind = type(id).kind;
+    if (kind == typing::TypeKind::task) {
+        // `join` zeroes the handle and a moved-from handle is zero, so a live one here was dropped
+        // without being joined: the linear check should have refused the program (defence in depth).
+        auto* block = builder.CreateLoad(pointer(), address, "task");
+        trap(builder.CreateIsNotNull(block), "task dropped without join");
+        return;
+    }
     if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
             kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_destroy_abi"
+
                 : kind == typing::TypeKind::array ? "joyeer_array_destroy_abi" : "joyeer_dictionary_destroy_abi";
         call(name, builder.getVoidTy(), {address});
         return;

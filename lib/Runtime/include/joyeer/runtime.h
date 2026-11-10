@@ -172,8 +172,9 @@ void* joyeer_dictionary_find_abi(
     int32_t keyKind);
 
 /* Threads, a blocking mutex and a condition variable (decision 0016). They live in a separate
- * object of the runtime archive, linked only into a program that references them. The runtime is
- * not thread safe yet: a function run on a thread started here must not allocate, print or panic.
+ * object of the runtime archive, linked only into a program that references them. The rest of the
+ * runtime is thread safe (decision 0017): a function run on a thread started here may allocate,
+ * print and panic.
  * Every result is >= 0 on success or a negative code: the negated operating-system error, or one
  * of the two codes below. */
 #define JOYEER_THREAD_BYTES 128 /* zeroed, 8-byte-aligned storage for one thread */
