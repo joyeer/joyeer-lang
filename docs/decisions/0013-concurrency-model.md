@@ -185,7 +185,9 @@ Write each as its own decision when it starts.
   accepts stays valid then. The `Work` form (option 7) is spelled differently
   (`spawn(work: ...)`), so it is a separate form and inherits no such guarantee.
   That keeps the closure question open.
-- **Channels (v1: single sender, single receiver).** A bounded channel has two
+- **Channels (v1: single sender, single receiver).** *(Amended by [0019](0019-channels.md): `send` returns
+  `Result<Void, ChannelClosed>` and destroys an unsent value instead of `SendError<T>`, and queued values
+  are destroyed when the receiver closes, under the channel lock.)* A bounded channel has two
   noncopyable owned ends, each with exactly one owner; capacity is at least 1.
   `send(value: consume T)` returns `Result<Void, SendError>` whose error carries
   the unsent value (the value was consumed, so it cannot vanish). `receive()`

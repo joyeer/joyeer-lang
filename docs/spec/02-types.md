@@ -242,9 +242,10 @@ removes the element in constant time and does not shrink the array's capacity.
 
 #### 2.6.3 Concurrency builtin types (provisional)
 
-The concurrency design ([decision 0013](../decisions/0013-concurrency-model.md)) adds four
+The concurrency design ([decision 0013](../decisions/0013-concurrency-model.md)) adds three
 compiler-known generic types, in the same manner as `Array`, `Dict`, `Optional` and `Result`:
-`JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>` and `SendError<T>`. Their type
+`JoinHandle<R>`, `ChannelSender<T>` and `ChannelReceiver<T>` (the first draft's `SendError<T>` is dropped from
+v1, [decision 0019](../decisions/0019-channels.md)), and the builtin enumeration `ChannelClosed`. Their type
 arguments are understood by the compiler, not by a general parameter mechanism, so this does not
 introduce user-defined generics. A user declaration of the same name takes precedence over the
 builtin in its scope.
@@ -252,11 +253,12 @@ builtin in its scope.
 - `JoinHandle<R>` is **linear** (§4.1.1): it must be ended, by `join`, on every path (§4.7.1). Tasks are specified in [§21](21-concurrency.md).
 - `ChannelSender<T>` and `ChannelReceiver<T>` are **noncopyable** and close their channel when
   destroyed, like a handle with a `deinit` (§3.7.1); an explicit consuming `close` also exists.
-  `T` may not be linear, because a value queued when the channel closes would be destroyed.
+  `T` may not be linear, because a value queued when the channel closes would be destroyed; `Any` and
+  `Never` are not element types either ([§21.9](21-concurrency.md#219-channels)).
 - A channel is created by `channel(capacity:, sender: &s, receiver: &r)`, a builtin returning
   `Void` whose two outputs are `initializing` parameters (§4.10), so both variables are declared,
   uninitialised, with their types, and the element type comes from those types, which must
-  agree. A capacity below 1 traps.
+  agree. A capacity below 1 traps, and a literal below 1 is a compile-time error (§21.9.1).
 
 ```joyeer
 var sender: ChannelSender<Int>

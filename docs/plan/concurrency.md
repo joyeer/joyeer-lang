@@ -157,7 +157,7 @@ one way in `InitializationBuilder`, and destroy helpers are generated per type.
 - [ ] Later (defence in depth): an IR `linear` bit, no scope-end cleanup for linear bindings, a
       verifier rule, a wire bump, `Array.consumeEmpty()`.
 - [x] Amend spec §2.6 (2.6.3) for the new compiler-known generic builtins (`JoinHandle<R>`,
-      `ChannelSender<T>`, `ChannelReceiver<T>`, `SendError<T>`). Channel creation is
+      `ChannelSender<T>`, `ChannelReceiver<T>`; `SendError<T>` was dropped by 0019). Channel creation is
       decided (0013 Q17): `channel(capacity:, sender: &s, receiver: &r)` with two
       `initializing` outputs; specify it, including a capacity below 1.
 - [x] Unit tests per stage with stable diagnostic IDs (stage fixtures under `tests/` follow with the

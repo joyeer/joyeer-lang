@@ -1,7 +1,7 @@
 ## §21 Concurrency: Tasks
 
 > **Status:** implemented (phase P5a of the [concurrency plan](../plan/concurrency.md), stages 0
-> and 1) on Linux and Windows. Channels are specified with
+> and 1) on Linux and Windows. Channels (§21.9) are specified with
 > [decision 0019](../decisions/0019-channels.md) and join this chapter when they are built. The
 > design record is [decision 0018](../decisions/0018-tasks.md); the model it builds on is
 > [decision 0013](../decisions/0013-concurrency-model.md).
@@ -199,3 +199,115 @@ An unknown `function:` name is name resolution's ordinary unknown-name diagnosti
 
 No production is added: `spawn(function: f, input: consume x)` is an ordinary call (§17, `call_arg`).
 The restriction on `function:` is a type-checking rule, not a grammar rule.
+
+### 21.9 Channels
+
+> **Status:** specified; being implemented in phases P5b and P6 ([decision 0019](../decisions/0019-channels.md)).
+> Until then the compiler rejects these names as unknown.
+
+A **channel** carries values from one task to another. It is bounded, has exactly one sender end and
+one receiver end, and moves each value: a value sent is gone from the sender and owned by whoever
+receives it. There is still no shared state in user code.
+
+#### 21.9.1 Creating a channel
+
+```joyeer
+var sender: ChannelSender<Int>
+var receiver: ChannelReceiver<Int>
+channel(capacity: 8, sender: &sender, receiver: &receiver)
+```
+
+`channel` is a builtin function whose last two parameters are `initializing` (§4.10): each argument is `&`
+of an uninitialized (or wholly consumed) mutable local, or of an `initializing` parameter, so a wrapper
+function can take two `initializing` parameters and call `channel`. The two have types `ChannelSender<T>`
+and `ChannelReceiver<T>` for the same `T`, and both are initialized by the call. `T` is any type that is not
+linear (§4.7.1), `Any` or `Never`; `Void` is allowed as a pure signal, and a nested channel end is allowed
+(the request/reply idiom). The rule applies at every occurrence of the types in a type position. A capacity
+that is an integer literal below 1 is a compile-time error; any other capacity below 1 traps
+(`invalid channel capacity`), and one whose buffer size overflows traps (`channel too large`).
+
+`ChannelSender<T>`, `ChannelReceiver<T>` and the enumeration `ChannelClosed` (one case, `Closed`) are
+builtin names; a user declaration of the same name takes precedence in its scope (§21.2).
+
+#### 21.9.2 The ends
+
+Each end is **noncopyable** (§4.1.1): copying one is `type-checking.copy-of-noncopyable`. An end is
+**not linear**: it is closed when its owner is destroyed, on every path, so a `?` or an early `return`
+needs no cleanup. An end moves like any noncopyable value, into a task as its input, out as part of its
+result, into an array or a struct field.
+
+#### 21.9.3 Sending and receiving
+
+```joyeer
+match sender.send(value: consume 5) {
+    .Ok(_) => (),
+    .Err(_) => print(value: "the receiver is gone"),
+}
+match receiver.receive() {
+    .Ok(value) => print(value: value),
+    .Err(_) => print(value: "closed"),
+}
+```
+
+- `sender.send(value: consume x)` has type `Result<Void, ChannelClosed>`. It **waits** while the queue is
+  full and the receiver is open. If the receiver is closed it returns `.Err(.Closed)` and the value is
+  destroyed (a handle in it is closed by its destroy helper), so nothing leaks. A top-level constant array
+  passed as `value` is cloned, never freed by the receiver (§21.2.2). The `Err` can be ignored without a
+  diagnostic. `send` and `receive` take their end as a **borrow**, not `inout`: an end is an I/O-like
+  handle, borrows cannot cross threads, and all shared state is behind the channel's lock.
+- `receiver.receive()` has type `Result<T, ChannelClosed>`. It **waits** while the queue is empty and the
+  sender is open. Values still queued when the sender closes are delivered first; it returns
+  `.Err(.Closed)` once the queue is empty and the sender is closed.
+- Neither operation has a timeout (a bounded wait is future work, decision 0013 Q11).
+- `Err(ChannelClosed)` cannot be propagated with `?` into a function with another error type; the worker
+  idiom is a loop that matches:
+
+```joyeer
+while true {
+    match receiver.receive() {
+        .Ok(job) => handle(job: consume job),
+        .Err(_) => { break }
+    }
+}
+```
+
+Binding the payload of `receive()` in a `match` clones a copyable payload (a `String`, an array) until
+§7.1.2 moves payloads out of owned temporaries for every type; a noncopyable payload is moved.
+
+#### 21.9.4 Closing
+
+`consume sender.close()` and `consume receiver.close()` end a handle immediately, like destroying it; the
+binding is uninitialized afterwards and may be assigned again. An end also closes when its owner is
+destroyed, including an end held in an array, a struct field or an `Optional`; to close one element of an
+array, remove it with `removeLast()` first (`consume a[i].close()` is rejected). Closing the sender wakes
+a blocked `receive`; closing the receiver wakes a blocked `send` and destroys every value still queued, on
+the closing thread **while holding the channel's lock**, so the `deinit` of a channel element must not
+wait on that channel. The channel's storage is freed by the second end to close, which is decided under the
+lock. A blocked operation's own end is borrowed for the call, so only the peer can close and wake it.
+
+#### 21.9.5 Memory model and limits
+
+All operations on one channel are totally ordered by the channel's lock (there is no ordering across
+different channels beyond each thread's program order), so §21.4 holds: a `send` happens
+before the `receive` that gets its value, and closing the sender, after every earlier send, happens
+before the receiver observes the closed result. A value is moved, not copied; its own bytes are copied
+into the queue and out of it.
+
+A program can deadlock: every thread blocked, a cycle of full channels, or a `join` of a task waiting on an
+end the joiner still holds (the sender its loop receives from, or the receiver a blocked producer needs).
+Close that end (by consuming it) before the join. The language does not detect this, with one exception: a
+single-threaded program (no unjoined thread) that would wait traps with `channel deadlock: nothing can
+wake this thread`. A channel of capacity `n` holds at most `n` values.
+
+#### 21.9.6 Diagnostics
+
+| ID | Rejects |
+|---|---|
+| `type-checking.invalid-initializing-argument`, `semantic-analysis.initializing-initialized-storage` | an operand of `channel` without `&`, not an uninitialized mutable local or `initializing` parameter, or already initialized |
+| `type-checking.channel-end-types` | the two operands are not a `ChannelSender<T>` and a `ChannelReceiver<T>` of the same `T` |
+| `type-checking.channel-capacity` | a literal capacity below 1 |
+| `type-checking.linear-channel-element` | an element type that is linear |
+| `type-checking.channel-element-type` | an element type of `Any` or `Never` |
+| `type-checking.copy-of-noncopyable` | copying an end |
+| `type-checking.invalid-consume-argument` | `send` without `consume` on its value; `close` without `consume`, on a borrowed end, or on an array element |
+| `semantic-analysis.use-after-consume` | using an end after `close` |
