@@ -7,4 +7,4 @@ workspace, so building the compiler and running CTest never depends on them.
 
 | Example | What it shows | Status |
 |---|---|---|
-| [`web-server/`](web-server/README.md) | A web server that serves a directory of Markdown files | Runs on Windows and Linux over the provisional TCP API ([§18.6](../docs/spec/18-host.md#186-tcp-networking)); macOS needs its TCP implementation |
+| [`web-server/`](web-server/README.md) | A web server that serves a directory of Markdown files, with a pool of worker tasks fed through channels | Runs on Windows and Linux over the provisional TCP API ([§18.6](../docs/spec/18-host.md#186-tcp-networking)); macOS needs its TCP implementation |

@@ -284,15 +284,18 @@ reviews, validation.
 
 ## P7: Use it in the web server (S to M)
 
-- [ ] Worker-pool version of `example/web-server`: the accept loop owns one bounded
+- [x] Worker-pool version of `example/web-server`: the accept loop owns one bounded
       channel per worker and moves each `TcpConnection` into one, round-robin; workers
       close what they own; the sender is closed before the join (0013 destruction rule).
-- [ ] Decide dispatch: a try-receive or small `select` so a slow connection does not
+- [x] Decide dispatch: a try-receive or small `select` so a slow connection does not
       hold up its worker's queue (0013 Q11), or document the head-of-line cost.
-- [ ] Keep the per-connection deadlines from P1a.
-- [ ] Measure requests per second and tail latency against the single-thread server
+      Decided: round-robin, no try-receive or `select`; the head-of-line cost is measured and
+      documented in the example README. Q11 stays open: channels have one sender, so the accept
+      loop cannot learn which worker is idle.
+- [x] Keep the per-connection deadlines from P1a.
+- [x] Measure requests per second and tail latency against the single-thread server
       and record it honestly in the example README, with the machine.
-- [ ] Document the one-owner rule the example relies on, and that Markdown pages are
+- [x] Document the one-owner rule the example relies on, and that Markdown pages are
       read per request (no shared cache, by design).
 
 ## P8: Documentation and acceptance (M)
