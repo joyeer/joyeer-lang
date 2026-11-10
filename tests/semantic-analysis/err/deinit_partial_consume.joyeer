@@ -1,0 +1,11 @@
+struct Handle {
+    var name: String
+    deinit() { }
+}
+
+func take(value: consuming String) { }
+
+func main() {
+    var handle = Handle(name: "a")
+    take(value: consume handle.name)
+}

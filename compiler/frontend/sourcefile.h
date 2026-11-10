@@ -93,6 +93,8 @@ public:
     // lowering did not run or failed.
     std::string llvmIR;
     bool llvmHasEntryPoint = false;
+    // True when the program starts a task (spec 21), so the link needs the platform's thread library.
+    bool llvmUsesThreads = false;
     // Backend-owned LLVM module, retained until native generation completes.
     std::shared_ptr<JoyeerBackendModule> llvmModule;
     

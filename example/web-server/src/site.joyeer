@@ -1,0 +1,157 @@
+import Foundation
+import System
+
+// Maps a request target to a Markdown file under the site root, and wraps
+// rendered pages in an HTML document.
+//
+// The mapping is a whitelist, not a filter: a target is served only when it is
+// absolute, every path segment is nonempty (except a trailing slash) and made
+// of ASCII letters, digits, '.', '_' and '-', and no segment starts with '.'.
+// That rules out "..", hidden files, drive letters and stream names (':'),
+// backslashes, percent escapes and non-ASCII names. It does not follow or
+// resolve symbolic links itself: it refuses anything that is not a regular
+// file. `joinPath` and `fileKind` are not a sandbox (spec 18.2), so keep the
+// site root free of links that point outside it.
+
+private let slash: UInt8 = 47
+
+private func isNameByte(byte: UInt8): Bool {
+    return (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) ||
+        byte == 46 || byte == 95 || byte == 45
+}
+
+private func isSafeSegment(segment: String): Bool {
+    if segment.count == 0 || segment[0] == 46 { return false }
+    var index = 0
+    while index < segment.count {
+        if !isNameByte(byte: segment[index]) { return false }
+        index = index + 1
+    }
+    return true
+}
+
+// The path part of a target: everything before the first '?' or '#'.
+private func pathOnly(target: String): String {
+    var index = 0
+    while index < target.count && target[index] != 63 && target[index] != 35 { index = index + 1 }
+    return substring(text: target, start: 0, end: index)
+}
+
+// Splits on '/'. "docs/" is ["docs", ""] and "" is [""].
+private func splitPath(path: String): [String] {
+    var parts: [String] = []
+    var start = 0
+    var index = 0
+    while index <= path.count {
+        if index == path.count || path[index] == slash {
+            &parts.append(element: substring(text: path, start: start, end: index))
+            start = index + 1
+        }
+        index = index + 1
+    }
+    return parts
+}
+
+// root joined with the first `count` parts, one segment at a time so that the
+// host's own separators are used.
+private func joinParts(root: String, parts: [String], count: Int): Optional<String> {
+    var path = root
+    var index = 0
+    while index < count {
+        match joinPath(base: path, path: parts[index]) {
+            .Ok(joined) => { path = joined },
+            .Err(_) => { return .None },
+        }
+        index = index + 1
+    }
+    return .Some(path)
+}
+
+private func isRegularFile(path: String): Bool {
+    return match fileKind(path: path) {
+        .Ok(kind) => match kind {
+            .File => true,
+            _ => false,
+        },
+        .Err(_) => false,
+    }
+}
+
+// The path of the Markdown file that serves `target`, or .None when the target
+// is unsafe or names no page.
+//
+//   /            root/index.md
+//   /about       root/about.md, else root/about/index.md
+//   /docs/       root/docs/index.md
+//   /about.md    root/about.md
+func resolvePage(root: String, target: String): Optional<String> {
+    let path = pathOnly(target: target)
+    if path.count == 0 || path[0] != slash { return .None }
+    let parts = splitPath(path: substring(text: path, start: 1, end: path.count))
+    let last = parts.count - 1
+
+    var index = 0
+    while index < last {
+        if !isSafeSegment(segment: parts[index]) { return .None }
+        index = index + 1
+    }
+    if parts[last].count != 0 && !isSafeSegment(segment: parts[last]) { return .None }
+
+    var candidates: [String] = []
+    if parts[last].count == 0 {
+        match joinParts(root: root, parts: parts, count: last) {
+            .Some(directory) => {
+                match joinPath(base: directory, path: "index.md") {
+                    .Ok(file) => { &candidates.append(element: file) },
+                    .Err(_) => { },
+                }
+            },
+            .None => { },
+        }
+    } else if endsWith(text: parts[last], suffix: ".md") {
+        match joinParts(root: root, parts: parts, count: parts.count) {
+            .Some(file) => { &candidates.append(element: file) },
+            .None => { },
+        }
+    } else {
+        match joinParts(root: root, parts: parts, count: parts.count) {
+            .Some(base) => {
+                &candidates.append(element: base + ".md")
+                match joinPath(base: base, path: "index.md") {
+                    .Ok(file) => { &candidates.append(element: file) },
+                    .Err(_) => { },
+                }
+            },
+            .None => { },
+        }
+    }
+
+    var next = 0
+    while next < candidates.count {
+        if isRegularFile(path: candidates[next]) { return .Some(candidates[next]) }
+        next = next + 1
+    }
+    return .None
+}
+
+// A complete HTML document around an already-escaped body.
+func htmlPage(title: String, body: String): String {
+    var page = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n"
+    page = page + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    page = page + "<title>" + escapeHtml(text: title) + "</title>\n<style>\n"
+    page = page + ":root { color-scheme: light dark; }\n"
+    page = page + "body { font: 1.05rem/1.6 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }\n"
+    page = page + "pre { overflow-x: auto; padding: 1rem; background: rgba(127,127,127,.15); border-radius: .4rem; }\n"
+    page = page + "code { font-family: ui-monospace, Consolas, monospace; }\n"
+    page = page + "blockquote { margin-left: 0; padding-left: 1rem; border-left: .25rem solid rgba(127,127,127,.5); }\n"
+    page = page + "footer { margin-top: 3rem; font-size: .85rem; opacity: .7; }\n"
+    page = page + "</style>\n</head>\n<body>\n<nav><a href=\"/\">Home</a></nav>\n<main>\n"
+    page = page + body
+    page = page + "</main>\n<footer>Served by a Joyeer program.</footer>\n</body>\n</html>\n"
+    return page
+}
+
+func errorPage(status: Int, message: String): String {
+    let title = decimalString(value: status) + " " + message
+    return htmlPage(title: title, body: "<h1>" + escapeHtml(text: title) + "</h1>\n")
+}

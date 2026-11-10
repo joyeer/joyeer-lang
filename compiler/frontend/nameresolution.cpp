@@ -222,6 +222,7 @@ public:
         for (const auto& module : modules) {
             const auto id = createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
             moduleScopes.push_back(id);
+            model->moduleNames_.push_back(module.name);
             namedModules.emplace(module.name, id);
         }
         struct FileContext {
@@ -381,6 +382,7 @@ private:
                 const auto value = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 for (const auto& field : value->fields) indexNode(field);
                 for (const auto& method : value->methods) indexNode(method);
+                indexNode(value->deinitializer);
                 break;
             }
             case Kind::extensionDecl: {
@@ -659,6 +661,9 @@ private:
         const auto dictionaryType = declareBuiltinType("Dict");
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
+        const auto joinHandleType = declareBuiltinType("JoinHandle");
+        const auto channelSenderType = declareBuiltinType("ChannelSender");
+        const auto channelReceiverType = declareBuiltinType("ChannelReceiver");
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
@@ -705,6 +710,79 @@ private:
                 voidType,
                 std::move(appendSignature));
         symbol(append).isMutable = true;
+
+        // `removeLast()` gives back the last element as `Optional<T>`, or `.None` when empty; the
+        // element type comes from the receiver, as for `Dict.get`.
+        const auto removeLast = declareBuiltinMember(
+                arrayType,
+                SymbolKind::builtinMember,
+                "removeLast",
+                optionalType,
+                CallableSignature { CallableKind::function, true, {} });
+        symbol(removeLast).isMutable = true;
+
+        // `consume a.consumeEmpty()` ends an empty array (spec 2.6.4). The receiver is consumed, so it
+        // is spelled in the signature the way a user method's `consuming` receiver is.
+        declareBuiltinMember(
+                arrayType,
+                SymbolKind::builtinMember,
+                "consumeEmpty",
+                voidType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    {},
+                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
+                });
+
+        // `consume handle.join()` waits for the task and gives back its result (spec 21.3). Like
+        // `consumeEmpty`, the receiver is consumed; the result type is the handle's argument, computed
+        // by the type checker.
+        declareBuiltinMember(
+                joinHandleType,
+                SymbolKind::builtinMember,
+                "join",
+                voidType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    {},
+                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
+                });
+
+        // The ends of a channel (spec 21.9). `send` and `receive` borrow their end, `close` consumes it;
+        // the type checker computes their result types from the end's element type.
+        declareBuiltinMember(
+                channelSenderType,
+                SymbolKind::builtinMember,
+                "send",
+                voidType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    { CallableParameter {
+                        std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                        syntax::AccessEffect::consuming } },
+                });
+        declareBuiltinMember(
+                channelReceiverType,
+                SymbolKind::builtinMember,
+                "receive",
+                voidType,
+                CallableSignature { CallableKind::function, true, {} });
+        for (const auto end : { channelSenderType, channelReceiverType }) {
+            declareBuiltinMember(
+                    end,
+                    SymbolKind::builtinMember,
+                    "close",
+                    voidType,
+                    CallableSignature {
+                        CallableKind::function,
+                        true,
+                        {},
+                        CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
+                    });
+        }
 
         CallableSignature singlePayload {
             CallableKind::enumCase,
@@ -782,6 +860,51 @@ private:
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
 
+        // `channel(capacity: n, sender: &s, receiver: &r)` creates a channel (spec 21.9.1). Both ends are
+        // `initializing` outputs; the type checker requires a sender and a receiver of one element type.
+        const auto channel = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "channel",
+                {});
+        symbol(channel).declaredType = voidType;
+        symbol(channel).callable = CallableSignature {
+            CallableKind::function,
+            true,
+            {
+                CallableParameter { std::string("capacity"), true, std::nullopt, std::nullopt, intType },
+                CallableParameter {
+                    std::string("sender"), true, std::nullopt, std::nullopt, std::nullopt,
+                    syntax::AccessEffect::initializing },
+                CallableParameter {
+                    std::string("receiver"), true, std::nullopt, std::nullopt, std::nullopt,
+                    syntax::AccessEffect::initializing },
+            },
+        };
+
+        // `spawn(function: f, input: consume x)` starts a task (spec 21.2). Its parameters only fix the
+        // labels, their order and that `input` is consumed; the type checker derives the result type from
+        // the named function.
+        CallableSignature spawnSignature {
+            CallableKind::function,
+            true,
+            {
+                CallableParameter { std::string("function"), true, std::nullopt, std::nullopt, std::nullopt },
+                CallableParameter {
+                    std::string("input"), true, std::nullopt, std::nullopt, std::nullopt,
+                    syntax::AccessEffect::consuming },
+            },
+        };
+        const auto spawn = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "spawn",
+                {});
+        symbol(spawn).declaredType = voidType;
+        symbol(spawn).callable = std::move(spawnSignature);
+
         CallableSignature byteConversionSignature {
             CallableKind::function,
             true,
@@ -848,7 +971,7 @@ private:
                     const auto declaration =
                             std::static_pointer_cast<syntax::StructDeclSyntax>(item);
                     const auto type = declaredSymbolId(declaration);
-                    if (type.has_value()) collectMethods(*type, declaration->methods);
+                    if (type.has_value()) collectMethods(*type, structureMembers(declaration));
                     break;
                 }
                 case syntax::Kind::enumDecl: {
@@ -865,6 +988,15 @@ private:
                     break;
             }
         }
+    }
+
+    // A struct's `deinit` is a member function with an `inout` receiver and no parameters
+    // (decision 0015). `deinit` is a keyword, so the member cannot be named or called.
+    static std::vector<syntax::FunctionDeclSyntax::Ptr> structureMembers(
+            const syntax::StructDeclSyntax::Ptr& declaration) {
+        auto members = declaration->methods;
+        if (declaration->deinitializer != nullptr) members.push_back(declaration->deinitializer);
+        return members;
     }
 
     void collectExtension(const syntax::ExtensionDeclSyntax::Ptr& extension) {
@@ -1241,7 +1373,7 @@ private:
                 const auto declaration =
                         std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 resolveStructureSignature(declaration);
-                resolveMethodSignatures(declaredSymbolId(declaration), declaration->methods);
+                resolveMethodSignatures(declaredSymbolId(declaration), structureMembers(declaration));
                 break;
             }
             case syntax::Kind::enumDecl: {
@@ -1309,7 +1441,7 @@ private:
                 for (const auto& field : declaration->fields) {
                     resolveExpression(field->initializer, memberScope);
                 }
-                resolveMethodBodies(structure, declaration->methods);
+                resolveMethodBodies(structure, structureMembers(declaration));
                 break;
             }
             case syntax::Kind::enumDecl: {

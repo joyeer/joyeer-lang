@@ -94,6 +94,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::sameLineItems: return "parser.same-line-items";
         case DiagnosticId::unexpectedEndOfFile: return "parser.unexpected-eof";
         case DiagnosticId::unsupportedSyntax: return "parser.unsupported-syntax";
+        case DiagnosticId::invalidDeinit: return "parser.invalid-deinit";
     }
     return "parser.unknown";
 }
@@ -280,6 +281,17 @@ syntax::NodePtr Parser::parseTopLevelItem() {
         return std::make_shared<syntax::ErrorDeclSyntax>(tokenSpan(token));
     }
 
+    // `linear struct`: `linear` is contextual, recognised only directly before `struct`.
+    if (cursor.at(identifier) && cursor.peek()->rawValue == "linear" && cursor.at(kwStruct, 1) &&
+        !cursor.peek(1)->startsLine) {
+        const auto modifier = cursor.advance();
+        auto declaration = parseStructDecl();
+        declaration->isLinear = true;
+        declaration->linearSpan = modifier->span;
+        declaration->span = coveringSpan(modifier->span, declaration->span);
+        return declaration;
+    }
+
     switch (cursor.peek()->kind) {
         case kwLet:
         case kwVar:
@@ -440,6 +452,65 @@ bool Parser::isMethodStart() const {
     return cursor.at(kwFunc, offset);
 }
 
+bool Parser::isDeinitStart() const {
+    size_t offset = 0;
+    if (isVisibility(cursor.peek()->kind)) ++offset;
+    if (cursor.at(kwMutating, offset) || cursor.at(kwConsuming, offset) ||
+        cursor.at(kwBorrowing, offset)) {
+        ++offset;
+    }
+    return cursor.at(kwDeinit, offset);
+}
+
+syntax::FunctionDeclSyntax::Ptr Parser::parseDeinitDecl() {
+    const size_t start = cursor.position();
+    if (isVisibility(cursor.peek()->kind)) {
+        report(DiagnosticId::invalidDeinit, tokenSpan(cursor.peek()),
+               "a deinit takes no visibility modifier");
+        cursor.advance();
+    }
+    if (cursor.at(kwMutating) || cursor.at(kwConsuming) || cursor.at(kwBorrowing)) {
+        report(DiagnosticId::invalidDeinit, tokenSpan(cursor.peek()),
+               "a deinit takes no receiver modifier");
+        cursor.advance();
+    }
+    auto name = cursor.advance();
+
+    if (cursor.eat(leftParen) == nullptr) {
+        reportExpected(DiagnosticId::expectedToken, "'(' after 'deinit'");
+        addExpectedTokenFixIt(leftParen);
+    } else {
+        DelimiterScope delimiter(activeClosers, rightParen);
+        if (!cursor.at(rightParen) && !cursor.atEnd()) {
+            report(DiagnosticId::invalidDeinit, tokenSpan(cursor.peek()),
+                   "a deinit takes no parameters");
+            synchronizeList(rightParen);
+        }
+        expect(rightParen, "')'");
+    }
+
+    if (cursor.at(colon)) {
+        report(DiagnosticId::invalidDeinit, tokenSpan(cursor.peek()),
+               "a deinit has no return type");
+        cursor.advance();
+        parseType();
+    }
+
+    auto body = parseBlock();
+    // The body may mutate the stored fields of `self`, so the receiver is `inout`.
+    const auto position = name;
+    auto mutating = std::make_shared<Token>(
+            kwMutating, "mutating", position->span, position->lineNumber, position->columnAt, false);
+    std::vector<syntax::ParameterDeclSyntax::Ptr> parameters;
+    parameters.push_back(makeReceiverParameter(mutating, name));
+    return std::make_shared<syntax::FunctionDeclSyntax>(
+            spanFrom(start),
+            std::move(name),
+            std::move(parameters),
+            nullptr,
+            std::move(body));
+}
+
 bool Parser::isNestedMethodStart(uint32_t declarationColumn) const {
     return isMethodStart() &&
            !(cursor.peek()->startsLine && cursor.peek()->columnAt <= declarationColumn);
@@ -454,6 +525,14 @@ uint32_t Parser::declarationColumn(size_t keyword) const {
     if (keyword > 0 && !token->startsLine) {
         const auto before = cursor.tokenAt(keyword - 1);
         if (isVisibility(before->kind)) return before->columnAt;
+        // `linear struct`: the declaration starts at the contextual modifier.
+        if (before->kind == identifier && before->rawValue == "linear") {
+            if (keyword > 1 && !before->startsLine) {
+                const auto outer = cursor.tokenAt(keyword - 2);
+                if (isVisibility(outer->kind)) return outer->columnAt;
+            }
+            return before->columnAt;
+        }
     }
     return token->columnAt;
 }
@@ -526,7 +605,11 @@ syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
         }
         const size_t before = cursor.position();
         if (rejectMemberAnnotations()) continue;
-        if (isNestedMethodStart(column)) {
+        if (isDeinitStart()) {
+            auto misplaced = parseDeinitDecl();
+            report(DiagnosticId::invalidDeinit, misplaced->span,
+                   "a deinit belongs in the struct body, not in an extension");
+        } else if (isNestedMethodStart(column)) {
             methods.push_back(parseMethodDecl());
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
             cursor.advance();
@@ -561,12 +644,25 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
 
     std::vector<syntax::StructFieldDeclSyntax::Ptr> fields;
     std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
+    syntax::FunctionDeclSyntax::Ptr deinitializer;
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         const size_t before = cursor.position();
         // An annotation at or left of the struct begins the next top-level
         // declaration, as in an unclosed body.
         if (cursor.at(atSign) && cursor.peek()->startsLine && !isNestedAnnotation(column)) break;
         if (rejectMemberAnnotations()) continue;
+        if (isDeinitStart() &&
+            !(cursor.peek()->startsLine && cursor.peek()->columnAt <= column)) {
+            auto parsed = parseDeinitDecl();
+            if (deinitializer != nullptr) {
+                report(DiagnosticId::invalidDeinit, parsed->span, "a struct may have only one deinit");
+            } else {
+                deinitializer = std::move(parsed);
+            }
+            if (cursor.position() == before) cursor.advance();
+            enforceItemBoundary(false);
+            continue;
+        }
         if (isNestedMethodStart(column)) {
             methods.push_back(parseMethodDecl());
             if (cursor.position() == before) cursor.advance();
@@ -604,6 +700,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     auto declaration = std::make_shared<syntax::StructDeclSyntax>(
             spanFrom(start), std::move(name), std::move(fields));
     declaration->methods = std::move(methods);
+    declaration->deinitializer = std::move(deinitializer);
     return declaration;
 }
 
@@ -651,7 +748,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
     }
 
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
-        if (isNestedMethodStart(column)) break;
+        if (isNestedMethodStart(column) || isDeinitStart()) break;
         if (cursor.at(atSign) && (!cursor.peek()->startsLine || isNestedAnnotation(column))) {
             // Annotated case or method: report once, then parse what follows
             // as usual (a method ends the case list on the next iteration).
@@ -678,7 +775,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
             continue;
         }
         if (cursor.at(rightCurly) || cursor.atEnd() || isNestedMethodStart(column) ||
-            isNestedAnnotation(column)) {
+            isDeinitStart() || isNestedAnnotation(column)) {
             break;
         }
 
@@ -698,7 +795,11 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
         }
         const size_t before = cursor.position();
         if (rejectMemberAnnotations()) continue;
-        if (isNestedMethodStart(column)) {
+        if (isDeinitStart()) {
+            auto misplaced = parseDeinitDecl();
+            report(DiagnosticId::invalidDeinit, misplaced->span,
+                   "a deinit is only allowed in a struct body, not in an enum");
+        } else if (isNestedMethodStart(column)) {
             methods.push_back(parseMethodDecl());
         } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
             cursor.advance();
@@ -1666,7 +1767,8 @@ bool Parser::isExpressionStart(const Token::Ptr& token) const {
             token->kind == dot || token->kind == kwIf ||
             token->kind == kwMatch || token->kind == kwReturn ||
             token->kind == minus || token->kind == bang ||
-            token->kind == tilde || token->kind == ampersand);
+            token->kind == tilde || token->kind == ampersand ||
+            token->kind == kwConsume);
 }
 
 bool Parser::isTopLevelStart(const Token::Ptr& token) const {

@@ -158,6 +158,8 @@ public:
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
     [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
     [[nodiscard]] bool isCoreSource(SourceSpan span) const;
+    // The name a module was compiled under (the root module is index 0), or null for an unknown index.
+    [[nodiscard]] const std::string* moduleName(uint32_t module) const;
 
 private:
     friend class NameResolutionBuilder;
@@ -185,6 +187,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> sourceModules_;
     std::unordered_map<uint32_t, bool> runtimeSources_;
     std::unordered_map<uint32_t, bool> coreSources_;
+    std::vector<std::string> moduleNames_;
     std::unordered_map<NodeId, bool> moduleQualified_;
 };
 

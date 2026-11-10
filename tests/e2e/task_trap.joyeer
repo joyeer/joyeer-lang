@@ -1,0 +1,11 @@
+// A trap inside a task ends the whole process (spec 21.4), even while main is blocked in join.
+func boom(index: consuming Int): Int {
+    var values: [Int] = [1, 2]
+    return values[index]
+}
+
+func main() {
+    let handle = spawn(function: boom, input: consume 5)
+    let value = consume handle.join()
+    print(value: value)
+}

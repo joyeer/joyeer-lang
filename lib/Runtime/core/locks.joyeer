@@ -1,0 +1,248 @@
+// The locks the runtime's own state sits behind (decision 0017): one for the allocator, one for
+// standard output and one for standard input, each an eight-byte static slot (see the table in
+// docs/impl/runtime.md). A lock is taken only while another thread can run: the thread functions
+// (threads.joyeer) keep the number of unjoined threads in static slot 11, and a lock site that
+// finds it zero does nothing, which is one load and one branch for a single-threaded program.
+//
+// `lockAcquire` returns whether it locked and `lockRelease` unlocks only if it did, so a critical
+// section that began while the program was single threaded never unlocks a lock it did not take.
+// Critical sections never start a thread and never take another lock.
+//
+// The lock itself blocks in the operating system instead of spinning, because a user-space queue
+// lock stalls every waiter behind a preempted one (0016's review measured 8 s for 16 threads against
+// 0.02 s for a blocking lock):
+//
+// - Linux: a three-state futex mutex (0 free, 1 locked, 2 locked with waiters) through the raw
+//   `futex` system call, built on the atomic compare-and-swap and exchange intrinsics. No import.
+// - Windows: `SRWLOCK`, whose zeroed eight bytes are its initial state.
+// - macOS: `os_unfair_lock`, whose zero is unlocked.
+//
+// After a panic starts (slot 38), every other thread that reaches a lock parks for good, so it
+// can neither print nor write after the panicking thread's flush (panic.joyeer).
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_load")
+private func atomicLoad(address: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_exchange")
+private func atomicExchange(address: Int, value: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_cmpxchg")
+private func atomicCompareExchange(address: Int, expected: Int, desired: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+private func atomicAdd(address: Int, delta: Int): Int
+
+private let threadSlot: Int = 11
+private let panicSlot: Int = 38
+private let spinLimit: Int = 100
+
+// Whether another thread can run. Only the thread API raises the count, before the thread exists.
+public func threadsActive(): Bool {
+    return atomicLoad(address: staticSlot(index: threadSlot)) != 0
+}
+
+// True once any thread has started a panic.
+public func panicking(): Bool {
+    return atomicLoad(address: staticSlot(index: panicSlot)) != 0
+}
+
+// ---- Windows --------------------------------------------------------------------------------
+
+@platform(windows)
+@c_extern(symbol: "AcquireSRWLockExclusive")
+private func acquireSystem(lock: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "ReleaseSRWLockExclusive")
+private func releaseSystem(lock: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "TryAcquireSRWLockExclusive")
+private func tryAcquireSystem(lock: Int): UInt8
+
+@platform(windows)
+@c_extern(symbol: "Sleep")
+private func sleepSystem(milliseconds: UInt32): Void
+
+@platform(windows)
+private func blockOnLock(address: Int) {
+    acquireSystem(lock: address)
+}
+
+@platform(windows)
+private func unblockLock(address: Int) {
+    releaseSystem(lock: address)
+}
+
+@platform(windows)
+private func tryLockOnce(address: Int): Bool {
+    return tryAcquireSystem(lock: address) != 0
+}
+
+// Waits without end: a thread that lost the race to panic.
+@platform(windows)
+private func parkForever(): Never {
+    while true { sleepSystem(milliseconds: 4294967295) }
+    parkForever()
+}
+
+// ---- macOS ----------------------------------------------------------------------------------
+
+@platform(macos)
+@c_extern(symbol: "os_unfair_lock_lock")
+private func acquireSystem(lock: Int): Void
+
+@platform(macos)
+@c_extern(symbol: "os_unfair_lock_unlock")
+private func releaseSystem(lock: Int): Void
+
+@platform(macos)
+@c_extern(symbol: "os_unfair_lock_trylock")
+private func tryAcquireSystem(lock: Int): UInt8
+
+@platform(macos)
+@c_extern(symbol: "sleep")
+private func sleepSeconds(seconds: UInt32): UInt32
+
+@platform(macos)
+private func blockOnLock(address: Int) {
+    acquireSystem(lock: address)
+}
+
+@platform(macos)
+private func unblockLock(address: Int) {
+    releaseSystem(lock: address)
+}
+
+@platform(macos)
+private func tryLockOnce(address: Int): Bool {
+    return tryAcquireSystem(lock: address) != 0
+}
+
+@platform(macos)
+private func parkForever(): Never {
+    while true { sleepSeconds(seconds: 4294967295) }
+    parkForever()
+}
+
+// ---- Linux ----------------------------------------------------------------------------------
+
+@platform(linux)
+@c_extern(symbol: "joyeer_intrinsic_syscall")
+private func systemCall(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int,
+    sixth: Int): Int
+
+// FUTEX_WAIT_PRIVATE is 128 and FUTEX_WAKE_PRIVATE 129; the futex call is 202 on x86-64 and 98 on
+// AArch64. The futex word is the low four bytes of the eight-byte lock word (little endian), whose
+// value is only ever 0, 1 or 2, so a wait on 2 sleeps exactly while the lock is held with waiters.
+@platform(linux)
+private func futexWait(address: Int, value: Int) {
+    systemCall(number: callNumber(x86: 202, arm: 98), first: address, second: 128, third: value,
+        fourth: 0, fifth: 0, sixth: 0)
+}
+
+@platform(linux)
+private func futexWake(address: Int) {
+    systemCall(number: callNumber(x86: 202, arm: 98), first: address, second: 129, third: 1,
+        fourth: 0, fifth: 0, sixth: 0)
+}
+
+@platform(linux)
+private func blockOnLock(address: Int) {
+    var seen = atomicCompareExchange(address: address, expected: 0, desired: 1)
+    if seen == 0 { return }
+    // A short spin catches the common case of a critical section a few instructions long.
+    var spin = 0
+    while spin < spinLimit {
+        seen = atomicCompareExchange(address: address, expected: 0, desired: 1)
+        if seen == 0 { return }
+        spin = spin + 1
+    }
+    // Contended: mark the lock "locked with waiters" and sleep until it is released.
+    if seen != 2 { seen = atomicExchange(address: address, value: 2) }
+    while seen != 0 {
+        futexWait(address: address, value: 2)
+        seen = atomicExchange(address: address, value: 2)
+    }
+}
+
+@platform(linux)
+private func unblockLock(address: Int) {
+    if atomicAdd(address: address, delta: 0 - 1) != 1 {
+        atomicExchange(address: address, value: 0)
+        futexWake(address: address)
+    }
+}
+
+@platform(linux)
+private func tryLockOnce(address: Int): Bool {
+    return atomicCompareExchange(address: address, expected: 0, desired: 1) == 0
+}
+
+// The panic flag changes when a second thread also claims it, so a wait on its current value
+// returns and the loop reads it again.
+@platform(linux)
+private func parkForever(): Never {
+    let flag = staticSlot(index: panicSlot)
+    while true { futexWait(address: flag, value: atomicLoad(address: flag)) }
+    parkForever()
+}
+
+// ---- The API ----------------------------------------------------------------------------------
+
+private func parkIfPanicking() {
+    if panicking() { parkForever() }
+}
+
+// Locks the static slot's lock when another thread can run; returns whether it locked. A hot path
+// that wants no call at all when the program is single threaded writes the check itself:
+// `let held = threadsActive()`, then `if held { lockBlocking(slot: ...) }`, and `lockUnblock` after.
+public func lockAcquire(slot: Int): Bool {
+    if !threadsActive() { return false }
+    lockBlocking(slot: slot)
+    return true
+}
+
+// Takes the lock for the slot; the caller has seen that another thread can run.
+public func lockBlocking(slot: Int) {
+    // A thread that arrives after a panic started, or wakes up after one, parks instead of
+    // proceeding into state the panicking thread is about to flush.
+    parkIfPanicking()
+    let address = staticSlot(index: slot)
+    blockOnLock(address: address)
+    if panicking() {
+        unblockLock(address: address)
+        parkForever()
+    }
+}
+
+public func lockUnblock(slot: Int) {
+    unblockLock(address: staticSlot(index: slot))
+}
+
+public func lockRelease(slot: Int, held: Bool) {
+    if held { lockUnblock(slot: slot) }
+}
+
+// Tries the lock for at most `spins` attempts without parking; used by a panicking thread, which
+// must not wait on a lock another thread may never release. Returns whether it locked.
+public func lockTry(slot: Int, spins: Int): Bool {
+    if !threadsActive() { return false }
+    let address = staticSlot(index: slot)
+    var attempts = 0
+    while attempts < spins {
+        if tryLockOnce(address: address) { return true }
+        attempts = attempts + 1
+    }
+    return false
+}
+
+// Parks the calling thread for the rest of the process: another thread is panicking.
+public func parkThread(): Never {
+    parkForever()
+}

@@ -1,0 +1,75 @@
+// Fan-out and fan-in (spec 21.3): many tasks held in an array, drained with removeLast and ended
+// with consumeEmpty; tasks that spawn tasks; a constant array as input and as result is cloned.
+let table: [Int] = [10, 20, 30]
+
+func square(value: consuming Int): Int {
+    return value * value
+}
+
+func sumOf(values: consuming [Int]): Int {
+    var sum = 0
+    var index = 0
+    while index < values.count {
+        sum = sum + values[index]
+        index = index + 1
+    }
+    return sum
+}
+
+func fetch(value: consuming Int): [Int] {
+    return table
+}
+
+func nested(value: consuming Int): Int {
+    let inner = spawn(function: square, input: consume value)
+    let joined = consume inner.join()
+    return joined + 1
+}
+
+// A handle can be a task's result and is joined by the receiver.
+func launch(value: consuming Int): JoinHandle<Int> {
+    return spawn(function: square, input: consume value)
+}
+
+func fanOut(count: Int): Int {
+    var handles: [JoinHandle<Int>] = []
+    var index = 0
+    while index < count {
+        &handles.append(element: consume spawn(function: square, input: consume (index + 1)))
+        index = index + 1
+    }
+    var sum = 0
+    while true {
+        let popped = &handles.removeLast()
+        match consume popped {
+            .Some(handle) => { sum = sum + consume handle.join() }
+            .None => { break }
+        }
+    }
+    consume handles.consumeEmpty()
+    return sum
+}
+
+func main() {
+    // 1 + 4 + ... + 100 * 100
+    print(value: fanOut(count: 100))
+
+    let outer = spawn(function: nested, input: consume 6)
+    let nestedResult = consume outer.join()
+    print(value: nestedResult)
+
+    // A top-level constant passed by consume is cloned, never freed.
+    let summed = spawn(function: sumOf, input: consume table)
+    let constantSum = consume summed.join()
+    print(value: constantSum)
+    let fetched = spawn(function: fetch, input: consume 0)
+    let again = consume fetched.join()
+    print(value: again.count)
+    print(value: table.count)
+
+    let launcher = spawn(function: launch, input: consume 3)
+    let inner = consume launcher.join()
+    let nine = consume inner.join()
+    print(value: nine)
+}
+

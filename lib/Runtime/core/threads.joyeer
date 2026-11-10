@@ -1,0 +1,426 @@
+// Threads, a blocking mutex and a condition variable (decision 0016). This is the runtime's
+// lowest layer for concurrency: it starts a thread, waits for it, and gives the code that
+// follows (tasks and channels, P5 and P6) something to sleep on. The rest of the runtime is
+// made thread safe on top of it (decision 0017, locks.joyeer).
+//
+// Windows uses `CreateThread`, `SRWLOCK` and `CONDITION_VARIABLE`, all in kernel32. Linux and
+// macOS use `pthread` through the C library the program already links for its startup. The
+// caller supplies every object's storage: 128 zeroed bytes for a thread record and 64 zeroed,
+// 8-byte-aligned bytes for each mutex and condition, so this code never allocates.
+//
+// The thread record, 16 eight-byte words:
+//
+//     0   the operating system's handle (Windows) or `pthread_t` (POSIX)
+//     8   the entry function, `void entry(void *argument)`
+//     16  the argument
+//     24  set to 1 by the trampoline once the entry returned
+//     32  64 bytes for `pthread_attr_t` (POSIX only)
+//
+// The thread routine the operating system calls is the private trampoline below: it receives
+// the address of the record, calls the entry through `call_void1`, and returns 0, which is the
+// shape both `DWORD WINAPI f(LPVOID)` and `void *f(void *)` take. A caller therefore never
+// writes a platform thread routine.
+//
+// At most 256 unjoined threads exist at once, counted in static slot 11. Every result is a
+// non-negative value on success, or a negative code: the negated operating-system error, or one
+// of the two codes below (outside the range of negated operating-system codes).
+//
+// This is a runtime core unit: scalars and addresses held as `Int` only (runtime plan §4).
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+private func atomicAdd(address: Int, delta: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_symbol_address")
+private func symbolAddress(name: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+private func callVoid1(target: Int, first: Int): Void
+
+private let threadSlot: Int = 11
+private let threadLimit: Int = 256
+private let stackBytes: Int = 8388608
+private let recordBytes: Int = 128
+private let lockBytes: Int = 64
+
+// Outside the range of negated operating-system codes (a negated Win32 code reaches only about
+// -16000, and an errno about -4095).
+private let limitReached: Int = 0 - 1073741824
+private let invalidArgument: Int = 0 - 1073741823
+
+private func read(address: Int): Int {
+    return load64(address: address) as Int
+}
+
+private func write(address: Int, value: Int) {
+    store64(address: address, value: value as UInt64)
+}
+
+private func zero(address: Int, bytes: Int) {
+    var offset = 0
+    while offset < bytes {
+        write(address: address + offset, value: 0)
+        offset = offset + 8
+    }
+}
+
+// What the operating system runs on the new thread: the record's entry on its argument.
+@c_export(symbol: "joyeer_thread_trampoline")
+public func threadTrampoline(record: Int): Int {
+    callVoid1(target: read(address: record + 8), first: read(address: record + 16))
+    write(address: record + 24, value: 1)
+    return 0
+}
+
+@platform(windows)
+@c_extern(symbol: "CreateThread")
+private func createThread(attributes: Int, stackSize: Int, start: Int, parameter: Int,
+    flags: UInt32, threadId: Int): Int
+
+@platform(windows)
+@c_extern(symbol: "WaitForSingleObject")
+private func waitForObject(handle: Int, milliseconds: UInt32): UInt32
+
+@platform(windows)
+@c_extern(symbol: "CloseHandle")
+private func closeHandle(handle: Int): Int32
+
+@platform(windows)
+@c_extern(symbol: "GetLastError")
+private func lastError(): UInt32
+
+@platform(windows)
+@c_extern(symbol: "AcquireSRWLockExclusive")
+private func acquireLock(lock: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "ReleaseSRWLockExclusive")
+private func releaseLock(lock: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "SleepConditionVariableSRW")
+private func sleepOnCondition(condition: Int, lock: Int, milliseconds: UInt32, flags: UInt32): Int32
+
+@platform(windows)
+@c_extern(symbol: "WakeConditionVariable")
+private func wakeOne(condition: Int): Void
+
+@platform(windows)
+@c_extern(symbol: "WakeAllConditionVariable")
+private func wakeAll(condition: Int): Void
+
+@platform(posix)
+@c_extern(symbol: "pthread_attr_init")
+private func attributeInit(attributes: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_attr_setstacksize")
+private func attributeStackSize(attributes: Int, size: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_attr_destroy")
+private func attributeDestroy(attributes: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_create")
+private func threadCreate(thread: Int, attributes: Int, start: Int, argument: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_join")
+private func threadJoin(thread: Int, value: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_mutex_lock")
+private func mutexLock(mutex: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_mutex_unlock")
+private func mutexUnlock(mutex: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_mutex_destroy")
+private func mutexDestroy(mutex: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_cond_wait")
+private func conditionWait(condition: Int, mutex: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_cond_signal")
+private func conditionSignal(condition: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_cond_broadcast")
+private func conditionBroadcast(condition: Int): Int32
+
+@platform(posix)
+@c_extern(symbol: "pthread_cond_destroy")
+private func conditionDestroy(condition: Int): Int32
+
+// macOS's mutex and condition are not valid when zero (their initialisers carry a signature).
+@platform(macos)
+@c_extern(symbol: "pthread_mutex_init")
+private func mutexInit(mutex: Int, attributes: Int): Int32
+
+@platform(macos)
+@c_extern(symbol: "pthread_cond_init")
+private func conditionInit(condition: Int, attributes: Int): Int32
+
+// ---- Windows --------------------------------------------------------------------------------
+
+// MEM_... flag: the stack size is a reservation, committed as it is used.
+private let reserveStack: UInt32 = 65536
+
+@platform(windows)
+private func startThread(record: Int): Int {
+    let handle = createThread(attributes: 0, stackSize: stackBytes,
+        start: symbolAddress(name: "joyeer_thread_trampoline"), parameter: record,
+        flags: reserveStack, threadId: 0)
+    if handle == 0 { return 0 - (lastError() as Int) }
+    write(address: record, value: handle)
+    return 0
+}
+
+// WAIT_OBJECT_0 is 0 and WAIT_FAILED is 0xFFFFFFFF.
+@platform(windows)
+private func joinThread(record: Int): Int {
+    let handle = read(address: record)
+    let waited = waitForObject(handle: handle, milliseconds: 4294967295)
+    if waited != 0 { return 0 - (lastError() as Int) }
+    closeHandle(handle: handle)
+    return 0
+}
+
+@platform(windows)
+private func initLock(storage: Int): Int {
+    zero(address: storage, bytes: lockBytes)
+    return 0
+}
+
+@platform(windows)
+private func lockMutex(storage: Int): Int {
+    acquireLock(lock: storage)
+    return 0
+}
+
+@platform(windows)
+private func unlockMutex(storage: Int): Int {
+    releaseLock(lock: storage)
+    return 0
+}
+
+@platform(windows)
+private func destroyLock(storage: Int): Int {
+    return 0
+}
+
+@platform(windows)
+private func waitCondition(condition: Int, mutex: Int): Int {
+    if sleepOnCondition(condition: condition, lock: mutex, milliseconds: 4294967295, flags: 0) == 0 {
+        return 0 - (lastError() as Int)
+    }
+    return 0
+}
+
+@platform(windows)
+private func signalCondition(condition: Int): Int {
+    wakeOne(condition: condition)
+    return 0
+}
+
+@platform(windows)
+private func broadcastCondition(condition: Int): Int {
+    wakeAll(condition: condition)
+    return 0
+}
+
+// ---- Linux and macOS -------------------------------------------------------------------------
+
+@platform(posix)
+private func startThread(record: Int): Int {
+    let attributes = record + 32
+    var status = attributeInit(attributes: attributes) as Int
+    if status != 0 { return 0 - status }
+    status = attributeStackSize(attributes: attributes, size: stackBytes) as Int
+    if status == 0 {
+        status = threadCreate(thread: record, attributes: attributes,
+            start: symbolAddress(name: "joyeer_thread_trampoline"), argument: record) as Int
+    }
+    attributeDestroy(attributes: attributes)
+    if status != 0 { return 0 - status }
+    return 0
+}
+
+@platform(posix)
+private func joinThread(record: Int): Int {
+    let status = threadJoin(thread: read(address: record), value: 0) as Int
+    if status != 0 { return 0 - status }
+    return 0
+}
+
+@platform(linux)
+private func initLock(storage: Int): Int {
+    zero(address: storage, bytes: lockBytes)
+    return 0
+}
+
+@platform(macos)
+private func initLock(storage: Int): Int {
+    zero(address: storage, bytes: lockBytes)
+    let status = mutexInit(mutex: storage, attributes: 0) as Int
+    if status != 0 { return 0 - status }
+    return 0
+}
+
+@platform(posix)
+private func lockMutex(storage: Int): Int {
+    return 0 - (mutexLock(mutex: storage) as Int)
+}
+
+@platform(posix)
+private func unlockMutex(storage: Int): Int {
+    return 0 - (mutexUnlock(mutex: storage) as Int)
+}
+
+@platform(posix)
+private func destroyLock(storage: Int): Int {
+    return 0 - (mutexDestroy(mutex: storage) as Int)
+}
+
+@platform(posix)
+private func waitCondition(condition: Int, mutex: Int): Int {
+    return 0 - (conditionWait(condition: condition, mutex: mutex) as Int)
+}
+
+@platform(posix)
+private func signalCondition(condition: Int): Int {
+    return 0 - (conditionSignal(condition: condition) as Int)
+}
+
+@platform(posix)
+private func broadcastCondition(condition: Int): Int {
+    return 0 - (conditionBroadcast(condition: condition) as Int)
+}
+
+@platform(windows)
+private func initCondition(storage: Int): Int {
+    zero(address: storage, bytes: lockBytes)
+    return 0
+}
+
+@platform(windows)
+private func destroyCondition(condition: Int): Int {
+    return 0
+}
+
+@platform(linux)
+private func initCondition(storage: Int): Int {
+    zero(address: storage, bytes: lockBytes)
+    return 0
+}
+
+@platform(macos)
+private func initCondition(storage: Int): Int {
+    zero(address: storage, bytes: lockBytes)
+    let status = conditionInit(condition: storage, attributes: 0) as Int
+    if status != 0 { return 0 - status }
+    return 0
+}
+
+@platform(posix)
+private func destroyCondition(condition: Int): Int {
+    return 0 - (conditionDestroy(condition: condition) as Int)
+}
+
+// ---- The exported API ------------------------------------------------------------------------
+
+// Starts a thread running `entry(argument)`. `thread` is 128 zeroed bytes that must stay valid
+// until the thread is joined.
+@c_export(symbol: "joyeer_thread_start_abi")
+public func threadStartAbi(thread: Int, entry: Int, argument: Int): Int {
+    if thread == 0 || entry == 0 { return invalidArgument }
+    let slot = staticSlot(index: threadSlot)
+    if atomicAdd(address: slot, delta: 1) >= threadLimit {
+        atomicAdd(address: slot, delta: 0 - 1)
+        return limitReached
+    }
+    write(address: thread + 8, value: entry)
+    write(address: thread + 16, value: argument)
+    write(address: thread + 24, value: 0)
+    let status = startThread(record: thread)
+    if status != 0 { atomicAdd(address: slot, delta: 0 - 1) }
+    return status
+}
+
+// Waits for the thread to finish and releases it. Every started thread is joined exactly once.
+@c_export(symbol: "joyeer_thread_join_abi")
+public func threadJoinAbi(thread: Int): Int {
+    if thread == 0 { return invalidArgument }
+    let status = joinThread(record: thread)
+    if status == 0 { atomicAdd(address: staticSlot(index: threadSlot), delta: 0 - 1) }
+    return status
+}
+
+@c_export(symbol: "joyeer_mutex_init_abi")
+public func mutexInitAbi(storage: Int): Int {
+    if storage == 0 { return invalidArgument }
+    return initLock(storage: storage)
+}
+
+@c_export(symbol: "joyeer_mutex_lock_abi")
+public func mutexLockAbi(storage: Int): Int {
+    if storage == 0 { return invalidArgument }
+    return lockMutex(storage: storage)
+}
+
+@c_export(symbol: "joyeer_mutex_unlock_abi")
+public func mutexUnlockAbi(storage: Int): Int {
+    if storage == 0 { return invalidArgument }
+    return unlockMutex(storage: storage)
+}
+
+@c_export(symbol: "joyeer_mutex_destroy_abi")
+public func mutexDestroyAbi(storage: Int): Int {
+    if storage == 0 { return invalidArgument }
+    return destroyLock(storage: storage)
+}
+
+@c_export(symbol: "joyeer_condition_init_abi")
+public func conditionInitAbi(storage: Int): Int {
+    if storage == 0 { return invalidArgument }
+    return initCondition(storage: storage)
+}
+
+// Waits on `condition` with `mutex` held; it is released while waiting and held again on return. A
+// wait can wake without a signal, so a caller waits in a loop that tests its own condition.
+@c_export(symbol: "joyeer_condition_wait_abi")
+public func conditionWaitAbi(condition: Int, mutex: Int): Int {
+    if condition == 0 || mutex == 0 { return invalidArgument }
+    return waitCondition(condition: condition, mutex: mutex)
+}
+
+@c_export(symbol: "joyeer_condition_signal_abi")
+public func conditionSignalAbi(condition: Int): Int {
+    if condition == 0 { return invalidArgument }
+    return signalCondition(condition: condition)
+}
+
+@c_export(symbol: "joyeer_condition_broadcast_abi")
+public func conditionBroadcastAbi(condition: Int): Int {
+    if condition == 0 { return invalidArgument }
+    return broadcastCondition(condition: condition)
+}
+
+@c_export(symbol: "joyeer_condition_destroy_abi")
+public func conditionDestroyAbi(condition: Int): Int {
+    if condition == 0 { return invalidArgument }
+    return destroyCondition(condition: condition)
+}

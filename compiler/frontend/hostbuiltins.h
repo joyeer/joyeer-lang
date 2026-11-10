@@ -41,7 +41,10 @@ inline constexpr std::array<std::string_view, 3> stdinErrors {
 inline constexpr std::array<std::string_view, 1> conversionErrors {
     "OutOfRange",
 };
-inline constexpr std::array<Enumeration, 7> enumerations {{
+inline constexpr std::array<std::string_view, 1> channelErrors {
+    "Closed",
+};
+inline constexpr std::array<Enumeration, 8> enumerations {{
     { "FileSystemError", filesystemErrors, true },
     { "FileKind", fileKinds, false },
     { "ProcessStatus", processStatuses, true },
@@ -49,6 +52,7 @@ inline constexpr std::array<Enumeration, 7> enumerations {{
     { "StderrError", stderrErrors, true },
     { "StdinError", stdinErrors, true },
     { "ConversionError", conversionErrors, false },
+    { "ChannelClosed", channelErrors, false },
 }};
 
 }

@@ -58,6 +58,39 @@ Here `outcome` can have type `Result<Void, String>`. `.Ok(_)` and `.Ok(value)`
 are also valid, with `value` bound as `Void`. An empty pattern clause `.Ok()`
 is invalid. General tuple patterns remain outside the implemented subset.
 
+### 7.1.2 Binding a noncopyable payload
+
+An identifier pattern normally binds a copy of the matched value. A payload whose
+type is noncopyable (§4.1.1) cannot be copied, so a pattern that binds one
+**moves** it out of the scrutinee, and the scrutinee must be something that can
+give it up: an owned temporary, or `consume` of an owning local or consuming
+parameter (§4.3).
+
+```joyeer
+func close(slot: consuming Slot): Int {
+  return match consume slot {
+    .Full(connection) => connection.id,   // `connection` owns the handle
+    .Empty => 0,
+  }
+}
+
+match tcpAccept(listener: listener, timeoutMillis: 5000) {    // an owned temporary
+  .Ok(connection) => serve(connection: consume connection),
+  .Err(error) => report(error: error),
+}
+```
+
+The binding is an owning local of its arm: it is destroyed when the arm ends
+unless the arm moves it on (`consume connection`). Payloads the pattern does not
+bind, including those matched by `_`, stay in the scrutinee and are destroyed
+with it, unless they are linear (§4.1.1): a pattern over a linear scrutinee must bind every
+linear payload, and `_` over one is `semantic-analysis.linear-result-dropped` (§4.7.1). Matching a place without `consume` while binding a noncopyable payload
+is `type-checking.copy-of-noncopyable`, and so is binding the whole noncopyable scrutinee
+with a bare identifier pattern. A `match consume x` ends the ownership of `x`: it may not be read
+again until it is reinitialized, though payloads no arm bound stay in its storage until it is
+reassigned or leaves scope. **Implementation status:**
+implemented for enum payloads, including nested enum patterns.
+
 ### 7.2 Alternative patterns
 
 A match arm may list several comma-separated patterns; the arm runs when

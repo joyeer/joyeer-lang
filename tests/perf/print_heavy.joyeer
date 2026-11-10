@@ -1,0 +1,9 @@
+// Print-heavy baseline for the runtime (decision 0017): many small prints to standard output.
+// Redirect the output; this is not a test. See tests/perf/README.md.
+func main() {
+    var index = 0
+    while index < 4000000 {
+        print(value: index)
+        index = index + 1
+    }
+}

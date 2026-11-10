@@ -8,16 +8,19 @@
 // Standard output is buffered, 8 KiB, and flushed when it fills, before the program
 // reads standard input or panics, when it ends, and after every `print` while the
 // output is a terminal. Standard error is not buffered. Standard input is read
-// into a 4 KiB buffer a byte at a time. The buffers live in one block mapped
-// straight from the system on first use and never freed: it is not an allocation, so
-// the leak count does not see it.
+// into a 4 KiB buffer a byte at a time. The buffers live in two blocks mapped
+// straight from the system on first use and never freed: they are not allocations, so
+// the leak count does not see them. Each block is behind its own lock (locks.joyeer,
+// decision 0017): standard output and standard error behind one, standard input behind
+// the other, so a thread blocked reading input never holds up a `print`. A `print` takes
+// the output lock once, so two prints never interleave.
 //
 // Every failing operation reports an errno-style code (9 bad descriptor, 32 broken
 // pipe, 28 disk full, 13 access denied, otherwise 5), the codes `System` has always
 // reported; 0 means success.
 //
 // This is a runtime core unit: scalars and addresses held as `Int` only (runtime
-// plan §4). The state is in static slot 2.
+// plan §4). The output state is in static slot 2 and the input state in slot 15.
 
 @c_extern(symbol: "joyeer_intrinsic_static_slot")
 private func staticSlot(index: Int): Int
@@ -43,41 +46,60 @@ private func copyBytes(destination: Int, source: Int, count: Int): Void
 @c_extern(symbol: "joyeer_intrinsic_literal_address")
 private func literalAddress(text: String): Int
 
-// Slot 2 holds the state block; slots 3 to 10 (64 contiguous bytes) are scratch for the
-// system calls' out parameters, so the panic path needs no mapping.
-private let stateSlot: Int = 2
-private let scratchSlot: Int = 3
+// Static slots (the table is in docs/impl/runtime.md): 2 the output state block, 15 the input state
+// block, 13 and 14 the output and input locks, and scratch for the system calls' out parameters,
+// which is shared state and so belongs to the lock that guards its user: slots 3 to 7 (40 bytes,
+// enough for the Linux termios structure) for output, slot 8 for input, slot 9 for a panic, which
+// takes no lock.
+private let outputSlot: Int = 2
+private let outputScratchSlot: Int = 3
+private let inputScratchSlot: Int = 8
+private let panicScratchSlot: Int = 9
+private let outputLockSlot: Int = 13
+private let inputLockSlot: Int = 14
+private let inputSlot: Int = 15
+
+// The output block: the buffered count, the terminal flag, the buffer, the Windows console's wide
+// buffer. The input block: the read position, the end of the buffered input, the buffer.
 private let outputCountOffset: Int = 0
 private let terminalOffset: Int = 8
-private let inputPositionOffset: Int = 16
-private let inputEndOffset: Int = 24
 private let outputOffset: Int = 4096
 private let outputCapacity: Int = 8192
-private let inputOffset: Int = 12288
+private let wideOffset: Int = 12288
+private let outputBytes: Int = 16384
+private let inputPositionOffset: Int = 0
+private let inputEndOffset: Int = 8
+private let inputOffset: Int = 4096
 private let inputCapacity: Int = 4096
-private let wideOffset: Int = 16384
-private let stateBytes: Int = 20480
+private let inputBytes: Int = 8192
 private let errorUnknown: Int = 5
 
-// Maps the state block on first use; 0 when the system has no memory for it.
-private func tryState(): Int {
-    let slot = staticSlot(index: stateSlot)
-    var base = load64(address: slot) as Int
+// Maps the block of static slot `slot` on first use; 0 when the system has no memory for it. The
+// caller holds the lock of the block's domain, so two threads never both map it.
+private func tryBlock(slot: Int, bytes: Int): Int {
+    let address = staticSlot(index: slot)
+    var base = load64(address: address) as Int
     if base == 0 {
-        base = mapPages(size: stateBytes)
-        if base != 0 { store64(address: slot, value: base as UInt64) }
+        base = mapPages(size: bytes)
+        if base != 0 { store64(address: address, value: base as UInt64) }
     }
     return base
 }
 
-private func state(): Int {
-    let base = tryState()
+private func outputState(): Int {
+    let base = tryBlock(slot: outputSlot, bytes: outputBytes)
     if base == 0 { panic(message: literalAddress(text: "out of memory")) }
     return base
 }
 
-private func scratchAddress(): Int {
-    return staticSlot(index: scratchSlot)
+private func inputState(): Int {
+    let base = tryBlock(slot: inputSlot, bytes: inputBytes)
+    if base == 0 { panic(message: literalAddress(text: "out of memory")) }
+    return base
+}
+
+private func outputScratch(): Int {
+    return staticSlot(index: outputScratchSlot)
 }
 
 // ---- The system interface -------------------------------------------------------
@@ -143,8 +165,8 @@ private func handleOf(descriptor: Int): Int {
 }
 
 @platform(windows)
-private func systemTerminal(descriptor: Int): Bool {
-    return consoleMode(handle: handleOf(descriptor: descriptor), mode: scratchAddress()) != 0
+private func systemTerminal(descriptor: Int, scratch: Int): Bool {
+    return consoleMode(handle: handleOf(descriptor: descriptor), mode: scratch) != 0
 }
 
 // The number of leading bytes of the `count` at `data` that end on a UTF-8
@@ -173,28 +195,26 @@ private func completePrefix(data: Int, count: Int): Int {
 // Text to a console goes through WriteConsoleW, so it shows as Unicode whatever the
 // console code page is.
 @platform(windows)
-private func writeToConsole(handle: Int, data: Int, count: Int): Int {
+private func writeToConsole(handle: Int, data: Int, count: Int, scratch: Int, wide: Int): Int {
     var chunk = count
     if chunk > 1024 { chunk = 1024 }
     chunk = completePrefix(data: data, count: chunk)
-    let base = tryState()
-    if base == 0 { return 0 - errorUnknown }
     let units = multiByteToWide(codePage: 65001, flags: 0, bytes: data, byteCount: chunk as Int32,
-        wide: base + wideOffset, wideCount: 1024)
+        wide: wide, wideCount: 1024)
     if units <= 0 { return 0 - errorUnknown }
-    if writeConsole(handle: handle, buffer: base + wideOffset, count: units as UInt32,
-        written: scratchAddress(), reserved: 0) == 0 {
+    if writeConsole(handle: handle, buffer: wide, count: units as UInt32,
+        written: scratch, reserved: 0) == 0 {
         return 0 - systemCode(code: lastError())
     }
     return chunk
 }
 
 @platform(windows)
-private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
+private func systemWrite(descriptor: Int, data: Int, count: Int, scratch: Int, wide: Int): Int {
     let handle = handleOf(descriptor: descriptor)
-    let scratch = scratchAddress()
-    if consoleMode(handle: handle, mode: scratch) != 0 {
-        return writeToConsole(handle: handle, data: data, count: count)
+    // A caller with no wide buffer (a panic, which takes no lock) writes the bytes as they are.
+    if wide != 0 && consoleMode(handle: handle, mode: scratch) != 0 {
+        return writeToConsole(handle: handle, data: data, count: count, scratch: scratch, wide: wide)
     }
     var chunk = count
     if chunk > 1048576 { chunk = 1048576 }
@@ -205,9 +225,8 @@ private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
 }
 
 @platform(windows)
-private func systemRead(data: Int, count: Int): Int {
+private func systemRead(data: Int, count: Int, scratch: Int): Int {
     let handle = handleOf(descriptor: 0)
-    let scratch = scratchAddress()
     if readFile(handle: handle, buffer: data, count: count as UInt32, done: scratch, overlapped: 0) == 0 {
         let code = lastError()
         // A closed pipe is the end of the input.
@@ -250,7 +269,7 @@ public func callNumber(x86: Int, arm: Int): Int {
 }
 
 @platform(linux)
-private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
+private func systemWrite(descriptor: Int, data: Int, count: Int, scratch: Int, wide: Int): Int {
     var outcome = 0 - 4
     // EINTR: a signal arrived before anything was written.
     while outcome == 0 - 4 {
@@ -261,7 +280,7 @@ private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
 }
 
 @platform(linux)
-private func systemRead(data: Int, count: Int): Int {
+private func systemRead(data: Int, count: Int, scratch: Int): Int {
     var outcome = 0 - 4
     while outcome == 0 - 4 {
         outcome = systemCall(number: callNumber(x86: 0, arm: 63), first: 0, second: data,
@@ -273,15 +292,15 @@ private func systemRead(data: Int, count: Int): Int {
 // TCGETS on the descriptor succeeds only for a terminal; the termios structure
 // fits the scratch area.
 @platform(linux)
-private func systemTerminal(descriptor: Int): Bool {
+private func systemTerminal(descriptor: Int, scratch: Int): Bool {
     let outcome = systemCall(number: callNumber(x86: 16, arm: 29), first: descriptor, second: 21505,
-        third: scratchAddress(), fourth: 0, fifth: 0, sixth: 0)
+        third: scratch, fourth: 0, fifth: 0, sixth: 0)
     return outcome == 0
 }
 
 @platform(linux)
 private func systemProbe(descriptor: Int): Int32 {
-    let outcome = systemWrite(descriptor: descriptor, data: 0, count: 0)
+    let outcome = systemWrite(descriptor: descriptor, data: 0, count: 0, scratch: 0, wide: 0)
     if outcome < 0 { return (0 - outcome) as Int32 }
     return 0
 }
@@ -322,7 +341,7 @@ private func failureCode(): Int {
 }
 
 @platform(macos)
-private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
+private func systemWrite(descriptor: Int, data: Int, count: Int, scratch: Int, wide: Int): Int {
     var outcome = writeDescriptor(descriptor: descriptor as Int32, buffer: data, count: count)
     while outcome < 0 && failureCode() == 0 - 4 {
         outcome = writeDescriptor(descriptor: descriptor as Int32, buffer: data, count: count)
@@ -332,7 +351,7 @@ private func systemWrite(descriptor: Int, data: Int, count: Int): Int {
 }
 
 @platform(macos)
-private func systemRead(data: Int, count: Int): Int {
+private func systemRead(data: Int, count: Int, scratch: Int): Int {
     var outcome = readDescriptor(descriptor: 0, buffer: data, count: count)
     while outcome < 0 && failureCode() == 0 - 4 {
         outcome = readDescriptor(descriptor: 0, buffer: data, count: count)
@@ -342,13 +361,13 @@ private func systemRead(data: Int, count: Int): Int {
 }
 
 @platform(macos)
-private func systemTerminal(descriptor: Int): Bool {
+private func systemTerminal(descriptor: Int, scratch: Int): Bool {
     return isTerminal(descriptor: descriptor as Int32) != 0
 }
 
 @platform(macos)
 private func systemProbe(descriptor: Int): Int32 {
-    let outcome = systemWrite(descriptor: descriptor, data: 0, count: 0)
+    let outcome = systemWrite(descriptor: descriptor, data: 0, count: 0, scratch: 0, wide: 0)
     if outcome < 0 { return (0 - outcome) as Int32 }
     return 0
 }
@@ -360,11 +379,13 @@ public func exitProcess(status: Int32): Never {
 
 // ---- Streams ----------------------------------------------------------------------
 
-// Writes all `count` bytes at `data` to `descriptor`; 0, or the first error code.
-private func writeAll(descriptor: Int, data: Int, count: Int): Int32 {
+// Writes all `count` bytes at `data` to `descriptor`; 0, or the first error code. `scratch` and
+// `wide` belong to the caller's lock domain.
+private func writeAll(descriptor: Int, data: Int, count: Int, scratch: Int, wide: Int): Int32 {
     var done = 0
     while done < count {
-        let written = systemWrite(descriptor: descriptor, data: data + done, count: count - done)
+        let written = systemWrite(descriptor: descriptor, data: data + done, count: count - done,
+            scratch: scratch, wide: wide)
         if written < 0 { return (0 - written) as Int32 }
         if written == 0 { return errorUnknown as Int32 }
         done = done + written
@@ -372,21 +393,55 @@ private func writeAll(descriptor: Int, data: Int, count: Int): Int32 {
     return 0
 }
 
-// Writes the buffered standard output and empties the buffer, even on failure.
-@c_export(symbol: "joyeer_stdout_flush")
-public func stdoutFlush(): Int32 {
-    let slot = load64(address: staticSlot(index: stateSlot))
-    if slot == 0 { return 0 }
-    let base = slot as Int
+// Writes the buffered standard output and empties the buffer, even on failure. The caller holds
+// the output lock, or is a panic that gave up waiting for it, and passes its own scratch.
+private func flushBuffered(base: Int, scratch: Int, wide: Int): Int32 {
     let pending = load64(address: base + outputCountOffset) as Int
     if pending == 0 { return 0 }
     store64(address: base + outputCountOffset, value: 0)
-    return writeAll(descriptor: 1, data: base + outputOffset, count: pending)
+    return writeAll(descriptor: 1, data: base + outputOffset, count: pending, scratch: scratch, wide: wide)
 }
 
-// Appends bytes to standard output; 0, or the code of the first failed write.
+// The output lock, taken once per `print` so its bytes stay together. A print checks
+// `threadsActive()` itself, so a single-threaded program makes no call here.
+public func outputLockBlocking() {
+    lockBlocking(slot: outputLockSlot)
+}
+
+public func outputUnlockBlocking() {
+    lockUnblock(slot: outputLockSlot)
+}
+
+// Writes the buffered standard output (a lock holder's flush: the buffer is full, or a terminal).
+private func flushOutput(base: Int): Int32 {
+    return flushBuffered(base: base, scratch: outputScratch(), wide: base + wideOffset)
+}
+
+@c_export(symbol: "joyeer_stdout_flush")
+public func stdoutFlush(): Int32 {
+    let held = lockAcquire(slot: outputLockSlot)
+    var code: Int32 = 0
+    let block = load64(address: staticSlot(index: outputSlot)) as Int
+    if block != 0 { code = flushOutput(base: block) }
+    lockRelease(slot: outputLockSlot, held: held)
+    return code
+}
+
+// A panic's flush: it waits a bounded time for the output lock, then flushes without it. It uses
+// its own scratch and no console wide buffer, so it never touches state another thread is using.
+public func stdoutFlushForPanic() {
+    let held = lockTry(slot: outputLockSlot, spins: 100000)
+    let block = load64(address: staticSlot(index: outputSlot)) as Int
+    if block != 0 {
+        flushBuffered(base: block, scratch: staticSlot(index: panicScratchSlot), wide: 0)
+    }
+    lockRelease(slot: outputLockSlot, held: held)
+}
+
+// Appends bytes to standard output; 0, or the code of the first failed write. The caller holds
+// the output lock.
 public func putBytes(data: Int, count: Int): Int32 {
-    let base = state()
+    let base = outputState()
     var code: Int32 = 0
     var done = 0
     while done < count {
@@ -394,13 +449,14 @@ public func putBytes(data: Int, count: Int): Int32 {
         let remaining = count - done
         if pending == 0 && remaining >= outputCapacity {
             // Too big to be worth copying.
-            let failure = writeAll(descriptor: 1, data: data + done, count: remaining)
+            let failure = writeAll(descriptor: 1, data: data + done, count: remaining,
+                scratch: outputScratch(), wide: base + wideOffset)
             if code == 0 { code = failure }
             return code
         }
         var room = outputCapacity - pending
         if room == 0 {
-            let failure = stdoutFlush()
+            let failure = flushOutput(base: base)
             if code == 0 { code = failure }
             pending = 0
             room = outputCapacity
@@ -414,11 +470,12 @@ public func putBytes(data: Int, count: Int): Int32 {
     return code
 }
 
+// The caller holds the output lock.
 public func putByte(value: Int) {
-    let base = state()
+    let base = outputState()
     var pending = load64(address: base + outputCountOffset) as Int
     if pending == outputCapacity {
-        stdoutFlush()
+        flushOutput(base: base)
         pending = 0
     }
     store8(address: base + outputOffset + pending, value: value as UInt8)
@@ -427,55 +484,86 @@ public func putByte(value: Int) {
 
 // Called when one `print` has written its text and newline: an interactive program's
 // output appears at once, a redirected one stays buffered. The terminal check is
-// made once per process.
+// made once per process. The caller holds the output lock.
 public func endPrint() {
-    let base = state()
+    let base = outputState()
     var terminal = load64(address: base + terminalOffset) as Int
     if terminal == 0 {
         terminal = 2
-        if systemTerminal(descriptor: 1) { terminal = 1 }
+        if systemTerminal(descriptor: 1, scratch: outputScratch()) { terminal = 1 }
         store64(address: base + terminalOffset, value: terminal as UInt64)
     }
-    if terminal == 1 { stdoutFlush() }
+    if terminal == 1 { flushOutput(base: base) }
 }
 
 @c_export(symbol: "joyeer_stdout_write")
 public func stdoutWrite(data: Int, count: Int): Int32 {
-    return putBytes(data: data, count: count)
+    let held = lockAcquire(slot: outputLockSlot)
+    let code = putBytes(data: data, count: count)
+    lockRelease(slot: outputLockSlot, held: held)
+    return code
 }
 
 // Standard error is written at once, bypassing the standard output buffer.
 @c_export(symbol: "joyeer_stderr_write")
 public func stderrWrite(data: Int, count: Int): Int32 {
     if count <= 0 { return systemProbe(descriptor: 2) }
-    return writeAll(descriptor: 2, data: data, count: count)
+    let held = lockAcquire(slot: outputLockSlot)
+    // The console path needs the wide buffer; without memory for the block it writes bytes.
+    var wide = 0
+    let block = tryBlock(slot: outputSlot, bytes: outputBytes)
+    if block != 0 { wide = block + wideOffset }
+    let code = writeAll(descriptor: 2, data: data, count: count, scratch: outputScratch(), wide: wide)
+    lockRelease(slot: outputLockSlot, held: held)
+    return code
+}
+
+// A panic's message: unlocked, with its own scratch and no wide buffer.
+public func stderrWriteForPanic(data: Int, count: Int) {
+    if count <= 0 { return }
+    writeAll(descriptor: 2, data: data, count: count, scratch: staticSlot(index: panicScratchSlot), wide: 0)
 }
 
 // The next byte of standard input (0 to 255), -1 at the end of the input, or a
-// negated error code (at most -2).
+// negated error code (at most -2). The input lock is held across a blocking read, which
+// only stops other readers.
 @c_export(symbol: "joyeer_stdin_read_byte")
 public func stdinReadByte(): Int32 {
-    let base = state()
+    let held = lockAcquire(slot: inputLockSlot)
+    let base = inputState()
     var position = load64(address: base + inputPositionOffset) as Int
     var end = load64(address: base + inputEndOffset) as Int
+    var code: Int32 = 0
     if position >= end {
-        let count = systemRead(data: base + inputOffset, count: inputCapacity)
-        if count < 0 { return count as Int32 }
-        if count == 0 { return 0 - 1 }
-        position = 0
-        end = count
-        store64(address: base + inputEndOffset, value: end as UInt64)
+        let count = systemRead(data: base + inputOffset, count: inputCapacity,
+            scratch: staticSlot(index: inputScratchSlot))
+        if count < 0 {
+            code = count as Int32
+        } else if count == 0 {
+            code = 0 - 1
+        } else {
+            position = 0
+            end = count
+            store64(address: base + inputEndOffset, value: end as UInt64)
+        }
     }
-    store64(address: base + inputPositionOffset, value: (position + 1) as UInt64)
-    return load8(address: base + inputOffset + position) as Int32
+    if code == 0 {
+        store64(address: base + inputPositionOffset, value: (position + 1) as UInt64)
+        code = load8(address: base + inputOffset + position) as Int32
+    }
+    lockRelease(slot: inputLockSlot, held: held)
+    return code
 }
 
 // Drops the buffered, unread standard input. A program that points its own standard
 // input somewhere else (a test) calls this so the old input is not read first.
 @c_export(symbol: "joyeer_stdin_discard")
 public func stdinDiscard(): Void {
-    let slot = load64(address: staticSlot(index: stateSlot))
-    if slot == 0 { return }
-    store64(address: (slot as Int) + inputPositionOffset, value: 0)
-    store64(address: (slot as Int) + inputEndOffset, value: 0)
+    let held = lockAcquire(slot: inputLockSlot)
+    let block = load64(address: staticSlot(index: inputSlot)) as Int
+    if block != 0 {
+        store64(address: block + inputPositionOffset, value: 0)
+        store64(address: block + inputEndOffset, value: 0)
+    }
+    lockRelease(slot: inputLockSlot, held: held)
 }

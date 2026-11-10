@@ -1,0 +1,81 @@
+// Channels on one thread (spec 21.9): values move through a bounded queue in order, a closed sender
+// still delivers what is queued and then reports closed, a closed receiver refuses and destroys, and
+// every value is destroyed exactly once (the leak counter ends at zero).
+struct Item {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+func report(outcome: Result<Int, ChannelClosed>) {
+    match outcome {
+        .Ok(value) => print(value: value),
+        .Err(_) => print(value: "closed"),
+    }
+}
+
+func main() {
+    var sender: ChannelSender<Int>
+    var receiver: ChannelReceiver<Int>
+    channel(capacity: 4, sender: &sender, receiver: &receiver)
+    let first = sender.send(value: consume 10)
+    let second = sender.send(value: consume 20)
+    report(outcome: receiver.receive())
+    report(outcome: receiver.receive())
+    consume sender.close()
+    report(outcome: receiver.receive())
+    consume receiver.close()
+
+    // A heap value moves through the queue.
+    var textSender: ChannelSender<String>
+    var textReceiver: ChannelReceiver<String>
+    channel(capacity: 2, sender: &textSender, receiver: &textReceiver)
+    let sentText = textSender.send(value: consume "hello")
+    let gotText = textReceiver.receive()
+    match gotText {
+        .Ok(text) => print(value: text),
+        .Err(_) => print(value: "closed"),
+    }
+
+    var listSender: ChannelSender<[Int]>
+    var listReceiver: ChannelReceiver<[Int]>
+    channel(capacity: 2, sender: &listSender, receiver: &listReceiver)
+    let sentList = listSender.send(value: consume [1, 2, 3])
+    let gotList = listReceiver.receive()
+    match gotList {
+        .Ok(values) => print(value: values.count),
+        .Err(_) => print(value: "closed"),
+    }
+
+    // A closed receiver refuses a value and the value is destroyed.
+    var gone: ChannelSender<Int>
+    var away: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &gone, receiver: &away)
+    consume away.close()
+    let refusedInt = gone.send(value: consume 5)
+    match refusedInt {
+        .Ok(_) => print(value: "sent"),
+        .Err(_) => print(value: "gone"),
+    }
+
+    // Noncopyable elements: received ones are moved, queued ones are destroyed when the receiver closes,
+    // and one sent to a closed receiver is destroyed by the send.
+    var itemSender: ChannelSender<Item>
+    var itemReceiver: ChannelReceiver<Item>
+    channel(capacity: 3, sender: &itemSender, receiver: &itemReceiver)
+    let a = itemSender.send(value: consume Item(id: 1))
+    let b = itemSender.send(value: consume Item(id: 2))
+    let c = itemSender.send(value: consume Item(id: 3))
+    match itemReceiver.receive() {
+        .Ok(item) => print(value: item.id * 100),
+        .Err(_) => print(value: "closed"),
+    }
+    consume itemReceiver.close()
+    let late = itemSender.send(value: consume Item(id: 9))
+    match late {
+        .Ok(_) => print(value: "accepted"),
+        .Err(_) => print(value: "refused"),
+    }
+}

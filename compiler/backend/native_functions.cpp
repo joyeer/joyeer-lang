@@ -235,6 +235,17 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::extractPayload:
             result = extractPayload(values.at(instruction.operands[0]).type, argument(0),
                     *instruction.symbol, static_cast<size_t>(instruction.integerValue)); break;
+        case Opcode::payloadAddress: {
+            const auto id = values.at(instruction.operands[0]).type;
+            const auto& cases = enumerations.at(id)->cases;
+            const auto found = std::find_if(cases.begin(), cases.end(), [&instruction](const auto& definition) {
+                return definition.symbol == *instruction.symbol;
+            });
+            if (found == cases.end()) return false;
+            result = payload(llvmType(id), argument(0),
+                    payloadOffsets(*found).at(static_cast<size_t>(instruction.integerValue)));
+            break;
+        }
         case Opcode::branch: builder.CreateBr(blocks.at(instruction.targets[0])); break;
         case Opcode::conditionalBranch:
             builder.CreateCondBr(argument(0), blocks.at(instruction.targets[0]), blocks.at(instruction.targets[1])); break;

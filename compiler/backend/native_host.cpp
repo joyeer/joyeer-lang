@@ -162,6 +162,20 @@ llvm::Value* Builder::emitIntrinsic(const intrinsic::Descriptor& descriptor,
         case Operation::atomicAdd:
             return builder.CreateAtomicRMW(llvm::AtomicRMWInst::Add, address, arguments[1],
                     llvm::MaybeAlign(8), llvm::AtomicOrdering::SequentiallyConsistent);
+        case Operation::atomicLoad: {
+            auto* load = builder.CreateAlignedLoad(builder.getInt64Ty(), address, llvm::MaybeAlign(8), temporary());
+            load->setAtomic(llvm::AtomicOrdering::SequentiallyConsistent);
+            return load;
+        }
+        case Operation::atomicExchange:
+            return builder.CreateAtomicRMW(llvm::AtomicRMWInst::Xchg, address, arguments[1],
+                    llvm::MaybeAlign(8), llvm::AtomicOrdering::SequentiallyConsistent);
+        case Operation::atomicCompareExchange: {
+            auto* exchange = builder.CreateAtomicCmpXchg(address, arguments[1], arguments[2],
+                    llvm::MaybeAlign(8), llvm::AtomicOrdering::SequentiallyConsistent,
+                    llvm::AtomicOrdering::SequentiallyConsistent);
+            return builder.CreateExtractValue(exchange, 0, temporary());
+        }
         case Operation::addressOf:
         case Operation::callVoid1:
         case Operation::callVoid2:

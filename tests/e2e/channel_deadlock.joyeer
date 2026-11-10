@@ -1,0 +1,10 @@
+// With no other thread, a send on a full queue could never be woken: it traps instead of hanging
+// (spec 21.9.5).
+func main() {
+    var sender: ChannelSender<Int>
+    var receiver: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+    let first = sender.send(value: consume 1)
+    let second = sender.send(value: consume 2)
+    print(value: "unreachable")
+}

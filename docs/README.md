@@ -22,6 +22,7 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
 | Plan runtime and public-library development | [Runtime in Joyeer](plan/runtime-in-joyeer.md) and [Library modules](plan/library.md) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/toolchain-libraries.md) |
+| See a larger program (a Markdown web server over the provisional [TCP API](spec/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
@@ -74,6 +75,7 @@ work.
 | [test-audit.md](plan/test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
 | [runtime-in-joyeer.md](plan/runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
+| [concurrency.md](plan/concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
 | [library.md](plan/library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 
@@ -96,6 +98,14 @@ in the spec.
 | [0009](decisions/0009-runtime-core-capabilities.md) | What the Joyeer runtime core needs from the compiler: static storage, indirect calls, core units, the entry point, data symbols, panic messages |
 | [0010](decisions/0010-floating-point-printing.md) | `Float` and `Double` printing in Joyeer: exact `%.17g` / `%.9g` bytes, big-integer digit generation, `nan` |
 | [0011](decisions/0011-runtime-without-the-c-library.md) | The runtime without the C library (Tier 2): size-class allocator over the system, owned output and exit, own entry |
+| [0012](decisions/0012-tcp-networking.md) | Blocking IPv4 TCP in `System` (provisional, Windows and Linux implemented): opaque listener and connection handles, bounded receive, no concurrency yet |
+| [0013](decisions/0013-concurrency-model.md) | Concurrency (accepted direction): share-nothing threads, ownership moved through tasks and bounded channels, no shared mutable state; timeouts and readiness polling first |
+| [0014](decisions/0014-network-timeouts.md) | `timeoutMillis` on `tcpAccept` and `tcpReceive` (accepted, implemented on Windows and Linux): a bounded wait per call, no send or connect timeout, no total deadline |
+| [0015](decisions/0015-noncopyable-and-linear-types.md) | Noncopyable and linear types and handles that close (accepted, implemented): copy and consume checks, a "must be consumed" analysis, consuming a pattern binding; the open fork is `deinit` versus a restricted resource annotation |
+| [0016](decisions/0016-thread-primitives.md) | Thread, mutex and condition primitives in the runtime (accepted, implemented): runtime-owned trampoline, caller-supplied storage, 8 MiB stacks, at most 256 unjoined threads |
+| [0017](decisions/0017-runtime-thread-safety.md) | Runtime thread safety (accepted, implemented): locks taken only while a second thread exists, OS-assisted sleeping locks, atomic `print`, first-panic-wins |
+| [0018](decisions/0018-tasks.md) | Tasks (accepted design, in implementation): `spawn`, `JoinHandle<R>` and `consume h.join()`, one heap block per task, `Array.consumeEmpty()` |
+| [0019](decisions/0019-channels.md) | Channels (accepted, implemented): single-sender, single-receiver bounded channels, `send` returns `Result<Void, ChannelClosed>`, a runtime object with a lock-protected close protocol |
 
 ## Conventions
 

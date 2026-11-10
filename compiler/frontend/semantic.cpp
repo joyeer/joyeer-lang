@@ -28,6 +28,10 @@ bool SemanticModel::isRuntimeSource(SourceSpan span) const {
     return found != runtimeSources_.end() && found->second;
 }
 
+const std::string* SemanticModel::moduleName(uint32_t module) const {
+    return module < moduleNames_.size() ? &moduleNames_[module] : nullptr;
+}
+
 bool SemanticModel::isCoreSource(SourceSpan span) const {
     const auto found = coreSources_.find(span.sourceId);
     return found != coreSources_.end() && found->second;

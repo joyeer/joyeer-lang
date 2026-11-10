@@ -171,6 +171,40 @@ public func arrayAppendOwned(array: Int, element: Int): Void {
     write(address: array + 8, value: count + 1)
 }
 
+// Removes the last element into `element`, which receives its bytes and takes ownership of
+// it: the element is not destroyed. Returns 0 and writes nothing when the array is empty.
+@c_export(symbol: "joyeer_array_remove_last_abi")
+public func arrayRemoveLast(array: Int, element: Int): Int {
+    if array == 0 || read(address: array) == 0 || read(address: array + 8) < 0 ||
+        read(address: array + 16) < read(address: array + 8) {
+        panic(message: literalAddress(text: "invalid array remove"))
+    }
+    let data = read(address: array)
+    let count = read(address: array + 8)
+    if count == 0 { return 0 }
+    let elementSize = read(address: data - headerSize)
+    if elementSize < 0 || (elementSize != 0 && element == 0) {
+        panic(message: literalAddress(text: "invalid array remove"))
+    }
+    if elementSize != 0 {
+        copyBytes(destination: element,
+            source: data + byteCount(count: count - 1, stride: elementSize), count: elementSize)
+    }
+    write(address: array + 8, value: count - 1)
+    return 1
+}
+
+// Ends an array that must be empty (`consume a.consumeEmpty()`, spec 2.6.4): traps before touching
+// any element when it is not, otherwise frees the storage and leaves the handle inert.
+@c_export(symbol: "joyeer_array_consume_empty_abi")
+public func arrayConsumeEmpty(array: Int): Void {
+    if array == 0 || read(address: array + 8) < 0 || read(address: array + 16) < read(address: array + 8) {
+        panic(message: literalAddress(text: "invalid array consume"))
+    }
+    if read(address: array + 8) != 0 { panic(message: literalAddress(text: "array not empty")) }
+    destroy(handle: array)
+}
+
 @c_export(symbol: "joyeer_array_destroy_abi")
 public func arrayDestroy(array: Int): Void {
     destroy(handle: array)

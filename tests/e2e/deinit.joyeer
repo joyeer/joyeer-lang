@@ -1,0 +1,52 @@
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+struct Holder {
+    var handle: Handle
+}
+
+func finish(handle: consuming Handle) {
+    print(value: 100)
+}
+
+func make(id: Int): Handle {
+    let handle = Handle(id: id)
+    return handle
+}
+
+func scoped() {
+    let first = Handle(id: 1)
+    let second = Handle(id: 2)
+    print(value: 10)
+}
+
+func maybeFinish(id: Int, flag: Bool) {
+    var handle = Handle(id: id)
+    if flag {
+        finish(handle: consume handle)
+    }
+    print(value: 200)
+}
+
+func main() {
+    scoped()
+
+    let made = make(id: 3)
+    print(value: 20)
+    finish(handle: consume made)
+
+    maybeFinish(id: 4, flag: true)
+    maybeFinish(id: 5, flag: false)
+
+    var replaced = Handle(id: 6)
+    replaced = Handle(id: 7)
+    print(value: 30)
+
+    let holder = Holder(handle: Handle(id: 8))
+    print(value: 40)
+}

@@ -50,7 +50,7 @@ comparison is against the non-inlined form).
 the address of the 8-byte, zero-initialized slot `index` in a table of 64 slots.
 An index outside `0..<64` traps. The table is one internal global with
 `linkonce_odr` linkage in a comdat, so every runtime object in a program shares a
-single table. Slot ranges are assigned in the runtime plan (core 0 to 15,
+single table. Slot ranges are assigned in the runtime implementation notes (`docs/impl/runtime.md`) (core 0 to 15,
 `System` 16 to 31, the rest reserved). Rejected: mutable top-level `var` (a
 language change with ownership and initialization-order questions), and a
 heap-allocated state block with its address kept in an OS slot (needs a C

@@ -1,0 +1,36 @@
+struct Handle {
+    var id: Int
+
+    deinit() {
+        print(value: self.id)
+    }
+}
+
+func main() {
+    var numbers: [Int] = [1, 2, 3]
+    let last = &numbers.removeLast()
+    match last {
+        .Some(n) => print(value: n),
+        .None => print(value: -1),
+    }
+    print(value: numbers.count)
+
+    var empty: [Int] = []
+    let none = &empty.removeLast()
+    match none {
+        .Some(n) => print(value: n),
+        .None => print(value: -1),
+    }
+
+    var words: [String] = ["a", "bb"]
+    let word = &words.removeLast()
+    match word {
+        .Some(s) => print(value: s),
+        .None => print(value: "none"),
+    }
+    print(value: words.count)
+
+    var handles: [Handle] = [Handle(id: 1), Handle(id: 2), Handle(id: 3)]
+    let dropped = &handles.removeLast()
+    print(value: handles.count)
+}

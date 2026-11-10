@@ -954,6 +954,35 @@ if(JOYEER_CLANG_EXECUTABLE)
             LABELS "e2e;llvm-backend;runtime;ownership;consuming;projection-consume"
     )
 
+    add_test(NAME E2EExecutableDeinit
+            COMMAND ${CMAKE_COMMAND}
+                    -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                    -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/deinit.joyeer
+                    -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deinit${CMAKE_EXECUTABLE_SUFFIX}
+                    -DEXPECTED_OUTPUT=10\n2\n1\n20\n100\n3\n100\n4\n200\n200\n5\n6\n30\n40\n8\n7\n
+                    -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+    )
+    set_tests_properties(E2EExecutableDeinit PROPERTIES
+            LABELS "e2e;llvm-backend;runtime;ownership;consuming;deinit"
+    )
+
+    # The destroy helper that runs a `deinit` has no debug scope of its own; at -O1 and above
+    # with full debug info the optimizer crashed until the helper was kept out of line.
+    foreach(level 0 1 2)
+        add_test(NAME E2EExecutableDeinitFullDebugO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DINPUT_FILE=${JOYEER_TESTS_DIR}/e2e/deinit.joyeer
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/joyeer-native-deinit-gfull-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DCOMPILER_ARGS=-O${level};-gfull"
+                        -DEXPECTED_OUTPUT=10\n2\n1\n20\n100\n3\n100\n4\n200\n200\n5\n6\n30\n40\n8\n7\n
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake
+        )
+        set_tests_properties(E2EExecutableDeinitFullDebugO${level} PROPERTIES
+                LABELS "e2e;llvm-backend;runtime;ownership;deinit;debug"
+        )
+    endforeach()
+
     function(add_joyeer_native_regression name fixture expected_output)
         set(levels 0 2)
         if(ARGC GREATER 3)
@@ -976,6 +1005,45 @@ if(JOYEER_CLANG_EXECUTABLE)
         endforeach()
     endfunction()
 
+    add_joyeer_native_regression(
+            E2EDeinitMoves deinit_moves
+            "10\n20\n30\n40\n5\n50\n60\n7\n6\n4\n3\n2\n1\n")
+    add_joyeer_native_regression(
+            E2EArrayRemoveLast array_remove_last
+            "3\n2\n-1\nbb\n1\n2\n3\n2\n1\n")
+    add_joyeer_native_regression(
+            E2EArrayConsumeEmpty array_consume_empty
+            "bb\na\n1\n3\n2\n1\n6\n0\n2\n1\n0\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ETaskBasic task_basic
+            "99\n49\nhi!\njob\n4\n5\n8\n8\n10\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ETaskFanout task_fanout
+            "338350\n37\n60\n3\n3\n9\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EChannelBasic channel_basic
+            "10\n20\nclosed\nhello\n3\ngone\n100\n1\n2\n3\n9\nrefused\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EChannelTasks channel_tasks
+            "500500\n1000\n10100\n100\n100\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EChannelCycle channel_cycle
+            "built\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EMatchMoves match_moves
+            "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
+    add_joyeer_native_regression(
+            E2EMatchMovesOnward match_moves_onward
+            "100\n1\n1\nname\n3\n2\n")
+    add_joyeer_native_regression(
+            E2EConstArrayConsume const_array_consume
+            "41\n41\n58\n6\n")
     add_joyeer_native_regression(
             E2ERegressionShortCircuit regression_lowering_short_circuit
             "false\n0\ntrue\n1\nfalse\nfalse\ntrue\nfalse\ntrue\nfalse\n")
@@ -1234,6 +1302,16 @@ abcdabcd
     endfunction()
     add_joyeer_native_checked_trap(
             E2EUnitArrayBounds unit_array_bounds "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            E2EArrayConsumeEmptyTrap array_consume_empty_trap "array not empty")
+    add_joyeer_native_checked_trap(
+            E2ETaskTrap task_trap "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            E2ETaskLimit task_limit "too many tasks")
+    add_joyeer_native_checked_trap(
+            E2EChannelTrap channel_trap "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            E2EChannelDeadlock channel_deadlock "channel deadlock")
     add_joyeer_native_checked_trap(
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
 
@@ -1633,4 +1711,42 @@ add_test(NAME ParserMvpCliRejectsInvalidSource
 )
 set_tests_properties(ParserMvpCliRejectsInvalidSource PROPERTIES
         LABELS parser
+)
+
+add_test(NAME DiagnosticsCliRejectsCopyOfNoncopyableValue
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/deinit_copy.joyeer
+                "-DEXPECTED_HEADER=deinit_copy.joyeer:8:13: error[type-checking.copy-of-noncopyable]"
+                "-DEXPECTED_SOURCE=    let b = a"
+                "-DEXPECTED_HELP=help: move an owning local or consuming parameter with 'consume'"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsCopyOfNoncopyableValue PROPERTIES
+        LABELS "diagnostics;type-checking;deinit"
+)
+
+add_test(NAME DiagnosticsCliRejectsRunProcessWithTasks
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/run_process_with_tasks.joyeer
+                "-DEXPECTED_HEADER=run_process_with_tasks.joyeer:9:18: error[semantic-analysis.run-process-with-tasks]"
+                "-DEXPECTED_SOURCE=    let status = runProcess(executable: \"true\", arguments: [], workingDirectory: \".\")"
+                "-DEXPECTED_HELP=help: this program also calls spawn"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsRunProcessWithTasks PROPERTIES
+        LABELS "diagnostics;semantic-analysis;tasks"
+)
+
+add_test(NAME DiagnosticsCliRejectsPartialConsumeOfDeinitType
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/semantic-analysis/err/deinit_partial_consume.joyeer
+                "-DEXPECTED_HEADER=deinit_partial_consume.joyeer:10:25: error[semantic-analysis.partial-consume-of-deinit-type]"
+                "-DEXPECTED_SOURCE=    take(value: consume handle.name)"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsPartialConsumeOfDeinitType PROPERTIES
+        LABELS "diagnostics;semantic-analysis;deinit"
 )

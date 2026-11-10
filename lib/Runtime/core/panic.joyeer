@@ -8,6 +8,15 @@
 // point, including inside the allocator. The streams it writes through (streams.joyeer)
 // map no memory on this path.
 //
+// With threads (decision 0017) the first trap wins. A panic claims the panic flag (static slot
+// 38) with an atomic add. A thread that finds it already claimed by another thread parks for
+// good: it neither prints nor returns, and the process ends when the first thread exits it. A
+// thread that reaches any runtime lock after the claim parks too (locks.joyeer), so nothing else
+// prints or writes after the flush. The first thread takes no lock it could wait on forever: it
+// tries the output lock for a bounded number of attempts, flushes without it if that fails, and
+// writes standard error with its own scratch. A second panic in a program that never started a
+// thread (one inside the panic path) exits at once instead of parking, as it always did.
+//
 // This is a runtime core unit: scalars and addresses held as `Int` only. It must
 // not use String values, arrays, dictionaries or print, which lower to runtime
 // calls (runtime plan §4).
@@ -17,6 +26,14 @@ private func literalAddress(text: String): Int
 
 @c_extern(symbol: "joyeer_intrinsic_load_u8")
 private func loadByte(address: Int): UInt8
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+private func staticSlot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+private func atomicAdd(address: Int, delta: Int): Int
+
+private let panicSlot: Int = 38
 
 private func length(address: Int): Int {
     var count = 0
@@ -30,9 +47,16 @@ public func panic(message: Int): Never {
     var text = message
     if text == 0 { text = literalAddress(text: "unknown error") }
     let prefix = literalAddress(text: "Joyeer runtime error: ")
-    stdoutFlush()
-    stderrWrite(data: prefix, count: length(address: prefix))
-    stderrWrite(data: text, count: length(address: text))
-    stderrWrite(data: literalAddress(text: "\n"), count: 1)
+    let claimed = atomicAdd(address: staticSlot(index: panicSlot), delta: 1)
+    if claimed != 0 {
+        // Another thread is already panicking. If other threads can exist it ends the process;
+        // wait for it. Otherwise this is a panic inside the panic path of a single thread.
+        if threadsActive() { parkThread() }
+        exitProcess(status: 1)
+    }
+    stdoutFlushForPanic()
+    stderrWriteForPanic(data: prefix, count: length(address: prefix))
+    stderrWriteForPanic(data: text, count: length(address: text))
+    stderrWriteForPanic(data: literalAddress(text: "\n"), count: 1)
     exitProcess(status: 1)
 }

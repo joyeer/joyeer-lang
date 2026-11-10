@@ -81,6 +81,17 @@ enum class Opcode {
     constructStruct,
     constructArray,
     arrayAppend,
+    arrayRemoveLast,
+    arrayConsumeEmpty,
+    // Starts a task running `callee(input)` and yields its handle; `taskJoin` waits for it (spec 21).
+    taskSpawn,
+    taskJoin,
+    // Channels (decision 0019): create both ends in two addresses; send a moved value; receive one;
+    // close an end and zero its storage.
+    channelCreate,
+    channelSend,
+    channelReceive,
+    channelClose,
     constructDictionary,
     dictionarySet,
     dictionaryGet,
@@ -88,6 +99,7 @@ enum class Opcode {
     extractField,
     constructEnum,
     extractPayload,
+    payloadAddress,
     stringUtf8,
     count,
     subscript,
@@ -252,7 +264,15 @@ struct StructureDefinition {
     TypeId type = typing::invalidTypeId;
     std::string name;
     std::vector<FieldDefinition> fields;
+    // The struct's `deinit` (decision 0015): a function taking the value's address and
+    // returning nothing, run once when a live value is destroyed, before its fields. A
+    // struct with one ends with a hidden Bool field (`liveFieldName`, no source symbol) that
+    // construction sets and `take` clears with the rest of the value, so destroying moved-from
+    // or uninitialized storage never runs the `deinit`.
+    std::optional<FunctionId> deinitializer;
 };
+
+inline constexpr const char* liveFieldName = "$live";
 
 struct EnumCaseDefinition {
     semantic::SymbolId symbol = semantic::invalidSymbolId;

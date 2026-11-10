@@ -1,0 +1,210 @@
+import Foundation
+
+// Blocking IPv4 TCP (spec §18.6, decision 0012), written in Joyeer. This file
+// holds what is the same on every platform: the public types, argument
+// validation, the dotted-quad parser, the send loop and the error handling.
+// network_windows.joyeer and network_posix.joyeer hold the primitives.
+//
+// Primitive results are plain Ints: a value >= 0 is success (a handle, a byte
+// count, a port, 0), and a negative value is the negated native error code.
+// An IPv4 address crosses to the primitives as one Int, a.b.c.d packed as
+// (a << 24) | (b << 16) | (c << 8) | d.
+
+public enum NetworkError {
+    InvalidInput(Int),
+    AddressInUse(Int),
+    AddressNotAvailable(Int),
+    PermissionDenied(Int),
+    ConnectionRefused(Int),
+    ConnectionReset(Int),
+    TimedOut(Int),
+    Other(Int),
+}
+
+// A listening socket. The handle is not visible outside System. A listener owns its socket
+// (decision 0015): it is noncopyable, and destroying it closes the socket. An explicit close
+// stores -1, which tells the `deinit` there is nothing left to close.
+public struct TcpListener {
+    var handle: Int
+
+    deinit() {
+        if self.handle >= 0 { discard(handle: self.handle) }
+    }
+}
+
+// A connected socket, owned and closed the same way.
+public struct TcpConnection {
+    var handle: Int
+
+    deinit() {
+        if self.handle >= 0 { discard(handle: self.handle) }
+    }
+}
+
+private let maximumReceiveBytes: Int = 1048576
+private let maximumSendChunk: Int = 1073741824
+private let maximumTimeoutMillis: Int = 2147483647
+private let lowestPort: Int = 0
+private let highestPort: Int = 65535
+
+// The packed address of a dotted quad, or -1. Four decimal fields of one to
+// three digits, each 0...255, with no leading zero except a lone "0".
+func parseIpv4(text: String): Int {
+    var packed = 0
+    var fields = 0
+    var index = 0
+    while fields < 4 {
+        var digits = 0
+        var value = 0
+        let start = index
+        while index < text.count && text[index] >= 48 && text[index] <= 57 {
+            value = value * 10 + (byteToInt(value: text[index]) - 48)
+            digits = digits + 1
+            index = index + 1
+            if digits > 3 { return -1 }
+        }
+        if digits == 0 || value > 255 { return -1 }
+        if digits > 1 && text[start] == 48 { return -1 }
+        packed = (packed << 8) | value
+        fields = fields + 1
+        if fields < 4 {
+            if index >= text.count || text[index] != 46 { return -1 }
+            index = index + 1
+        }
+    }
+    if index != text.count { return -1 }
+    return packed
+}
+
+private func failed(status: Int): NetworkError {
+    return classifyNetworkError(code: 0 - status)
+}
+
+// Closes a socket whose close result is not reported: after another failure, which is the one
+// reported, or when the owning value is destroyed.
+private func discard(handle: Int) {
+    if nativeTcpClose(handle: handle) < 0 { }
+}
+
+public func tcpListen(address: String, port: Int, backlog: Int): Result<TcpListener, NetworkError> {
+    let packed = parseIpv4(text: address)
+    if packed < 0 || port < lowestPort || port > highestPort || backlog < 1 {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    let handle = nativeTcpOpen()
+    if handle < 0 { return .Err(failed(status: handle)) }
+    var status = nativeTcpPrepareListener(handle: handle)
+    if status >= 0 { status = nativeTcpBind(handle: handle, address: packed, port: port) }
+    if status >= 0 { status = nativeTcpListen(handle: handle, backlog: backlog) }
+    if status < 0 {
+        discard(handle: handle)
+        return .Err(failed(status: status))
+    }
+    return .Ok(TcpListener(handle: handle))
+}
+
+// -1 waits without limit, 0 does not wait, 1...2147483647 is a limit in milliseconds.
+private func validTimeout(timeoutMillis: Int): Bool {
+    return timeoutMillis >= -1 && timeoutMillis <= maximumTimeoutMillis
+}
+
+// Waits for the handle to become ready unless the timeout is -1. Returns .None when
+// the call may go ahead, or the error to report; an expired wait is `.TimedOut`.
+// The primitive's status is 1 ready, 0 expired, or the negated native error code.
+private func waitFailure(handle: Int, timeoutMillis: Int): Optional<NetworkError> {
+    if timeoutMillis < 0 { return .None }
+    let waited = nativeTcpWait(handle: handle, timeoutMillis: timeoutMillis)
+    if waited < 0 { return .Some(failed(status: waited)) }
+    if waited == 0 { return .Some(.TimedOut(networkTimeoutCode())) }
+    return .None
+}
+
+public func tcpAccept(listener: TcpListener, timeoutMillis: Int): Result<TcpConnection, NetworkError> {
+    if !validTimeout(timeoutMillis: timeoutMillis) { return .Err(.InvalidInput(networkInvalidCode())) }
+    let problem = waitFailure(handle: listener.handle, timeoutMillis: timeoutMillis)
+    match problem {
+        .Some(error) => { return .Err(error) },
+        .None => { },
+    }
+    let handle = nativeTcpAccept(handle: listener.handle)
+    if handle < 0 { return .Err(failed(status: handle)) }
+    return .Ok(TcpConnection(handle: handle))
+}
+
+public func tcpConnect(address: String, port: Int): Result<TcpConnection, NetworkError> {
+    let packed = parseIpv4(text: address)
+    if packed < 0 || port < 1 || port > highestPort {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    let handle = nativeTcpOpen()
+    if handle < 0 { return .Err(failed(status: handle)) }
+    let status = nativeTcpConnect(handle: handle, address: packed, port: port)
+    if status < 0 {
+        discard(handle: handle)
+        return .Err(failed(status: status))
+    }
+    return .Ok(TcpConnection(handle: handle))
+}
+
+public func tcpLocalPort(listener: TcpListener): Result<Int, NetworkError> {
+    let port = nativeTcpPort(handle: listener.handle)
+    if port < 0 { return .Err(failed(status: port)) }
+    return .Ok(port)
+}
+
+public func tcpReceive(connection: TcpConnection, maximumBytes: Int,
+    timeoutMillis: Int): Result<String, NetworkError> {
+    if maximumBytes < 1 || maximumBytes > maximumReceiveBytes || !validTimeout(timeoutMillis: timeoutMillis) {
+        return .Err(.InvalidInput(networkInvalidCode()))
+    }
+    let problem = waitFailure(handle: connection.handle, timeoutMillis: timeoutMillis)
+    match problem {
+        .Some(error) => { return .Err(error) },
+        .None => { },
+    }
+    var buffer = zeroBuffer(count: maximumBytes)
+    let received = nativeTcpReceive(handle: connection.handle, buffer: &buffer, count: maximumBytes)
+    if received < 0 { return .Err(failed(status: received)) }
+    return .Ok(stringFromBytes(bytes: buffer, count: received))
+}
+
+// The bytes of `bytes` from `start` on, as a new array.
+private func bytesFrom(bytes: [UInt8], start: Int): [UInt8] {
+    var rest: [UInt8] = []
+    var index = start
+    while index < bytes.count {
+        &rest.append(element: bytes[index])
+        index = index + 1
+    }
+    return rest
+}
+
+public func tcpSend(connection: TcpConnection, contents: String): Result<Void, NetworkError> {
+    if contents.count == 0 { return .Ok(()) }
+    var pending = contents.utf8()
+    while pending.count > 0 {
+        var chunk = pending.count
+        if chunk > maximumSendChunk { chunk = maximumSendChunk }
+        let sent = nativeTcpSend(handle: connection.handle, buffer: pending, count: chunk)
+        if sent < 0 { return .Err(failed(status: sent)) }
+        // A blocking send that accepts nothing would loop forever; report it.
+        if sent == 0 { return .Err(.Other(networkInvalidCode())) }
+        if sent >= pending.count { return .Ok(()) }
+        pending = bytesFrom(bytes: pending, start: sent)
+    }
+    return .Ok(())
+}
+
+public func tcpCloseConnection(connection: consuming TcpConnection): Result<Void, NetworkError> {
+    let status = nativeTcpClose(handle: connection.handle)
+    &connection.handle = -1
+    if status < 0 { return .Err(failed(status: status)) }
+    return .Ok(())
+}
+
+public func tcpCloseListener(listener: consuming TcpListener): Result<Void, NetworkError> {
+    let status = nativeTcpClose(handle: listener.handle)
+    &listener.handle = -1
+    if status < 0 { return .Err(failed(status: status)) }
+    return .Ok(())
+}

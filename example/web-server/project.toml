@@ -1,0 +1,8 @@
+schema-version = 1
+
+[module]
+name = "example.web_server"
+kind = "bin"
+output = "web-server"
+sources = ["src/main.joyeer", "src/http.joyeer", "src/site.joyeer", "src/markdown.joyeer"]
+dependencies = ["System", "Foundation"]

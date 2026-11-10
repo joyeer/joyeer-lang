@@ -1,0 +1,23 @@
+// A top-level constant array passed by `consume` is cloned, never freed (decision 0017): the
+// shared constant must survive every use and the allocation balance must stay at zero. With
+// threads a wrong free of a constant would be a double free; this guards the single-threaded rule.
+let primes: [Int] = [2, 3, 5, 7, 11, 13]
+
+func total(values: consuming [Int]): Int {
+    var sum = 0
+    var index = 0
+    while index < values.count {
+        sum = sum + values[index]
+        index = index + 1
+    }
+    return sum
+}
+
+func main() {
+    print(value: total(values: consume primes))
+    print(value: total(values: consume primes))
+    var copy = primes
+    &copy.append(element: 17)
+    print(value: total(values: consume copy))
+    print(value: primes.count)
+}

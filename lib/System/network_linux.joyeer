@@ -1,0 +1,196 @@
+import Foundation
+
+// Linux primitives for network.joyeer, over the kernel's system calls (decision
+// 0011, 0012): no C library, resolver or `errno`. A socket is a file descriptor.
+// Results are >= 0 on success and the negated errno on failure, which is what the
+// kernel returns.
+//
+// Every socket is created with SOCK_CLOEXEC (and accepted with it), so a child from
+// runProcess does not inherit it. A listener sets SO_REUSEADDR, so a restarted server
+// can bind while closed connections sit in TIME_WAIT; it does not let a second socket
+// bind a port that is still listening. A send uses MSG_NOSIGNAL, so a closed peer is
+// an error rather than SIGPIPE. A system call the kernel interrupted before it did
+// anything is repeated, except connect, which would otherwise report EALREADY.
+//
+// sockaddr_in is the same on every architecture; only the system call numbers differ
+// between x86-64 and AArch64.
+
+private let interrupted: Int = 4
+private let familyInet: Int = 2
+private let closeOnExec: Int = 524288
+private let typeStream: Int = 1
+private let levelSocket: Int = 1
+private let optionReuseAddress: Int = 2
+private let noSignal: Int = 16384
+private let addressSize: Int = 16
+
+// sockaddr_in: family (host order), port and address (network order), padding.
+@platform(linux)
+private func socketAddress(address: Int, port: Int): [UInt8] {
+    var bytes = zeroBuffer(count: addressSize)
+    &bytes[0] = 2
+    &bytes[2] = ((port >> 8) & 255) as UInt8
+    &bytes[3] = (port & 255) as UInt8
+    &bytes[4] = ((address >> 24) & 255) as UInt8
+    &bytes[5] = ((address >> 16) & 255) as UInt8
+    &bytes[6] = ((address >> 8) & 255) as UInt8
+    &bytes[7] = (address & 255) as UInt8
+    return bytes
+}
+
+@platform(linux)
+func networkInvalidCode(): Int { return 22 }
+
+@platform(linux)
+func networkTimeoutCode(): Int { return 110 }
+
+// Stores `value` at `offset` as `width` little-endian bytes.
+@platform(linux)
+private func putInteger(bytes: inout [UInt8], offset: Int, width: Int, value: Int) {
+    var index = 0
+    while index < width {
+        &bytes[offset + index] = ((value >> (index * 8)) & 255) as UInt8
+        index = index + 1
+    }
+}
+
+@platform(linux)
+func classifyNetworkError(code: Int): NetworkError {
+    if code == 22 || code == 14 { return .InvalidInput(code) }
+    if code == 98 { return .AddressInUse(code) }
+    if code == 99 { return .AddressNotAvailable(code) }
+    if code == 13 || code == 1 { return .PermissionDenied(code) }
+    if code == 111 { return .ConnectionRefused(code) }
+    if code == 104 || code == 103 || code == 32 { return .ConnectionReset(code) }
+    if code == 110 { return .TimedOut(code) }
+    return .Other(code)
+}
+
+// socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)
+@platform(linux)
+func nativeTcpOpen(): Int {
+    return linuxCall(x86: 41, arm: 198, first: familyInet, second: typeStream + closeOnExec, third: 0,
+        fourth: 0, fifth: 0, sixth: 0)
+}
+
+// setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &1, 4)
+@platform(linux)
+func nativeTcpPrepareListener(handle: Int): Int {
+    var enabled = zeroBuffer(count: 4)
+    &enabled[0] = 1
+    let outcome = linuxCall(x86: 54, arm: 208, first: handle, second: levelSocket,
+        third: optionReuseAddress, fourth: addressOfBytes(bytes: &enabled), fifth: 4, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+@platform(linux)
+func nativeTcpBind(handle: Int, address: Int, port: Int): Int {
+    var name = socketAddress(address: address, port: port)
+    let outcome = linuxCall(x86: 49, arm: 200, first: handle, second: addressOfBytes(bytes: &name),
+        third: addressSize, fourth: 0, fifth: 0, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+@platform(linux)
+func nativeTcpListen(handle: Int, backlog: Int): Int {
+    var limit = backlog
+    // The kernel clamps the value to net.core.somaxconn; keep it a valid int.
+    if limit > 2147483647 { limit = 2147483647 }
+    let outcome = linuxCall(x86: 50, arm: 201, first: handle, second: limit, third: 0, fourth: 0,
+        fifth: 0, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+// accept4(fd, NULL, NULL, SOCK_CLOEXEC)
+@platform(linux)
+func nativeTcpAccept(handle: Int): Int {
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 288, arm: 242, first: handle, second: 0, third: 0, fourth: closeOnExec,
+            fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+@platform(linux)
+func nativeTcpConnect(handle: Int, address: Int, port: Int): Int {
+    var name = socketAddress(address: address, port: port)
+    let outcome = linuxCall(x86: 42, arm: 203, first: handle, second: addressOfBytes(bytes: &name),
+        third: addressSize, fourth: 0, fifth: 0, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}
+
+// getsockname(fd, &address, &length); the port is at offset 2, in network order.
+@platform(linux)
+func nativeTcpPort(handle: Int): Int {
+    var name = zeroBuffer(count: addressSize)
+    var length = zeroBuffer(count: 4)
+    &length[0] = 16
+    let outcome = linuxCall(x86: 51, arm: 204, first: handle, second: addressOfBytes(bytes: &name),
+        third: addressOfBytes(bytes: &length), fourth: 0, fifth: 0, sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return (byteToInt(value: name[2]) << 8) | byteToInt(value: name[3])
+}
+
+// recvfrom(fd, buffer, count, 0, NULL, NULL)
+@platform(linux)
+func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int {
+    let address = addressOfBytes(bytes: &buffer)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 45, arm: 207, first: handle, second: address, third: count, fourth: 0,
+            fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+// sendto(fd, buffer, count, MSG_NOSIGNAL, NULL, 0)
+@platform(linux)
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int {
+    var bytes = buffer
+    let address = addressOfBytes(bytes: &bytes)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 44, arm: 206, first: handle, second: address, third: count,
+            fourth: noSignal, fifth: 0, sixth: 0)
+    }
+    return outcome
+}
+
+// Waits up to `timeoutMillis` for the socket to be readable (a listener: a connection can
+// be accepted). 1 ready, 0 expired, or the negated errno. A hangup or error counts as
+// ready, so the following receive reports it: ppoll reports those in revents whatever was
+// requested. struct pollfd is the descriptor (4 bytes), the requested events (POLLIN, 1)
+// and the returned events; the timeout is a struct timespec of seconds and nanoseconds.
+// ppoll(fds, 1, &timeout, NULL, 8)
+@platform(linux)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int {
+    var descriptors = zeroBuffer(count: 8)
+    putInteger(bytes: &descriptors, offset: 0, width: 4, value: handle)
+    &descriptors[4] = 1
+    var limit = zeroBuffer(count: 16)
+    putInteger(bytes: &limit, offset: 0, width: 8, value: timeoutMillis / 1000)
+    putInteger(bytes: &limit, offset: 8, width: 8, value: (timeoutMillis % 1000) * 1000000)
+    let descriptorAddress = addressOfBytes(bytes: &descriptors)
+    let limitAddress = addressOfBytes(bytes: &limit)
+    var outcome = 0 - interrupted
+    while outcome == 0 - interrupted {
+        outcome = linuxCall(x86: 271, arm: 73, first: descriptorAddress, second: 1, third: limitAddress,
+            fourth: 0, fifth: 8, sixth: 0)
+    }
+    if kernelFailed(outcome: outcome) { return outcome }
+    if outcome == 0 { return 0 }
+    return 1
+}
+
+@platform(linux)
+func nativeTcpClose(handle: Int): Int {
+    let outcome = linuxCall(x86: 3, arm: 57, first: handle, second: 0, third: 0, fourth: 0, fifth: 0,
+        sixth: 0)
+    if kernelFailed(outcome: outcome) { return outcome }
+    return 0
+}

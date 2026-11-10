@@ -1,0 +1,49 @@
+// macOS placeholders for network.joyeer. TCP is implemented for Windows and Linux
+// (decision 0012); every operation here fails with ENOSYS, reported as `.Other(38)`,
+// so that `System` type-checks and links on macOS and a program fails cleanly instead
+// of failing to build. libSystem calls replace these.
+
+@platform(macos)
+func networkInvalidCode(): Int { return 22 }
+
+@platform(macos)
+func networkTimeoutCode(): Int { return 60 }
+
+@platform(macos)
+func classifyNetworkError(code: Int): NetworkError {
+    if code == 22 { return .InvalidInput(code) }
+    return .Other(code)
+}
+
+@platform(macos)
+func nativeTcpOpen(): Int { return -38 }
+
+@platform(macos)
+func nativeTcpPrepareListener(handle: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpBind(handle: Int, address: Int, port: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpListen(handle: Int, backlog: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpAccept(handle: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpConnect(handle: Int, address: Int, port: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpPort(handle: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpReceive(handle: Int, buffer: inout [UInt8], count: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpSend(handle: Int, buffer: [UInt8], count: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpClose(handle: Int): Int { return -38 }
+
+@platform(macos)
+func nativeTcpWait(handle: Int, timeoutMillis: Int): Int { return -38 }

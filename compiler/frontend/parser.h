@@ -27,6 +27,7 @@ enum class DiagnosticId {
     sameLineItems,
     unexpectedEndOfFile,
     unsupportedSyntax,
+    invalidDeinit,
 };
 
 struct Diagnostic {
@@ -92,6 +93,10 @@ private:
     syntax::BindingDeclSyntax::Ptr parseBindingDecl(bool requireType);
     syntax::FunctionDeclSyntax::Ptr parseFunctionDecl(bool hasAttributes = false);
     syntax::FunctionDeclSyntax::Ptr parseMethodDecl();
+    // `deinit() { ... }` (spec 3.7.1). Reports invalidDeinit for a modifier, a parameter
+    // or a return type, and still returns the declaration so later stages see one.
+    // The caller decides whether a deinit is allowed where it appears.
+    syntax::FunctionDeclSyntax::Ptr parseDeinitDecl();
     syntax::ParameterDeclSyntax::Ptr makeReceiverParameter(
             const Token::Ptr& effect, const Token::Ptr& anchor);
     syntax::ExtensionDeclSyntax::Ptr parseExtensionDecl();
@@ -134,6 +139,8 @@ private:
     [[nodiscard]] bool isTopLevelStart(const Token::Ptr& token) const;
     // At `[visibility] [mutating|consuming|borrowing] func`, i.e. a member method.
     [[nodiscard]] bool isMethodStart() const;
+    // At `[visibility] [mutating|consuming|borrowing] deinit`.
+    [[nodiscard]] bool isDeinitStart() const;
     // A method start that belongs to a body whose declaration began at
     // `declarationColumn`. A line-leading `func` at or left of that column
     // is the next top-level item of a body missing its `}`, not a member.

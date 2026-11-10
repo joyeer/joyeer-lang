@@ -710,4 +710,80 @@ TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
             }));
 }
 
+
+// Decision 0015, stage 3: a struct's `deinit` is a member with an `inout` receiver and no
+// call parameters. `deinit` is a keyword, so no source text can name or call it.
+TEST_F(NameResolutionTest, ADeinitIsAMemberWithAnInoutReceiverAndNoParameters) {
+    resolve("struct Handle {\n"
+            "    var fd: Int\n"
+            "    deinit() { &self.fd = -1 }\n"
+            "}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto& model = *resolution.model;
+
+    const auto* handle = findSymbol(model, SymbolKind::structure, "Handle");
+    ASSERT_NE(handle, nullptr);
+    const auto& members = model.scope(*handle->memberScope)->values;
+    ASSERT_TRUE(members.contains("deinit"));
+    const auto& deinitializer = *model.symbol(members.at("deinit"));
+    EXPECT_EQ(deinitializer.kind, SymbolKind::method);
+    EXPECT_EQ(deinitializer.containingSymbol, handle->id);
+    ASSERT_TRUE(deinitializer.callable.has_value());
+    ASSERT_TRUE(deinitializer.callable->receiver.has_value());
+    EXPECT_TRUE(deinitializer.callable->parameters.empty());
+    EXPECT_EQ(deinitializer.callable->receiver->access, joyeer::syntax::AccessEffect::inout);
+    EXPECT_EQ(deinitializer.callable->receiver->type, handle->id);
+    EXPECT_EQ(deinitializer.declaredType, findSymbol(model, SymbolKind::builtinType, "Void")->id);
+
+    // The syntax node is the way later stages find it.
+    const auto declaration = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            model.node(*handle->declaration));
+    ASSERT_NE(declaration->deinitializer, nullptr);
+    EXPECT_EQ(model.declaredSymbol(declaration->deinitializer), deinitializer.id);
+}
+
+TEST_F(NameResolutionTest, ADeinitBodyResolvesSelfFieldsAndSelfType) {
+    resolve("struct Handle {\n"
+            "    var fd: Int\n"
+            "    deinit() {\n"
+            "        let open: Int = self.fd\n"
+            "        let copy: Self = self\n"
+            "    }\n"
+            "}\n");
+    EXPECT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+
+    resolve("struct Handle {\n"
+            "    var fd: Int\n"
+            "    deinit() { let open: Int = missing }\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedName));
+}
+
+TEST_F(NameResolutionTest, ADeinitIntroducesAFunctionScopeWithTheReceiver) {
+    resolve("struct Handle {\n"
+            "    var fd: Int\n"
+            "    deinit() { }\n"
+            "}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto* handle = findSymbol(*resolution.model, SymbolKind::structure, "Handle");
+    ASSERT_NE(handle, nullptr);
+    const auto declaration = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(
+            resolution.model->node(*handle->declaration));
+    ASSERT_NE(declaration->deinitializer, nullptr);
+    const auto scope = resolution.model->introducedScope(declaration->deinitializer);
+    ASSERT_TRUE(scope.has_value());
+    EXPECT_TRUE(resolution.model->scope(*scope)->values.contains("self"));
+}
+
+
+// The labels, their order and the argument count of `spawn` are name resolution's ordinary call rules.
+TEST_F(NameResolutionTest, SpawnLabelsOrderAndCountAreCheckedLikeAnyCall) {
+    resolve(std::string("func square(value: consuming Int): Int { return value }\n") +
+            "func f() { let h = spawn(input: consume 1, function: square) }\n");
+    EXPECT_FALSE(resolution.succeeded());
+    resolve(std::string("func square(value: consuming Int): Int { return value }\n") +
+            "func f() { let h = spawn(function: square) }\n");
+    EXPECT_FALSE(resolution.succeeded());
+}
+
 } // namespace

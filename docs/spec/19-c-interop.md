@@ -278,11 +278,14 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_load_u8` / `_u16` / `_u32` / `_u64` | `(address: Int) -> UInt8` / `UInt16` / `UInt32` / `UInt64` | Little-endian load of that width |
 | `joyeer_intrinsic_store_u8` / `_u16` / `_u32` / `_u64` | `(address: Int, value: UInt8` / `UInt16` / `UInt32` / `UInt64`) `-> Void` | Little-endian store of that width |
 | `joyeer_intrinsic_atomic_add` | `(address: Int, delta: Int) -> Int` | Sequentially consistent add; returns the previous value |
+| `joyeer_intrinsic_atomic_load` | `(address: Int) -> Int` | Sequentially consistent load of an 8-byte word |
+| `joyeer_intrinsic_atomic_exchange` | `(address: Int, value: Int) -> Int` | Sequentially consistent exchange; stores `value` and returns the previous value |
+| `joyeer_intrinsic_atomic_cmpxchg` | `(address: Int, expected: Int, desired: Int) -> Int` | Sequentially consistent compare-and-swap: stores `desired` if the word equals `expected`; returns the value found (so it succeeded when that equals `expected`) |
 | `joyeer_intrinsic_call_void1` | `(function: Int, first: Int) -> Void` | Calls the C function at `function`, which returns void and takes one address argument, with the target's C calling convention |
 | `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
 | `joyeer_intrinsic_literal_address` | `(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal. No `String` value is created and nothing is allocated; it and `symbol_address` are the only uses of a string literal a core unit (§19.4.7) may make |
 | `joyeer_intrinsic_symbol_address` | `(name: String) -> Int` | The address of the function or data symbol named by the string literal given as `name`, which must be a literal (the same rules as `literal_address`). A function defined in the same program unit is taken directly; any other name is resolved by the linker, and nothing checks that it exists or what type it has. Used to store a runtime function as a callback |
-| `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime plan](../plan/runtime-in-joyeer.md) |
+| `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime implementation notes](../impl/runtime.md#static-slots) |
 | `joyeer_intrinsic_memcpy` | `(destination: Int, source: Int, count: Int) -> Void` | Copies `count` bytes (taken as unsigned); the ranges must not overlap. No alignment is required. Lowers to LLVM's `memcpy`, so a small constant count becomes inline moves |
 | `joyeer_intrinsic_memmove` | `(destination: Int, source: Int, count: Int) -> Void` | The same for ranges that may overlap |
 | `joyeer_intrinsic_memset` | `(destination: Int, value: UInt8, count: Int) -> Void` | Stores `value` in `count` bytes |
@@ -393,8 +396,11 @@ Neither direction permits a C++ exception, `longjmp`, or other nonlocal
 unwinding across Joyeer frames. Recoverable failures use the declared scalar
 protocol and explicit wrappers. A Joyeer panic retains its defined fatal
 behavior; it must not become a fabricated C success value or an exception
-escaping into C. Callbacks, asynchronous retention, and entry from foreign
-threads require separate designs.
+escaping into C. Callbacks and asynchronous retention require separate designs. Entry from a
+foreign thread does too, with one exception: a function the runtime exports as a thread
+trampoline may be entered by a thread the runtime created through its thread API
+([decision 0016](../decisions/0016-thread-primitives.md)). Such a thread may allocate, print and
+panic (decision 0017), and nothing unwinds across the thread boundary.
 
 The binding author must match the real native prototype and its behavioral
 contract. Without a header importer, checking the Joyeer declaration and
