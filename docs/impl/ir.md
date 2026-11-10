@@ -139,6 +139,11 @@ The current instruction set covers:
   handle address, yielding `R`): the backend allocates one block per task (zeroed 128-byte thread record,
   block size, result, input), emits a thunk per target, starts the thread through the runtime thread
   API, and `task_join` waits, moves the result out, frees the block and zeroes the handle (decision 0018);
+- `channel_create` (a capacity and the addresses of a sender and a receiver of one element type),
+  `channel_send` (a sender address and a moved value, yielding `Result<Void, ChannelClosed>`; the backend
+  destroys the value when the receiver is closed), `channel_receive` (a receiver address, yielding
+  `Result<T, ChannelClosed>`) and `channel_close` (an end address, zeroed afterwards), lowered to the
+  `joyeer_channel_*_abi` runtime calls (decision 0019);
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned

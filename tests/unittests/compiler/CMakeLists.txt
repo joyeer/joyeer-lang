@@ -1024,6 +1024,14 @@ if(JOYEER_CLANG_EXECUTABLE)
             "338350\n37\n60\n3\n3\n9\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EChannelBasic channel_basic
+            "10\n20\nclosed\nhello\n3\ngone\n100\n1\n2\n3\n9\nrefused\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EChannelTasks channel_tasks
+            "500500\n1000\n10100\n100\n100\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EMatchMoves match_moves
             "1\n1\n9\n9\n20\n30\n3\n41\n2\n")
     add_joyeer_native_regression(
@@ -1296,6 +1304,10 @@ abcdabcd
             E2ETaskTrap task_trap "array index out of bounds")
     add_joyeer_native_checked_trap(
             E2ETaskLimit task_limit "too many tasks")
+    add_joyeer_native_checked_trap(
+            E2EChannelTrap channel_trap "array index out of bounds")
+    add_joyeer_native_checked_trap(
+            E2EChannelDeadlock channel_deadlock "channel deadlock")
     add_joyeer_native_checked_trap(
             E2EUnitDictionaryMissing unit_dictionary_missing "dictionary key not found")
 

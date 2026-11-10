@@ -322,6 +322,16 @@ Moss's `Moss.Serve` test and the live-pipe check in
 [the serve contract](../../tools/moss/docs/jvm.md#persistent-session-moss-serve)
 depend on `readStdinLine` flushing standard output before it blocks.
 
+## Channels
+
+`lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
+spec §21.9), linked only into a program that creates a channel (which also links the thread object and
+`-lpthread`). One allocation holds the channel block: a mutex, two conditions, the capacity, stride, head,
+count, element destroy callback, a closed flag per end and the ring buffer; the receiver handle is the block
+address plus one. Everything, including the "last closer frees the block" decision, happens under the mutex;
+closing the receiver destroys queued values while holding it. A wait with no unjoined thread (static slot 11
+zero) traps as `channel deadlock`. The tests are `tests/unittests/runtime/channel_test.cpp`.
+
 ## Tasks
 
 A task (decision [0018](../decisions/0018-tasks.md), spec §21) is one heap block from `joyeer_alloc`:

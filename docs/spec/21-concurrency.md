@@ -202,8 +202,7 @@ The restriction on `function:` is a type-checking rule, not a grammar rule.
 
 ### 21.9 Channels
 
-> **Status:** specified; being implemented in phases P5b and P6 ([decision 0019](../decisions/0019-channels.md)).
-> Until then the compiler rejects these names as unknown.
+> **Status:** implemented in phases P5b and P6 ([decision 0019](../decisions/0019-channels.md)).
 
 A **channel** carries values from one task to another. It is bounded, has exactly one sender end and
 one receiver end, and moves each value: a value sent is gone from the sender and owned by whoever
@@ -292,6 +291,10 @@ different channels beyond each thread's program order), so §21.4 holds: a `send
 before the `receive` that gets its value, and closing the sender, after every earlier send, happens
 before the receiver observes the closed result. A value is moved, not copied; its own bytes are copied
 into the queue and out of it.
+
+A channel that carries its own receiver (or two channels that carry each other's receivers) leaks: the only
+reference to the receiver is in the queue, so the channel is never freed. It is memory safe and the leak
+check at exit reports it; the language does not detect the cycle.
 
 A program can deadlock: every thread blocked, a cycle of full channels, or a `join` of a task waiting on an
 end the joiner still holds (the sender its loop receives from, or the receiver a blocked producer needs).

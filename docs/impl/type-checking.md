@@ -127,6 +127,11 @@ The current checker validates:
   `linear-in-deinit-type` (a type with `deinit` may not be or hold a linear value) and
   `linear-collection-element` (a `Dict` key or value in a binding, parameter, result or field,
   and `for-in` over an array), `linear-top-level-binding` and `linear-struct-without-fields`;
+- Channels (decision 0019, spec 21.9): `ChannelSender<T>` and `ChannelReceiver<T>` are `TypeKind::channelSender`
+  and `channelReceiver` (noncopyable, not linear); `channel` is checked by `checkChannel` and `send`, `receive`
+  and `close` are builtin members whose results come from the end's element type; the element rules
+  (`linear-channel-element`, `channel-element-type`) run at every type position and enum payload, and
+  `channel-end-types` and `channel-capacity` check the creation call;
 - Tasks (decision 0018, spec 21): `JoinHandle<R>` is `TypeKind::task`, linear and noncopyable;
   `spawn` is checked by `checkSpawn`, which reads `function:` as a name and reports
   `spawn-target-not-function`, `spawn-target-unsupported`, `spawn-target-parameters` and

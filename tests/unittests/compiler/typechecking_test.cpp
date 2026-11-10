@@ -2837,4 +2837,167 @@ TEST_F(TypeCheckingTest, ATaskHandleCannotBeAKeyAValueOrAConstantAndCannotBeComp
     EXPECT_FALSE(checking.succeeded());
 }
 
+
+// Channels (spec 21.9, decision 0019).
+constexpr const char* channelPrelude =
+        "func make(): Int {\n"
+        "    var sender: ChannelSender<Int>\n"
+        "    var receiver: ChannelReceiver<Int>\n"
+        "    channel(capacity: 4, sender: &sender, receiver: &receiver)\n"
+        "    return 0\n"
+        "}\n";
+
+TEST_F(TypeCheckingTest, ChannelInitializesASenderAndAReceiverOfOneElementType) {
+    check(channelPrelude);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SendAndReceiveHaveResultTypesOverChannelClosed) {
+    check("func f() {\n"
+          "    var sender: ChannelSender<Int>\n"
+          "    var receiver: ChannelReceiver<String>\n"
+          "    var other: ChannelSender<String>\n"
+          "    var third: ChannelReceiver<Int>\n"
+          "    channel(capacity: 2, sender: &sender, receiver: &third)\n"
+          "    channel(capacity: 2, sender: &other, receiver: &receiver)\n"
+          "    let sent = sender.send(value: consume 5)\n"
+          "    let got = third.receive()\n"
+          "    let text = receiver.receive()\n"
+          "    consume sender.close()\n"
+          "    consume other.close()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[0]);
+    auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[6])), "Result<Void, ChannelClosed>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[7])), "Result<Int, ChannelClosed>");
+    EXPECT_EQ(types.displayName(declaredType(function->body->items[8])), "Result<String, ChannelClosed>");
+}
+
+TEST_F(TypeCheckingTest, ChannelRejectsEndsThatAreNotASenderAndAReceiverOfTheSameType) {
+    const std::vector<std::string> rejected {
+        "func f() { var a: ChannelSender<Int>\n var b: ChannelReceiver<String>\n channel(capacity: 1, sender: &a, receiver: &b) }\n",
+        "func f() { var a: ChannelReceiver<Int>\n var b: ChannelSender<Int>\n channel(capacity: 1, sender: &a, receiver: &b) }\n",
+        "func f() { var a: ChannelSender<Int>\n var b: Int\n channel(capacity: 1, sender: &a, receiver: &b) }\n",
+    };
+    for (const auto& body : rejected) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::channelEndTypes))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ChannelNeedsAnInitializingMarkerOnBothEnds) {
+    check("func f() { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n channel(capacity: 1, sender: a, receiver: &b) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidInitializingArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AConstantCapacityBelowOneIsRejected) {
+    for (const auto* capacity : {"0", "-3"}) {
+        SCOPED_TRACE(capacity);
+        check(std::string("func f() { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n channel(capacity: ") +
+              capacity + ", sender: &a, receiver: &b) }\n");
+        EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::channelCapacity))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+    check("func f(n: Int) { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n channel(capacity: n, sender: &a, receiver: &b) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AChannelElementCannotBeLinear) {
+    check("func f(c: consuming ChannelSender<JoinHandle<Int>>) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: consuming ChannelReceiver<[JoinHandle<Int>]>) { }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AChannelElementMayBeVoidAHandleALargeValueOrAnotherEnd) {
+    const std::vector<std::string> allowed {
+        "func f(c: consuming ChannelSender<Void>) { }\n",
+        "struct Handle {\n var fd: Int\n deinit() { }\n}\nfunc f(c: consuming ChannelSender<Handle>) { }\n",
+        "func f(c: consuming ChannelReceiver<[String]>) { }\n",
+        "func f(c: consuming ChannelSender<ChannelSender<Int>>) { }\n",
+    };
+    for (const auto& body : allowed) {
+        SCOPED_TRACE(body);
+        check(body);
+        EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ChannelEndsAreNoncopyableAndSendAndCloseNeedConsume) {
+    check("func f(c: consuming ChannelSender<Int>) { let d = c }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::copyOfNoncopyable))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: ChannelSender<Int>) { c.send(value: 5) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: consuming ChannelSender<Int>) { c.close() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(c: ChannelSender<Int>) { consume c.close() }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, SendTakesAValueOfTheElementType) {
+    check("func f(c: ChannelSender<Int>) { c.send(value: consume \"x\") }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, ABorrowedEndCanSendAndReceive) {
+    check("func f(s: ChannelSender<Int>, r: ChannelReceiver<Int>) {\n"
+          "    let a = s.send(value: consume 1)\n"
+          "    let b = r.receive()\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, AUserDeclaredChannelWinsOverThePrelude) {
+    check("func channel(capacity: Int): Int { return capacity }\n"
+          "func f(): Int { return channel(capacity: 3) }\n"
+          "struct ChannelSender {\n    var id: Int\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+
+TEST_F(TypeCheckingTest, ALinearChannelElementIsRejectedInAnEnumPayloadToo) {
+    check("enum Message {\n    Hand(ChannelSender<JoinHandle<Int>>),\n    Stop,\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ALinearChannelElementIsRejectedNestedAndInAStructDeclaredLater) {
+    check("struct Holder {\n    var ends: [Optional<ChannelReceiver<Pending>>]\n}\n"
+          "struct Pending {\n    var handle: JoinHandle<Int>\n}\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::linearChannelElement))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, TheCapacityArgumentOfChannelFollowsTheOrdinaryMarkerRules) {
+    check("func f(n: Int) { var a: ChannelSender<Int>\n var b: ChannelReceiver<Int>\n"
+          " channel(capacity: consume n, sender: &a, receiver: &b) }\n");
+    EXPECT_TRUE(hasMethodDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidConsumeArgument))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ChannelMembersNeedAReceiverValue) {
+    check("func f() { ChannelSender.send(value: consume 1) }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func f() { ChannelReceiver.receive() }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+// A struct or enum comparison has no lowering, so equality on one is a diagnostic, not a compiler crash.
+TEST_F(TypeCheckingTest, EqualityOnAnEnumOrStructIsRejected) {
+    check("enum Kind {\n    A,\n    B,\n}\nfunc f(x: Kind, y: Kind): Bool { return x == y }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("struct P {\n    var n: Int\n}\nfunc f(x: P, y: P): Bool { return x == y }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
 } // namespace

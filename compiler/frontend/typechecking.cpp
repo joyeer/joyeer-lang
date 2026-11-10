@@ -63,6 +63,8 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerGenericBuiltin("Optional", TypeKind::optional, 1);
     registerGenericBuiltin("Result", TypeKind::result, 2);
     registerGenericBuiltin("JoinHandle", TypeKind::task, 1);
+    registerGenericBuiltin("ChannelSender", TypeKind::channelSender, 1);
+    registerGenericBuiltin("ChannelReceiver", TypeKind::channelReceiver, 1);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
             {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
@@ -137,6 +139,25 @@ TypeId TypeContext::taskType(TypeId result) {
     const auto symbol = builtinSymbol("JoinHandle");
     assert(symbol.has_value());
     return typeForSymbol(*symbol, { result }).value_or(errorTypeId);
+}
+
+TypeId TypeContext::channelSenderType(TypeId element) {
+    const auto symbol = builtinSymbol("ChannelSender");
+    assert(symbol.has_value());
+    return typeForSymbol(*symbol, { element }).value_or(errorTypeId);
+}
+
+TypeId TypeContext::channelReceiverType(TypeId element) {
+    const auto symbol = builtinSymbol("ChannelReceiver");
+    assert(symbol.has_value());
+    return typeForSymbol(*symbol, { element }).value_or(errorTypeId);
+}
+
+TypeId TypeContext::channelResultType(TypeId success) {
+    const auto closed = builtinSymbol("ChannelClosed");
+    assert(closed.has_value());
+    const auto closedType = typeForSymbol(*closed).value_or(errorTypeId);
+    return resultType(success, closedType);
 }
 
 TypeId TypeContext::resultType(TypeId success, TypeId failure) {
@@ -234,6 +255,10 @@ std::string TypeContext::displayName(TypeId id) const {
                     displayName(value->arguments[1]) + ">";
         case TypeKind::task:
             return "JoinHandle<" + displayName(value->arguments[0]) + ">";
+        case TypeKind::channelSender:
+            return "ChannelSender<" + displayName(value->arguments[0]) + ">";
+        case TypeKind::channelReceiver:
+            return "ChannelReceiver<" + displayName(value->arguments[0]) + ">";
         default: {
             const auto* declaration = model.symbol(value->symbol);
             return declaration == nullptr ? "<invalid-type>" : declaration->name;
@@ -477,6 +502,10 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
         case TypeKind::task:
             reason = name + " is a task handle, which has exactly one owner";
             break;
+        case TypeKind::channelSender:
+        case TypeKind::channelReceiver:
+            reason = name + " is a channel end, which has exactly one owner";
+            break;
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
@@ -577,6 +606,7 @@ public:
         const auto& root = semanticModel->root();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+            for (const auto& [type, span] : enumPayloadChecks) requireNoLinearDictionary(type, span);
             validateNativeSymbols();
             for (const auto& item : root->items) checkTopLevelBody(item);
         }
@@ -590,6 +620,8 @@ private:
     std::optional<TypeId> currentReturnType;
     size_t loopDepth = 0;
     std::unordered_set<semantic::NodeId> handledDeferredReferences;
+    // Enum case payload types, checked for linear dictionaries and channel elements after resolution.
+    std::vector<std::pair<TypeId, SourceSpan>> enumPayloadChecks;
     // `consume` access expressions that appear where a value is stored (see permitMove).
     std::unordered_set<const syntax::Node*> permittedMoves;
     bool insideDeinit = false;
@@ -757,6 +789,27 @@ private:
                     true,
                     {},
                     model->typeContext.anyType(),
+                };
+                continue;
+            }
+            if ((symbol.name == "send" || symbol.name == "receive") && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.anyType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    symbol.name == "send" ? std::vector<TypeId> { model->typeContext.anyType() }
+                                          : std::vector<TypeId> {},
+                    model->typeContext.anyType(),
+                };
+                continue;
+            }
+            if (symbol.name == "close" && symbol.callable.has_value()) {
+                model->symbolTypes[symbol.id] = model->typeContext.voidType();
+                model->callables[symbol.id] = TypedCallableSignature {
+                    semantic::CallableKind::function,
+                    true,
+                    {},
+                    model->typeContext.voidType(),
                 };
                 continue;
             }
@@ -1237,6 +1290,7 @@ private:
             for (const auto& associatedType : enumCase->associatedTypes) {
                 signature.parameters.push_back(resolveType(associatedType->type).value_or(
                         model->typeContext.errorType()));
+                enumPayloadChecks.emplace_back(signature.parameters.back(), associatedType->span);
             }
             model->symbolTypes[*caseSymbol] = enumerationType;
             model->callables[*caseSymbol] = std::move(signature);
@@ -1388,8 +1442,28 @@ private:
                    "use an array and drain it with removeLast");
             return;
         }
+        if ((type->kind == TypeKind::channelSender || type->kind == TypeKind::channelReceiver) &&
+            arguments.size() == 1) {
+            const auto* element = model->typeContext.type(arguments[0]);
+            if (model->isLinear(arguments[0])) {
+                report(TypeCheckingDiagnosticId::linearChannelElement, span,
+                       "'" + model->typeContext.displayName(arguments[0]) +
+                               "' is linear, so it cannot be the element type of '" + model->typeContext.displayName(id) + "'",
+                       "a value still queued when the channel closes would be dropped; send the result of "
+                       "'consume handle.join()' (or another value that can be destroyed) instead of the handle");
+                return;
+            }
+            if (element != nullptr && (element->kind == TypeKind::any || element->kind == TypeKind::never)) {
+                report(TypeCheckingDiagnosticId::channelElementType, span,
+                       "'" + model->typeContext.displayName(arguments[0]) + "' cannot be the element type of a channel ('" +
+                               model->typeContext.displayName(id) + "')",
+                       "use a concrete type, or Void for a signal that carries no value");
+                return;
+            }
+        }
         for (const auto argument : arguments) requireNoLinearDictionary(argument, span);
     }
+
 
     void checkTopLevelBody(const syntax::NodePtr& node) {
         if (node == nullptr) return;
@@ -1977,7 +2051,10 @@ private:
             case notEqual:
                 // A noncopyable value (a task handle, a handle with `deinit`) cannot be compared: the
                 // comparison would have to copy it.
-                if (left == right && left != model->typeContext.voidType() && model->isCopyable(left)) {
+                if (left == right && left != model->typeContext.voidType() && model->isCopyable(left) &&
+                    model->typeContext.type(left) != nullptr &&
+                    model->typeContext.type(left)->kind != TypeKind::enumeration &&
+                    model->typeContext.type(left)->kind != TypeKind::structure) {
                     return model->typeContext.boolType();
                 }
                 break;
@@ -2224,7 +2301,15 @@ private:
             model->spawnCallSpans.push_back(expression->span);
             return checkSpawn(expression);
         }
-        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::method) {
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
+            semanticTarget->name == "channel") {
+            return checkChannel(expression, *semanticTarget);
+        }
+        if (semanticTarget != nullptr &&
+            (semanticTarget->kind == semantic::SymbolKind::method ||
+             (semanticTarget->kind == semantic::SymbolKind::builtinMember &&
+              (semanticTarget->name == "send" || semanticTarget->name == "receive" ||
+               semanticTarget->name == "close" || semanticTarget->name == "join")))) {
             // A method needs a receiver value; `Type.method(...)` has none.
             const auto base = expression->callee->kind == syntax::Kind::memberExpr
                     ? std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base
@@ -2272,8 +2357,9 @@ private:
                                             : "non-consuming call must not use 'consume' on the receiver",
                     requiredReceiver == syntax::AccessEffect::consuming
                             ? std::optional<std::string>(
-                                      "write 'consume' before the receiver, as in 'let v = consume h.join()'; "
-                                      "to use the result as an argument or before '?', bind or parenthesize it first")
+                                      "write 'consume' before the receiver, as in 'let v = consume x." +
+                                      (semanticTarget != nullptr ? semanticTarget->name : std::string("join")) +
+                                      "()'; to use a result as an argument or before '?', bind or parenthesize it first")
                             : std::nullopt);
 
         }
@@ -2355,6 +2441,16 @@ private:
                        baseType != nullptr && baseType->kind == TypeKind::task &&
                        baseType->arguments.size() == 1) {
                 receiverResultType = baseType->arguments[0];
+            } else if (semanticTarget->name == "send" &&
+                       baseType != nullptr && baseType->kind == TypeKind::channelSender &&
+                       baseType->arguments.size() == 1) {
+                receiverArgumentType = baseType->arguments[0];
+                receiverResultType = model->typeContext.channelResultType(model->typeContext.voidType());
+            } else if (semanticTarget->name == "receive" &&
+                       baseType != nullptr && baseType->kind == TypeKind::channelReceiver &&
+                       baseType->arguments.size() == 1) {
+                const auto element = baseType->arguments[0];
+                receiverResultType = model->typeContext.channelResultType(element);
             } else if (semanticTarget->name == "get" &&
                        baseType != nullptr && baseType->kind == TypeKind::dictionary &&
                        baseType->arguments.size() == 2) {
@@ -2437,6 +2533,69 @@ private:
         }
         return receiverResultType.value_or(
                 signature == nullptr ? model->typeContext.errorType() : signature->result);
+    }
+
+    // `channel(capacity: n, sender: &s, receiver: &r)` (spec 21.9.1): the two outputs are `initializing`
+    // arguments of a sender and a receiver type with the same element type.
+    TypeId checkChannel(const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol& target) {
+        const auto error = model->typeContext.errorType();
+        // Labels, their order and the argument count are name resolution's ordinary call rules.
+        if (expression->arguments.size() != 3) return error;
+        const auto capacityType = checkExpression(expression->arguments[0]->value, model->typeContext.intType());
+        if (capacityType.has_value()) {
+            requireAssignable(*capacityType, model->typeContext.intType(), expression->arguments[0]->value->span);
+        }
+        // An integer literal capacity (optionally negated) below 1 is a compile-time error.
+        auto literal = expression->arguments[0]->value;
+        bool negated = false;
+        if (literal != nullptr && literal->kind == syntax::Kind::prefixExpr) {
+            const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(literal);
+            if (prefix->op != nullptr && prefix->op->kind == minus) {
+                negated = true;
+                literal = prefix->operand;
+            }
+        }
+        if (literal != nullptr && literal->kind == syntax::Kind::literalExpr) {
+            const auto value = std::static_pointer_cast<syntax::LiteralExprSyntax>(literal);
+            if (value->literal != nullptr && value->literal->kind == decimalLiteral) {
+                const bool belowOne = negated || value->literal->intValue < 1;
+                if (belowOne) {
+                    report(TypeCheckingDiagnosticId::channelCapacity, expression->arguments[0]->value->span,
+                           "a channel needs a capacity of at least 1",
+                           "pass 1 or more, for example channel(capacity: 8, sender: &sender, receiver: &receiver)");
+                }
+            }
+        }
+        checkCallArgumentAccess(target, 0, *expression->arguments[0]);
+        const auto diagnosticsBefore = diagnostics.size();
+        std::vector<CallAccess> accesses;
+        std::vector<TypeId> endTypes;
+        for (size_t index = 1; index < 3; ++index) {
+            const auto& argument = expression->arguments[index];
+            const auto type = checkExpression(argument->value);
+            checkCallArgumentAccess(target, index, *argument);
+            collectCallArgumentAccess(*argument, syntax::AccessEffect::initializing, accesses);
+            endTypes.push_back(type.value_or(error));
+        }
+        validateCallExclusivity(accesses);
+        const auto* senderType = model->typeContext.type(endTypes[0]);
+        const auto* receiverType = model->typeContext.type(endTypes[1]);
+        // An operand that already failed (a marker, a non-variable, the same variable twice) has its own diagnostic.
+        if (endTypes[0] == error || endTypes[1] == error || diagnostics.size() != diagnosticsBefore) {
+            return model->typeContext.voidType();
+        }
+        if (senderType == nullptr || receiverType == nullptr ||
+            senderType->kind != TypeKind::channelSender || receiverType->kind != TypeKind::channelReceiver ||
+            senderType->arguments.size() != 1 || receiverType->arguments.size() != 1 ||
+            senderType->arguments[0] != receiverType->arguments[0]) {
+            report(TypeCheckingDiagnosticId::channelEndTypes, expression->span,
+                   "'channel' needs a ChannelSender<T> and a ChannelReceiver<T> of the same element type, but got '" +
+                           model->typeContext.displayName(endTypes[0]) + "' and '" +
+                           model->typeContext.displayName(endTypes[1]) + "'",
+                   "declare var sender: ChannelSender<Int> and var receiver: ChannelReceiver<Int>, then "
+                   "channel(capacity: 8, sender: &sender, receiver: &receiver)");
+        }
+        return model->typeContext.voidType();
     }
 
     // `spawn(function: f, input: consume x)` (spec 21.2): `f` must name one top-level function with a
@@ -3953,6 +4112,8 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::optional: return "optional";
         case TypeKind::result: return "result";
         case TypeKind::task: return "task";
+        case TypeKind::channelSender: return "channel-sender";
+        case TypeKind::channelReceiver: return "channel-receiver";
         case TypeKind::int8: return "int8";
         case TypeKind::int16: return "int16";
         case TypeKind::int32: return "int32";
@@ -4023,6 +4184,14 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.spawn-target-parameters";
         case TypeCheckingDiagnosticId::spawnTargetNever:
             return "type-checking.spawn-target-never";
+        case TypeCheckingDiagnosticId::channelEndTypes:
+            return "type-checking.channel-end-types";
+        case TypeCheckingDiagnosticId::channelCapacity:
+            return "type-checking.channel-capacity";
+        case TypeCheckingDiagnosticId::linearChannelElement:
+            return "type-checking.linear-channel-element";
+        case TypeCheckingDiagnosticId::channelElementType:
+            return "type-checking.channel-element-type";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

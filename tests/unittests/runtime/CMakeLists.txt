@@ -314,6 +314,18 @@ if(WIN32 AND JOYEER_RUNTIME_NM_EXECUTABLE)
                 -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
         set_tests_properties(RuntimeTaskProgramHasNoCRuntime
             PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
+        # A program that only creates a channel pulls the thread object for its mutex and condition.
+        add_test(NAME RuntimeChannelProgramHasNoCRuntime
+            COMMAND "${CMAKE_COMMAND}"
+                "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+                "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/channel_basic.joyeer"
+                "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/channel-program.exe"
+                "-DREADOBJ=${JOYEER_RUNTIME_READOBJ_EXECUTABLE}"
+                "-DCOMPILER_ARGS=-O0;-g0"
+                "-DFORBIDDEN_IMPORTS=IsProcessorFeaturePresent;GetStartupInfoW;InitializeSListHead;UnhandledExceptionFilter;SetUnhandledExceptionFilter;IsDebuggerPresent;GetProcessHeap;HeapAlloc;HeapFree;GetEnvironmentStringsW"
+                -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+        set_tests_properties(RuntimeChannelProgramHasNoCRuntime
+            PROPERTIES LABELS "runtime;native;entry;channels" TIMEOUT 120)
     endif()
 endif()
 
@@ -348,4 +360,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND JOYEER_RUNTIME_NM_EXECUTABLE)
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
     set_tests_properties(RuntimeTaskProgramNeedsOnlyThePthreadFunctions
         PROPERTIES LABELS "runtime;native;entry;tasks" TIMEOUT 120)
+    # A program that only creates a channel links the thread object (its mutex and condition) and
+    # -lpthread, and needs nothing else from the C library.
+    add_test(NAME RuntimeChannelProgramNeedsOnlyThePthreadFunctions
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${JOYEER_SOURCE_DIR}/tests/e2e/channel_basic.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/channel-program"
+            "-DNM=${JOYEER_RUNTIME_NM_EXECUTABLE}"
+            "-DCOMPILER_ARGS=-O0;-g0"
+            "-DALLOWED_IMPORTS=__libc_start_main;__cxa_atexit;__gmon_start__;_ITM_registerTMCloneTable;_ITM_deregisterTMCloneTable;memcpy;memset;memmove;memcmp;pthread_attr_init;pthread_attr_setstacksize;pthread_attr_destroy;pthread_create;pthread_join;pthread_mutex_lock;pthread_mutex_unlock;pthread_mutex_destroy;pthread_mutex_init;pthread_cond_wait;pthread_cond_signal;pthread_cond_broadcast;pthread_cond_destroy;pthread_cond_init"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyProgramImports.cmake")
+    set_tests_properties(RuntimeChannelProgramNeedsOnlyThePthreadFunctions
+        PROPERTIES LABELS "runtime;native;entry;channels" TIMEOUT 120)
 endif()

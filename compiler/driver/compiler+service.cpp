@@ -613,10 +613,21 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
             });
     sourcefile->llvmIR = llvm.text;
     sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
+    // An end type brings its destroy helper, which calls the channel runtime and so the thread object, even
+    // when the program never creates a channel.
+    for (const auto& type : lowering.module->types) {
+        if (type.kind == joyeer::typing::TypeKind::channelSender ||
+            type.kind == joyeer::typing::TypeKind::channelReceiver) {
+            sourcefile->llvmUsesThreads = true;
+        }
+    }
     for (const auto& function : lowering.module->functions) {
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
-                if (instruction.opcode == joyeer::ir::Opcode::taskSpawn) sourcefile->llvmUsesThreads = true;
+                if (instruction.opcode == joyeer::ir::Opcode::taskSpawn ||
+                    instruction.opcode == joyeer::ir::Opcode::channelCreate) {
+                    sourcefile->llvmUsesThreads = true;
+                }
             }
         }
     }

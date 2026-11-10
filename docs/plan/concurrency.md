@@ -268,7 +268,7 @@ reviews, validation.
 
 - [ ] Task runtime: start, result slot, join, the trap path, destruction of the
       task's locals before `join` returns.
-- [ ] Bounded single-sender, single-receiver channel: ring buffer, a blocking send
+- [x] Bounded single-sender, single-receiver channel: ring buffer, a blocking send
       when full and receive when empty, close from either end, a closed result for a
       receive with no live sender, an unsent-value error on a closed send, queued
       values destroyed by the last end dropped.

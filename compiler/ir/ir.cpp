@@ -62,6 +62,8 @@ bool producesValue(Opcode opcode) {
         case Opcode::arrayRemoveLast:
         case Opcode::taskSpawn:
         case Opcode::taskJoin:
+        case Opcode::channelSend:
+        case Opcode::channelReceive:
         case Opcode::constructDictionary:
         case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
@@ -180,6 +182,8 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::array:
             case typing::TypeKind::dictionary:
             case typing::TypeKind::task:
+            case typing::TypeKind::channelSender:
+            case typing::TypeKind::channelReceiver:
                 result = true;
                 break;
             case typing::TypeKind::structure: {
@@ -1950,6 +1954,82 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::channelCreate: {
+                        if (!requireShape(3, 0) || operands[0] == nullptr || operands[1] == nullptr ||
+                            operands[2] == nullptr) {
+                            break;
+                        }
+                        const auto* senderType = types.contains(operands[1]->type) ? types.at(operands[1]->type) : nullptr;
+                        const auto* receiverType = types.contains(operands[2]->type) ? types.at(operands[2]->type) : nullptr;
+                        const auto* capacityType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        if (operands[0]->category != ValueCategory::value || capacityType == nullptr ||
+                            capacityType->kind != typing::TypeKind::integer ||
+                            operands[1]->category != ValueCategory::address ||
+                            operands[2]->category != ValueCategory::address ||
+                            senderType == nullptr || receiverType == nullptr ||
+                            senderType->kind != typing::TypeKind::channelSender ||
+                            receiverType->kind != typing::TypeKind::channelReceiver ||
+                            senderType->arguments.size() != 1 || receiverType->arguments.size() != 1 ||
+                            senderType->arguments[0] != receiverType->arguments[0]) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_create requires an Int capacity and the addresses of a sender and a receiver of one element type");
+                        }
+                        break;
+                    }
+                    case Opcode::channelSend: {
+                        if (!requireShape(2, 0) || operands[0] == nullptr || operands[1] == nullptr) break;
+                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
+                            endType->kind != typing::TypeKind::channelSender || endType->arguments.size() != 1 ||
+                            operands[1]->category != ValueCategory::value ||
+                            operands[1]->type != endType->arguments[0] ||
+                            !instruction.result.has_value() || resultType == nullptr ||
+                            resultType->kind != typing::TypeKind::result || resultType->arguments.size() != 2 ||
+                            instruction.result->category != ValueCategory::value ||
+                            !types.contains(resultType->arguments[0]) ||
+                            types.at(resultType->arguments[0])->kind != typing::TypeKind::voidType ||
+                            !types.contains(resultType->arguments[1]) ||
+                            types.at(resultType->arguments[1])->kind != typing::TypeKind::enumeration ||
+                            types.at(resultType->arguments[1])->name != "ChannelClosed") {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_send requires a sender address, a value of its element type, and a Result of Void");
+                        }
+                        break;
+                    }
+                    case Opcode::channelReceive: {
+                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
+                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
+                            endType->kind != typing::TypeKind::channelReceiver || endType->arguments.size() != 1 ||
+                            !instruction.result.has_value() || resultType == nullptr ||
+                            resultType->kind != typing::TypeKind::result || resultType->arguments.size() != 2 ||
+                            instruction.result->category != ValueCategory::value ||
+                            resultType->arguments[0] != endType->arguments[0] ||
+                            !types.contains(resultType->arguments[1]) ||
+                            types.at(resultType->arguments[1])->kind != typing::TypeKind::enumeration ||
+                            types.at(resultType->arguments[1])->name != "ChannelClosed") {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_receive requires a receiver address and a Result of its element type");
+                        }
+                        break;
+                    }
+                    case Opcode::channelClose: {
+                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
+                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
+                            (endType->kind != typing::TypeKind::channelSender &&
+                             endType->kind != typing::TypeKind::channelReceiver)) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "channel_close requires the address of a channel end");
+                        }
+                        break;
+                    }
                     case Opcode::taskJoin:
                         if (requireShape(1, 0) && operands[0] != nullptr) {
                             const auto* taskType = types.contains(operands[0]->type)
@@ -2412,6 +2492,10 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::arrayConsumeEmpty: return "array_consume_empty";
         case Opcode::taskSpawn: return "task_spawn";
         case Opcode::taskJoin: return "task_join";
+        case Opcode::channelCreate: return "channel_create";
+        case Opcode::channelSend: return "channel_send";
+        case Opcode::channelReceive: return "channel_receive";
+        case Opcode::channelClose: return "channel_close";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -2679,6 +2763,10 @@ std::string dump(const Module& module) {
                     case Opcode::arrayRemoveLast:
                     case Opcode::arrayConsumeEmpty:
                     case Opcode::taskJoin:
+                    case Opcode::channelCreate:
+                    case Opcode::channelSend:
+                    case Opcode::channelReceive:
+                    case Opcode::channelClose:
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:

@@ -2031,4 +2031,102 @@ TEST_F(SemanticAnalysisTest, EvaluatingTheQuestionMarkFirstAndBindingItIsAccepte
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+
+// Channels (spec 21.9): the ends close when dropped, so they need no cleanup on any path; `close`
+// consumes the end.
+constexpr const char* channelAnalysisPrelude =
+        "func make(): Int {\n"
+        "    var sender: ChannelSender<Int>\n"
+        "    var receiver: ChannelReceiver<Int>\n"
+        "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+        "    return 0\n"
+        "}\n";
+
+TEST_F(SemanticAnalysisTest, ChannelEndsNeedNoCleanupOnAnyPath) {
+    analyze("func f(flag: Bool): Result<Int, String> {\n"
+            "    var sender: ChannelSender<Int>\n"
+            "    var receiver: ChannelReceiver<Int>\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "    if flag { return .Err(\"early\") }\n"
+            "    let r = receiver.receive()\n"
+            "    return .Ok(1)\n"
+            "}\n");
+    EXPECT_TRUE(result.diagnostics.empty() ||
+                !hasDiagnostic(joyeer::analysis::DiagnosticId::linearNotConsumed))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, UsingAnEndAfterCloseIsUseAfterConsume) {
+    analyze("func f(): Int {\n"
+            "    var sender: ChannelSender<Int>\n"
+            "    var receiver: ChannelReceiver<Int>\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "    consume sender.close()\n"
+            "    let r = sender.send(value: consume 1)\n"
+            "    return 0\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AClosedEndCanBeInitializedAgainByChannel) {
+    analyze("func f(): Int {\n"
+            "    var sender: ChannelSender<Int>\n"
+            "    var receiver: ChannelReceiver<Int>\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "    consume sender.close()\n"
+            "    consume receiver.close()\n"
+            "    channel(capacity: 3, sender: &sender, receiver: &receiver)\n"
+            "    let r = sender.send(value: consume 1)\n"
+            "    return 0\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::initializingInitializedStorage))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, ChannelOnLiveEndsIsInitializingInitializedStorage) {
+    analyze("func f(): Int {\n"
+            "    var sender: ChannelSender<Int>\n"
+            "    var receiver: ChannelReceiver<Int>\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "    return 0\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::initializingInitializedStorage))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AWrapperWithInitializingParametersCanCreateAChannel) {
+    analyze("func open(sender: initializing ChannelSender<Int>, receiver: initializing ChannelReceiver<Int>) {\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "}\n"
+            "func f(): Int {\n"
+            "    var s: ChannelSender<Int>\n"
+            "    var r: ChannelReceiver<Int>\n"
+            "    open(sender: &s, receiver: &r)\n"
+            "    let x = s.send(value: consume 4)\n"
+            "    return 0\n"
+            "}\n");
+    EXPECT_TRUE(result.diagnostics.empty() || !hasDiagnostic(joyeer::analysis::DiagnosticId::useBeforeInitialization))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, AnEndMovesIntoAStructAndAnArray) {
+    analyze("struct Worker {\n    var inbox: ChannelReceiver<Int>\n    var id: Int\n}\n"
+            "func f(): Int {\n"
+            "    var sender: ChannelSender<Int>\n"
+            "    var receiver: ChannelReceiver<Int>\n"
+            "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+            "    let worker = Worker(inbox: consume receiver, id: 1)\n"
+            "    var senders: [ChannelSender<Int>] = []\n"
+            "    &senders.append(element: consume sender)\n"
+            "    let sent = senders[0].send(value: consume 9)\n"
+            "    return worker.id\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
 } // namespace

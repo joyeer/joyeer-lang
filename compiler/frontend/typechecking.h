@@ -49,6 +49,9 @@ enum class TypeKind {
     float64,
     // `JoinHandle<R>`: a running task whose result type is the one argument (spec 21).
     task,
+    // `ChannelSender<T>` and `ChannelReceiver<T>`: the ends of a channel (decision 0019).
+    channelSender,
+    channelReceiver,
 };
 
 [[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
@@ -159,6 +162,10 @@ public:
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
     [[nodiscard]] TypeId taskType(TypeId result);
+    [[nodiscard]] TypeId channelSenderType(TypeId element);
+    [[nodiscard]] TypeId channelReceiverType(TypeId element);
+    // `Result<success, ChannelClosed>`, what `send` and `receive` give.
+    [[nodiscard]] TypeId channelResultType(TypeId success);
 
     // Resolves a type declaration symbol plus concrete built-in generic
     // arguments. Invalid arity and non-type symbols return nullopt.
@@ -271,6 +278,10 @@ enum class TypeCheckingDiagnosticId {
     spawnTargetUnsupported,
     spawnTargetParameters,
     spawnTargetNever,
+    channelEndTypes,
+    channelCapacity,
+    linearChannelElement,
+    channelElementType,
 };
 
 struct TypeCheckingDiagnostic {

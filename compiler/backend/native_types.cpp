@@ -153,7 +153,9 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
         case typing::TypeKind::voidType: result = llvm::StructType::get(context()); break;
         case typing::TypeKind::never: result = builder.getVoidTy(); break;
         case typing::TypeKind::boolean: result = builder.getInt1Ty(); break;
-        case typing::TypeKind::task: result = pointer(); break;
+        case typing::TypeKind::task:
+        case typing::TypeKind::channelSender:
+        case typing::TypeKind::channelReceiver: result = pointer(); break;
         case typing::TypeKind::string: name = "joyeer.string"; break;
         case typing::TypeKind::array: name = "joyeer.array"; break;
         case typing::TypeKind::dictionary: name = "joyeer.dictionary"; break;
@@ -201,7 +203,9 @@ Layout Builder::layout(ir::TypeId id) {
         case typing::TypeKind::boolean:
         case typing::TypeKind::uint8: result = {1, 1}; break;
         case typing::TypeKind::integer:
-        case typing::TypeKind::task: result = {8, 8}; break;
+        case typing::TypeKind::task:
+        case typing::TypeKind::channelSender:
+        case typing::TypeKind::channelReceiver: result = {8, 8}; break;
         case typing::TypeKind::string: result = {16, 8}; break;
         case typing::TypeKind::array:
         case typing::TypeKind::dictionary: result = {24, 8}; break;

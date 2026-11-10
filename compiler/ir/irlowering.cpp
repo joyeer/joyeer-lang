@@ -2748,6 +2748,18 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
+            targetSymbol->name == "channel") {
+            return lowerChannelCreate(expression);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
+            (targetSymbol->name == "send" || targetSymbol->name == "receive" ||
+             targetSymbol->name == "close") &&
+            isChannelEndReceiver(expression)) {
+            return lowerChannelMember(expression, targetSymbol->name);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
             targetSymbol->name == "spawn") {
             return lowerSpawn(expression);
         }
@@ -2942,6 +2954,104 @@ private:
         auto instruction = makeInstruction(ir::Opcode::taskSpawn, expression->span);
         instruction.operands = { value->id };
         instruction.callee = calleeId;
+        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, requiresDestroy(result.type)
+                ? ValueOwnership::owned
+                : ValueOwnership::trivial);
+        return result;
+    }
+
+    // `channel(capacity: n, sender: &s, receiver: &r)`: the runtime creates the block and stores both
+    // ends in the two addresses (decision 0019).
+    std::optional<ir::Value> lowerChannelCreate(const syntax::CallExprSyntax::Ptr& expression) {
+        if (expression->arguments.size() != 3) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                   "channel takes a capacity, a sender and a receiver");
+            return std::nullopt;
+        }
+        auto capacity = lowerExpression(expression->arguments[0]->value);
+        if (!capacity.has_value()) return std::nullopt;
+        capacity = coerce(*capacity, model->types().intType(), expression->arguments[0]->value->span);
+        const auto sender = lowerAddress(expression->arguments[1]->value);
+        const auto receiver = lowerAddress(expression->arguments[2]->value);
+        if (!capacity.has_value() || !sender.has_value() || !receiver.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(ir::Opcode::channelCreate, expression->span);
+        instruction.operands = { capacity->id, sender->id, receiver->id };
+        emit(std::move(instruction));
+        return emitUnit(expression->span);
+    }
+
+    bool isChannelEndReceiver(const syntax::CallExprSyntax::Ptr& expression) const {
+        if (expression->callee->kind != syntax::Kind::memberExpr) return false;
+        const auto base = model->typeOf(
+                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
+        const auto* type = base.has_value() ? model->types().type(*base) : nullptr;
+        return type != nullptr && (type->kind == typing::TypeKind::channelSender ||
+                                   type->kind == typing::TypeKind::channelReceiver);
+    }
+
+    // `send`, `receive` and `close` on a channel end. `send` moves its value into the instruction, which
+    // consumes it on both outcomes; `close` leaves the end's storage zeroed.
+    std::optional<ir::Value> lowerChannelMember(
+            const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
+        if (expression->callee->kind != syntax::Kind::memberExpr) {
+            report(DiagnosticId::unsupportedSyntax, expression->span,
+                   "a channel operation requires a receiver expression");
+            return std::nullopt;
+        }
+        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+        if (!isAddressable(member->base)) {
+            report(DiagnosticId::unsupportedSyntax, member->base->span,
+                   "a channel operation needs its end stored in a variable, parameter or field, not a temporary");
+            return std::nullopt;
+        }
+        const auto end = lowerAddress(member->base);
+        if (!end.has_value()) return std::nullopt;
+        if (name == "close") {
+            auto instruction = makeInstruction(ir::Opcode::channelClose, expression->span);
+            instruction.operands = { end->id };
+            emit(std::move(instruction));
+            return emitUnit(expression->span);
+        }
+        const auto resultType = model->typeOf(expression);
+        if (!resultType.has_value()) return std::nullopt;
+        auto instruction = makeInstruction(
+                name == "send" ? ir::Opcode::channelSend : ir::Opcode::channelReceive, expression->span);
+        instruction.operands = { end->id };
+        if (name == "send") {
+            if (expression->arguments.size() != 1) {
+                report(DiagnosticId::unsupportedSyntax, expression->span, "send takes one value");
+                return std::nullopt;
+            }
+            const auto& argument = expression->arguments[0];
+            const auto* endType = model->types().type(end->type);
+            if (endType == nullptr || endType->arguments.size() != 1) return std::nullopt;
+            std::optional<ir::Value> value;
+            if (isAddressable(argument->value)) {
+                const auto address = lowerAddress(argument->value);
+                if (address.has_value()) {
+                    value = emitValue(
+                            ir::Opcode::take,
+                            address->type,
+                            ir::ValueCategory::value,
+                            { address->id },
+                            argument->span);
+                }
+            } else {
+                value = lowerExpression(argument->value);
+            }
+            if (!value.has_value()) return std::nullopt;
+            value = coerce(*value, endType->arguments[0], argument->value->span);
+            if (!value.has_value()) return std::nullopt;
+            if (requiresDestroy(value->type)) {
+                value = prepareOwned(*value, argument->span);
+                if (!value.has_value()) return std::nullopt;
+                if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
+            }
+            instruction.operands.push_back(value->id);
+        }
         instruction.result = makeValue(*resultType, ir::ValueCategory::value);
         const auto result = *instruction.result;
         emit(std::move(instruction));

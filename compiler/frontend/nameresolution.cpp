@@ -662,6 +662,8 @@ private:
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
         const auto joinHandleType = declareBuiltinType("JoinHandle");
+        const auto channelSenderType = declareBuiltinType("ChannelSender");
+        const auto channelReceiverType = declareBuiltinType("ChannelReceiver");
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
@@ -748,6 +750,40 @@ private:
                     CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
                 });
 
+        // The ends of a channel (spec 21.9). `send` and `receive` borrow their end, `close` consumes it;
+        // the type checker computes their result types from the end's element type.
+        declareBuiltinMember(
+                channelSenderType,
+                SymbolKind::builtinMember,
+                "send",
+                voidType,
+                CallableSignature {
+                    CallableKind::function,
+                    true,
+                    { CallableParameter {
+                        std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                        syntax::AccessEffect::consuming } },
+                });
+        declareBuiltinMember(
+                channelReceiverType,
+                SymbolKind::builtinMember,
+                "receive",
+                voidType,
+                CallableSignature { CallableKind::function, true, {} });
+        for (const auto end : { channelSenderType, channelReceiverType }) {
+            declareBuiltinMember(
+                    end,
+                    SymbolKind::builtinMember,
+                    "close",
+                    voidType,
+                    CallableSignature {
+                        CallableKind::function,
+                        true,
+                        {},
+                        CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
+                    });
+        }
+
         CallableSignature singlePayload {
             CallableKind::enumCase,
             true,
@@ -823,6 +859,29 @@ private:
                 {});
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
+
+        // `channel(capacity: n, sender: &s, receiver: &r)` creates a channel (spec 21.9.1). Both ends are
+        // `initializing` outputs; the type checker requires a sender and a receiver of one element type.
+        const auto channel = declareSymbol(
+                model->preludeScope_,
+                SymbolNamespace::value,
+                SymbolKind::builtinFunction,
+                "channel",
+                {});
+        symbol(channel).declaredType = voidType;
+        symbol(channel).callable = CallableSignature {
+            CallableKind::function,
+            true,
+            {
+                CallableParameter { std::string("capacity"), true, std::nullopt, std::nullopt, intType },
+                CallableParameter {
+                    std::string("sender"), true, std::nullopt, std::nullopt, std::nullopt,
+                    syntax::AccessEffect::initializing },
+                CallableParameter {
+                    std::string("receiver"), true, std::nullopt, std::nullopt, std::nullopt,
+                    syntax::AccessEffect::initializing },
+            },
+        };
 
         // `spawn(function: f, input: consume x)` starts a task (spec 21.2). Its parameters only fix the
         // labels, their order and that `input` is consumed; the type checker derives the result type from

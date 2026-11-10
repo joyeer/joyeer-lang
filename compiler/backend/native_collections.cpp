@@ -223,6 +223,76 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
             result = value;
             return true;
         }
+        case Opcode::channelCreate: {
+            const auto element = type(values.at(instruction.operands[1]).type).arguments.at(0);
+            const auto elementLayout = unit(element) ? Layout {0, 1} : layout(element);
+            call("joyeer_channel_create_abi", builder.getInt64Ty(),
+                    {argument(0), integer(elementLayout.size), integer(elementLayout.alignment),
+                     helper(element, false), argument(1), argument(2)});
+            return true;
+        }
+        case Opcode::channelSend: {
+            const auto element = type(values.at(instruction.operands[0]).type).arguments.at(0);
+            auto* end = builder.CreateLoad(pointer(), argument(0), temporary());
+            auto* valueAddress = unit(element) ? nullPointer() : spill(argument(1));
+            auto* sent = call("joyeer_channel_send_abi", builder.getInt64Ty(), {end, valueAddress});
+            const auto resultId = instruction.result->type;
+            const auto& cases = enumerations.at(resultId)->cases;
+            size_t okTag = cases.size();
+            size_t errTag = cases.size();
+            for (size_t index = 0; index < cases.size(); ++index) {
+                if (cases[index].name == "Ok") okTag = index;
+                if (cases[index].name == "Err") errTag = index;
+            }
+            if (okTag == cases.size() || errTag == cases.size()) return false;
+            auto* address = stack(resultType());
+            builder.CreateStore(llvm::Constant::getNullValue(resultType()), address);
+            auto* delivered = builder.CreateICmpNE(sent, integer(0), temporary());
+            builder.CreateStore(builder.CreateSelect(delivered, integer(okTag, 32), integer(errTag, 32), temporary()),
+                    field(resultType(), address, 0));
+            if (destruction->requiresDestruction(element)) {
+                // The channel did not take the value (the receiver is closed), so it is destroyed here.
+                auto* unsent = llvm::BasicBlock::Create(context(), "channel.unsent." + temporary(), activeFunction);
+                auto* done = llvm::BasicBlock::Create(context(), "channel.sent." + temporary(), activeFunction);
+                builder.CreateCondBr(delivered, done, unsent);
+                builder.SetInsertPoint(unsent);
+                builder.CreateCall(destroys.at(element), {valueAddress});
+                builder.CreateBr(done);
+                builder.SetInsertPoint(done);
+            }
+            result = builder.CreateLoad(resultType(), address);
+            return true;
+        }
+        case Opcode::channelReceive: {
+            const auto element = type(values.at(instruction.operands[0]).type).arguments.at(0);
+            const auto resultId = instruction.result->type;
+            const auto& cases = enumerations.at(resultId)->cases;
+            size_t okTag = cases.size();
+            size_t errTag = cases.size();
+            for (size_t index = 0; index < cases.size(); ++index) {
+                if (cases[index].name == "Ok") okTag = index;
+                if (cases[index].name == "Err") errTag = index;
+            }
+            if (okTag == cases.size() || errTag == cases.size()) return false;
+            auto* address = stack(resultType());
+            builder.CreateStore(llvm::Constant::getNullValue(resultType()), address);
+            auto* end = builder.CreateLoad(pointer(), argument(0), temporary());
+            // The runtime moves the value's bytes straight into the `Ok` payload.
+            auto* received = call("joyeer_channel_receive_abi", builder.getInt64Ty(),
+                    {end, unit(element) ? nullPointer() : payload(resultType(), address)});
+            auto* delivered = builder.CreateICmpNE(received, integer(0), temporary());
+            builder.CreateStore(builder.CreateSelect(delivered, integer(okTag, 32), integer(errTag, 32), temporary()),
+                    field(resultType(), address, 0));
+            result = builder.CreateLoad(resultType(), address);
+            return true;
+        }
+        case Opcode::channelClose: {
+            auto* slot = argument(0);
+            auto* end = builder.CreateLoad(pointer(), slot, temporary());
+            call("joyeer_channel_close_abi", builder.getVoidTy(), {end});
+            builder.CreateStore(nullPointer(), slot);
+            return true;
+        }
         case Opcode::arrayConsumeEmpty:
             // Traps when the array is not empty; otherwise frees its storage and zeroes the handle,
             // so the scope-end destroy of the moved-from binding does nothing.

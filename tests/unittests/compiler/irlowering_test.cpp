@@ -348,6 +348,28 @@ protected:
         return false;
     }
 
+    // True when the verifier rejects the module after `mutate` and one of its messages contains `text`,
+    // so the rule under test is the one that fired and not a side effect of the mutation.
+    template<class Mutate>
+    bool rejectsWith(const std::string& name, joyeer::ir::Opcode opcode, Mutate&& mutate,
+            const std::string& text) {
+        auto module = *result.module;
+        for (auto& candidate : module.functions) {
+            if (candidate.name != name) continue;
+            for (auto& block : candidate.blocks) {
+                for (auto& instruction : block.instructions) {
+                    if (instruction.opcode != opcode) continue;
+                    mutate(instruction, module);
+                    const auto verification = joyeer::ir::Verifier().verify(module);
+                    return std::any_of(verification.errors.begin(), verification.errors.end(),
+                            [&text](const auto& error) { return error.message.find(text) != std::string::npos; });
+                }
+            }
+        }
+        ADD_FAILURE() << "no " << name << " instruction to mutate";
+        return false;
+    }
+
     static joyeer::ir::TypeId typeNamed(const joyeer::ir::Module& module, const std::string& name) {
         return std::find_if(module.types.begin(), module.types.end(),
                 [&name](const auto& type) { return type.name == name; })->id;
@@ -2057,6 +2079,111 @@ TEST_F(NewOpcodeVerifierTest, TaskSpawnRejectsAMalformedTargetOrResult) {
     EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
         instruction.result.reset();
     }));
+}
+
+
+// Channels (spec 21.9): one instruction per operation; the verifier checks the ends against each other.
+TEST_F(IRLoweringTest, ChannelOperationsLowerToOneInstructionEach) {
+    ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
+                                  "    var sender: ChannelSender<Int>\n"
+                                  "    var receiver: ChannelReceiver<Int>\n"
+                                  "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+                                  "    let sent = sender.send(value: consume 4)\n"
+                                  "    let got = receiver.receive()\n"
+                                  "    consume sender.close()\n"
+                                  "    return 0\n"
+                                  "}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    using joyeer::ir::Opcode;
+    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelCreate), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelSend), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelReceive), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelClose), 1u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(NewOpcodeVerifierTest, ChannelInstructionsAreCheckedAgainstTheirEnds) {
+    ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
+                                  "    var sender: ChannelSender<Int>\n"
+                                  "    var receiver: ChannelReceiver<Int>\n"
+                                  "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+                                  "    let sent = sender.send(value: consume 4)\n"
+                                  "    let got = receiver.receive()\n"
+                                  "    consume sender.close()\n"
+                                  "    return 0\n"
+                                  "}\n"));
+    using joyeer::ir::Opcode;
+    using joyeer::ir::ValueCategory;
+    EXPECT_TRUE(rejects("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+        instruction.operands.pop_back();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+        std::swap(instruction.operands[1], instruction.operands[2]);
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto&) {
+        instruction.operands.pop_back();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Int");
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto&) {
+        instruction.result->category = ValueCategory::address;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelReceive, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelReceive, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Int");
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelClose, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::channelClose, [](auto& instruction, auto&) {
+        instruction.operands.push_back(instruction.operands.at(0));
+    }));
+}
+
+
+// Each rule of the channel instructions, with the rule's own message asserted.
+TEST_F(NewOpcodeVerifierTest, EachChannelRuleFiresOnItsOwnMutation) {
+    ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
+                                  "    var sender: ChannelSender<Int>\n"
+                                  "    var receiver: ChannelReceiver<Int>\n"
+                                  "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
+                                  "    let sent = sender.send(value: consume 4)\n"
+                                  "    let got = receiver.receive()\n"
+                                  "    consume sender.close()\n"
+                                  "    return 0\n"
+                                  "}\n"));
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+        std::swap(instruction.operands[1], instruction.operands[2]);
+    }, "channel_create requires"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+        instruction.operands.pop_back();
+    }, "channel_create expects 3 operand"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelSend, [](auto& instruction, auto&) {
+        instruction.operands.pop_back();
+    }, "channel_send expects 2 operand"));
+    // The error type of the result must be the one-case ChannelClosed: point it at Int.
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelSend, [](auto& instruction, auto& module) {
+        const auto intType = typeNamed(module, "Int");
+        std::find_if(module.types.begin(), module.types.end(), [&](auto& type) {
+            return type.id == instruction.result->type;
+        })->arguments[1] = intType;
+    }, "channel_send requires"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelReceive, [](auto& instruction, auto& module) {
+        const auto intType = typeNamed(module, "Int");
+        std::find_if(module.types.begin(), module.types.end(), [&](auto& type) {
+            return type.id == instruction.result->type;
+        })->arguments[1] = intType;
+    }, "channel_receive requires"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelReceive, [](auto& instruction, auto&) {
+        instruction.result.reset();
+    }, "channel_receive must define a result"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::channelClose, [](auto& instruction, auto&) {
+        instruction.operands.clear();
+    }, "channel_close expects 1 operand"));
 }
 
 } // namespace
