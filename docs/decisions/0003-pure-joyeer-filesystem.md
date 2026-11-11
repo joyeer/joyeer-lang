@@ -5,7 +5,7 @@
   question was settled by [0004](0004-remove-host-builtins.md): the built-in
   names and `filesystem.c` were removed, and `System` is the only provider.
   The POSIX variants have still not run on Linux or macOS.
-- Spec: [§19.4.4 Bare byte pointers](../spec/19-c-interop.md#1944-bare-byte-pointers)
+- Spec: [§19.4.4 Bare byte pointers](../../specs/19-c-interop.md#1944-bare-byte-pointers)
 
 ## Context
 
@@ -37,7 +37,7 @@ showed that most of that is avoidable.
    - Strings are built from bytes by binding the runtime's existing
      `joyeer_string_clone_abi` with an `initializing String` output.
 3. **Raw addresses and a general unsafe layer.** Most flexible; contradicts
-   [§19.10](../spec/19-c-interop.md#1910-deferred-memory-and-abi-extensions)
+   [§19.10](../../specs/19-c-interop.md#1910-deferred-memory-and-abi-extensions)
    and the project's review-by-humans goal.
 
 ## Decision

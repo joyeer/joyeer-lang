@@ -9,15 +9,16 @@ syntax.
 restricted buffers, bare byte pointers and the intrinsics) and `@platform` are
 parsed and checked. `@spec` and `@property` remain
 unsupported; their proposed tooling examples below are not currently
-compilable programs. See [current C binding coverage](../impl/c-interop.md).
+compilable programs. See [current C binding coverage](../docs/impl/c-interop.md).
 
 ```
 attribute       ::= '@' identifier '(' [ attribute_arg , ... ] ')'
 attribute_arg   ::= [ identifier ':' ] expression
 ```
 
-This is the parenthesized production of [§17](17-grammar.md). Each annotation
-fixes its own argument shape and rejects any other: `@c_extern`, `@c_export` and `@c_data`
+This is the parenthesized production of [Appendix C](appendix-c-grammar.md).
+Each annotation fixes its own argument shape and rejects any other:
+`@c_extern`, `@c_export` and `@c_data`
 each take one `symbol:` string literal, `@c_extern` may add `pointer:` arguments
 naming bare-pointer parameters (§19.4.4), and `@platform` takes unlabelled
 platform names. Attribute placement and arguments are checked against the named
@@ -103,7 +104,7 @@ system it generates code for, which is the host. Code generation for any
 other target is rejected (`driver.unsupported-target-platform`); a toolchain
 client may select another target only to validate, without generating code.
 The implementation detail is in
-[the implemented surface](../impl/supported-features.md).
+[the implemented surface](../docs/impl/supported-features.md).
 
 **Selection.** Before names are resolved, a function whose platform list does
 not contain the target is removed from the program; a function that does
@@ -156,6 +157,6 @@ annotation is reported by the parser as `parser.unsupported-syntax`. A
 compilation with any `platform.*` diagnostic reports only those; name
 resolution and later stages do not run.
 
-**Design rationale.** See [decision 0002](../decisions/0002-platform-annotation.md).
+**Design rationale.** See [decision 0002](../docs/decisions/0002-platform-annotation.md).
 
 ---

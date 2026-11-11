@@ -1,9 +1,9 @@
-## §17 Grammar Appendix (EBNF)
+## Appendix C: Grammar (EBNF)
 
 Compact reference. Whitespace and comments are skipped between tokens.
 This is the broader specification grammar, not a list of currently accepted
 parser features. The C annotation/bodyless import syntax is implemented for
-the restricted subset in [implementation coverage](../impl/c-interop.md).
+the restricted subset in [implementation coverage](../docs/impl/c-interop.md).
 The `@spec`/`@property` shorthand and quantifier proposals in §11 are not
 included in this grammar.
 

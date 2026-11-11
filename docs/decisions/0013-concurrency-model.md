@@ -6,8 +6,8 @@
   [0017](0017-runtime-thread-safety.md). The recommendations marked *recommended* below are
   accepted as written, and the answers to questions 17 to 19 are recorded under "Resolutions".
   Question 11 (dispatch) stays open; the web server's pool documents the cost.
-- Spec: [§21 Concurrency](../spec/21-concurrency.md), [§2.6.3](../spec/02-types.md), and the
-  reserved keywords in [§15](../spec/15-reserved.md) (`async`, `await` and `actor` stay reserved).
+- Spec: [§21 Concurrency](../../specs/21-concurrency.md), [§2.6.3](../../specs/02-types.md), and the
+  reserved keywords in [Appendix A](../../specs/appendix-a-reserved.md) (`async`, `await` and `actor` stay reserved).
 
 ## Context
 
@@ -59,7 +59,7 @@ What the implementation constrains:
   received in a `match` arm is rejected today (0012). Postfix `?` works only
   between the same error type.
 - Foreign code makes no thread-safety claim, and callbacks and entry from
-  foreign threads are separate designs ([§19](../spec/19-c-interop.md)).
+  foreign threads are separate designs ([§19](../../specs/19-c-interop.md)).
 
 Goals this must serve: no GC, deterministic destruction, a model a reviewer can
 check from signatures, and one way to do each thing.
@@ -127,7 +127,7 @@ That claim covers memory only.
 ### Stage 1: timeouts, then readiness (no language change)
 
 - **1a, timeouts.** Add receive, send, accept and connect timeouts to
-  [§18.6](../spec/18-host.md#186-tcp-networking) (milliseconds; `.TimedOut` is
+  [§18.6](../../specs/18-host.md#186-tcp-networking) (milliseconds; `.TimedOut` is
   already a case). This is small and defeats a silent client on its own.
 - **1b, readiness (optional).** A wait over several handles, for example
   `tcpPoll(connections:, listener:, timeoutMillis:)`, backed by `WSAPoll` on
@@ -163,7 +163,7 @@ Write each as its own decision when it starts.
     consume"; the inverse check, "still initialized at scope exit", is new work.
     P2 of the plan owns it.
   - It interacts with control flow: every `?` or early `return` between `spawn`
-    and `join` needs a join on that path (and `defer` is reserved, §15); a loop must
+    and `join` needs a join on that path (and `defer` is reserved, Appendix A); a loop must
     consume per iteration; assigning over a live task is an error; and linearity
     propagates through `Array`, `Optional`, `Result`, structs and enums, so the
     generated destroy helpers must reject, not silently drop, a non-empty `[JoinHandle]`.

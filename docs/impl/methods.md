@@ -1,8 +1,8 @@
 # Methods, Extensions, `self` and `Self`
 
 > **Status:** implemented subset of
-> [spec §3.2.4, §3.5 and §3.9](../spec/03-declarations.md). This is the
-> prerequisite for the proposed [protocols](../spec/20-protocols.md); nothing
+> [spec §3.2.4, §3.5 and §3.9](../../specs/03-declarations.md). This is the
+> prerequisite for the proposed [protocols](../../specs/20-protocols.md); nothing
 > here depends on generics or protocols.
 
 ## 1. Surface

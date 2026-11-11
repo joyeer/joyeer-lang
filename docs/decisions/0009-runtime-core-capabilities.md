@@ -4,8 +4,8 @@
   Never results and the core entry export (D4, part of D7) and the
   constant-data address (part of D7) and data symbols (D5) are implemented and
   measured. Bulk memory (D11, added below) is implemented too.
-- Spec: [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics) (implemented
-  intrinsics) and [§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
+- Spec: [§19.4.5](../../specs/19-c-interop.md#1945-compiler-intrinsics) (implemented
+  intrinsics) and [§19.4.7](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)
   (Never results, core units, data symbols and the entry point).
 
 ## Context
