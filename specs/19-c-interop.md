@@ -10,9 +10,9 @@ and the restricted buffer imports in §19.4.3.
 The example in §19.2 requires an explicitly authorized compilation context;
 it is not an ordinary application program. Native platform acceptance and
 the still-unsupported memory extensions are recorded in the
-[C binding implementation](../impl/c-interop.md),
-[implemented surface](../impl/supported-features.md) and the separate
-[implementation plan](../plan/c-interop.md).
+[C binding implementation](../docs/impl/c-interop.md),
+[implemented surface](../docs/impl/supported-features.md) and the separate
+[implementation plan](../docs/plan/c-interop.md).
 
 ### 19.1 Scope and authorization
 
@@ -75,7 +75,7 @@ the signature rules in §19.4 and §19.5.
 A bodyless declaration is valid only with `@c_extern`; an empty `{}` is
 still a body and is invalid on an import. Ordinary functions and
 `@c_export` definitions require bodies. The declaration and attribute
-productions are consolidated in [§17](17-grammar.md).
+productions are consolidated in [Appendix C](appendix-c-grammar.md).
 
 ### 19.3 Source calls and native symbols
 
@@ -226,7 +226,7 @@ Exclusivity and initialization rules apply exactly as for ordinary Joyeer
 calls. Native declarations for one symbol must agree on buffer shape and
 access effect, not merely on the size of the flattened pointer arguments.
 Descriptor layouts, helper names, and runtime revision matching are defined
-in the [buffer ABI implementation contract](../impl/c-interop.md#buffer-imports).
+in the [buffer ABI implementation contract](../docs/impl/c-interop.md#buffer-imports).
 There is no source-level raw-pointer value, asynchronous retention, callback,
 or general aggregate FFI in this extension.
 
@@ -285,13 +285,13 @@ parameter and result types; anything else with the prefix is an error, and
 | `joyeer_intrinsic_call_void2` | `(function: Int, first: Int, second: Int) -> Void` | The same for a function taking two address arguments |
 | `joyeer_intrinsic_literal_address` | `(text: String) -> Int` | The address of the NUL-terminated constant data of the string literal given as `text`, which must be a literal. No `String` value is created and nothing is allocated; it and `symbol_address` are the only uses of a string literal a core unit (§19.4.7) may make |
 | `joyeer_intrinsic_symbol_address` | `(name: String) -> Int` | The address of the function or data symbol named by the string literal given as `name`, which must be a literal (the same rules as `literal_address`). A function defined in the same program unit is taken directly; any other name is resolved by the linker, and nothing checks that it exists or what type it has. Used to store a runtime function as a callback |
-| `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime implementation notes](../impl/runtime.md#static-slots) |
+| `joyeer_intrinsic_static_slot` | `(index: Int) -> Int` | The address of 8-byte, zero-initialized slot `index` of a 64-slot table shared by every unit in the program; an index outside `0..<64` traps (`static slot index out of range`). Slots are 8-byte aligned, so `atomic_add` applies. Slot ranges are assigned in the [runtime implementation notes](../docs/impl/runtime.md#static-slots) |
 | `joyeer_intrinsic_memcpy` | `(destination: Int, source: Int, count: Int) -> Void` | Copies `count` bytes (taken as unsigned); the ranges must not overlap. No alignment is required. Lowers to LLVM's `memcpy`, so a small constant count becomes inline moves |
 | `joyeer_intrinsic_memmove` | `(destination: Int, source: Int, count: Int) -> Void` | The same for ranges that may overlap |
 | `joyeer_intrinsic_memset` | `(destination: Int, value: UInt8, count: Int) -> Void` | Stores `value` in `count` bytes |
 | `joyeer_intrinsic_double_bits` | `(value: Double) -> UInt64` | The IEEE 754 bit pattern of `value` |
 | `joyeer_intrinsic_float_bits` | `(value: Float) -> UInt32` | The IEEE 754 bit pattern of `value` |
-| `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../decisions/0011-runtime-without-the-c-library.md) |
+| `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../docs/decisions/0011-runtime-without-the-c-library.md) |
 | `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
@@ -301,12 +301,12 @@ from is alive and unmodified in size, and the language does not track that.
 Nothing checks that an address points at memory the program may access: these
 operations can read and write anywhere, so a unit that uses them takes on the
 obligations of C. They exist so that the runtime itself can be written in
-Joyeer ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)); they add
+Joyeer ([decision 0005](../docs/decisions/0005-runtime-unsafe-memory.md)); they add
 no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
 #### 19.4.6 Runtime capabilities still proposed ⏳
 
-One operation the runtime plan ([runtime plan](../plan/runtime-in-joyeer.md)) may
+One operation the runtime plan ([runtime plan](../docs/plan/runtime-in-joyeer.md)) may
 want has **no decision** yet and is rejected by the compiler: for a runtime that
 does not depend on the C library, a Linux system-call intrinsic. It would follow
 the rules of §19.4.5: a reserved symbol, an exact signature, and authorized units
@@ -399,7 +399,7 @@ behavior; it must not become a fabricated C success value or an exception
 escaping into C. Callbacks and asynchronous retention require separate designs. Entry from a
 foreign thread does too, with one exception: a function the runtime exports as a thread
 trampoline may be entered by a thread the runtime created through its thread API
-([decision 0016](../decisions/0016-thread-primitives.md)). Such a thread may allocate, print and
+([decision 0016](../docs/decisions/0016-thread-primitives.md)). Such a thread may allocate, print and
 panic (decision 0017), and nothing unwinds across the thread boundary.
 
 The binding author must match the real native prototype and its behavioral
@@ -491,7 +491,7 @@ bare byte pointers), output parameters, and owned native result storage need a s
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 
-The [memory-boundary proposal](../plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [memory-boundary proposal](../docs/plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 tracks those decisions separately, including whether a mechanism remains
 runtime-only. It is not an implicit approval of `Optional` pointer layouts,
 C-compatible ordinary structs, callbacks, variadic calls, or a general

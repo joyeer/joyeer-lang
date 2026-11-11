@@ -1,6 +1,6 @@
 # Joyeer Documentation Index
 
-The normative language definition is [spec.md](spec.md), with design
+The normative language definition is the [specification](../specs/README.md), with design
 explanations alongside the rules in each chapter. Implementation notes
 describe the current compiler, and plan documents track incomplete work.
 Explanations and plans do not add language rules or implementation guarantees.
@@ -9,32 +9,32 @@ Explanations and plans do not add language rules or implementation guarantees.
 
 | Goal | Document |
 |---|---|
-| Learn the language | [spec.md](spec.md) |
+| Learn the language | [Language specification](../specs/README.md) |
 | Use Joyeer with an AI coding agent | [Portable Joyeer skill](../skills/README.md) |
-| Understand the design and cost goals | [spec/00-preamble.md](spec/00-preamble.md) |
-| Understand memory and ownership | [spec/04-memory.md](spec/04-memory.md) |
-| Understand parameter access | [Access effects](spec/04-memory.md#42-access-effects-on-parameters) |
-| Understand contracts and verification limits | [spec/09-contracts.md](spec/09-contracts.md) |
-| Read the C binding design and distinguish its implemented subset | [spec/19-c-interop.md](spec/19-c-interop.md) and [impl/c-interop.md](impl/c-interop.md) |
+| Understand the design and cost goals | [specs/00-preamble.md](../specs/00-preamble.md) |
+| Understand memory and ownership | [specs/04-memory.md](../specs/04-memory.md) |
+| Understand parameter access | [Access effects](../specs/04-memory.md#42-access-effects-on-parameters) |
+| Understand contracts and verification limits | [specs/09-contracts.md](../specs/09-contracts.md) |
+| Read the C binding design and distinguish its implemented subset | [specs/19-c-interop.md](../specs/19-c-interop.md) and [impl/c-interop.md](impl/c-interop.md) |
 | See what the compiler implements | [impl/supported-features.md](impl/supported-features.md) |
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
 | Plan runtime and public-library development | [Runtime in Joyeer](plan/runtime-in-joyeer.md) and [Library modules](plan/library.md) |
 | Plan how the compiler finds the standard library | [Toolchain library resolution](plan/toolchain-libraries.md) |
-| See a larger program (a Markdown web server over the provisional [TCP API](spec/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
+| See a larger program (a Markdown web server over the provisional [TCP API](../specs/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
 | Contribute | [AGENTS.md](../AGENTS.md) |
 
 ## Specification
 
-The files under [spec/](spec/) contain the normative chapters:
+The files under [specs/](../specs/) contain the normative chapters:
 lexical structure, types, declarations, memory, expressions, statements,
-patterns, errors, contracts, modules, naming, examples, grammar, and portable
-host operations, and restricted C interoperation.
-[spec.md](spec.md) is their index and change log, not an assembled copy of
-the chapter text.
+patterns, errors, contracts, modules, naming, portable host operations, and
+restricted C interoperation. Reserved keywords and syntax, worked examples,
+and the consolidated grammar follow the numbered chapters as appendices.
+[specs/README.md](../specs/README.md) indexes the chapters and appendices.
 
 Design rationale, design notes, and cost notes explain the adjacent rules.
 They are not separate specifications; future proposals remain explicitly

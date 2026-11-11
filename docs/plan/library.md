@@ -22,7 +22,7 @@
 | `Collections` | Extra containers and algorithms | Independent; builtin arrays/dicts do not need it |
 | `Testing` | Assertions, failure reporting, helpers | May use `Foundation` |
 
-Rules (the language-level ones are in [§12.5](../spec/12-modules.md#125-standard-modules)):
+Rules (the language-level ones are in [§12.5](../../specs/12-modules.md#125-standard-modules)):
 - Each module is one real source unit with its own `project.toml`; no umbrella
   or re-exports. Keep the dependency graph acyclic.
 - Prelude types (`String`, `Array`, `Dict`, `Optional`, `Result`, and the host

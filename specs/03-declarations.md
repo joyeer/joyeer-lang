@@ -61,7 +61,8 @@ access_effect   ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'   // 'b
 block           ::= '{' statement* '}'
 ```
 
-`attribute` is defined in [§11](11-annotations.md) and [§17](17-grammar.md).
+`attribute` is defined in [§11](11-annotations.md) and
+[Appendix C](appendix-c-grammar.md).
 The optional body in this production is constrained semantically: only a
 `@c_extern` declaration may omit it, and that declaration must omit it.
 All other functions, including `@c_export`, require a body. The restricted
@@ -70,14 +71,14 @@ specified in [§19](19-c-interop.md), not implied by the grammar alone.
 
 **Implementation status:** bodyless `@c_extern` imports are accepted in
 authorized units; ordinary functions still require bodies. Coverage is
-recorded in [the implementation boundary](../impl/c-interop.md).
+recorded in [the implementation boundary](../docs/impl/c-interop.md).
 
 `method_effect` is only meaningful for functions that have a receiver
 (methods declared inside a `struct`, `enum`, or `extension`). Free functions
 may not carry it. See §3.2.4.
 
 **Implementation status:** methods and extensions are implemented as described
-in [methods](../impl/methods.md). The `borrowing` keyword before `func` is
+in [methods](../docs/impl/methods.md). The `borrowing` keyword before `func` is
 accepted as an explicit spelling of the default receiver effect.
 
 #### 3.2.1 Parameters: labels
@@ -127,7 +128,7 @@ v0.1 has **no user-defined generics** (§2.6): a `func` may not declare type
 parameters, `where` clauses, or constraints. Generic *containers* (`Array`,
 `Dict`, `Optional`, `Result`) are built-ins. User-defined generics and the
 protocol system needed for constraints (`Comparable`, etc.) are reserved for a
-future version (§15).
+future version (Appendix A).
 
 #### 3.2.4 Method receiver effects
 
@@ -409,9 +410,9 @@ deinit_decl     ::= 'deinit' '(' ')' block
 #### 3.7.1 `deinit` rules (provisional)
 
 **Implementation status:** implemented for structs (parser through the native backend; see
-[supported features](../impl/supported-features.md)). Not implemented: `deinit` on an `enum`, `init`
+[supported features](../docs/impl/supported-features.md)). Not implemented: `deinit` on an `enum`, `init`
 declarations, and moving a noncopyable value out of a `match` binding or an array. These rules fix the first implementation
-([decision 0015](../decisions/0015-noncopyable-and-linear-types.md)): `deinit` for
+([decision 0015](../docs/decisions/0015-noncopyable-and-linear-types.md)): `deinit` for
 structs, so that a handle can close the resource it owns. `init` declarations stay
 unimplemented, and a struct with a `deinit` is constructed with its memberwise
 initializer.
@@ -454,7 +455,7 @@ not supported. See §12 for module rules.
 **Implementation status:** implemented for non-generic methods of structs and
 enums and for extensions of such types in the same module. Implicit-`self` field
 access is not implemented: write `self.field`. See
-[methods](../impl/methods.md).
+[methods](../docs/impl/methods.md).
 
 `self` and `Self` are keywords (§1.4) and cannot be declared as identifiers.
 They name two different things:

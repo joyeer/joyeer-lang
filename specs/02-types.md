@@ -2,7 +2,7 @@
 
 **Implementation status:** this chapter includes broader type-system design.
 The executable subset is listed in
-[Implemented Language Surface](../impl/supported-features.md). In particular,
+[Implemented Language Surface](../docs/impl/supported-features.md). In particular,
 the runtime currently preserves arbitrary string bytes without enforcing the
 valid-UTF-8 invariant described below. `Result` and `Optional` are
 compiler-known builtins in this subset, not user-declared generic enums. Their
@@ -189,7 +189,7 @@ let r: Result<Int, ParseError> = .Ok(1)
 
 User-defined generics will use `<T>`. They, along with constraints,
 associated types, and monomorphization, are reserved for a future version
-(§15).
+(Appendix A).
 
 #### 2.6.1 Safe dictionary lookup
 
@@ -242,10 +242,10 @@ removes the element in constant time and does not shrink the array's capacity.
 
 #### 2.6.3 Concurrency builtin types (provisional)
 
-The concurrency design ([decision 0013](../decisions/0013-concurrency-model.md)) adds three
+The concurrency design ([decision 0013](../docs/decisions/0013-concurrency-model.md)) adds three
 compiler-known generic types, in the same manner as `Array`, `Dict`, `Optional` and `Result`:
 `JoinHandle<R>`, `ChannelSender<T>` and `ChannelReceiver<T>` (the first draft's `SendError<T>` is dropped from
-v1, [decision 0019](../decisions/0019-channels.md)), and the builtin enumeration `ChannelClosed`. Their type
+v1, [decision 0019](../docs/decisions/0019-channels.md)), and the builtin enumeration `ChannelClosed`. Their type
 arguments are understood by the compiler, not by a general parameter mechanism, so this does not
 introduce user-defined generics. A user declaration of the same name takes precedence over the
 builtin in its scope.
@@ -278,7 +278,7 @@ traps with `array not empty` before any element is touched. It is the only way t
 returns `Void`. In this version the receiver must be a variable, a parameter or a field, not a
 temporary.
 
-**Implementation status:** implemented (stage 0 of P5a, [decision 0018](../decisions/0018-tasks.md)): a consuming builtin member, the `array_consume_empty` IR instruction (wire version 13) and `joyeer_array_consume_empty_abi` in the runtime.
+**Implementation status:** implemented (stage 0 of P5a, [decision 0018](../docs/decisions/0018-tasks.md)): a consuming builtin member, the `array_consume_empty` IR instruction (wire version 13) and `joyeer_array_consume_empty_abi` in the runtime.
 
 ### 2.8 Type inference
 

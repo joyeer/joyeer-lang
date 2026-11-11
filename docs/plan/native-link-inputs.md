@@ -11,7 +11,7 @@
 Only explicit file paths can be linked. There is no way to link a library by
 logical name (for example `ws2_32`, `m`, `pthread`, or a system `sqlite3`), no
 search directories, and no per-platform inputs. `@c_extern(symbol:)` keeps
-naming no library ([§19.7](../spec/19-c-interop.md)).
+naming no library ([§19.7](../../specs/19-c-interop.md)).
 
 ## 2. Compiler CLI (proposed)
 

@@ -198,7 +198,7 @@ versions and platform prerequisites are documented in
 Homebrew macOS links LLD and some support libraries dynamically. Their C++
 types remain private to the backend, but in-process linking does not make
 the compiler package independent of those dylibs. See
-[macOS main acceptance and packaging limits](../building.md#macos-arm64-acceptance-on-main).
+[release staging and macOS packaging limits](../building.md#release-staging).
 
 ---
 
@@ -267,7 +267,7 @@ uses `.o`/`.obj` code generation, and does not require a runtime archive or
 an application `main`. It does not establish a general binary-module ABI.
 `--runtime-core-module <name>` is `--runtime-module` plus a restriction: a core
 unit may use only `Bool`, the integer and floating types and `Void`
-([§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)),
+([§19.4.7](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)),
 and a use of anything else is `type-checking.managed-type-in-core-unit`. The
 Joyeer runtime core (`lib/Runtime/core/`) is built this way.
 See [C binding coverage](c-interop.md) for signatures, static/shared providers,
@@ -339,7 +339,7 @@ the reachable graph, rejecting unknown imports and cycles with diagnostics.
 Public imported declarations support short names as well as full module
 qualification. Short-name lookup retains lexical/prelude precedence and
 diagnoses ambiguous imported names at the use; it does not merge modules or
-re-export imports. See [module rules](../spec/12-modules.md#123-imports).
+re-export imports. See [module rules](../../specs/12-modules.md#123-imports).
 Unused dependency sets are validated but not parsed. Output must not alias any
 supplied source, including unused dependency inputs; on Windows this also
 applies to the native output's sibling PDB cleanup path. Use `--emit-llvm`
@@ -490,7 +490,7 @@ The emitter calls the runtime only for `print`, the byte conversions, string,
 array and dictionary operations, ownership helpers, panics and the program
 entry. It knows no host operation: the filesystem, processes, standard error
 and input are ordinary `System` functions that reach the OS through
-`@c_extern` bindings ([§18](../spec/18-host.md), [runtime](runtime.md#host-operations)).
+`@c_extern` bindings ([§18](../../specs/18-host.md), [runtime](runtime.md#host-operations)).
 
 ---
 
@@ -610,7 +610,7 @@ end-to-end tests are detailed in [runtime validation](runtime.md#limits-and-vali
 
 ## 7. Performance and footprint measurement
 
-The [language cost goals](../spec/00-preamble.md#012-cost-goals) are not
+The [language cost goals](../../specs/00-preamble.md#012-cost-goals) are not
 measured performance parity or a fixed binary-size budget. Before adopting
 numerical acceptance thresholds, establish reproducible workloads and record:
 

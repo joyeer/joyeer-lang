@@ -67,7 +67,7 @@ payload or error type is noncopyable, is itself noncopyable, so
 satisfy the `Copyable` constraint of §20.5. The implicit copy that lowering performs
 when a borrowed value is needed as an owned one (§4.1) is a compile-time error for
 such a type, reported at the copy site (provisional; see
-[decision 0015](../decisions/0015-noncopyable-and-linear-types.md)).
+[decision 0015](../docs/decisions/0015-noncopyable-and-linear-types.md)).
 Such a value may still be passed through a consuming boundary or produced as
 an owned temporary. A future explicit copy-initializer design may let a type
 opt back into copying; it is not part of v0.1.
@@ -76,7 +76,7 @@ opt back into copying; it is not part of v0.1.
 
 A **linear** type is a noncopyable type whose value must be explicitly ended: it is never
 destroyed implicitly. The builtin `JoinHandle<R>` (§2.6, with the concurrency design in
-[decision 0013](../decisions/0013-concurrency-model.md)) is the only linear type of the first
+[decision 0013](../docs/decisions/0013-concurrency-model.md)) is the only linear type of the first
 implementation. A `struct` or `enum` that holds a linear field or payload, and an `Array`,
 `Optional` or `Result` whose element, payload or error type is linear, is itself linear; a `Dict`
 key or value may not be. A linear type is noncopyable, so it does not satisfy `Copyable`
@@ -428,7 +428,7 @@ reason a stored field of such a value cannot be moved out of it (§3.7.1), and a
 end of the call unless the function passes it on. A `deinit` may run on a different
 thread from the one that created the value when ownership has moved between threads
 (provisional; the concurrency design in
-[decision 0013](../decisions/0013-concurrency-model.md)).
+[decision 0013](../docs/decisions/0013-concurrency-model.md)).
 
 For an overwrite, the right-hand side is evaluated and converted into an
 owned replacement before the previous value is destroyed. The old value is
@@ -517,23 +517,23 @@ and exports, restricted buffer imports and bare byte pointers for an explicitly
 authorized compilation context. By-value scalar ABI adaptation does not
 introduce references, aliasing values, or a way for native code to mutate the
 caller's scalar storage. Implementation coverage is recorded in
-[C interop](../impl/c-interop.md).
+[C interop](../docs/impl/c-interop.md).
 
 Raw memory remains outside the accepted surface of **ordinary** source. This
 revision adds no address type, address-taking or dereference syntax, nullable
 address representation, or public pointer API. `unsafe` remains reserved
-(§15); a future block or pointer spelling is not selected here.
+(Appendix A); a future block or pointer spelling is not selected here.
 
 **Runtime units are the one exception.** Units the toolchain authorizes for
 native bindings may use the compiler intrinsics of
 [§19.4.5](19-c-interop.md#1945-compiler-intrinsics), which treat an `Int` as an
 address and load and store through it. They exist so that the runtime and the
 standard library's host code can be written in Joyeer
-([decision 0005](../decisions/0005-runtime-unsafe-memory.md)). Such a unit takes
+([decision 0005](../docs/decisions/0005-runtime-unsafe-memory.md)). Such a unit takes
 on the obligations of C for that code; the language checks nothing about the
 addresses, and none of it is reachable from ordinary programs.
 
-The [deferred memory-boundary proposal](../plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [deferred memory-boundary proposal](../docs/plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 must settle byte extents, read/write access, nullability, output
 initialization, retention, and allocator ownership before any address
 mechanism is admitted to ordinary code. Ordinary access effects, `Optional`,

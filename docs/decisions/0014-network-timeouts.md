@@ -7,7 +7,7 @@
   where a silent client received `408` after 5.0 s and later clients were served.
   The Linux AArch64 `ppoll` number and macOS are untested; full validation and
   the role reviews have not run.
-- Spec: [§18.6 TCP networking](../spec/18-host.md#186-tcp-networking)
+- Spec: [§18.6 TCP networking](../../specs/18-host.md#186-tcp-networking)
   (provisional)
 
 ## Context

@@ -1,705 +1,187 @@
 # Building Joyeer
 
-All supported platforms perform code generation and native linking through
-LLVM/LLD libraries behind the versioned Joyeer native-backend C ABI. The
-platform backend selects COFF, Mach-O, or ELF LLD in-process. Linux uses the
-Clang Driver library in-process to discover startup objects, the dynamic
-loader, libc, and compiler runtime inputs; it never launches Clang to produce
-native output.
-
-## Dependency policy
-
-Contributors install and update CMake, Ninja, the host compiler, platform SDK,
-and LLVM 22.1.8 development SDK. CMake does not download or build LLVM.
-All platforms treat LLVM, LLD, and the Linux Clang Driver library as private
-implementation details of a Joyeer-owned backend library. Only a versioned C
-ABI crosses into the compiler; LLVM/Clang C++ types, exceptions, allocators,
-and ownership never cross that boundary.
-
-On Windows, CMake fetches and statically embeds LibXml2 2.14.5 because the
-official LLVM 22.1.8 Windows LLD libraries enable manifest merging. On every
-platform, `JOYEER_BUILD_UNITTESTS=ON` also fetches GoogleTest 1.15.2. The first
-configuration that needs these dependencies requires network access. Neither
-dependency adds a runtime DLL to the Joyeer package.
-
-`JOYEER_BUILD_COMPRESSION` (default `ON`) additionally acquires the pinned
-miniz 3.1.0 source using Git and builds a separate `JoyeerCompression` static
-archive, staged as the `Compression` standard module. Neither the
-compiler/backend nor the core runtime links miniz. The root `workspace.toml`
-includes `moss`, which imports `Compression`, so a build with this option `OFF`
-cannot run the whole root workspace (`validate.py --no-compression` tests only
-the library modules). See [Compression](impl/compression.md) for the module and
-the `StandardLibrary` install component, which includes miniz's MIT license. Python 3.9+ enables an optional independent ZIP oracle
-when already available; it is not required to build or use the library.
+Run these commands from the repository root. For language usage, see the
+[README](../README.md); for compiler internals, see [Backend](impl/backend.md).
 
 ## Source-build prerequisites
 
-All platforms require:
+Install CMake 3.20+, Ninja, Git, a C++20 host compiler, and an **LLVM 22.1.8
+development SDK** matching the native architecture.
 
-- CMake 3.20 or newer;
-- Ninja as the canonical generator;
-- a host C and C++ compiler with C++20 support;
-- a developer-installed LLVM 22.1.8 development SDK;
-- the platform SDK and native linker inputs;
-- network access for the first LibXml2 and GoogleTest population.
-
-Windows requires the full development archive matching the MSVC target,
-not the tool-only installer:
-
-```text
-clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz
-clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz
-```
-
-Use the first archive for x64 or the second for ARM64. The LLVM/LLD libraries
-must use the static MSVC runtime (`/MT`). Install the matching MSVC target
-tools, Windows SDK libraries, and Visual Studio DIA SDK (`lib/amd64` for x64,
-`lib/arm64` for ARM64). CMake checks the LLVM native architecture against the
-MSVC target; x64 LLVM libraries cannot be linked into an ARM64 backend DLL.
-
-Extract the SDK to a stable path such as `C:\LLVM-22.1.8` for x64 or
-`C:\LLVM-22.1.8-arm64` for ARM64, then set the user environment variable
-`LLVM_HOME` to the selected SDK. For x64, in PowerShell:
-
-```powershell
-[Environment]::SetEnvironmentVariable("LLVM_HOME", "C:\LLVM-22.1.8", "User")
-$env:LLVM_HOME = "C:\LLVM-22.1.8"
-```
-
-The first command persists the setting for future applications; the second
-sets it in the current shell. Restart already-running IDEs or terminal hosts
-so their new terminals inherit the updated user environment.
-
-The directory must contain:
-
-```text
-bin/clang.exe
-bin/llvm-readobj.exe
-lib/LLVMCore.lib
-lib/lldCOFF.lib
-lib/cmake/llvm/LLVMConfig.cmake
-lib/cmake/lld/LLDConfig.cmake
-```
-
-The LLVM executables are test and inspection tools. `joyeer` does not launch
-Clang or an LLD executable on any platform. Python and curl are not
-source-build requirements.
-
-Platform prerequisites are:
-
-| Platform | Required software |
+| Platform | Additional requirements |
 |---|---|
-| Windows | Visual Studio with Desktop development with C++, MSVC, a Windows SDK, CMake, and Ninja |
-| Linux | GCC or Clang with C++20 support, libc development files and startup objects, the LLVM/LLD/Clang 22.1.8 development SDK, CMake, and Ninja |
-| macOS | Xcode Command Line Tools and the active macOS SDK, CMake, Ninja, and Homebrew `llvm`/`lld` 22.1.8 |
+| Windows | Visual Studio Desktop development with C++, MSVC, Windows SDK, and DIA SDK |
+| Linux | libc development files and startup objects; LLVM, LLD, and Clang development libraries from the same SDK |
+| macOS | Xcode Command Line Tools, a compatible macOS SDK, and matching LLVM/LLD development packages |
 
-Windows uses the MSVC compiler toolset installed by Visual Studio for the
-Joyeer implementation. CMake rejects MinGW, GCC, clang-cl, and other non-MSVC
-compilers. Ninja is the canonical build generator on Windows, but it only
-schedules compiler and linker commands; it does not replace `cl.exe` or the
-Visual Studio toolchain. Platform SDKs, sysroots, startup objects, and system
-libraries remain external prerequisites.
+On Windows, use the full `clang+llvm-22.1.8-x86_64-pc-windows-msvc.tar.xz`
+or `clang+llvm-22.1.8-aarch64-pc-windows-msvc.tar.xz` archive, not the
+tool-only installer. LLVM/LLD libraries must use the static MSVC runtime
+(`/MT`), and the DIA SDK must include libraries for the target architecture.
+Build from an x64- or ARM64-targeting Visual Studio Developer shell.
+The preset does not switch the shell's target; non-MSVC compilers are rejected.
 
-Before configuring Windows, verify the tools in Developer PowerShell:
+Set `LLVM_HOME` to the SDK root, or pass `-DJOYEER_LLVM_ROOT=<sdk>` when
+configuring. macOS also discovers Homebrew LLVM/LLD packages automatically.
+See [troubleshooting](#troubleshooting) for SDK compatibility and discovery.
 
-```powershell
-cmake --version
-ninja --version
-git --version
-& "$env:LLVM_HOME\bin\clang.exe" --version
-& "$env:LLVM_HOME\bin\llvm-readobj.exe" --version
-```
+### Dependency policy
 
-Run `cl` from a Visual Studio Developer shell as well. All LLVM tools and
-libraries must report version 22.1.8 and come from the same SDK root.
+Toolchains are developer-managed: CMake does not install compilers, platform
+SDKs, or LLVM. It acquires pinned project dependencies as needed:
+LibXml2 2.14.5 on Windows, GoogleTest 1.15.2 for unit tests, and miniz 3.1.0
+for the optional [Compression](impl/compression.md) module. First-time
+dependency population requires network access.
 
-On macOS, install the matching development libraries and verify the active
-SDK. `dsymutil` is optional for ordinary native output and required only when
-`-g` requests a dSYM bundle:
-
-```text
-brew install cmake ninja llvm lld
-brew list --versions llvm lld
-xcrun --sdk macosx --show-sdk-path
-xcrun --sdk macosx --show-sdk-version
-```
+Python is not required for source builds or compiled programs. The optional
+installer and full-platform validator below require Python 3.9+.
 
 ## Configure, build, and test
 
-Run CMake from a shell in which the host compiler and platform SDK are active.
-On macOS, the checked-in presets use Ninja, discover the LLVM/LLD CMake
-packages, and obtain the active SDK through `xcrun`:
+Choose a native preset:
+
+| Host | Debug | Release |
+|---|---|---|
+| Windows x64 | `x64-debug` | `x64-release` |
+| Windows ARM64 | `arm64-debug` | `arm64-release` |
+| Linux x86-64 / AArch64 | `linux-debug` | `linux-release` |
+| macOS | `macos-debug` | `macos-release` |
+
+For example, with `LLVM_HOME` set, Windows x64 uses:
 
 ```text
-cmake --preset macos-debug
-cmake --build --preset macos-debug
-ctest --preset macos-debug
-```
-
-Use `macos-release` in the same commands for a release build.
-
-On Linux, use the full LLVM/LLD/Clang development SDK and the checked-in
-presets:
-
-```text
-cmake --preset linux-debug -DJOYEER_LLVM_ROOT=/opt/llvm
-cmake --build --preset linux-debug
-ctest --preset linux-debug
-```
-
-Use `linux-release` for a release build. Omit `JOYEER_LLVM_ROOT` when
-`LLVM_HOME` already points to the SDK.
-
-Linux presets are architecture-neutral. Native x86-64 and AArch64 builds use
-the same commands with a matching host compiler, LLVM/LLD/Clang SDK, and
-system development libraries. Code generation uses LLVM's default target;
-the Clang Driver discovers that target's ELF linker inputs. Run the full
-acceptance gate on each Linux architecture before treating it as validated;
-Windows ARM64 results do not establish Linux ARM64 coverage.
-
-On Windows, use a Visual Studio Developer PowerShell or Developer Command
-Prompt configured for the intended x64 or ARM64 target. For x64, use the x64
-Native Tools prompt or `vcvars64.bat`; for native ARM64, use an ARM64-targeting
-Developer shell, for example one initialized by `vcvarsarm64.bat`. The
-presets select `cl.exe` but declare architecture setup as external: the
-preset name does not switch the shell's compiler target. Configuration fails
-when the required Visual Studio C++ workload or Windows SDK is missing.
-
-All Windows Debug and Release presets enable `JOYEER_BUILD_UNITTESTS` by
-default. For x64 development and the full acceptance gate:
-
-```powershell
-cmake --preset x64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON
+cmake --preset x64-debug
 cmake --build --preset x64-debug
 ctest --preset x64-debug
 ```
 
-For native Windows ARM64, from an ARM64-targeting Developer shell:
+Replace `x64-debug` in all three commands with your preset. Builds go under
+`out/build/<preset>/`, with executables in `bin/`. Keep separate build trees
+for each architecture; in-source builds are not supported.
 
-```powershell
-cmake --preset arm64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8-arm64
-cmake --build --preset arm64-debug
-ctest --preset arm64-debug
-```
-
-Use `arm64-release` for a release build. Keep separate build directories
-and SDK roots for x64 and ARM64;
-do not switch architectures inside an existing CMake build tree.
-
-These are native builds, not a cross-compilation interface. The compiler,
-backend library, runtime archive, LLVM default target, and system
-libraries must agree on the architecture. Joyeer does not currently expose
-a `--target` option; 32-bit Windows and ARM64EC are not supported.
-
-Omit `JOYEER_LLVM_ROOT` when `LLVM_HOME` points to the intended SDK.
-
-The build is out-of-source only. Preset builds write the executable under
-`out/build/<preset>/bin/`; manually configured single-config builds use
-`build/bin/`. Unfiltered CTest is the required final CMake gate; labels are for
-focused iteration.
+Use the default build, not just `--target joyeer`: the compiler alone does
+not stage the runtime needed to link programs. Unit tests, fern, and
+Compression are enabled by default. Keep them enabled for acceptance;
+filtered CTest runs are only for focused iteration.
 
 ### Full platform validation
 
-Use the shared validator rather than ad-hoc scripts to validate a platform or
-hand validation work to another contributor:
+For feature or platform acceptance, use the shared validator:
 
 ```text
 python3 scripts/validate.py --llvm-root <sdk>
 ```
 
-It configures, builds, and runs unfiltered CTest and `fern test` in Debug and
-Release, then prints a platform x configuration x suite table. Keep
-`BUILD_TESTING`, `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN` enabled.
-The default root-workspace gate also needs `JOYEER_BUILD_COMPRESSION`;
-`--no-compression` covers only the library modules, not the full workspace.
-`--report FILE` saves the table, and `--tests-list DIR` saves sorted CTest
-names for cross-platform comparison. The validator never installs a toolchain.
+Use `python` instead of `python3` on Windows. The validator builds and runs
+unfiltered CTest and the root workspace's `fern test` in **Debug and Release**.
+Keep `BUILD_TESTING`, `JOYEER_BUILD_UNITTESTS`, `JOYEER_BUILD_FERN`, and
+`JOYEER_BUILD_COMPRESSION` enabled. `--no-compression` covers only library
+modules, not the full workspace.
 
-### Compiler construction and product staging
+Use `--report FILE` to save results, `--no-retry` to disable failed-test
+reruns, and `--help` for other options. Validate each native architecture
+separately; one platform's results do not establish another's acceptance.
 
-The `joyeer` target builds the compiler/backend independently of the program
-runtime. Internal [runtime-object generation](impl/c-interop.md) can therefore
-run before a completed runtime archive exists. The `JoyeerToolchain` `ALL`
-target separately copies `JoyeerRuntime` beside the compiler, and fern
-bootstrap waits for that staged product. Use the default build, or explicitly
-build `JoyeerToolchain`, for a compiler ready to link ordinary executables;
-`--target joyeer` alone is a compiler-construction step, not full staging.
-The runtime archive is built from Joyeer sources in `lib/Runtime/core/` by the
-just-built compiler, which is why the `JoyeerRuntime` target depends on `joyeer`.
+### Fern bootstrap and acceptance
 
-On macOS, the configured Joyeer deployment target also controls generated
-object metadata. If the active SDK is newer than LLVM/LLD 22.1.8 can read,
-select an already installed compatible SDK with `CMAKE_OSX_SYSROOT`,
-`CMAKE_OSX_DEPLOYMENT_TARGET`, `JOYEER_MACOS_SDK_PATH`,
-`JOYEER_MACOS_SDK_VERSION`, and `JOYEER_MACOS_DEPLOYMENT_TARGET` consistently.
-Do not bypass the embedded linker or silently substitute another SDK.
+The default build bootstraps fern with the new compiler; no installed fern
+is needed. Debug uses `-O0 -gfull`, Release uses `-O2 -g0`. On macOS, Debug
+falls back to `-g0` if `dsymutil` is unavailable. Debug PDB/dSYM sidecars,
+when produced, are tracked build outputs.
 
-LLVM/LLD 22.1.8 cannot read the `arm64e.x1` TAPI entries in the tested macOS
-27.0 and 27.2 SDKs. With the already installed macOS 26.5 SDK at the path
-below, the full native Debug/Release gate is:
-
-```text
-python3 scripts/validate.py --fresh --llvm-root /opt/homebrew/opt/llvm --jobs 8 --no-retry \
-  --define BUILD_TESTING=ON --define JOYEER_BUILD_FERN=ON --define INSTALL_GTEST=OFF \
-  --define CMAKE_OSX_SYSROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
-  --define CMAKE_OSX_DEPLOYMENT_TARGET=26.5 \
-  --define JOYEER_MACOS_SDK_PATH=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk \
-  --define JOYEER_MACOS_SDK_VERSION=26.5 \
-  --define JOYEER_MACOS_DEPLOYMENT_TARGET=26.5
-```
-
-Use paths and versions matching the installed SDK. This does not install
-tools or change the globally active Xcode. The validator enables unit tests
-and Compression, runs unfiltered CTest and the root workspace's `fern test`,
-and reports skipped tests separately from passes. `--fresh` replaces only
-its Debug/Release validation build trees; `--no-retry` does not hide flaky
-failures behind a successful rerun.
-
-## Fern bootstrap and acceptance
-
-`JOYEER_BUILD_FERN=ON` is the default. The `fern` `ALL` target invokes the
-newly built compiler with an explicit list of seven sources from
-[tools/fern/](../tools/fern/) and a generated platform source. It
-depends on the compiler, backend, and runtime and produces `fern` next
-to `joyeer`. Bootstrap uses `-O0 -gfull` in Debug and `-O2 -g0` in Release
-(and other non-Debug configurations). On macOS, Debug falls back to `-g0`
-when `dsymutil` is unavailable, so ordinary native output remains possible.
-Debug PDBs on Windows and dSYM bundles on macOS, when produced, are declared
-CMake `BYPRODUCTS`; Release does not claim Debug sidecars. Bootstrap needs no
-preinstalled `fern` or Python. Configure also creates the explicit self-build
-project under `out/build/<preset>/tools/fern/project/`; the
-[self-build gate](../tests/fern/verifySelfBuild.cmake) builds and executes both
-profiles and a second-stage tool through fern itself.
-
-`Fern.Bootstrap` verifies regeneration of a missing Debug PDB/dSYM, or
-the executable when no sidecar is expected, on all native platforms.
-On macOS, `-DJOYEER_DSYMUTIL_EXECUTABLE:FILEPATH=` explicitly disables
-dSYM generation without modifying installed tools. Debug bootstrap then
-uses `-g0`; ordinary native output works, while an explicit `-gfull` request
-reports `linker.missing-tool`. This is a narrower fallback gate, not a full
-debug-information configuration. Use `-UJOYEER_DSYMUTIL_EXECUTABLE` when
-reconfiguring to rediscover the active tool.
-
-For a compiler-only configuration, for example on x64:
-
-```powershell
-cmake --preset x64-debug -DJOYEER_BUILD_FERN=OFF
-cmake --build --preset x64-debug
-```
-
-The same option works with the other native presets. Cross-compiling
-configurations must disable fern because the bootstrap runs the new compiler.
-`JOYEER_BUILD_UNITTESTS` independently controls the C++/GoogleTest suite.
-The gates in [tests/fern/CMakeLists.txt](../tests/fern/CMakeLists.txt),
-including module/workspace rules, limits, concurrency, host failures, self-build, and product installation,
-require `BUILD_TESTING` and `JOYEER_BUILD_FERN`, not `JOYEER_BUILD_UNITTESTS`.
-When enabled, `FernAcceptanceTools` also builds native fixtures as an `ALL`
-target. The full acceptance configuration enables all three options and runs
-unfiltered CTest; turning off C++ tests does not remove fern gates.
-
-**Validation status:** fresh native Windows x64 Debug and Release default
-`ALL` builds and unfiltered serial CTest each pass 846/846, including all
-15 fern gates. Toolchain provenance, C interop coverage, and the in-memory
-debug-information regression are recorded in
-[C interop acceptance](impl/c-interop.md#windows-x64).
-
-Earlier native Windows ARM64 Debug default `ALL` and unfiltered
-CTest pass 790/790, including all 15 fern gates for the module/workspace
-organization. Debug/optimized self-build and relocated product workflows
-pass. The previous 0.1.0 full Release 789/789 is historical; a fresh full
-native ARM64 Release gate for the new layout is open despite the retained
-0.1.0 version.
-Hardware, process, MSVC/LLVM architecture,
-and PE headers were independently recorded. See the
-[remaining platform gates](plan/package-manager.md#4-native-platform-validation).
-For another platform/architecture, use a matching Developer shell/SDK and fresh
-Debug/Release trees; registration or another target's pass is not acceptance.
-
-### macOS ARM64 acceptance on main
-
-On 2026-11-01, `main` based on `3a09bb7`, with the macOS fixes described here,
-completed fresh Debug and Release default builds and unfiltered eight-worker
-CTest without retries. The host was macOS 27.0.1 ARM64 (build 26A434), using
-AppleClang 21.0.0 (clang-2100.4.1.1), CMake 4.4.2, Ninja 1.13.2, Homebrew
-LLVM/LLD 22.1.8, and the installed macOS 26.5 SDK/deployment target.
-
-| Configuration | Default build | CTest | Root workspace `fern test` |
-|---|---|---|---|
-| Debug | Passed | 949 passed, 1 skipped, 0 failed | 2/2 passed |
-| Release | Passed | 949 passed, 1 skipped, 0 failed | 2/2 passed |
-
-Both configurations registered identical sets of 950 tests, including
-15 fern acceptance gates, 55 C interop tests, and six Compression gates
-(including the independent Python ZIP oracle). The one skipped case,
-`FileSystemTest.RejectsNonUtf8DirectoryEntriesWithoutLeakingPartialResults`,
-cannot create its invalid-UTF-8 filename on this filesystem; it is not a
-passed test or a disabled suite.
-
-The initial fresh Debug run on unmodified `main` exposed two process-test
-failures caused by shared timestamp-only temporary directories. Process,
-filesystem, and module fixtures now include process identity, claim their
-directories exclusively, and never clean up an unclaimed path. Native
-linking likewise uses an exclusively claimed process-identified directory.
-The focused concurrent suites completed 20 repeated runs without failures;
-`Fern.Concurrent` also verifies distinct simultaneous source outputs and
-temporary cleanup without modifying an unrelated sentinel file.
-
-Compiler, backend, and fern headers identify ARM64 Mach-O. Generated fern
-records SDK/deployment version 26.5 and depends only on system `libSystem`.
-Self-build, second-stage execution, Unicode paths, component inventories,
-and relocated workflows pass. The local Debug installer was exercised with
-and without dSYM support using isolated destinations and without changing
-shell profiles or installed agent skills. Debug executable/dSYM UUIDs match.
-
-A separate native probe with the active macOS 27.2 SDK reproduced the TAPI
-link failure; compatible SDK selection was explicit, not a silent fallback.
-This establishes functional acceptance of the implemented `main` surface,
-not the separate struct-methods branch, Intel macOS, performance parity, or
-a standalone redistribution package. Homebrew dependency packaging remains
-the release limitation below.
-
-## Release staging
-
-Third-party license/notice assembly is deferred. Complete it before
-redistributing toolchain binaries; the current install is a local-development
-payload, not a complete redistribution bundle.
-
-Build Release and stage a movable Windows directory for local validation:
-
-```powershell
-cmake --preset x64-release -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8 -DJOYEER_BUILD_UNITTESTS=ON -DINSTALL_GTEST=OFF
-cmake --build --preset x64-release
-ctest --test-dir .\out\build\x64-release --output-on-failure
-cmake --install .\out\build\x64-release --prefix .\out\package\joyeer
-```
-
-For an ARM64 package, use `arm64-release` and the ARM64 LLVM SDK throughout
-the commands above, with a separate staging directory. Do not mix x64 and
-ARM64 compiler, backend, or runtime files in one package.
-
-`INSTALL_GTEST=OFF` disables only GoogleTest's installation rules, not its
-tests. Without this setting, a unit-test-enabled build also installs
-`include/gtest`, GoogleTest libraries, and CMake/pkg-config metadata.
-
-With that setting, the compiler and fern artifacts are:
-
-```text
-joyeer.exe
-joyeer-backend.dll
-JoyeerRuntime.lib
-fern.exe                 # when JOYEER_BUILD_FERN=ON (default)
-licenses/LICENSE         # Joyeer's own license; third-party notices deferred
-```
-
-Compiler, backend, runtime, and the current Joyeer license use install
-component `JoyeerRuntime`; optional `fern` uses `PRODUCT`. The `StandardLibrary`
-component installs the standard modules and `lib/index.toml` to `<prefix>/lib`,
-beside the compiler. When enabled, `Compression` is part of that component,
-including its native archive and miniz license. The optional `NativeDevelopment`
-component contains C buffer-adapter headers. Keep both separate from
-compiler-only product staging. An unfiltered install includes the enabled
-standard modules; `NativeDevelopment` must be selected explicitly.
-The Windows Debug fern PDB is
-also installed by `PRODUCT`; Release has no fern Debug-PDB install rule.
-An install limited to
-`JoyeerRuntime` does not install fern; select `PRODUCT` as well when staging
-the tool. With `JOYEER_BUILD_FERN=OFF`, no fern binary is built or installed.
-Keep GoogleTest and LLVM development tools/SDKs out of the product inventory.
-
-The top-level install stages only the repository's own [LICENSE](../LICENSE).
-The checked-in third-party notice copies were removed for local development;
-there is no source-tree license bundle or automatic third-party notice
-acquisition. Before redistribution, assemble the applicable LLVM/LLD,
-support-library, Windows LibXml2, Linux Clang, and other SDK dependency
-license/notice material. The native ARM64 local-install gate verifies exact
-inventories and the Joyeer license hash, not third-party license compliance.
-
-These files may be moved together to another directory or machine. LLVM,
-LLD, and LibXml2 are statically contained in the backend DLL. The DLL finds
-installed MSVC and Windows SDK library paths through Visual Studio Setup
-Configuration and the Windows registry, so a Developer Prompt is not required
-when running a packaged compiler.
-
-Release users do not install LLVM or Clang. They still need MSVC Build Tools
-and a Windows SDK to create native executables. Programs already produced by
-Joyeer use the static CRT and Windows system DLLs; running those programs does
-not require the Visual C++ Redistributable. A program that calls no C library function
-starts at the runtime's own entry point and links only the static `memcpy` family of the
-CRT (`libvcruntime.lib`) and `kernel32` ([decision 0011](decisions/0011-runtime-without-the-c-library.md)).
-
-Linux and macOS use the corresponding release preset:
-
-```text
-cmake --preset linux-release -DJOYEER_LLVM_ROOT=/opt/llvm -DINSTALL_GTEST=OFF
-cmake --build --preset linux-release
-cmake --install out/build/linux-release --prefix out/package/joyeer
-```
-
-Replace `linux-release` with `macos-release` on macOS. The installed package
-keeps the `joyeer` executable, `joyeer-backend` shared library,
-`JoyeerRuntime` archive, optional `fern`, and licenses together. Linux
-uses an `$ORIGIN` runtime search path and macOS uses `@loader_path`; the compiler also resolves
-the runtime archive relative to its own executable. Building Joyeer programs
-still requires the host libc/platform SDK startup objects and system
-libraries, but not an external LLVM, Clang, or LLD executable.
-The installed fern still requires `--compiler <explicit path>`; it does not
-discover the compiler beside itself or search PATH. Package staging and use
-of the tool through a relocated package are validated on Windows ARM64 and
-macOS ARM64; relocation on a development host does not establish independence
-from the development SDK's shared libraries.
-
-**Homebrew macOS dependency boundary:** the tested LLVM/LLD 22.1.8 packages
-provide shared `lldMachO` and `lldCommon` libraries that load `libLLVM.dylib`.
-The backend also depends on Homebrew Z3 and zstd. The current install does
-not bundle or relocate these libraries, so it is a local-development payload,
-not a standalone compiler package. Before redistribution, supply and validate
-an appropriate static SDK or implement dependency bundling/relocation and
-the required notices. Generated Joyeer programs do not inherit LLVM/LLD
-dependencies.
+The [fern gates](../tests/fern/CMakeLists.txt) cover bootstrap regeneration,
+self-build, workspaces, and relocated installs. They require `BUILD_TESTING`
+and `JOYEER_BUILD_FERN`, independently of the C++ unit-test option.
+`-DJOYEER_BUILD_FERN=OFF` disables bootstrap and these gates.
 
 ## Local Debug installation
 
-[scripts/install-debug.py](../scripts/install-debug.py) installs an **existing
-native Debug build** on Windows, macOS, and Linux for local development and
-testing. This optional tool requires Python 3.9+ and CMake on PATH. It uses only
-the Python standard library; it does not configure or build Joyeer, download
-tools, or create a release package. It also installs the matching Joyeer agent
-skill from this checkout by default. Source builds, the installed compiler,
-and compiled Joyeer programs do not require Python.
-
-Configure and build first using the prerequisites above. On Windows ARM64,
-build in a matching Developer shell:
+After building a native Debug preset:
 
 ```powershell
-cmake --preset arm64-debug -DJOYEER_LLVM_ROOT=C:\LLVM-22.1.8-arm64
-cmake --build --preset arm64-debug
 python .\scripts\install-debug.py
 ```
 
-For Windows x64, build `x64-debug` with the x64 LLVM SDK. Installation itself
-can run from an ordinary terminal after the build.
-
-On macOS:
+On macOS or Linux:
 
 ```bash
-cmake --preset macos-debug
-cmake --build --preset macos-debug
 python3 scripts/install-debug.py
 ```
 
-On Linux:
+The [installer](../scripts/install-debug.py) requires Python 3.9+ and CMake.
+It selects the native Debug preset, installs into `~/.joyeer/bin`, updates
+the user PATH or shell profile, and installs the [Joyeer agent skill](../skills/README.md).
+**Open a new terminal or restart your IDE afterward.**
 
-```bash
-cmake --preset linux-debug -DJOYEER_LLVM_ROOT=/opt/llvm
-cmake --build --preset linux-debug
-python3 scripts/install-debug.py
+- Use `--build-dir` for a different existing Debug build and `--install-dir`
+  for a different binary destination.
+- Use `--skip-path-update` to leave PATH and shell profiles untouched; it is
+  required for unsupported shells.
+- Use `--skip-skill-install` to omit the skill or `--skill-dir` to choose
+  its destination. See [skill installation](../skills/README.md#install-for-a-local-agent)
+  before using `--force` to overwrite local skill edits.
+
+The installer does not configure or build Joyeer, and does not fall back to
+another architecture or Release build. Close running tools/debuggers before
+reinstalling; rerun the same command after rebuilding.
+
+Native compilation still needs the platform SDK and system libraries.
+Self-contained backends do not require an external LLVM installation;
+Homebrew-backed macOS installs retain the dependencies described below.
+
+## Release staging
+
+**Local staging is not a redistributable release.** Third-party license/notice
+assembly is still required before redistribution.
+
+Use your platform's Release preset, with `LLVM_HOME` set:
+
+```text
+cmake --preset <release-preset> -DINSTALL_GTEST=OFF
+cmake --build --preset <release-preset>
+ctest --preset <release-preset>
+cmake --install out/build/<release-preset> --prefix out/package/joyeer
 ```
 
-Without `--build-dir`, the installer selects a preset build relative to this
-checkout, not the current working directory:
+`INSTALL_GTEST=OFF` excludes GoogleTest from installation, not testing.
+Keep LLVM SDKs and test tools out of product packages.
 
-| Native host | Default build directory |
-|---|---|
-| Windows ARM64 | `out/build/arm64-debug` |
-| Windows x64 | `out/build/x64-debug` |
-| macOS | `out/build/macos-debug` |
-| Linux | `out/build/linux-debug` |
+- `JoyeerRuntime` installs the compiler, backend, runtime, and Joyeer license.
+- `PRODUCT` and `Moss` install fern and moss respectively when enabled.
+- `StandardLibrary` installs standard modules, including Compression when enabled.
+- `NativeDevelopment` provides optional C adapter headers and must be selected
+  explicitly.
 
-Windows selection reads the system architecture, not the Python process or
-Developer shell target, so emulation does not change the default. If the system
-architecture cannot be identified, specify `--build-dir`. The selected build
-must already exist; there is no fallback to another architecture or a Release
-build. macOS and Linux presets use the native architecture of their build tree.
+Keep the compiler, backend, and runtime together, with matching architectures.
+Before redistribution, assemble applicable LLVM/LLD, support-library,
+Windows LibXml2, Linux Clang, and other dependency notices.
 
-The default destination is `~/.joyeer/bin`
-(`$HOME\.joyeer\bin` in PowerShell), which needs no administrator rights.
-Use `--install-dir` for a dedicated alternative destination or to keep separate
-architecture installations:
-
-```powershell
-python .\scripts\install-debug.py --build-dir .\out\build\arm64-debug --install-dir C:\DevTools\Joyeer-debug-arm64
-```
-
-```bash
-python3 scripts/install-debug.py --build-dir out/build/linux-debug --install-dir "$HOME/.local/joyeer-debug/bin"
-```
-
-### PATH setup
-
-After successful installation, Windows adds the install directory to the user
-PATH unless the user or system PATH already contains it. Comparison ignores
-case and trailing separators and expands environment variables. Existing
-entries and their order are preserved; system PATH is never modified.
-
-On macOS and Linux, the installer appends an idempotent PATH block to the
-configuration for the user's shell (`SHELL`, or the account's login shell when
-`SHELL` is unset):
-
-| Shell | Configuration |
-|---|---|
-| Bash on Linux | `~/.bashrc` |
-| Bash on macOS | First existing `~/.bash_profile`, `~/.bash_login`, or `~/.profile`; otherwise `~/.bash_profile` |
-| Zsh | `$ZDOTDIR/.zshrc`, or `~/.zshrc` when `ZDOTDIR` is unset |
-| Fish | `$XDG_CONFIG_HOME/fish/conf.d/joyeer.fish`, or `~/.config/fish/conf.d/joyeer.fish` |
-| Sh, Dash, Ksh | `~/.profile` |
-
-Existing configuration bytes are preserved. The block appends the directory
-only when it is absent from PATH, including when the profile is loaded more
-than once. Unsupported shells require `--skip-path-update` and manual PATH
-configuration; they are rejected before installation otherwise.
-
-Python cannot update its parent shell's environment. Open a new shell or
-reload the reported profile on macOS/Linux; restart the terminal host or IDE
-on Windows. Until then, use the installed executable's full path. Pass
-`--skip-path-update` to leave persistent PATH, shell profiles, and the current
-process PATH unchanged, for example for temporary installations.
-
-### Agent skill
-
-The complete [skills/joyeer](../skills/joyeer/) directory, including references
-and examples, is copied to `~/.agents/skills/joyeer` for VS Code Copilot,
-Copilot CLI, and Codex. Use `--skill-dir` to specify the full destination for
-another client or scope, for example for Claude Code:
-
-```bash
-python3 scripts/install-debug.py --skill-dir "~/.claude/skills/joyeer"
-```
-
-Only the selected skill destination is used. Pass `--skip-skill-install` to
-install only the binaries, including fern when enabled. For isolated
-installations, override both `--install-dir` and `--skill-dir` (or skip the
-skill), and use `--skip-path-update`.
-
-Identical source files are left unchanged, including any additional user files.
-A new or empty destination accepts a full installation. In a nonempty
-destination, missing or differing files cause an error before compiler
-installation or PATH updates unless `--force` is supplied. After reviewing
-and backing up local skill edits, update with:
-
-```bash
-python3 scripts/install-debug.py --force
-```
-
-Use `python .\scripts\install-debug.py --force` on Windows. `--force` applies
-only to skill files: it overwrites differing files and restores missing ones
-using this checkout. Identical files, extra files (including files removed
-from the source in a newer revision), and other skills are left unchanged.
-It does not clear the destination or bypass Debug build validation.
-File/directory conflicts are rejected even with `--force`; resolve them
-manually. `--skip-skill-install` takes precedence over `--force`. Reload the
-agent session and confirm discovery; see [agent setup](../skills/README.md).
-
-### Installed artifacts
-
-The script verifies that the build belongs to this checkout and selects Debug
-only, including in multi-configuration build trees. Installation uses CMake's
-`JoyeerRuntime` and, when enabled, `PRODUCT` components to exclude GoogleTest
-and SDK files and preserve platform runtime search paths. Runtime products and
-Debug symbols must exist before installation.
-
-| Platform | Runtime products |
-|---|---|
-| Windows | `joyeer.exe`, `joyeer-backend.dll`, `JoyeerRuntime.lib`, optional `fern.exe` |
-| macOS | `joyeer`, `libjoyeer-backend.dylib`, `libJoyeerRuntime.a`, optional `fern` |
-| Linux | `joyeer`, `libjoyeer-backend.so`, `libJoyeerRuntime.a`, optional `fern` |
-
-All platforms install these files together directly in the selected directory,
-along with Joyeer's own `licenses/LICENSE`. Windows also requires and copies
-`joyeer.pdb`, `joyeer-backend.pdb`, and `fern.pdb` when the tool is enabled.
-Linux Debug information stays embedded in the installed binaries. On macOS,
-existing compiler/backend dSYM bundles are copied when present; the fern
-dSYM is required when the configured `dsymutil` is available. A build using
-the documented macOS `-g0` bootstrap fallback does not require that bundle.
-
-`--skip-skill-install` skips only the agent skill; it does not disable fern.
-Use `JOYEER_BUILD_FERN=OFF` for compiler-only installation.
-
-After rebuilding, rerun the same command to update the installation. Close
-running compiler/tool processes or debugger sessions first to release file
-locks. Unrelated destination files are not removed. This is a local Debug
-installation, not a distributable release; third-party license/notice auditing
-is still required for redistribution.
-
-Use the installed compiler directly from the repository root (adjust the path
-when using `--install-dir`). On Windows:
-
-```powershell
-& "$HOME\.joyeer\bin\joyeer.exe" -O0 -gfull -gcodeview -o .\out\hello.exe .\tests\native\hello.joyeer
-if ($LASTEXITCODE -ne 0) { throw "Compilation failed" }
-.\out\hello.exe
-if ($LASTEXITCODE -ne 0) { throw "Program failed" }
-```
-
-On Linux:
-
-```bash
-"$HOME/.joyeer/bin/joyeer" -O0 -gfull -o out/hello tests/e2e/hello.joyeer
-./out/hello
-```
-
-The same command works on macOS when `dsymutil` is available; use `-g0`
-otherwise. Native compilation still requires MSVC Build Tools and a Windows
-SDK on Windows, or the host libc/platform SDK linker inputs on Linux/macOS.
-Self-contained backends do not need an external LLVM installation.
-Homebrew-backed macOS local installs retain the shared-library requirements
-described in [release staging](#release-staging).
-
-## Non-Windows tool discovery
-
-macOS requires LLVM and LLD 22.1.8 development packages. CMake discovers the
-Homebrew packages under `/opt/homebrew/opt` or `/usr/local/opt`; set
-`JOYEER_LLVM_ROOT`, `LLVM_DIR`, or `LLD_DIR` for another SDK layout. It obtains
-the active SDK path and version from `xcrun`; set `JOYEER_MACOS_SDK_PATH` and
-`JOYEER_MACOS_SDK_VERSION` together when an explicit SDK is necessary. Set
-`JOYEER_MACOS_DEPLOYMENT_TARGET` to target an older supported macOS release;
-it defaults to `CMAKE_OSX_DEPLOYMENT_TARGET`, then to the active SDK version.
-
-Linux requires LLVM, LLD, and Clang **development libraries** from the same
-22.1.8 SDK. The root must provide `LLVMConfig.cmake`, `LLDConfig.cmake`,
-`ClangConfig.cmake`, `lldELF`, and `clangDriver`. The Clang Driver library
-constructs the host link command in-process and embedded ELF LLD executes it.
-The host libc development package must provide its startup objects and system
-libraries in a layout recognized by Clang.
-
-`JOYEER_CLANG_EXECUTABLE` refers only to the optional Clang executable used by
-independent LLVM IR oracle tests. It is never launched by `joyeer` when
-building a native executable.
+**Homebrew macOS limitation:** the backend depends on shared LLVM/LLD, Z3,
+and zstd libraries that the install does not bundle or relocate. A standalone
+package needs a suitable static SDK or dependency bundling/relocation.
+Generated Joyeer programs do not inherit LLVM/LLD dependencies.
 
 ## Troubleshooting
 
-- **CMake regeneration fails after moving a checkout:** build trees record the
-  source path. Configure a new build tree rather than reusing one from the old
-  location.
-- **LLVM or LLD package is not found:** use the full Windows development
-  archive, a full Linux LLVM/LLD/Clang development SDK, or install both `llvm`
-  and `lld` with Homebrew on macOS; clear the build directory or use
-  `cmake --fresh`, and set `JOYEER_LLVM_ROOT`, `LLVM_DIR`, `LLD_DIR`, or
-  `Clang_DIR` for a nonstandard SDK root.
-- **Windows rejects the compiler:** reopen a Visual Studio Developer shell and
-  verify `cl` and the Windows SDK before running CMake.
-- **Windows Unicode source/output/temporary paths fail:** the compiler now
-  uses `wmain` and strict UTF-8 argument conversion, with native filesystem
-  paths and UTF-8 backend/linker strings. Their native Windows ARM64
-  Debug/Release regressions and relocated-package workflows pass. Record
-  binary provenance and the exact diagnostic rather than assuming an older
-  binary contains these fixes or that another native target is verified.
-  General Unicode-aware
-  diagnostic rendering and legacy narrow `readFile(path:)` remain separate
-  limitations; changing source encoding or the global console code page is
-  not a substitute for validation.
-- **Packaged native linking cannot find platform libraries:** install the
-  Desktop development with C++ workload and a Windows SDK.
-- **GoogleTest cannot be fetched:** restore Git/network access, provide it
-  through the normal CMake dependency cache, or configure with
-  `-DJOYEER_BUILD_UNITTESTS=OFF`.
-- **macOS native linking cannot find system libraries:** run `xcode-select -p`
-  and `xcrun --sdk macosx --show-sdk-path`, then repair or select Xcode Command
-  Line Tools before reconfiguring.
-- **Linux linking fails with `invalid linker name in argument '-fuse-ld=lld'`:**
-  the in-process Clang Driver checks that an `ld.lld` file exists even though it
-  never runs it. Put the SDK's `bin` directory on `PATH`, or install `ld.lld`
-  where the driver looks (`/usr/bin`). `scripts/validate.py` adds the SDK's
-  `bin` to its child processes' `PATH` when needed.
-- **Linux native linking cannot find startup objects or libc:** install the
-  distribution's libc and GCC runtime development packages; embedded LLD does
-  not replace those platform ABI inputs.
+- **CMake fails after moving a checkout:** configure a new build tree; cached
+  source paths refer to the old location.
+- **LLVM/LLD packages are missing:** use development libraries, not a tool-only
+  installer. Set `JOYEER_LLVM_ROOT`, or `LLVM_DIR`/`LLD_DIR`/`Clang_DIR` for a
+  nonstandard layout. Linux needs `clangDriver` as well as `lldELF`.
+- **Windows compiler or SDK errors:** use a matching Visual Studio Developer
+  shell and verify `cl`, the C++ workload, Windows SDK, and LLVM architecture.
+  Packaged compilers also need MSVC Build Tools and a Windows SDK to link.
+- **Dependency fetch fails:** restore Git/network access or provide the
+  dependency through CMake's normal dependency cache.
+- **macOS TAPI errors involving `arm64e.x1`:** LLVM/LLD 22.1.8 cannot read the
+  tested macOS 27.0/27.2 SDKs. Select an installed compatible SDK (26.5 was
+  validated) using `CMAKE_OSX_SYSROOT`, `CMAKE_OSX_DEPLOYMENT_TARGET`,
+  `JOYEER_MACOS_SDK_PATH`, `JOYEER_MACOS_SDK_VERSION`, and
+  `JOYEER_MACOS_DEPLOYMENT_TARGET` consistently.
+- **macOS debug output fails:** `-gfull` requires `dsymutil`; use `-g0` when
+  it is unavailable. Check the active SDK with `xcrun --sdk macosx --show-sdk-path`.
+- **Linux reports `invalid linker name ... '-fuse-ld=lld'`:** put the SDK's
+  `bin` directory on PATH. The in-process Clang Driver checks for `ld.lld`
+  even though it never launches it; the validator sets this PATH when needed.
+- **Linux startup objects or libc are missing:** install the distribution's
+  libc and GCC runtime development packages; embedded LLD does not replace them.
