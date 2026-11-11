@@ -6,7 +6,7 @@ rejected, so later work (human or AI) does not reopen settled questions
 without new evidence.
 
 A decision record is not normative. Language rules live in [the
-spec](../spec.md); once a decision is adopted, the rule goes in the relevant
+spec](../../specs/README.md); once a decision is adopted, the rule goes in the relevant
 chapter and the record links to it.
 
 ## When to write one

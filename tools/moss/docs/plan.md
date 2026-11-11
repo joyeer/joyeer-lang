@@ -336,7 +336,7 @@ Study and adapt contracts/algorithms, not application actors or handlers:
 
 - [JVMS classfile structures](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-4.html)
 - [JVMS instruction encodings](https://docs.oracle.com/javase/specs/jvms/se25/html/jvms-6.html#jvms-6.5)
-- [Joyeer host operations](../../../docs/spec/18-host.md)
+- [Joyeer host operations](../../../specs/18-host.md)
 - [fern workflow and limitations](../../../docs/impl/fern.md)
 
 Do not mechanically translate force unwraps, unchecked indexes, ignored

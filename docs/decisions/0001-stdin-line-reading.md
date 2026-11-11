@@ -5,7 +5,7 @@
   the C and host-builtin implementation described below was replaced by
   `System.readStdinLine` in Joyeer ([0007](0007-stdio-in-joyeer.md),
   [0004](0004-remove-host-builtins.md)).
-- Spec: [§18.5 Standard input](../spec/18-host.md#185-standard-input)
+- Spec: [§18.5 Standard input](../../specs/18-host.md#185-standard-input)
 
 ## Context
 

@@ -3,10 +3,10 @@
 A static web server, written in Joyeer, that serves a directory of Markdown
 files as a website. Each request reads the file, renders it to HTML, and
 answers; there is nothing to build when a page changes. A pool of worker tasks
-serves connections concurrently ([spec §21](../../docs/spec/21-concurrency.md)).
+serves connections concurrently ([spec §21](../../specs/21-concurrency.md)).
 
 > **Status: runs on Windows.** The server uses the provisional TCP functions of
-> `System` ([spec §18.6](../../docs/spec/18-host.md#186-tcp-networking),
+> `System` ([spec §18.6](../../specs/18-host.md#186-tcp-networking),
 > [decision 0012](../../docs/decisions/0012-tcp-networking.md)), which are
 > implemented for Windows and Linux; on macOS they fail with `.Other(38)`, so
 > the server prints a listen error and exits. It was built with the in-tree
@@ -80,7 +80,7 @@ there is no shared cache, by design, because a cache would need shared mutable s
 
 When accepting keeps failing, the accept loop closes every queue (a worker finishes what it holds, sees its queue
 closed and returns), joins the workers, and exits. The senders are closed before the joins on purpose: a worker
-ends only when its sender is gone, so joining first would wait forever ([spec §21.9.5](../../docs/spec/21-concurrency.md)).
+ends only when its sender is gone, so joining first would wait forever ([spec §21.9.5](../../specs/21-concurrency.md)).
 
 ## Measured behavior
 
@@ -119,7 +119,7 @@ run on Windows shows the same shape (one of eight requests waits about 4.9 s).
   never reads the response, can still tie a worker up, because there is no total deadline and no send timeout.
   Do not expose this directly to the internet; put it behind a reverse proxy that enforces timeouts and terminates
   TLS.
-- **`runProcess` cannot be used** in a program that starts tasks ([spec §21.6](../../docs/spec/21-concurrency.md)).
+- **`runProcess` cannot be used** in a program that starts tasks ([spec §21.6](../../specs/21-concurrency.md)).
 - **No TLS**, no keep-alive, no caching headers, no request bodies.
 - **Not CommonMark.** See [`site/docs/markdown.md`](site/docs/markdown.md).
 - It binds `127.0.0.1` unless told otherwise. `--address 0.0.0.0` serves the

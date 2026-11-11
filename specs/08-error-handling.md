@@ -5,7 +5,7 @@ explicit `match`, postfix `?`, and the typed `IOError` below (`readFile` is a
 `System` function). `??` and
 several library helpers used in examples are broader, unimplemented design.
 See
-[the implemented language surface](../impl/supported-features.md).
+[the implemented language surface](../docs/impl/supported-features.md).
 
 ### 8.1 No exceptions
 

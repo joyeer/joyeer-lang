@@ -7,9 +7,9 @@
   The one fork in it, how a handle closes, was settled the same day in favor of a
   real `deinit` ("The fork"); that revises the answer accepted in
   [0013](0013-concurrency-model.md) question 6, which now says so.
-- Spec: none yet. When accepted it amends [§4.1.1](../spec/04-memory.md) (copyability),
-  [§4.7](../spec/04-memory.md) (destruction) and [§2.6](../spec/02-types.md) (builtin
-  generics), and [§18.6](../spec/18-host.md#186-tcp-networking) (handles).
+- Spec: none yet. When accepted it amends [§4.1.1](../../specs/04-memory.md) (copyability),
+  [§4.7](../../specs/04-memory.md) (destruction) and [§2.6](../../specs/02-types.md) (builtin
+  generics), and [§18.6](../../specs/18-host.md#186-tcp-networking) (handles).
 
 ## Context
 
@@ -212,7 +212,7 @@ the user's to run.
   one (including a few in the tests and `System` itself) must change. An audit is part
   of the work.
 - Harder: linearity makes early exits explicit. A function that spawns a task and then
-  returns on an error must join it on that path. There is no `defer` (reserved, §15);
+  returns on an error must join it on that path. There is no `defer` (reserved, Appendix A);
   whether the language needs one is the open question below.
 - Tests, per the feature workflow: failing fixtures at each stage and GoogleTests
   citing the spec sections, covering: copying a noncopyable value (assignment,

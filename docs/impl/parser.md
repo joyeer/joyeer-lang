@@ -2,7 +2,7 @@
 
 > **Status:** The current parser produces a syntax-only AST for the
 > [implemented language surface](supported-features.md).
-> **Normative source:** [the language specification](../spec.md). This document
+> **Normative source:** [the language specification](../../specs/README.md). This document
 > describes the implemented parser subset; it does not redefine the language.
 
 ---

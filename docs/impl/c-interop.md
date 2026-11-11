@@ -1,7 +1,7 @@
 # Restricted C Interoperation
 
 > **Status:** authorized scalar imports/exports implement every representation
-> in [§19.4](../spec/19-c-interop.md#194-c-scalar-representations).
+> in [§19.4](../../specs/19-c-interop.md#194-c-scalar-representations).
 > Imports also support the restricted buffer ABI below. Platform acceptance
 > is recorded separately below. General native addresses/output pointers, C aggregates,
 > callbacks, variadic calls, and public user FFI remain unsupported.
@@ -79,7 +79,7 @@ to expose them. Allocation failures follow the existing runtime panic policy.
 
 ### Compiler intrinsics
 
-Symbols beginning with `joyeer_intrinsic_` ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics)) are checked against a shared table
+Symbols beginning with `joyeer_intrinsic_` ([§19.4.5](../../specs/19-c-interop.md#1945-compiler-intrinsics)) are checked against a shared table
 ([intrinsics.h](../../compiler/frontend/intrinsics.h)) by the type checker
 and the IR verifier, and the backend lowers them inline: `ptrtoint` for
 `address_of`, unaligned `load` and `store`, and `atomicrmw add`. No C function
@@ -89,7 +89,7 @@ with `malloc` and `free` from the C library.
 ### Bare byte pointers
 
 A `[UInt8]` import parameter named by a `pointer:` annotation argument crosses
-as a single data pointer with no count ([§19.4.4](../spec/19-c-interop.md#1944-bare-byte-pointers)):
+as a single data pointer with no count ([§19.4.4](../../specs/19-c-interop.md#1944-bare-byte-pointers)):
 
 ```joyeer
 @c_extern(symbol: "ReadFile", pointer: "buffer", pointer: "done")
@@ -199,7 +199,7 @@ The parser stores spanned annotation names and arguments on function syntax.
 It permits an omitted body on an annotated declaration so semantic checking
 can diagnose the actual import/export rule. (The `@platform` selection pass
 runs before name resolution and checks body presence itself for functions it
-strips; see [§11.5](../spec/11-annotations.md#115-platform).) Ordinary
+strips; see [§11.5](../../specs/11-annotations.md#115-platform).) Ordinary
 declarations still require bodies. This parser support does not implement the proposed
 `@spec`/`@property` shorthand or DSL.
 
@@ -313,11 +313,11 @@ paths pass in both Joyeer optimization profiles.
 Fresh default builds and unfiltered eight-worker CTest each completed
 **949 passed, one filesystem-dependent skip, and zero failures**, with no
 retry. Native and test temporary directories have process-identified
-exclusive ownership. See
-[macOS main acceptance](../building.md#macos-arm64-acceptance-on-main) for
-full coverage, the macOS 27.2 SDK incompatibility, and Homebrew package
-dependency limits. The earlier 817-pass/one-skip Debug result covered only
-the initial `Int`/`Void` slice and is not the current acceptance boundary.
+exclusive ownership. See [build troubleshooting](../building.md#troubleshooting)
+for SDK incompatibilities and [release staging](../building.md#release-staging)
+for Homebrew package dependency limits. The earlier 817-pass/one-skip Debug
+result covered only the initial `Int`/`Void` slice and is not the current
+acceptance boundary.
 
 #### Windows x64
 

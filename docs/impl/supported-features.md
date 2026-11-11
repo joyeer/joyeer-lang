@@ -1,7 +1,7 @@
 # Implemented Language Surface
 
 > **Status:** current implementation boundary. The
-> [language specification](../spec.md) is normative for the broader design,
+> [language specification](../../specs/README.md) is normative for the broader design,
 > but it includes syntax and semantics that the compiler does not yet
 > implement. This document records implementation coverage; it is not a
 > release-readiness or complete-correctness claim.
@@ -59,21 +59,21 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | `deinit` and noncopyable types | A `struct` may declare one `deinit() { ... }` (no parameters, `self` is a mutable receiver; it cannot be named or called). It runs once when a live value is destroyed, before its fields are destroyed in reverse order, at scope end, on overwrite and when a consumed value ends in its new owner. A struct with `deinit`, and anything that holds one (a field, an enum payload, or an `Array`, `Dict`, `Optional` or `Result` element), is noncopyable: copying it is `type-checking.copy-of-noncopyable`, and moving a field out of a `deinit` type is `semantic-analysis.partial-consume-of-deinit-type`. A `return` of an owning local moves it, and `consume x` moves an owning local or consuming parameter into a binding, an assignment, an initializer, an enum case, `append` or an array or dictionary element. A temporary's `deinit` runs when its enclosing block ends, not at the end of its statement. A `deinit` cannot assign `self`. A `match` pattern may bind a noncopyable enum payload by moving it out of an owned temporary or a `match consume x` scrutinee, and `Array.removeLast()` takes an element out of an array. Not yet: reading a noncopyable element in place (`Dict.get`, an array subscript), and a trailing expression that moves a local (use `return`). See [decision 0015](../decisions/0015-noncopyable-and-linear-types.md) |
 | Containers | Compiler-known `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` |
 | Linear types | A struct declared `linear` (a contextual modifier accepted only in runtime and core sources, `type-checking.linear-reserved` elsewhere) is never destroyed implicitly: a binding that may still hold one, or a type holding one, at the end of its block, a match arm, a function, a `return`, a `?`, a `break` or a `continue` is `semantic-analysis.linear-not-consumed`; overwriting a live one is `linear-overwrite`; dropping a statement value, borrowing an owned temporary, or ignoring a payload of a moved scrutinee with `_` is `linear-result-dropped`. It ends field by field, consuming every field. A linear type has no `deinit`, cannot be a `Dict` key or value, and cannot be iterated with `for`. `JoinHandle<R>` is the one public linear type (see the `spawn` row) ([decision 0015](../decisions/0015-noncopyable-and-linear-types.md)) |
-| `Array.removeLast` | `&values.removeLast()` removes the last element and returns it as `Optional<T>` (`.None` when empty); the element moves into the result, so it works for noncopyable elements ([spec §2.6.2](../spec/02-types.md#262-removing-the-last-array-element)) |
-| `Array.consumeEmpty` | `consume values.consumeEmpty()` ends an empty array and frees its storage; it traps (`array not empty`) otherwise, so it is the way to end an array of linear elements after draining it with `removeLast()`. The receiver must be a variable, parameter or field ([spec §2.6.4](../spec/02-types.md#264-ending-an-empty-array-consumeempty)). `consume` now also starts an expression statement and a `return` value |
-| `spawn` and `JoinHandle<R>` | `let h = spawn(function: work, input: consume value)` runs the top-level function `work` (one `consuming` parameter) on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle is linear: every path must join it, and an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`. At most 256 unjoined tasks; a trap in a task ends the process; `runProcess` and `spawn` cannot share a program ([spec §21](../spec/21-concurrency.md), [decision 0018](../decisions/0018-tasks.md)) |
-| Channels | `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel of `ChannelSender<T>` and `ChannelReceiver<T>`; `s.send(value: consume x)` gives `Result<Void, ChannelClosed>` and `r.receive()` gives `Result<T, ChannelClosed>`; both wait when the queue is full or empty; `consume s.close()` and `consume r.close()` end an end, and an end also closes when dropped. Ends are noncopyable (not linear) and move into tasks; a linear element is rejected. A blocking operation with no other thread traps (`channel deadlock`). Known limits: a copyable payload bound by a `match` on `receive()` is cloned; the builtin `ChannelClosed` is written `.Closed` (the qualified `ChannelClosed.Closed` fails in IR lowering, as `ConversionError.OutOfRange` does); a payload-less case needs a local before `consume` (`consume Chain.End` is rejected; `consume .End` works) ([spec §21.9](../spec/21-concurrency.md#219-channels), [decision 0019](../decisions/0019-channels.md)) |
+| `Array.removeLast` | `&values.removeLast()` removes the last element and returns it as `Optional<T>` (`.None` when empty); the element moves into the result, so it works for noncopyable elements ([spec §2.6.2](../../specs/02-types.md#262-removing-the-last-array-element)) |
+| `Array.consumeEmpty` | `consume values.consumeEmpty()` ends an empty array and frees its storage; it traps (`array not empty`) otherwise, so it is the way to end an array of linear elements after draining it with `removeLast()`. The receiver must be a variable, parameter or field ([spec §2.6.4](../../specs/02-types.md#264-ending-an-empty-array-consumeempty)). `consume` now also starts an expression statement and a `return` value |
+| `spawn` and `JoinHandle<R>` | `let h = spawn(function: work, input: consume value)` runs the top-level function `work` (one `consuming` parameter) on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle is linear: every path must join it, and an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`. At most 256 unjoined tasks; a trap in a task ends the process; `runProcess` and `spawn` cannot share a program ([spec §21](../../specs/21-concurrency.md), [decision 0018](../decisions/0018-tasks.md)) |
+| Channels | `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel of `ChannelSender<T>` and `ChannelReceiver<T>`; `s.send(value: consume x)` gives `Result<Void, ChannelClosed>` and `r.receive()` gives `Result<T, ChannelClosed>`; both wait when the queue is full or empty; `consume s.close()` and `consume r.close()` end an end, and an end also closes when dropped. Ends are noncopyable (not linear) and move into tasks; a linear element is rejected. A blocking operation with no other thread traps (`channel deadlock`). Known limits: a copyable payload bound by a `match` on `receive()` is cloned; the builtin `ChannelClosed` is written `.Closed` (the qualified `ChannelClosed.Closed` fails in IR lowering, as `ConversionError.OutOfRange` does); a payload-less case needs a local before `consume` (`consume Chain.End` is rejected; `consume .End` works) ([spec §21.9](../../specs/21-concurrency.md#219-channels), [decision 0019](../decisions/0019-channels.md)) |
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
 | Unit results | `Result<Void, E>`, constructed as `.Ok(())`; unit expressions, types, bindings, aggregate fields, container elements, and patterns |
 | Strings and bytes | Byte count/indexing, owned `utf8()` byte arrays, the fixed escape set, comparison, concatenation, cloning, and destruction |
 | Built-ins | Primitive/string `print(value:)` and byte conversions. Everything that touches the host is in `System` (below) |
 | Filesystem (`System`) | UTF-8 paths, binary whole-file `readFileUtf8` and bounded `readFilePrefix`, exclusive `writeFileNew`, directory creation/listing, file classification, file/empty-directory removal, and lexical `joinPath` |
-| TCP (`System`, provisional) | `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpLocalPort`, `tcpReceive`, `tcpSend`, `tcpCloseConnection`, `tcpCloseListener`: blocking IPv4 literal addresses with receive and accept timeouts (`timeoutMillis`), over Winsock (`ws2_32`, linked by the toolchain) on Windows and raw system calls on Linux. Verified on Windows x64 and Linux x86-64 Debug; macOS is a placeholder returning `.Other(38)`. See [spec §18.6](../spec/18-host.md#186-tcp-networking) |
+| TCP (`System`, provisional) | `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpLocalPort`, `tcpReceive`, `tcpSend`, `tcpCloseConnection`, `tcpCloseListener`: blocking IPv4 literal addresses with receive and accept timeouts (`timeoutMillis`), over Winsock (`ws2_32`, linked by the toolchain) on Windows and raw system calls on Linux. Verified on Windows x64 and Linux x86-64 Debug; macOS is a placeholder returning `.Other(38)`. See [spec §18.6](../../specs/18-host.md#186-tcp-networking) |
 | Processes (`System`) | Synchronous `runProcess` with explicit executable, argument array and child directory; typed completion and launch/wait errors; no implicit shell or PATH lookup |
 | Compiler output | Frontend validation, textual LLVM IR, native executables, optimization flags, debug information, and native debug artifacts |
 | Internal C bindings | Explicitly authorized scalar imports/exports, restricted borrowed/initializing buffer imports, bare `[UInt8]` data pointers (`pointer:`, borrowed or `inout`), runtime-only memory intrinsics (`joyeer_intrinsic_*`: address-of, loads, stores, atomic add), scalar or `Void` results, runtime-object output, and explicit native-library link inputs |
 | System library (Joyeer) | `import System` provides the nine §18.2 filesystem operations, legacy `readFile`, `runProcess` (§18.3), `writeStderr` (§18.4) and `readStdinLine` (§18.5), written in Joyeer over kernel32 (Windows) or libc (POSIX; processes use `posix_spawn`; the standard streams use the C library's own stdio) through `@platform` variants. They are no longer compiler-known built-ins and the C runtime has no filesystem, process, stderr, stdin or `readFile` code. Verified by `SystemTests` and the end-to-end fixtures on Windows x64 Debug. The POSIX variants type-check for Linux and macOS but have not run there |
-| Platform selection | `@platform(windows, linux, macos, posix)` (one or more names) on top-level functions ([§11.5](../spec/11-annotations.md#115-platform)). The selected variant is kept and the others are removed before name resolution; the target is the host. `CompileOptions.targetPlatform` can name another, but only for `validate` output (`driver.unsupported-target-platform` otherwise); there is no command-line option. Dropped variants must parse and keep valid annotations but are not resolved or type-checked; a failed selection reports only `platform.*` diagnostics |
+| Platform selection | `@platform(windows, linux, macos, posix)` (one or more names) on top-level functions ([§11.5](../../specs/11-annotations.md#115-platform)). The selected variant is kept and the others are removed before name resolution; the target is the host. `CompileOptions.targetPlatform` can name another, but only for `validate` output (`driver.unsupported-target-platform` otherwise); there is no command-line option. Dropped variants must parse and keep valid annotations but are not resolved or type-checked; a failed selection reports only `platform.*` diagnostics |
 | Top-level constants | Top-level `let` with an explicit type and a compile-time initializer: `Bool`, numbers, `String`, and nested arrays of those, up to 1 MiB of data per constant; `public` constants work across modules. Overflow and other evaluation errors are compile-time errors (`ir-lowering.invalid-constant`). Structs, enums, dictionaries and function calls are not supported |
 | Optional Compression library | Separately built miniz-backed classic ZIP creation, listing, and bounded in-memory extraction; see [Compression](compression.md) |
 
@@ -123,8 +123,10 @@ are unchanged; no library ABI is implied.
 CMake bootstraps the default `ALL` tool and registers 15 portable acceptance
 gates, including bootstrap regeneration, independently of
 `JOYEER_BUILD_UNITTESTS`. Native macOS ARM64 Debug and Release pass all 15,
-including self-build and relocated workflows; platform-specific evidence
-and packaging limits are recorded in [building](../building.md#macos-arm64-acceptance-on-main).
+including self-build and relocated workflows. See
+[full platform validation](../building.md#full-platform-validation) for
+acceptance commands and [release staging](../building.md#release-staging)
+for packaging limits.
 Every document is
 bounded to 65536 bytes with a sentinel
 read after regular-file classification. Outputs use module-qualified fresh
@@ -140,7 +142,7 @@ See [fern](fern.md) for current contracts and parser limits.
   asynchronous/concurrent functions.
 - Networking beyond blocking IPv4 TCP: UDP, IPv6, host names, timeouts,
   non-blocking I/O, TLS. The TCP operations
-  ([spec §18.6](../spec/18-host.md#186-tcp-networking), provisional,
+  ([spec §18.6](../../specs/18-host.md#186-tcp-networking), provisional,
   [decision 0012](../decisions/0012-tcp-networking.md)) work on Windows and Linux;
   on macOS they return `.Other(38)`.
 - User-defined `init` bodies, `deinit` on an `enum` or extension, explicit copy
@@ -177,7 +179,7 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 
 ### Common authoring pitfalls
 
-- `result` and the other [reserved words](../spec/15-reserved.md) cannot be
+- `result` and the other [reserved words](../../specs/appendix-a-reserved.md) cannot be
   identifiers. The current unsupported-syntax diagnostic still mentions
   "JSON-parser MVP"; rename the binding rather than treating it as a module
   or file-format requirement.
@@ -204,7 +206,7 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
 - Legacy `readFile(path:)` returns `Result<String, IOError>` unchanged.
   Portable filesystem operations use a separate `FileSystemError`;
   synchronous processes use `ProcessError` and `ProcessStatus`. See the
-  [exact signatures and boundaries](../spec/18-host.md). Recursive cleanup,
+  [exact signatures and boundaries](../../specs/18-host.md). Recursive cleanup,
   replacement/atomic publication, canonicalization, process output capture,
   timeouts, and asynchronous handles are not provided.
 - `writeStderr(contents: String): Result<Void, StderrError>` writes exact bytes
@@ -219,7 +221,7 @@ Joyeer IR, native backend, runtime, diagnostic, and durable-fixture boundary.
   `ReadFailed(Int)`; a longer line is consumed through its terminator so the
   next call resynchronizes. The bound is required. Windows switches stdin to
   binary mode, and stdout is flushed before the read blocks. See
-  [spec §18.5](../spec/18-host.md#185-standard-input). No streaming, timeout,
+  [spec §18.5](../../specs/18-host.md#185-standard-input). No streaming, timeout,
   or partial-line API exists.
 - Generated programs receive Windows command-line arguments as UTF-8 from a
   wide-character entry point, while POSIX arguments preserve their original

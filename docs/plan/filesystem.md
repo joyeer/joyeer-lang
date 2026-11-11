@@ -87,4 +87,4 @@ run.
 ## 6. Not planned
 
 Streaming I/O, atomic replacement, recursive removal, and arbitrary-byte POSIX
-paths remain deferred, as in [§18.2](../spec/18-host.md#182-filesystem-operations).
+paths remain deferred, as in [§18.2](../../specs/18-host.md#182-filesystem-operations).

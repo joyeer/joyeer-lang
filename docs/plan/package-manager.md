@@ -44,12 +44,12 @@ incrementality; workspaces need not fetch remote packages.
 New APIs must not present lexical path checks as confinement. Stay aligned with
 [supported features](../impl/supported-features.md),
 [compiler input contract](../impl/backend.md#2-cli), and
-[host operations](../spec/18-host.md).
+[host operations](../../specs/18-host.md).
 
 ## 4. Native Platform Validation
 
 macOS ARM64 functional acceptance is recorded in
-[macOS acceptance](../building.md#macos-arm64-acceptance-on-main). Intel macOS and
+[native validation evidence](../impl/c-interop.md#macos-arm64). Intel macOS and
 standalone Homebrew dependency packaging remain separate gates.
 
 For each additional or unrecorded claimed platform/architecture, with
@@ -65,8 +65,9 @@ For each additional or unrecorded claimed platform/architecture, with
 - Separate install components and relocated compiler/backend/runtime lookup;
   the [local Debug installer](../building.md#local-debug-installation).
 
-Record provenance and results in
-[building](../building.md), not here.
+Use the [full-platform validator](../building.md#full-platform-validation).
+Record provenance and results in the relevant implementation documentation,
+not in this plan or the build guide.
 
 ## 5. Release Gates
 
