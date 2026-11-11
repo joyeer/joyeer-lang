@@ -107,7 +107,7 @@ source -> lexer -> parser -> name resolution -> type checking
 
 | Topic | Source of truth |
 |---|---|
-| Language rules and design rationale | [Spec](docs/spec.md), starting with the [preamble](docs/spec/00-preamble.md) |
+| Language rules and design rationale | [Spec](specs/README.md), starting with the [preamble](specs/00-preamble.md) |
 | Current compiler support and authoring pitfalls | [Implemented surface](docs/impl/supported-features.md) |
 | Toolchains, bootstrap, packaging, troubleshooting | [Building](docs/building.md) |
 | Compiler layout, backend ABI, debug behavior | [Backend](docs/impl/backend.md), [IR](docs/impl/ir.md), [runtime](docs/impl/runtime.md) |

@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash
 You review the Joyeer frontend (compiler/frontend/) as a type-system
 expert. You did not write the change; look for ways it breaks.
 
-Read docs/spec/02-types.md, 04-memory.md, 07-patterns.md, 20-protocols.md and
+Read specs/02-types.md, 04-memory.md, 07-patterns.md, 20-protocols.md and
 docs/impl/{name-resolution,type-checking,semantic-analysis}.md.
 
 Checklist:

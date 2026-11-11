@@ -8,7 +8,7 @@
   module-service and symbol-import gates, and the example over HTTP. macOS is a
   placeholder that fails with `.Other(38)`; AArch64 Linux is untested; full
   validation and the role reviews have not run.
-- Spec: [§18.6 TCP networking](../spec/18-host.md#186-tcp-networking)
+- Spec: [§18.6 TCP networking](../../specs/18-host.md#186-tcp-networking)
   (provisional)
 
 ## Context
@@ -28,7 +28,7 @@ Constraints:
 - Windows `System` calls only `kernel32` and Linux `System` makes raw system
   calls ([0011](0011-runtime-without-the-c-library.md)). Winsock lives in
   `ws2_32`, which the Windows link does not name today.
-- The FFI is restricted ([§19](../spec/19-c-interop.md)): scalars, bare
+- The FFI is restricted ([§19](../../specs/19-c-interop.md)): scalars, bare
   `[UInt8]` data pointers, no C structures, no callbacks, no variadic calls.
   Socket structures are built and read as byte buffers at fixed offsets, as
   `stat` and `dirent` already are ([0003](0003-pure-joyeer-filesystem.md)).
@@ -56,7 +56,7 @@ Constraints:
 
 ## Decision
 
-Option 2, as [§18.6](../spec/18-host.md#186-tcp-networking):
+Option 2, as [§18.6](../../specs/18-host.md#186-tcp-networking):
 
 - `System` gains `TcpListener`, `TcpConnection`, `NetworkError`, and eight
   functions: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpLocalPort`,

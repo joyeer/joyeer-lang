@@ -5,8 +5,8 @@
   [concurrency plan](../plan/concurrency.md). It decides the runtime's lowest layer for threads;
   there is no language surface here. The language-level tasks and channels are
   [0013](0013-concurrency-model.md), built on this in P5 and P6.
-- Spec: amends [§19.6](../spec/19-c-interop.md) (a thread the runtime created entering Joyeer
-  code) and fixes the static-slot pointer of [§19.4.5](../spec/19-c-interop.md). No intrinsic is
+- Spec: amends [§19.6](../../specs/19-c-interop.md) (a thread the runtime created entering Joyeer
+  code) and fixes the static-slot pointer of [§19.4.5](../../specs/19-c-interop.md). No intrinsic is
   added.
 
 ## Context

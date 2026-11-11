@@ -2,7 +2,7 @@
 
 This chapter defines the accepted first filesystem, synchronous-process,
 standard-error, and standard-input contracts, and the provisional TCP
-networking contract (§18.6). See [the implemented surface](../impl/supported-features.md) for
+networking contract (§18.6). See [the implemented surface](../docs/impl/supported-features.md) for
 implementation status. These operations are functions of the `System` standard
 module (`import System`, §12.5); they are not compiler-known and do not introduce
 source-language FFI or user-defined generic functions.
@@ -170,7 +170,7 @@ asynchronous handles, and shell-script interpretation are deferred.
 zero, unsuccessful completion or launch/wait failure to one, and invalid CLI
 usage to two. It reports the original child status or platform error rather
 than truncating it to fit its own entry result. This tool policy is detailed in
-[fern status and diagnostics](../impl/fern.md#status-and-diagnostics);
+[fern status and diagnostics](../docs/impl/fern.md#status-and-diagnostics);
 it is not a restriction on the language's `ProcessStatus` contract.
 
 ### 18.4 Standard error
@@ -261,7 +261,7 @@ point.
 > **Status: provisional.** Implemented and tested on Windows x64 and Linux
 > x86-64 (Debug); the AArch64 system call numbers are untested. On macOS every
 > operation currently fails with `.Other(38)`. The
-> design record is [0012](../decisions/0012-tcp-networking.md). Rules here
+> design record is [0012](../docs/decisions/0012-tcp-networking.md). Rules here
 > may change before acceptance. The first version is deliberately small:
 > blocking IPv4 TCP between literal addresses. Names, IPv6, UDP, timeouts,
 > non-blocking I/O, concurrency, socket options, peer addresses, and TLS are
@@ -350,7 +350,7 @@ peer's address is not reported in this version.
 
 #### Timeouts
 
-[Decision 0014](../decisions/0014-network-timeouts.md). `tcpAccept` and
+[Decision 0014](../docs/decisions/0014-network-timeouts.md). `tcpAccept` and
 `tcpReceive` take `timeoutMillis`:
 
 - `-1` waits without limit, as these operations did before this parameter existed.

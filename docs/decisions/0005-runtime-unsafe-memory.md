@@ -2,7 +2,7 @@
 
 - Status: accepted and implemented (decided and built 2026-11-07; verified on
   Windows x64 Debug). The runtime is not yet rewritten on top of it.
-- Spec: [§19.4.5 Compiler intrinsics](../spec/19-c-interop.md#1945-compiler-intrinsics).
+- Spec: [§19.4.5 Compiler intrinsics](../../specs/19-c-interop.md#1945-compiler-intrinsics).
 
 ## Context
 
@@ -17,7 +17,7 @@ that:
   from `malloc`.
 - The allocation counter the tests rely on needs an atomic add.
 
-The language deliberately has no pointer type ([§4.8](../spec/04-memory.md#48-no-reference-types)).
+The language deliberately has no pointer type ([§4.8](../../specs/04-memory.md#48-no-reference-types)).
 
 ## Options considered
 
@@ -39,7 +39,7 @@ Option 2, built as reserved `@c_extern` symbols, not new syntax:
   its signature (shared table in
   [intrinsics.h](../../compiler/frontend/intrinsics.h)).
 - **An address is an `Int`.** `address_of` takes a `[UInt8]` as a bare data
-  pointer ([§19.4.4](../spec/19-c-interop.md#1944-bare-byte-pointers)) and
+  pointer ([§19.4.4](../../specs/19-c-interop.md#1944-bare-byte-pointers)) and
   returns its address; the language does not track the array's lifetime.
 - **Operations:** `address_of`, little-endian loads and stores of 8, 16, 32 and
   64 bits, and a sequentially consistent 64-bit `atomic_add` that returns the

@@ -97,7 +97,7 @@ Official client documentation:
   maintain independent Copilot/Claude/Codex language guides.
 - Keep the entry point short; update references against the implemented
   compiler, not merely future specification syntax. The normative design is
-  [docs/spec.md](../docs/spec.md); the current implementation boundary is
+  [specs/README.md](../specs/README.md); the current implementation boundary is
   [docs/impl/supported-features.md](../docs/impl/supported-features.md).
 - Update the compatibility baseline when the compiler changes. Publish the
   skill with its matching release/revision rather than linking to moving

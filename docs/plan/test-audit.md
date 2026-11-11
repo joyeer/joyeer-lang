@@ -49,7 +49,7 @@ This is a solid base. The gaps are mostly in systematic and adversarial testing.
    entry checks each have 1 to 3 negative fixtures. Spec sections to
    mine for missing cases: visibility and cycle checks (`12-modules.md`),
    literal range and separator rules (`01-lexical.md`), and reserved words
-   (`15-reserved.md`).
+   (`appendix-a-reserved.md`).
 8. **Spec-to-test traceability is absent.** No test names or comments cite spec
    sections, so coverage cannot be measured. Add a `// spec: 04-memory.md §4.2`
    convention to new tests, and a small script that lists spec sections with

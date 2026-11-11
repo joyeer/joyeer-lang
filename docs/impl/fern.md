@@ -2,7 +2,7 @@
 
 `fern 0.1.0` is written in Joyeer. It resolves manifests to explicit source sets
 and invokes the compiler; it does not change the
-[language module definition](../spec/12-modules.md). The compiler CMake
+[language module definition](../../specs/12-modules.md). The compiler CMake
 version remains `0.0.1`, independently of the tool's `0.1.0`. The module and
 workspace schemas both remain version 1 during unreleased development;
 the numeric version alone is not sufficient build provenance.

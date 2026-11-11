@@ -1,6 +1,6 @@
-## §16 Worked Examples
+## Appendix B: Worked Examples
 
-### 16.1 Quicksort (canonical demo)
+### B.1 Quicksort (canonical demo)
 
 ```joyeer
 import std.io
@@ -71,7 +71,7 @@ public func main() {
 }
 ```
 
-### 16.2 JSON parser
+### B.2 JSON parser
 
 This example illustrates recursive enums, byte-oriented input, explicit
 mutation, optional values, and recoverable errors. It is a language-design
@@ -134,7 +134,7 @@ public func parse(source: String): Result<JsonValue, JsonError> {
 }
 ```
 
-### 16.3 Linked list (indirect enum + deinit demo)
+### B.3 Linked list (indirect enum + deinit demo)
 
 ```joyeer
 public enum IntList {
@@ -156,7 +156,7 @@ extension IntList {
 }
 ```
 
-### 16.4 String builder (subscript + mutating/consuming demo)
+### B.4 String builder (subscript + mutating/consuming demo)
 
 ```joyeer
 public struct StringBuilder {

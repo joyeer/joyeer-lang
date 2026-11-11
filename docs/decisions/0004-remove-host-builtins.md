@@ -4,7 +4,7 @@
   Windows x64 Debug only.
   The Joyeer variants for Linux and macOS have not run, so those platforms are
   unverified; the C implementations were removed with the built-ins.
-- Spec: [§18](../spec/18-host.md) now says the operations are `System` functions
+- Spec: [§18](../../specs/18-host.md) now says the operations are `System` functions
   and no longer calls them compiler-known.
 
 ## Context

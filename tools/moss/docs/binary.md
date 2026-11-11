@@ -157,7 +157,7 @@ for classification/size rejections. It retains the native host code; it does
 not invent a host failure for a domain error.
 
 Host path/argument rules follow the
-[Joyeer filesystem contract](../../../docs/spec/18-host.md):
+[Joyeer filesystem contract](../../../specs/18-host.md):
 strict UTF-8, no embedded NUL, wide Windows APIs, and ordinary host-relative
 resolution. Paths are not canonicalized or confined.
 

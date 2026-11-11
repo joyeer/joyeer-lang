@@ -2,7 +2,7 @@
 
 > **Status:** unfinished work only. The scalar `@c_extern`/`@c_export` boundary
 > is implemented; see [impl/c-interop](../impl/c-interop.md). The language rules
-> are in [§19](../spec/19-c-interop.md). Remove items here when they are done.
+> are in [§19](../../specs/19-c-interop.md). Remove items here when they are done.
 
 ## 1. Scope
 
@@ -74,4 +74,4 @@ Prefer an internal scoped region mechanism over exposing pointer arithmetic.
 | Any public native capability? | Separate user-FFI/unsafe proposal |
 | Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](native-link-inputs.md) |
 | Complex ABI features | Separate gates: aggregates by value, unions/bit-fields, callbacks, varargs, `long double` |
-| Runtime-only capabilities | Implemented: static storage, indirect calls, data symbols, Never results, core units and the core entry export ([§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics), [§19.4.7](../spec/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)). Still undecided: bulk memory and a Linux syscall intrinsic ([§19.4.6](../spec/19-c-interop.md#1946-runtime-capabilities-still-proposed-)) |
+| Runtime-only capabilities | Implemented: static storage, indirect calls, data symbols, Never results, core units and the core entry export ([§19.4.5](../../specs/19-c-interop.md#1945-compiler-intrinsics), [§19.4.7](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)). Still undecided: bulk memory and a Linux syscall intrinsic ([§19.4.6](../../specs/19-c-interop.md#1946-runtime-capabilities-still-proposed-)) |

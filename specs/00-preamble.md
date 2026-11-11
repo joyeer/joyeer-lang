@@ -49,7 +49,7 @@ safety checks (§9).
 
 Performance parity and fixed binary-size budgets are measurement goals, not
 language guarantees. Current costs and measurement requirements belong in the
-[backend implementation notes](../impl/backend.md#7-performance-and-footprint-measurement).
+[backend implementation notes](../docs/impl/backend.md#7-performance-and-footprint-measurement).
 
 #### 0.1.3 Written in Joyeer
 
@@ -61,7 +61,7 @@ toolchain-authorized units with a small, explicit unsafe surface (§19.4.5) that
 ordinary programs cannot reach. This keeps one language to review, and makes the
 runtime the largest test of the language's own cost and safety claims. The
 current state and the path there are in the
-[runtime plan](../plan/runtime-in-joyeer.md).
+[runtime plan](../docs/plan/runtime-in-joyeer.md).
 
 ### 0.2 Notation
 

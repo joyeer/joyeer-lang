@@ -51,11 +51,11 @@ performs binding and exhaustiveness checks (§7).
 
 > `class` is **reserved ⏳ and rejected** by the current compiler; use
 > `struct` for aggregates. The other reserved words are also rejected in
-> v0.1 (§15).
+> v0.1 (Appendix A).
 
 > `as` introduces an integer conversion (`x as T`, `x &as T`, §5.2.1). It is not
 > accepted in the module/import grammar (§12); import aliases remain reserved.
-> The `is` type-test operator is also deferred (§15).
+> The `is` type-test operator is also deferred (Appendix A).
 
 ### 1.5 Literals
 
@@ -115,8 +115,9 @@ buffer (§2.1.1). For example `b'"'` is `0x22` and `b'\n'` is `0x0A`.
 
 `@` starts a declaration annotation. Annotation names such as `c_extern`
 and `c_export`, and argument labels such as `symbol`, are identifiers, not
-new keywords. The annotation grammar is specified in [§17](17-grammar.md),
-the C annotations' semantics in [§19](19-c-interop.md), and `@platform` in
+new keywords. The annotation grammar is specified in
+[Appendix C](appendix-c-grammar.md), the C annotations' semantics in
+[§19](19-c-interop.md), and `@platform` in
 [§11.5](11-annotations.md#115-platform). **Implementation status:** `@`, the
 restricted C annotation subset, and `@platform` are accepted; the proposed
 `@spec`/`@property` shorthand and DSL remain unsupported.
@@ -138,6 +139,6 @@ print(value: "answer is \(n), squared is \(n * n)")
 ```
 
 A user-extensible `Display` protocol is also reserved for a future version
-(§15).
+(Appendix A).
 
 ---

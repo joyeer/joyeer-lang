@@ -2,11 +2,11 @@
 
 > **Status:** proposed, not implemented. This chapter defines a deliberately
 > small first version ("v1") of protocols. Nothing here is accepted by the
-> current compiler; `protocol` and `trait` remain reserved and rejected (§15)
+> current compiler; `protocol` and `trait` remain reserved and rejected (Appendix A)
 > until the implementation lands. Where this chapter conflicts with §2.6 or
 > §3.2.3, those sections describe the current language and this chapter
 > describes the proposal. See
-> [implemented language surface](../impl/supported-features.md).
+> [implemented language surface](../docs/impl/supported-features.md).
 
 ### 20.1 Purpose and scope
 
@@ -71,7 +71,7 @@ A protocol is a **type-namespace** declaration (§13.1): it may not share a
 name with a struct, enum, or another protocol in the same scope. The names
 `Display`, `Equatable`, `Comparable`, `Any`, and `Copyable` cannot be declared
 by user code in v1; `Copyable` is the builtin protocol of §20.5 and the
-others stay reserved (§12.4, §15).
+others stay reserved (§12.4, Appendix A).
 
 A protocol has no stored state and no instances. It is **not a type**: using
 a protocol name where a type is expected is an error
@@ -188,8 +188,8 @@ Each type parameter must be determined by the argument types:
 
 After inference, every constraint must hold, otherwise
 `type-checking.unsatisfied-constraint` names the type and protocol. Because
-calls never contain `<`, the grammar of §17 is not made ambiguous with the
-comparison operator.
+calls never contain `<`, the grammar of [Appendix C](appendix-c-grammar.md)
+is not made ambiguous with the comparison operator.
 
 A generic function can only be called. It cannot be named as a function value
 (§2.3), and two generic functions cannot be overloaded against each other.
@@ -286,7 +286,7 @@ measurable cost of generic use, not a free abstraction (§0.1.2).
 ### 20.8 Diagnostics
 
 Diagnostics follow the stable-ID and source-span rules of
-[diagnostics](../impl/diagnostics.md). Proposed IDs:
+[diagnostics](../docs/impl/diagnostics.md). Proposed IDs:
 
 | ID | Condition |
 |---|---|
@@ -312,9 +312,9 @@ Diagnostics follow the stable-ID and source-span rules of
 - `protocol` joins the **Declarations** row of §1.4 and is removed from the
   reserved list. `trait` stays reserved; there is one spelling for the
   concept (§0.1, principle 4).
-- §17 gains `protocol_decl` as a `top_decl`, the optional `generic_params` in
-  `func_decl`, and the optional conformance list in `extension_decl`, all as
-  given in §20.2 to §20.4.
+- [Appendix C](appendix-c-grammar.md) gains `protocol_decl` as a `top_decl`,
+  the optional `generic_params` in `func_decl`, and the optional conformance
+  list in `extension_decl`, all as given in §20.2 to §20.4.
 - `extension_decl` still admits only `func_decl` and `subscript_decl` bodies;
   conformance does not allow adding stored fields (§3.5).
 

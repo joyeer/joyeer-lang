@@ -3,7 +3,7 @@
 - Status: accepted (implemented; language-designer and type-system reviews
   run twice and addressed; unfiltered CTest passes 1150/1150 on Windows x64 Debug;
   Release, other platforms, and `scripts/validate.py` were not run)
-- Spec: [§11.5 `@platform`](../spec/11-annotations.md#115-platform)
+- Spec: [§11.5 `@platform`](../../specs/11-annotations.md#115-platform)
 
 ## Context
 
@@ -63,7 +63,7 @@ compile-time selector if platform-specific Joyeer declarations are wanted.
 
 ## Decision
 
-Option 1, with these rules (normative text: [§11.5](../spec/11-annotations.md#115-platform)).
+Option 1, with these rules (normative text: [§11.5](../../specs/11-annotations.md#115-platform)).
 
 - **Syntax.** `@platform(name, ...)` on a top-level function, with unlabelled
   identifier arguments: `windows`, `linux`, `macos`, and the group `posix`

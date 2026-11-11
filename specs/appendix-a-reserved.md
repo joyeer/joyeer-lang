@@ -1,13 +1,8 @@
-## §15 Reserved for Future
+## Appendix A: Reserved Keywords and Syntax
 
-The following keywords are reserved and rejected with a clear error
-message in v0.1:
-
-`async`, `await`, `actor`, `throws`, `try`, `catch`, `defer`,
-`is`, `protocol`, `trait`, `macro`, `invariant`, `result`,
-`unsafe`, `package`, `Any`.
-
-`class` is also reserved (§1.4) and rejected by the current lexer.
+The authoritative list of reserved keywords is in
+[§1.4](01-lexical.md#14-keywords-full-reserved-list).
+Those keywords are rejected with a clear error message in v0.1.
 
 The restricted scalar [C interoperation rules](19-c-interop.md) do not
 unreserve `unsafe` or select pointer, dereference, or unsafe-block syntax.

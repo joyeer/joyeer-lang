@@ -3,7 +3,7 @@
 - Status: accepted and implemented (decided and built 2026-11-07). Verified on
   Windows x64 Debug and Release; Linux and macOS have not built it.
 - Spec: none. This is a build contract; the language rules it relies on are
-  [§19.4.5](../spec/19-c-interop.md#1945-compiler-intrinsics).
+  [§19.4.5](../../specs/19-c-interop.md#1945-compiler-intrinsics).
 
 ## Context
 

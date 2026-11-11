@@ -3,7 +3,7 @@
 - Status: accepted (2026-11-09). Phase P4 of the [concurrency plan](../plan/concurrency.md),
   built on [0016](0016-thread-primitives.md). It makes the runtime safe to call from several
   threads; it adds no language feature and changes no single-threaded behaviour.
-- Spec: [§19.4.5](../spec/19-c-interop.md) gains three runtime-only intrinsics (atomic load,
+- Spec: [§19.4.5](../../specs/19-c-interop.md) gains three runtime-only intrinsics (atomic load,
   exchange and compare-and-exchange). The memory-model facts the runtime keeps are those
   [0013](0013-concurrency-model.md) states in prose.
 

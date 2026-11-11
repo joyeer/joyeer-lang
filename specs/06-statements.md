@@ -33,7 +33,7 @@ for_stmt        ::= 'for' [ '&' ] pattern 'in' expression block
 The optional `&` requests an `inout` iteration over the source collection
 (when the collection — a built-in container such as `Array` — provides an
 inout view). A user-extensible iteration protocol is reserved for a future
-version (§15).
+version (Appendix A).
 
 **Implemented subset.** The pattern is a name or `_`. The source is an array,
 a `String` (iterating its bytes as `UInt8`), or an integer range:
@@ -92,7 +92,7 @@ block nested in a condition can also exit or restart that loop.
 These are statements, not value expressions. A block path ending in either
 does not fall through and can be combined with value-producing branches.
 Using either outside a loop is an error. Neither takes a value or label;
-labeled forms remain reserved (§15).
+labeled forms remain reserved (Appendix A).
 
 Every jump destroys values and pending temporaries in exited scopes in reverse
 cleanup order, without destroying values in enclosing scopes that remain active.

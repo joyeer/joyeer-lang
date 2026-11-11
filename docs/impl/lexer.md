@@ -2,7 +2,7 @@
 
 > **Status:** The [supported lexical surface](supported-features.md) is
 > implemented by the compiler's only lexer. The normative grammar is
-> [../spec/01-lexical.md](../spec/01-lexical.md).
+> [../../specs/01-lexical.md](../../specs/01-lexical.md).
 
 ## Boundary
 
@@ -98,9 +98,7 @@ contract above is unchanged.
 
 The lexer reserves words needed by later language phases without pretending
 their grammar is implemented. Adding a terminal requires a concrete parser or
-standard-library consumer and focused positive/negative tests. The removed
-general `performs`/`pure` effect system must not be reintroduced through token
-reservation.
+standard-library consumer and focused positive/negative tests.
 
 ## Validation
 

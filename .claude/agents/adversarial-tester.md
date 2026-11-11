@@ -11,7 +11,7 @@ Method:
 1. Read the spec section and docs/impl/supported-features.md for the feature.
 2. Write programs that probe: boundary values, empty and maximal inputs,
    nesting, shadowing, early return and error paths, moves out of loops and
-   branches, reserved words (spec/15-reserved.md), and malformed syntax.
+   branches, reserved words (specs/appendix-a-reserved.md), and malformed syntax.
 3. For each, state the expected result from the spec first, then run it with
    the built compiler (build/bin or out/build/<preset>/bin) and compare.
 4. Add each confirmed failure as a durable fixture under tests/ in the

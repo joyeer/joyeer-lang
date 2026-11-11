@@ -30,7 +30,7 @@ later use separate units for dependencies or test targets.
 The legacy single-file invocation remains supported as a one-file root unit
 without an explicit name or dependency mappings. Named input validation,
 path identity, and migration from the removed directory flags are documented
-in the [compiler interface](../impl/backend.md#2-cli), separately from these
+in the [compiler interface](../docs/impl/backend.md#2-cli), separately from these
 source-language rules.
 
 Imports determine the dependency graph before declaration resolution. Unknown
@@ -74,7 +74,7 @@ Joyeer visibility is separate from
 `public` does not export a C symbol or grant a runtime compilation context,
 and `@c_export` does not make a source declaration public. Runtime permission
 is a separate explicit compilation input, not a privilege inherited through
-imports; see [the implemented subset](../impl/c-interop.md).
+imports; see [the implemented subset](../docs/impl/c-interop.md).
 
 Only the root module contributes an executable entry point: exactly one root
 function named `main` is required for native executable output, using one of
@@ -148,11 +148,11 @@ prelude functions; they are ordinary functions of the `System` standard module
 This is a long-term design vision, not the current compiler prelude inventory.
 For example, the compiler does not yet supply the contract APIs or general
 tuple support. See the
-[implemented name-resolution prelude](../impl/name-resolution.md#3-scopes-and-symbols)
+[implemented name-resolution prelude](../docs/impl/name-resolution.md#3-scopes-and-symbols)
 for the authoritative current list.
 
 The names `Display`, `Equatable`, `Comparable` are reserved for a future
-protocol system (§15) but are **not** usable as constraints or conformances
+protocol system (Appendix A) but are **not** usable as constraints or conformances
 in v0.1.
 
 ### 12.5 Standard modules
@@ -163,7 +163,7 @@ required. The toolchain finds standard modules relative to the compiler itself,
 never through a search path, and a module supplied explicitly with the same
 name takes precedence (which is how the library itself is developed). The
 resolution mechanism is an implementation contract, described in
-[toolchain libraries](../plan/toolchain-libraries.md).
+[toolchain libraries](../docs/plan/toolchain-libraries.md).
 
 | Module | Provides |
 |---|---|

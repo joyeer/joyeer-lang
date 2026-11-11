@@ -1,10 +1,10 @@
 ## §21 Concurrency: Tasks
 
-> **Status:** implemented (phase P5a of the [concurrency plan](../plan/concurrency.md), stages 0
+> **Status:** implemented (phase P5a of the [concurrency plan](../docs/plan/concurrency.md), stages 0
 > and 1) on Linux and Windows. Channels (§21.9) are specified with
-> [decision 0019](../decisions/0019-channels.md) and join this chapter when they are built. The
-> design record is [decision 0018](../decisions/0018-tasks.md); the model it builds on is
-> [decision 0013](../decisions/0013-concurrency-model.md).
+> [decision 0019](../docs/decisions/0019-channels.md) and join this chapter when they are built. The
+> design record is [decision 0018](../docs/decisions/0018-tasks.md); the model it builds on is
+> [decision 0013](../docs/decisions/0013-concurrency-model.md).
 
 ### 21.1 Purpose and model
 
@@ -88,7 +88,7 @@ be ended on every path out of the scope that owns it, and it cannot be dropped, 
 while live. A program that does not join a task does not compile
 (`semantic-analysis.linear-not-consumed`, whose help names `join`), so there are no detached tasks, and
 `main` returns only after every task has finished, which is what lets the allocation-balance check run on
-a quiescent program (see [runtime](../impl/runtime.md)).
+a quiescent program (see [runtime](../docs/impl/runtime.md)).
 
 Consequences of the linear rules:
 
@@ -197,12 +197,13 @@ An unknown `function:` name is name resolution's ordinary unknown-name diagnosti
 
 ### 21.8 Grammar
 
-No production is added: `spawn(function: f, input: consume x)` is an ordinary call (§17, `call_arg`).
+No production is added: `spawn(function: f, input: consume x)` is an ordinary
+call ([Appendix C](appendix-c-grammar.md), `call_arg`).
 The restriction on `function:` is a type-checking rule, not a grammar rule.
 
 ### 21.9 Channels
 
-> **Status:** implemented in phases P5b and P6 ([decision 0019](../decisions/0019-channels.md)).
+> **Status:** implemented in phases P5b and P6 ([decision 0019](../docs/decisions/0019-channels.md)).
 
 A **channel** carries values from one task to another. It is bounded, has exactly one sender end and
 one receiver end, and moves each value: a value sent is gone from the sender and owned by whoever

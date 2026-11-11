@@ -19,7 +19,7 @@ into Joyeer behind the existing runtime interfaces; this document
 describes the current C implementation. Public library modules and their
 separate fern workflow are tracked in the [library plan](../plan/library.md).
 The [C binding implementation](c-interop.md) supports the restricted
-by-value scalar runtime-source boundary of [§19](../spec/19-c-interop.md).
+by-value scalar runtime-source boundary of [§19](../../specs/19-c-interop.md).
 It does not replace any production C algorithm or compiler-known runtime
 interface described here.
 
@@ -220,7 +220,7 @@ new runtime allocation or destruction API is introduced for unit values.
 File input, the portable filesystem, synchronous processes, standard-error
 writing and standard-input line reading are not part of the C runtime. They are
 ordinary Joyeer functions in the `System` standard module
-([spec §18](../spec/18-host.md)): `readFile` (legacy), `readFileUtf8`,
+([spec §18](../../specs/18-host.md)): `readFile` (legacy), `readFileUtf8`,
 `readFilePrefix`, `writeFileNew`, `createDirectory`, `listDirectory`,
 `fileKind`, `removeFile`, `removeDirectory`, `joinPath`, `runProcess`,
 `writeStderr` and `readStdinLine`. A program writes `import System`. The
@@ -230,7 +230,7 @@ enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
 so user code and `System` share one definition.
 
 `System` reaches the operating system through `@c_extern` bindings, authorized
-by the module's `native-bindings = true` ([§19](../spec/19-c-interop.md)): the
+by the module's `native-bindings = true` ([§19](../../specs/19-c-interop.md)): the
 Win32 API on Windows, the kernel on Linux and libSystem on macOS, selected per function by
 `@platform`.
 Per-platform files hold the primitives and one portable file holds the logic;

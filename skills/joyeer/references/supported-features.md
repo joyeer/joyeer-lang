@@ -19,7 +19,7 @@ open. Versions and schemas remain at their initial values during unreleased
 development; an older binary with the same version may lack these interfaces.
 
 Keep this directory with the matching release or revision. The upstream
-`docs/spec.md` defines the language design;
+`specs/README.md` defines the language design;
 `docs/impl/supported-features.md` and end-to-end fixtures describe current
 implementation coverage. Specification examples can use future features.
 Compiler acceptance is evidence of implementation support, not a replacement
@@ -41,8 +41,8 @@ require a source checkout, internet access, or access to a moving branch.
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
 | Noncopyable types | A struct may declare one `deinit() { ... }`; it runs once when a live value is destroyed. Such a struct, and anything that holds one (field, enum payload, `Array`/`Dict`/`Optional`/`Result` element), is noncopyable: move it with `consume x`, take an element out of an array with `&values.removeLast()` (an `Optional`), and end an empty array with `consume values.consumeEmpty()`. A `match` over an owned temporary or `match consume x` may bind a noncopyable payload |
-| Tasks and channels | `let h = spawn(function: work, input: consume value)` runs a top-level function with one `consuming` parameter on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle must be joined on every path (an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`). `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel; `s.send(value: consume x)` and `r.receive()` give `Result<_, ChannelClosed>` and wait when full or empty; ends are noncopyable and close when dropped, or with `consume end.close()`. Values move between threads; there is no shared mutable state. `runProcess` and `spawn` cannot share a program ([spec §21](../../../docs/spec/21-concurrency.md)) |
-| Networking | Blocking IPv4 TCP in `System` (`tcpListen`, `tcpAccept`, `tcpReceive`, `tcpSend`, handles that close on drop) with timeouts; Windows and Linux ([spec §18.6](../../../docs/spec/18-host.md)) |
+| Tasks and channels | `let h = spawn(function: work, input: consume value)` runs a top-level function with one `consuming` parameter on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle must be joined on every path (an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`). `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel; `s.send(value: consume x)` and `r.receive()` give `Result<_, ChannelClosed>` and wait when full or empty; ends are noncopyable and close when dropped, or with `consume end.close()`. Values move between threads; there is no shared mutable state. `runProcess` and `spawn` cannot share a program ([spec §21](../../../specs/21-concurrency.md)) |
+| Networking | Blocking IPv4 TCP in `System` (`tcpListen`, `tcpAccept`, `tcpReceive`, `tcpSend`, handles that close on drop) with timeouts; Windows and Linux ([spec §18.6](../../../specs/18-host.md)) |
 | Dictionary lookup | `get(key:)` returns an owned `Optional<V>`; absence is `.None`, while strict subscripts still trap |
 | Propagation | Postfix `?` on `Result<T, E>` in `Result<U, E>` functions with identical `E`, or on `Optional<T>` in Optional-returning functions |
 | Unit results | `Result<Void, E>` with `.Ok(())`; unit expressions, bindings, fields, container elements, and patterns |

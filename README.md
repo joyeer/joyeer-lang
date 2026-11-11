@@ -125,9 +125,9 @@ for discovery and agent-specific setup.
 
 | Topic | Guide |
 |---|---|
-| Language reference | [Joyeer specification](docs/spec.md) |
-| Design philosophy | [Why Joyeer](docs/spec/00-preamble.md) |
-| Memory and ownership | [Memory model](docs/spec/04-memory.md) |
+| Language reference | [Joyeer specification](specs/README.md) |
+| Design philosophy | [Why Joyeer](specs/00-preamble.md) |
+| Memory and ownership | [Memory model](specs/04-memory.md) |
 | Build, install, and troubleshoot | [Building Joyeer](docs/building.md) |
 | All documentation | [Documentation index](docs/README.md) |
 

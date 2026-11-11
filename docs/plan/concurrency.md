@@ -2,7 +2,7 @@
 
 The concurrency work is done: network timeouts (P1a), noncopyable and linear types with `deinit` (P2),
 thread primitives (P3), a thread-safe runtime (P4), tasks (P5a), channels (P5b, P6) and the worker-pool
-web server (P7). The rules are in [spec §21](../spec/21-concurrency.md), the decisions in
+web server (P7). The rules are in [spec §21](../../specs/21-concurrency.md), the decisions in
 [0013](../decisions/0013-concurrency-model.md) and [0015](../decisions/0015-noncopyable-and-linear-types.md)
 to [0019](../decisions/0019-channels.md), and the implementation notes in
 [runtime](../impl/runtime.md) and [supported features](../impl/supported-features.md). This file keeps
