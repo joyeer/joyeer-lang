@@ -32,7 +32,7 @@ Constraints from the current compiler:
   host triple. The backend admits only x86-64/ARM64 Windows MSVC, Linux, and
   macOS.
 - The compiler takes explicit source inputs and never discovers files
-  ([library plan](../plan/library.md) §4).
+  ([toolchain libraries plan](../plan/toolchain-libraries.md)).
 
 ## Options considered
 

@@ -1,11 +1,12 @@
 # Runtime in Joyeer: Plan
 
-> **Status:** in progress. The runtime is Joyeer (`lib/Runtime/core/`); only its C
-> declarations remain as C (`lib/Runtime/include/joyeer/`). Tier 1 and Tier 2 are done on
-> Windows x64 and Linux x86-64 (stages 0 to 10 below). Open: moving the archive into the
-> toolchain `lib/` (9.3) and platform acceptance on Windows ARM64, Linux AArch64 and macOS
-> (9.4, 10.5). Current behavior: [runtime](../impl/runtime.md),
-> [strings](../impl/string.md). Remove completed work from this plan.
+- Status: in progress (updated 2026-11-12). The runtime is Joyeer (`lib/Runtime/core/`); only its C
+  declarations remain as C (`lib/Runtime/include/joyeer/`). Tier 1 and Tier 2 are done on Windows x64
+  and Linux x86-64 (stages 0 to 10 of the [todo list](#11-todo)). Open: moving the archive into the
+  toolchain `lib/` (9.3) and platform acceptance on Windows ARM64, Linux AArch64 and macOS (9.4, 10.5).
+- Decisions: [0005](../decisions/0005-runtime-unsafe-memory.md), [0008](../decisions/0008-runtime-core-build-shape.md)
+  to [0011](../decisions/0011-runtime-without-the-c-library.md)
+- Current behavior: [runtime](../impl/runtime.md), [strings](../impl/string.md)
 
 ## 1. Goal
 
@@ -99,12 +100,12 @@ state, and the change is its own phase (R12).
 | Item | Where it is tracked | How it touches the runtime |
 |---|---|---|
 | Spec text for the runtime-only capabilities | [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point) (proposed) | Each capability becomes accepted spec text when its decision lands |
-| `assert`, `precondition`, `fatalError` | [library plan](library.md) §2 | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
+| `assert`, `precondition`, `fatalError` | [library plan](library.md#library) | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
 | `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
 | User generics | [§20](../../specs/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
-| Runtime archive in `lib/` | [toolchain libraries](toolchain-libraries.md) §3 | Do it with R9, when the compiler builds the archive |
+| Runtime archive in `lib/` | [toolchain libraries](toolchain-libraries.md#todo) | Do it with R9, when the compiler builds the archive |
 | Sanitizer builds | [test audit](test-audit.md) item 3 | The main safety net for unchecked address code |
-| POSIX verification of `System` | [filesystem plan](filesystem.md) §2 | Same hosts and gates as this plan's platform acceptance |
+| POSIX verification of `System` | [filesystem plan](filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos) | Same hosts and gates as this plan's platform acceptance |
 
 ## 3. Inventory
 
@@ -373,11 +374,11 @@ Update [runtime](../impl/runtime.md), [strings](../impl/string.md),
 [supported features](../impl/supported-features.md) and
 [building](../building.md) as phases land.
 
-## 11. Implementation checklist
+## 11. Todo
 
-Work top to bottom. Each box is one change set that leaves the suite green and is
-committed on its own. Tick a box (`[x]`) when it lands, with the commit, and
-delete a whole stage once every box in it is done and the impl docs describe it.
+Work top to bottom, following the [plan rules](README.md#rules). Each box is one change set that
+leaves the suite green and is committed on its own. Tick a box (`[x]`) when it lands, with the commit,
+and delete a whole stage once every box in it is done and the impl docs describe it.
 
 **Every box is done only when:** the decision, if the box names one, is recorded
 in [decisions](../decisions/README.md); a failing test came first; the change
@@ -570,9 +571,9 @@ Start any time after 5.3.
 - [x] 9.2 Add the archive check: no object not produced by the Joyeer compiler
   (`RuntimeArchiveMembers`: the archive holds exactly the core and entry objects).
 - [ ] 9.3 Move `JoyeerRuntime.*` into `lib/`
-  ([toolchain libraries](toolchain-libraries.md) §3).
+  ([toolchain libraries](toolchain-libraries.md#todo)).
 - [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,
-  together with the POSIX verification of `System` ([filesystem plan](filesystem.md) §2).
+  together with the POSIX verification of `System` ([filesystem plan](filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
   Done so far: Windows x64, and Linux x86-64 (Debug and Release, 1188 tests, run in Ubuntu under
   WSL2). Open: Windows ARM64, Linux AArch64, macOS.
   **Tier 1 is done here.**
@@ -600,3 +601,8 @@ Start any time after 5.3.
   x64 and Linux x86-64** (the latter run in Ubuntu under WSL2, whose full suite passes: 1184 tests). On
   Linux the program still starts at `main`; macOS keeps libSystem and is unverified, as are Linux
   AArch64 and Windows ARM64.
+
+## Progress log
+
+- 2026-11-12: converted to the plan template (status header, `Todo` heading, this log); no items
+  changed.

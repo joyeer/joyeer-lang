@@ -53,7 +53,7 @@ Order, because each step must keep the suite green:
   backend lowering for host calls go away) and one place to read each operation.
 - Harder: every program that touches the filesystem or stdio imports `System`,
   which resolves only inside a workspace until the installed-library catalog in
-  [library](../plan/library.md) §4 exists. Removal therefore also depends on that
+  [toolchain libraries](../plan/toolchain-libraries.md) exists. Removal therefore also depends on that
   catalog, or on `System` being always available to the compiler.
 - The shared enum types the built-ins use (`FileSystemError`, `FileKind`,
   `ProcessStatus`, ...) are currently prelude types known to the compiler. They
@@ -65,7 +65,7 @@ Order, because each step must keep the suite green:
 
 Step 3 was done without step 2, at the owner's request, so Linux and macOS now
 run only Joyeer code that has never executed there
-([filesystem plan](../plan/filesystem.md) §2).
+([filesystem plan](../plan/filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
 
 - **Enumerations stay in the prelude on purpose.** `FileSystemError`, `FileKind`,
   `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError` and `IOError` are

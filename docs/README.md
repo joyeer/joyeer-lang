@@ -64,8 +64,10 @@ The compiler lowers typed Joyeer IR through LLVM to native executables.
 
 ## Plans
 
-Plan documents should be updated or removed when they stop describing active
-work.
+[plan/](plan/README.md) tracks incomplete multi-step work. Every plan follows
+the [plan rules](plan/README.md#rules): a `Todo` checklist updated in every
+iteration, a progress log, and deletion once every item is done. Start from the
+[template](plan/template.md).
 
 | Document | Topic |
 |---|---|
@@ -76,6 +78,7 @@ work.
 | [runtime-in-joyeer.md](plan/runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
 | [concurrency.md](plan/concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
+| [generics.md](plan/generics.md) | Function values, protocols and generic functions, generic types and layout intrinsics, then moving the task and channel builtins into the library (proposed) |
 | [library.md](plan/library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
 | [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
 

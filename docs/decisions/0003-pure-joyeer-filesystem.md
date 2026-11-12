@@ -78,7 +78,7 @@ Option 2.
   needs glibc 2.28. Both must be confirmed on real hosts.
 - Open before routing: whether to keep the built-in names compiler-known and
   lower them to `System`, or remove them and require `import System`
-  ([plan](../plan/filesystem.md) §5); POSIX run evidence; fern and moss
+  ([plan](../plan/filesystem.md#coverage)); POSIX run evidence; fern and moss
   switching to the Joyeer implementation; removing the C runtime code and its
   ABI tests.
 - Tests: `tests/c-interop/pointers.joyeer` with a C fixture (both profiles),
