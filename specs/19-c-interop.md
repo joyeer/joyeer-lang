@@ -271,6 +271,9 @@ a unit authorized for native bindings, so ordinary programs cannot use these.
 The symbol must be one of the table below, declared with exactly the listed
 parameter and result types; anything else with the prefix is an error, and
 `@c_export` of such a symbol is rejected. An address is an `Int`.
+The Declaration column lists each `@c_extern` declaration's labeled parameters and
+result in a shorthand; it is not a function type (§2.3.1), and intrinsics are not
+function values (§5.6.1).
 
 | Symbol | Declaration | Effect |
 |---|---|---|
@@ -318,7 +321,8 @@ inline form of it, so a runtime unit imports the C library's `memcmp` with
 
 A **core unit**, selected with `--runtime-core-module <name>` (which implies
 `--runtime-module`), may use only `Bool`, the integer and floating types, `Void`,
-`Never` and top-level scalar constants. `String`, arrays, dictionaries,
+`Never`, function types (§2.3.1) built from those, and top-level scalar
+constants. `String`, arrays, dictionaries,
 `Optional`, `Result`, enums, structs, `print` and string literals (other than as
 the argument of the constant-data intrinsic) are reported as
 `type-checking.managed-type-in-core-unit`, because each lowers to a call into the
@@ -361,7 +365,9 @@ boundary. In particular:
 - Other array forms, dictionaries, tuples, ordinary structs and enums,
   `Optional`, and `Result` have no implicit C ABI representation.
 - Neither `T?` nor `Optional<T>` denotes a nullable C value or address.
-- Function values, callbacks, variadic or unprototyped functions, C
+- Function values (§5.6.1) use the Joyeer calling convention and are not C
+  function pointers; a function type is not admitted in a C binding. C
+  callbacks, variadic or unprototyped functions, C
   aggregates by value, unions, bit-fields, `long double`, complex numbers,
   vectors, and wider integers are not admitted.
 - Native addresses and opaque handles that are actually pointers may not

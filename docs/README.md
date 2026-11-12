@@ -109,7 +109,7 @@ in the spec.
 | [0017](decisions/0017-runtime-thread-safety.md) | Runtime thread safety (accepted, implemented): locks taken only while a second thread exists, OS-assisted sleeping locks, atomic `print`, first-panic-wins |
 | [0018](decisions/0018-tasks.md) | Tasks (accepted design, in implementation): `spawn`, `JoinHandle<R>` and `consume h.join()`, one heap block per task, `Array.consumeEmpty()` |
 | [0019](decisions/0019-channels.md) | Channels (accepted, implemented): single-sender, single-receiver bounded channels, `send` returns `Result<Void, ChannelClosed>`, a runtime object with a lock-protected close protocol |
-| [0020](decisions/0020-function-values.md) | Function values (proposed): non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
+| [0020](decisions/0020-function-values.md) | Function values (accepted, in implementation): non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
 
 ## Conventions
 

@@ -49,7 +49,8 @@ The call has type `JoinHandle<R>`, where `R` is the function's result type (`Voi
 The function must be:
 
 - a top-level function (not any method);
-- not `@c_extern` or `@c_export` (§19), and not `main` (`spawn-target-unsupported`);
+- not `@c_extern` or `@c_export` (§19), and not the root module's `main` (§3.2.6)
+  (`spawn-target-unsupported`);
 - declared with **exactly one parameter**, and that parameter is `consuming` (§4.2)
   (`spawn-target-parameters`). A `borrowing`, `inout` or `initializing` parameter is rejected because a
   borrow cannot outlive the call and a child would otherwise mutate its parent's storage. A function
@@ -60,9 +61,10 @@ The function must be:
 (A generic function is also rejected, but user generic functions do not exist yet, §3.2.3.) A public
 function of a source dependency may be a target; a private one is not visible (§12).
 
-This is a subset of a future `function:` argument of the function type (§2.3), provided `spawn` is then
-redeclared as a generic builtin: every call the compiler accepts stays valid, so the closure question
-stays open.
+`function:` takes a function's name, not an arbitrary function value (§5.6.1): this is a subset of a
+future `function:` argument of a function type (§2.3.1), provided `spawn` is then redeclared as a
+generic builtin, and every call the compiler accepts stays valid. A function value may itself be a
+task's input or result and may be sent through a channel.
 
 #### 21.2.2 Ownership
 

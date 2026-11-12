@@ -1,7 +1,7 @@
 # 0020: Function values
 
-- Status: proposed (2026-11-12), revised after a `language-designer` review whose findings are folded in
-  below. Phase 1 of the [generics plan](../plan/0010-generics.md).
+- Status: accepted (2026-11-12), after `language-designer` and `ir-backend-reviewer` reviews whose findings are folded in
+  below. Phase 1 of the [generics plan](../plan/0010-generics.md). Implementation in progress.
 - Spec: [§2.3](../../specs/02-types.md#23-composite-types) (function types, made normative). The spec
   change also amends §2.9, §3.1.1, §3.2.1, §4.1.1, §4.4, §5.4, §5.6, §5.8, §5.11, §12.2, §19.4.5,
   §19.4.7, §19.5, §21.2.1 and Appendix C (see "Spec changes").
@@ -166,8 +166,9 @@ argument.
 
 - A value named by a plain identifier is called directly: `f(a, &b, consume c)`. Any other callee is
   parenthesized: `(s.handler)(x)`, `(table[i])(x)`, `(maybe!)(x)`.
-- The arguments are positional. A label in a call through a value is an error, and so is mixing labeled
-  and unlabeled arguments in any call. Appendix C's `call_arg` becomes
+- The arguments are positional. A label in a call through a value is an error; a call by name keeps
+  requiring every label. (Mixed arguments stay valid only in enum construction, §5.8, which already
+  allows them.) Appendix C's `call_arg` becomes
   `[ label ':' ] [ '&' | 'consume' ] expression`.
 - Each argument is checked against its parameter's type and effect exactly as for a direct call (§4.2):
   `inout` and `initializing` arguments are written `&x`, `consuming` arguments `consume x` (or a literal
@@ -306,7 +307,7 @@ not needed now; if Phase 4 finds that it is, it gets its own record.
   must follow the value to know which function runs. The type states the full effect signature, and a
   parenthesized callee or a binding of function type marks the call as indirect.
 - New diagnostics: a function that cannot be a value, with its reason (`not-a-function-value`); a
-  labeled call through a value (`labeled-function-value-call`); mixed labeled and unlabeled arguments; a
+  labeled call through a value (`labeled-function-value-call`); a
   labeled parameter in a function type; a function type with no result; calling a value that is not a
   function; the wrong number of arguments through a value; calling an optional function value without
   unwrapping; a non-identifier callee without parentheses that names no method; a field and method with
@@ -318,7 +319,7 @@ not needed now; if Phase 4 finds that it is, it gets its own record.
 - **Parser:** `(): ()`; `(()): Int`; `(Int): Int?` versus `((Int): Int)?`; `(Int): (Int): Int` nests to the
   right; `[(): Int]` and `[(Int): Int]` are arrays; `[String: (Int): Bool]`; `Optional<(Int): Int>` and
   `Result<(Int): Int, E>`; each effect keyword in parameter position; rejected: labeled parameters, a
-  missing result, mixed labeled and unlabeled arguments, a parenthesized non-function type.
+  missing result, a parenthesized non-function type.
 - **Type checking:** exact matching, with one mismatch each in effect, count, parameter type and result;
   `borrowing` written out equals the default; no `Never` variance; `let f = square` infers; a defaulted
   function's value needs every argument; each rejected value kind with its reason (method, declared and
