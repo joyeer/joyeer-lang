@@ -1,7 +1,7 @@
 # 0011: The runtime without the C library (Tier 2)
 
 - Status: accepted and implemented in stage 10 of the
-  [runtime plan](../plan/runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
+  [runtime plan](../plan/0008-runtime-in-joyeer.md) (decided and built 2026-11-08). Verified on
   Windows x64 and Linux x86-64 (Ubuntu under WSL2, the full suite). Linux AArch64, macOS and Windows
   ARM64 have not run; the AArch64 system call numbers are from memory.
 - Spec: [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point)

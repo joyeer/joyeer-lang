@@ -1,0 +1,12 @@
+struct Counter {
+    var count: Int
+
+    func current(): Int {
+        return self.count
+    }
+}
+
+func main() {
+    let counter = Counter(count: 1)
+    let read = counter.current
+}

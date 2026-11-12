@@ -52,6 +52,9 @@ enum class TypeKind {
     // `ChannelSender<T>` and `ChannelReceiver<T>`: the ends of a channel (decision 0019).
     channelSender,
     channelReceiver,
+    // `(E1 T1, ..., En Tn): R` (spec 2.3.1, decision 0020): `arguments` holds the parameter types and
+    // then the result; `effects` holds one access effect per parameter.
+    function,
 };
 
 [[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
@@ -110,6 +113,8 @@ struct TypeRecord {
     TypeKind kind = TypeKind::error;
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     std::vector<TypeId> arguments;
+    // Only for `TypeKind::function`: one access effect per parameter.
+    std::vector<syntax::AccessEffect> effects;
 };
 
 enum class NativeBufferKind {
@@ -166,6 +171,11 @@ public:
     [[nodiscard]] TypeId channelReceiverType(TypeId element);
     // `Result<success, ChannelClosed>`, what `send` and `receive` give.
     [[nodiscard]] TypeId channelResultType(TypeId success);
+    // A function type: `parameters` and `effects` have one entry per parameter (spec 2.3.1).
+    [[nodiscard]] TypeId functionType(
+            const std::vector<TypeId>& parameters,
+            const std::vector<syntax::AccessEffect>& effects,
+            TypeId result);
 
     // Resolves a type declaration symbol plus concrete built-in generic
     // arguments. Invalid arity and non-type symbols return nullopt.
@@ -186,6 +196,7 @@ private:
         TypeKind kind;
         semantic::SymbolId symbol;
         std::vector<TypeId> arguments;
+        std::vector<syntax::AccessEffect> effects;
 
         bool operator==(const TypeKey& other) const = default;
     };
@@ -202,7 +213,8 @@ private:
     [[nodiscard]] TypeId intern(
             TypeKind kind,
             semantic::SymbolId symbol,
-            std::vector<TypeId> arguments = {});
+            std::vector<TypeId> arguments = {},
+            std::vector<syntax::AccessEffect> effects = {});
     [[nodiscard]] semantic::SymbolId requireBuiltinSymbol(const std::string& name);
     void registerConcreteBuiltin(const std::string& name, TypeKind kind, TypeId& destination);
     void registerGenericBuiltin(const std::string& name, TypeKind kind, size_t arity);
@@ -282,6 +294,10 @@ enum class TypeCheckingDiagnosticId {
     channelCapacity,
     linearChannelElement,
     channelElementType,
+    // Function values (decision 0020).
+    invalidFunctionType,
+    notAFunctionValue,
+    labeledFunctionValueCall,
 };
 
 struct TypeCheckingDiagnostic {

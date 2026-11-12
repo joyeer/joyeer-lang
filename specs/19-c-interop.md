@@ -12,7 +12,7 @@ it is not an ordinary application program. Native platform acceptance and
 the still-unsupported memory extensions are recorded in the
 [C binding implementation](../docs/impl/c-interop.md),
 [implemented surface](../docs/impl/supported-features.md) and the separate
-[implementation plan](../docs/plan/c-interop.md).
+[implementation plan](../docs/plan/0002-c-interop.md).
 
 ### 19.1 Scope and authorization
 
@@ -271,6 +271,9 @@ a unit authorized for native bindings, so ordinary programs cannot use these.
 The symbol must be one of the table below, declared with exactly the listed
 parameter and result types; anything else with the prefix is an error, and
 `@c_export` of such a symbol is rejected. An address is an `Int`.
+The Declaration column lists each `@c_extern` declaration's labeled parameters and
+result in a shorthand; it is not a function type (§2.3.1), and intrinsics are not
+function values (§5.6.1).
 
 | Symbol | Declaration | Effect |
 |---|---|---|
@@ -306,7 +309,7 @@ no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
 #### 19.4.6 Runtime capabilities still proposed ⏳
 
-One operation the runtime plan ([runtime plan](../docs/plan/runtime-in-joyeer.md)) may
+One operation the runtime plan ([runtime plan](../docs/plan/0008-runtime-in-joyeer.md)) may
 want has **no decision** yet and is rejected by the compiler: for a runtime that
 does not depend on the C library, a Linux system-call intrinsic. It would follow
 the rules of §19.4.5: a reserved symbol, an exact signature, and authorized units
@@ -318,7 +321,8 @@ inline form of it, so a runtime unit imports the C library's `memcmp` with
 
 A **core unit**, selected with `--runtime-core-module <name>` (which implies
 `--runtime-module`), may use only `Bool`, the integer and floating types, `Void`,
-`Never` and top-level scalar constants. `String`, arrays, dictionaries,
+`Never`, function types (§2.3.1) built from those, and top-level scalar
+constants. `String`, arrays, dictionaries,
 `Optional`, `Result`, enums, structs, `print` and string literals (other than as
 the argument of the constant-data intrinsic) are reported as
 `type-checking.managed-type-in-core-unit`, because each lowers to a call into the
@@ -361,7 +365,9 @@ boundary. In particular:
 - Other array forms, dictionaries, tuples, ordinary structs and enums,
   `Optional`, and `Result` have no implicit C ABI representation.
 - Neither `T?` nor `Optional<T>` denotes a nullable C value or address.
-- Function values, callbacks, variadic or unprototyped functions, C
+- Function values (§5.6.1) use the Joyeer calling convention and are not C
+  function pointers; a function type is not admitted in a C binding. C
+  callbacks, variadic or unprototyped functions, C
   aggregates by value, unions, bit-fields, `long double`, complex numbers,
   vectors, and wider integers are not admitted.
 - Native addresses and opaque handles that are actually pointers may not
@@ -491,7 +497,7 @@ bare byte pointers), output parameters, and owned native result storage need a s
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 
-The [memory-boundary proposal](../docs/plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [memory-boundary proposal](../docs/plan/0002-c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 tracks those decisions separately, including whether a mechanism remains
 runtime-only. It is not an implicit approval of `Optional` pointer layouts,
 C-compatible ordinary structs, callbacks, variadic calls, or a general

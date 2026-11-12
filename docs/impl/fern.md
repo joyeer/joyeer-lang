@@ -41,7 +41,7 @@ dependency source; it has no standalone library artifact or stable binary
 ABI and must not declare `output`. Test programs are separate modules with
 their own manifests and entries, not extra units hidden inside one manifest.
 
-The [library plan](../plan/library.md) applies this source-module model to
+The [library plan](../plan/0003-library.md) applies this source-module model to
 the proposed `Foundation`, `System`, `Collections`, and `Testing` modules.
 Local library development can use the existing workspace workflow.
 Standard modules that ship with the compiler (`Foundation`, `System`, and
@@ -285,4 +285,4 @@ External local dependencies, registries/version resolution, lockfiles,
 cache/clean, process capture/timeouts, and remote acquisition
 are not implemented. Physical filesystem identity, atomic publication,
 release notices, and general Unicode diagnostic rendering remain separate
-contracts in the [remaining plan](../plan/package-manager.md).
+contracts in the [remaining plan](../plan/0001-package-manager.md).

@@ -780,6 +780,13 @@ private:
                         if (path.has_value()) mutatedArguments.push_back(path->root);
                     }
                 }
+                // A call through a function value takes its effects from the value's type (spec 5.6.1).
+                std::vector<syntax::AccessEffect> valueEffects;
+                if (!target.has_value()) {
+                    const auto calleeType = model->typeOf(call->callee);
+                    const auto* record = calleeType.has_value() ? model->types().type(*calleeType) : nullptr;
+                    if (record != nullptr && record->kind == typing::TypeKind::function) valueEffects = record->effects;
+                }
                 size_t countedPendingMoves = 0;
                 for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
@@ -791,7 +798,8 @@ private:
                                         callableSymbol->callable.has_value() &&
                                         index < callableSymbol->callable->parameters.size()
                             ? callableSymbol->callable->parameters[index].access
-                            : syntax::AccessEffect::borrowing;
+                            : index < valueEffects.size() ? valueEffects[index]
+                                                          : syntax::AccessEffect::borrowing;
                     if (marked && effect == syntax::AccessEffect::borrowing) {
                         effect = syntax::AccessEffect::consuming;
                     }
@@ -805,8 +813,10 @@ private:
                         if (effect == syntax::AccessEffect::inout) {
                             const auto path = storagePath(argument->value);
                             if (path.has_value()) mutatedArguments.push_back(path->root);
-                        } else if (effect == syntax::AccessEffect::borrowing && callableSymbol != nullptr &&
-                                   !storesItsArguments(*callableSymbol)) {
+                        } else if (effect == syntax::AccessEffect::borrowing &&
+                                   ((callableSymbol != nullptr && !storesItsArguments(*callableSymbol)) ||
+                                    // A function value never stores its arguments.
+                                    (!target.has_value() && !valueEffects.empty()))) {
                             // A borrowed argument that is an owned linear temporary is dropped
                             // once the call returns.
                             reportBorrowedLinearTemporary(argument->value, state);

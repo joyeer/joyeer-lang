@@ -420,6 +420,7 @@ private:
                 type->kind,
                 type->symbol,
                 type->arguments,
+                type->effects,
             });
             const auto* symbol = model->semanticModel()->symbol(type->symbol);
             if (symbol != nullptr && symbol->declaration.has_value()) {
@@ -1277,8 +1278,35 @@ private:
         return result;
     }
 
+    // A function named where it is not called (spec 5.6.1).
+    std::optional<ir::Value> lowerFunctionAddress(semantic::SymbolId symbol, const syntax::NodePtr& expression) {
+        const auto type = model->typeOf(expression);
+        if (!functions.contains(symbol) || !type.has_value()) {
+            report(DiagnosticId::missingSymbol, expression->span,
+                   "function value has no IR function declaration");
+            return std::nullopt;
+        }
+        auto instruction = makeInstruction(ir::Opcode::functionAddress, expression->span);
+        instruction.callee = functions.at(symbol);
+        instruction.result = makeValue(*type, ir::ValueCategory::value);
+        const auto result = *instruction.result;
+        emit(std::move(instruction));
+        recordValue(result, ValueOwnership::trivial);
+        return result;
+    }
+
+    bool namesFunctionValue(const syntax::NodePtr& expression, std::optional<semantic::SymbolId> symbol) const {
+        if (!symbol.has_value()) return false;
+        const auto* declaration = model->semanticModel()->symbol(*symbol);
+        const auto type = model->typeOf(expression);
+        const auto* record = type.has_value() ? model->types().type(*type) : nullptr;
+        return declaration != nullptr && declaration->kind == semantic::SymbolKind::function &&
+                record != nullptr && record->kind == typing::TypeKind::function;
+    }
+
     std::optional<ir::Value> lowerName(const syntax::NodePtr& expression) {
         const auto symbol = model->referencedSymbol(expression);
+        if (namesFunctionValue(expression, symbol)) return lowerFunctionAddress(*symbol, expression);
         if (symbol.has_value() && topLevelBindings.contains(*symbol)) {
             // A rejected declaration was already reported; do not add a second error.
             if (!constantDeclarations.contains(*symbol)) return std::nullopt;
@@ -1819,6 +1847,7 @@ private:
                     "member has no typed resolved symbol");
             return std::nullopt;
         }
+        if (namesFunctionValue(expression, symbol)) return lowerFunctionAddress(*symbol, expression);
         if (topLevelBindings.contains(*symbol)) {
             if (!constantDeclarations.contains(*symbol)) return std::nullopt;
             return lowerConstant(*symbol, expression->span);
@@ -2716,6 +2745,11 @@ private:
     std::optional<ir::Value> lowerCall(const syntax::CallExprSyntax::Ptr& expression) {
         const auto target = model->callTarget(expression);
         if (!target.has_value()) {
+            const auto calleeType = model->typeOf(expression->callee);
+            const auto* record = calleeType.has_value() ? model->types().type(*calleeType) : nullptr;
+            if (record != nullptr && record->kind == typing::TypeKind::function) {
+                return lowerFunctionValueCall(expression, *calleeType);
+            }
             report(
                     DiagnosticId::missingSymbol,
                     expression->span,
@@ -2819,49 +2853,106 @@ private:
         const auto& callee = module->functions[functions.at(*target)];
         for (size_t index = 0; index < operands.size(); ++index) {
             const auto& operand = operands[index];
-            const auto expectsAddress = index < callee.parameters.size() &&
-                callee.parameters[index].value.category == ir::ValueCategory::address;
-            const auto consumesValue = index < callee.parameters.size() &&
-                    callee.parameters[index].isConsuming;
-            std::optional<ir::Value> value;
-            if (expectsAddress) {
-                value = lowerAddress(operand.value);
-            } else if (consumesValue && isAddressable(operand.value)) {
-                const auto address = lowerAddress(operand.value);
-                if (address.has_value()) {
-                    value = emitValue(
-                            ir::Opcode::take,
-                            address->type,
-                            ir::ValueCategory::value,
-                            { address->id },
-                            operand.span);
-                }
-            } else {
-                value = lowerExpression(operand.value);
-            }
+            const auto* parameter = index < callee.parameters.size() ? &callee.parameters[index] : nullptr;
+            const auto value = lowerCallOperand(
+                    operand.value,
+                    operand.span,
+                    parameter != nullptr && parameter->value.category == ir::ValueCategory::address,
+                    parameter != nullptr && parameter->isConsuming,
+                    parameter != nullptr && !parameter->acceptsAnyType
+                            ? std::optional<typing::TypeId>(parameter->value.type)
+                            : std::nullopt,
+                    consumedArguments);
             if (!value.has_value()) return std::nullopt;
-            if (!expectsAddress && index < callee.parameters.size() &&
-                !callee.parameters[index].acceptsAnyType) {
-                value = coerce(
-                        *value,
-                        callee.parameters[index].value.type,
-                        operand.value->span);
-                if (!value.has_value()) return std::nullopt;
-            }
-            if (consumesValue && requiresDestroy(value->type)) {
-                value = prepareOwned(*value, operand.span);
-                if (!value.has_value()) return std::nullopt;
-                consumedArguments.push_back(*value);
-            }
             arguments.push_back(value->id);
         }
+        auto instruction = makeInstruction(ir::Opcode::call, expression->span);
+        instruction.callee = functions.at(*target);
+        return finishCall(expression, std::move(instruction), std::move(arguments), consumedArguments);
+    }
 
+    // One argument of a call: an address for `inout` and `initializing`, a moved value for `consuming`,
+    // otherwise a value coerced to the parameter type. An owned consumed value is added to
+    // `consumedArguments`, to be acquired once every argument is evaluated.
+    std::optional<ir::Value> lowerCallOperand(
+            const syntax::ExprPtr& operand,
+            SourceSpan span,
+            bool expectsAddress,
+            bool consumesValue,
+            std::optional<typing::TypeId> parameterType,
+            std::vector<ir::Value>& consumedArguments) {
+        std::optional<ir::Value> value;
+        if (expectsAddress) {
+            value = lowerAddress(operand);
+        } else if (consumesValue && isAddressable(operand)) {
+            const auto address = lowerAddress(operand);
+            if (address.has_value()) {
+                value = emitValue(
+                        ir::Opcode::take,
+                        address->type,
+                        ir::ValueCategory::value,
+                        { address->id },
+                        span);
+            }
+        } else {
+            value = lowerExpression(operand);
+        }
+        if (!value.has_value()) return std::nullopt;
+        if (!expectsAddress && parameterType.has_value()) {
+            value = coerce(*value, *parameterType, operand->span);
+            if (!value.has_value()) return std::nullopt;
+        }
+        if (consumesValue && requiresDestroy(value->type)) {
+            value = prepareOwned(*value, span);
+            if (!value.has_value()) return std::nullopt;
+            consumedArguments.push_back(*value);
+        }
+        return value;
+    }
+
+    // `f(a, &b)` or `(s.f)(a)` (spec 5.6.1): the callee is evaluated first to a copy, then the arguments
+    // by the function type's effects.
+    std::optional<ir::Value> lowerFunctionValueCall(
+            const syntax::CallExprSyntax::Ptr& expression,
+            typing::TypeId calleeType) {
+        const auto* record = model->types().type(calleeType);
+        const auto parameters = record->arguments;
+        const auto effects = record->effects;
+        const auto callee = lowerExpression(expression->callee);
+        if (!callee.has_value()) return std::nullopt;
+        std::vector<ir::ValueId> arguments { callee->id };
+        std::vector<ir::Value> consumedArguments;
+        for (size_t index = 0; index < expression->arguments.size() && index < effects.size(); ++index) {
+            const auto& argument = expression->arguments[index];
+            const auto effect = effects[index];
+            const auto value = lowerCallOperand(
+                    argument->value,
+                    argument->span,
+                    effect == syntax::AccessEffect::inout || effect == syntax::AccessEffect::initializing,
+                    effect == syntax::AccessEffect::consuming,
+                    parameters[index],
+                    consumedArguments);
+            if (!value.has_value()) return std::nullopt;
+            arguments.push_back(value->id);
+        }
+        return finishCall(
+                expression,
+                makeInstruction(ir::Opcode::callIndirect, expression->span),
+                std::move(arguments),
+                consumedArguments);
+    }
+
+    // Emits a call whose operands are lowered: acquires the consumed arguments, then gives the result
+    // a value, or ends the block after a `Never` call.
+    std::optional<ir::Value> finishCall(
+            const syntax::CallExprSyntax::Ptr& expression,
+            ir::Instruction instruction,
+            std::vector<ir::ValueId> arguments,
+            const std::vector<ir::Value>& consumedArguments) {
         for (const auto& argument : consumedArguments) {
             if (!acquireOwned(argument, expression->span).has_value()) return std::nullopt;
         }
-        auto instruction = makeInstruction(ir::Opcode::call, expression->span);
         instruction.operands = std::move(arguments);
-        instruction.callee = functions.at(*target);
         const auto type = model->typeOf(expression);
         if (type.has_value() && *type != model->types().voidType() &&
             *type != model->types().neverType()) {

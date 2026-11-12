@@ -8,7 +8,7 @@
 
 `print` of a `Double` wrote `%.17g` and of a `Float` `%.9g` through `printf`, which a
 Joyeer runtime cannot call (variadic) and a libc-free runtime (Tier 2) cannot
-depend on. [The runtime plan](../plan/runtime-in-joyeer.md) D6 asked for the same
+depend on. [The runtime plan](../plan/0008-runtime-in-joyeer.md) D6 asked for the same
 bytes from Joyeer code, proven against the C library.
 
 ## Decision

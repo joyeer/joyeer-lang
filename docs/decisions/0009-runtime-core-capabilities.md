@@ -10,7 +10,7 @@
 
 ## Context
 
-[The runtime plan](../plan/runtime-in-joyeer.md) writes the runtime in Joyeer. The
+[The runtime plan](../plan/0008-runtime-in-joyeer.md) writes the runtime in Joyeer. The
 first functions ([decision 0008](0008-runtime-core-build-shape.md)) needed nothing
 the compiler lacked. The rest need five things it does not yet have: mutable
 state, calls through a function address, a way to stop the runtime reaching

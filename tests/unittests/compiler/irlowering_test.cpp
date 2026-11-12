@@ -2186,4 +2186,155 @@ TEST_F(NewOpcodeVerifierTest, EachChannelRuleFiresOnItsOwnMutation) {
     }, "channel_close expects 1 operand"));
 }
 
+// Function values (decision 0020): a function named as a value lowers to one function_address, and a
+// call through a value to one call_indirect whose operands follow the type's effects.
+constexpr const char* functionValueProgram =
+        "func square(value: Int): Int { return value * value }\n"
+        "func bump(count: inout Int) { &count = count + 1 }\n"
+        "func stop(code: Int): Never { return stop(code: code) }\n"
+        "func run(): Int {\n"
+        "    let f = square\n"
+        "    let g = bump\n"
+        "    var n = f(3)\n"
+        "    g(&n)\n"
+        "    return n\n"
+        "}\n"
+        "func halt(): Int {\n"
+        "    let s = stop\n"
+        "    s(1)\n"
+        "}\n";
+
+TEST_F(IRLoweringTest, FunctionValuesLowerToAnAddressAndAnIndirectCall) {
+    ASSERT_NO_FATAL_FAILURE(lower(functionValueProgram));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::functionAddress), 2u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::callIndirect), 2u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 0u);
+    // A call through a Never value ends its block.
+    EXPECT_EQ(opcodeCount(function("halt"), joyeer::ir::Opcode::callIndirect), 1u);
+    EXPECT_GE(opcodeCount(function("halt"), joyeer::ir::Opcode::unreachable), 1u);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    EXPECT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+}
+
+TEST_F(NewOpcodeVerifierTest, FunctionAddressAndIndirectCallsAreCheckedAgainstTheFunctionType) {
+    ASSERT_NO_FATAL_FAILURE(lower(functionValueProgram));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    using joyeer::ir::Opcode;
+    // function_address: an unknown callee, an operand, a result of another type.
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto&) {
+        instruction.callee = 987654;
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto&) {
+        instruction.operands.push_back(0);
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "Int");
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
+        instruction.result->type = typeNamed(module, "(inout Int): ()");
+    }));
+    // call_indirect: a callee that is not a function value, a wrong count, a wrong category, a result.
+    EXPECT_TRUE(rejectsWith("run", Opcode::callIndirect, [](auto& instruction, auto&) {
+        instruction.operands.erase(instruction.operands.begin());
+    }, "call_indirect"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::callIndirect, [](auto& instruction, auto&) {
+        instruction.operands.push_back(instruction.operands.back());
+    }, "call_indirect"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::callIndirect, [](auto& instruction, auto&) {
+        instruction.result.reset();
+    }, "call_indirect"));
+    EXPECT_TRUE(rejectsWith("run", Opcode::callIndirect, [](auto& instruction, auto&) {
+        instruction.callee = 0;
+    }, "call_indirect"));
+    // A Never call must be followed by unreachable.
+    EXPECT_TRUE(rejectsWith("halt", Opcode::callIndirect, [](auto& instruction, auto& module) {
+        for (auto& candidate : module.functions) {
+            if (candidate.name != "halt") continue;
+            for (auto& block : candidate.blocks) {
+                for (size_t index = 0; index + 1 < block.instructions.size(); ++index) {
+                    if (block.instructions[index].opcode == Opcode::callIndirect) {
+                        block.instructions[index + 1].opcode = Opcode::returnVoid;
+                    }
+                }
+            }
+        }
+    }, "unreachable"));
+}
+
+// Malformed wire input must be rejected, not crash; and the native-binding, Never and entry-point rules
+// hold for function values as for direct calls (review of decision 0020).
+TEST_F(NewOpcodeVerifierTest, FunctionValueRulesRejectMalformedModules) {
+    ASSERT_NO_FATAL_FAILURE(lower(functionValueProgram));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    using joyeer::ir::Opcode;
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto&) {
+        instruction.result.reset();
+    }));
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto&) {
+        instruction.result->category = joyeer::ir::ValueCategory::address;
+    }));
+    // A C binding's address needs a runtime unit, like a direct call to it.
+    EXPECT_TRUE(rejectsWith("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
+        for (auto& candidate : module.functions) {
+            if (candidate.id != *instruction.callee) continue;
+            candidate.nativeBinding = joyeer::NativeBinding { joyeer::NativeBindingKind::cExport, "exported" };
+        }
+    }, "runtime authorization"));
+    // The root `main` has no address.
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
+        for (auto& candidate : module.functions) {
+            if (candidate.id == *instruction.callee) candidate.name = "main";
+        }
+    }));
+    // call_indirect takes no block targets.
+    EXPECT_TRUE(rejectsWith("run", Opcode::callIndirect, [](auto& instruction, auto&) {
+        instruction.targets.push_back(0);
+    }, "call_indirect"));
+    // A direct call returning Never must be followed by unreachable too.
+    EXPECT_TRUE(rejectsWith("stop", Opcode::call, [](auto&, auto& module) {
+        for (auto& candidate : module.functions) {
+            if (candidate.name != "stop") continue;
+            for (auto& block : candidate.blocks) {
+                for (size_t index = 0; index + 1 < block.instructions.size(); ++index) {
+                    if (block.instructions[index].opcode == Opcode::call) {
+                        block.instructions[index + 1].opcode = Opcode::returnVoid;
+                    }
+                }
+            }
+        }
+    }, "unreachable"));
+}
+
+TEST_F(NewOpcodeVerifierTest, FunctionTypesNeedOneValidEffectPerParameter) {
+    ASSERT_NO_FATAL_FAILURE(lower(functionValueProgram));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    auto module = *result.module;
+    auto found = std::find_if(module.types.begin(), module.types.end(),
+            [](const auto& type) { return type.kind == joyeer::typing::TypeKind::function; });
+    ASSERT_NE(found, module.types.end());
+    auto missing = module;
+    missing.types[found - module.types.begin()].effects.clear();
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(missing).succeeded());
+    auto outOfRange = module;
+    outOfRange.types[found - module.types.begin()].effects.assign(
+            found->effects.size(), static_cast<joyeer::syntax::AccessEffect>(99));
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(outOfRange).succeeded());
+    // `Never` is not a parameter type.
+    auto neverParameter = module;
+    const auto never = std::find_if(module.types.begin(), module.types.end(),
+            [](const auto& type) { return type.kind == joyeer::typing::TypeKind::never; });
+    ASSERT_NE(never, module.types.end());
+    auto& changed = neverParameter.types[found - module.types.begin()];
+    ASSERT_GE(changed.arguments.size(), 2u);
+    changed.arguments[0] = never->id;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(neverParameter).succeeded());
+    // Effects belong only to function types.
+    auto strayEffects = module;
+    const auto integer = std::find_if(strayEffects.types.begin(), strayEffects.types.end(),
+            [](const auto& type) { return type.kind == joyeer::typing::TypeKind::integer; });
+    ASSERT_NE(integer, strayEffects.types.end());
+    integer->effects.push_back(joyeer::syntax::AccessEffect::inout);
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(strayEffects).succeeded());
+}
 } // namespace

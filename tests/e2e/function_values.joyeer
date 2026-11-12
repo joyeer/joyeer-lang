@@ -1,0 +1,138 @@
+// Function values (spec 2.3.1, 5.6.1; decision 0020): a top-level function named where it is not
+// called is a value of its function type, called positionally with the same access markers as a call
+// by name. Values are stored in bindings, fields, arrays, optionals, enum payloads and dictionaries,
+// cross a task and a channel, and every heap value is still destroyed once (the leak check ends at 0).
+struct Counter {
+    var count: Int
+    var step: (inout Counter): ()
+}
+
+enum Operation {
+    Unary((Int): Int),
+    Constant(Int),
+}
+
+func square(value: Int): Int {
+    return value * value
+}
+
+func negate(value: Int): Int {
+    return 0 - value
+}
+
+func bump(count: inout Int) {
+    &count = count + 1
+}
+
+func advance(counter: inout Counter) {
+    &counter.count = counter.count + 10
+}
+
+func shout(text: consuming String): String {
+    return text + "!"
+}
+
+func fill(out: initializing String, value: borrowing String) {
+    &out = value + "?"
+}
+
+func stop(code: Int): Never {
+    return stop(code: code)
+}
+
+func apply(f: (Int): Int, value: Int): Int {
+    return f(value)
+}
+
+func compose(): (Int): Int {
+    return square
+}
+
+func run(operation: Operation, value: Int): Int {
+    match operation {
+        .Unary(f) => return f(value),
+        .Constant(number) => return number,
+    }
+}
+
+func countdown(steps: Int, again: (Int): Int): Int {
+    if steps == 0 {
+        return 0
+    }
+    return 1 + again(steps - 1)
+}
+
+func recurse(steps: Int): Int {
+    return countdown(steps: steps, again: recurse)
+}
+
+func worker(task: consuming (Int): Int): Int {
+    return task(6)
+}
+
+func main() {
+    // A binding, a parameter and a returned function value.
+    let f = square
+    print(value: f(3))
+    print(value: apply(f: negate, value: 4))
+    print(value: (compose())(5))
+
+    // inout and initializing arguments keep their '&'.
+    let g: (inout Int): () = bump
+    var n = 1
+    g(&n)
+    print(value: n)
+    let make: (initializing String, String): () = fill
+    var made: String
+    make(&made, "made")
+    print(value: made)
+
+    // A consuming argument moves a heap value into the call.
+    let loud: (consuming String): String = shout
+    let text = "hello"
+    print(value: loud(consume text))
+
+    // A field is called with a parenthesized callee, and may take its own holder inout.
+    var counter = Counter(count: 1, step: advance)
+    (counter.step)(&counter)
+    print(value: counter.count)
+
+    // Arrays, optionals, enum payloads and dictionary values.
+    let table: [(Int): Int] = [square, negate]
+    print(value: (table[1])(7))
+    let maybe: ((Int): Int)? = square
+    match maybe {
+        .Some(h) => print(value: h(9)),
+        .None => print(value: "none"),
+    }
+    print(value: run(operation: .Unary(negate), value: 2))
+    print(value: run(operation: .Constant(8), value: 2))
+    var named: [String: (Int): Int] = [:]
+    &named["square"] = square
+    match named.get(key: "square") {
+        .Some(h) => print(value: h(11)),
+        .None => print(value: "missing"),
+    }
+
+    // Recursion through a value, and a Never function value that is never called.
+    print(value: recurse(steps: 3))
+    let fail: (Int): Never = stop
+    if n < 0 {
+        fail(1)
+    }
+
+    // A function value crosses a task and a channel.
+    let handle = spawn(function: worker, input: consume square)
+    let joined = consume handle.join()
+    print(value: joined)
+    var sender: ChannelSender<(Int): Int>
+    var receiver: ChannelReceiver<(Int): Int>
+    channel(capacity: 1, sender: &sender, receiver: &receiver)
+    let sent = sender.send(value: consume negate)
+    match receiver.receive() {
+        .Ok(received) => print(value: received(12)),
+        .Err(_) => print(value: "closed"),
+    }
+    consume sender.close()
+    consume receiver.close()
+}

@@ -1,0 +1,12 @@
+func square(value: Int): Int {
+    return value * value
+}
+
+struct Handler {
+    var run: (Int): Int
+}
+
+func main() {
+    let handler = Handler(run: square)
+    let doubled = handler.run(2)
+}

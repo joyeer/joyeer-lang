@@ -98,6 +98,10 @@ source -> lexer -> parser -> name resolution -> type checking
   `JOYEER_BUILD_UNITTESTS`, and `JOYEER_BUILD_FERN` enabled; the full root
   workspace also needs `JOYEER_BUILD_COMPRESSION`. Report unrun or blocked
   gates explicitly. See [validation details](docs/building.md#full-platform-validation).
+- When working from a plan in [docs/plan/](docs/plan/README.md), update its
+  `Todo` checklist and progress log in the same change: check off only
+  verified items, with evidence. New plans start from the
+  [plan template](docs/plan/template.md).
 - Use [jp_write_bytes](tests/fern/helpers.cmake) for byte-exact manifest
   fixtures, not CMake `file(WRITE)`: Windows text writes can change byte counts.
 - Claim parallel test directories exclusively with process-specific names.

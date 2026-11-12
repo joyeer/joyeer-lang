@@ -1325,4 +1325,32 @@ TEST(CInteropParserTest, RejectsMisplacedAnnotationsDefaultsAndOrdinaryBodylessD
     }
 }
 
+// The wire format carries a function type's effects and both function-value instructions (decision 0020).
+TEST_F(CInteropTest, WireFormatRoundTripsFunctionValues) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+func fill(out: initializing String, text: consuming String) { &out = text }
+func run(): String {
+    let f: (initializing String, consuming String): () = fill
+    var out: String
+    f(&out, consume "x")
+    return out
+}
+)"));
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
+    const auto function = std::find_if(decoded.types.begin(), decoded.types.end(),
+            [](const auto& type) { return type.kind == joyeer::typing::TypeKind::function; });
+    ASSERT_NE(function, decoded.types.end());
+    EXPECT_EQ(function->effects, (std::vector<joyeer::syntax::AccessEffect> {
+            joyeer::syntax::AccessEffect::initializing, joyeer::syntax::AccessEffect::consuming }));
+    EXPECT_EQ(joyeer::ir::dump(decoded), joyeer::ir::dump(*module));
+    const auto text = joyeer::ir::dump(decoded);
+    EXPECT_NE(text.find("function_address"), std::string::npos);
+    EXPECT_NE(text.find("call_indirect"), std::string::npos);
+}
 } // namespace

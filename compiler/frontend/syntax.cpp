@@ -25,6 +25,7 @@ const char* kindName(Kind kind) {
         case Kind::arrayType: return "array_type";
         case Kind::dictionaryType: return "dictionary_type";
         case Kind::optionalType: return "optional_type";
+        case Kind::functionType: return "function_type";
         case Kind::errorExpr: return "error_expr";
         case Kind::nameExpr: return "name_expr";
         case Kind::literalExpr: return "literal_expr";
@@ -203,6 +204,18 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
             const auto value = std::static_pointer_cast<OptionalTypeSyntax>(node);
             out << '\n';
             appendNode(out, value->wrapped, depth + 1);
+            return;
+        }
+        case Kind::functionType: {
+            const auto value = std::static_pointer_cast<FunctionTypeSyntax>(node);
+            out << " access=";
+            for (size_t index = 0; index < value->parameters.size(); ++index) {
+                const auto& keyword = value->parameters[index].accessKeyword;
+                out << (index == 0 ? "" : ",") << (keyword == nullptr ? "borrowing" : tokenText(keyword));
+            }
+            out << '\n';
+            for (const auto& parameter : value->parameters) appendNode(out, parameter.type, depth + 1);
+            appendNode(out, value->result, depth + 1);
             return;
         }
         case Kind::nameExpr: {

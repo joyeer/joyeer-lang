@@ -112,6 +112,11 @@ enum class Opcode {
     returnVoid,
     unreachable,
     floatingConstant,
+    // Function values (decision 0020). `functionAddress` yields `callee` as a value of its function type;
+    // `callIndirect` calls operand 0, a function value, with the remaining operands passed by the
+    // type's parameter effects.
+    functionAddress,
+    callIndirect,
 };
 
 enum class PatternKind {
@@ -249,6 +254,9 @@ struct TypeName {
     typing::TypeKind kind = typing::TypeKind::error;
     semantic::SymbolId symbol = semantic::invalidSymbolId;
     std::vector<TypeId> arguments;
+    // A function type's parameter effects, one per parameter; `arguments` is the parameters, then the
+    // result.
+    std::vector<syntax::AccessEffect> effects;
     std::optional<SourceSpan> declarationSpan;
 };
 

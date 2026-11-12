@@ -43,6 +43,7 @@ enum class Kind {
     arrayType,
     dictionaryType,
     optionalType,
+    functionType,
 
     errorExpr,
     nameExpr,
@@ -233,6 +234,36 @@ struct OptionalTypeSyntax final : TypeSyntax {
 
     OptionalTypeSyntax(SourceSpan span, TypePtr wrapped):
             TypeSyntax(Kind::optionalType, span), wrapped(std::move(wrapped)) {}
+};
+
+// `(E1 T1, ..., En Tn): R` (spec 2.3.1): unlabeled parameters with access effects and a
+// mandatory result.
+struct FunctionTypeSyntax final : TypeSyntax {
+    using Ptr = std::shared_ptr<FunctionTypeSyntax>;
+
+    struct Parameter {
+        // Null for the default `borrowing`.
+        Token::Ptr accessKeyword;
+        TypePtr type;
+
+        [[nodiscard]] AccessEffect accessEffect() const {
+            if (accessKeyword == nullptr) return AccessEffect::borrowing;
+            switch (accessKeyword->kind) {
+                case kwInout: return AccessEffect::inout;
+                case kwConsuming: return AccessEffect::consuming;
+                case kwInitializing: return AccessEffect::initializing;
+                default: return AccessEffect::borrowing;
+            }
+        }
+    };
+
+    std::vector<Parameter> parameters;
+    TypePtr result;
+
+    FunctionTypeSyntax(SourceSpan span, std::vector<Parameter> parameters, TypePtr result):
+            TypeSyntax(Kind::functionType, span),
+            parameters(std::move(parameters)),
+            result(std::move(result)) {}
 };
 
 struct BindingDeclSyntax final : DeclSyntax {

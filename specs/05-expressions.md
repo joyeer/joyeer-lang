@@ -116,6 +116,11 @@ optional_chain  ::= postfix_expr '?.' identifier
 Methods declared in a `struct`, `enum`, or `extension` are called via
 member syntax: `a.size()`, `point.distance(to: other)`.
 
+`a.f(args)` always calls a method. A stored field of function type is called
+with a parenthesized callee, `(a.f)(args)` (§5.6.1). A type may not have a
+stored field and a method with the same name
+(`name-resolution.duplicate-declaration`).
+
 Optional chaining short-circuits to `nil`:
 
 ```joyeer
@@ -145,14 +150,70 @@ depends on the surrounding context (§4.5.1).
 
 ```
 call_expr       ::= callee '(' [ call_arg , ... ] ')'
-call_arg        ::= label ':' [ '&' | 'consume' ] expression
+callee          ::= identifier | member_expr | '(' expression ')'
+call_arg        ::= [ label ':' ] [ '&' | 'consume' ] expression
 ```
 
-Argument labels are **mandatory** at every call site (§3.2.1);
-there is no positional / unlabeled form and no `_` label.
+Argument labels are **mandatory** at every call by name (§3.2.1);
+there is no positional / unlabeled form for one and no `_` label.
 `func f(a: Int, b: Int)` must be called as `f(a: 1, b: 2)`. Supplied arguments
 follow declaration order; a defaulted argument (§3.2.5) may be omitted but is
-never written without its label.
+never written without its label. Unlabeled arguments appear only in a call
+through a function value (§5.6.1) and in enum construction (§5.8).
+
+#### 5.6.1 Function values and calls through them
+
+The name of a function, used as an expression where it is not called, is a
+**function value** of its function type (§2.3.1,
+[decision 0020](../docs/decisions/0020-function-values.md)):
+
+```joyeer
+func square(value: Int): Int { value * value }
+func bump(count: inout Int) { count = count + 1 }
+
+let f = square                    // f: (Int): Int
+let g: (inout Int): () = bump
+var n = f(3)                      // 9
+g(&n)                             // n == 10
+```
+
+A module-qualified name works too. Only the name's visibility is checked
+(§12.2); a private function's value may be returned by a public function.
+
+These are not function values (`type-checking.not-a-function-value`, which
+states the reason):
+
+- methods, declared and synthesized initializers, and enum cases;
+- the compiler-known builtins (`print`, `spawn`, `channel`, `byteToInt`,
+  `byteToString`) and the runtime intrinsics (§19.4.5); a user declaration
+  that shadows a builtin is an ordinary function and is a value;
+- `@c_extern` and `@c_data` declarations (§19.5);
+- the root module's `main` (§3.2.6); a dependency's `main` is ordinary.
+
+A function's default parameter values (§3.2.5) do not carry over: a call
+through the value supplies every argument.
+
+**Calls.** A function value named by a plain identifier is called directly:
+`f(a, &b, consume c)`. Any other callee is parenthesized: `(s.handler)(x)`,
+`(table[i])(x)`, `(maybe!)(x)`; `s.f(args)` always names a method (§5.4).
+
+- Arguments are positional. A label is an error
+  (`type-checking.labeled-function-value-call`), and so is a wrong number of
+  arguments.
+- Each argument is checked against its parameter's type and effect exactly as
+  for a call by name (§4.2): `inout` and `initializing` arguments are written
+  `&x`, `consuming` arguments `consume x`, with `consume` also before a literal or
+  temporary, as for every consuming argument (§4.3).
+- **Evaluation order.** The callee expression is evaluated first, to a copy;
+  no access to its storage is held while the arguments are evaluated or during
+  the call. The arguments are then evaluated left to right and committed as for
+  a call by name (§4.4, §4.7.1). So `(s.f)(&s)` and `(handlers[0])(&handlers)`
+  are valid.
+- A call whose result type is `Never` does not return.
+- An optional function value must be unwrapped first, with `(maybe!)(x)` or a
+  `match`. `maybe?(x)` propagates `nil` out of the enclosing function and then
+  calls (§5.4.1); it is not "call if present".
+- Calling a value that is not a function is `type-checking.not-callable`.
 
 ### 5.7 Struct construction
 
@@ -179,8 +240,9 @@ let error: DecodeError = .Unexpected(b'?', at: 12)
 The declaration determines the payload arity and labels. A payload position
 declared without a label is positional; a labeled position must use exactly
 that label. Positional and labeled payloads may be mixed in declaration order.
-This is the only unlabeled invocation form in v0.1 — ordinary function and
-struct-initializer calls still require labels (§3.2.1, §5.6). A payload-less
+Besides calls through a function value (§5.6.1), this is the only unlabeled
+invocation form; calls by name and struct-initializer calls require labels
+(§3.2.1, §5.6). A payload-less
 case is written without an empty argument clause (`.Quit`, not `.Quit()`).
 
 ### 5.9 Match expression
@@ -239,8 +301,9 @@ In `.Ok(())`, the outer parentheses contain one payload expression, `()`;
 
 ### 5.11 Closures
 
-Closures are deferred to v0.2. v0.1 has only top-level and method functions.
-Iteration uses `for-in`; higher-order patterns use free functions.
+Closures are deferred to v0.2. A function value (§5.6.1) refers to a top-level
+function and captures nothing; higher-order code passes such values, or a struct
+together with a function value when it needs context.
 
 ### 5.12 Nil-coalescing `??`
 

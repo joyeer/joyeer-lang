@@ -95,6 +95,9 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::unexpectedEndOfFile: return "parser.unexpected-eof";
         case DiagnosticId::unsupportedSyntax: return "parser.unsupported-syntax";
         case DiagnosticId::invalidDeinit: return "parser.invalid-deinit";
+        case DiagnosticId::labeledFunctionTypeParameter: return "parser.labeled-function-type-parameter";
+        case DiagnosticId::missingFunctionTypeResult: return "parser.missing-function-type-result";
+        case DiagnosticId::parenthesizedType: return "parser.parenthesized-type";
     }
     return "parser.unknown";
 }
@@ -900,11 +903,7 @@ syntax::TypePtr Parser::parseType() {
 
 syntax::TypePtr Parser::parseTypePrimary() {
     const size_t start = cursor.position();
-    if (cursor.at(leftParen) && cursor.at(rightParen, 1)) {
-        cursor.advance();
-        cursor.advance();
-        return std::make_shared<syntax::UnitTypeSyntax>(spanFrom(start));
-    }
+    if (cursor.at(leftParen)) return parseParenthesizedType();
     if (cursor.at(identifier)) {
         auto name = cursor.advance();
         if (cursor.at(dot)) {
@@ -958,6 +957,62 @@ syntax::TypePtr Parser::parseTypePrimary() {
     }
 
     return nullptr;
+}
+
+// `()`, a function type `(E1 T1, ...): R` (spec 2.3.1), or a function type in parentheses. A list
+// followed by `:` is always a function type, so `[(): Int]` is an array of functions.
+syntax::TypePtr Parser::parseParenthesizedType() {
+    const size_t start = cursor.position();
+    cursor.advance();
+    std::vector<syntax::FunctionTypeSyntax::Parameter> parameters;
+    {
+        DelimiterScope delimiter(activeClosers, rightParen);
+        while (!cursor.at(rightParen) && !cursor.atEnd()) {
+            const size_t before = cursor.position();
+            if (cursor.at(identifier) && cursor.at(colon, 1)) {
+                const auto label = cursor.advance();
+                cursor.advance();
+                report(DiagnosticId::labeledFunctionTypeParameter, tokenSpan(label),
+                       "a function type's parameters have no labels; remove '" + label->rawValue + ":'");
+            }
+            Token::Ptr accessKeyword;
+            if (cursor.at(kwBorrowing) || cursor.at(kwInout) || cursor.at(kwConsuming) ||
+                cursor.at(kwInitializing)) {
+                accessKeyword = cursor.advance();
+            }
+            parameters.push_back({ std::move(accessKeyword), parseType() });
+            if (cursor.position() == before) cursor.advance();
+            if (cursor.eat(comma) != nullptr) {
+                if (cursor.at(rightParen)) break;
+                continue;
+            }
+            if (cursor.at(rightParen) || cursor.atEnd()) break;
+            reportMissingComma("expected ',' between function type parameters");
+            synchronizeList(rightParen);
+            if (cursor.eat(comma) == nullptr) break;
+        }
+    }
+    expect(rightParen, "')' to close a function type");
+
+    if (cursor.eat(colon) != nullptr) {
+        auto result = parseType();
+        return std::make_shared<syntax::FunctionTypeSyntax>(
+                spanFrom(start), std::move(parameters), std::move(result));
+    }
+    if (parameters.empty()) return std::make_shared<syntax::UnitTypeSyntax>(spanFrom(start));
+    if (parameters.size() == 1 && parameters[0].accessKeyword == nullptr) {
+        auto inner = std::move(parameters[0].type);
+        if (inner->kind != syntax::Kind::functionType && inner->kind != syntax::Kind::errorType) {
+            report(DiagnosticId::parenthesizedType, spanFrom(start),
+                   "parentheses around a type are allowed only around a function type");
+        }
+        return inner;
+    }
+    report(DiagnosticId::missingFunctionTypeResult, insertionSpan(),
+           "a function type needs a result type; write ': ()' for a function that returns nothing");
+    auto result = std::make_shared<syntax::UnitTypeSyntax>(insertionSpan());
+    return std::make_shared<syntax::FunctionTypeSyntax>(
+            spanFrom(start), std::move(parameters), std::move(result));
 }
 
 syntax::BlockExprSyntax::Ptr Parser::parseBlock() {

@@ -32,7 +32,8 @@ let table: [UInt32] = [0, 0x7707_3096, 0xEE0E_612C]
 - Only `let` is allowed at the top level, and the type annotation is required.
 - The type is `Bool`, an integer type, `Float`, `Double`, `String`, or an array
   of those (arrays may nest). Structs, enums, dictionaries and optionals are
-  not supported.
+  not supported, and neither are function types (§2.3.1;
+  `type-checking.invalid-function-type`).
 - The initializer is evaluated by the compiler. It may use literals, array
   literals, prefix and binary operators, `as` and `&as`, and other constants,
   in any declaration order. Function calls, `if` and `match` are not allowed.
@@ -83,8 +84,9 @@ accepted as an explicit spelling of the default receiver effect.
 
 #### 3.2.1 Parameters: labels
 
-Argument labels are mandatory at every call site; there is no positional /
-unlabeled form. Every parameter has a label and the caller must always write it.
+Argument labels are mandatory at every call by name; there is no positional /
+unlabeled form for one. Every parameter has a label and the caller must always
+write it. (A call through a function value is positional, §5.6.1.)
 
 ```joyeer
 func add(a: Int, b: Int): Int { a + b }
@@ -99,8 +101,8 @@ transfer(from: alice, to: bob, amount: 100)
   and the internal name are identical.
 - A distinct external label may precede the internal name, as in `from src`:
   the caller writes `from:`, the body uses `src`.
-- There is **no** `_` wildcard label and **no** positional call form. A
-  parameter declared `func f(x: Int)` must be called as `f(x: 1)`.
+- There is **no** `_` wildcard label and **no** positional form for a call by
+  name. A parameter declared `func f(x: Int)` must be called as `f(x: 1)`.
 
 #### 3.2.2 Return type
 
@@ -200,6 +202,7 @@ ordinary functions, not executable entries. The supported entry signatures are
 `func main(args: [String]): Int`. The latter's external parameter label is
 `args`, and its access effect is `borrowing` (the default); the internal
 parameter name may differ. Both forms cannot be declared together.
+The root module's `main` is not a function value (§5.6.1).
 
 The argument-taking form receives the command-line arguments after the
 executable name, in their original order. Empty arguments and spaces within

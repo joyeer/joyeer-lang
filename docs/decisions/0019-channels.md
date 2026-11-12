@@ -1,7 +1,7 @@
 # 0019: Channels
 
 - Status: accepted as a design (2026-11-10), after a `language-designer` review whose findings are
-  folded in below. Phases P5b and P6 of the [concurrency plan](../plan/concurrency.md): the compiler
+  folded in below. Phases P5b and P6 of the [concurrency plan](../plan/0009-concurrency.md): the compiler
   support and the runtime for bounded single-sender, single-receiver channels, on top of tasks
   ([0018](0018-tasks.md)). It amends two details of [0013](0013-concurrency-model.md) (see
   "Amendments"). Implemented on Linux and Windows.

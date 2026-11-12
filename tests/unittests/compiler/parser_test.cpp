@@ -1369,3 +1369,63 @@ TEST_F(ParserTest, ConsumeMayBeAMatchArmBodyAndAReturnValueOnTheSameLine) {
 }
 
 } // namespace
+
+// Function types (spec 2.3.1, decision 0020): unlabeled parameters with effects, a mandatory result
+// that extends to the right, parentheses only around a function type, and `[(...): R]` as an array.
+TEST_F(ParserTest, ParsesFunctionTypes) {
+    parse("let a: (): () = run\n"
+          "let b: (inout Int, consuming String, initializing [Int], borrowing Bool): Int? = f\n"
+          "let c: ((Int): Int)? = g\n"
+          "let d: (Int): (Int): Int = h\n"
+          "let e: [(): Int] = []\n"
+          "let f: [String: (Int): Bool] = [:]\n"
+          "let g: Result<(Int): Int, String> = k\n"
+          "let h: (()): Int = m\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto annotation = [this](size_t index) {
+        return std::static_pointer_cast<joyeer::syntax::BindingDeclSyntax>(result.root->items[index])->annotation;
+    };
+    EXPECT_EQ(annotation(0)->kind, Kind::functionType);
+    const auto effects = std::static_pointer_cast<joyeer::syntax::FunctionTypeSyntax>(annotation(1));
+    ASSERT_EQ(effects->parameters.size(), 4u);
+    EXPECT_EQ(effects->parameters[0].accessEffect(), joyeer::syntax::AccessEffect::inout);
+    EXPECT_EQ(effects->parameters[1].accessEffect(), joyeer::syntax::AccessEffect::consuming);
+    EXPECT_EQ(effects->parameters[2].accessEffect(), joyeer::syntax::AccessEffect::initializing);
+    EXPECT_EQ(effects->parameters[3].accessEffect(), joyeer::syntax::AccessEffect::borrowing);
+    EXPECT_EQ(effects->result->kind, Kind::optionalType);   // `(...): Int?` returns `Int?`
+    EXPECT_EQ(annotation(2)->kind, Kind::optionalType);      // `((Int): Int)?` is an optional function
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::OptionalTypeSyntax>(annotation(2))->wrapped->kind,
+              Kind::functionType);
+    const auto nested = std::static_pointer_cast<joyeer::syntax::FunctionTypeSyntax>(annotation(3));
+    EXPECT_EQ(nested->result->kind, Kind::functionType);    // nests to the right
+    EXPECT_EQ(annotation(4)->kind, Kind::arrayType);
+    EXPECT_EQ(std::static_pointer_cast<joyeer::syntax::ArrayTypeSyntax>(annotation(4))->element->kind,
+              Kind::functionType);
+    EXPECT_EQ(annotation(5)->kind, Kind::dictionaryType);
+    const auto unitParameter = std::static_pointer_cast<joyeer::syntax::FunctionTypeSyntax>(annotation(7));
+    ASSERT_EQ(unitParameter->parameters.size(), 1u);
+    EXPECT_EQ(unitParameter->parameters[0].type->kind, Kind::unitType);
+}
+
+TEST_F(ParserTest, RejectsMalformedFunctionTypes) {
+    parse("let f: (x: Int): Int = g\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::labeledFunctionTypeParameter));
+    parse("let f: (Int, Bool) = g\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::missingFunctionTypeResult));
+    parse("let f: (inout Int) = g\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::missingFunctionTypeResult));
+    parse("let f: (Int) = g\n");
+    EXPECT_TRUE(hasDiagnostic(DiagnosticId::parenthesizedType));
+}
+
+// A call through a value takes positional arguments, and a parenthesized callee may be called.
+TEST_F(ParserTest, ParsesPositionalAndParenthesizedCalls) {
+    parse("func run() {\n"
+          "    f(1, &x, consume y)\n"
+          "    (s.handler)(2)\n"
+          "    (table[0])(3)\n"
+          "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    const auto tree = joyeer::syntax::dump(result.root);
+    EXPECT_NE(tree.find("parenthesized_expr"), std::string::npos);
+}

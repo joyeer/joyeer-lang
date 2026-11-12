@@ -127,6 +127,14 @@ The current instruction set covers:
 - checked `div` / `rem` with exactly two `Int` value operands and an `Int`
   value result;
 - direct source and external calls, including the external builtins (`print`, byte conversions) and native bindings;
+- function values ([decision 0020](../decisions/0020-function-values.md)): `function_address` names a
+  Joyeer function and yields it as a value of its function type, and `call_indirect` calls operand 0, a
+  function value, with the other operands passed by the type's parameter effects (an address for
+  `inout` and `initializing`, a value otherwise). A function type's `TypeName` carries one effect per
+  parameter, with the parameters and then the result in `arguments`. The verifier checks the callee's
+  exact type, the operand count and categories, the result, and that a call (direct or indirect)
+  returning `Never` is followed by `unreachable`. The backend lowers a function type to `ptr` and the call
+  to one indirect call whose LLVM type comes from the same helper as every function definition;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses

@@ -17,7 +17,7 @@ target. Today there are two workarounds:
 - Anything platform-specific lives in C behind `#ifdef`, as in
   `filesystem.c` (since removed; the filesystem is now Joyeer, see [decision 0003](0003-pure-joyeer-filesystem.md)).
 
-The [filesystem plan](../plan/filesystem.md) moves the filesystem into Joyeer
+The [filesystem plan](../plan/0007-filesystem.md) moves the filesystem into Joyeer
 and needs a way to express the per-OS differences.
 
 Constraints from the current compiler:
@@ -32,7 +32,7 @@ Constraints from the current compiler:
   host triple. The backend admits only x86-64/ARM64 Windows MSVC, Linux, and
   macOS.
 - The compiler takes explicit source inputs and never discovers files
-  ([library plan](../plan/library.md) §4).
+  ([toolchain libraries plan](../plan/0006-toolchain-libraries.md)).
 
 ## Options considered
 

@@ -1683,4 +1683,33 @@ TEST(LLVMOwnershipBackendTest, EmitsRecursiveOwnershipHelpersAndOperations) {
     EXPECT_NE(result.text.find("store %joyeer.string zeroinitializer"), std::string::npos);
 }
 
+// Function values (decision 0020): a call through a value is one indirect call, and it can only agree
+// with the callee because every Joyeer function definition carries no calling convention or attribute
+// beyond what its type implies.
+TEST_F(LLVMBackendTest, CallsThroughFunctionValuesAreOneIndirectCall) {
+    emit("func square(value: Int): Int { return value * value }\n"
+         "func bump(count: inout Int) { &count = count + 1 }\n"
+         "func run(): Int {\n"
+         "    let f = square\n"
+         "    let g = bump\n"
+         "    var n = f(3)\n"
+         "    g(&n)\n"
+         "    return n\n"
+         "}\n");
+    ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+    EXPECT_TRUE(std::regex_search(result.text, std::regex(R"(call i64 %[A-Za-z0-9_.]+\(i64 )")))
+            << result.text;
+    EXPECT_TRUE(std::regex_search(result.text, std::regex(R"(call void %[A-Za-z0-9_.]+\(ptr )")))
+            << result.text;
+    std::istringstream lines(result.text);
+    std::string line;
+    const std::regex plainDefinition(R"(^define (internal )?[a-z0-9{}, %.\[\]]+ @joyeer_fn_[0-9]+\([^)]*\) \{$)");
+    size_t definitions = 0;
+    while (std::getline(lines, line)) {
+        if (line.rfind("define", 0) != 0 || line.find("@joyeer_fn_") == std::string::npos) continue;
+        ++definitions;
+        EXPECT_TRUE(std::regex_match(line, plainDefinition)) << line;
+    }
+    EXPECT_GE(definitions, 3u);
+}
 } // namespace

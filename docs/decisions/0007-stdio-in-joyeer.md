@@ -15,7 +15,7 @@
 ## Context
 
 [Decision 0004](0004-remove-host-builtins.md) moves the host operations into
-`System`. [The filesystem plan](../plan/filesystem.md) held back `writeStderr`
+`System`. [The filesystem plan](../plan/0007-filesystem.md) held back `writeStderr`
 and `readStdinLine` because a port seemed to need one of two things Joyeer lacks:
 
 - **Windows descriptor protection.** The C code stops the CRT from aborting the

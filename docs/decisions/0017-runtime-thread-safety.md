@@ -1,6 +1,6 @@
 # 0017: Runtime thread safety
 
-- Status: accepted (2026-11-09). Phase P4 of the [concurrency plan](../plan/concurrency.md),
+- Status: accepted (2026-11-09). Phase P4 of the [concurrency plan](../plan/0009-concurrency.md),
   built on [0016](0016-thread-primitives.md). It makes the runtime safe to call from several
   threads; it adds no language feature and changes no single-threaded behaviour.
 - Spec: [§19.4.5](../../specs/19-c-interop.md) gains three runtime-only intrinsics (atomic load,

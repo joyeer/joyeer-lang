@@ -430,6 +430,12 @@ private:
             case Kind::optionalType:
                 indexNode(std::static_pointer_cast<syntax::OptionalTypeSyntax>(node)->wrapped);
                 break;
+            case Kind::functionType: {
+                const auto value = std::static_pointer_cast<syntax::FunctionTypeSyntax>(node);
+                for (const auto& parameter : value->parameters) indexNode(parameter.type);
+                indexNode(value->result);
+                break;
+            }
             case Kind::parenthesizedExpr:
                 indexNode(std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(node)->expression);
                 break;
@@ -1235,6 +1241,12 @@ private:
                         std::static_pointer_cast<syntax::OptionalTypeSyntax>(type)->wrapped,
                         declaration);
                 break;
+            case syntax::Kind::functionType: {
+                const auto function = std::static_pointer_cast<syntax::FunctionTypeSyntax>(type);
+                for (const auto& parameter : function->parameters) validateExposedType(parameter.type, declaration);
+                validateExposedType(function->result, declaration);
+                break;
+            }
             default: break;
         }
     }
@@ -1631,6 +1643,13 @@ private:
                 resolveType(optional->wrapped, currentScope);
                 return bindBuiltinType(type, currentScope, "Optional");
             }
+            case syntax::Kind::functionType: {
+                // A function type is structural (spec 2.3.1): it names no symbol of its own.
+                const auto function = std::static_pointer_cast<syntax::FunctionTypeSyntax>(type);
+                for (const auto& parameter : function->parameters) resolveType(parameter.type, currentScope);
+                resolveType(function->result, currentScope);
+                return std::nullopt;
+            }
             default:
                 return std::nullopt;
         }
@@ -1917,6 +1936,11 @@ private:
             target = *callee.synthesizedInitializer;
         }
 
+        // A value may hold a function (spec 5.6.1); its type decides whether it can be called.
+        if (callee.kind == SymbolKind::binding || callee.kind == SymbolKind::parameter ||
+            callee.kind == SymbolKind::patternBinding || callee.kind == SymbolKind::structureField) {
+            return;
+        }
         if (!symbol(target).callable.has_value()) {
             report(
                     NameResolutionDiagnosticId::notCallable,

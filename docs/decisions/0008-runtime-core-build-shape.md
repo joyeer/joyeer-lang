@@ -7,7 +7,7 @@
 
 ## Context
 
-[The runtime plan](../plan/runtime-in-joyeer.md) moves the runtime from C into
+[The runtime plan](../plan/0008-runtime-in-joyeer.md) moves the runtime from C into
 Joyeer one function at a time. Stage 1 needs the first Joyeer objects inside
 `JoyeerRuntime` beside the C ones, without a second runtime archive, without
 making the compiler wait for the runtime, and without letting a function have two

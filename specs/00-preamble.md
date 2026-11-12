@@ -61,7 +61,7 @@ toolchain-authorized units with a small, explicit unsafe surface (§19.4.5) that
 ordinary programs cannot reach. This keeps one language to review, and makes the
 runtime the largest test of the language's own cost and safety claims. The
 current state and the path there are in the
-[runtime plan](../docs/plan/runtime-in-joyeer.md).
+[runtime plan](../docs/plan/0008-runtime-in-joyeer.md).
 
 ### 0.2 Notation
 

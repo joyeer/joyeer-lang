@@ -28,6 +28,17 @@ param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expr
 label             ::= identifier
 access_effect     ::= 'borrowing' | 'inout' | 'consuming' | 'initializing'
 
+type              ::= primary_type [ '?' ]
+primary_type      ::= '(' ')'                                  // Void (§2.1.2)
+                   |  nominal_type [ '<' type , ... '>' ]
+                   |  '[' type ']'
+                   |  '[' type ':' type ']'
+                   |  function_type
+                   |  '(' function_type ')'
+function_type     ::= '(' [ param_type , ... ] ')' ':' type      // result extends right (§2.3.1)
+param_type        ::= [ access_effect ] type             // no label, not Never
+nominal_type      ::= identifier ( '.' identifier )*         // primitive types included
+
 struct_decl       ::= [ visibility ] 'struct' identifier
                       '{' struct_member* '}'
 
@@ -93,7 +104,9 @@ postfix_expr      ::= primary_expr ( '.' identifier
                                     | '[' expression , ... ']'
                                     | '?'
                                     | '!' )*
-call_arg          ::= label ':' [ '&' | 'consume' ] expression
+call_arg          ::= [ label ':' ] [ '&' | 'consume' ] expression
+                                 // unlabeled only through a function value
+                                 //   or for an enum payload (§5.6, §5.6.1, §5.8)
 
 primary_expr      ::= literal
                    |  '(' ')'                                  // unit value, type Void

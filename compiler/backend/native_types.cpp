@@ -155,7 +155,8 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
         case typing::TypeKind::boolean: result = builder.getInt1Ty(); break;
         case typing::TypeKind::task:
         case typing::TypeKind::channelSender:
-        case typing::TypeKind::channelReceiver: result = pointer(); break;
+        case typing::TypeKind::channelReceiver:
+        case typing::TypeKind::function: result = pointer(); break;
         case typing::TypeKind::string: name = "joyeer.string"; break;
         case typing::TypeKind::array: name = "joyeer.array"; break;
         case typing::TypeKind::dictionary: name = "joyeer.dictionary"; break;
@@ -205,7 +206,9 @@ Layout Builder::layout(ir::TypeId id) {
         case typing::TypeKind::integer:
         case typing::TypeKind::task:
         case typing::TypeKind::channelSender:
-        case typing::TypeKind::channelReceiver: result = {8, 8}; break;
+        case typing::TypeKind::channelReceiver:
+        // A function value is a code address; its parameter types are not part of its layout.
+        case typing::TypeKind::function: result = {8, 8}; break;
         case typing::TypeKind::string: result = {16, 8}; break;
         case typing::TypeKind::array:
         case typing::TypeKind::dictionary: result = {24, 8}; break;
@@ -280,14 +283,34 @@ void Builder::defineTypes() {
     }
 }
 
-llvm::Function* Builder::declareFunction(const ir::Function& function) {
-    std::vector<llvm::Type*> parameters;
-    for (const auto& parameter : function.parameters) {
-        parameters.push_back(parameter.value.category == ir::ValueCategory::address
-                ? pointer() : llvmType(parameter.value.type));
+llvm::FunctionType* Builder::signatureType(
+        const std::vector<std::pair<ir::TypeId, ir::ValueCategory>>& parameters, ir::TypeId result) {
+    std::vector<llvm::Type*> types;
+    for (const auto& [id, category] : parameters) {
+        types.push_back(category == ir::ValueCategory::address ? pointer() : llvmType(id));
     }
-    auto* result = unit(function.resultType) ? builder.getVoidTy() : llvmType(function.resultType);
-    return llvm::Function::Create(llvm::FunctionType::get(result, parameters, false),
+    return llvm::FunctionType::get(unit(result) ? builder.getVoidTy() : llvmType(result), types, false);
+}
+
+llvm::FunctionType* Builder::signatureType(ir::TypeId functionType) {
+    const auto& info = type(functionType);
+    std::vector<std::pair<ir::TypeId, ir::ValueCategory>> parameters;
+    for (size_t index = 0; index < info.effects.size(); ++index) {
+        const auto effect = info.effects[index];
+        parameters.emplace_back(info.arguments[index],
+                effect == syntax::AccessEffect::inout || effect == syntax::AccessEffect::initializing
+                        ? ir::ValueCategory::address
+                        : ir::ValueCategory::value);
+    }
+    return signatureType(parameters, info.arguments.back());
+}
+
+llvm::Function* Builder::declareFunction(const ir::Function& function) {
+    std::vector<std::pair<ir::TypeId, ir::ValueCategory>> parameters;
+    for (const auto& parameter : function.parameters) {
+        parameters.emplace_back(parameter.value.type, parameter.value.category);
+    }
+    return llvm::Function::Create(signatureType(parameters, function.resultType),
             source.isRuntimeObject || function.nativeBinding.has_value()
                     ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
             "joyeer_fn_" + std::to_string(function.id), module());

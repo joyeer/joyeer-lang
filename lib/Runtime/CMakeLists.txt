@@ -1,4 +1,4 @@
-# The runtime is Joyeer (docs/plan/runtime-in-joyeer.md): four "core" modules compiled
+# The runtime is Joyeer (docs/plan/0008-runtime-in-joyeer.md): four "core" modules compiled
 # by the just-built compiler into the four objects the archive holds: the core
 # (everything but the entry), the entry (the program startup logic and, on Windows, the
 # own entry point `joyeer_start`) and the main wrappers (the C `main` / `wmain`). They are
