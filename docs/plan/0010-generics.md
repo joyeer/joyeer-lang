@@ -1,6 +1,6 @@
 # 0010: Generics
 
-- Status: proposed (updated 2026-11-12)
+- Status: in progress (updated 2026-11-12)
 - Decisions: none yet; each phase records one (see "Open questions"). Background:
   [0009](../decisions/0009-runtime-core-capabilities.md), [0015](../decisions/0015-noncopyable-and-linear-types.md),
   [0018](../decisions/0018-tasks.md), [0019](../decisions/0019-channels.md)
@@ -47,7 +47,9 @@ tests, implementation, role reviewers run separately from the author, then
 Non-capturing references to top-level functions; access effects are part of the type and must match
 exactly. No closures, methods or generic functions as values.
 
-- [ ] Decision record: function values without captures, and why captures stay out.
+- [ ] Decision record: function values without captures, and why captures stay out. Drafted as
+  [0020](../decisions/0020-function-values.md) and reviewed (language-designer, ir-backend-reviewer);
+  open until accepted.
 - [ ] Spec: make §2.3 function types normative; mark what is not accepted.
 - [ ] Failing GoogleTests and stage fixtures for each access effect and each rejected form.
 - [ ] Name resolution and type checking: a function `TypeKind`, a function name used as a value.
@@ -116,4 +118,6 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: decision record 0020 drafted and reviewed by language-designer and ir-backend-reviewer;
+  awaiting acceptance. No items done.
 - 2026-11-12: plan written; no items done.
