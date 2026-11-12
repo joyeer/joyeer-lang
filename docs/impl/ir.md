@@ -114,6 +114,35 @@ This is intentionally allocation-based rather than SSA. LLVM's `mem2reg` can
 promote eligible slots after lowering, while source variables retain simple
 and debuggable semantics in the language IR.
 
+### Generic function instances
+
+The frontend checks each generic body once and caches concrete instances
+([decision 0021](../decisions/0021-protocols-and-generic-functions.md)).
+Lowering emits one function per instance, not a function for the generic
+declaration itself. It reads the same syntax with an instance substitution
+and resolves each protocol requirement to the concrete conformance's
+witness. Direct calls therefore remain ordinary `call` instructions.
+
+Every emitted type is concrete. Generic-only type-table entries become
+unusable error placeholders so canonical IDs stay stable; the verifier
+rejects an actual `typeParameter` record even when unused. Concrete types
+are interned before lowering snapshots the table.
+The verifier also rejects error-placeholder types, or types transitively
+containing them, in executable values, signatures, aggregate definitions,
+constants and debug variables; only unused placeholders may remain.
+
+Each instance has its own function/debug scopes and concrete local types;
+instruction spans still point to the generic source. Its display name,
+such as `totalArea<Square>`, uses the existing function `name` wire field.
+No wire layout or version change is needed. Disambiguating an instance's
+type arguments does not rename ordinary nominal types in debug information.
+
+Copy-versus-move decisions use the checked body's unsubstituted types.
+`prepareOwned` additionally rejects a resource-owning copy at a span that
+was noncopyable in that body. This lowering backstop does not check trivial
+values such as `Int`: they need no ownership instruction, and source-level
+copy restrictions are enforced by type checking.
+
 ---
 
 ## 3. Implemented instructions
@@ -286,6 +315,8 @@ plus case symbol, including distinct builtin container instantiations.
 `ir::Verifier` implements checks for:
 
 - duplicate or unknown type/function/block/value identifiers;
+- unsubstituted generic type parameters, including unused type records;
+- executable uses of generic/error placeholders, including nested type arguments;
 - malformed instruction operand/target counts;
 - invalid value/address categories;
 - selected load/store, return, operator, call, field, aggregate, and payload

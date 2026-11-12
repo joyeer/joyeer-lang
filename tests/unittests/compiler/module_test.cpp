@@ -63,6 +63,46 @@ TEST(CompilationUnitModules, ResolvesTwoRootFilesAndQualifiedPublicTypesAndFunct
     EXPECT_EQ(result.model->symbol(*symbol)->span.sourceId, 2u);
 }
 
+TEST(CompilationUnitModules, PrivateProtocolWitnessesMustBeAccessibleFromTheirConformanceFile) {
+    const auto first = parseFile(
+            "private protocol P { func read(): Int }\nstruct S {}\nextension S: P {}\n"
+            "private func invoke<T: P>(value: T): Int { return value.read() }\n"
+            "func main() { print(value: invoke(value: S())) }\n", 0);
+    const auto second = parseFile(
+            "extension S {\n    private func read(): Int { return 7 }\n}\n", 1);
+    const auto resolved = resolve({{"app", {first, second}}});
+    ASSERT_TRUE(resolved.succeeded()) << joyeer::semantic::dump(resolved.diagnostics);
+    const auto checking = joyeer::typing::TypeChecker().check(resolved.model);
+    EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+            [](const auto& diagnostic) {
+                return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::witnessNotAccessible;
+            })) << joyeer::typing::dump(checking.diagnostics);
+
+    const auto together = parseFile(
+            "private protocol P { func read(): Int }\nstruct S {}\n"
+            "extension S: P {\n    private func read(): Int { return 7 }\n}\n", 0);
+    const auto sameFile = resolve({{"app", {together}}});
+    ASSERT_TRUE(sameFile.succeeded()) << joyeer::semantic::dump(sameFile.diagnostics);
+    const auto sameFileChecking = joyeer::typing::TypeChecker().check(sameFile.model);
+    EXPECT_TRUE(sameFileChecking.succeeded()) << joyeer::typing::dump(sameFileChecking.diagnostics);
+}
+
+TEST(CompilationUnitModules, UnusedGenericBodiesRejectQualifiedTypeNamesAsValues) {
+    for (const auto* name : {"P", "S"}) {
+        const auto root = parseFile(
+                std::string("import dep\nfunc invalid<T>(value: T) { let bogus = dep.") +
+                name + " }\nfunc main() {}\n", 0);
+        const auto dependency = parseFile("public protocol P {}\npublic struct S {}\n", 1);
+        const auto resolved = resolve({{"app", {root}}, {"dep", {dependency}}});
+        ASSERT_TRUE(resolved.succeeded()) << joyeer::semantic::dump(resolved.diagnostics);
+        const auto checking = joyeer::typing::TypeChecker().check(resolved.model);
+        EXPECT_TRUE(std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::notAFunctionValue;
+                })) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
 TEST(CompilationUnitModules, FilePrivateShadowsOnlyWithinItsOwnFile) {
     auto first = parseFile("private func value(): Int { 1 }\nfunc first(): Int { value() }\n", 0);
     auto second = parseFile("func value(): Int { 2 }\nfunc second(): Int { value() }\n", 1);

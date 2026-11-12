@@ -188,10 +188,17 @@ given type arguments, and it may not be a `Dict` key type (§20.5).
 ```joyeer
 func totalArea<S: Shape>(shapes: [S]): Int {
     var total = 0
-    for shape in shapes { total += shape.area() }
+    var index = 0
+    while index < shapes.count {
+        total += shapes[index].area()
+        index += 1
+    }
     return total
 }
 ```
+
+The index loop borrows each element. `for shape in shapes` would copy the
+array and its elements, which would require `S: Copyable` (§6.3, §20.5).
 
 `&` in a constraint joins protocols and is unrelated to the call-site `&`
 marker (§4.3); the two never appear in the same syntactic position.

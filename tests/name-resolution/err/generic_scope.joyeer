@@ -1,0 +1,5 @@
+func identity<T>(value: consuming T): T {
+    return value
+}
+
+func outside(value: T) {}

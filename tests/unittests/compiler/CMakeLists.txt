@@ -1032,6 +1032,23 @@ if(JOYEER_CLANG_EXECUTABLE)
             "14\n36\n1\n10\ndropping\n2\nafter drop\n3\ntally=seen\nticket\n14\nhihi\nhi\nempty\n1\n4\n3\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EGenericsPropagation generics_propagation
+            "ok\n10\nerr\n20\nhello\n31\ncloned\n30\n"
+            0 1 2 3)
+    foreach(level 0 2)
+        add_test(NAME E2EGenericDependencyO${level}
+                COMMAND ${CMAKE_COMMAND}
+                        -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                        -DMODULE_NAME=generic.app
+                        -DINPUT_FILES=${JOYEER_TESTS_DIR}/modules/generics/main.joyeer
+                        "-DCOMPILER_ARGS=-O${level};--module-source;generic.library=${JOYEER_TESTS_DIR}/modules/generics/library.joyeer"
+                        -DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generics-dependency-O${level}${CMAKE_EXECUTABLE_SUFFIX}
+                        "-DEXPECTED_OUTPUT=7\n99\n"
+                        -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake)
+        set_tests_properties(E2EGenericDependencyO${level} PROPERTIES
+                LABELS "e2e;generics;modules;ownership" TIMEOUT 60)
+    endforeach()
+    add_joyeer_native_regression(
             E2EChannelBasic channel_basic
             "10\n20\nclosed\nhello\n3\ngone\n100\n1\n2\n3\n9\nrefused\n"
             0 1 2 3)
@@ -1438,6 +1455,35 @@ function(add_joyeer_rejected_regression name stage fixture diagnostic)
     )
     set_tests_properties(${name} PROPERTIES LABELS "${stage};safety;regression" TIMEOUT 30)
 endfunction()
+
+add_joyeer_rejected_regression(ParserGenericsRejectsMissingConstraint parser
+        generic_constraint parser.expected-type)
+add_joyeer_rejected_regression(NameResolutionGenericsRejectsEscapedParameter name-resolution
+        generic_scope name-resolution.undefined-type)
+add_joyeer_rejected_regression(TypeGenericsRejectsUnboundedCopy type-checking
+        generic_copy type-checking.copy-of-noncopyable)
+add_joyeer_rejected_regression(TypeGenericsRejectsExpandingRecursion type-checking
+        generic_recursion type-checking.expanding-generic-recursion)
+
+add_test(NAME GenericsInstantiationReport
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/generics_report.joyeer
+                -DEXPECTED_FILE=${JOYEER_TESTS_DIR}/type-checking/generics_report.txt
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstantiationReport.cmake)
+set_tests_properties(GenericsInstantiationReport PROPERTIES
+        LABELS "diagnostics;generics;ir-lowering" TIMEOUT 60)
+
+add_test(NAME DiagnosticsCliRejectsUnsatisfiedGenericConstraint
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/generic_constraint.joyeer
+                "-DEXPECTED_HEADER=generic_constraint.joyeer:8:5: error[type-checking.unsatisfied-constraint]"
+                "-DEXPECTED_SOURCE=    inspect(value: 7)"
+                "-DEXPECTED_HELP=help: declare 'extension Int: Readable"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake)
+set_tests_properties(DiagnosticsCliRejectsUnsatisfiedGenericConstraint PROPERTIES
+        LABELS "diagnostics;generics;type-checking")
 
 add_joyeer_rejected_regression(TypeRegressionPayloadCoverage type-checking
         regression_type_payload_nonexhaustive type-checking.non-exhaustive-match)

@@ -300,7 +300,7 @@ size_t TypeContext::size() const {
     return types.size();
 }
 
-std::string TypeContext::displayName(TypeId id) const {
+std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const {
     const auto* value = type(id);
     if (value == nullptr) return "<invalid-type>";
 
@@ -308,25 +308,26 @@ std::string TypeContext::displayName(TypeId id) const {
         case TypeKind::error:
             return "<error>";
         case TypeKind::array:
-            return "[" + displayName(value->arguments[0]) + "]";
+            return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
         case TypeKind::dictionary:
-            return "[" + displayName(value->arguments[0]) + ": " +
-                    displayName(value->arguments[1]) + "]";
+            return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
+                    displayName(value->arguments[1], disambiguateNominals) + "]";
         case TypeKind::optional: {
             // `((Int): Int)?` is an optional function; `(Int): Int?` returns an optional.
             const auto* wrapped = type(value->arguments[0]);
             const bool function = wrapped != nullptr && wrapped->kind == TypeKind::function;
-            return (function ? "(" : "") + displayName(value->arguments[0]) + (function ? ")?" : "?");
+            return (function ? "(" : "") + displayName(value->arguments[0], disambiguateNominals) +
+                    (function ? ")?" : "?");
         }
         case TypeKind::result:
-            return "Result<" + displayName(value->arguments[0]) + ", " +
-                    displayName(value->arguments[1]) + ">";
+            return "Result<" + displayName(value->arguments[0], disambiguateNominals) + ", " +
+                    displayName(value->arguments[1], disambiguateNominals) + ">";
         case TypeKind::task:
-            return "JoinHandle<" + displayName(value->arguments[0]) + ">";
+            return "JoinHandle<" + displayName(value->arguments[0], disambiguateNominals) + ">";
         case TypeKind::channelSender:
-            return "ChannelSender<" + displayName(value->arguments[0]) + ">";
+            return "ChannelSender<" + displayName(value->arguments[0], disambiguateNominals) + ">";
         case TypeKind::channelReceiver:
-            return "ChannelReceiver<" + displayName(value->arguments[0]) + ">";
+            return "ChannelReceiver<" + displayName(value->arguments[0], disambiguateNominals) + ">";
         case TypeKind::typeParameter: {
             const auto* declaration = model.symbol(value->symbol);
             if (declaration != nullptr && declaration->kind == semantic::SymbolKind::protocol) return "Self";
@@ -342,13 +343,32 @@ std::string TypeContext::displayName(TypeId id) const {
                     case syntax::AccessEffect::initializing: text += "initializing "; break;
                     case syntax::AccessEffect::borrowing: break;
                 }
-                text += displayName(value->arguments[index]);
+                text += displayName(value->arguments[index], disambiguateNominals);
             }
-            return text + "): " + displayName(value->arguments.back());
+            return text + "): " + displayName(value->arguments.back(), disambiguateNominals);
         }
         default: {
             const auto* declaration = model.symbol(value->symbol);
-            return declaration == nullptr ? "<invalid-type>" : declaration->name;
+            if (declaration == nullptr) return "<invalid-type>";
+            auto name = declaration->name;
+            if (!disambiguateNominals) return name;
+            if (value->kind != TypeKind::structure && value->kind != TypeKind::enumeration) return name;
+            bool duplicate = false;
+            bool sameModule = false;
+            for (const auto& other : model.symbols()) {
+                if (other.id == declaration->id || other.name != name ||
+                    (other.kind != semantic::SymbolKind::structure &&
+                     other.kind != semantic::SymbolKind::enumeration &&
+                     other.kind != semantic::SymbolKind::builtinType)) continue;
+                duplicate = true;
+                sameModule |= other.moduleId == declaration->moduleId;
+            }
+            if (duplicate) {
+                if (const auto* module = model.moduleName(declaration->moduleId);
+                    module != nullptr && !module->empty()) name = *module + "." + name;
+                if (sameModule) name += "@" + std::to_string(declaration->span.sourceId);
+            }
+            return name;
         }
     }
 }
@@ -738,6 +758,32 @@ std::optional<size_t> TypeCheckedModel::instanceIndex(
     return found->second;
 }
 
+std::string TypeCheckedModel::functionDisplayName(semantic::SymbolId function) const {
+    const auto* symbol = semanticModelValue->symbol(function);
+    assert(symbol != nullptr);
+    const auto localName = [this](const semantic::Symbol& value) {
+        if (value.containingSymbol.has_value()) {
+            const auto* owner = semanticModelValue->symbol(*value.containingSymbol);
+            if (owner != nullptr) return owner->name + "." + value.name;
+        }
+        return value.name;
+    };
+    const auto local = localName(*symbol);
+    auto name = local;
+    if (const auto* module = semanticModelValue->moduleName(symbol->moduleId);
+        module != nullptr && !module->empty()) {
+        name = *module + "." + name;
+    }
+    if (std::any_of(semanticModelValue->symbols().begin(), semanticModelValue->symbols().end(),
+            [&](const auto& other) {
+                return other.id != function && other.kind == symbol->kind &&
+                        other.moduleId == symbol->moduleId && localName(other) == local;
+            })) {
+        name += "@" + std::to_string(symbol->span.sourceId);
+    }
+    return name;
+}
+
 class TypeCheckingBuilder {
 public:
     TypeCheckingResult build(const semantic::SemanticModel::Ptr& semanticModel) {
@@ -778,8 +824,7 @@ private:
     bool insideDeinit = false;
     // Type parameters with constraints, checked for conflicting requirements once all are known.
     std::vector<semantic::SymbolId> constrainedParameters;
-    // The generic function whose body is being checked, so a generic call records its caller.
-    std::optional<semantic::SymbolId> currentGenericFunction;
+    std::optional<semantic::SymbolId> currentFunction;
 
     void report(
             TypeCheckingDiagnosticId id,
@@ -1061,6 +1106,10 @@ private:
                 const auto resolved = model->typeContext.typeForSymbol(*symbol, arguments);
                 if (resolved.has_value()) {
                     result = *resolved;
+                    const auto* record = model->typeContext.type(result);
+                    if (record != nullptr && record->kind == TypeKind::dictionary) {
+                        rejectInvalidDictionaryKey(record->arguments[0], nominal->arguments[0]->span);
+                    }
                     break;
                 }
 
@@ -1089,14 +1138,7 @@ private:
                         model->typeContext.errorType());
                 const auto value = resolveType(dictionary->value).value_or(
                         model->typeContext.errorType());
-                rejectFunctionKey(key, dictionary->key->span);
-                if (model->typeContext.mentionsTypeParameter(key)) {
-                    report(TypeCheckingDiagnosticId::invalidTypeArgument, dictionary->key->span,
-                           "a dictionary key cannot be the type parameter type '" +
-                                   model->typeContext.displayName(key) + "'",
-                           "keys are restricted to Int, Bool, UInt8 and String, and no protocol states that "
-                           "yet (spec 20.5)");
-                }
+                rejectInvalidDictionaryKey(key, dictionary->key->span);
                 result = model->typeContext.dictionaryType(key, value);
                 break;
             }
@@ -1184,6 +1226,14 @@ private:
         return symbol == nullptr ? std::string("<unknown>") : symbol->name;
     }
 
+    bool checkProtocolReference(const syntax::TypePtr& reference) {
+        if (reference->kind == syntax::Kind::nominalType &&
+            std::static_pointer_cast<syntax::NominalTypeSyntax>(reference)->arguments.empty()) return true;
+        report(TypeCheckingDiagnosticId::invalidConformance, reference->span,
+               "a protocol reference must name a protocol without type arguments (spec 20.2)");
+        return false;
+    }
+
     // Records `T: P & Q`: the parameters of a top-level generic function and each parameter's
     // constraint. A method, `init` or requirement with type parameters is reported by the caller's
     // `misplaced` diagnostic, but its parameters still get constraints so their types resolve.
@@ -1216,8 +1266,13 @@ private:
             const auto symbol = model->semanticModelValue->declaredSymbol(parameter);
             if (!symbol.has_value()) continue;
             parameters.push_back(*symbol);
+            if (parameter->name != nullptr && parameter->name->rawValue == "Copyable") {
+                report(TypeCheckingDiagnosticId::reservedProtocolName, parameter->name->span,
+                       "'Copyable' is reserved for the builtin protocol (spec 20.5)");
+            }
             std::vector<semantic::SymbolId> protocols;
             for (const auto& constraint : parameter->constraints) {
+                if (!checkProtocolReference(constraint)) continue;
                 const auto referenced = model->semanticModelValue->referencedSymbol(constraint);
                 if (!referenced.has_value()) continue;
                 const auto* protocol = symbolOf(*referenced);
@@ -1416,6 +1471,7 @@ private:
         const auto module = model->semanticModelValue->moduleOf(extension->span);
         std::vector<semantic::SymbolId> listed;
         for (const auto& conformance : extension->conformances) {
+            if (!checkProtocolReference(conformance)) continue;
             const auto referenced = model->semanticModelValue->referencedSymbol(conformance);
             if (!referenced.has_value()) continue;
             const auto* protocol = symbolOf(*referenced);
@@ -1481,7 +1537,8 @@ private:
                     valid = false;
                     continue;
                 }
-                if (std::min(witnessSymbol->visibility, typeSymbol->visibility) < conformanceVisibility) {
+                if (std::min(witnessSymbol->visibility, typeSymbol->visibility) < conformanceVisibility ||
+                    !model->semanticModelValue->isAccessible(*witness, conformance->span)) {
                     report(TypeCheckingDiagnosticId::witnessNotAccessible, witnessSymbol->span,
                            "'" + typeSymbol->name + "." + witnessSymbol->name +
                                    "' is less accessible than the conformance to '" + protocol->name + "'",
@@ -1523,6 +1580,9 @@ private:
     static ArgumentInformation argumentInformation(const syntax::ExprPtr& value) {
         if (value == nullptr) return ArgumentInformation::none;
         switch (value->kind) {
+            case syntax::Kind::parenthesizedExpr:
+                return argumentInformation(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(value)->expression);
             case syntax::Kind::literalExpr: {
                 const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(value);
                 if (literal->literal != nullptr && literal->literal->kind == nilLiteral) {
@@ -1576,7 +1636,7 @@ private:
     // Structural unification of a parameter type with an argument type (spec 20.4.1). A mismatch
     // binds nothing; the ordinary argument check reports it afterwards.
     void unify(TypeId parameter, TypeId argument, Inference& inference, SourceSpan span) {
-        if (argument == model->typeContext.errorType() || argument == model->typeContext.neverType()) return;
+        if (argument == model->typeContext.errorType()) return;
         const auto* record = model->typeContext.type(parameter);
         if (record == nullptr) return;
         if (record->kind == TypeKind::typeParameter &&
@@ -1630,8 +1690,24 @@ private:
             if (!parameter.has_value() || *parameter >= signature.parameters.size()) return std::nullopt;
             return signature.parameters[*parameter];
         };
+        std::vector<size_t> order;
+        for (size_t index = 0; index < expression->arguments.size(); ++index) order.push_back(index);
+        const auto floatingLiteral = [&](size_t index) {
+            auto value = expression->arguments[index]->value;
+            while (value != nullptr && value->kind == syntax::Kind::parenthesizedExpr) {
+                value = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(value)->expression;
+            }
+            if (value != nullptr && value->kind == syntax::Kind::prefixExpr) {
+                value = std::static_pointer_cast<syntax::PrefixExprSyntax>(value)->operand;
+            }
+            return value != nullptr && value->kind == syntax::Kind::literalExpr &&
+                    std::static_pointer_cast<syntax::LiteralExprSyntax>(value)->literal->kind == floatLiteral;
+        };
+        std::stable_sort(order.begin(), order.end(), [&](size_t left, size_t right) {
+            return floatingLiteral(left) && !floatingLiteral(right);
+        });
         for (const auto pass : { ArgumentInformation::typed, ArgumentInformation::literal }) {
-            for (size_t index = 0; index < expression->arguments.size(); ++index) {
+            for (const auto index : order) {
                 const auto& argument = expression->arguments[index];
                 const auto type = parameterType(index);
                 if (!type.has_value() || !mentionsAny(*type, parameters) ||
@@ -1641,9 +1717,12 @@ private:
                 const auto expected = model->typeContext.substitute(*type, inference.bindings);
                 const auto actual = checkExpression(
                         argument->value,
-                        mentionsAny(expected, parameters) ? std::optional<TypeId>() : std::optional<TypeId>(expected));
+                        pass == ArgumentInformation::literal && !mentionsAny(expected, parameters)
+                                ? std::optional<TypeId>(expected) : std::optional<TypeId>());
                 checked[index] = actual;
-                if (actual.has_value()) unify(*type, *actual, inference, argument->value->span);
+                if (actual.has_value() && *actual != model->typeContext.neverType()) {
+                    unify(*type, *actual, inference, argument->value->span);
+                }
             }
         }
         std::vector<TypeId> arguments;
@@ -1667,7 +1746,7 @@ private:
         }
         checkTypeArguments(expression, targetSymbol, parameters, arguments);
         model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
-            target, arguments, currentGenericFunction, expression->span };
+            target, arguments, currentFunction, expression->span };
         TypedCallableSignature result = signature;
         for (auto& parameter : result.parameters) parameter = model->typeContext.substitute(parameter, substitution);
         result.result = model->typeContext.substitute(result.result, substitution);
@@ -1780,6 +1859,8 @@ private:
     // backstop for programs the expanding-recursion rule allows but that are still huge.
     static constexpr size_t maximumInstances = 10000;
     static constexpr size_t maximumTypeNesting = 64;
+    static constexpr size_t maximumInstanceDepth = 64;
+    static constexpr size_t maximumTypeOccurrences = 4096;
 
     void instantiate() {
         std::vector<std::pair<semantic::NodeId, const GenericCall*>> calls;
@@ -1792,7 +1873,9 @@ private:
         std::unordered_map<semantic::SymbolId, std::vector<const GenericCall*>> callsIn;
         std::vector<const GenericCall*> roots;
         for (const auto& [node, call] : calls) {
-            if (call->caller.has_value()) callsIn[*call->caller].push_back(call);
+            if (call->caller.has_value() && model->genericParameters(*call->caller) != nullptr) {
+                callsIn[*call->caller].push_back(call);
+            }
             else roots.push_back(call);
         }
         // Breadth first, so an instance's "required by" is the shortest chain from a root.
@@ -1800,6 +1883,21 @@ private:
         const auto require = [&](const GenericCall& call, std::vector<TypeId> arguments,
                                  std::optional<size_t> requiredBy) -> bool {
             for (const auto argument : arguments) {
+                std::vector<TypeId> pending { argument };
+                size_t occurrences = 0;
+                while (!pending.empty() && occurrences <= maximumTypeOccurrences) {
+                    const auto* type = model->typeContext.type(pending.back());
+                    pending.pop_back();
+                    ++occurrences;
+                    if (type != nullptr) pending.insert(pending.end(), type->arguments.begin(), type->arguments.end());
+                }
+                if (occurrences > maximumTypeOccurrences) {
+                    report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
+                           "this call needs an instance whose type arguments contain more than " +
+                                   std::to_string(maximumTypeOccurrences) + " type occurrences",
+                           std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                    return false;
+                }
                 if (model->typeContext.nestingDepth(argument) > maximumTypeNesting) {
                     report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
                            "this call needs an instance of '" + symbolName(call.callee) +
@@ -1809,7 +1907,30 @@ private:
                     return false;
                 }
             }
-            if (model->instanceIndices.contains({call.callee, arguments})) return true;
+            const auto depth = requiredBy.has_value() ? model->instanceList[*requiredBy].depth + 1 : 1;
+            if (const auto existing = model->instanceIndices.find({call.callee, arguments});
+                existing != model->instanceIndices.end()) {
+                auto& instance = model->instanceList[existing->second];
+                const auto before = call.span.sourceId < instance.requiredAt.sourceId ||
+                        (call.span.sourceId == instance.requiredAt.sourceId &&
+                         call.span.offset < instance.requiredAt.offset);
+                if (depth < instance.depth || (depth == instance.depth && before)) {
+                    instance.depth = depth;
+                    instance.requiredAt = call.span;
+                    instance.requiredBy = requiredBy;
+                    instance.requiredByFunction = requiredBy.has_value()
+                            ? std::optional<semantic::SymbolId>(model->instanceList[*requiredBy].function)
+                            : call.caller;
+                }
+                return true;
+            }
+            if (depth > maximumInstanceDepth) {
+                report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
+                       "this call needs an instantiation chain longer than " +
+                               std::to_string(maximumInstanceDepth),
+                       std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                return false;
+            }
             if (model->instanceList.size() >= maximumInstances) {
                 report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
                        "the program needs more than " + std::to_string(maximumInstances) +
@@ -1821,15 +1942,16 @@ private:
             instance.function = call.callee;
             instance.arguments = arguments;
             const auto* parameters = model->genericParameters(call.callee);
-            std::string name = symbolName(call.callee) + "<";
+            std::string name = model->functionDisplayName(call.callee) + "<";
             for (size_t index = 0; parameters != nullptr && index < parameters->size(); ++index) {
                 instance.substitution.emplace((*parameters)[index], arguments[index]);
                 if (index != 0) name += ", ";
-                name += model->typeContext.displayName(arguments[index]);
+                name += model->typeContext.displayName(arguments[index], true);
             }
             instance.name = name + ">";
             instance.requiredAt = call.span;
             instance.requiredBy = requiredBy;
+            instance.depth = depth;
             instance.requiredByFunction = requiredBy.has_value()
                     ? std::optional<semantic::SymbolId>(model->instanceList[*requiredBy].function)
                     : call.caller;
@@ -2470,9 +2592,8 @@ private:
         const auto previousReturnType = currentReturnType;
         const auto previousLoopDepth = loopDepth;
         loopDepth = 0;
-        const auto previousGenericFunction = currentGenericFunction;
-        currentGenericFunction = functionSymbol.has_value() && model->genericParameters(*functionSymbol) != nullptr
-                ? functionSymbol : std::nullopt;
+        const auto previousFunction = currentFunction;
+        currentFunction = functionSymbol;
         currentReturnType = signature == nullptr
             ? model->typeContext.errorType()
             : signature->result;
@@ -2487,7 +2608,7 @@ private:
         }
         currentReturnType = previousReturnType;
         loopDepth = previousLoopDepth;
-        currentGenericFunction = previousGenericFunction;
+        currentFunction = previousFunction;
     }
 
     TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block,
@@ -2831,6 +2952,7 @@ private:
                 operandExpected = model->typeContext.optionalType(*expected);
             }
         }
+        permitMove(expression->operand);
         const auto operand = checkExpression(expression->operand, operandExpected).value_or(
                 model->typeContext.errorType());
         if (operand == model->typeContext.errorType()) return operand;
@@ -2849,6 +2971,7 @@ private:
         const auto* returnType = currentReturnType.has_value()
                 ? model->typeContext.type(*currentReturnType)
                 : nullptr;
+        auto result = operandType->arguments[0];
         if (returnType == nullptr || returnType->kind != operandType->kind) {
             report(
                     TypeCheckingDiagnosticId::invalidPropagationContext,
@@ -2856,10 +2979,9 @@ private:
                     operandType->kind == TypeKind::result
                             ? "postfix '?' on Result requires a Result-returning function"
                             : "postfix '?' on Optional requires an Optional-returning function");
-            return model->typeContext.errorType();
-        }
-        if (operandType->kind == TypeKind::result &&
-            operandType->arguments[1] != returnType->arguments[1]) {
+            result = model->typeContext.errorType();
+        } else if (operandType->kind == TypeKind::result &&
+                   operandType->arguments[1] != returnType->arguments[1]) {
             report(
                     TypeCheckingDiagnosticId::mismatchedPropagationError,
                     expression->span,
@@ -2867,9 +2989,10 @@ private:
                             model->typeContext.displayName(operandType->arguments[1]) +
                             "' but function returns '" +
                             model->typeContext.displayName(returnType->arguments[1]) + "'");
-            return model->typeContext.errorType();
+            result = model->typeContext.errorType();
         }
-        return operandType->arguments[0];
+        requireNoImplicitCopy(expression->operand, operand);
+        return result;
     }
 
     TypeId checkCast(const syntax::PrefixExprSyntax::Ptr& expression) {
@@ -3067,27 +3190,35 @@ private:
         return model->typeContext.errorType();
     }
 
+    // A type may name a constructor or qualify a member, but is not itself a value (spec 5.6.1).
+    bool rejectTypeAsValue(const syntax::ExprPtr& expression) {
+        if (expression.get() == currentCallee || expression.get() == currentMemberBase) return false;
+        const auto referenced = model->referencedSymbol(expression);
+        const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+        if (symbol == nullptr ||
+            (symbol->kind != semantic::SymbolKind::structure &&
+             symbol->kind != semantic::SymbolKind::enumeration &&
+             symbol->kind != semantic::SymbolKind::builtinType &&
+             symbol->kind != semantic::SymbolKind::typeParameter &&
+             symbol->kind != semantic::SymbolKind::protocol)) return false;
+        std::optional<std::string> help;
+        if (symbol->kind == semantic::SymbolKind::structure) {
+            help = "construct a value with its initializer, as in '" + symbol->name + "(...)'";
+        } else if (symbol->kind == semantic::SymbolKind::protocol) {
+            help = "declare a type parameter constrained to '" + symbol->name + "'";
+        }
+        report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
+               "'" + symbol->name + "' is a " +
+                       (symbol->kind == semantic::SymbolKind::protocol ? "protocol" : "type") +
+                       ", not a value or a function value", help);
+        return true;
+    }
+
     TypeId checkName(const syntax::NameExprSyntax::Ptr& expression) {
         if (expression.get() != currentCallee) {
             if (const auto value = functionValueType(expression)) return *value;
         }
-        // A type named as a value is neither a value nor a function value; its initializer must be
-        // called (spec 5.6.1). As a member's base (`Color.Red`) it names the type.
-        if (expression.get() != currentCallee && expression.get() != currentMemberBase) {
-            const auto referenced = model->referencedSymbol(expression);
-            const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
-            if (symbol != nullptr && (symbol->kind == semantic::SymbolKind::structure ||
-                                      symbol->kind == semantic::SymbolKind::enumeration ||
-                                      symbol->kind == semantic::SymbolKind::builtinType)) {
-                report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
-                       "'" + symbol->name + "' is a type, not a value or a function value",
-                       symbol->kind == semantic::SymbolKind::structure
-                               ? std::optional<std::string>("construct a value with its initializer, as in '" +
-                                                            symbol->name + "(...)'")
-                               : std::nullopt);
-                return model->typeContext.errorType();
-            }
-        }
+        if (rejectTypeAsValue(expression)) return model->typeContext.errorType();
         return referencedValueType(expression);
     }
 
@@ -3216,12 +3347,19 @@ private:
         }
     }
 
-    // A dictionary key needs equality, which function types do not have (spec 2.3.1).
-    void rejectFunctionKey(TypeId key, SourceSpan span) {
-        if (!containsFunctionType(key)) return;
-        report(TypeCheckingDiagnosticId::invalidFunctionType, span,
-               "a function type cannot be a dictionary key: function values have no equality",
-               "key the dictionary by a name or a number and store the function value as the value");
+    void rejectInvalidDictionaryKey(TypeId key, SourceSpan span) {
+        if (containsFunctionType(key)) {
+            report(TypeCheckingDiagnosticId::invalidFunctionType, span,
+                   "a function type cannot be a dictionary key: function values have no equality",
+                   "key the dictionary by a name or a number and store the function value as the value");
+        }
+        if (model->typeContext.mentionsTypeParameter(key)) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+                   "a dictionary key cannot be the type parameter type '" +
+                           model->typeContext.displayName(key) + "'",
+                   "keys are restricted to Int, Bool, UInt8 and String, and no protocol states that "
+                   "yet (spec 20.5)");
+        }
     }
 
     bool isOptionalFunction(TypeId type) const {
@@ -3241,6 +3379,7 @@ private:
             if (expression.get() != currentCallee) {
                 if (const auto value = functionValueType(expression)) return *value;
             }
+            if (rejectTypeAsValue(expression)) return model->typeContext.errorType();
             return referencedValueType(expression);
         }
         const auto* savedMemberBase = currentMemberBase;
@@ -3524,6 +3663,7 @@ private:
                  (baseDeclaration->kind == semantic::SymbolKind::structure ||
                   baseDeclaration->kind == semantic::SymbolKind::enumeration ||
                   baseDeclaration->kind == semantic::SymbolKind::typeParameter ||
+                  baseDeclaration->kind == semantic::SymbolKind::protocol ||
                   baseDeclaration->kind == semantic::SymbolKind::builtinType))) {
                 report(
                         TypeCheckingDiagnosticId::invalidCallArguments,
@@ -4593,13 +4733,8 @@ private:
                     collectCopiedPlaces(arm->body, places);
                 }
                 return;
-            case syntax::Kind::propagateExpr: {
-                // `place?` takes a copy of the whole `Result` or `Optional` it unwraps.
-                const auto operand =
-                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand;
-                if (isPlaceExpression(operand)) places.push_back(operand);
-                return;
-            }
+            case syntax::Kind::propagateExpr:
+                return; // checkPropagation checks its owned operand independently of the result's context.
             default:
                 if (isPlaceExpression(expression)) places.push_back(expression);
                 return;
@@ -5323,7 +5458,8 @@ private:
             if (!valueType.has_value()) valueType = actualValue;
             else requireAssignable(actualValue, *valueType, entry->value->span);
         }
-        if (!expression->entries.empty()) rejectFunctionKey(*keyType, expression->entries.front()->key->span);
+        rejectInvalidDictionaryKey(*keyType, expression->entries.empty()
+                ? expression->span : expression->entries.front()->key->span);
         return model->typeContext.dictionaryType(*keyType, *valueType);
     }
 };

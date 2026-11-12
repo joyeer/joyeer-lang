@@ -202,7 +202,7 @@ public:
 
     [[nodiscard]] const TypeRecord* type(TypeId id) const;
     [[nodiscard]] size_t size() const;
-    [[nodiscard]] std::string displayName(TypeId id) const;
+    [[nodiscard]] std::string displayName(TypeId id, bool disambiguateNominals = false) const;
     [[nodiscard]] bool isAssignable(TypeId source, TypeId destination) const;
 
 private:
@@ -343,7 +343,8 @@ struct Conformance {
 };
 
 // A call of a generic function, with its inferred type arguments in parameter order. Inside another
-// generic function they may mention that function's parameters (`caller`).
+// generic function they may mention that function's parameters. `caller` is the enclosing function,
+// including non-generic functions, methods and deinitializers.
 struct GenericCall {
     semantic::SymbolId callee = semantic::invalidSymbolId;
     std::vector<TypeId> arguments;
@@ -363,6 +364,7 @@ struct Instance {
     SourceSpan requiredAt;
     std::optional<size_t> requiredBy;
     std::optional<semantic::SymbolId> requiredByFunction;
+    size_t depth = 1;
 };
 
 struct TypeCheckingDiagnostic {
@@ -429,6 +431,7 @@ public:
     [[nodiscard]] const std::vector<Instance>& instances() const { return instanceList; }
     [[nodiscard]] std::optional<size_t> instanceIndex(
             semantic::SymbolId function, const std::vector<TypeId>& arguments) const;
+    [[nodiscard]] std::string functionDisplayName(semantic::SymbolId function) const;
     // Where the program starts a task and where it calls System's `runProcess` (spec 21.6).
     [[nodiscard]] const std::vector<SourceSpan>& spawnCalls() const { return spawnCallSpans; }
     [[nodiscard]] const std::vector<SourceSpan>& runProcessCalls() const { return runProcessCallSpans; }

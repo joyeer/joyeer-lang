@@ -80,6 +80,24 @@ TEST_F(SemanticAnalysisTest, ConsumingReceiverEndsTheReceiversOwnership) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+TEST_F(SemanticAnalysisTest, GenericRequirementCallsConsumeTheirReceiverAndArguments) {
+    analyze("protocol P { consuming func finish() }\n"
+            "func f<T: P>(value: consuming T) { consume value.finish()\nconsume value.finish() }\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+    analyze("protocol P { func take(value: consuming Self) }\n"
+            "func f<T: P>(receiver: T, value: consuming T) {\n"
+            "receiver.take(value: consume value)\nreceiver.take(value: consume value) }\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+}
+
+TEST_F(SemanticAnalysisTest, GenericRequirementCallsInitializeArgumentsOnAllPaths) {
+    analyze("protocol P { func make(value: initializing Self) }\n"
+            "func f<T: P>(receiver: T): T { var output: T\nreceiver.make(value: &output)\nreturn output }\n");
+    EXPECT_TRUE(result.succeeded()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 TEST_F(SemanticAnalysisTest, ReinitializingAConsumedReceiverAllowsLaterUse) {
     analyze("struct C {\n"
             "    var n: Int\n"

@@ -3,7 +3,7 @@
 - Status: accepted (2026-11-12), after a `language-designer` review whose findings are folded in below
   ("Review"). Phase 2 of the [generics plan](../plan/0010-generics.md); it settles that plan's open
   questions 1 to 3.
-- Spec: [§20](../../specs/20-protocols.md) (v1, to be made normative). The spec change also amends
+- Spec: [§20](../../specs/20-protocols.md) (normative for v1). The spec change also amends
   §1.4, §2.6, §2.9, §3.2.3, §4.1.1, §5.4, §12.2, §12.4, Appendix A and Appendix C (see "Spec
   changes").
 
@@ -246,8 +246,8 @@ Options A2, B2, C2 and D3, as the following rules.
   with copy decisions made as above. Lowering never emits a type that contains a type parameter.
 - **IR, verifier and backend see only concrete functions.** The verifier rejects any type that contains
   a type parameter (defence in depth). The IR gains no opcode. An `ir::Function` carries the instance's
-  display name as a string, which the wire format records (it needs nothing more), and the wire
-  version is bumped.
+  display name as a string, which the existing wire format already records. No wire layout or
+  version change is needed.
 - **Spans and debug scopes point at the generic source.** Every instruction of an instance carries the
   generic body's spans. Each instance has its own function debug scope at the generic declaration,
   named with the instance's display name (`totalArea<Square>`), with locals at their concrete types.
@@ -333,6 +333,35 @@ Those of §20.8, plus `type-checking.linear-type-argument`, `type-checking.inval
    in review without asking for it? Decided with the plan's measurement item.
 2. How generic code ends a linear value, needed before generic types may hold one (Phase 3 and 4).
 
+## Implementation notes
+
+The implementation starts in dd059d9, with completion work tracked in plan
+0010. The original implementation was work in progress, not
+full-suite validated or implementation-reviewed.
+
+- Instance discovery runs at the end of successful type checking, before
+  semantic analysis, rather than in a separate post-analysis pass. Semantic
+  analysis still checks each body once, and must succeed before lowering or
+  an instantiation report is produced. Discovery is bounded independently.
+- The wire version stays 15: the existing function `name` field transports
+  each instance's display/debug name, so no additional field is required.
+- Source-level copies are checked against the unsubstituted generic type.
+  The lowering backstop only sees resource-owning values: for a trivial
+  `Int`, ownership acquisition is a no-op, so `prepareOwned` does not
+  distinguish a logical copy from a transfer. This is narrower than the
+  originally proposed backstop for every type argument; it does not relax
+  the type checker's `Copyable` rule.
+- The §20.4 `totalArea` example uses an index loop. `for-in` copies its
+  sequence/elements and would require `S: Copyable`; the index loop borrows.
+- `--report-instantiations` uses the format and fixed limits documented in
+  [supported features](../impl/supported-features.md). The report counts
+  unoptimized Joyeer IR instructions, not machine-code bytes.
+- Function parameter defaults are not implemented for ordinary or generic
+  functions; the parser has no parameter-initializer representation. The
+  inference rule for omitted defaults describes the design, not an accepted
+  source form in this implementation. Adding general default arguments is
+  not part of Phase 2.
+
 ## Review
 
 `language-designer` (2026-11-12) found three blockers, all folded in: §20.7's `?` rule was a
@@ -346,6 +375,58 @@ checker; §20.6's wording; a well-defined "required by"; the scope of the linear
 scope and reason; a list of spec changes; and the missing tests. Nits on diagnostic prefixes, debug
 names and folding, the wire field, §20.5's free-function sentence and the grammar of the extended type
 are folded in as well.
+
+The independent implementation reviews found nine distinct issues
+(`type-system-reviewer`: eight, `ir-backend-reviewer`: two, with propagation
+reported by both). Each was reproduced by a failing GoogleTest and fixed:
+
+- propagation copied a borrowed generic operand only when the result entered
+  an owned context; the operand is now checked for discarded and borrowed
+  uses too, and lowering uses its span for the abstract-copy backstop;
+- inferred and nominal dictionary keys bypassed the opaque-key restriction;
+- nonliteral inference inputs could be retyped by an earlier argument;
+- parentheses caused context-free arguments to be checked prematurely;
+- a chained `Self` result lost the caller's other protocol constraints;
+- unused generic bodies accepted bare type/protocol names as values;
+- witness visibility ignored private-file boundaries;
+- protocol references silently ignored type arguments;
+- used error placeholders, including nested ones, escaped IR verification.
+
+Completion tests also caught public signatures treating their own type
+parameters as inaccessible, malformed parameter clauses, nested `Never`
+inference, incorrect report reasons, missing instantiation-chain limits and
+protocol-name receiver calls. Instance-name disambiguation preserves
+ordinary nominal debug names and distinguishes types shadowing prelude
+names. Type-as-value checks cover qualified names too, and propagation
+retains copy diagnostics even in an invalid return context.
+`generics_propagation.joyeer` covers consumed
+success/error results with strings and deinit-traced values, and a chained
+`Self` result across two constraints, at `-O0` through `-O3`.
+
+The reviewers inspected source; the author ran the reproductions and
+regressions. The independent `adversarial-tester` invocation was rejected by
+the service (HTTP 422) before executing, so that review remains unrun.
+
+## Validation and measurements
+
+See the [local timing/footprint sample](../impl/backend.md#phase-2-generics-completion-sample)
+for fern and the web server. Their generated code and executable sizes are
+unchanged in this sample; neither currently instantiates user generics.
+No automatic report archiving or additional cost budget is added beyond the
+documented implementation safety limits.
+
+Full-platform acceptance remains open. `python scripts/validate.py
+--llvm-root C:\LLVM-22.1.8` exits 9009 because Python is not installed.
+The final Windows x64 Debug default build succeeds, and unfiltered CTest
+passes **1591 of 1591**. The report fixture is byte-exact across two runs at
+both `-O0` and `-O2`; the final fern/web-server reports each contain zero
+instances.
+The manually run Debug root `fern test` has six passing modules and one
+pre-existing `SystemTests` failure: read-only stderr reports error 13, and
+a zero-byte write to a closed descriptor reports success. The same failure
+reproduces with the `3feb624` baseline compiler. It is not changed here.
+Release-host and Linux acceptance, the independent adversarial review, and
+the debugger breakpoint check remain unrun; no debugger is available.
 
 ## Evidence
 

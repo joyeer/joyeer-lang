@@ -248,6 +248,17 @@ joyeer --emit-llvm output.ll source.joyeer
 joyeer -O0 -gfull --emit-llvm output.debug.ll source.joyeer
 ```
 
+Inspect concrete generic instances without creating an output file:
+
+```pwsh
+joyeer --report-instantiations source.joyeer
+```
+
+The deterministic report names each instance, its requiring call and its
+unoptimized Joyeer IR instruction count; see
+[supported features](supported-features.md). It can also accompany native
+or LLVM output.
+
 Build a native executable:
 
 ```pwsh
@@ -647,3 +658,35 @@ The before/after LLVM output was byte-identical.
 This is a local compilation-to-IR sample including process startup and file
 I/O, not native linking, a clean C++ build, generated-program performance,
 or a cross-platform speed guarantee.
+
+### Phase 2 generics completion sample
+
+On native Windows x64 on 2026-11-12, the Debug MSVC compiler/runtime builds
+with LLVM/LLD 22.1.8 and static CRT compared `3feb624` with `dd059d9` plus
+the Phase 2 completion changes. Both compilers consumed the same eight fern
+sources (including the generated Windows platform source) or the four
+web-server sources listed in its `project.toml`. Standard-library sources
+were unchanged. Generated programs used `-g0`, the optimization below, and
+the default linker settings, without additional LTO or stripping flags.
+
+Each compiler had one warm-up per workload/profile, followed by five
+alternating process-wall-time samples. Times include frontend, LLVM,
+native code generation, linking, startup and file I/O, not a C++ rebuild.
+Code bytes are the PE `.text` virtual size; executable bytes are the full
+file. Both sizes were unchanged:
+
+| Workload | Program optimization | Before median (ms) | After median (ms) | Code bytes, both | Executable bytes, both |
+|---|---|---|---|---|---|
+| fern | `-O0` | 2245.0 | 2244.6 | 566966 | 602624 |
+| fern | `-O2` | 3546.3 | 3579.5 | 265014 | 299008 |
+| web server | `-O0` | 1028.7 | 1042.7 | 239910 | 268288 |
+| web server | `-O2` | 1683.1 | 1695.4 | 150454 | 178176 |
+
+The measured medians ranged from effectively unchanged to 1.4% higher,
+with overlapping samples. This is not a statistical
+no-regression or cross-platform claim. Neither workload currently uses
+user-defined generics, so both instantiation reports are empty: this sample
+measures compiler overhead and existing-program footprint, not the cost of
+many instantiations. No additional cost budget or automatic CI/fern report
+archiving is introduced on this evidence. Program `-O2` here does not
+constitute Release-host or full-platform acceptance.

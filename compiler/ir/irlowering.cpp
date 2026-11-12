@@ -2257,7 +2257,7 @@ private:
             return std::nullopt;
         }
 
-        operand = acquireOwned(*operand, expression->span);
+        operand = acquireOwned(*operand, expression->operand->span);
         if (!operand.has_value()) return std::nullopt;
         const bool neverSuccess = *resultType == model->types().neverType();
         const bool neverFailure = isResult &&

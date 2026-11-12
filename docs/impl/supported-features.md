@@ -62,6 +62,7 @@ paths containing spaces are supported and require appropriate CLI quoting.
 | `Array.removeLast` | `&values.removeLast()` removes the last element and returns it as `Optional<T>` (`.None` when empty); the element moves into the result, so it works for noncopyable elements ([spec §2.6.2](../../specs/02-types.md#262-removing-the-last-array-element)) |
 | `Array.consumeEmpty` | `consume values.consumeEmpty()` ends an empty array and frees its storage; it traps (`array not empty`) otherwise, so it is the way to end an array of linear elements after draining it with `removeLast()`. The receiver must be a variable, parameter or field ([spec §2.6.4](../../specs/02-types.md#264-ending-an-empty-array-consumeempty)). `consume` now also starts an expression statement and a `return` value |
 | Function values | `(E T, ...): R` function types (spec §2.3.1) with unlabeled parameters and `borrowing`, `inout`, `consuming` or `initializing` effects; a top-level function named where it is not called is a value of its type (`let f = square`), called positionally with the same markers as a call by name (`f(x, &y, consume z)`); a field, element or call result is called through a parenthesized callee (`(s.f)(x)`). Values are copyable, never linear, and may be stored anywhere except a dictionary key or a top-level constant, and may cross tasks and channels. Not values: methods, builtins, `@c_extern`/`@c_data`, the root `main`. No closures, no `==`, no `print`; force-unwrap is not implemented, so an optional function is unwrapped with `match` ([spec §5.6.1](../../specs/05-expressions.md), [decision 0020](../decisions/0020-function-values.md)) |
+| Protocols and generic functions | Top-level `protocol` declarations, explicit conformance extensions of same-module user structs/enums, and top-level generic functions (`<T: P & Copyable>`), checked once and monomorphized with direct witness calls. Type arguments are inferred from arguments, not the result; they may be noncopyable but never linear or `Never`. A parameter is noncopyable without `Copyable`. Requirement effects use the ordinary access markers and ownership/exclusivity checks. No generic function values or generic `spawn` targets. Generic types, methods, extensions, defaults/refinement of protocols, associated types and existential values remain deferred ([spec §20](../../specs/20-protocols.md), [decision 0021](../decisions/0021-protocols-and-generic-functions.md)) |
 | `spawn` and `JoinHandle<R>` | `let h = spawn(function: work, input: consume value)` runs the top-level function `work` (one `consuming` parameter) on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle is linear: every path must join it, and an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`. At most 256 unjoined tasks; a trap in a task ends the process; `runProcess` and `spawn` cannot share a program ([spec §21](../../specs/21-concurrency.md), [decision 0018](../decisions/0018-tasks.md)) |
 | Channels | `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel of `ChannelSender<T>` and `ChannelReceiver<T>`; `s.send(value: consume x)` gives `Result<Void, ChannelClosed>` and `r.receive()` gives `Result<T, ChannelClosed>`; both wait when the queue is full or empty; `consume s.close()` and `consume r.close()` end an end, and an end also closes when dropped. Ends are noncopyable (not linear) and move into tasks; a linear element is rejected. A blocking operation with no other thread traps (`channel deadlock`). Known limits: a copyable payload bound by a `match` on `receive()` is cloned; the builtin `ChannelClosed` is written `.Closed` (the qualified `ChannelClosed.Closed` fails in IR lowering, as `ConversionError.OutOfRange` does); a payload-less case needs a local before `consume` (`consume Chain.End` is rejected; `consume .End` works) ([spec §21.9](../../specs/21-concurrency.md#219-channels), [decision 0019](../decisions/0019-channels.md)) |
 | Dictionary lookup | `Dict.get(key:)` returns an independent owned `Optional<V>`; missing keys return `.None`, without changing strict subscripts |
@@ -80,7 +81,19 @@ paths containing spaces are supported and require appropriate CLI quoting.
 
 `Array`, `Dict`, `Optional`, and `Result` are compiler/runtime-special-cased
 builtins. Their type arguments do not imply support for user-defined generic
-declarations.
+type declarations.
+
+`--report-instantiations` prints one line per concrete generic function
+instance, sorted by qualified function name and type-argument display names:
+`name<Args> | required by caller at file:line | N IR instructions`.
+The count is before optimization, identical at every `-O` level, and is not
+machine-code size. The requiring call is nearest a non-generic root, ties
+broken by least source position. Named modules qualify function names;
+same-module private-name collisions add `@sourceId`. Type names are qualified
+when otherwise ambiguous. Names are printed in full. Without another output
+option the flag creates no file. Limits are 10,000 instances, type nesting
+and shortest-chain depth 64, and 4,096 expanded type occurrences per argument;
+exceeding a limit is `type-checking.instantiation-limit`.
 
 Decimal integer literals use their contextual numeric type, or default to
 `Int`; decimal floating literals (including exponents) default to `Double`.
@@ -139,7 +152,7 @@ See [fern](fern.md) for current contracts and parser limits.
 
 ## Not implemented
 
-- User-defined generics, traits/protocols/interfaces, classes, closures, or
+- User-defined generic types/methods, traits/interfaces, classes, closures, or
   asynchronous/concurrent functions.
 - Networking beyond blocking IPv4 TCP: UDP, IPv6, host names, timeouts,
   non-blocking I/O, TLS. The TCP operations
@@ -148,9 +161,12 @@ See [fern](fern.md) for current contracts and parser limits.
   on macOS they return `.Other(38)`.
 - User-defined `init` bodies, `deinit` on an `enum` or extension, explicit copy
   initializers, or user-defined accessors.
+- Function parameter default values (`= expression`), including on generic
+  functions. This existing parser limitation is separate from defaults on
+  stored fields.
 - Implicit-`self` field access (write `self.count`, not `count`), extensions of
   builtin types or of a type from another module, generic methods, stored
-  properties in extensions, and methods on protocols (there are no protocols).
+  properties in extensions, and protocol default method implementations.
 - Top-level executable statements, mutable global storage, import aliases,
   wildcard imports, re-exports, dependency fetching, separate binary modules,
   or a stable source-library ABI.

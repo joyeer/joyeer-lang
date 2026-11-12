@@ -144,6 +144,138 @@ TEST_F(IRLoweringTest, LowersMethodsAsFunctionsWithALeadingReceiverParameter) {
     EXPECT_EQ(entries, 0);
 }
 
+TEST_F(IRLoweringTest, GenericInstancesHaveConcreteTypesDirectWitnessCallsAndSourceScopes) {
+    ASSERT_NO_FATAL_FAILURE(lower(readFixture("type-checking/generics.joyeer")));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(std::count_if(result.module->functions.begin(), result.module->functions.end(),
+            [](const auto& candidate) { return candidate.name == "read<Number>"; }), 1);
+    EXPECT_EQ(opcodeCount(function("read<Number>"), joyeer::ir::Opcode::call), 1u);
+    for (const auto& block : function("read<Number>").blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::call) continue;
+            ASSERT_TRUE(instruction.callee.has_value());
+            EXPECT_EQ(result.module->functions[*instruction.callee].name, "Number.read");
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            ASSERT_TRUE(instruction.debugLocation->scope.has_value());
+            EXPECT_EQ(result.module->debugScopes[*instruction.debugLocation->scope].function,
+                      function("read<Number>").id);
+        }
+    }
+    EXPECT_TRUE(std::none_of(result.module->types.begin(), result.module->types.end(),
+            [](const auto& type) { return type.kind == joyeer::typing::TypeKind::typeParameter; }));
+}
+
+TEST_F(IRLoweringTest, GenericConsumptionAndCopyableCopiesFollowTheCheckedBody) {
+    ASSERT_NO_FATAL_FAILURE(lower(
+            "struct Ticket { let n: Int\n    deinit() {} }\n"
+            "func identity<T>(value: consuming T): T { return value }\n"
+            "func duplicate<T: Copyable>(value: T): [T] { return [value, value] }\n"
+            "func main() { let a = identity(value: consume Ticket(n: 1))\n"
+            "let b = identity(value: consume 2)\nlet c = duplicate(value: \"x\") }\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("identity<Ticket>"), joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(function("identity<Int>"), joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(function("duplicate<String>"), joyeer::ir::Opcode::copyValue), 2u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, VerifierRejectsATypeParameterEvenInAnUnusedTypeRecord) {
+    ASSERT_NO_FATAL_FAILURE(lower("func main() {}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    auto& type = result.module->types.emplace_back();
+    type.id = static_cast<joyeer::ir::TypeId>(result.module->types.size() - 1);
+    type.kind = joyeer::typing::TypeKind::typeParameter;
+    type.name = "T";
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, VerifierRejectsUsedGenericPlaceholdersAndTypesContainingThem) {
+    for (const auto nested : {false, true}) {
+        ASSERT_NO_FATAL_FAILURE(lower(
+                "func sink<T>(value: T) {}\nfunc main() { sink(value: 1) }\n"));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto placeholder = std::find_if(result.module->types.begin(), result.module->types.end(),
+                [](const auto& type) {
+                    return type.kind == joyeer::typing::TypeKind::error && type.name == "T";
+                });
+        ASSERT_NE(placeholder, result.module->types.end());
+        auto type = placeholder->id;
+        if (nested) {
+            const auto id = static_cast<joyeer::ir::TypeId>(result.module->types.size());
+            result.module->types.push_back({id, "[T]", joyeer::typing::TypeKind::array,
+                                           joyeer::semantic::invalidSymbolId, {type}});
+            type = id;
+        }
+        auto& main = result.module->functions[function("main").id];
+        joyeer::ir::Instruction allocation {joyeer::ir::Opcode::stackAllocate};
+        allocation.result = joyeer::ir::Value {1000000, type, joyeer::ir::ValueCategory::address};
+        main.blocks[0].instructions.insert(main.blocks[0].instructions.begin(), std::move(allocation));
+        const auto verification = joyeer::ir::Verifier().verify(*result.module);
+        EXPECT_FALSE(verification.succeeded());
+        EXPECT_TRUE(std::any_of(verification.errors.begin(), verification.errors.end(),
+                [](const auto& error) { return error.message.find("non-concrete type") != std::string::npos; }))
+                << joyeer::ir::dump(verification);
+    }
+}
+
+TEST_F(IRLoweringTest, GenericDependencyUsesTheRootTypesConformanceAndSourceFile) {
+    result = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer",
+          "import library\nstruct Number { let value: Int }\n"
+          "extension Number: library.Readable { func read(): Int { return self.value } }\n"
+          "func main() { print(value: library.read(value: Number(value: 7))) }\n" },
+        { "library", "library.joyeer",
+          "public protocol Readable { func read(): Int }\n"
+          "public func read<T: Readable>(value: T): Int { return value.read() }\n" },
+    });
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& instance = function("library.read<Number>");
+    ASSERT_TRUE(instance.debugLocation.has_value());
+    EXPECT_EQ(instance.debugLocation->span.sourceId, 1u);
+    for (const auto& block : instance.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::call) continue;
+            ASSERT_TRUE(instruction.callee.has_value());
+            EXPECT_EQ(result.module->functions[*instruction.callee].name, "Number.read");
+        }
+    }
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, DiscoversGenericCallsInMethodsAndDeinitializers) {
+    ASSERT_NO_FATAL_FAILURE(lower(
+            "func identity<T: Copyable>(value: T): T { return value }\n"
+            "struct Ticket {\n    let n: Int\n"
+            "    func read(): Int { return identity(value: self.n) }\n"
+            "    deinit() { print(value: identity(value: self.n)) }\n}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("Ticket.read"), joyeer::ir::Opcode::call), 1u);
+    EXPECT_EQ(opcodeCount(function("identity<Int>"), joyeer::ir::Opcode::copyValue), 0u);
+}
+
+TEST_F(IRLoweringTest, GenericInstanceNamesDisambiguatePrivateFunctionsAndTypeArguments) {
+    result = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer",
+          "private struct Box { let value: Int }\n"
+          "func identity<T: Copyable>(value: T): T { return value }\n"
+          "private func helper<T: Copyable>(value: T): T { return value }\n"
+          "func main() { let box = identity(value: Box(value: 7))\n"
+          "print(value: helper(value: box.value)) }\n" },
+        { "app", "other.joyeer",
+          "private struct Box { let value: String }\n"
+          "private func helper<T: Copyable>(value: T): T { return value }\n"
+          "func other() { let box = identity(value: Box(value: \"x\"))\n"
+          "print(value: helper(value: box.value)) }\n" },
+    });
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(function("app.identity<app.Box@0>").parameters.size(), 1u);
+    EXPECT_EQ(function("app.identity<app.Box@1>").parameters.size(), 1u);
+    EXPECT_EQ(function("app.helper@0<Int>").parameters.size(), 1u);
+    EXPECT_EQ(function("app.helper@1<String>").parameters.size(), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersParametersOperatorsAndReturns) {
     lower(R"JOYEER(func add(left: Int, right: Int): Int {
 return left + right

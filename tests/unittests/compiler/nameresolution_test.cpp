@@ -118,6 +118,44 @@ return item.count
     EXPECT_EQ(referenced(field).name, "count");
 }
 
+TEST_F(NameResolutionTest, ResolvesGenericParameterAndProtocolSelfInTheirOwnScopes) {
+    resolve(readFixture("name-resolution/generics.joyeer"));
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto protocol = std::static_pointer_cast<joyeer::syntax::ProtocolDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto& requirement = protocol->requirements[0];
+    EXPECT_EQ(referenced(requirement->parameters[0]->type).id, declared(protocol).id);
+    EXPECT_EQ(referenced(requirement->returnType).id, declared(protocol).id);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[1]);
+    const auto& parameter = function->genericParameters[0];
+    EXPECT_EQ(declared(parameter).kind, SymbolKind::typeParameter);
+    EXPECT_EQ(referenced(parameter->constraints[0]).id, declared(protocol).id);
+    EXPECT_EQ(referenced(function->parameters[0]->type).id, declared(parameter).id);
+    EXPECT_EQ(referenced(function->returnType).id, declared(parameter).id);
+}
+
+TEST_F(NameResolutionTest, GenericParametersDoNotEscapeOrShareIdentity) {
+    resolve("func first<T>(value: T) {}\nfunc second<T>(value: T) {}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto first = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto second = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[1]);
+    EXPECT_NE(declared(first->genericParameters[0]).id, declared(second->genericParameters[0]).id);
+    resolve(readFixture("name-resolution/err/generic_scope.joyeer"));
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+}
+
+TEST_F(NameResolutionTest, PublicGenericSignaturesExposeConstraintsNotTheirOwnParameters) {
+    resolve("public protocol P {}\n"
+            "public func identity<T: P>(value: consuming T): T { return value }\n");
+    EXPECT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    resolve("private protocol P {}\n"
+            "public func identity<T: P>(value: consuming T): T { return value }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
+}
+
 TEST_F(NameResolutionTest, UnitTypeUsesBuiltinIdentityWhenVoidIsShadowed) {
     resolve("struct Void {}\nfunc accept(value: ()): () { return value }\n"
             "func run() { accept(value: ()) }\n");

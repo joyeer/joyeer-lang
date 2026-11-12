@@ -1,6 +1,7 @@
 #include "driver.h"
 #include "compiler/codegen/linker.h"
 #include "toolchain.h"
+#include "compiler/ir/ir.h"
 
 #include <filesystem>
 
@@ -14,6 +15,10 @@
 #endif
 
 #include <algorithm>
+#include <iostream>
+#include <map>
+#include <sstream>
+#include <tuple>
 #include <vector>
 
 #ifndef JOYEER_RUNTIME_PATH
@@ -45,6 +50,77 @@ std::filesystem::path runtimePath() {
         if (!directory.empty()) return directory / configuredPath;
     }
     return configuredPath;
+}
+
+bool printInstantiationReport(
+        const SourceFile& source,
+        const std::filesystem::path& workingDirectory,
+        Diagnostics& diagnostics) {
+    if (source.typeCheckedModel == nullptr || source.joyeerIR == nullptr) {
+        diagnostics.reportDiagnostic(ErrorLevel::failure, "driver.missing-source-result",
+                                     "compiler produced no generic instantiation data");
+        return false;
+    }
+    const auto& model = *source.typeCheckedModel;
+    const auto& module = *source.joyeerIR;
+    std::map<std::pair<joyeer::semantic::SymbolId, std::string>, size_t> sizes;
+    for (const auto& function : module.functions) {
+        if (!function.symbol.has_value() || model.genericParameters(*function.symbol) == nullptr) continue;
+        size_t size = 0;
+        for (const auto& block : function.blocks) size += block.instructions.size();
+        if (!sizes.emplace(std::pair { *function.symbol, function.name }, size).second) {
+            diagnostics.reportDiagnostic(ErrorLevel::failure, "driver.invalid-instantiation-report",
+                                         "generic instances have indistinguishable display names");
+            return false;
+        }
+    }
+    struct Entry {
+        const joyeer::typing::Instance* instance;
+        std::string function;
+        std::vector<std::string> arguments;
+    };
+    std::vector<Entry> entries;
+    for (const auto& instance : model.instances()) {
+        Entry entry { &instance, model.functionDisplayName(instance.function), {} };
+        for (const auto argument : instance.arguments) {
+            entry.arguments.push_back(model.types().displayName(argument, true));
+        }
+        entries.push_back(std::move(entry));
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+        return std::tie(left.function, left.arguments) < std::tie(right.function, right.arguments);
+    });
+    std::ostringstream report;
+    for (const auto& entry : entries) {
+        const auto& instance = *entry.instance;
+        const auto size = sizes.find({ instance.function, instance.name });
+        const auto* file = module.sourceFile(instance.requiredAt.sourceId);
+        if (size == sizes.end() || file == nullptr) {
+            diagnostics.reportDiagnostic(ErrorLevel::failure, "driver.invalid-instantiation-report",
+                                         "generic instance has no lowered function or requiring source file");
+            return false;
+        }
+        const auto requirer = instance.requiredBy.has_value()
+                ? model.instances()[*instance.requiredBy].name
+                : instance.requiredByFunction.has_value()
+                    ? model.functionDisplayName(*instance.requiredByFunction) : "<default argument>";
+        auto path = std::filesystem::u8path(file->directory) / std::filesystem::u8path(file->fileName);
+        const auto relative = path.lexically_relative(workingDirectory);
+        if (!relative.empty()) path = relative;
+        const auto encoded = path.generic_u8string();
+        const auto line = std::upper_bound(file->lineStarts.begin(), file->lineStarts.end(),
+                                          instance.requiredAt.offset) - file->lineStarts.begin();
+        report << instance.name << " | required by " << requirer << " at "
+               << std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size())
+               << ':' << line << " | " << size->second << " IR instructions\n";
+    }
+    std::cout << report.str();
+    if (!std::cout) {
+        diagnostics.reportDiagnostic(ErrorLevel::failure, "driver.instantiation-report-write-failed",
+                                     "cannot write the generic instantiation report to standard output");
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -117,6 +193,18 @@ int Driver::run() {
             }
         }
         if (diagnostics->hasFailure()) {
+            diagnostics->printErrors();
+            return 1;
+        }
+    }
+    if (arguments->reportInstantiations) {
+        const auto& source = compiler->getLastCompiledSourceFile();
+        if (source == nullptr ||
+            !printInstantiationReport(*source, arguments->workingDirectory, *diagnostics)) {
+            if (source == nullptr) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.missing-source-result",
+                                             "compiler produced no source result");
+            }
             diagnostics->printErrors();
             return 1;
         }

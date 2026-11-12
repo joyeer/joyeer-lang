@@ -721,13 +721,16 @@ std::vector<syntax::GenericParameterSyntax::Ptr> Parser::parseGenericParameters(
     std::vector<syntax::GenericParameterSyntax::Ptr> parameters;
     cursor.advance();
     DelimiterScope delimiter(activeClosers, greater);
+    if (cursor.at(greater)) {
+        reportExpected(DiagnosticId::expectedToken, "a type parameter name");
+    }
     while (!cursor.at(greater) && !cursor.atEnd()) {
         const size_t start = cursor.position();
         auto name = expect(identifier, "a type parameter name");
         std::vector<syntax::TypePtr> constraints;
         if (cursor.eat(colon) != nullptr) {
             while (true) {
-                constraints.push_back(parseTypePrimary());
+                constraints.push_back(parseType());
                 if (cursor.eat(ampersand) == nullptr) break;
             }
         }

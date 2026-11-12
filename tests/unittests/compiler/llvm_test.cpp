@@ -1712,4 +1712,16 @@ TEST_F(LLVMBackendTest, CallsThroughFunctionValuesAreOneIndirectCall) {
     }
     EXPECT_GE(definitions, 3u);
 }
+
+TEST_F(LLVMBackendTest, GenericInstanceNamesAndConcreteDebugTypesSurviveTheBackendWire) {
+    for (const auto format : {joyeer::DebugInfoFormat::dwarf, joyeer::DebugInfoFormat::codeView}) {
+        emit("func identity<T>(value: consuming T): T { return value }\n"
+             "func run(): String { return identity(value: consume \"hello\") }\n",
+             true, {true, format, joyeer::OptimizationLevel::O0, true});
+        ASSERT_TRUE(result.succeeded()) << joyeer::llvmbackend::dump(result.diagnostics);
+        EXPECT_NE(result.text.find("name: \"identity<String>\""), std::string::npos) << result.text;
+        EXPECT_NE(result.text.find("name: \"value\""), std::string::npos);
+        EXPECT_NE(result.text.find("name: \"String\""), std::string::npos);
+    }
+}
 } // namespace

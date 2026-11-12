@@ -1295,6 +1295,7 @@ private:
         if (type == nullptr) return;
         const auto referenced = referencedSymbol(type);
         if (referenced.has_value() &&
+            symbol(*referenced).kind != SymbolKind::typeParameter &&
             symbol(*referenced).visibility < declaration.visibility) {
             report(NameResolutionDiagnosticId::inaccessibleExposedType, type->span,
                    "declaration '" + declaration.name + "' exposes less accessible type '" +
@@ -1991,6 +1992,13 @@ private:
         }
 
         const auto& type = symbol(*baseType);
+        const auto baseSymbol = referencedSymbol(expression->base);
+        if (type.kind == SymbolKind::protocol &&
+            (!baseSymbol.has_value() || symbol(*baseSymbol).kind != SymbolKind::protocol)) {
+            addDeferred(expression, DeferredResolutionKind::memberNeedsBaseType, name,
+                        tokenSpan(expression->member, expression->span));
+            return;
+        }
         if (!type.memberScope.has_value()) {
             report(
                     NameResolutionDiagnosticId::unknownMember,

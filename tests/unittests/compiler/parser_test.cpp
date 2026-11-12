@@ -73,6 +73,38 @@ TEST_F(ParserTest, EmptySourceProducesEmptySpannedFile) {
     EXPECT_EQ(result.root->span.length, 0u);
 }
 
+TEST_F(ParserTest, ParsesProtocolsConformancesAndGenericConstraints) {
+    parse(readFixture("parser/ok/generics.joyeer"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 5u);
+    const auto protocol = std::static_pointer_cast<joyeer::syntax::ProtocolDeclSyntax>(
+            result.root->items[0]);
+    ASSERT_EQ(protocol->requirements.size(), 3u);
+    EXPECT_EQ(protocol->requirements[1]->parameters[0]->accessEffect(), joyeer::syntax::AccessEffect::inout);
+    EXPECT_EQ(protocol->requirements[2]->parameters[0]->accessEffect(), joyeer::syntax::AccessEffect::consuming);
+    for (const auto& requirement : protocol->requirements) EXPECT_EQ(requirement->body, nullptr);
+    const auto extension = std::static_pointer_cast<joyeer::syntax::ExtensionDeclSyntax>(
+            result.root->items[3]);
+    EXPECT_EQ(extension->conformances.size(), 2u);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            result.root->items[4]);
+    ASSERT_EQ(function->genericParameters.size(), 1u);
+    EXPECT_EQ(function->genericParameters[0]->name->rawValue, "T");
+    EXPECT_EQ(function->genericParameters[0]->constraints.size(), 2u);
+}
+
+TEST_F(ParserTest, RejectsMalformedGenericParameterClauses) {
+    for (const auto* text : {
+            "func f<>(value: Int) {}\n",
+            "func f<T:>(value: T) {}\n",
+            "func f<T: P &>(value: T) {}\n",
+            "func f<T(value: T) {}\n"}) {
+        SCOPED_TRACE(text);
+        parse(text);
+        EXPECT_FALSE(result.succeeded());
+    }
+}
+
 TEST_F(ParserTest, ParsesUnitTypesValuesAndPatterns) {
     parse("let value: () = ()\n"
           "func run(): Result<Void, String> { return .Ok(()) }\n"

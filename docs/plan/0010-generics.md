@@ -31,9 +31,9 @@ construction) through dedicated IR opcodes (`taskSpawn`, `taskJoin`, `channelCre
 
 | Feature | State |
 |---|---|
-| Function types `(T): R` | Syntax described in §2.3; no `TypeKind`, not accepted. A function used as a value gives a late or misleading diagnostic ([concurrency plan](0009-concurrency.md)). |
-| Indirect calls | Runtime-only and untyped: `joyeer_intrinsic_call_void1/2` (decision 0009, D2). |
-| Protocols and generic functions | Proposed in §20, not implemented; `protocol` and `trait` are reserved. |
+| Function types `(T): R` | Implemented in Phase 1 ([0020](../decisions/0020-function-values.md)); non-capturing top-level function values, with exact access effects. |
+| Indirect calls | Typed function-value calls are implemented; the runtime-only untyped `joyeer_intrinsic_call_void1/2` also remain (decision 0009, D2). |
+| Protocols and generic functions | §20 is normative for v1; Phase 2 implementation and acceptance are tracked below. `trait` remains reserved. |
 | Generic structs, enums, methods | Deferred by §20.10; v0.1 forbids them (§2.6, §3.2.3). |
 | Layout intrinsics | None; runtime code sees only `Int` addresses ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)). |
 
@@ -92,15 +92,35 @@ exactly. No closures, methods or generic functions as values.
 - [x] Spec: settle §20 v1 and update §2.6, §3.2.3 and the reserved-keyword appendix. Evidence: §20
   made normative (inference §20.4.1, entailment §20.4.2, expanding recursion §20.6), with §1.4, §2.6,
   §2.9, §3.2.3, §3.5, §4.1.1, §5.4, §7, §12.2, §12.4, §21.2.1 and Appendix C amended as listed in 0021.
-- [ ] Failing GoogleTests and stage fixtures for protocols, conformances, constraints and `Copyable`.
-- [ ] Parsing and name resolution: `protocol`, conformance extensions, generic parameters.
-- [ ] Type checking: check a generic body once against its constraints; call-site errors name the
-  unmet constraint.
-- [ ] Instantiation with a cache keyed by function and type arguments; spans and debug scopes point at
-  the generic source.
-- [ ] IR, verifier and backend see only concrete functions; end-to-end fixtures.
-- [ ] Measure compile time and code size on fern and the web-server example.
-- [ ] Reviews and validation; update supported features.
+- [x] Failing GoogleTests and stage fixtures for protocols, conformances, constraints and `Copyable`.
+  Evidence: parser/name-resolution/type-checking fixtures, CLI rejection/report fixtures, and focused
+  tests in the existing stage suites. The initial implementation preceded these tests; failing
+  regressions reproduced all nine distinct implementation-review findings before their fixes.
+- [x] Parsing and name resolution: `protocol`, conformance extensions, generic parameters.
+  Evidence: `ParsesProtocolsConformancesAndGenericConstraints`,
+  `ResolvesGenericParameterAndProtocolSelfInTheirOwnScopes`, and the public-signature/module fixtures.
+- [x] Type checking: check a generic body once against its constraints; call-site errors name the
+  unmet constraint. Evidence: generic inference, conformance, ownership, visibility and unused-body
+  regressions, plus `DiagnosticsCliRejectsUnsatisfiedGenericConstraint`.
+- [x] Instantiation with a cache keyed by function and type arguments; spans and debug scopes point at
+  the generic source. Evidence: transitive/cache and source-scope tests, bounded recursion/depth tests,
+  private-name collision coverage and the byte-exact `GenericsInstantiationReport` at `-O0`/`-O2`.
+- [x] IR, verifier and backend see only concrete functions; end-to-end fixtures. Evidence:
+  `GenericInstanceNamesAndConcreteDebugTypesSurviveTheBackendWire`, literal/used/nested placeholder
+  rejection, `E2EGenericsO0`..`O3`, `E2EGenericsPropagationO0`..`O3` and `E2EGenericDependencyO0`/`O2`.
+- [x] Measure compile time and code size on fern and the web-server example. Evidence:
+  [local sample](../impl/backend.md#phase-2-generics-completion-sample), against `3feb624`; code/file
+  sizes unchanged and compile/link medians effectively unchanged to 1.4% higher in this sample.
+- [x] Type-system and IR/backend implementation reviews, separately from the author. Evidence:
+  nine distinct findings reproduced and fixed with passing regressions, recorded in 0021.
+- [ ] Independent adversarial review. blocked: the service rejected the agent invocation (HTTP 422)
+  before it executed. It is not counted as a completed review.
+- [ ] Full validation in Debug and Release, and Linux. blocked: Python is absent, so `validate.py`
+  cannot run; manual Debug root `fern test` also reproduces the baseline `SystemTests` stderr
+  descriptor failure (0021). Windows x64 Debug default build and unfiltered CTest pass 1591/1591.
+  Release-host/Linux and the debugger breakpoint check remain unrun.
+- [x] Update supported features and implementation notes, correct the spec example, and record
+  implementation deviations in 0021. Evidence: the linked source-of-truth documents in this change.
 
 ### Phase 3: generic types and layout intrinsics
 
@@ -150,6 +170,14 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: Phase 2 implementation work completed: reporting, stage/CLI/module/e2e coverage,
+  nine distinct implementation-review findings fixed, and follow-up inference, diagnostic and
+  naming regressions covered. Windows x64 Debug default build and unfiltered CTest pass 1591/1591.
+  Final fern/web-server timing and footprint samples recorded; code/file sizes unchanged and both
+  reports have zero user generic instances. Acceptance remains open: Python is absent,
+  root `SystemTests` repeats its baseline stderr failure, the adversarial review was rejected by the
+  service before execution, and Release-host/Linux/debugger checks are unrun. Docs and portable
+  skill references updated; only verified items checked.
 - 2026-11-12: Phase 2 implementation in progress, not reviewed: parser (`protocol`, conformance lists,
   `<T: P & Q>`), name resolution, type checking (inference, constraints, conformances, expanding
   recursion, instantiation) and lowering of instances are written; `tests/e2e/generics.joyeer` builds and

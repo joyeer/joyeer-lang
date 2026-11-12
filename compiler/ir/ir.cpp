@@ -394,6 +394,14 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
     for (const auto& type : module.types) {
+        if (type.kind == typing::TypeKind::typeParameter) {
+            report(
+                    VerificationErrorId::typeMismatch,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "type parameter '" + type.name + "' must be substituted before IR lowering");
+        }
         for (const auto argument : type.arguments) {
             if (!types.contains(argument)) {
                 report(
@@ -427,9 +435,39 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
+    std::unordered_map<TypeId, std::vector<TypeId>> typeDependents;
+    std::unordered_set<TypeId> nonConcreteTypes;
+    std::vector<TypeId> pendingTypes;
+    for (const auto& type : module.types) {
+        for (const auto argument : type.arguments) typeDependents[argument].push_back(type.id);
+        if (type.kind == typing::TypeKind::error || type.kind == typing::TypeKind::typeParameter) {
+            if (nonConcreteTypes.insert(type.id).second) pendingTypes.push_back(type.id);
+        }
+    }
+    for (size_t next = 0; next < pendingTypes.size(); ++next) {
+        const auto dependents = typeDependents.find(pendingTypes[next]);
+        if (dependents == typeDependents.end()) continue;
+        for (const auto dependent : dependents->second) {
+            if (nonConcreteTypes.insert(dependent).second) pendingTypes.push_back(dependent);
+        }
+    }
+    const auto verifyConcreteType = [&](TypeId type,
+                                        std::optional<FunctionId> function,
+                                        std::optional<BlockId> block,
+                                        std::optional<size_t> instruction,
+                                        const std::string& owner) {
+        if (!nonConcreteTypes.contains(type)) return;
+        report(VerificationErrorId::typeMismatch, function, block, instruction,
+               owner + " uses non-concrete type '" + types.at(type)->name + "'");
+    };
+    for (const auto& constant : module.constants) {
+        verifyConcreteType(constant.type, std::nullopt, std::nullopt, std::nullopt, "constant");
+    }
+
     std::unordered_map<TypeId, const StructureDefinition*> structures;
     std::unordered_map<semantic::SymbolId, const FieldDefinition*> fields;
     for (const auto& structure : module.structures) {
+        verifyConcreteType(structure.type, std::nullopt, std::nullopt, std::nullopt, "structure");
         if (!types.contains(structure.type)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -448,6 +486,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                             std::to_string(structure.type));
         }
         for (const auto& field : structure.fields) {
+            verifyConcreteType(field.type, std::nullopt, std::nullopt, std::nullopt,
+                               "field '" + field.name + "'");
             if (!types.contains(field.type)) {
                 report(
                         VerificationErrorId::invalidReference,
@@ -485,6 +525,7 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     std::unordered_map<TypeId, const EnumerationDefinition*> enumerations;
     for (const auto& enumeration : module.enumerations) {
+        verifyConcreteType(enumeration.type, std::nullopt, std::nullopt, std::nullopt, "enumeration");
         if (!types.contains(enumeration.type)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -515,6 +556,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 std::to_string(enumeration.type));
             }
             for (const auto payloadType : enumCase.payloadTypes) {
+                verifyConcreteType(payloadType, std::nullopt, std::nullopt, std::nullopt,
+                                   "enum case '" + enumCase.name + "'");
                 if (!types.contains(payloadType)) {
                     report(
                             VerificationErrorId::invalidReference,
@@ -673,6 +716,8 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_map<DebugVariableId, const DebugVariable*> debugVariables;
     std::unordered_map<FunctionId, std::unordered_set<uint32_t>> parameterIndices;
     for (const auto& variable : module.debugVariables) {
+        verifyConcreteType(variable.type, variable.function, std::nullopt, std::nullopt,
+                           "debug variable '" + variable.name + "'");
         if (!debugVariables.emplace(variable.id, &variable).second) {
             report(
                     VerificationErrorId::duplicateId,
@@ -952,6 +997,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                         "function location does not reference its root debug scope");
                     }
         }
+        verifyConcreteType(function.resultType, functionId, std::nullopt, std::nullopt, "function result");
         if (!types.contains(function.resultType)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -964,6 +1010,8 @@ VerificationResult Verifier::verify(const Module& module) const {
 
         std::unordered_map<ValueId, Value> values;
         for (const auto& parameter : function.parameters) {
+            verifyConcreteType(parameter.value.type, functionId, std::nullopt, std::nullopt,
+                               "parameter '" + parameter.name + "'");
             if (!types.contains(parameter.value.type)) {
                 report(
                         VerificationErrorId::invalidReference,
@@ -1098,6 +1146,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                     }
                 }
                 if (!instruction.result.has_value()) continue;
+                verifyConcreteType(instruction.result->type, functionId, block.id, index, "instruction result");
                 if (!types.contains(instruction.result->type)) {
                     report(
                             VerificationErrorId::invalidReference,

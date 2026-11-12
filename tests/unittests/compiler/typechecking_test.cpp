@@ -3217,4 +3217,309 @@ TEST_F(TypeCheckingTest, FunctionTypesCannotBeKeysConstantsOrNeverParameters) {
         EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidFunctionType));
     }
 }
+
+TEST_F(TypeCheckingTest, GenericCallsUseWitnessesAndCacheTransitiveInstances) {
+    check(readFixture("type-checking/generics.joyeer"));
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    ASSERT_EQ(checking.model->conformances().size(), 1u);
+    EXPECT_EQ(checking.model->conformances()[0].witnesses.size(), 1u);
+    ASSERT_EQ(checking.model->instances().size(), 2u);
+    std::vector<std::string> names;
+    for (const auto& instance : checking.model->instances()) names.push_back(instance.name);
+    std::sort(names.begin(), names.end());
+    EXPECT_EQ(names, (std::vector<std::string> {"read<Number>", "relay<Number>"}));
+}
+
+TEST_F(TypeCheckingTest, GenericInstanceNamesDisambiguatePreludeTypes) {
+    check("struct Int {}\nfunc sink<T>(value: T) {}\n"
+          "func main() { sink(value: 1)\nsink(value: Int()) }\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto& instances = checking.model->instances();
+    ASSERT_EQ(instances.size(), 2u);
+    EXPECT_NE(instances[0].name, instances[1].name);
+}
+
+TEST_F(TypeCheckingTest, GenericInferenceUsesTypedArgumentsBeforeLiteralsAndUnifiesFunctions) {
+    check("func choose<T: Copyable>(a: T, b: T): T { return a }\n"
+          "func call<T, R>(function: (T): R, value: T): R { return function(value) }\n"
+          "func length(value: String): Int { return value.count }\n"
+          "func main() {\n"
+          "    let typed: UInt8 = 2\n"
+          "    let a: UInt8 = choose(a: 1, b: typed)\n"
+          "    let b: Double = choose(a: 1, b: 2.5)\n"
+          "    let c: Int = call(function: length, value: \"abc\")\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, GenericInferenceDiagnosesConflictsAndUninformativeArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* call : {
+            "empty(value: nil)", "items(value: [])", "dictionary(value: [:])",
+            "nothing()", "optional(value: 1)"}) {
+        SCOPED_TRACE(call);
+        check(std::string("func empty<T>(value: T?) {}\nfunc items<T>(value: [T]) {}\n"
+                          "func dictionary<T>(value: [String: T]) {}\n"
+                          "func nothing<T>(): T? { return nil }\n"
+                          "func optional<T>(value: T?) {}\nfunc main() { ") + call + " }\n");
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::cannotInferTypeParameter))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+    check("func pair<T>(a: T, b: T) {}\nfunc main(a: Int, b: String) { pair(a: a, b: b) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::conflictingTypeArgument));
+}
+
+TEST_F(TypeCheckingTest, GenericBodiesAreCheckedEvenWhenUnusedAndParametersStayDistinct) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check(readFixture("type-checking/err/generic_copy.joyeer"));
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::copyOfNoncopyable));
+    EXPECT_TRUE(checking.model->instances().empty());
+    check("func wrong<T, U>(a: T, b: U) { var x = a\nx = b }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch));
+    check("func wrong<E>(value: Result<Int, E>): Result<Int, String> { return .Ok(value?) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::mismatchedPropagationError));
+}
+
+TEST_F(TypeCheckingTest, CopyableConstraintsAndEntailmentAreCheckedInGenericBodies) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Ticket { let n: Int\n    deinit() {} }\n"
+          "func copy<T: Copyable>(value: T): T { return value }\n"
+          "func main() { let t = Ticket(n: 1)\nlet other = copy(value: t) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint));
+    check("func copy<T: Copyable>(value: T): T { return value }\n"
+          "func pass<T>(value: T) { copy(value: value) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint));
+    check("func copy<T: Copyable>(value: T): T { return value }\n"
+          "func pass<T: Copyable>(value: [T]): [T] { return copy(value: value) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, GenericBodiesRejectCopiesThroughPropagationMatchAndDictionaryGet) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f<T>(value: T?): T? { let item = value?\nreturn item }\n",
+            "func f<T>(value: T?) { match value { .Some(item) => (), .None => () } }\n",
+            "func f<T>(value: [String: T]): T? { return value.get(key: \"x\") }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, GenericPropagationChecksTheOperandInEveryContext) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* statement : {"value?", "print(value: value?)"}) {
+        SCOPED_TRACE(statement);
+        check(std::string("func probe<E>(value: Result<Int, E>): Result<Int, E> {\n") +
+              statement + "\nreturn .Ok(0)\n}\n");
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::copyOfNoncopyable))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_TRUE(checking.model->instances().empty());
+    }
+    check("func probe<E: Copyable>(value: Result<Int, E>): Result<Int, E> {\n"
+          "print(value: value?)\nreturn .Ok(0)\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, GenericDictionaryKeysAreRejectedForEverySpelling) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f<T>(value: [T: Int]) {}\n",
+            "func f<T>(value: Dict<T, Int>) {}\n",
+            "func f<T: Copyable>(key: T) { let values = [key: 42] }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidTypeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, GenericInferenceDoesNotRetypeNonliteralArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* arguments : {"a: small, b: 1 + 2", "a: 1 + 2, b: small"}) {
+        SCOPED_TRACE(arguments);
+        check(std::string("func pair<T>(a: T, b: T) {}\n"
+                          "func run(small: UInt8) { pair(") + arguments + ") }\n");
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::conflictingTypeArgument))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, GenericInferenceTreatsParenthesesTransparently) {
+    check("func optional<T>(maybe: T?, value: T) {}\n"
+          "func array<T>(items: [T], value: T) {}\n"
+          "func dictionary<T>(items: [String: T], value: T) {}\n"
+          "func pair<T>(a: T, b: T) {}\n"
+          "func main() {\n"
+          "optional(maybe: (nil), value: 1)\n"
+          "optional(maybe: (.None), value: 1)\n"
+          "array(items: ([]), value: 1)\n"
+          "dictionary(items: ([:]), value: 1)\n"
+          "pair(a: 1, b: (2.5))\n}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, GenericSelfResultsRetainEveryCallerConstraint) {
+    check("protocol Clone { func cloned(): Self }\nprotocol Read { func read(): Int }\n"
+          "func inspect<T: Clone & Read>(value: T): Int { return value.cloned().read() }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, UnusedGenericBodiesRejectBareTypeNamesAsValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* value : {"T", "P"}) {
+        check(std::string("protocol P {}\nfunc f<T>(value: T) { let invalid = ") + value + " }\n");
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notAFunctionValue))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ProtocolReferencesRejectTypeArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "protocol P {}\nfunc f<T: P<Int>>(value: T) {}\n",
+            "protocol P {}\nstruct S {}\nextension S: P<Int> {}\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidConformance))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, ConformancesCheckWitnessEffectsLabelsTypesAndVisibility) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* witness : {
+            "mutating func read(value: Int): Int { return value }",
+            "func read(other: Int): Int { return other }",
+            "func read(value: consuming Int): Int { return value }",
+            "func read(value: String): Int { return 1 }",
+            "func read(value: Int): String { return \"x\" }"}) {
+        SCOPED_TRACE(witness);
+        check(std::string("protocol P { func read(value: Int): Int }\nstruct S {}\nextension S: P {\n") +
+              "    " + witness + "\n}\n");
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::witnessMismatch))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+    check("protocol P { func read(): Int }\nstruct S {}\nextension S: P {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness));
+    check("public protocol P { func read(): Int }\npublic struct S {}\n"
+          "extension S: P { private func read(): Int { return 1 } }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::witnessNotAccessible));
+    check("protocol P {}\nstruct S {}\nextension S: P {}\nextension S: P {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::duplicateConformance));
+}
+
+TEST_F(TypeCheckingTest, ConstraintsRejectDuplicateAndConflictingRequirements) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "protocol P {}\nfunc f<T: P & P>(value: T) {}\n",
+            "protocol P { func read(): Int }\nprotocol Q { func read(): String }\n"
+            "func f<T: P & Q>(value: T) {}\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidConformance))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+    check("protocol P { func read(): Int }\nprotocol Q { func read(): Int }\n"
+          "func f<T: P & Q>(value: T): Int { return value.read() }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsUnsupportedGenericAndProtocolUses) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto& [text, id] : std::vector<std::pair<std::string, Id>> {
+            {"protocol P {}\nfunc f(value: P) {}\n", Id::protocolUsedAsType},
+            {"protocol P { func read(): Int }\nfunc f() { P.read() }\n", Id::invalidCallArguments},
+            {"protocol P { func f() {} }\n", Id::invalidProtocolMember},
+            {"protocol Copyable {}\n", Id::reservedProtocolName},
+            {"func f<Copyable>(value: Copyable) {}\n", Id::reservedProtocolName},
+            {"struct S { func f<T>(value: T) {} }\n", Id::invalidGenericDeclaration},
+            {"func f<T>(value: T) { print(value: value) }\n", Id::typeMismatch},
+            {"func f<T>(value: T): Int { return value.missing() }\n", Id::unknownMemberOnTypeParameter},
+            {"func f<T>(value: T) {}\nfunc main() { let x = f }\n", Id::notAFunctionValue},
+            {"func f<T>(value: consuming T) {}\n"
+             "func main() { let h = spawn(function: f, input: consume 1)\nconsume h.join() }\n",
+             Id::spawnTargetUnsupported},
+    }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, id)) << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, GenericArgumentsRejectLinearAndNeverButAcceptVoidAndFunctions) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func work(value: consuming Int): Int { return value }\n"
+          "func f<T>(value: T) {}\n"
+          "func main() { let h = spawn(function: work, input: consume 1)\nf(value: h)\nconsume h.join() }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::linearTypeArgument));
+    check("func f<T, E>(value: Result<T, E>) {}\n"
+          "func run(value: Result<Int, Never>) { f(value: value) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidTypeArgument));
+    check("func f<T>(value: T) {}\nfunc work(): Int { return 1 }\n"
+          "func main() { f(value: ())\nf(value: work) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, RejectsExpandingRecursionWithoutRequiringAnInstance) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check(readFixture("type-checking/err/generic_recursion.joyeer"));
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::expandingGenericRecursion));
+    check("func f<T: Copyable>(value: T) { g(value: [value]) }\n"
+          "func g<U: Copyable>(value: U) { f(value: value) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::expandingGenericRecursion));
+    check("func f<T>(value: T) { f(value: value) }\nfunc main() { f(value: 1) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    EXPECT_EQ(checking.model->instances().size(), 1u);
+}
+
+TEST_F(TypeCheckingTest, InstantiationReasonsChooseTheNearestRootThenTheLeastCallSite) {
+    check("func leaf<T>(value: T) {}\n"
+          "func early<T>(value: T) { leaf(value: value) }\n"
+          "func late<T>(value: T) { leaf(value: value) }\n"
+          "func main() { late(value: 1)\nearly(value: 2) }\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto& instances = checking.model->instances();
+    const auto leaf = std::find_if(instances.begin(), instances.end(),
+            [](const auto& instance) { return instance.name == "leaf<Int>"; });
+    ASSERT_NE(leaf, instances.end());
+    ASSERT_TRUE(leaf->requiredBy.has_value());
+    EXPECT_EQ(instances[*leaf->requiredBy].name, "early<Int>");
+    for (const auto& instance : instances) {
+        if (instance.requiredBy.has_value()) continue;
+        ASSERT_TRUE(instance.requiredByFunction.has_value());
+        EXPECT_EQ(resolution.model->symbol(*instance.requiredByFunction)->name, "main");
+    }
+}
+
+TEST_F(TypeCheckingTest, InstantiationLimitsBoundTypeDepthAndNonexpandingCallChains) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    const std::string nested = std::string(65, '[') + "Int" + std::string(65, ']');
+    check("func f<T>(value: T) {}\nfunc root(value: " + nested + ") { f(value: value) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::instantiationLimit));
+    std::string text;
+    for (size_t index = 0; index < 66; ++index) {
+        text += "func f" + std::to_string(index) + "<T>(value: T) { ";
+        if (index != 65) text += "f" + std::to_string(index + 1) + "(value: value)";
+        text += " }\n";
+    }
+    check(text + "func main() { f0(value: 1) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::instantiationLimit));
+}
+
+TEST_F(TypeCheckingTest, InstantiationLimitsBoundExponentiallyExpandedTypeArguments) {
+    std::string text;
+    for (size_t index = 0; index < 17; ++index) {
+        text += "func f" + std::to_string(index) + "<T: Copyable>(value: T) { ";
+        if (index != 16) {
+            text += "let next: Result<T, T> = .Ok(value)\nf" +
+                    std::to_string(index + 1) + "(value: next)";
+        }
+        text += " }\n";
+    }
+    check(text + "func main() { f0(value: 1) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::instantiationLimit))
+            << joyeer::typing::dump(checking.diagnostics);
+}
 } // namespace

@@ -1,0 +1,63 @@
+protocol Clone {
+    func cloned(): Self
+}
+
+protocol Read {
+    func read(): Int
+}
+
+struct Ticket {
+    let number: Int
+
+    deinit() {
+        print(value: self.number)
+    }
+}
+
+extension Ticket: Clone, Read {
+    func cloned(): Self {
+        return Ticket(number: self.number + 1)
+    }
+
+    func read(): Int {
+        return self.number
+    }
+}
+
+func readClone<T: Clone & Read>(value: T): Int {
+    return value.cloned().read()
+}
+
+func forward<T, E>(value: consuming Result<T, E>): Result<T, E> {
+    let item = (consume value)?
+    return .Ok(consume item)
+}
+
+func main() {
+    let success: Result<Ticket, String> = .Ok(Ticket(number: 10))
+    let moved = forward(value: consume success)
+    match consume moved {
+        .Ok(ticket) => print(value: "ok"),
+        .Err(error) => print(value: error),
+    }
+
+    let failure: Result<String, Ticket> = .Err(Ticket(number: 20))
+    let movedError = forward(value: consume failure)
+    match consume movedError {
+        .Ok(text) => print(value: text),
+        .Err(ticket) => print(value: "err"),
+    }
+
+    let words: Result<String, String> = .Ok("hello")
+    let movedWords = forward(value: consume words)
+    match movedWords {
+        .Ok(text) => print(value: text),
+        .Err(error) => print(value: error),
+    }
+
+    let another = Ticket(number: 30)
+    if readClone(value: another) != 31 {
+        print(value: "wrong clone")
+    }
+    print(value: "cloned")
+}

@@ -169,8 +169,44 @@ See [ownership-and-errors.joyeer](../examples/ownership-and-errors.joyeer).
   `try`, `catch`, `??`, or implicit error conversion.
 
 These are compiler-supported built-ins, not evidence for user-defined
-generics. See [collections.joyeer](../examples/collections.joyeer) and
+generic types. See [collections.joyeer](../examples/collections.joyeer) and
 [ownership-and-errors.joyeer](../examples/ownership-and-errors.joyeer).
+
+## Protocols and generic functions
+
+A protocol declares method requirements; an extension explicitly supplies
+a conformance. Generic top-level functions infer their type arguments:
+
+```joyeer
+protocol Readable {
+    func read(): Int
+}
+
+struct Number {
+    let value: Int
+}
+
+extension Number: Readable {
+    func read(): Int { return self.value }
+}
+
+func read<T: Readable>(value: T): Int {
+    return value.read()
+}
+
+func main() {
+    print(value: read(value: Number(value: 7)))
+}
+```
+
+The body can use only its declared constraints. `T` is noncopyable unless
+bounded by `Copyable`; use `consuming T` and `consume` to transfer ownership,
+or add `T: Readable & Copyable` when copies are intended. Linear values and
+`Never` cannot be type arguments. Calls do not spell explicit type
+arguments, and generic functions cannot be values or `spawn` targets.
+Generic types/methods, protocol-typed values and default protocol methods
+remain unsupported. Check the matching compiler's
+[compatibility boundary](supported-features.md).
 
 ## File input
 
@@ -252,7 +288,7 @@ There are no implicit shell scripts, capture, timeout, or async APIs.
 
 The separate source-implemented fern consumes a strict TOML profile with
 explicit modules/files and `bin`/`test` targets; it does not add Joyeer imports,
-test attributes, compiler subcommands, or user-defined generics. Manifest
+test attributes or compiler subcommands. Manifest
 basic strings support `\uXXXX`/`\UXXXXXXXX` scalar escapes, unlike current
 Joyeer source strings. Manifest limits are 65536 input bytes, 4096 decoded
 bytes/string, 256 modules/targets each, and 1024 entries/string array.

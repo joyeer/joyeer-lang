@@ -39,6 +39,7 @@ require a source checkout, internet access, or access to a moving branch.
 | Aggregates | Concrete structs and payload enums; compiler-managed value copying and destruction |
 | Methods and extensions | Non-generic methods in `struct`/`enum` bodies and in `extension Type { ... }` for a struct or enum of the same module; `borrowing` (default), `mutating`, `consuming` receivers; `self` and `Self`; call markers `&value.m()` and `consume value.m()`; fields are written `self.field` |
 | Parameters | Default/explicit `borrowing`, `inout`, `consuming`, `initializing`; access and exclusivity checks |
+| Protocols and generic functions | Top-level `protocol` method requirements, conformance extensions of same-module user structs/enums, and top-level functions with inferred parameters such as `<T: Readable & Copyable>`. Bodies are checked once and requirement calls dispatch directly to witnesses. A parameter is noncopyable without `Copyable`; linear and `Never` arguments are rejected. No generic types/methods, protocol-typed values, associated types or default protocol methods |
 | Containers | Built-in `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, `Result<T, E>` |
 | Noncopyable types | A struct may declare one `deinit() { ... }`; it runs once when a live value is destroyed. Such a struct, and anything that holds one (field, enum payload, `Array`/`Dict`/`Optional`/`Result` element), is noncopyable: move it with `consume x`, take an element out of an array with `&values.removeLast()` (an `Optional`), and end an empty array with `consume values.consumeEmpty()`. A `match` over an owned temporary or `match consume x` may bind a noncopyable payload |
 | Tasks and channels | `let h = spawn(function: work, input: consume value)` runs a top-level function with one `consuming` parameter on a new thread and gives a `JoinHandle<R>`; `consume h.join()` waits and returns the result. A handle must be joined on every path (an array of handles is drained with `removeLast()` and ended with `consumeEmpty()`). `channel(capacity: 8, sender: &s, receiver: &r)` creates a bounded single-sender, single-receiver channel; `s.send(value: consume x)` and `r.receive()` give `Result<_, ChannelClosed>` and wait when full or empty; ends are noncopyable and close when dropped, or with `consume end.close()`. Values move between threads; there is no shared mutable state. `runProcess` and `spawn` cannot share a program ([spec §21](../../../specs/21-concurrency.md)) |
@@ -55,6 +56,13 @@ require a source checkout, internet access, or access to a moving branch.
 
 This is an implemented subset with regression coverage, not a claim that every
 combination is supported or that the compiler is free of correctness gaps.
+
+On a matching Phase 2 compiler, `--report-instantiations` prints each
+concrete generic function, the call that required it and its unoptimized
+Joyeer IR instruction count, in a stable order. It creates no output file
+without another output option; instruction counts are not machine-code
+sizes. Implementation safety limits are 10,000 instances, type nesting and
+shortest-chain depth 64, and 4,096 expanded type occurrences per argument.
 
 Named mode uses `--module-name` with positional root source files and repeated
 `--module-source name=file` dependency inputs. Repeating a dependency name adds
@@ -111,9 +119,10 @@ See [CLI usage](cli.md#local-projects-with-fern).
 
 ## Do not generate these as supported features
 
-- User-defined generics, traits/protocols/interfaces, classes, closures,
+- User-defined generic types/methods, traits/interfaces, classes, closures,
   `async` functions, multi-sender or unbounded channels, `select`, or detached tasks.
 - User-defined `init` bodies or explicit copy initializers.
+- Function parameter default values, including on generic functions.
 - Implicit-`self` field access (write `self.count`), extensions of builtin
   types or of a type from another module, and generic methods.
 - General user FFI, native pointer/unsafe syntax, output pointers, callbacks,
