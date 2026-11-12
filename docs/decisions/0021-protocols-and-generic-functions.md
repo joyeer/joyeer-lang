@@ -438,3 +438,14 @@ the debugger breakpoint check remain unrun; no debugger is available.
 - 0015 already listed a linear type argument as not allowed in v1.
 - 0020's implementation review found a use-after-free where a new call form missed the exclusivity
   and ownership paths; this record names those paths for requirement and generic calls up front.
+
+## Adversarial review findings (2026-11-12)
+
+`adversarial-tester` found no crash and no wrong code. Fixed: an inference failure no longer cascades into
+a function-type mismatch, and `func main<T>()` is `invalid-generic-declaration`. Open, all low severity:
+
+- A literal beside an already-inferred `T?` takes its default type and conflicts (`two(a: 1, b: o)` with
+  `o: Int?`); §20.4.1 does not say literals wrap.
+- A user `struct` or `enum` may be named `Copyable`, `Equatable` or `Display`; only a `protocol` of those
+  names is rejected (§20.2).
+- A method, requirement or label named `Self` is accepted, though a type parameter `Self` is rejected.

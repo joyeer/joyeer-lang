@@ -113,8 +113,11 @@ exactly. No closures, methods or generic functions as values.
   sizes unchanged and compile/link medians effectively unchanged to 1.4% higher in this sample.
 - [x] Type-system and IR/backend implementation reviews, separately from the author. Evidence:
   nine distinct findings reproduced and fixed with passing regressions, recorded in 0021.
-- [ ] Independent adversarial review. blocked: the service rejected the agent invocation (HTTP 422)
-  before it executed. It is not counted as a completed review.
+- [x] Independent adversarial review. Evidence: adversarial-tester found five minor defects and no crash or
+  miscompile; the `<error>` cascade and generic `main` are fixed with regression tests
+  (`AConflictingTypeArgumentDoesNotCascadeIntoAFunctionTypeMismatch`, `TheProgramEntryPointCannotBeGeneric`).
+  Three are recorded as open in 0021: a literal does not take an already-inferred `T?`, user structs may
+  reuse reserved protocol names, and a method named `Self` is accepted.
 - [ ] Full validation in Debug and Release, and Linux. blocked: Python is absent, so `validate.py`
   cannot run; manual Debug root `fern test` also reproduces the baseline `SystemTests` stderr
   descriptor failure (0021). Windows x64 Debug default build and unfiltered CTest pass 1591/1591.
@@ -170,6 +173,8 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: adversarial review done and two of five findings fixed; Debug ctest 1593 of 1593. Only
+  full validation (Release, Linux, `validate.py`) remains, blocked on Python.
 - 2026-11-12: Phase 2 implementation work completed: reporting, stage/CLI/module/e2e coverage,
   nine distinct implementation-review findings fixed, and follow-up inference, diagnostic and
   naming regressions covered. Windows x64 Debug default build and unfiltered CTest pass 1591/1591.

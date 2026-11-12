@@ -3523,3 +3523,18 @@ TEST_F(TypeCheckingTest, InstantiationLimitsBoundExponentiallyExpandedTypeArgume
             << joyeer::typing::dump(checking.diagnostics);
 }
 } // namespace
+
+TEST_F(TypeCheckingTest, AConflictingTypeArgumentDoesNotCascadeIntoAFunctionTypeMismatch) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func ap<T>(v: T, f: (borrowing T): Int): Int { return f(v) }\n"
+          "func inc(x: borrowing Int): Int { return x + 1 }\n"
+          "func main() { let r = ap(v: \"s\", f: inc) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::conflictingTypeArgument));
+    EXPECT_FALSE(hasTypeDiagnostic(checking, Id::typeMismatch)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, TheProgramEntryPointCannotBeGeneric) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func main<T>() {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidGenericDeclaration));
+}

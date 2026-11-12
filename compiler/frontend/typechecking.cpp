@@ -204,6 +204,9 @@ TypeId TypeContext::substitute(
     bool changed = false;
     for (auto& argument : arguments) {
         const auto replaced = substitute(argument, substitution);
+        // An error argument makes the whole type an error, as typeForSymbol and functionType do,
+        // so one inference failure does not cascade into a mismatch against "(<error>): Int".
+        if (replaced == errorTypeId) return errorTypeId;
         changed = changed || replaced != argument;
         argument = replaced;
     }
@@ -1293,6 +1296,13 @@ private:
             (void) model->typeContext.typeParameterType(*symbol);
         }
         constrainedParameters.insert(constrainedParameters.end(), parameters.begin(), parameters.end());
+        const auto* functionSymbol = symbolOf(*function);
+        if (!misplaced.has_value() && functionSymbol != nullptr && functionSymbol->isRootModule &&
+            functionSymbol->name == "main" && functionSymbol->kind == semantic::SymbolKind::function) {
+            report(TypeCheckingDiagnosticId::invalidGenericDeclaration, clause,
+                   "the program entry point 'main' cannot declare type parameters",
+                   "move the work into a generic function that 'main' calls");
+        }
         if (!misplaced.has_value()) model->genericParameterLists[*function] = std::move(parameters);
     }
 
