@@ -163,7 +163,7 @@ required. The toolchain finds standard modules relative to the compiler itself,
 never through a search path, and a module supplied explicitly with the same
 name takes precedence (which is how the library itself is developed). The
 resolution mechanism is an implementation contract, described in
-[toolchain libraries](../docs/plan/toolchain-libraries.md).
+[toolchain libraries](../docs/plan/0006-toolchain-libraries.md).
 
 | Module | Provides |
 |---|---|

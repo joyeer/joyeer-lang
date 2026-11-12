@@ -1,7 +1,7 @@
 # 0018: Tasks: `spawn`, `JoinHandle` and `join`
 
 - Status: accepted (2026-11-09), after a `language-designer` review whose findings are folded in
-  below. Phase P5a of the [concurrency plan](../plan/concurrency.md), the first half of the compiler
+  below. Phase P5a of the [concurrency plan](../plan/0009-concurrency.md), the first half of the compiler
   work in [0013](0013-concurrency-model.md). Implemented: stage 0 (`consumeEmpty`) and stage 1
   (`JoinHandle`, `spawn`, `join`) on Linux and Windows. Channels are
   [0019](0019-channels.md) (P5b with the runtime of P6), so tasks ship on the P3 and P4 runtime alone.

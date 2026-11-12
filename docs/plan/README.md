@@ -40,5 +40,9 @@ Plans written before these rules adopt them the next time they are edited.
 
 ## Template
 
-Copy [template.md](template.md) to `short-title.md` and add a row to the Plans
-table in the [documentation index](../README.md).
+Copy [template.md](template.md) to `NNNN-short-title.md` and add a row to the
+Plans table in the [documentation index](../README.md). `NNNN` is the next
+number after the highest one ever used, including deleted plans
+(`git log --all --name-only --format= -- docs/plan` lists them); numbers are
+never reused, so a link to a finished plan cannot silently point at a new one.
+The title repeats the number: `# NNNN: Title`.

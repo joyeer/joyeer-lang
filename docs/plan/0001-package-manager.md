@@ -1,4 +1,4 @@
-# Joyeer Package Manager: Plan
+# 0001: Joyeer Package Manager
 
 - Status: in progress (updated 2026-11-12)
 - Decisions: none yet

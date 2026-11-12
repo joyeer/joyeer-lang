@@ -1,4 +1,4 @@
-# Test Coverage: Plan
+# 0005: Test Coverage
 
 - Status: in progress (updated 2026-11-12)
 - Decisions: none
@@ -38,7 +38,7 @@ In priority order.
   needing arguments, a working directory or input files are excluded.
 - [x] Remove the stale legacy fixtures. Evidence: `tests/basis` and `tests/errors` are gone.
 - [ ] Sanitizer builds: a CMake option for ASan/UBSan (MSVC AddressSanitizer on Windows) for the compiler
-  and runtime, plus one validation row. The [runtime plan](runtime-in-joyeer.md) leans on this, because
+  and runtime, plus one validation row. The [runtime plan](0008-runtime-in-joyeer.md) leans on this, because
   the runtime's address code is unchecked.
 - [ ] A byte-mutation fuzzer for the lexer and parser that checks only "no crash, no hang, a diagnostic
   or a valid AST"; the type checker later.

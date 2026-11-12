@@ -1,4 +1,4 @@
-# Concurrency: Plan
+# 0009: Concurrency
 
 - Status: in progress (updated 2026-11-12); the feature work is done, gates and gaps remain
 - Decisions: [0013](../decisions/0013-concurrency-model.md), [0014](../decisions/0014-network-timeouts.md),
@@ -53,7 +53,7 @@ Python there.
 - [ ] `consume Chain.End` (a qualified payload-less case) is accepted.
 - [ ] `==` on a struct or enum, or a diagnostic with a workaround.
 - [ ] Early, accurate diagnostics for a function or method used as a value, and for `spawn(...).join()`
-  (see the [generics plan](generics.md), Phase 1).
+  (see the [generics plan](0010-generics.md), Phase 1).
 - [ ] A joined result can be an argument (`print(value: consume h.join())`); today the argument marker
   and the receiver marker collide.
 - [ ] A channel that carries its own receiver does not leak.

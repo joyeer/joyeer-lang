@@ -305,7 +305,7 @@ overrides it. Standard modules are loaded only when imported, may import each
 other, and bring their native archives into the link only then. `--print-sysroot`
 prints the root, and `--no-stdlib` disables the lookup. A supplied module with a
 standard module's name takes precedence over the toolchain's copy. See
-[toolchain library resolution](../plan/toolchain-libraries.md).
+[toolchain library resolution](../plan/0006-toolchain-libraries.md).
 
 CLI source paths resolve against the process working directory, including
 dependency paths, not against the first source file or another module.
@@ -484,7 +484,7 @@ The C11 [runtime](runtime.md) owns process startup, checked
 arithmetic and bounds helpers, value storage, collections, printing and
 allocation-balance checking. It is a static archive linked into generated
 programs, not a dependency on LLVM/LLD. The
-[runtime plan](../plan/runtime-in-joyeer.md) replaces it with Joyeer.
+[runtime plan](../plan/0008-runtime-in-joyeer.md) replaces it with Joyeer.
 
 The emitter calls the runtime only for `print`, the byte conversions, string,
 array and dictionary operations, ownership helpers, panics and the program

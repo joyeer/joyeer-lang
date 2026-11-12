@@ -20,8 +20,8 @@ Explanations and plans do not add language rules or implementation guarantees.
 | Use the first local project-manager version | [impl/fern.md](impl/fern.md) |
 | Use the optional miniz-backed ZIP library | [Compression](impl/compression.md) |
 | Disassemble Java classes and JARs with an AI agent | [moss](../tools/moss/README.md) and its [skill](../tools/moss/skills/moss/SKILL.md) |
-| Plan runtime and public-library development | [Runtime in Joyeer](plan/runtime-in-joyeer.md) and [Library modules](plan/library.md) |
-| Plan how the compiler finds the standard library | [Toolchain library resolution](plan/toolchain-libraries.md) |
+| Plan runtime and public-library development | [Runtime in Joyeer](plan/0008-runtime-in-joyeer.md) and [Library modules](plan/0003-library.md) |
+| Plan how the compiler finds the standard library | [Toolchain library resolution](plan/0006-toolchain-libraries.md) |
 | See a larger program (a Markdown web server over the provisional [TCP API](../specs/18-host.md#186-tcp-networking)) | [example/](../example/README.md) |
 | Build from source | [building.md](building.md) |
 | Install a local Debug compiler | [Debug installation](building.md#local-debug-installation) |
@@ -69,18 +69,18 @@ the [plan rules](plan/README.md#rules): a `Todo` checklist updated in every
 iteration, a progress log, and deletion once every item is done. Start from the
 [template](plan/template.md).
 
-| Document | Topic |
+| Plan | Topic |
 |---|---|
-| [c-interop.md](plan/c-interop.md) | Remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
-| [toolchain-libraries.md](plan/toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
-| [native-link-inputs.md](plan/native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
-| [test-audit.md](plan/test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
-| [runtime-in-joyeer.md](plan/runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
-| [filesystem.md](plan/filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
-| [concurrency.md](plan/concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
-| [generics.md](plan/generics.md) | Function values, protocols and generic functions, generic types and layout intrinsics, then moving the task and channel builtins into the library (proposed) |
-| [library.md](plan/library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
-| [package-manager.md](plan/package-manager.md) | Remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
+| [0001](plan/0001-package-manager.md) | Package manager: remaining native platform/release gates and future dependency, workspace, cache, and registry contracts |
+| [0002](plan/0002-c-interop.md) | C interoperation: remaining scalar ABI implementation, cross-platform acceptance, and separate memory/alias proposals |
+| [0003](plan/0003-library.md) | Standard modules: remaining Foundation/System work (contract APIs, host detection, environment and time), Collections/Testing, and fern adoption |
+| [0004](plan/0004-native-link-inputs.md) | Linking native libraries by logical name and search path (proposed) |
+| [0005](plan/0005-test-audit.md) | Test coverage gaps: fuzzing, sanitizers, CI, ownership generators, spec traceability |
+| [0006](plan/0006-toolchain-libraries.md) | How the compiler finds standard modules (implemented) and what is left: the runtime in `lib/`, `--sysroot` in fern, precompiled modules |
+| [0007](plan/0007-filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
+| [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
+| [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
+| [0010](plan/0010-generics.md) | Function values, protocols and generic functions, generic types and layout intrinsics, then moving the task and channel builtins into the library (proposed) |
 
 ## Decisions
 

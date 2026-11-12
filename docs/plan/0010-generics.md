@@ -1,4 +1,4 @@
-# Generics: Plan
+# 0010: Generics
 
 - Status: proposed (updated 2026-11-12)
 - Decisions: none yet; each phase records one (see "Open questions"). Background:
@@ -30,7 +30,7 @@ construction) through dedicated IR opcodes (`taskSpawn`, `taskJoin`, `channelCre
 
 | Feature | State |
 |---|---|
-| Function types `(T): R` | Syntax described in §2.3; no `TypeKind`, not accepted. A function used as a value gives a late or misleading diagnostic ([concurrency plan](concurrency.md)). |
+| Function types `(T): R` | Syntax described in §2.3; no `TypeKind`, not accepted. A function used as a value gives a late or misleading diagnostic ([concurrency plan](0009-concurrency.md)). |
 | Indirect calls | Runtime-only and untyped: `joyeer_intrinsic_call_void1/2` (decision 0009, D2). |
 | Protocols and generic functions | Proposed in §20, not implemented; `protocol` and `trait` are reserved. |
 | Generic structs, enums, methods | Deferred by §20.10; v0.1 forbids them (§2.6, §3.2.3). |
@@ -54,7 +54,7 @@ exactly. No closures, methods or generic functions as values.
 - [ ] IR: a function-address opcode and an indirect-call opcode; verifier checks signature and ownership.
 - [ ] Backend: function pointers, indirect calls with the Joyeer calling convention, debug info.
 - [ ] End-to-end fixture: store, pass and call function values, including `consuming` and `inout`.
-- [ ] Close the "function used as a value" diagnostic gap in the [concurrency plan](concurrency.md).
+- [ ] Close the "function used as a value" diagnostic gap in the [concurrency plan](0009-concurrency.md).
 - [ ] Reviews (language-designer, type-system-reviewer, ir-backend-reviewer, adversarial-tester) and validation.
 - [ ] Update [supported features](../impl/supported-features.md).
 

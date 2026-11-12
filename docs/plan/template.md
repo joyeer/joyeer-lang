@@ -1,4 +1,4 @@
-# Title: Plan
+# NNNN: Title
 
 - Status: proposed | in progress | blocked | done (updated YYYY-MM-DD)
 - Decisions: links to the decision records this plan depends on or produces

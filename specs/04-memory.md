@@ -533,7 +533,7 @@ standard library's host code can be written in Joyeer
 on the obligations of C for that code; the language checks nothing about the
 addresses, and none of it is reachable from ordinary programs.
 
-The [deferred memory-boundary proposal](../docs/plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [deferred memory-boundary proposal](../docs/plan/0002-c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 must settle byte extents, read/write access, nullability, output
 initialization, retention, and allocator ownership before any address
 mechanism is admitted to ordinary code. Ordinary access effects, `Optional`,

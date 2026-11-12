@@ -2,7 +2,7 @@
 
 - Status: accepted (2026-11-09), implemented, amended the same day after a backend review that ran the
   mechanism on Windows x64 and Linux x86-64. Phase P3 of the
-  [concurrency plan](../plan/concurrency.md). It decides the runtime's lowest layer for threads;
+  [concurrency plan](../plan/0009-concurrency.md). It decides the runtime's lowest layer for threads;
   there is no language surface here. The language-level tasks and channels are
   [0013](0013-concurrency-model.md), built on this in P5 and P6.
 - Spec: amends [§19.6](../../specs/19-c-interop.md) (a thread the runtime created entering Joyeer

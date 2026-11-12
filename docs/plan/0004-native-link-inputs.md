@@ -1,4 +1,4 @@
-# Native Link Inputs: Plan
+# 0004: Native Link Inputs
 
 - Status: proposed (updated 2026-11-12); explicit library files are implemented, the rest is proposed
 - Decisions: none yet

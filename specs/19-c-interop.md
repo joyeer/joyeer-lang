@@ -12,7 +12,7 @@ it is not an ordinary application program. Native platform acceptance and
 the still-unsupported memory extensions are recorded in the
 [C binding implementation](../docs/impl/c-interop.md),
 [implemented surface](../docs/impl/supported-features.md) and the separate
-[implementation plan](../docs/plan/c-interop.md).
+[implementation plan](../docs/plan/0002-c-interop.md).
 
 ### 19.1 Scope and authorization
 
@@ -306,7 +306,7 @@ no pointer type, no address arithmetic beyond `Int`, and no dereference syntax.
 
 #### 19.4.6 Runtime capabilities still proposed ⏳
 
-One operation the runtime plan ([runtime plan](../docs/plan/runtime-in-joyeer.md)) may
+One operation the runtime plan ([runtime plan](../docs/plan/0008-runtime-in-joyeer.md)) may
 want has **no decision** yet and is rejected by the compiler: for a runtime that
 does not depend on the C library, a Linux system-call intrinsic. It would follow
 the rules of §19.4.5: a reserved symbol, an exact signature, and authorized units
@@ -491,7 +491,7 @@ bare byte pointers), output parameters, and owned native result storage need a s
 source representation and lifetime/initialization contract before they can
 appear in these signatures.
 
-The [memory-boundary proposal](../docs/plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [memory-boundary proposal](../docs/plan/0002-c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 tracks those decisions separately, including whether a mechanism remains
 runtime-only. It is not an implicit approval of `Optional` pointer layouts,
 C-compatible ordinary structs, callbacks, variadic calls, or a general

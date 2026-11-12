@@ -1,4 +1,4 @@
-# Host Operations in Joyeer: Plan
+# 0007: Host Operations in Joyeer
 
 - Status: in progress (updated 2026-11-12); implemented, verification remains
 - Decisions: [0003](../decisions/0003-pure-joyeer-filesystem.md), [0004](../decisions/0004-remove-host-builtins.md),

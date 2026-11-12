@@ -9,7 +9,7 @@
 
 ## Context
 
-[docs/plan/filesystem.md](../plan/filesystem.md) proposed writing the §18.2
+[docs/plan/0007-filesystem.md](../plan/0007-filesystem.md) proposed writing the §18.2
 filesystem operations in Joyeer, calling the operating system directly. The
 first plan listed five FFI extensions: NUL- and UTF-16-terminated string
 adapters (E1), mutable buffers (E2), opaque handles (E3), variadic calls (E4),
@@ -78,7 +78,7 @@ Option 2.
   needs glibc 2.28. Both must be confirmed on real hosts.
 - Open before routing: whether to keep the built-in names compiler-known and
   lower them to `System`, or remove them and require `import System`
-  ([plan](../plan/filesystem.md#coverage)); POSIX run evidence; fern and moss
+  ([plan](../plan/0007-filesystem.md#coverage)); POSIX run evidence; fern and moss
   switching to the Joyeer implementation; removing the C runtime code and its
   ABI tests.
 - Tests: `tests/c-interop/pointers.joyeer` with a C fixture (both profiles),

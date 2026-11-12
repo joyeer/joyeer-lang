@@ -1,5 +1,5 @@
 # Checks that the runtime archive holds exactly the objects the Joyeer compiler
-# produced from lib/Runtime/core/ and nothing else (docs/plan/runtime-in-joyeer.md,
+# produced from lib/Runtime/core/ and nothing else (docs/plan/0008-runtime-in-joyeer.md,
 # stage 9): no object compiled from C, no stray member.
 #
 # Inputs: AR, ARCHIVE, EXPECTED_MEMBERS (semicolon list of file names).

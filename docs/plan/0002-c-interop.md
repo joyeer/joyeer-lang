@@ -1,4 +1,4 @@
-# C Interoperation: Plan
+# 0002: C Interoperation
 
 - Status: in progress (updated 2026-11-12); the scalar boundary is implemented, acceptance and memory
   design remain
@@ -11,9 +11,9 @@ A C boundary for the toolchain-controlled runtime context that is accepted on ev
 with designed contracts for native memory before any source syntax is added. This plan does not add
 user FFI.
 
-Related plans: [runtime-in-joyeer](runtime-in-joyeer.md) (the runtime in Joyeer),
-[library](library.md) (`Foundation`, `System`, `Collections`, `Testing`),
-[native-link-inputs](native-link-inputs.md) (supplying link inputs).
+Related plans: [runtime-in-joyeer](0008-runtime-in-joyeer.md) (the runtime in Joyeer),
+[library](0003-library.md) (`Foundation`, `System`, `Collections`, `Testing`),
+[native-link-inputs](0004-native-link-inputs.md) (supplying link inputs).
 
 ## Definition of done
 
@@ -87,7 +87,7 @@ adding source syntax:
 |---|---|
 | C-specific source aliases? | Decide separately; today use fixed-width types or C shims |
 | Any public native capability? | Separate user-FFI/unsafe proposal |
-| Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](native-link-inputs.md) |
+| Who supplies link metadata? | CMake for bootstrap; fern design is in [native-link-inputs](0004-native-link-inputs.md) |
 | Complex ABI features | Separate gates: aggregates by value, unions/bit-fields, callbacks, varargs, `long double` |
 
 ## Out of scope

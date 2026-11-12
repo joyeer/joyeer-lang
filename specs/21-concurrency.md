@@ -1,6 +1,6 @@
 ## §21 Concurrency: Tasks
 
-> **Status:** implemented (phase P5a of the [concurrency plan](../docs/plan/concurrency.md), stages 0
+> **Status:** implemented (phase P5a of the [concurrency plan](../docs/plan/0009-concurrency.md), stages 0
 > and 1) on Linux and Windows. Channels (§21.9) are specified with
 > [decision 0019](../docs/decisions/0019-channels.md) and join this chapter when they are built. The
 > design record is [decision 0018](../docs/decisions/0018-tasks.md); the model it builds on is

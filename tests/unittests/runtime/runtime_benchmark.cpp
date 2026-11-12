@@ -1,6 +1,6 @@
 // Micro-benchmarks for the hot runtime operations, written against the exported
 // ABI only so the same program measures any provider of the runtime (the C
-// implementation, later the Joyeer one; docs/plan/runtime-in-joyeer.md).
+// implementation, later the Joyeer one; docs/plan/0008-runtime-in-joyeer.md).
 //
 // This is not a test and is not registered with CTest. Run it from a Release
 // build with `cmake --build <dir> --target runtime-benchmark`. Numbers are for

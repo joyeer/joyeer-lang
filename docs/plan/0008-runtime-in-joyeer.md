@@ -1,4 +1,4 @@
-# Runtime in Joyeer: Plan
+# 0008: Runtime in Joyeer
 
 - Status: in progress (updated 2026-11-12). The runtime is Joyeer (`lib/Runtime/core/`); only its C
   declarations remain as C (`lib/Runtime/include/joyeer/`). Tier 1 and Tier 2 are done on Windows x64
@@ -100,12 +100,12 @@ state, and the change is its own phase (R12).
 | Item | Where it is tracked | How it touches the runtime |
 |---|---|---|
 | Spec text for the runtime-only capabilities | [§19.4.6](../../specs/19-c-interop.md#1947-core-units-never-results-data-symbols-and-the-program-entry-point) (proposed) | Each capability becomes accepted spec text when its decision lands |
-| `assert`, `precondition`, `fatalError` | [library plan](library.md#library) | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
+| `assert`, `precondition`, `fatalError` | [library plan](0003-library.md#library) | Built on `joyeer_panic` (R2); `fatalError` needs a `Never` result |
 | `deinit` and noncopyable types | not planned yet (§3.7, §4.7 of the spec) | Needed for owned OS resources in `System`, not by the core runtime |
 | User generics | [§20](../../specs/20-protocols.md) (proposed) | Lets D2 move to compiler-specialized containers |
-| Runtime archive in `lib/` | [toolchain libraries](toolchain-libraries.md#todo) | Do it with R9, when the compiler builds the archive |
-| Sanitizer builds | [test audit](test-audit.md) item 3 | The main safety net for unchecked address code |
-| POSIX verification of `System` | [filesystem plan](filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos) | Same hosts and gates as this plan's platform acceptance |
+| Runtime archive in `lib/` | [toolchain libraries](0006-toolchain-libraries.md#todo) | Do it with R9, when the compiler builds the archive |
+| Sanitizer builds | [test audit](0005-test-audit.md) item 3 | The main safety net for unchecked address code |
+| POSIX verification of `System` | [filesystem plan](0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos) | Same hosts and gates as this plan's platform acceptance |
 
 ## 3. Inventory
 
@@ -367,7 +367,7 @@ FFI or a user-visible `unsafe`; GC, ARC or copy-on-write; enforcing UTF-8 on
 - Replace the type-erased array and dictionary helpers with compiler-specialized
   code when generics or an internal type-operation mechanism exist.
 - Owned OS resources, after custom destruction and noncopyability.
-- Source standard library: see [library](library.md).
+- Source standard library: see [library](0003-library.md).
 
 Update [runtime](../impl/runtime.md), [strings](../impl/string.md),
 [backend](../impl/backend.md), [C interop](../impl/c-interop.md),
@@ -571,9 +571,9 @@ Start any time after 5.3.
 - [x] 9.2 Add the archive check: no object not produced by the Joyeer compiler
   (`RuntimeArchiveMembers`: the archive holds exactly the core and entry objects).
 - [ ] 9.3 Move `JoyeerRuntime.*` into `lib/`
-  ([toolchain libraries](toolchain-libraries.md#todo)).
+  ([toolchain libraries](0006-toolchain-libraries.md#todo)).
 - [ ] 9.4 Platform acceptance (§8) on Windows x64 and ARM64, Linux and macOS,
-  together with the POSIX verification of `System` ([filesystem plan](filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
+  together with the POSIX verification of `System` ([filesystem plan](0007-filesystem.md#verify-the-posix-variants-blocks-claiming-linux-and-macos)).
   Done so far: Windows x64, and Linux x86-64 (Debug and Release, 1188 tests, run in Ubuntu under
   WSL2). Open: Windows ARM64, Linux AArch64, macOS.
   **Tier 1 is done here.**

@@ -1,4 +1,4 @@
-# Library Modules and fern: Plan
+# 0003: Library Modules and fern
 
 - Status: in progress (updated 2026-11-12)
 - Decisions: [0004](../decisions/0004-remove-host-builtins.md), [0015](../decisions/0015-noncopyable-and-linear-types.md)
@@ -23,7 +23,7 @@ Done (see [fern](../impl/fern.md), [Compression](../impl/compression.md),
 [runtime](../impl/runtime.md#host-operations)): `Foundation` (text helpers, UTF-8 validation and
 `crc32`, with `FoundationTests`); `System` with every host operation of §18 in Joyeer, lexical path
 helpers and message formatters (with `SystemTests`); the optional `Compression` module; the root
-`workspace.toml`; standard-module resolution from the toolchain ([toolchain libraries](toolchain-libraries.md));
+`workspace.toml`; standard-module resolution from the toolchain ([toolchain libraries](0006-toolchain-libraries.md));
 and the removal of the compiler's host built-ins (decision 0004).
 
 ### Module plan
@@ -45,7 +45,7 @@ Rules (the language-level ones are in §12.5):
   name. Public APIs wrap internal bindings.
 - Add a module or workspace member only when it has real sources; no empty modules.
 - Layout: `lib/<Module>/`, tests in `tests/lib/<Module>/`, both listed in the root `workspace.toml`.
-- Use ordinary public functions until protocols exist ([generics plan](generics.md)).
+- Use ordinary public functions until protocols exist ([generics plan](0010-generics.md)).
 
 Acceptance for each new module: source and dependency validation, visibility, case-sensitive names,
 ambiguity, prelude collisions, duplicate names and cycles. Run real test executables in Debug and
@@ -67,7 +67,7 @@ Follow [building](../building.md) and record evidence in the implementation note
 - [ ] System owned OS resources: open files, directory handles and child processes as values. `deinit`
   and noncopyable types now exist (decision 0015); design the handles. Until then every operation opens
   and closes within one call.
-- [ ] Verify the POSIX variants of `System` ([filesystem plan](filesystem.md)).
+- [ ] Verify the POSIX variants of `System` ([filesystem plan](0007-filesystem.md)).
 - [ ] `Collections`, when a concrete consumer needs it.
 - [ ] `Testing`, when a concrete consumer needs it; then use it in test modules.
 
@@ -88,8 +88,8 @@ self-build manifests together. Fern must not depend on a previously installed to
 ## Out of scope
 
 Installed-library follow-ups (the runtime archive in `lib/`, fern and `--sysroot`, Compression by
-default, precompiled modules, cross-compilation) are in [toolchain libraries](toolchain-libraries.md).
-Registry packages and a binary-library ABI are in [package manager](package-manager.md).
+default, precompiled modules, cross-compilation) are in [toolchain libraries](0006-toolchain-libraries.md).
+Registry packages and a binary-library ABI are in [package manager](0001-package-manager.md).
 
 ## Progress log
 

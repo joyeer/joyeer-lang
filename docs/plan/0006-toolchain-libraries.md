@@ -1,11 +1,11 @@
-# Toolchain Standard-Library Resolution: Plan
+# 0006: Toolchain Standard-Library Resolution
 
 - Status: in progress (updated 2026-11-12); implemented for the compiler, fern, CMake staging and
   install, follow-ups remain
 - Decisions: none
 - Spec: [§12](../../specs/12-modules.md)
 
-Related: [Library modules](library.md), [native link inputs](native-link-inputs.md),
+Related: [Library modules](0003-library.md), [native link inputs](0004-native-link-inputs.md),
 [fern](../impl/fern.md), [Compression](../impl/compression.md).
 
 ## Goal
@@ -79,7 +79,7 @@ validation is unchanged.
 
 - [ ] Move `JoyeerRuntime.*` into `lib/`. Today the runtime sits flat beside the compiler
   (`JOYEER_RUNTIME_PATH` is exe-relative). This changes the packaging inventory and
-  `scripts/install-debug.py`; do it with or before 9.3 of the [runtime plan](runtime-in-joyeer.md).
+  `scripts/install-debug.py`; do it with or before 9.3 of the [runtime plan](0008-runtime-in-joyeer.md).
 - [ ] fern and `--sysroot`: fern derives the library from the compiler path and does not pass or honor
   `--sysroot`. Have fern run `--print-sysroot`, or accept the limitation permanently.
 - [ ] Decide whether Compression ships in the default install (it is optional because it fetches miniz)
