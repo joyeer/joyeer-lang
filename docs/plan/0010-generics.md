@@ -2,7 +2,7 @@
 
 - Status: in progress (updated 2026-11-12)
 - Decisions: [0020](../decisions/0020-function-values.md) (Phase 1),
-  [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2, proposed). Background:
+  [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2). Background:
   [0009](../decisions/0009-runtime-core-capabilities.md), [0015](../decisions/0015-noncopyable-and-linear-types.md),
   [0018](../decisions/0018-tasks.md), [0019](../decisions/0019-channels.md)
 - Spec: [§2.3](../../specs/02-types.md), [§2.6](../../specs/02-types.md), [§3.2.3](../../specs/03-declarations.md),
@@ -86,9 +86,12 @@ exactly. No closures, methods or generic functions as values.
 
 ### Phase 2: protocols and generic functions (§20 v1)
 
-- [ ] Decision record: reviewability of monomorphized generics, ownership of a type parameter, and
-  where instantiation happens.
-- [ ] Spec: settle §20 v1 and update §2.6, §3.2.3 and the reserved-keyword appendix.
+- [x] Decision record: reviewability of monomorphized generics, ownership of a type parameter, and
+  where instantiation happens. Evidence: [0021](../decisions/0021-protocols-and-generic-functions.md),
+  accepted 2026-11-12 after a language-designer review (8d9d643).
+- [x] Spec: settle §20 v1 and update §2.6, §3.2.3 and the reserved-keyword appendix. Evidence: §20
+  made normative (inference §20.4.1, entailment §20.4.2, expanding recursion §20.6), with §1.4, §2.6,
+  §2.9, §3.2.3, §3.5, §4.1.1, §5.4, §7, §12.2, §12.4, §21.2.1 and Appendix C amended as listed in 0021.
 - [ ] Failing GoogleTests and stage fixtures for protocols, conformances, constraints and `Copyable`.
 - [ ] Parsing and name resolution: `protocol`, conformance extensions, generic parameters.
 - [ ] Type checking: check a generic body once against its constraints; call-site errors name the
@@ -125,7 +128,7 @@ exactly. No closures, methods or generic functions as values.
 
 ## Open questions
 
-Questions 1 to 3 are answered in [0021](../decisions/0021-protocols-and-generic-functions.md) (proposed).
+Questions 1 to 3 are answered in [0021](../decisions/0021-protocols-and-generic-functions.md) (accepted).
 
 1. **Reviewability.** The preamble wants code that humans review; monomorphization compiles one body many
    times. How do bounded, statically dispatched generics keep behavior predictable, and what does the
@@ -147,6 +150,8 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: spec item checked (§20 normative for v1).
+- 2026-11-12: decision 0021 accepted; the decision-record item checked.
 - 2026-11-12: Phase 2 decision record 0021 drafted (open questions 1 to 3) and reviewed by
   language-designer (3 blockers and 14 should-fix items, all folded in); awaiting acceptance. No items
   done.

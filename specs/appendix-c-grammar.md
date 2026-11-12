@@ -13,15 +13,22 @@ file              ::= import_decl* top_decl*
 top_decl          ::= func_decl
                    |  struct_decl
                    |  enum_decl
+                   |  protocol_decl
                    |  extension_decl
                    |  binding
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
 func_decl         ::= attribute* [ visibility ] [ method_effect ] 'func' identifier
+                      [ generic_params ]
                       '(' [ param , ... ] ')'
                       [ ':' type ]
                       [ block ]
+
+generic_params    ::= '<' generic_param , ... '>'          // top-level functions only (§20.4)
+generic_param     ::= identifier [ ':' constraint ]
+constraint        ::= protocol_ref ( '&' protocol_ref )*
+protocol_ref      ::= nominal_type
 
 method_effect     ::= 'borrowing' | 'mutating' | 'consuming'
 param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expression ]
@@ -58,8 +65,18 @@ enum_decl         ::= [ visibility ] 'enum' identifier
 enum_case         ::= [ 'indirect' ] identifier [ '(' assoc_type , ... ')' ]
 assoc_type        ::= [ identifier ':' ] type
 
-extension_decl    ::= 'extension' type
+extension_decl    ::= 'extension' extended_type [ ':' protocol_ref , ... ]
                       '{' ( func_decl | subscript_decl )* '}'
+extended_type     ::= nominal_type [ '<' type , ... '>' ]
+                   |  '[' type ']'
+                   |  '[' type ':' type ']'
+
+protocol_decl     ::= [ visibility ] 'protocol' identifier
+                      '{' protocol_requirement* '}'
+protocol_requirement
+                  ::= [ method_effect ] 'func' identifier
+                      '(' [ requirement_param , ... ] ')' [ ':' type ]
+requirement_param ::= label [ identifier ] ':' [ access_effect ] type
 
 subscript_decl    ::= [ visibility ] 'subscript' [ identifier ]
                       '(' [ param , ... ] ')' ':' type

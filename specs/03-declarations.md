@@ -126,11 +126,12 @@ specified in §4.10.
 
 #### 3.2.3 Generics & constraints
 
-v0.1 has **no user-defined generics** (§2.6): a `func` may not declare type
-parameters, `where` clauses, or constraints. Generic *containers* (`Array`,
-`Dict`, `Optional`, `Result`) are built-ins. User-defined generics and the
-protocol system needed for constraints (`Comparable`, etc.) are reserved for a
-future version (Appendix A).
+A **top-level** `func` may declare type parameters with protocol constraints,
+`func totalArea<S: Shape>(shapes: [S]): Int` (§20.4). Methods, `init`,
+subscripts, protocol requirements and C bindings may not
+(`type-checking.invalid-generic-declaration`), and there are no `where`
+clauses. Generic *containers* (`Array`, `Dict`, `Optional`, `Result`) are
+built-ins. Operator protocols such as `Comparable` are reserved (§20.10).
 
 #### 3.2.4 Method receiver effects
 
@@ -340,14 +341,15 @@ and visible** in the declaration — no hidden boxing.
 ### 3.5 Extension declarations
 
 ```
-extension_decl  ::= 'extension' type
+extension_decl  ::= 'extension' extended_type [ ':' protocol_ref , ... ]
                     '{' extension_member* '}'
 
 extension_member ::= func_decl | subscript_decl
 ```
 
 Extensions add methods (functions tied to a type) and subscripts to an
-existing type. They cannot add stored fields.
+existing type. They cannot add stored fields. An extension with a
+conformance list declares that the type conforms to protocols (§20.3).
 
 ```joyeer
 extension Array<Int> {

@@ -1,6 +1,6 @@
 # 0021: Protocols and bounded generic functions
 
-- Status: proposed (2026-11-12), after a `language-designer` review whose findings are folded in below
+- Status: accepted (2026-11-12), after a `language-designer` review whose findings are folded in below
   ("Review"). Phase 2 of the [generics plan](../plan/0010-generics.md); it settles that plan's open
   questions 1 to 3.
 - Spec: [§20](../../specs/20-protocols.md) (v1, to be made normative). The spec change also amends

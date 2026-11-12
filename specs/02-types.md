@@ -203,12 +203,12 @@ See §8 for error-handling semantics.
 
 ### 2.6 Generics
 
-v0.1 has **no user-defined generics**. The only generic types are the built-in
-types `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and
-`Result<T, E>`. Their angle brackets are **type arguments understood directly
-by the compiler**, not a general type-parameter mechanism. User code may
-*use* these containers but may not declare new generic `func` / `struct` /
-`enum`, type parameters, or constraints.
+The generic types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
+`[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
+below). Their angle brackets are **type arguments understood directly by the
+compiler**. User code may *use* these containers and may declare **generic
+top-level functions** bounded by protocols (§20), but may not declare generic
+`struct`s, `enum`s or methods (§20.10).
 
 ```joyeer
 let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
@@ -216,9 +216,11 @@ let m: [String: Int] = [:]             // built-in Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
 
-User-defined generics will use `<T>`. They, along with constraints,
-associated types, and monomorphization, are reserved for a future version
-(Appendix A).
+Generic functions use `<T: P & Q>` and are instantiated by monomorphization
+(§20.4, §20.6). A type parameter may be a container's element, payload or
+error type (`[T]`, `T?`, `Result<T, E>`, `[String: T]`), but not a `Dict` key
+type (§20.5). Generic user types and associated types remain deferred
+(§20.10).
 
 #### 2.6.1 Safe dictionary lookup
 
@@ -343,6 +345,10 @@ value. This is what lets the right operand of `??` be `return .Err(e)` or
 The subtyping applies to expressions only. It does not extend to function types
 (§2.3.1): a `(Int): Never` value is not a `(Int): Int` value, and `Never` is not
 allowed as a function-type parameter.
+
+`Never` is not a type argument of a generic function (§20.4.1), whether
+written or inferred: a `Result<Int, Never>` argument for a `Result<T, E>`
+parameter is rejected (`type-checking.invalid-type-argument`).
 
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:

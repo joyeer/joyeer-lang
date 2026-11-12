@@ -116,7 +116,9 @@ optional_chain  ::= postfix_expr '?.' identifier
 Methods declared in a `struct`, `enum`, or `extension` are called via
 member syntax: `a.size()`, `point.distance(to: other)`.
 
-`a.f(args)` always calls a method. A stored field of function type is called
+`a.f(args)` always calls a method. When `a` has a type-parameter type (§20.4), the
+method is a requirement of a protocol in its constraint and the call reaches
+that requirement's witness (§20.5, §20.6). A stored field of function type is called
 with a parenthesized callee, `(a.f)(args)` (§5.6.1). A type may not have a
 stored field and a method with the same name
 (`name-resolution.duplicate-declaration`).

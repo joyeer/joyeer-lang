@@ -60,6 +60,8 @@ with its own destruction obligation:
   contained types are copyable; heap-backed storage is cloned recursively;
 - a `struct` or `enum` is copyable when all of its stored fields or payloads
   are copyable and it does not declare a custom `deinit`.
+- a type parameter of a generic function (§20.4) is copyable exactly when its
+  constraint lists `Copyable` (§20.5), and is never linear.
 
 A type that declares `deinit` is noncopyable by default. Ordinary
 initialization or assignment from a binding of that type is rejected rather
@@ -85,6 +87,8 @@ implementation. A `struct` or `enum` that holds a linear field or payload, and a
 `Optional` or `Result` whose element, payload or error type is linear, is itself linear; a `Dict`
 key or value may not be. A linear type is noncopyable, so it does not satisfy `Copyable`
 (§20.5), and it may not declare `deinit`; a type with `deinit` may not hold a linear field.
+A linear type may not be a type argument of a generic function
+(`type-checking.linear-type-argument`, §20.4.1): generic code may drop a `T`.
 
 A linear binding must not be **live** at any exit of its scope (§4.7.1). **Implementation
 status:** the checks are implemented for a struct declared `linear` in a toolchain-authorized

@@ -58,7 +58,7 @@ The function must be:
   a struct, or pass a unit-like (empty) struct, which occupies no storage;
 - not declared to return `Never` (`spawn-target-never`).
 
-(A generic function is also rejected, but user generic functions do not exist yet, §3.2.3.) A public
+(A generic function is also rejected: it is not a function value, §20.4.1.) A public
 function of a source dependency may be a target; a private one is not visible (§12).
 
 `function:` takes a function's name, not an arbitrary function value (§5.6.1): this is a subset of a
