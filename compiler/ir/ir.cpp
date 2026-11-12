@@ -24,6 +24,14 @@ bool validFloatingLiteral(typing::TypeKind kind, std::string_view text) {
             kind == typing::TypeKind::float64 && fits(double{});
 }
 
+// How an argument for a parameter with `effect` is passed: `inout` and `initializing` by address
+// (spec 4.2), the others by value.
+ValueCategory effectCategory(syntax::AccessEffect effect) {
+    return effect == syntax::AccessEffect::inout || effect == syntax::AccessEffect::initializing
+            ? ValueCategory::address
+            : ValueCategory::value;
+}
+
 bool producesValue(Opcode opcode) {
     switch (opcode) {
         case Opcode::integerConstant:
@@ -75,6 +83,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::count:
         case Opcode::subscript:
         case Opcode::subscriptAddress:
+        case Opcode::functionAddress:
             return true;
         default:
             return false;
@@ -395,6 +404,21 @@ VerificationResult Verifier::verify(const Module& module) const {
                         "type '" + type.name + "' references unknown type argument " +
                                 std::to_string(argument));
             }
+        }
+        // A function type has one effect per parameter and its result last; the wire reader does not
+        // range-check enumerations, so each effect is checked here.
+        const bool isFunction = type.kind == typing::TypeKind::function;
+        bool effectsValid = isFunction ? type.effects.size() + 1 == type.arguments.size() : type.effects.empty();
+        for (const auto effect : type.effects) {
+            effectsValid &= static_cast<uint64_t>(effect) <= static_cast<uint64_t>(syntax::AccessEffect::initializing);
+        }
+        if (!effectsValid) {
+            report(
+                    VerificationErrorId::typeMismatch,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "type '" + type.name + "' has invalid parameter effects");
         }
     }
 
@@ -1353,6 +1377,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                         functions.contains(*instruction.callee);
                 const auto expectsResult = instruction.opcode == Opcode::call
                         ? knownCallee && functions.at(*instruction.callee)->returnsValue
+                        : instruction.opcode == Opcode::callIndirect
+                        // Depends on the callee's function type, checked with the instruction.
+                        ? instruction.result.has_value()
                         : producesValue(instruction.opcode);
                 if (expectsResult != instruction.result.has_value()) {
                     report(
@@ -1763,6 +1790,14 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     location,
                                     "call arguments or result do not match callee signature");
                         }
+                        // A call that cannot return ends its block (decision 0020).
+                        const auto* calleeResult = types.contains(callee.resultType) ? types.at(callee.resultType) : nullptr;
+                        if (calleeResult != nullptr && calleeResult->kind == typing::TypeKind::never &&
+                            (index + 1 >= block.instructions.size() ||
+                             block.instructions[index + 1].opcode != Opcode::unreachable)) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                   "call of a function returning Never must be followed by unreachable");
+                        }
                         break;
                     }
                         case Opcode::constructStruct: {
@@ -1924,6 +1959,91 @@ VerificationResult Verifier::verify(const Module& module) const {
                             }
                         }
                         break;
+                    case Opcode::functionAddress: {
+                        if (!requireShape(0, 0)) break;
+                        if (!knownCallee) {
+                            report(VerificationErrorId::invalidReference, functionId, block.id, location,
+                                   "function_address references an unknown function");
+                            break;
+                        }
+                        const auto& callee = *functions.at(*instruction.callee);
+                        const auto* functionType = instruction.result.has_value() &&
+                                        types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type)
+                                : nullptr;
+                        // Only a Joyeer function has the Joyeer convention; a C import, a data symbol
+                        // and a builtin accepting any type have no address of a function type.
+                        bool matches = !callee.isExternal &&
+                                (!callee.nativeBinding.has_value() ||
+                                 (callee.nativeBinding->kind == NativeBindingKind::cExport &&
+                                  !callee.nativeBinding->dataSymbol)) &&
+                                instruction.result->category == ValueCategory::value &&
+                                functionType != nullptr && functionType->kind == typing::TypeKind::function &&
+                                functionType->effects.size() == callee.parameters.size() &&
+                                functionType->arguments.size() == callee.parameters.size() + 1;
+                        for (size_t parameter = 0; matches && parameter < callee.parameters.size(); ++parameter) {
+                            const auto& declared = callee.parameters[parameter];
+                            const auto effect = functionType->effects[parameter];
+                            matches &= !declared.acceptsAnyType &&
+                                    declared.value.type == functionType->arguments[parameter] &&
+                                    declared.value.category == effectCategory(effect) &&
+                                    declared.isConsuming == (effect == syntax::AccessEffect::consuming) &&
+                                    declared.isInitializing == (effect == syntax::AccessEffect::initializing);
+                        }
+                        if (matches) matches = callee.resultType == functionType->arguments.back();
+                        if (!matches) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "function_address requires a Joyeer function and a result of exactly its function type");
+                        }
+                        break;
+                    }
+                    case Opcode::callIndirect: {
+                        if (!instruction.targets.empty() || instruction.callee.has_value() ||
+                            instruction.operands.empty() || operands[0] == nullptr) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                   "call_indirect needs a function value operand and no callee or targets");
+                            break;
+                        }
+                        const auto* functionType = types.contains(operands[0]->type)
+                                ? types.at(operands[0]->type)
+                                : nullptr;
+                        if (operands[0]->category != ValueCategory::value || functionType == nullptr ||
+                            functionType->kind != typing::TypeKind::function ||
+                            functionType->arguments.size() != functionType->effects.size() + 1) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "call_indirect operand 0 must be a value of function type");
+                            break;
+                        }
+                        const auto parameterCount = functionType->effects.size();
+                        bool matches = instruction.operands.size() == parameterCount + 1;
+                        for (size_t parameter = 0; matches && parameter < parameterCount; ++parameter) {
+                            const auto* operand = operands[parameter + 1];
+                            matches &= operand != nullptr &&
+                                    operand->category == effectCategory(functionType->effects[parameter]) &&
+                                    operand->type == functionType->arguments[parameter];
+                        }
+                        const auto resultType = functionType->arguments.back();
+                        const auto* result = types.contains(resultType) ? types.at(resultType) : nullptr;
+                        const bool isNever = result != nullptr && result->kind == typing::TypeKind::never;
+                        const bool returnsValue = result != nullptr && !isNever &&
+                                result->kind != typing::TypeKind::voidType;
+                        matches &= returnsValue == instruction.result.has_value();
+                        if (returnsValue && instruction.result.has_value()) {
+                            matches &= instruction.result->category == ValueCategory::value &&
+                                    instruction.result->type == resultType;
+                        }
+                        if (!matches) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "call_indirect arguments or result do not match the function type");
+                        }
+                        // A call that cannot return ends its block.
+                        if (isNever && (index + 1 >= block.instructions.size() ||
+                                        block.instructions[index + 1].opcode != Opcode::unreachable)) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                   "call_indirect of a function returning Never must be followed by unreachable");
+                        }
+                        break;
+                    }
                     case Opcode::taskSpawn: {
                         if (!requireShape(1, 0) || operands[0] == nullptr) break;
                         const auto* taskType = instruction.result.has_value() && types.contains(instruction.result->type)
@@ -2485,6 +2605,8 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::constantValue: return "constant";
         case Opcode::integerFits: return "fits";
         case Opcode::call: return "call";
+        case Opcode::functionAddress: return "function_address";
+        case Opcode::callIndirect: return "call_indirect";
         case Opcode::constructStruct: return "construct_struct";
         case Opcode::constructArray: return "construct_array";
         case Opcode::arrayAppend: return "array_append";
@@ -2792,6 +2914,15 @@ std::string dump(const Module& module) {
                             out << (index == 0 ? " " : ", ")
                                 << valueName(instruction.operands[index]);
                         }
+                        break;
+                    case Opcode::functionAddress:
+                        out << " @" << instruction.callee.value_or(invalidFunctionId);
+                        break;
+                    case Opcode::callIndirect:
+                        for (size_t index = 0; index < instruction.operands.size(); ++index) {
+                            out << (index == 0 ? " " : index == 1 ? "(" : ", ") << valueName(instruction.operands[index]);
+                        }
+                        out << (instruction.operands.size() <= 1 ? "()" : ")");
                         break;
                     case Opcode::taskSpawn:
                     case Opcode::call:

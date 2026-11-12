@@ -310,9 +310,9 @@ not needed now; if Phase 4 finds that it is, it gets its own record.
   labeled call through a value (`labeled-function-value-call`); a
   labeled parameter in a function type; a function type with no result; calling a value that is not a
   function; the wrong number of arguments through a value; calling an optional function value without
-  unwrapping; a non-identifier callee without parentheses that names no method; a field and method with
-  the same name; `==`, a dictionary key, or `print` of a function value; a top-level constant of
-  function type. Stage prefixes follow the existing scheme (`parser.` or `type-checking.`).
+  unwrapping; a non-identifier callee without parentheses that names no method; `==`, a dictionary key, or `print` of a function value; a top-level constant of
+  function type. Stage prefixes follow the existing scheme (`parser.` or `type-checking.`). A field and a
+  method with the same name are already one scope's duplicate (`name-resolution.duplicate-declaration`).
 
 ### Tests
 

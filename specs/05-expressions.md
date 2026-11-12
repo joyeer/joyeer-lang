@@ -119,7 +119,7 @@ member syntax: `a.size()`, `point.distance(to: other)`.
 `a.f(args)` always calls a method. A stored field of function type is called
 with a parenthesized callee, `(a.f)(args)` (§5.6.1). A type may not have a
 stored field and a method with the same name
-(`type-checking.field-method-name-conflict`).
+(`name-resolution.duplicate-declaration`).
 
 Optional chaining short-circuits to `nil`:
 

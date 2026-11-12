@@ -87,6 +87,17 @@ std::string typeText(const syntax::TypePtr& type) {
         }
         case syntax::Kind::optionalType:
             return typeText(std::static_pointer_cast<syntax::OptionalTypeSyntax>(type)->wrapped) + '?';
+        case syntax::Kind::functionType: {
+            const auto value = std::static_pointer_cast<syntax::FunctionTypeSyntax>(type);
+            std::string result = "(";
+            for (size_t index = 0; index < value->parameters.size(); ++index) {
+                if (index != 0) result += ',';
+                const auto& keyword = value->parameters[index].accessKeyword;
+                if (keyword != nullptr) result += keyword->rawValue + ' ';
+                result += typeText(value->parameters[index].type);
+            }
+            return result + "):" + typeText(value->result);
+        }
         default: return "<error>";
     }
 }

@@ -38,6 +38,9 @@ size_t TypeContext::TypeKeyHash::operator()(const TypeKey& key) const noexcept {
     for (const auto argument : key.arguments) {
         combineHash(result, std::hash<TypeId>()(argument));
     }
+    for (const auto effect : key.effects) {
+        combineHash(result, std::hash<int>()(static_cast<int>(effect)));
+    }
     return result;
 }
 
@@ -160,6 +163,19 @@ TypeId TypeContext::channelResultType(TypeId success) {
     return resultType(success, closedType);
 }
 
+TypeId TypeContext::functionType(
+        const std::vector<TypeId>& parameters,
+        const std::vector<syntax::AccessEffect>& effects,
+        TypeId result) {
+    assert(parameters.size() == effects.size());
+    std::vector<TypeId> arguments = parameters;
+    arguments.push_back(result);
+    for (const auto argument : arguments) {
+        if (argument == errorTypeId) return errorTypeId;
+    }
+    return intern(TypeKind::function, semantic::invalidSymbolId, std::move(arguments), effects);
+}
+
 TypeId TypeContext::resultType(TypeId success, TypeId failure) {
     const auto symbol = builtinSymbol("Result");
     assert(symbol.has_value());
@@ -259,6 +275,20 @@ std::string TypeContext::displayName(TypeId id) const {
             return "ChannelSender<" + displayName(value->arguments[0]) + ">";
         case TypeKind::channelReceiver:
             return "ChannelReceiver<" + displayName(value->arguments[0]) + ">";
+        case TypeKind::function: {
+            std::string text = "(";
+            for (size_t index = 0; index + 1 < value->arguments.size(); ++index) {
+                if (index != 0) text += ", ";
+                switch (value->effects[index]) {
+                    case syntax::AccessEffect::inout: text += "inout "; break;
+                    case syntax::AccessEffect::consuming: text += "consuming "; break;
+                    case syntax::AccessEffect::initializing: text += "initializing "; break;
+                    case syntax::AccessEffect::borrowing: break;
+                }
+                text += displayName(value->arguments[index]);
+            }
+            return text + "): " + displayName(value->arguments.back());
+        }
         default: {
             const auto* declaration = model.symbol(value->symbol);
             return declaration == nullptr ? "<invalid-type>" : declaration->name;
@@ -284,13 +314,14 @@ bool TypeContext::isAssignable(TypeId source, TypeId destination) const {
 TypeId TypeContext::intern(
         TypeKind kind,
         semantic::SymbolId symbol,
-        std::vector<TypeId> arguments) {
-    TypeKey key { kind, symbol, std::move(arguments) };
+        std::vector<TypeId> arguments,
+        std::vector<syntax::AccessEffect> effects) {
+    TypeKey key { kind, symbol, std::move(arguments), std::move(effects) };
     const auto found = internedTypes.find(key);
     if (found != internedTypes.end()) return found->second;
 
     const auto id = static_cast<TypeId>(types.size());
-    types.push_back(TypeRecord { id, key.kind, key.symbol, key.arguments });
+    types.push_back(TypeRecord { id, key.kind, key.symbol, key.arguments, key.effects });
     internedTypes.emplace(std::move(key), id);
     return id;
 }
@@ -664,6 +695,8 @@ private:
     // read as constant data and never becomes a String value, is the one managed
     // value a core unit may write.
     const syntax::Node* literalAddressArgument = nullptr;
+    // The callee of the call being checked: a function named there is called, not a function value.
+    const syntax::Node* currentCallee = nullptr;
     // Set while resolving the parameter of the literal-address intrinsic itself.
     bool coreCheckSuspended = false;
 
@@ -920,6 +953,25 @@ private:
                         std::static_pointer_cast<syntax::OptionalTypeSyntax>(syntaxType);
                 result = model->typeContext.optionalType(resolveType(optional->wrapped).value_or(
                         model->typeContext.errorType()));
+                break;
+            }
+            case syntax::Kind::functionType: {
+                const auto function = std::static_pointer_cast<syntax::FunctionTypeSyntax>(syntaxType);
+                std::vector<TypeId> parameters;
+                std::vector<syntax::AccessEffect> effects;
+                for (const auto& parameter : function->parameters) {
+                    auto type = resolveType(parameter.type).value_or(model->typeContext.errorType());
+                    if (type == model->typeContext.neverType()) {
+                        report(TypeCheckingDiagnosticId::invalidFunctionType, parameter.type->span,
+                               "'Never' cannot be a function type's parameter type",
+                               "a function taking a value that cannot exist could never be called");
+                        type = model->typeContext.errorType();
+                    }
+                    parameters.push_back(type);
+                    effects.push_back(parameter.accessEffect());
+                }
+                const auto functionResult = resolveType(function->result).value_or(model->typeContext.errorType());
+                result = model->typeContext.functionType(parameters, effects, functionResult);
                 break;
             }
             default:
@@ -2051,7 +2103,10 @@ private:
             case notEqual:
                 // A noncopyable value (a task handle, a handle with `deinit`) cannot be compared: the
                 // comparison would have to copy it.
+                // Function types have no equality: identity is not stable across optimization
+                // (spec 2.3.1).
                 if (left == right && left != model->typeContext.voidType() && model->isCopyable(left) &&
+                    !containsFunctionType(left) &&
                     model->typeContext.type(left) != nullptr &&
                     model->typeContext.type(left)->kind != TypeKind::enumeration &&
                     model->typeContext.type(left)->kind != TypeKind::structure) {
@@ -2128,7 +2183,129 @@ private:
     }
 
     TypeId checkName(const syntax::NameExprSyntax::Ptr& expression) {
+        if (expression.get() != currentCallee) {
+            if (const auto value = functionValueType(expression)) return *value;
+        }
         return referencedValueType(expression);
+    }
+
+    // A function named where it is not called is a function value (spec 5.6.1). Returns nullopt
+    // when `expression` does not name a function, and the error type, with a diagnostic, when it
+    // names one that cannot be a value.
+    std::optional<TypeId> functionValueType(const syntax::ExprPtr& expression) {
+        const auto referenced = model->referencedSymbol(expression);
+        if (!referenced.has_value()) return std::nullopt;
+        const auto* symbol = model->semanticModelValue->symbol(*referenced);
+        if (symbol == nullptr) return std::nullopt;
+        std::string reason;
+        switch (symbol->kind) {
+            case semantic::SymbolKind::function: break;
+            case semantic::SymbolKind::builtinFunction:
+                reason = "it is a builtin function";
+                break;
+            case semantic::SymbolKind::method:
+                reason = "it is a method";
+                break;
+            default:
+                return std::nullopt;
+        }
+        if (reason.empty()) {
+            const auto* binding = model->nativeBinding(*referenced);
+            if (binding != nullptr && binding->dataSymbol) {
+                reason = "it is a '@c_data' declaration, which names an address and calls nothing";
+            } else if (binding != nullptr && binding->kind == NativeBindingKind::cImport) {
+                reason = "it is a '@c_extern' declaration, which uses the C calling convention";
+            } else if (symbol->isRootModule && symbol->name == "main") {
+                reason = "it is the program entry point";
+            }
+        }
+        const auto* signature = model->callable(*referenced);
+        if (reason.empty() && (signature == nullptr || !symbol->callable.has_value())) {
+            return model->typeContext.errorType();
+        }
+        if (!reason.empty()) {
+            report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
+                   "'" + symbol->name + "' cannot be used as a function value: " + reason,
+                   symbol->kind == semantic::SymbolKind::method
+                           ? std::optional<std::string>("call it, or write a top-level function that calls it and use that")
+                           : std::optional<std::string>("call it, or use a top-level Joyeer function"));
+            return model->typeContext.errorType();
+        }
+        std::vector<syntax::AccessEffect> effects;
+        for (const auto& parameter : symbol->callable->parameters) effects.push_back(parameter.access);
+        return model->typeContext.functionType(signature->parameters, effects, signature->result);
+    }
+
+    // `f(a, &b)` or `(s.f)(a)` where the callee is a value of function type (spec 5.6.1): positional
+    // arguments, each checked against the type's parameter effect and type.
+    TypeId checkFunctionValueCall(
+            const syntax::CallExprSyntax::Ptr& expression,
+            TypeId calleeType,
+            ReceiverMarker receiverMarker) {
+        // Copied out: checking the arguments can grow the type table and invalidate the record.
+        const auto parameters = model->typeContext.type(calleeType)->arguments;
+        const auto effects = model->typeContext.type(calleeType)->effects;
+        const auto result = parameters.back();
+        if (receiverMarker != ReceiverMarker::none) {
+            report(TypeCheckingDiagnosticId::invalidAccessMarker, expression->span,
+                   "'&' and 'consume' mark the arguments of a call through a function value, not the call",
+                   "remove the marker before the call");
+        }
+        for (const auto& argument : expression->arguments) {
+            if (argument->label == nullptr) continue;
+            report(TypeCheckingDiagnosticId::labeledFunctionValueCall, argument->label->span,
+                   "a call through a function value takes positional arguments; remove '" +
+                           argument->label->rawValue + ":'",
+                   "a function type has no parameter labels");
+        }
+        if (expression->arguments.size() != effects.size()) {
+            report(TypeCheckingDiagnosticId::invalidCallArguments, expression->span,
+                   "a function value of type '" + model->typeContext.displayName(calleeType) + "' takes " +
+                           std::to_string(effects.size()) + " argument(s), but " +
+                           std::to_string(expression->arguments.size()) + " were given");
+        }
+        std::vector<CallAccess> accesses;
+        for (size_t index = 0; index < expression->arguments.size(); ++index) {
+            const auto& argument = expression->arguments[index];
+            const auto expected = index < effects.size()
+                    ? std::optional<TypeId>(parameters[index])
+                    : std::optional<TypeId>();
+            const auto actual = checkExpression(argument->value, expected);
+            if (index >= effects.size()) continue;
+            checkArgumentAccess(effects[index], *argument);
+            collectCallArgumentAccess(*argument, effects[index], accesses);
+            if (actual.has_value()) requireAssignable(*actual, parameters[index], argument->value->span);
+        }
+        // The callee was evaluated to a copy first and holds no access (spec 4.4), so only the
+        // arguments can conflict.
+        validateCallExclusivity(accesses);
+        return result;
+    }
+
+    bool isFunctionType(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        return record != nullptr && record->kind == TypeKind::function;
+    }
+
+    // True for a function type, or a builtin container of one.
+    bool containsFunctionType(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return false;
+        switch (record->kind) {
+            case TypeKind::function: return true;
+            case TypeKind::array:
+            case TypeKind::dictionary:
+            case TypeKind::optional:
+            case TypeKind::result:
+                return std::any_of(record->arguments.begin(), record->arguments.end(),
+                        [this](TypeId argument) { return containsFunctionType(argument); });
+            default: return false;
+        }
+    }
+
+    bool isOptionalFunction(TypeId type) const {
+        const auto* record = model->typeContext.type(type);
+        return record != nullptr && record->kind == TypeKind::optional && isFunctionType(record->arguments[0]);
     }
 
     TypeId referencedValueType(const syntax::NodePtr& expression) {
@@ -2140,6 +2317,9 @@ private:
 
     TypeId checkMember(const syntax::MemberExprSyntax::Ptr& expression) {
         if (model->semanticModelValue->isModuleQualified(expression)) {
+            if (expression.get() != currentCallee) {
+                if (const auto value = functionValueType(expression)) return *value;
+            }
             return referencedValueType(expression);
         }
         const auto base = checkExpression(expression->base).value_or(
@@ -2171,6 +2351,14 @@ private:
                                         ? std::string()
                                         : expression->member->rawValue) + "'");
             }
+            return model->typeContext.errorType();
+        }
+        const auto* memberSymbol = model->semanticModelValue->symbol(*member);
+        if (expression.get() != currentCallee && memberSymbol != nullptr &&
+            memberSymbol->kind == semantic::SymbolKind::method) {
+            report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
+                   "'" + memberSymbol->name + "' cannot be used as a function value: it is a method",
+                   "call it, or write a top-level function that calls it and use that");
             return model->typeContext.errorType();
         }
         return model->typeOf(*member).value_or(model->typeContext.errorType());
@@ -2247,9 +2435,40 @@ private:
     TypeId checkCall(
             const syntax::CallExprSyntax::Ptr& expression,
             ReceiverMarker receiverMarker = ReceiverMarker::none) {
+        const auto* savedCallee = currentCallee;
+        currentCallee = expression->callee.get();
         const auto calleeType = checkExpression(expression->callee).value_or(
                 model->typeContext.errorType());
+        currentCallee = savedCallee;
         auto target = model->callTarget(expression);
+        if (!target.has_value() && isFunctionType(calleeType)) {
+            const auto callee = model->referencedSymbol(expression->callee);
+            const auto* calleeSymbol = callee.has_value() ? model->semanticModelValue->symbol(*callee) : nullptr;
+            if (expression->callee->kind == syntax::Kind::memberExpr &&
+                !model->semanticModelValue->isModuleQualified(expression->callee)) {
+                // `s.f(x)` always names a method (spec 5.4).
+                const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
+                const auto name = member->member == nullptr ? std::string() : member->member->rawValue;
+                report(TypeCheckingDiagnosticId::notCallable, expression->callee->span,
+                       "'" + name + "' is a stored function value, not a method; 'value." + name +
+                               "(...)' always calls a method",
+                       "call the stored function with a parenthesized callee: '(value." + name + ")(...)'");
+                for (const auto& argument : expression->arguments) checkExpression(argument->value);
+                return model->typeContext.errorType();
+            }
+            if (expression->callee->kind != syntax::Kind::nameExpr &&
+                expression->callee->kind != syntax::Kind::parenthesizedExpr &&
+                expression->callee->kind != syntax::Kind::memberExpr) {
+                report(TypeCheckingDiagnosticId::notCallable, expression->callee->span,
+                       "a call through a function value needs a plain name or a parenthesized callee",
+                       "put the callee in parentheses, as in '(table[i])(x)' or '(make())(x)'");
+                for (const auto& argument : expression->arguments) checkExpression(argument->value);
+                return model->typeContext.errorType();
+            }
+            if (calleeSymbol == nullptr || !calleeSymbol->callable.has_value()) {
+                return checkFunctionValueCall(expression, calleeType, receiverMarker);
+            }
+        }
         if (!target.has_value()) {
             const auto callee = model->referencedSymbol(expression->callee);
             if (callee.has_value()) {
@@ -2515,6 +2734,13 @@ private:
             if (expected.has_value() && actual.has_value()) {
                 requireAssignable(*actual, *expected, argument->value->span);
             }
+            if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
+                semanticTarget->name == "print" && actual.has_value() && containsFunctionType(*actual)) {
+                report(TypeCheckingDiagnosticId::typeMismatch, argument->value->span,
+                       "'print' cannot print a function value of type '" +
+                               model->typeContext.displayName(*actual) + "'",
+                       "print a number, a Bool or a String");
+            }
         }
         validateCallExclusivity(accesses);
 
@@ -2529,7 +2755,12 @@ private:
                     "value '" +
                             (symbol == nullptr ? std::string("<expression>") : symbol->name) +
                             "' of type '" + model->typeContext.displayName(calleeType) +
-                            "' is not callable");
+                            "' is not callable",
+                    isOptionalFunction(calleeType)
+                            ? std::optional<std::string>(
+                                      "unwrap it first, with '(value!)(...)' or a 'match'; 'value?(...)' "
+                                      "returns nil from the enclosing function when it is nil")
+                            : std::nullopt);
         }
         return receiverResultType.value_or(
                 signature == nullptr ? model->typeContext.errorType() : signature->result);
@@ -3138,8 +3369,12 @@ private:
         assert(target.callable.has_value());
         const auto& parameters = target.callable->parameters;
         if (parameterIndex >= parameters.size()) return;
+        checkArgumentAccess(parameters[parameterIndex].access, argument);
+    }
 
-        const auto required = parameters[parameterIndex].access;
+    // The marker and the storage an argument needs for a parameter with effect `required`, shared by
+    // calls by name and calls through a function value (spec 4.2, 5.6.1).
+    void checkArgumentAccess(syntax::AccessEffect required, const syntax::CallArgumentSyntax& argument) {
         const auto marker = argument.accessMarker == nullptr
                 ? syntax::AccessEffect::borrowing
                 : argument.accessMarker->kind == kwConsume
@@ -3424,6 +3659,8 @@ private:
             symbol->kind == semantic::SymbolKind::patternBinding) {
             return true;
         }
+        // A function named as a value is a temporary (spec 5.6.1).
+        if (symbol->kind == semantic::SymbolKind::function && path->projections.empty()) return true;
         if (symbol->kind != semantic::SymbolKind::parameter ||
             !symbol->declaration.has_value()) {
             return false;
@@ -4192,6 +4429,12 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.linear-channel-element";
         case TypeCheckingDiagnosticId::channelElementType:
             return "type-checking.channel-element-type";
+        case TypeCheckingDiagnosticId::invalidFunctionType:
+            return "type-checking.invalid-function-type";
+        case TypeCheckingDiagnosticId::notAFunctionValue:
+            return "type-checking.not-a-function-value";
+        case TypeCheckingDiagnosticId::labeledFunctionValueCall:
+            return "type-checking.labeled-function-value-call";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

@@ -2129,4 +2129,38 @@ TEST_F(SemanticAnalysisTest, AnEndMovesIntoAStructAndAnArray) {
             << joyeer::analysis::dump(result.diagnostics);
 }
 
+// Calls through a function value move and initialize like calls by name (spec 5.6.1).
+TEST_F(SemanticAnalysisTest, CallsThroughFunctionValuesConsumeAndInitializeArguments) {
+    analyze("func take(text: consuming String): Int { return 1 }\n"
+            "func run(): Int {\n"
+            "    let t = take\n"
+            "    let s = \"a\"\n"
+            "    let n = t(consume s)\n"
+            "    print(value: s)\n"
+            "    return n\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::useAfterConsume))
+            << joyeer::analysis::dump(result.diagnostics);
+
+    analyze("func fill(out: initializing String) { &out = \"x\" }\n"
+            "func run() {\n"
+            "    let f = fill\n"
+            "    var text: String\n"
+            "    f(&text)\n"
+            "    print(value: text)\n"
+            "}\n");
+    EXPECT_FALSE(hasDiagnostic(joyeer::analysis::DiagnosticId::useBeforeInitialization))
+            << joyeer::analysis::dump(result.diagnostics);
+
+    // The callee is copied first, so passing its holder inout does not overlap it.
+    analyze("struct S {\n    var n: Int\n    var f: (inout S): ()\n}\n"
+            "func step(s: inout S) { &s.n = s.n + 1 }\n"
+            "func run(): Int {\n"
+            "    var s = S(n: 1, f: step)\n"
+            "    (s.f)(&s)\n"
+            "    return s.n\n"
+            "}\n");
+    EXPECT_TRUE(result.diagnostics.empty()) << joyeer::analysis::dump(result.diagnostics);
+}
+
 } // namespace

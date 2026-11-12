@@ -127,6 +127,15 @@ The current checker validates:
   `linear-in-deinit-type` (a type with `deinit` may not be or hold a linear value) and
   `linear-collection-element` (a `Dict` key or value in a binding, parameter, result or field,
   and `for-in` over an array), `linear-top-level-binding` and `linear-struct-without-fields`;
+- Function values (decision 0020, spec 2.3.1 and 5.6.1): a function type is `TypeKind::function`, interned
+  structurally with `arguments` = parameters then result and one `effects` entry per parameter, and never
+  copy-restricted or linear. `checkName` (and a module-qualified `checkMember`) turns a function named
+  outside a callee position into a value of its type (`functionValueType`, or `not-a-function-value` with
+  the reason); `checkFunctionValueCall` checks positional arguments against the type's effects with the
+  same marker, storage and exclusivity rules as a call by name (`checkArgumentAccess`), and rejects
+  labels (`labeled-function-value-call`), a non-parenthesized field, element or call callee
+  (`not-callable`) and a `Never` parameter (`invalid-function-type`). Name resolution leaves a call of a
+  binding, parameter or field to the type checker;
 - Channels (decision 0019, spec 21.9): `ChannelSender<T>` and `ChannelReceiver<T>` are `TypeKind::channelSender`
   and `channelReceiver` (noncopyable, not linear); `channel` is checked by `checkChannel` and `send`, `receive`
   and `close` are builtin members whose results come from the end's element type; the element rules
