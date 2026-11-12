@@ -131,6 +131,7 @@ TokenKind keywordKind(std::string_view value) {
     {"private", kwPrivate},
     {"mutating", kwMutating},
     {"extension", kwExtension},
+    {"protocol", kwProtocol},
     {"as", kwAs},
   };
 
@@ -143,7 +144,7 @@ bool isDeferredKeyword(std::string_view value) {
     "subscript", "typealias", "indirect",
     "yield", "where",
     "async", "await", "actor", "throws", "catch", "defer",
-    "is", "protocol", "trait", "macro", "invariant",
+    "is", "trait", "macro", "invariant",
     "result", "unsafe", "package", "Any"
   };
   return words.contains(value);

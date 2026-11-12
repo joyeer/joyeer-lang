@@ -1028,6 +1028,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             "9\n-4\n25\n2\nmade?\nhello!\n11\n-7\n81\n-2\n8\n121\n3\n36\n-12\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EGenerics generics
+            "14\n36\n1\n10\ndropping\n2\nafter drop\n3\ntally=seen\nticket\n14\nhihi\nhi\nempty\n1\n4\n3\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EChannelBasic channel_basic
             "10\n20\nclosed\nhello\n3\ngone\n100\n1\n2\n3\n9\nrefused\n"
             0 1 2 3)

@@ -1,0 +1,168 @@
+// Protocols and bounded generic functions (spec 20, decision 0021): a generic function is checked
+// once and instantiated per type argument; requirement calls reach the witnesses, and every value of
+// a type parameter is moved, copied (only under `Copyable`) and destroyed as its concrete type is.
+// `Ticket` has a `deinit` that prints its number, so each line below shows one destruction.
+protocol Named {
+    func name(): String
+}
+
+protocol Counter {
+    func current(): Int
+    mutating func bump(by amount: Int)
+}
+
+protocol Closer {
+    consuming func close(): Int
+}
+
+protocol Shape {
+    func area(): Int
+    func scaled(by factor: Int): Self
+}
+
+struct Ticket {
+    var number: Int
+
+    deinit() {
+        print(value: self.number)
+    }
+}
+
+extension Ticket: Named, Closer {
+    func name(): String {
+        return "ticket"
+    }
+
+    consuming func close(): Int {
+        return self.number * 10
+    }
+}
+
+struct Tally {
+    var count: Int
+}
+
+extension Tally: Counter, Named {
+    func current(): Int {
+        return self.count
+    }
+
+    mutating func bump(by amount: Int) {
+        &self.count += amount
+    }
+
+    func name(): String {
+        return "tally"
+    }
+}
+
+struct Square {
+    let side: Int
+}
+
+extension Square: Shape {
+    func area(): Int {
+        return self.side * self.side
+    }
+
+    func scaled(by factor: Int): Self {
+        return Square(side: self.side * factor)
+    }
+}
+
+// Borrows every element; `S` needs no `Copyable`.
+func totalArea<S: Shape>(shapes: [S]): Int {
+    var total = 0
+    var index = 0
+    while index < shapes.count {
+        total += shapes[index].area()
+        index += 1
+    }
+    return total
+}
+
+// `Self` in a requirement's result is the argument's own type.
+func doubledArea<S: Shape>(shape: S): Int {
+    let grown = shape.scaled(by: 2)
+    return grown.area()
+}
+
+// A consuming requirement moves the value into the witness, which destroys it once.
+func finish<T: Closer>(value: consuming T): Int {
+    return consume value.close()
+}
+
+// A dropped value of a type parameter is destroyed at the end of its scope.
+func drop<T>(value: consuming T) {
+    print(value: "dropping")
+}
+
+// A mutating requirement through an inout parameter.
+func bumpTwice<T: Counter>(counter: inout T) {
+    &counter.bump(by: 1)
+    &counter.bump(by: 2)
+}
+
+// Generic code calling generic code: `describe` instantiates `nameOf` with its own argument.
+func nameOf<T: Named>(value: T): String {
+    return value.name()
+}
+
+func describe<T: Named & Counter>(value: T): String {
+    return nameOf(value: value) + "=" + "seen"
+}
+
+// `Copyable` permits copies of a borrowed value.
+func twice<T: Copyable>(value: T): [T] {
+    return [value, value]
+}
+
+func firstOf<T: Copyable>(items: [T]): T? {
+    if items.count == 0 {
+        return nil
+    }
+    return items[0]
+}
+
+// Moves values of a noncopyable type parameter into and out of containers.
+func keep<T>(value: consuming T): [T] {
+    var items: [T] = []
+    &items.append(element: consume value)
+    return items
+}
+
+func main() {
+    let squares = [Square(side: 1), Square(side: 2), Square(side: 3)]
+    print(value: totalArea(shapes: squares))
+    print(value: doubledArea(shape: Square(side: 3)))
+
+    let first = Ticket(number: 1)
+    print(value: finish(value: consume first))
+    let second = Ticket(number: 2)
+    drop(value: consume second)
+    print(value: "after drop")
+
+    var tally = Tally(count: 0)
+    bumpTwice(counter: &tally)
+    print(value: tally.current())
+    print(value: describe(value: tally))
+    print(value: nameOf(value: Ticket(number: 3)))
+
+    let numbers = twice(value: 7)
+    print(value: numbers[0] + numbers[1])
+    let words = twice(value: "hi")
+    print(value: words[0] + words[1])
+    match firstOf(items: words) {
+        .Some(word) => print(value: word),
+        .None => print(value: "empty"),
+    }
+    let none: [Int] = []
+    match firstOf(items: none) {
+        .Some(number) => print(value: number),
+        .None => print(value: "empty"),
+    }
+
+    let fourth = Ticket(number: 4)
+    let kept = keep(value: consume fourth)
+    print(value: kept.count)
+}

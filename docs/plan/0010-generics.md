@@ -150,6 +150,11 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: Phase 2 implementation in progress, not reviewed: parser (`protocol`, conformance lists,
+  `<T: P & Q>`), name resolution, type checking (inference, constraints, conformances, expanding
+  recursion, instantiation) and lowering of instances are written; `tests/e2e/generics.joyeer` builds and
+  prints the expected output by hand. Not done: GoogleTests and stage fixtures, the
+  `--report-instantiations` flag, the full ctest run, the role reviews, the docs. No items checked.
 - 2026-11-12: spec item checked (§20 normative for v1).
 - 2026-11-12: decision 0021 accepted; the decision-record item checked.
 - 2026-11-12: Phase 2 decision record 0021 drafted (open questions 1 to 3) and reviewed by

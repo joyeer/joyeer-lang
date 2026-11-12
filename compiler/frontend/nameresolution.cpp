@@ -21,7 +21,9 @@ std::string tokenText(const Token::Ptr& token) {
 bool isTypeSymbol(SymbolKind kind) {
     return kind == SymbolKind::builtinType ||
            kind == SymbolKind::structure ||
-           kind == SymbolKind::enumeration;
+           kind == SymbolKind::enumeration ||
+           kind == SymbolKind::protocol ||
+           kind == SymbolKind::typeParameter;
 }
 
 bool isEnumCaseSymbol(SymbolKind kind) {
@@ -368,6 +370,7 @@ private:
             }
             case Kind::functionDecl: {
                 const auto value = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+                for (const auto& parameter : value->genericParameters) indexNode(parameter);
                 for (const auto& parameter : value->parameters) indexNode(parameter);
                 indexNode(value->returnType);
                 indexNode(value->body);
@@ -388,7 +391,18 @@ private:
             case Kind::extensionDecl: {
                 const auto value = std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
                 indexNode(value->extendedType);
+                for (const auto& conformance : value->conformances) indexNode(conformance);
                 for (const auto& method : value->methods) indexNode(method);
+                break;
+            }
+            case Kind::protocolDecl: {
+                const auto value = std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node);
+                for (const auto& requirement : value->requirements) indexNode(requirement);
+                break;
+            }
+            case Kind::genericParameter: {
+                const auto value = std::static_pointer_cast<syntax::GenericParameterSyntax>(node);
+                for (const auto& constraint : value->constraints) indexNode(constraint);
                 break;
             }
             case Kind::structFieldDecl: {
@@ -658,6 +672,11 @@ private:
 
         const auto voidType = declareBuiltinType("Void");
         declareBuiltinType("Never");
+        // The builtin marker protocol of spec 20.5: no requirements, satisfied by copyable types.
+        const auto copyable = declareSymbol(
+                model->preludeScope_, SymbolNamespace::type, SymbolKind::protocol, "Copyable", {});
+        symbol(copyable).memberScope =
+                createScope(ScopeKind::typeMembers, model->preludeScope_, std::nullopt);
         const auto intType = declareBuiltinType("Int");
         declareBuiltinType("Bool");
         const auto stringType = declareBuiltinType("String");
@@ -962,6 +981,9 @@ private:
                 case syntax::Kind::enumDecl:
                     collectEnumeration(std::static_pointer_cast<syntax::EnumDeclSyntax>(item));
                     break;
+                case syntax::Kind::protocolDecl:
+                    collectProtocol(std::static_pointer_cast<syntax::ProtocolDeclSyntax>(item));
+                    break;
                 default:
                     break;
             }
@@ -990,6 +1012,19 @@ private:
                 case syntax::Kind::extensionDecl:
                     collectExtension(std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item));
                     break;
+                case syntax::Kind::protocolDecl: {
+                    const auto declaration =
+                            std::static_pointer_cast<syntax::ProtocolDeclSyntax>(item);
+                    const auto protocol = declaredSymbolId(declaration);
+                    if (!protocol.has_value()) break;
+                    collectMethods(*protocol, declaration->requirements);
+                    // A requirement has the visibility of its protocol (spec 20.2).
+                    for (const auto& requirement : declaration->requirements) {
+                        const auto id = declaredSymbolId(requirement);
+                        if (id.has_value()) symbol(*id).visibility = symbol(*protocol).visibility;
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -1092,6 +1127,53 @@ private:
                 tokenSpan(declaration->name, declaration->span),
                 nodeId(declaration));
         symbol(id).callable = std::move(signature);
+    }
+
+    void collectProtocol(const syntax::ProtocolDeclSyntax::Ptr& declaration) {
+        rejectReservedTypeName(declaration->name, declaration->span);
+        const auto protocol = declareSymbol(
+                model->fileScope_,
+                SymbolNamespace::type,
+                SymbolKind::protocol,
+                tokenText(declaration->name),
+                tokenSpan(declaration->name, declaration->span),
+                nodeId(declaration));
+        symbol(protocol).memberScope = createScope(
+                ScopeKind::typeMembers, model->fileScope_, nodeId(declaration));
+    }
+
+    // `<T: P & Q>` (spec 20.4): each parameter is a type in the function's scope. Its member scope
+    // holds the requirements of its constraint protocols; when two protocols require one name, the
+    // first is kept and the type checker compares them.
+    void declareGenericParameters(
+            const syntax::FunctionDeclSyntax::Ptr& declaration,
+            SymbolId function,
+            ScopeId functionScope) {
+        for (const auto& parameter : declaration->genericParameters) {
+            setContainingScope(parameter, functionScope);
+            rejectReservedTypeName(parameter->name, parameter->span);
+            const auto id = declareSymbol(
+                    functionScope,
+                    SymbolNamespace::type,
+                    SymbolKind::typeParameter,
+                    tokenText(parameter->name),
+                    tokenSpan(parameter->name, parameter->span),
+                    nodeId(parameter),
+                    true,
+                    function);
+            const auto members = createScope(ScopeKind::typeMembers, functionScope, nodeId(parameter));
+            symbol(id).memberScope = members;
+            for (const auto& constraint : parameter->constraints) {
+                const auto protocol = resolveType(constraint, model->fileScope_);
+                if (!protocol.has_value() || symbol(*protocol).kind != SymbolKind::protocol ||
+                    !symbol(*protocol).memberScope.has_value()) {
+                    continue;
+                }
+                for (const auto& [name, requirement] : scope(*symbol(*protocol).memberScope).values) {
+                    scope(members).values.emplace(name, requirement);
+                }
+            }
+        }
     }
 
     void rejectReservedTypeName(const Token::Ptr& name, SourceSpan fallback) {
@@ -1262,6 +1344,12 @@ private:
                 for (const auto& parameter : function->parameters) {
                     validateExposedType(parameter->type, declaration);
                 }
+                // Constraint protocols are exposed names of a generic signature (spec 12.2).
+                for (const auto& parameter : function->genericParameters) {
+                    for (const auto& constraint : parameter->constraints) {
+                        validateExposedType(constraint, declaration);
+                    }
+                }
             } else if (declaration.kind == SymbolKind::method) {
                 // A member is never more accessible than the type that owns it.
                 auto exposed = declaration;
@@ -1400,6 +1488,15 @@ private:
                         std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
                 resolveMethodSignatures(
                         referencedSymbol(declaration->extendedType), declaration->methods);
+                for (const auto& conformance : declaration->conformances) {
+                    resolveType(conformance, model->fileScope_);
+                }
+                break;
+            }
+            case syntax::Kind::protocolDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node);
+                resolveMethodSignatures(declaredSymbolId(declaration), declaration->requirements);
                 break;
             }
             default:
@@ -1469,6 +1566,14 @@ private:
                         referencedSymbol(declaration->extendedType), declaration->methods);
                 break;
             }
+            case syntax::Kind::protocolDecl: {
+                // A requirement has no body; one written anyway is resolved so the type checker can
+                // report it without cascading errors.
+                const auto declaration =
+                        std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node);
+                resolveMethodBodies(declaredSymbolId(declaration), declaration->requirements);
+                break;
+            }
             default:
                 break;
         }
@@ -1513,6 +1618,8 @@ private:
                 model->fileScope_,
                 nodeId(declaration));
         model->introducedScopes_[nodeId(declaration)] = functionScope;
+
+        declareGenericParameters(declaration, *functionSymbol, functionScope);
 
         // The receiver is not a call parameter; the rest keep their written order.
         size_t callableIndex = 0;
@@ -1892,6 +1999,15 @@ private:
             return;
         }
         const auto member = lookupMember(*baseType, name);
+        if (!member.has_value() && type.kind == SymbolKind::typeParameter) {
+            // The type checker reports the operation the constraint does not provide (spec 20.5).
+            addDeferred(
+                    expression,
+                    DeferredResolutionKind::memberNeedsBaseType,
+                    name,
+                    tokenSpan(expression->member, expression->span));
+            return;
+        }
         if (!member.has_value()) {
             report(
                     NameResolutionDiagnosticId::unknownMember,

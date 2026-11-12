@@ -307,6 +307,8 @@ syntax::NodePtr Parser::parseTopLevelItem() {
             return parseEnumDecl();
         case kwExtension:
             return parseExtensionDecl();
+        case kwProtocol:
+            return parseProtocolDecl();
         default:
             reportExpected(DiagnosticId::expectedDeclaration, "a top-level declaration");
             {
@@ -375,6 +377,9 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl(bool hasAttributes) {
     const size_t start = cursor.position();
     cursor.advance();
     auto name = expect(identifier, "a function name");
+    auto genericParameters = cursor.at(less)
+            ? parseGenericParameters()
+            : std::vector<syntax::GenericParameterSyntax::Ptr> {};
     std::vector<syntax::ParameterDeclSyntax::Ptr> parameters;
     if (cursor.eat(leftParen) == nullptr) {
         reportExpected(DiagnosticId::expectedToken, "'(' to begin the parameter clause");
@@ -415,12 +420,14 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl(bool hasAttributes) {
     // Body presence depends on the annotation's meaning, not on parser trust.
     // Semantic checking admits only c_extern without a body.
     auto body = cursor.at(leftCurly) || !hasAttributes ? parseBlock() : nullptr;
-    return std::make_shared<syntax::FunctionDeclSyntax>(
+    auto declaration = std::make_shared<syntax::FunctionDeclSyntax>(
             spanFrom(start),
             std::move(name),
             std::move(parameters),
             std::move(returnType),
             std::move(body));
+    declaration->genericParameters = std::move(genericParameters);
+    return declaration;
 }
 
 syntax::ParameterDeclSyntax::Ptr Parser::parseParameter() {
@@ -592,12 +599,29 @@ syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
     const auto column = declarationColumn(start);
     cursor.advance();
     auto extended = parseType();
+    // `extension T: P` (spec 20.3): the extended type is nominal, an array or a dictionary, so
+    // `extension (Int): Int: P` is not confusingly valid.
+    if (extended != nullptr && (extended->kind == syntax::Kind::functionType ||
+                                extended->kind == syntax::Kind::optionalType ||
+                                extended->kind == syntax::Kind::unitType)) {
+        report(DiagnosticId::unsupportedSyntax, extended->span,
+               "an extension must name a struct, enum, array or dictionary type");
+    }
+    std::vector<syntax::TypePtr> conformances;
+    if (cursor.eat(colon) != nullptr) {
+        while (true) {
+            conformances.push_back(parseType());
+            if (cursor.eat(comma) == nullptr) break;
+        }
+    }
 
     std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the extension body");
-        return std::make_shared<syntax::ExtensionDeclSyntax>(
+        auto declaration = std::make_shared<syntax::ExtensionDeclSyntax>(
                 spanFrom(start), std::move(extended), std::move(methods));
+        declaration->conformances = std::move(conformances);
+        return declaration;
     }
     DelimiterScope delimiter(activeClosers, rightCurly);
 
@@ -628,8 +652,92 @@ syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
     }
     expect(rightCurly, "'}' to close the extension body");
 
-    return std::make_shared<syntax::ExtensionDeclSyntax>(
+    auto declaration = std::make_shared<syntax::ExtensionDeclSyntax>(
             spanFrom(start), std::move(extended), std::move(methods));
+    declaration->conformances = std::move(conformances);
+    return declaration;
+}
+
+syntax::ProtocolDeclSyntax::Ptr Parser::parseProtocolDecl() {
+    const size_t start = cursor.position();
+    const auto column = declarationColumn(start);
+    cursor.advance();
+    auto name = expect(identifier, "a protocol name");
+
+    std::vector<syntax::FunctionDeclSyntax::Ptr> requirements;
+    if (cursor.eat(leftCurly) == nullptr) {
+        reportExpected(DiagnosticId::expectedBlock, "'{' to begin the protocol body");
+        return std::make_shared<syntax::ProtocolDeclSyntax>(
+                spanFrom(start), std::move(name), std::move(requirements));
+    }
+    DelimiterScope delimiter(activeClosers, rightCurly);
+
+    while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        if (cursor.peek()->startsLine && cursor.peek()->columnAt <= column &&
+            isTopLevelStart(cursor.peek())) {
+            break;
+        }
+        const size_t before = cursor.position();
+        if (rejectMemberAnnotations()) continue;
+        if (isNestedMethodStart(column)) {
+            // Parsed as a method whose body is optional; the type checker reports a body,
+            // a visibility or type parameters (spec 20.2).
+            const size_t requirementStart = cursor.position();
+            Token::Ptr visibility;
+            if (isVisibility(cursor.peek()->kind)) visibility = cursor.advance();
+            Token::Ptr effect;
+            if (cursor.at(kwMutating) || cursor.at(kwConsuming) || cursor.at(kwBorrowing)) {
+                effect = cursor.advance();
+            }
+            auto requirement = parseFunctionDecl(true);
+            requirement->parameters.insert(
+                    requirement->parameters.begin(),
+                    makeReceiverParameter(effect, requirement->name));
+            if (visibility != nullptr) {
+                requirement->visibility = visibilityFor(visibility->kind);
+                requirement->explicitVisibility = true;
+            }
+            requirement->span = spanFrom(requirementStart);
+            requirements.push_back(std::move(requirement));
+        } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
+            cursor.advance();
+        } else {
+            report(DiagnosticId::unsupportedSyntax,
+                   tokenSpan(cursor.peek()),
+                   "only method requirements are supported in a protocol");
+            cursor.advance();
+            synchronizeBlock();
+        }
+        if (cursor.position() == before) cursor.advance();
+        enforceItemBoundary(false);
+    }
+    expect(rightCurly, "'}' to close the protocol body");
+
+    return std::make_shared<syntax::ProtocolDeclSyntax>(
+            spanFrom(start), std::move(name), std::move(requirements));
+}
+
+std::vector<syntax::GenericParameterSyntax::Ptr> Parser::parseGenericParameters() {
+    std::vector<syntax::GenericParameterSyntax::Ptr> parameters;
+    cursor.advance();
+    DelimiterScope delimiter(activeClosers, greater);
+    while (!cursor.at(greater) && !cursor.atEnd()) {
+        const size_t start = cursor.position();
+        auto name = expect(identifier, "a type parameter name");
+        std::vector<syntax::TypePtr> constraints;
+        if (cursor.eat(colon) != nullptr) {
+            while (true) {
+                constraints.push_back(parseTypePrimary());
+                if (cursor.eat(ampersand) == nullptr) break;
+            }
+        }
+        parameters.push_back(std::make_shared<syntax::GenericParameterSyntax>(
+                spanFrom(start), std::move(name), std::move(constraints)));
+        if (cursor.position() == start) cursor.advance();
+        if (cursor.eat(comma) == nullptr) break;
+    }
+    expect(greater, "'>' to close the type parameter list");
+    return parameters;
 }
 
 syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
@@ -674,7 +782,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
         }
         if (cursor.peek()->startsLine &&
             (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum) ||
-             cursor.at(kwExtension))) {
+             cursor.at(kwExtension) || cursor.at(kwProtocol))) {
             break;
         }
         Token::Ptr modifier;
@@ -1028,7 +1136,7 @@ syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         if (cursor.peek()->startsLine &&
             (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum) ||
-             cursor.at(kwExtension) || cursor.at(kwMutating))) {
+             cursor.at(kwExtension) || cursor.at(kwMutating) || cursor.at(kwProtocol))) {
             break;
         }
         const size_t before = cursor.position();
@@ -1832,6 +1940,7 @@ bool Parser::isTopLevelStart(const Token::Ptr& token) const {
            token->kind == kwFunc || token->kind == kwStruct ||
            token->kind == kwEnum || token->kind == kwImport ||
            token->kind == kwExtension ||
+           token->kind == kwProtocol ||
            token->kind == atSign || isVisibility(token->kind);
 }
 

@@ -51,6 +51,12 @@ enum class SymbolKind {
     enumCase,
     patternBinding,
     method,
+    // `protocol P` (spec 20.2); its member scope holds the requirements, which are methods.
+    // The prelude `Copyable` is one with no requirements.
+    protocol,
+    // `T` in `func f<T: P>` (spec 20.4). Its member scope holds the requirements of its
+    // constraint protocols, so `t.m()` resolves to a requirement.
+    typeParameter,
 };
 
 enum class CallableKind {
@@ -158,6 +164,8 @@ public:
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
     [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
     [[nodiscard]] bool isCoreSource(SourceSpan span) const;
+    // The module whose source contains `span` (the root module is 0).
+    [[nodiscard]] uint32_t moduleOf(SourceSpan span) const;
     // The name a module was compiled under (the root module is index 0), or null for an unknown index.
     [[nodiscard]] const std::string* moduleName(uint32_t module) const;
 

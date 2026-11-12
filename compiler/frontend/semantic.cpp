@@ -28,6 +28,11 @@ bool SemanticModel::isRuntimeSource(SourceSpan span) const {
     return found != runtimeSources_.end() && found->second;
 }
 
+uint32_t SemanticModel::moduleOf(SourceSpan span) const {
+    const auto found = sourceModules_.find(span.sourceId);
+    return found == sourceModules_.end() ? 0 : found->second;
+}
+
 const std::string* SemanticModel::moduleName(uint32_t module) const {
     return module < moduleNames_.size() ? &moduleNames_[module] : nullptr;
 }
@@ -174,6 +179,8 @@ const char* symbolKindName(SymbolKind kind) {
         case SymbolKind::enumCase: return "enum-case";
         case SymbolKind::patternBinding: return "pattern-binding";
         case SymbolKind::method: return "method";
+        case SymbolKind::protocol: return "protocol";
+        case SymbolKind::typeParameter: return "type-parameter";
     }
     return "unknown";
 }

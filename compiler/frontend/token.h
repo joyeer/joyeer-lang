@@ -59,6 +59,7 @@ enum TokenKind {
     kwPrivate,
     kwMutating,
     kwExtension,
+    kwProtocol,
     kwAs,
 
     leftCurly,

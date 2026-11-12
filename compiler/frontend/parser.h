@@ -103,6 +103,11 @@ private:
     syntax::ParameterDeclSyntax::Ptr makeReceiverParameter(
             const Token::Ptr& effect, const Token::Ptr& anchor);
     syntax::ExtensionDeclSyntax::Ptr parseExtensionDecl();
+    // `protocol P { requirement* }` (spec 20.2). A requirement is parsed like a method whose body is
+    // optional; the type checker rejects a body.
+    syntax::ProtocolDeclSyntax::Ptr parseProtocolDecl();
+    // `<T: P & Q, U>` after a function name (spec 20.4).
+    std::vector<syntax::GenericParameterSyntax::Ptr> parseGenericParameters();
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();
