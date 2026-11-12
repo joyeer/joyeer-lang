@@ -1,7 +1,8 @@
 # 0010: Generics
 
 - Status: in progress (updated 2026-11-12)
-- Decisions: none yet; each phase records one (see "Open questions"). Background:
+- Decisions: [0020](../decisions/0020-function-values.md) (Phase 1),
+  [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2, proposed). Background:
   [0009](../decisions/0009-runtime-core-capabilities.md), [0015](../decisions/0015-noncopyable-and-linear-types.md),
   [0018](../decisions/0018-tasks.md), [0019](../decisions/0019-channels.md)
 - Spec: [§2.3](../../specs/02-types.md), [§2.6](../../specs/02-types.md), [§3.2.3](../../specs/03-declarations.md),
@@ -124,6 +125,8 @@ exactly. No closures, methods or generic functions as values.
 
 ## Open questions
 
+Questions 1 to 3 are answered in [0021](../decisions/0021-protocols-and-generic-functions.md) (proposed).
+
 1. **Reviewability.** The preamble wants code that humans review; monomorphization compiles one body many
    times. How do bounded, statically dispatched generics keep behavior predictable, and what does the
    compiler report (instantiations, size) to keep it visible? Phase 2 record.
@@ -132,6 +135,9 @@ exactly. No closures, methods or generic functions as values.
 3. **Where instantiation happens:** on the typed model after type checking, or during IR lowering.
    Phase 2 record.
 4. **Captures.** What would justify closures later, given ownership of captured state? Phase 1 record.
+5. **Linear values in generic types.** 0021 bans linear type arguments of generic functions, but a
+   library `Array<T>` must hold `JoinHandle<R>`. How does generic code end a linear value? Phase 3
+   record.
 
 ## Out of scope
 
@@ -141,6 +147,9 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: Phase 2 decision record 0021 drafted (open questions 1 to 3) and reviewed by
+  language-designer (3 blockers and 14 should-fix items, all folded in); awaiting acceptance. No items
+  done.
 - 2026-11-12: implementation review fixes (use-after-free through nested value calls and seven more);
   three items checked (gap, reviews, supported features); validation blocked on Python; two pre-existing
   bugs added under "Found along the way".
