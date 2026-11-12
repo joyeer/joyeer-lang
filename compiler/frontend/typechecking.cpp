@@ -264,8 +264,12 @@ std::string TypeContext::displayName(TypeId id) const {
         case TypeKind::dictionary:
             return "[" + displayName(value->arguments[0]) + ": " +
                     displayName(value->arguments[1]) + "]";
-        case TypeKind::optional:
-            return displayName(value->arguments[0]) + "?";
+        case TypeKind::optional: {
+            // `((Int): Int)?` is an optional function; `(Int): Int?` returns an optional.
+            const auto* wrapped = type(value->arguments[0]);
+            const bool function = wrapped != nullptr && wrapped->kind == TypeKind::function;
+            return (function ? "(" : "") + displayName(value->arguments[0]) + (function ? ")?" : "?");
+        }
         case TypeKind::result:
             return "Result<" + displayName(value->arguments[0]) + ", " +
                     displayName(value->arguments[1]) + ">";
@@ -697,6 +701,8 @@ private:
     const syntax::Node* literalAddressArgument = nullptr;
     // The callee of the call being checked: a function named there is called, not a function value.
     const syntax::Node* currentCallee = nullptr;
+    // The base of the member expression being checked: a type named there is not a value.
+    const syntax::Node* currentMemberBase = nullptr;
     // Set while resolving the parameter of the literal-address intrinsic itself.
     bool coreCheckSuspended = false;
 
@@ -945,6 +951,7 @@ private:
                         model->typeContext.errorType());
                 const auto value = resolveType(dictionary->value).value_or(
                         model->typeContext.errorType());
+                rejectFunctionKey(key, dictionary->key->span);
                 result = model->typeContext.dictionaryType(key, value);
                 break;
             }
@@ -1017,6 +1024,11 @@ private:
 
     void resolveBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
         const auto type = resolveType(declaration->annotation);
+        if (type.has_value() && containsFunctionType(*type)) {
+            report(TypeCheckingDiagnosticId::invalidFunctionType, declaration->annotation->span,
+                   "a top-level constant cannot have the function type '" + model->typeContext.displayName(*type) + "'",
+                   "name the function directly, or bind the value to a local 'let'");
+        }
         if (type.has_value()) recordDeclaredType(declaration, *type);
     }
 
@@ -1036,8 +1048,14 @@ private:
             // The literal-address intrinsic's own String parameter is not a
             // value a core unit builds; every other declaration is checked.
             coreCheckSuspended = literalAddress;
-            const auto type = resolveType(parameter->type).value_or(
+            auto type = resolveType(parameter->type).value_or(
                     model->typeContext.errorType());
+            if (type == model->typeContext.neverType() && !parameter->isReceiver) {
+                report(TypeCheckingDiagnosticId::invalidFunctionType, parameter->type->span,
+                       "a parameter cannot have type 'Never'",
+                       "a function taking a value that cannot exist could never be called");
+                type = model->typeContext.errorType();
+            }
             recordDeclaredType(parameter, type);
             coreCheckSuspended = false;
             if (parameter->isReceiver) {
@@ -2186,6 +2204,23 @@ private:
         if (expression.get() != currentCallee) {
             if (const auto value = functionValueType(expression)) return *value;
         }
+        // A type named as a value is neither a value nor a function value; its initializer must be
+        // called (spec 5.6.1). As a member's base (`Color.Red`) it names the type.
+        if (expression.get() != currentCallee && expression.get() != currentMemberBase) {
+            const auto referenced = model->referencedSymbol(expression);
+            const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+            if (symbol != nullptr && (symbol->kind == semantic::SymbolKind::structure ||
+                                      symbol->kind == semantic::SymbolKind::enumeration ||
+                                      symbol->kind == semantic::SymbolKind::builtinType)) {
+                report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
+                       "'" + symbol->name + "' is a type, not a value or a function value",
+                       symbol->kind == semantic::SymbolKind::structure
+                               ? std::optional<std::string>("construct a value with its initializer, as in '" +
+                                                            symbol->name + "(...)'")
+                               : std::nullopt);
+                return model->typeContext.errorType();
+            }
+        }
         return referencedValueType(expression);
     }
 
@@ -2218,6 +2253,13 @@ private:
             } else if (symbol->isRootModule && symbol->name == "main") {
                 reason = "it is the program entry point";
             }
+            if (reason.empty() && binding != nullptr &&
+                !model->semanticModelValue->isRuntimeSource(expression->span)) {
+                report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, expression->span,
+                       "a C binding can be used as a function value only in a runtime compilation unit",
+                       "use a checked Joyeer wrapper");
+                return model->typeContext.errorType();
+            }
         }
         const auto* signature = model->callable(*referenced);
         if (reason.empty() && (signature == nullptr || !symbol->callable.has_value())) {
@@ -2228,6 +2270,8 @@ private:
                    "'" + symbol->name + "' cannot be used as a function value: " + reason,
                    symbol->kind == semantic::SymbolKind::method
                            ? std::optional<std::string>("call it, or write a top-level function that calls it and use that")
+                           : symbol->kind == semantic::SymbolKind::function && symbol->name == "main"
+                           ? std::optional<std::string>("move the work into another top-level function and use that")
                            : std::optional<std::string>("call it, or use a top-level Joyeer function"));
             return model->typeContext.errorType();
         }
@@ -2303,6 +2347,14 @@ private:
         }
     }
 
+    // A dictionary key needs equality, which function types do not have (spec 2.3.1).
+    void rejectFunctionKey(TypeId key, SourceSpan span) {
+        if (!containsFunctionType(key)) return;
+        report(TypeCheckingDiagnosticId::invalidFunctionType, span,
+               "a function type cannot be a dictionary key: function values have no equality",
+               "key the dictionary by a name or a number and store the function value as the value");
+    }
+
     bool isOptionalFunction(TypeId type) const {
         const auto* record = model->typeContext.type(type);
         return record != nullptr && record->kind == TypeKind::optional && isFunctionType(record->arguments[0]);
@@ -2322,8 +2374,11 @@ private:
             }
             return referencedValueType(expression);
         }
+        const auto* savedMemberBase = currentMemberBase;
+        currentMemberBase = expression->base.get();
         const auto base = checkExpression(expression->base).value_or(
                 model->typeContext.errorType());
+        currentMemberBase = savedMemberBase;
         auto member = model->referencedSymbol(expression);
         if (!member.has_value() && base != model->typeContext.errorType()) {
             member = lookupMember(
@@ -2354,12 +2409,21 @@ private:
             return model->typeContext.errorType();
         }
         const auto* memberSymbol = model->semanticModelValue->symbol(*member);
-        if (expression.get() != currentCallee && memberSymbol != nullptr &&
-            memberSymbol->kind == semantic::SymbolKind::method) {
-            report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
-                   "'" + memberSymbol->name + "' cannot be used as a function value: it is a method",
-                   "call it, or write a top-level function that calls it and use that");
-            return model->typeContext.errorType();
+        if (expression.get() != currentCallee && memberSymbol != nullptr) {
+            // Only top-level functions are values (spec 5.6.1); a member that must be called is not.
+            const bool builtinMethod = memberSymbol->kind == semantic::SymbolKind::builtinMember &&
+                    memberSymbol->callable.has_value();
+            const bool payloadCase = (memberSymbol->kind == semantic::SymbolKind::enumCase ||
+                                      memberSymbol->kind == semantic::SymbolKind::builtinEnumCase) &&
+                    memberSymbol->callable.has_value() && !memberSymbol->callable->parameters.empty();
+            if (memberSymbol->kind == semantic::SymbolKind::method || builtinMethod || payloadCase) {
+                report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
+                       "'" + memberSymbol->name + "' cannot be used as a function value: " +
+                               (payloadCase ? "it is an enum case; construct it with its payload"
+                                            : builtinMethod ? "it is a builtin method" : "it is a method"),
+                       "call it, or write a top-level function that calls it and use that");
+                return model->typeContext.errorType();
+            }
         }
         return model->typeOf(*member).value_or(model->typeContext.errorType());
     }
@@ -2458,6 +2522,7 @@ private:
             }
             if (expression->callee->kind != syntax::Kind::nameExpr &&
                 expression->callee->kind != syntax::Kind::parenthesizedExpr &&
+                expression->callee->kind != syntax::Kind::propagateExpr &&
                 expression->callee->kind != syntax::Kind::memberExpr) {
                 report(TypeCheckingDiagnosticId::notCallable, expression->callee->span,
                        "a call through a function value needs a plain name or a parenthesized callee",
@@ -2737,7 +2802,7 @@ private:
             if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
                 semanticTarget->name == "print" && actual.has_value() && containsFunctionType(*actual)) {
                 report(TypeCheckingDiagnosticId::typeMismatch, argument->value->span,
-                       "'print' cannot print a function value of type '" +
+                       "'print' cannot print a value of type '" +
                                model->typeContext.displayName(*actual) + "'",
                        "print a number, a Bool or a String");
             }
@@ -2752,14 +2817,13 @@ private:
             report(
                     TypeCheckingDiagnosticId::notCallable,
                     expression->callee->span,
-                    "value '" +
-                            (symbol == nullptr ? std::string("<expression>") : symbol->name) +
-                            "' of type '" + model->typeContext.displayName(calleeType) +
+                    (symbol == nullptr ? std::string("this expression") : "value '" + symbol->name + "'") +
+                            " of type '" + model->typeContext.displayName(calleeType) +
                             "' is not callable",
                     isOptionalFunction(calleeType)
                             ? std::optional<std::string>(
-                                      "unwrap it first, with '(value!)(...)' or a 'match'; 'value?(...)' "
-                                      "returns nil from the enclosing function when it is nil")
+                                      "unwrap it first with a 'match', or write 'value?(...)' to return nil from the "
+                                      "enclosing function when it is nil")
                             : std::nullopt);
         }
         return receiverResultType.value_or(
@@ -2864,7 +2928,7 @@ private:
                 return error;
             }
             report(TypeCheckingDiagnosticId::spawnTargetNotFunction, span,
-                   "'function:' must name a function; a variable or an expression is not a function value",
+                   "'function:' must name a top-level function; a function value held in a variable or an expression is not accepted here (spec 21.2.1)",
                    "pass the name of a top-level function, for example spawn(function: work, input: consume value)");
             return error;
         }
@@ -3123,6 +3187,14 @@ private:
                         ? model->semanticModelValue->symbol(*target)
                         : nullptr;
                 collectCallReceiverAccess(call, symbol, accesses, false);
+                // A call through a function value takes its effects from the value's type, by
+                // position (spec 5.6.1).
+                std::vector<syntax::AccessEffect> valueEffects;
+                if (!target.has_value()) {
+                    const auto calleeType = model->typeOf(call->callee);
+                    const auto* record = calleeType.has_value() ? model->typeContext.type(*calleeType) : nullptr;
+                    if (record != nullptr && record->kind == TypeKind::function) valueEffects = record->effects;
+                }
                 for (size_t index = 0; index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
                     const auto parameterIndex = symbol == nullptr
@@ -3132,7 +3204,8 @@ private:
                                         symbol->callable.has_value() &&
                                         parameterIndex.has_value()
                             ? symbol->callable->parameters[*parameterIndex].access
-                            : syntax::AccessEffect::borrowing;
+                            : index < valueEffects.size() ? valueEffects[index]
+                                                          : syntax::AccessEffect::borrowing;
                     collectCallArgumentAccess(*argument, effect, accesses, false);
                 }
                 break;
@@ -3659,7 +3732,8 @@ private:
             symbol->kind == semantic::SymbolKind::patternBinding) {
             return true;
         }
-        // A function named as a value is a temporary (spec 5.6.1).
+        // A function named as a value is a temporary, so `consume square` is valid; like any
+        // temporary passed to a consuming parameter it is still written with `consume` (spec 4.3).
         if (symbol->kind == semantic::SymbolKind::function && path->projections.empty()) return true;
         if (symbol->kind != semantic::SymbolKind::parameter ||
             !symbol->declaration.has_value()) {
@@ -4322,6 +4396,7 @@ private:
             if (!valueType.has_value()) valueType = actualValue;
             else requireAssignable(actualValue, *valueType, entry->value->span);
         }
+        if (!expression->entries.empty()) rejectFunctionKey(*keyType, expression->entries.front()->key->span);
         return model->typeContext.dictionaryType(*keyType, *valueType);
     }
 };
@@ -4351,6 +4426,7 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::task: return "task";
         case TypeKind::channelSender: return "channel-sender";
         case TypeKind::channelReceiver: return "channel-receiver";
+        case TypeKind::function: return "function";
         case TypeKind::int8: return "int8";
         case TypeKind::int16: return "int16";
         case TypeKind::int32: return "int32";

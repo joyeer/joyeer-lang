@@ -47,18 +47,41 @@ tests, implementation, role reviewers run separately from the author, then
 Non-capturing references to top-level functions; access effects are part of the type and must match
 exactly. No closures, methods or generic functions as values.
 
-- [ ] Decision record: function values without captures, and why captures stay out. Drafted as
-  [0020](../decisions/0020-function-values.md) and reviewed (language-designer, ir-backend-reviewer);
-  open until accepted.
-- [ ] Spec: make §2.3 function types normative; mark what is not accepted.
-- [ ] Failing GoogleTests and stage fixtures for each access effect and each rejected form.
-- [ ] Name resolution and type checking: a function `TypeKind`, a function name used as a value.
-- [ ] IR: a function-address opcode and an indirect-call opcode; verifier checks signature and ownership.
-- [ ] Backend: function pointers, indirect calls with the Joyeer calling convention, debug info.
-- [ ] End-to-end fixture: store, pass and call function values, including `consuming` and `inout`.
-- [ ] Close the "function used as a value" diagnostic gap in the [concurrency plan](0009-concurrency.md).
-- [ ] Reviews (language-designer, type-system-reviewer, ir-backend-reviewer, adversarial-tester) and validation.
-- [ ] Update [supported features](../impl/supported-features.md).
+- [x] Decision record: function values without captures, and why captures stay out. Evidence:
+  [0020](../decisions/0020-function-values.md), accepted 2026-11-12 after language-designer and
+  ir-backend-reviewer reviews (8801ec1, 24fca8f).
+- [x] Spec: make §2.3 function types normative; mark what is not accepted. Evidence: §2.3.1 and §5.6.1
+  with the amended sections listed in 0020 (24fca8f).
+- [x] GoogleTests and stage fixtures for each access effect and each rejected form. Evidence: parser,
+  type-checking, semantic-analysis, IR lowering/verifier, LLVM and wire tests, two CLI diagnostic
+  fixtures (c292e32). They were written alongside the implementation, not strictly first; five of them
+  failed and found real bugs before passing.
+- [x] Name resolution and type checking: a function `TypeKind`, a function name used as a value.
+  Evidence: c292e32.
+- [x] IR: a function-address opcode and an indirect-call opcode; verifier checks signature and ownership.
+  Evidence: c292e32, `NewOpcodeVerifierTest.FunctionAddressAndIndirectCallsAreCheckedAgainstTheFunctionType`.
+- [x] Backend: function pointers, indirect calls with the Joyeer calling convention, debug info.
+  Evidence: c292e32, `LLVMBackendTest.CallsThroughFunctionValuesAreOneIndirectCall`; the e2e fixture
+  builds and runs identically with `-gfull`/`-gdwarf` at -O0, -O2 and -O3.
+- [x] End-to-end fixture: store, pass and call function values, including `consuming` and `inout`.
+  Evidence: `tests/e2e/function_values.joyeer`, `E2EFunctionValuesO0`..`O3` and
+  `E2EOptimizationEquivalence_function_values`; Windows x64 Debug ctest 1527 of 1527.
+- [x] Close the "function used as a value" diagnostic gap in the [concurrency plan](0009-concurrency.md).
+  Evidence: a function used as a value is now a typed value or `not-a-function-value` with its reason
+  (`TypeCheckingTest.RejectsFunctionsThatCannotBeValues`, `MembersThatMustBeCalledAreNotFunctionValues`).
+  The `spawn(...).join()` half of that gap is unrelated and stays in plan 0009.
+- [x] Reviews (language-designer, type-system-reviewer, ir-backend-reviewer, adversarial-tester).
+  Evidence: findings recorded in decision 0020; all fixed with regression tests, and the adversarial
+  probes re-run clean.
+- [ ] Validation: `scripts/validate.py` (Debug and Release) and Linux. blocked: Windows has no Python
+  (plan 0009); Windows x64 Debug ctest run by hand instead.
+- [x] Update [supported features](../impl/supported-features.md). Evidence: the "Function values" row.
+
+### Found along the way (not function values)
+
+- [ ] The compiler overflows its stack on deep nesting (about 200 parenthesized expressions, 400
+  parenthesized types, a 300-term `+` chain); add a depth limit with a diagnostic. Pre-existing.
+- [ ] `struct S { var n: Never }` is accepted; reject `Never` as a stored field type. Pre-existing.
 
 ### Phase 2: protocols and generic functions (§20 v1)
 
@@ -118,6 +141,12 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-12: implementation review fixes (use-after-free through nested value calls and seven more);
+  three items checked (gap, reviews, supported features); validation blocked on Python; two pre-existing
+  bugs added under "Found along the way".
+- 2026-11-12: Phase 1 implemented (c292e32): seven items checked. Windows x64 Debug ctest passes 1527
+  of 1527. Role reviews (type-system, ir-backend, adversarial-tester) are running; `validate.py`,
+  Release and other platforms not run yet.
 - 2026-11-12: decision record 0020 drafted and reviewed by language-designer and ir-backend-reviewer;
   awaiting acceptance. No items done.
 - 2026-11-12: plan written; no items done.

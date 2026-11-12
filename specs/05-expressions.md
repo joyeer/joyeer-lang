@@ -202,7 +202,8 @@ through the value supplies every argument.
   arguments.
 - Each argument is checked against its parameter's type and effect exactly as
   for a call by name (§4.2): `inout` and `initializing` arguments are written
-  `&x`, `consuming` arguments `consume x` (or a literal or temporary).
+  `&x`, `consuming` arguments `consume x`, with `consume` also before a literal or
+  temporary, as for every consuming argument (§4.3).
 - **Evaluation order.** The callee expression is evaluated first, to a copy;
   no access to its storage is held while the arguments are evaluated or during
   the call. The arguments are then evaluated left to right and committed as for

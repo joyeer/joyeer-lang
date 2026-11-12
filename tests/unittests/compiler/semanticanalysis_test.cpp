@@ -2161,6 +2161,16 @@ TEST_F(SemanticAnalysisTest, CallsThroughFunctionValuesConsumeAndInitializeArgum
             "    return s.n\n"
             "}\n");
     EXPECT_TRUE(result.diagnostics.empty()) << joyeer::analysis::dump(result.diagnostics);
+
+    // A linear temporary borrowed by a call through a value is dropped, as for a call by name.
+    analyze("func work(input: consuming Int): Int { return input }\n"
+            "func look(h: borrowing JoinHandle<Int>): Int { return 1 }\n"
+            "func run(): Int {\n"
+            "    let g = look\n"
+            "    return g(spawn(function: work, input: consume 1))\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(joyeer::analysis::DiagnosticId::linearResultDropped))
+            << joyeer::analysis::dump(result.diagnostics);
 }
 
 } // namespace

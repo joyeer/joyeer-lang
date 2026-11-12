@@ -33,7 +33,7 @@ let table: [UInt32] = [0, 0x7707_3096, 0xEE0E_612C]
 - The type is `Bool`, an integer type, `Float`, `Double`, `String`, or an array
   of those (arrays may nest). Structs, enums, dictionaries and optionals are
   not supported, and neither are function types (§2.3.1;
-  `ir-lowering.invalid-constant`).
+  `type-checking.invalid-function-type`).
 - The initializer is evaluated by the compiler. It may use literals, array
   literals, prefix and binary operators, `as` and `&as`, and other constants,
   in any declaration order. Function calls, `if` and `match` are not allowed.

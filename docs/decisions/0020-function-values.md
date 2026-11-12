@@ -366,3 +366,12 @@ not needed now; if Phase 4 finds that it is, it gets its own record.
   against the backend, corrected two statements (`Never` results get no `noreturn`; the convention
   invariant is held only by convention), and added the verifier rules, the `Never`-parameter and
   debug-location rules, the wire-format bump and the backend tests above.
+- Implementation review (2026-11-12) by the `type-system-reviewer`, `ir-backend-reviewer` and
+  `adversarial-tester` on the first implementation (c292e32) found: a call through a value nested in
+  another call's arguments lost its effects in the exclusivity check, so `show(a: s, b: f(&s))` was a
+  use-after-free; a borrowed linear temporary through a value was dropped silently; a C binding's value
+  skipped the runtime-unit rule; the verifier could read a missing result; `maybe?(x)` was rejected;
+  `((Int): Int)?` printed as `(Int): Int?`; type names, initializers, payload cases and builtin methods
+  as values, function-type dictionary keys and constants, and `Never` parameters failed late or crashed.
+  All are fixed with regression tests. Deep nesting (a few hundred parentheses) still overflows the
+  compiler's stack, as it did before this feature.

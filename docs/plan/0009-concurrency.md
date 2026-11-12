@@ -52,8 +52,8 @@ Python there.
 - [ ] Qualified builtin enum cases (`ChannelClosed.Closed`, `ConversionError.OutOfRange`) lower in IR.
 - [ ] `consume Chain.End` (a qualified payload-less case) is accepted.
 - [ ] `==` on a struct or enum, or a diagnostic with a workaround.
-- [ ] Early, accurate diagnostics for a function or method used as a value, and for `spawn(...).join()`
-  (see the [generics plan](0010-generics.md), Phase 1).
+- [ ] Early, accurate diagnostics for `spawn(...).join()`. (A function or method used as a value is done:
+  [generics plan](0010-generics.md), Phase 1.)
 - [ ] A joined result can be an argument (`print(value: consume h.join())`); today the argument marker
   and the receiver marker collide.
 - [ ] A channel that carries its own receiver does not leak.
@@ -93,4 +93,6 @@ Deferred, not forgotten:
 
 ## Progress log
 
+- 2026-11-12: the function-used-as-a-value half of one compiler-gap item was done by plan 0010 Phase 1;
+  the item now covers only `spawn(...).join()`.
 - 2026-11-12: converted to the plan template; no items changed.

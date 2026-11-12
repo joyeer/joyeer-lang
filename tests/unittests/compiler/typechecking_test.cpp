@@ -3126,4 +3126,95 @@ TEST_F(TypeCheckingTest, FunctionValuesAreCopyableAndNeverLinear) {
     EXPECT_FALSE(checking.model->noncopyableReason(type).has_value());
     EXPECT_FALSE(checking.model->isLinear(type));
 }
+// A call through a value nested in another call's arguments keeps its effects, so it cannot consume or
+// mutate storage the outer call borrows (review of decision 0020).
+TEST_F(TypeCheckingTest, NestedCallsThroughValuesKeepTheirEffectsForExclusivity) {
+    check("func eat(s: consuming String): Int { return 1 }\n"
+          "func outer(a: borrowing String, b: Int) { }\n"
+          "func run() {\n"
+          "    let e = eat\n"
+          "    var t = \"wor\" + \"ld\"\n"
+          "    outer(a: t, b: e(consume t))\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func inc(n: inout Int): Int { &n = n + 1\n return n }\n"
+          "func outer(a: Int, b: Int) { }\n"
+          "func run() {\n"
+          "    let g = inc\n"
+          "    var x = 1\n"
+          "    outer(a: x, b: g(&x))\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+    // The same through struct construction, a method receiver and a field callee.
+    const std::string replace =
+            "func replace(s: inout String): Int { &s = \"b\"\n return 1 }\n"
+            "struct P {\n    var a: String\n    var b: Int\n"
+            "    func m(b: Int): Int { return b }\n}\n"
+            "struct H {\n    var name: String\n    var f: (inout H): Int\n}\n"
+            "func show(a: String, b: Int): Int { return b }\n";
+    for (const auto* body : {
+            "func run() { let f = replace\n var s = \"a\"\n let p = P(a: s, b: f(&s)) }\n",
+            "func run() { let f: (inout P): Int = touch\n var p = P(a: \"a\", b: 1)\n let n = p.m(b: f(&p)) }\n"
+            "func touch(p: inout P): Int { return 1 }\n",
+            "func run(h: H) { var b = h\n let n = show(a: b.name, b: (b.f)(&b)) }\n"}) {
+        SCOPED_TRACE(body);
+        check(replace + body);
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, TypeNamesAreNotValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "struct P {\n    var n: Int\n}\nfunc run() { let g = P }\n",
+            "func run() { let g = ChannelSender }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notAFunctionValue));
+    }
+    // As a member's base or a callee a type name stays valid.
+    check("enum Color {\n    Red,\n}\nstruct P {\n    var n: Int\n}\n"
+          "func run(): Int {\n    let c = Color.Red\n    let p = P(n: 1)\n    return p.n\n}\n");
+    EXPECT_TRUE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, OptionalFunctionValuesPropagateAndPrintParenthesized) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func call(f: ((Int): Int)?): Int? {\n    return f?(3)\n}\n");
+    EXPECT_TRUE(checking.succeeded());
+    check("func call(f: ((Int): Int)?): Int {\n    return f(3)\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notCallable));
+    const auto record = std::find_if(checking.diagnostics.begin(), checking.diagnostics.end(),
+            [](const auto& diagnostic) { return diagnostic.id == Id::notCallable; });
+    ASSERT_NE(record, checking.diagnostics.end());
+    EXPECT_NE(record->message.find("((Int): Int)?"), std::string::npos) << record->message;
+}
+
+TEST_F(TypeCheckingTest, MembersThatMustBeCalledAreNotFunctionValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "enum E {\n    A(String),\n    B,\n}\nfunc run() { let a = E.A }\n",
+            "func run() {\n    var values: [Int] = []\n    let f = values.append\n}\n",
+            "func run(d: [String: Int]) { let g = d.get }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notAFunctionValue));
+    }
+    // A payload-less case and a property stay ordinary values.
+    check("enum E {\n    A(String),\n    B,\n}\nfunc run(): Int {\n    let b = E.B\n    let s = \"x\"\n    return s.count\n}\n");
+    EXPECT_TRUE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, FunctionTypesCannotBeKeysConstantsOrNeverParameters) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func square(value: Int): Int { return value }\nfunc run() { let e = [square: 1] }\n",
+            "func run(e: [(Int): Int: Int]) { }\n",
+            "func square(value: Int): Int { return value }\nlet F: (Int): Int = square\n",
+            "func absurd(x: Never): Int { return 1 }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidFunctionType));
+    }
+}
 } // namespace

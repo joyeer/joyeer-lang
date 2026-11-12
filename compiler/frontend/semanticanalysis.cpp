@@ -813,8 +813,10 @@ private:
                         if (effect == syntax::AccessEffect::inout) {
                             const auto path = storagePath(argument->value);
                             if (path.has_value()) mutatedArguments.push_back(path->root);
-                        } else if (effect == syntax::AccessEffect::borrowing && callableSymbol != nullptr &&
-                                   !storesItsArguments(*callableSymbol)) {
+                        } else if (effect == syntax::AccessEffect::borrowing &&
+                                   ((callableSymbol != nullptr && !storesItsArguments(*callableSymbol)) ||
+                                    // A function value never stores its arguments.
+                                    (!target.has_value() && !valueEffects.empty()))) {
                             // A borrowed argument that is an owned linear temporary is dropped
                             // once the call returns.
                             reportBorrowedLinearTemporary(argument->value, state);

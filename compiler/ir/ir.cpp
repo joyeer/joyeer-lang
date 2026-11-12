@@ -412,6 +412,11 @@ VerificationResult Verifier::verify(const Module& module) const {
         for (const auto effect : type.effects) {
             effectsValid &= static_cast<uint64_t>(effect) <= static_cast<uint64_t>(syntax::AccessEffect::initializing);
         }
+        // `Never` is not a parameter type: its LLVM type is void (spec 2.3.1).
+        for (size_t index = 0; isFunction && effectsValid && index + 1 < type.arguments.size(); ++index) {
+            const auto found = types.find(type.arguments[index]);
+            effectsValid &= found == types.end() || found->second->kind != typing::TypeKind::never;
+        }
         if (!effectsValid) {
             report(
                     VerificationErrorId::typeMismatch,
@@ -1973,12 +1978,18 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 : nullptr;
                         // Only a Joyeer function has the Joyeer convention; a C import, a data symbol
                         // and a builtin accepting any type have no address of a function type.
-                        bool matches = !callee.isExternal &&
+                        if (callee.nativeBinding.has_value() && !function.runtimeContext) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "function_address of a C binding requires runtime authorization");
+                        }
+                        // The root `main` is not a value (decision 0020).
+                        bool matches = !callee.isExternal && !(callee.isRootModule && callee.name == "main") &&
                                 (!callee.nativeBinding.has_value() ||
                                  (callee.nativeBinding->kind == NativeBindingKind::cExport &&
                                   !callee.nativeBinding->dataSymbol)) &&
+                                functionType != nullptr &&
                                 instruction.result->category == ValueCategory::value &&
-                                functionType != nullptr && functionType->kind == typing::TypeKind::function &&
+                                functionType->kind == typing::TypeKind::function &&
                                 functionType->effects.size() == callee.parameters.size() &&
                                 functionType->arguments.size() == callee.parameters.size() + 1;
                         for (size_t parameter = 0; matches && parameter < callee.parameters.size(); ++parameter) {
