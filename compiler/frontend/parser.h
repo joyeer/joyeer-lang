@@ -28,6 +28,9 @@ enum class DiagnosticId {
     unexpectedEndOfFile,
     unsupportedSyntax,
     invalidDeinit,
+    labeledFunctionTypeParameter,
+    missingFunctionTypeResult,
+    parenthesizedType,
 };
 
 struct Diagnostic {
@@ -109,6 +112,7 @@ private:
 
     syntax::TypePtr parseType();
     syntax::TypePtr parseTypePrimary();
+    syntax::TypePtr parseParenthesizedType();
 
     syntax::BlockExprSyntax::Ptr parseBlock();
     syntax::NodePtr parseBlockItem();

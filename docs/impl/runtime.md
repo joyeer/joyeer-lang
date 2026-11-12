@@ -14,10 +14,10 @@ The runtime is not offered as separately selectable `abi`, `core`, or `std`
 profiles. Programs depend on the target's C runtime and startup/link inputs;
 freestanding, kernel, embedded, and no-libc profiles are not supported.
 
-The [runtime plan](../plan/runtime-in-joyeer.md) describes how the whole runtime moves
+The [runtime plan](../plan/0008-runtime-in-joyeer.md) describes how the whole runtime moves
 into Joyeer behind the existing runtime interfaces; this document
 describes the current C implementation. Public library modules and their
-separate fern workflow are tracked in the [library plan](../plan/library.md).
+separate fern workflow are tracked in the [library plan](../plan/0003-library.md).
 The [C binding implementation](c-interop.md) supports the restricted
 by-value scalar runtime-source boundary of [§19](../../specs/19-c-interop.md).
 It does not replace any production C algorithm or compiler-known runtime

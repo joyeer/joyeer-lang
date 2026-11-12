@@ -792,7 +792,7 @@ TEST(RuntimeTest, DeepClonesAndRecursivelyDestroysDictionaryEntries) {
 // Black-box coverage of the exported ABI. These tests name only functions that
 // runtime.h declares (through the helpers above), so they hold for any provider
 // of the runtime: the C implementation today, Joyeer objects later (see
-// docs/plan/runtime-in-joyeer.md).
+// docs/plan/0008-runtime-in-joyeer.md).
 
 std::string capturedStdout(void (*produce)()) {
     std::fflush(stdout);

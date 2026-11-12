@@ -114,35 +114,64 @@ A nominal type is introduced by a `struct` or `enum` declaration (§3.3,
 ### 2.3 Composite types
 
 ```
-type            ::= primitive_type
+type            ::= primary_type [ '?' ]                    // optional_type
+primary_type    ::= primitive_type
                  |  '(' ')'                                 // Void type alias
                  |  nominal_type [ generic_args ]
                  |  array_type
                  |  dict_type
                  |  tuple_type
                  |  function_type
-                 |  optional_type
+                 |  '(' function_type ')'
 
 array_type      ::= '[' type ']'
 dict_type       ::= '[' type ':' type ']'
 tuple_type      ::= '(' type , type , ... ')'
 function_type   ::= '(' [ param_type , ... ] ')' ':' type
 param_type      ::= [ access_effect ] type        // access_effect defined in §3.2
-optional_type   ::= type '?'
 generic_args    ::= '<' type , ... '>'
 ```
 
-`function_type` parameters carry effect annotations exactly like declared
-functions (§3.2):
+#### 2.3.1 Function types
+
+A function type names the parameters' access effects and types and the
+result type, without parameter labels ([decision 0020](../docs/decisions/0020-function-values.md)):
 
 ```joyeer
-let f: (inout Int): Int = ...
-let g: (consuming String): ()  = ...
+let f: (inout Int): Int = bump
+let g: (consuming String): () = discard
+let h: (): () = tick
 ```
 
-The inner `:` is the function type's return separator (§3.2 uses the same `:`
+The inner `:` is the function type's result separator (§3.2 uses the same `:`
 for declared functions); the outer `:` in `let f: ...` is the binding's type
 annotation.
+
+- Each parameter has an access effect (§4.2): `borrowing` (the default; writing
+  it gives the same type), `inout`, `consuming` or `initializing`. A parameter
+  type is any type except `Never`.
+- The result is mandatory and may be any type, `()` and `Never` included:
+  `(Int)` is not a type; write `(Int): ()`.
+- A parameter has no label: `(x: Int): Int` is an error
+  (`parser.labeled-function-type-parameter`).
+- The result type extends as far right as possible: `(Int): Int?` returns
+  `Int?`, and `(Int): (Int): Int` returns a function. An optional function is
+  written `((Int): Int)?`; parentheses around a type are allowed only around a
+  function type.
+- Inside `[` `]`, a parenthesized list followed by `:` is a function type, so
+  `[(): Int]` and `[(Int): Bool]` are arrays of functions.
+- Two function types are the same type when their parameter count, every
+  effect, every parameter type and the result are identical. There is no
+  subtyping, conversion or variance between function types, `Never` results
+  included (§2.9).
+
+A value of a function type is a **function value**: a reference to a top-level
+function, with no captured state (closures are deferred, §5.11). How a function
+becomes a value and how a value is called are in §5.6.1. Function values are
+copyable, never linear, and trivially destroyed (§4.1.1); they cross tasks and
+channels freely (§21), because they hold no state. A function type has no
+equality: `==` is rejected, it cannot be a dictionary key, and `print` does not
+accept it.
 
 ### 2.4 Optional<T>
 
@@ -310,6 +339,10 @@ return type is `Never` — has type `Never`, which is a subtype of every type.
 A diverging expression is therefore well-typed in any position that expects a
 value. This is what lets the right operand of `??` be `return .Err(e)` or
 `fatalError(...)` (§5.1, §8.5, §9.3).
+
+The subtyping applies to expressions only. It does not extend to function types
+(§2.3.1): a `(Int): Never` value is not a `(Int): Int` value, and `Never` is not
+allowed as a function-type parameter.
 
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:

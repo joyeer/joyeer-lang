@@ -3000,4 +3000,221 @@ TEST_F(TypeCheckingTest, EqualityOnAnEnumOrStructIsRejected) {
     EXPECT_FALSE(checking.succeeded());
 }
 
+// Function values (spec 2.3.1, 5.6.1; decision 0020).
+bool hasTypeDiagnostic(const joyeer::typing::TypeCheckingResult& checking,
+                       joyeer::typing::TypeCheckingDiagnosticId id) {
+    return std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(),
+            [id](const auto& diagnostic) { return diagnostic.id == id; });
+}
+
+TEST_F(TypeCheckingTest, FunctionNameIsAValueOfItsFunctionType) {
+    check("func square(value: Int): Int { return value * value }\n"
+          "func bump(count: inout Int) { &count = count + 1 }\n"
+          "func run() {\n"
+          "    let f = square\n"
+          "    let g: (inout Int): () = bump\n"
+          "    let h: (borrowing Int): Int = square\n"
+          "    var n = f(3)\n"
+          "    g(&n)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << checking.diagnostics.size();
+    const auto run = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[2]);
+    const auto f = declaredType(run->body->items[0]);
+    EXPECT_EQ(checking.model->types().displayName(f), "(Int): Int");
+    EXPECT_EQ(declaredType(run->body->items[2]), f);   // `borrowing` written out is the same type
+    EXPECT_EQ(checking.model->types().displayName(declaredType(run->body->items[1])), "(inout Int): Void");
+}
+
+TEST_F(TypeCheckingTest, FunctionTypesMatchExactly) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(value: Int): Int { return value }\nfunc run() { let g: (inout Int): Int = f }\n",
+            "func f(value: Int): Int { return value }\nfunc run() { let g: (Int, Int): Int = f }\n",
+            "func f(value: Int): Int { return value }\nfunc run() { let g: (String): Int = f }\n",
+            "func f(value: Int): Int { return value }\nfunc run() { let g: (Int): String = f }\n",
+            "func f(value: Int): Never { return f(value: value) }\nfunc run() { let g: (Int): Int = f }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::typeMismatch));
+    }
+}
+
+TEST_F(TypeCheckingTest, RejectsFunctionsThatCannotBeValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func run() { let p = print }\n",
+            "func run() { let s = spawn }\n",
+            "struct S {\n    var n: Int\n    func get(): Int { return self.n }\n}\n"
+            "func run(s: S) { let m = s.get }\n",
+            "func main() { let m = main }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notAFunctionValue));
+    }
+}
+
+TEST_F(TypeCheckingTest, ChecksCallsThroughFunctionValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    const std::string functions =
+            "func square(value: Int): Int { return value * value }\n"
+            "func bump(count: inout Int) { &count = count + 1 }\n"
+            "func take(text: consuming String): Int { return 1 }\n";
+    check(functions + "func run() { let f = square\n let n = f(value: 2) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::labeledFunctionValueCall));
+    check(functions + "func run() { let f = square\n let n = f(1, 2) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidCallArguments));
+    check(functions + "func run() { let g = bump\n var n = 1\n g(n) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidInoutArgument));
+    check(functions + "func run() { let t = take\n let s = \"a\"\n let n = t(s) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidConsumeArgument));
+    check(functions + "func run() { let t = take\n let s = \"a\"\n let n = t(consume s) }\n");
+    EXPECT_TRUE(checking.succeeded());
+    // A forgotten label on a call by name keeps the ordinary name-resolution diagnostic.
+    Diagnostics lexing;
+    const auto text = std::make_shared<SourceFile>(functions + "func run() { let n = square(2) }\n");
+    LexParser(&lexing).parse(text);
+    const auto parsed = joyeer::parser::Parser(text->tokens).parse();
+    const auto resolved = joyeer::semantic::NameResolver().resolve(parsed.root);
+    EXPECT_TRUE(std::any_of(resolved.diagnostics.begin(), resolved.diagnostics.end(), [](const auto& diagnostic) {
+        return diagnostic.id == joyeer::semantic::NameResolutionDiagnosticId::missingArgumentLabel;
+    })) << joyeer::semantic::dump(resolved.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, StoredFunctionValuesNeedAParenthesizedCallee) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    const std::string declarations =
+            "func square(value: Int): Int { return value * value }\n"
+            "func make(): (Int): Int { return square }\n"
+            "struct S {\n    var f: (Int): Int\n}\n";
+    check(declarations + "func run(s: S): Int { return (s.f)(2) }\n");
+    EXPECT_TRUE(checking.succeeded());
+    check(declarations + "func run(s: S): Int { return s.f(2) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notCallable));
+    check(declarations + "func run(): Int { return make()(2) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notCallable));
+    check(declarations + "func run(): Int { return (make())(2) }\n");
+    EXPECT_TRUE(checking.succeeded());
+    check(declarations + "func run(t: [(Int): Int]): Int { return (t[0])(2) }\n");
+    EXPECT_TRUE(checking.succeeded());
+    // An optional function value must be unwrapped first.
+    check(declarations + "func run(m: ((Int): Int)?): Int { return m(2) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notCallable));
+}
+
+TEST_F(TypeCheckingTest, FunctionTypesRejectNeverParametersAndEquality) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func run(f: (Never): Int) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidFunctionType));
+    check("func square(value: Int): Int { return value }\nfunc run(): Bool { return square == square }\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func square(value: Int): Int { return value }\nfunc run() { print(value: square) }\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+// Copyability and linearity stop at a function type (spec 4.1.1).
+TEST_F(TypeCheckingTest, FunctionValuesAreCopyableAndNeverLinear) {
+    check("func work(handle: consuming JoinHandle<Int>): Int { return consume handle.join() }\n"
+          "struct S {\n    var f: (S): S\n}\n"
+          "func run() {\n"
+          "    let w: (consuming JoinHandle<Int>): Int = work\n"
+          "    let copy = w\n"
+          "    let again = w\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded());
+    const auto run = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[2]);
+    const auto type = declaredType(run->body->items[0]);
+    EXPECT_FALSE(checking.model->noncopyableReason(type).has_value());
+    EXPECT_FALSE(checking.model->isLinear(type));
+}
+// A call through a value nested in another call's arguments keeps its effects, so it cannot consume or
+// mutate storage the outer call borrows (review of decision 0020).
+TEST_F(TypeCheckingTest, NestedCallsThroughValuesKeepTheirEffectsForExclusivity) {
+    check("func eat(s: consuming String): Int { return 1 }\n"
+          "func outer(a: borrowing String, b: Int) { }\n"
+          "func run() {\n"
+          "    let e = eat\n"
+          "    var t = \"wor\" + \"ld\"\n"
+          "    outer(a: t, b: e(consume t))\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+    check("func inc(n: inout Int): Int { &n = n + 1\n return n }\n"
+          "func outer(a: Int, b: Int) { }\n"
+          "func run() {\n"
+          "    let g = inc\n"
+          "    var x = 1\n"
+          "    outer(a: x, b: g(&x))\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+    // The same through struct construction, a method receiver and a field callee.
+    const std::string replace =
+            "func replace(s: inout String): Int { &s = \"b\"\n return 1 }\n"
+            "struct P {\n    var a: String\n    var b: Int\n"
+            "    func m(b: Int): Int { return b }\n}\n"
+            "struct H {\n    var name: String\n    var f: (inout H): Int\n}\n"
+            "func show(a: String, b: Int): Int { return b }\n";
+    for (const auto* body : {
+            "func run() { let f = replace\n var s = \"a\"\n let p = P(a: s, b: f(&s)) }\n",
+            "func run() { let f: (inout P): Int = touch\n var p = P(a: \"a\", b: 1)\n let n = p.m(b: f(&p)) }\n"
+            "func touch(p: inout P): Int { return 1 }\n",
+            "func run(h: H) { var b = h\n let n = show(a: b.name, b: (b.f)(&b)) }\n"}) {
+        SCOPED_TRACE(body);
+        check(replace + body);
+        EXPECT_FALSE(checking.succeeded());
+    }
+}
+
+TEST_F(TypeCheckingTest, TypeNamesAreNotValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "struct P {\n    var n: Int\n}\nfunc run() { let g = P }\n",
+            "func run() { let g = ChannelSender }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notAFunctionValue));
+    }
+    // As a member's base or a callee a type name stays valid.
+    check("enum Color {\n    Red,\n}\nstruct P {\n    var n: Int\n}\n"
+          "func run(): Int {\n    let c = Color.Red\n    let p = P(n: 1)\n    return p.n\n}\n");
+    EXPECT_TRUE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, OptionalFunctionValuesPropagateAndPrintParenthesized) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func call(f: ((Int): Int)?): Int? {\n    return f?(3)\n}\n");
+    EXPECT_TRUE(checking.succeeded());
+    check("func call(f: ((Int): Int)?): Int {\n    return f(3)\n}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notCallable));
+    const auto record = std::find_if(checking.diagnostics.begin(), checking.diagnostics.end(),
+            [](const auto& diagnostic) { return diagnostic.id == Id::notCallable; });
+    ASSERT_NE(record, checking.diagnostics.end());
+    EXPECT_NE(record->message.find("((Int): Int)?"), std::string::npos) << record->message;
+}
+
+TEST_F(TypeCheckingTest, MembersThatMustBeCalledAreNotFunctionValues) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "enum E {\n    A(String),\n    B,\n}\nfunc run() { let a = E.A }\n",
+            "func run() {\n    var values: [Int] = []\n    let f = values.append\n}\n",
+            "func run(d: [String: Int]) { let g = d.get }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notAFunctionValue));
+    }
+    // A payload-less case and a property stay ordinary values.
+    check("enum E {\n    A(String),\n    B,\n}\nfunc run(): Int {\n    let b = E.B\n    let s = \"x\"\n    return s.count\n}\n");
+    EXPECT_TRUE(checking.succeeded());
+}
+
+TEST_F(TypeCheckingTest, FunctionTypesCannotBeKeysConstantsOrNeverParameters) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func square(value: Int): Int { return value }\nfunc run() { let e = [square: 1] }\n",
+            "func run(e: [(Int): Int: Int]) { }\n",
+            "func square(value: Int): Int { return value }\nlet F: (Int): Int = square\n",
+            "func absurd(x: Never): Int { return 1 }\n"}) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidFunctionType));
+    }
+}
 } // namespace

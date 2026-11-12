@@ -96,6 +96,12 @@ private:
     Layout layout(ir::TypeId id);
     std::vector<size_t> payloadOffsets(const ir::EnumCaseDefinition& definition);
     void defineTypes();
+    // The LLVM type of a Joyeer function: the one place its convention comes from, shared by function
+    // definitions and calls through a function value (decision 0020). `inout` and `initializing`
+    // parameters are pointers; a unit or `Never` result is void. No attributes are added.
+    llvm::FunctionType* signatureType(
+            const std::vector<std::pair<ir::TypeId, ir::ValueCategory>>& parameters, ir::TypeId result);
+    llvm::FunctionType* signatureType(ir::TypeId functionType);
     llvm::Function* declareFunction(const ir::Function& function);
     llvm::Function* declareNativeFunction(const ir::Function& function);
     // The external global behind a `@c_data` binding; declared once per symbol.

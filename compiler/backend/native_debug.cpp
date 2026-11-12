@@ -66,6 +66,19 @@ llvm::DIType* Builder::debugType(ir::TypeId id) {
         case typing::TypeKind::uint8:
             result = debug->createBasicType("UInt8", 8, llvm::dwarf::DW_ATE_unsigned_char); break;
         case typing::TypeKind::never: return nullptr;
+        case typing::TypeKind::function: {
+            // A pointer to a subroutine type built like a function's own; position 0 is the result,
+            // and a null entry there means void. Parameters are never `Never` (spec 2.3.1).
+            std::vector<llvm::Metadata*> signature {
+                unit(value.arguments.back()) ? nullptr : debugType(value.arguments.back())
+            };
+            for (size_t index = 0; index + 1 < value.arguments.size(); ++index) {
+                signature.push_back(debugType(value.arguments[index]));
+            }
+            auto* subroutine = debug->createSubroutineType(debug->getOrCreateTypeArray(signature));
+            result = debug->createPointerType(subroutine, 64, 0, std::nullopt, value.name);
+            break;
+        }
         default: {
             const auto valueLayout = value.kind == typing::TypeKind::any ? Layout{8, 8} : layout(id);
             auto* file = value.declarationSpan.has_value()
