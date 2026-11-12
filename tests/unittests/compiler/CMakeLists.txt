@@ -1024,6 +1024,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             "338350\n37\n60\n3\n3\n9\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2EFunctionValues function_values
+            "9\n-4\n25\n2\nmade?\nhello!\n11\n-7\n81\n-2\n8\n121\n3\n36\n-12\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EChannelBasic channel_basic
             "10\n20\nclosed\nhello\n3\ngone\n100\n1\n2\n3\n9\nrefused\n"
             0 1 2 3)
@@ -1711,6 +1715,32 @@ add_test(NAME ParserMvpCliRejectsInvalidSource
 )
 set_tests_properties(ParserMvpCliRejectsInvalidSource PROPERTIES
         LABELS parser
+)
+
+add_test(NAME DiagnosticsCliRejectsMethodAsFunctionValue
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/function_value_method.joyeer
+                "-DEXPECTED_HEADER=function_value_method.joyeer:11:16: error[type-checking.not-a-function-value]"
+                "-DEXPECTED_SOURCE=    let read = counter.current"
+                "-DEXPECTED_HELP=help: call it, or write a top-level function that calls it and use that"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsMethodAsFunctionValue PROPERTIES
+        LABELS "diagnostics;type-checking;function-values"
+)
+
+add_test(NAME DiagnosticsCliRejectsFieldCallWithoutParentheses
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/err/function_value_field_call.joyeer
+                "-DEXPECTED_HEADER=function_value_field_call.joyeer:11:19: error[type-checking.not-callable]"
+                "-DEXPECTED_SOURCE=    let doubled = handler.run(2)"
+                "-DEXPECTED_HELP=help: call the stored function with a parenthesized callee: '(value.run)(...)'"
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/expectRichCompilerDiagnostic.cmake
+)
+set_tests_properties(DiagnosticsCliRejectsFieldCallWithoutParentheses PROPERTIES
+        LABELS "diagnostics;type-checking;function-values"
 )
 
 add_test(NAME DiagnosticsCliRejectsCopyOfNoncopyableValue

@@ -52,6 +52,10 @@ A type is **copyable** when an ordinary copy can produce an independent value
 with its own destruction obligation:
 
 - scalar built-ins are trivially copyable;
+- function types (§2.3.1) are trivially copyable and never linear, whatever
+  their parameter and result types are: `(consuming TcpConnection): ()` is
+  copyable. Copyability and linearity do not look inside a function type, and a
+  struct holding one has no recursive layout (`struct S { var f: (S): S }`);
 - `String`, `Array`, `Dict`, `Optional`, and `Result` are copyable when their
   contained types are copyable; heap-backed storage is cloned recursively;
 - a `struct` or `enum` is copyable when all of its stored fields or payloads
@@ -267,6 +271,10 @@ func add(dst: inout Int, src: Int) { &dst = dst + src }
 var n = 5
 add(dst: &n, src: n)          // ❌ error: 'n' has overlapping inout + borrowing projections
 ```
+
+In a call through a function value (§5.6.1), the callee is evaluated first to a
+copy and holds no projection, so `(s.f)(&s)` and `(handlers[0])(&handlers)` take
+only the argument projections.
 
 #### 4.4.1 Field-level disjointness
 
@@ -533,7 +541,7 @@ standard library's host code can be written in Joyeer
 on the obligations of C for that code; the language checks nothing about the
 addresses, and none of it is reachable from ordinary programs.
 
-The [deferred memory-boundary proposal](../docs/plan/c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
+The [deferred memory-boundary proposal](../docs/plan/0002-c-interop.md#32-native-memory-design-needed-no-accepted-syntax)
 must settle byte extents, read/write access, nullability, output
 initialization, retention, and allocator ownership before any address
 mechanism is admitted to ordinary code. Ordinary access effects, `Optional`,

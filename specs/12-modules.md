@@ -61,7 +61,9 @@ always an error, regardless of visibility.
 
 An exposed type must be at least as accessible as the declaration exposing it.
 This includes function parameters/results, public stored fields, enum payloads,
-and types nested inside containers or optionals. A member's effective
+and types nested inside containers, optionals or function types (§2.3.1).
+Visibility applies to names, not values: a private function's value (§5.6.1)
+may be returned by a public function. A member's effective
 accessibility is limited by its enclosing type. Inferred member lookup must
 enforce the same visibility rules as lookup from an explicit type annotation.
 
@@ -163,7 +165,7 @@ required. The toolchain finds standard modules relative to the compiler itself,
 never through a search path, and a module supplied explicitly with the same
 name takes precedence (which is how the library itself is developed). The
 resolution mechanism is an implementation contract, described in
-[toolchain libraries](../docs/plan/toolchain-libraries.md).
+[toolchain libraries](../docs/plan/0006-toolchain-libraries.md).
 
 | Module | Provides |
 |---|---|

@@ -200,6 +200,20 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             break;
         }
         case Opcode::call: result = emitCall(instruction); break;
+        case Opcode::functionAddress:
+            result = functions.at(*instruction.callee);
+            break;
+        case Opcode::callIndirect: {
+            // One indirect call with the type's signature: definitions are declared from the same
+            // helper, so caller and callee agree on convention and attributes (decision 0020).
+            std::vector<llvm::Value*> arguments;
+            for (size_t index = 1; index < instruction.operands.size(); ++index) {
+                arguments.push_back(argument(index));
+            }
+            result = builder.CreateCall(signatureType(values.at(instruction.operands[0]).type),
+                    argument(0), arguments);
+            break;
+        }
         case Opcode::constructStruct:
             result = llvm::PoisonValue::get(resultType());
             if (instruction.operands.empty()) result = llvm::Constant::getNullValue(resultType());
