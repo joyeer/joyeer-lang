@@ -1278,7 +1278,16 @@ private:
                 const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 resolveStructure(declaration);
                 for (const auto& method : declaration->methods) resolveMethod(method);
-                if (declaration->deinitializer != nullptr) resolveFunction(declaration->deinitializer);
+                if (declaration->deinitializer != nullptr) {
+                    resolveFunction(declaration->deinitializer);
+                    // The `deinit` of a generic struct is an instance per instance of the struct.
+                    if (selfOwner.has_value() && !selfParameters.empty()) {
+                        if (const auto deinit = model->semanticModelValue->declaredSymbol(declaration->deinitializer)) {
+                            methodParameters[*deinit] = selfParameters;
+                            model->genericParameterLists[*deinit] = selfParameters;
+                        }
+                    }
+                }
                 selfOwner.reset();
                 selfArguments.clear();
                 break;
@@ -2124,7 +2133,36 @@ private:
         for (const auto* call : roots) {
             if (!require(*call, call->arguments, std::nullopt)) return;
         }
-        for (size_t next = 0; next < queue.size(); ++next) {
+        // The `deinit` of every concrete instance of a generic struct is an instance too (spec 20.12);
+        // finding one can intern new types, so the two are run until neither adds anything.
+        const auto requireDeinitInstances = [&]() -> std::optional<bool> {
+            bool added = false;
+            for (TypeId id = 0; id < model->typeContext.size(); ++id) {
+                const auto* record = model->typeContext.type(id);
+                if (record == nullptr || record->kind != TypeKind::structure || record->arguments.empty() ||
+                    model->typeContext.mentionsTypeParameter(id)) {
+                    continue;
+                }
+                const auto* symbol = symbolOf(record->symbol);
+                if (symbol == nullptr || !symbol->declaration.has_value()) continue;
+                const auto node = model->semanticModelValue->node(*symbol->declaration);
+                if (node == nullptr || node->kind != syntax::Kind::structDecl) continue;
+                const auto deinitializer = std::static_pointer_cast<syntax::StructDeclSyntax>(node)->deinitializer;
+                if (deinitializer == nullptr) continue;
+                const auto deinit = model->semanticModelValue->declaredSymbol(deinitializer);
+                if (!deinit.has_value() || model->genericParameters(*deinit) == nullptr ||
+                    model->instanceIndex(*deinit, record->arguments).has_value()) {
+                    continue;
+                }
+                const GenericCall call { *deinit, record->arguments, std::nullopt, deinitializer->span };
+                if (!require(call, record->arguments, std::nullopt)) return std::nullopt;
+                added = true;
+            }
+            return added;
+        };
+        size_t next = 0;
+        while (true) {
+        for (; next < queue.size(); ++next) {
             const auto index = queue[next];
             const auto function = model->instanceList[index].function;
             for (const auto* call : callsIn[function]) {
@@ -2151,6 +2189,10 @@ private:
             }
         }
         internInstanceTypes();
+        const auto more = requireDeinitInstances();
+        if (!more.has_value()) return;
+        if (!*more) break;
+        }
     }
 
     // Lowering substitutes every type it reads, and the IR type table is a snapshot taken before

@@ -772,6 +772,23 @@ private:
             if (declaration->deinitializer == nullptr) continue;
             const auto structureSymbol = semanticModel.declaredSymbol(declaration);
             const auto deinitSymbol = semanticModel.declaredSymbol(declaration->deinitializer);
+            if (deinitSymbol.has_value() && model->genericParameters(*deinitSymbol) != nullptr) {
+                // Each instance of a generic struct runs its own instance of the `deinit`.
+                for (auto& instance : module->structures) {
+                    if (!structureSymbol.has_value() || instance.symbol != *structureSymbol) continue;
+                    const auto* record = model->types().type(instance.type);
+                    const auto index = record == nullptr ? std::nullopt
+                            : model->instanceIndex(*deinitSymbol, record->arguments);
+                    if (!index.has_value() || *index >= instanceFunctions.size() ||
+                        instanceFunctions[*index] == ir::invalidFunctionId) {
+                        report(DiagnosticId::missingSymbol, declaration->deinitializer->span,
+                               "'deinit' has no lowered instance for '" + instance.name + "'");
+                        continue;
+                    }
+                    instance.deinitializer = instanceFunctions[*index];
+                }
+                continue;
+            }
             const auto function = deinitSymbol.has_value()
                     ? functions.find(*deinitSymbol)
                     : functions.end();

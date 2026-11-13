@@ -177,6 +177,11 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-13: Phase 3 generic `deinit`: the `deinit` of a generic struct is an instance per concrete instance of the
+  struct (found to a fixpoint with the instance types) and is linked to that instance's IR definition. New fixture
+  `tests/e2e/generic_deinit.joyeer` (`E2EGenericDeinitO0`..`O3`): each instance runs its own `deinit` once, in
+  reverse declaration order. Windows x64 Debug full ctest 1614 of 1614. Not done: the layout intrinsics, expected-type
+  inference (B2), expanding recursion through types, instantiation report lines for types/methods, the Queue fixture.
 - 2026-11-13: Phase 3 instantiation and lowering of generic structs and enums: concrete instance layouts are
   interned (to a fixpoint) and lowered per type, methods of generic types are instances keyed by the receiver's
   arguments (including witnesses reached through a requirement call), enum cases substitute the instance's
