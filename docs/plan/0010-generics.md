@@ -181,8 +181,8 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
   interned (to a fixpoint) and lowered per type, methods of generic types are instances keyed by the receiver's
   arguments (including witnesses reached through a requirement call), enum cases substitute the instance's
   arguments, and the IR verifier allows a field symbol to repeat across instances. New e2e fixture
-  `tests/e2e/generic_types.joyeer` (`E2EGenericTypesO0`..`O3`) passes; full Windows x64 Debug ctest before this
-  fixture was 1604 of 1604 (not re-run in full after the last lowering edits). Not done: `deinit` of a generic
+  `tests/e2e/generic_types.joyeer` (`E2EGenericTypesO0`..`O3`) passes; full Windows x64 Debug ctest
+  (before the fixture was registered) passed 1605 of 1605 after the lowering and verifier edits. Not done: `deinit` of a generic
   struct, the intrinsics, expected-type inference (B2), expanding recursion through types, `--report-instantiations`
   for types and methods, Self-in-extension edge cases, and the Queue fixture.
 - 2026-11-13: Phase 3 type checking, second slice: explicit type arguments of generic types are checked against
