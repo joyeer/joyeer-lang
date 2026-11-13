@@ -331,6 +331,7 @@ enum class TypeCheckingDiagnosticId {
     unknownMemberOnTypeParameter,
     genericNativeBinding,
     expandingGenericRecursion,
+    invalidExtensionHeader,
     instantiationLimit,
 };
 
@@ -441,6 +442,7 @@ private:
     // `declared` (a field or payload type written in a generic type's declaration) as `owner`, an
     // instance of that type, sees it (spec 20.12).
     [[nodiscard]] TypeId memberTypeOf(TypeId owner, TypeId declared) const;
+    [[nodiscard]] bool conformanceSubjectMatches(TypeId subject, TypeId type) const;
     [[nodiscard]] bool isLinear(
             TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;
     friend class TypeCheckingBuilder;

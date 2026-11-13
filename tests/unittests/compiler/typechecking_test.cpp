@@ -3602,3 +3602,58 @@ TEST_F(TypeCheckingTest, ExtensionsOfGenericTypesBindTheirOwnParametersToTheDecl
     const auto main = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[2]);
     EXPECT_EQ(checking.model->types().displayName(declaredType(main->body->items[1])), "Double");
 }
+
+TEST_F(TypeCheckingTest, ExplicitTypeArgumentsOfGenericTypesAreCheckedAgainstTheirConstraints) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("protocol Named { func name(): String }\n"
+          "struct Box<T: Named> { var value: T }\n"
+          "func a(value: Box<Int>) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::unsatisfiedConstraint));
+    check("protocol Named { func name(): String }\n"
+          "struct Box<T: Named> { var value: T }\n"
+          "struct Tag { var id: Int }\n"
+          "extension Tag: Named { func name(): String { return \"tag\" } }\n"
+          "func a(value: Box<Tag>) {}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("struct Box<T> { var value: T }\n"
+          "func a(value: Box<Never>) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidTypeArgument));
+    checkToolchain("linear struct Handle { var id: Int }\n"
+                   "struct Box<T> { var value: T }\n"
+                   "func a(value: Box<Handle>) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::linearTypeArgument));
+}
+
+TEST_F(TypeCheckingTest, ExtensionHeadersOfGenericTypesListTheirParametersOnce) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* header : { "Box<Int>", "Box<U, V>" }) {
+        SCOPED_TRACE(header);
+        check(std::string("struct Box<T> { var value: T }\n") + "struct Pair<A, B> { var a: A }\n"
+              "extension " + header + " { func nothing() {} }\n");
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidExtensionHeader));
+    }
+    check("struct Pair<A, B> { var a: A\n var b: B }\n"
+          "extension Pair<X, Y> { func nothing() {} }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, GenericTypesConformUnconditionallyAndSatisfyConstraintsInsideBodies) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    const std::string declarations =
+            "protocol Named { func name(): String }\n"
+            "struct Box<T> { var value: T }\n"
+            "extension Box<U>: Named { func name(): String { return \"box\" } }\n"
+            "func describe<N: Named>(item: N): String { return item.name() }\n";
+    check(declarations +
+          "func wrap<T>(value: consuming T): String { return describe(item: Box(value: consume value)) }\n"
+          "func main() { let s = describe(item: Box(value: 1)) }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    // A second conformance under another header name is a duplicate.
+    check(declarations + "extension Box<V>: Named {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::duplicateConformance));
+    // A witness is still required.
+    check("protocol Named { func name(): String }\n"
+          "struct Box<T> { var value: T }\n"
+          "extension Box<U>: Named {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness));
+}

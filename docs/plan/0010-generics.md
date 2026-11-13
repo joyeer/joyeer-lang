@@ -177,6 +177,13 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-13: Phase 3 type checking, second slice: explicit type arguments of generic types are checked against
+  their constraints, `Never` and linear (deferred until constraints are known); `invalid-extension-header`;
+  conformance of generic types (`extension Box<U>: P`) is recorded against the declaration's instance, matches
+  every instance, and satisfies constraints inside generic bodies. CompilerTypeCheckingTests 206 of 206.
+  Not done: expected-type inference (B2), expanding recursion through types, intrinsics, and all of
+  instantiation of types and methods, IR and backend. A duplicate extension-parameter name is reported by
+  name resolution, not the type checker.
 - 2026-11-13: Phase 3 type checking, first slice: `TypeContext` interns generic structs/enums by arguments,
   `Self` and extension parameters resolve per context, construction of a generic struct or enum case infers
   its arguments through the existing generic-call inference, members and methods substitute the receiver's
