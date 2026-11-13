@@ -85,6 +85,9 @@ bool producesValue(Opcode opcode) {
         case Opcode::subscript:
         case Opcode::subscriptAddress:
         case Opcode::functionAddress:
+        case Opcode::typeSize:
+        case Opcode::typeAlignment:
+        case Opcode::integerAddress:
             return true;
         default:
             return false;
@@ -1524,6 +1527,37 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::typeSize:
+                    case Opcode::typeAlignment: {
+                        requireShape(0, 0);
+                        const auto queried = static_cast<TypeId>(instruction.integerValue);
+                        const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type) : nullptr;
+                        if (!types.contains(queried) || result == nullptr ||
+                            result->kind != typing::TypeKind::integer ||
+                            instruction.result->category != ValueCategory::value) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "a size or alignment query names a known type and yields an Int");
+                        }
+                        break;
+                    }
+                    case Opcode::integerAddress: {
+                        const auto* source = requireShape(1, 0) && operands[0] != nullptr && types.contains(operands[0]->type)
+                                ? types.at(operands[0]->type) : nullptr;
+                        if (source == nullptr || source->kind != typing::TypeKind::integer ||
+                            operands[0]->category != ValueCategory::value ||
+                            !instruction.result.has_value() ||
+                            instruction.result->category != ValueCategory::address ||
+                            !types.contains(instruction.result->type)) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "an integer address takes an Int and yields the address of a known type");
+                        }
+                        break;
+                    }
                     case Opcode::integerFits:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                             instruction.result.has_value()) {
@@ -2666,6 +2700,9 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::convertWrapping: return "convert_wrapping";
         case Opcode::constantValue: return "constant";
         case Opcode::integerFits: return "fits";
+        case Opcode::typeSize: return "type_size";
+        case Opcode::typeAlignment: return "type_alignment";
+        case Opcode::integerAddress: return "integer_address";
         case Opcode::call: return "call";
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
@@ -2923,6 +2960,13 @@ std::string dump(const Module& module) {
                     case Opcode::integerFits:
                         out << ' ' << valueName(instruction.operands[0]) << " in type "
                             << instruction.integerValue;
+                        break;
+                    case Opcode::typeSize:
+                    case Opcode::typeAlignment:
+                        out << " of type " << instruction.integerValue;
+                        break;
+                    case Opcode::integerAddress:
+                        out << ' ' << valueName(instruction.operands[0]);
                         break;
                     case Opcode::stringConstant:
                         out << " \"" << escape(instruction.text) << "\"";

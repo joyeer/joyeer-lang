@@ -135,10 +135,13 @@ exactly. No closures, methods or generic functions as values.
   §3.3, §3.5, §3.9, §4.1.1, §5.6.1, §19.4.5, §20.4, §20.4.1, §20.4.2, §20.8, §20.10 and Appendix C amended
   per 0022. Documentation only; not built or run.
 - [ ] Failing tests, then parsing, type checking and instantiation of generic types.
-- [ ] Runtime-only intrinsics: size and alignment of `T`, moving a `T` into and out of an address, and
-  destroying a `T` at an address.
-- [ ] Fixture: a runtime-source generic struct owns a raw buffer of `T` and destroys queued noncopyable
-  values correctly.
+- [x] Runtime-only intrinsics: size and alignment of `T`, moving a `T` into and out of an address, and
+  destroying a `T` at an address. Evidence: `tests/c-interop/layout-intrinsics.joyeer`
+  (`JoyeerCInterop.LayoutIntrinsicsDebug`/`Optimized`) and four unit tests in `cinterop_test.cpp`; Windows x64
+  Debug only.
+- [x] Fixture: a runtime-source generic struct owns a raw buffer of `T` and destroys queued noncopyable
+  values correctly. Evidence: `tests/c-interop/generic-queue.joyeer` (`JoyeerCInterop.GenericQueueDebug`/
+  `Optimized`), including the runtime's allocation-balance check at exit.
 - [ ] Reviews and validation; update supported features.
 
 ### Phase 4: concurrency builtins in the library
@@ -176,6 +179,16 @@ protocol methods, protocol inheritance, explicit type arguments at call sites, a
 They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
+
+- 2026-11-13: Phase 3 layout intrinsics and expected-type inference. `name<T>(...)` parses for the five
+  `joyeer_intrinsic_*` layout names only in a unit selected with `--runtime-module` (`Parser` flag); they are
+  prelude builtins that the type checker rejects elsewhere with `unauthorized-intrinsic`. New IR opcodes
+  `typeSize`, `typeAlignment` (constant expressions the target layout folds, since the portable module has no
+  layout) and `integerAddress`; `move_in`/`move_out`/`destroy_at` lower to store, take and destroy on it. Wire
+  format 17. A construction's expected type now fills open type parameters (spec 20.12.1). Fixtures
+  `layout-intrinsics` and `generic-queue` pass at -O0 and -O2. Windows x64 Debug full ctest 1627 of 1627. Not done: expanding
+  recursion through types, instantiation report lines for types/methods, the exposed-constraint check, role
+  reviews, Release/Linux and `validate.py` (no Python here), supported-features update.
 
 - 2026-11-13: Phase 3 generic `deinit`: the `deinit` of a generic struct is an instance per concrete instance of the
   struct (found to a fixpoint with the instance types) and is linked to that instance's IR definition. New fixture

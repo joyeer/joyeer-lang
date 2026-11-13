@@ -76,7 +76,9 @@ private:
 
 class Parser {
 public:
-    explicit Parser(const std::vector<Token::Ptr>& tokens);
+    // `intrinsicTypeArguments` admits `name<T>(...)` on the layout intrinsics (spec 20.12.5); only a
+    // toolchain-authorized unit sets it, and elsewhere `a < b > (c)` stays a comparison.
+    explicit Parser(const std::vector<Token::Ptr>& tokens, bool intrinsicTypeArguments = false);
 
     ParseResult parse();
 
@@ -136,6 +138,8 @@ private:
     syntax::ReturnExprSyntax::Ptr parseReturnExpr();
     syntax::MatchExprSyntax::Ptr parseMatchExpr();
     syntax::CallArgumentSyntax::Ptr parseCallArgument();
+    [[nodiscard]] bool atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const;
+    std::vector<syntax::TypePtr> parseIntrinsicTypeArguments();
     std::vector<syntax::CallArgumentSyntax::Ptr> parseArgumentClause();
 
     syntax::PatternPtr parsePattern();
@@ -185,6 +189,7 @@ private:
 
 private:
     TokenCursor cursor;
+    bool intrinsicTypeArguments;
     std::vector<Diagnostic> diagnostics;
     std::vector<TokenKind> activeClosers;
     // Declarations a for-in loop adds before its loop; the enclosing block takes them.

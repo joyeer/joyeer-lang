@@ -770,6 +770,14 @@ std::optional<semantic::SymbolId> TypeCheckedModel::copyableProtocol() const {
     return found->second;
 }
 
+std::optional<TypeId> TypeCheckedModel::layoutIntrinsicType(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (!id.has_value()) return std::nullopt;
+    const auto found = layoutIntrinsicTypes.find(*id);
+    if (found == layoutIntrinsicTypes.end()) return std::nullopt;
+    return found->second;
+}
+
 const GenericCall* TypeCheckedModel::genericCall(const syntax::NodePtr& node) const {
     const auto id = semanticModelValue->nodeId(node);
     if (!id.has_value()) return nullptr;
@@ -1810,6 +1818,30 @@ private:
         }
     }
 
+    // Spec 20.12.1: after the non-literal arguments, the expected type of a construction binds the
+    // parameters still open, so `var b: Box<Double> = Box(value: 1)` is a `Box<Double>`. It never
+    // overrides what an argument determined, and one `?` around the expected type is looked through.
+    void bindFromExpectedType(
+            const semantic::Symbol& targetSymbol,
+            const std::vector<semantic::SymbolId>& parameters,
+            std::optional<TypeId> expectedResult,
+            Inference& inference) {
+        if (!expectedResult.has_value() || !targetSymbol.containingSymbol.has_value()) return;
+        const auto* expected = model->typeContext.type(*expectedResult);
+        if (expected != nullptr && expected->kind == TypeKind::optional && expected->arguments.size() == 1) {
+            expected = model->typeContext.type(expected->arguments[0]);
+        }
+        if (expected == nullptr || (expected->kind != TypeKind::structure && expected->kind != TypeKind::enumeration) ||
+            expected->symbol != *targetSymbol.containingSymbol || expected->arguments.size() != parameters.size()) {
+            return;
+        }
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            if (inference.bindings.contains(parameters[index])) continue;
+            if (expected->arguments[index] == model->typeContext.errorType()) continue;
+            inference.bindings.emplace(parameters[index], expected->arguments[index]);
+        }
+    }
+
     // Infers the type arguments of a call of a generic function, checks their constraints, records
     // the call, and returns the signature with the arguments substituted. Arguments checked here
     // are marked in `checked`, so the caller does not check them again.
@@ -1819,7 +1851,8 @@ private:
             const semantic::Symbol& targetSymbol,
             const TypedCallableSignature& signature,
             const std::vector<semantic::SymbolId>& parameters,
-            std::vector<std::optional<std::optional<TypeId>>>& checked) {
+            std::vector<std::optional<std::optional<TypeId>>>& checked,
+            std::optional<TypeId> expectedResult = std::nullopt) {
         Inference inference { parameters, {}, {} };
         std::vector<std::optional<size_t>> parameterIndices;
         for (size_t index = 0; index < expression->arguments.size(); ++index) {
@@ -1848,6 +1881,8 @@ private:
             return floatingLiteral(left) && !floatingLiteral(right);
         });
         for (const auto pass : { ArgumentInformation::typed, ArgumentInformation::literal }) {
+            if (pass == ArgumentInformation::literal) bindFromExpectedType(
+                    targetSymbol, parameters, expectedResult, inference);
             for (const auto index : order) {
                 const auto& argument = expression->arguments[index];
                 const auto type = parameterType(index);
@@ -3143,7 +3178,8 @@ private:
             case syntax::Kind::callExpr:
                 result = checkCall(
                         std::static_pointer_cast<syntax::CallExprSyntax>(expression),
-                        receiverMarker);
+                        receiverMarker,
+                        expected);
                 break;
             case syntax::Kind::arrayExpr:
                 result = checkArray(
@@ -3906,7 +3942,8 @@ private:
 
     TypeId checkCall(
             const syntax::CallExprSyntax::Ptr& expression,
-            ReceiverMarker receiverMarker = ReceiverMarker::none) {
+            ReceiverMarker receiverMarker = ReceiverMarker::none,
+            std::optional<TypeId> expectedResult = std::nullopt) {
         const auto* savedCallee = currentCallee;
         currentCallee = expression->callee.get();
         const auto calleeType = checkExpression(expression->callee).value_or(
@@ -3985,7 +4022,8 @@ private:
             if (genericParameters != nullptr &&
                 (calledSymbol->kind == semantic::SymbolKind::function || constructs)) {
                 substitutedSignature = inferGenericCall(
-                        expression, *target, *calledSymbol, *signature, *genericParameters, preChecked);
+                        expression, *target, *calledSymbol, *signature, *genericParameters, preChecked,
+                        constructs ? expectedResult : std::nullopt);
                 signature = &substitutedSignature;
             } else if (owner != nullptr && !owner->typeParameters.empty() &&
                        calledSymbol->kind == semantic::SymbolKind::method &&
@@ -4047,6 +4085,10 @@ private:
             semanticTarget->name == "spawn") {
             model->spawnCallSpans.push_back(expression->span);
             return checkSpawn(expression);
+        }
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
+            intrinsic::isLayoutIntrinsic(semanticTarget->name)) {
+            return checkLayoutIntrinsic(expression, *semanticTarget);
         }
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
             semanticTarget->name == "channel") {
@@ -4300,6 +4342,60 @@ private:
 
     // `channel(capacity: n, sender: &s, receiver: &r)` (spec 21.9.1): the two outputs are `initializing`
     // arguments of a sender and a receiver type with the same element type.
+    // `joyeer_intrinsic_size_of<T>()` and the other four layout intrinsics (spec 20.12.5). They exist
+    // only in a toolchain-authorized unit; the type argument is recorded for lowering, which
+    // substitutes it per instance.
+    TypeId checkLayoutIntrinsic(const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol& target) {
+        const auto error = model->typeContext.errorType();
+        const auto& name = target.name;
+        if (!model->semanticModelValue->isRuntimeSource(expression->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedIntrinsic, expression->span,
+                   "'" + name + "' is available only in a toolchain-authorized runtime unit",
+                   "write a checked Joyeer wrapper in a unit selected with --runtime-module");
+            return error;
+        }
+        if (expression->typeArguments.size() != 1) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->span,
+                   "'" + name + "' takes exactly one explicit type argument",
+                   "write " + name + "<T>(...)");
+            return error;
+        }
+        const auto written = resolveType(expression->typeArguments[0]);
+        const auto type = written.value_or(error);
+        std::optional<TypeId> result;
+        if (type != error) {
+            if (type == model->typeContext.neverType() || model->isLinear(type)) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
+                       "'" + name + "' cannot take " + (type == model->typeContext.neverType() ? "'Never'" :
+                               "the linear type '" + model->typeContext.displayName(type) + "'"),
+                       "a layout intrinsic needs a type with a representation that is not linear (spec 20.12.5)");
+            } else {
+                model->layoutIntrinsicTypes[*model->semanticModelValue->nodeId(expression)] = type;
+            }
+        }
+        const auto expectedAddress = model->typeContext.intType();
+        const auto checkAddress = [&](size_t index) {
+            const auto& argument = expression->arguments[index];
+            const auto actual = checkExpression(argument->value, expectedAddress);
+            if (actual.has_value()) requireAssignable(*actual, expectedAddress, argument->value->span);
+            checkCallArgumentAccess(target, index, *argument);
+        };
+        if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of") {
+            return model->typeContext.intType();
+        }
+        if (expression->arguments.empty()) return error;
+        checkAddress(0);
+        if (name == "joyeer_intrinsic_move_in") {
+            if (expression->arguments.size() != 2) return error;
+            const auto& argument = expression->arguments[1];
+            const auto actual = checkExpression(argument->value, type == error ? std::nullopt : std::optional<TypeId>(type));
+            if (actual.has_value() && type != error) requireAssignable(*actual, type, argument->value->span);
+            checkCallArgumentAccess(target, 1, *argument);
+            return model->typeContext.voidType();
+        }
+        return name == "joyeer_intrinsic_move_out" ? type : model->typeContext.voidType();
+    }
+
     TypeId checkChannel(const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol& target) {
         const auto error = model->typeContext.errorType();
         // Labels, their order and the argument count are name resolution's ordinary call rules.
@@ -6037,6 +6133,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.invalid-extension-header";
         case TypeCheckingDiagnosticId::instantiationLimit:
             return "type-checking.instantiation-limit";
+        case TypeCheckingDiagnosticId::unauthorizedIntrinsic:
+            return "type-checking.unauthorized-intrinsic";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

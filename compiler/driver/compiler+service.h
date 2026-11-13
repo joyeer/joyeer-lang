@@ -27,7 +27,7 @@ public:
     }
 
 private:
-    joyeer::syntax::SourceFileSyntax::Ptr parse(const SourceFile::Ptr& sourcefile);
+    joyeer::syntax::SourceFileSyntax::Ptr parse(const SourceFile::Ptr& sourcefile, bool authorized = false);
     void compileModules(const std::filesystem::path& singleFile = {});
     void compile(const std::vector<joyeer::semantic::ModuleInput>& modules);
     bool protectInputs(const std::vector<std::filesystem::path>& inputs);

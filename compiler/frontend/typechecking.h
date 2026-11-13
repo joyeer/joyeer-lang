@@ -333,6 +333,7 @@ enum class TypeCheckingDiagnosticId {
     expandingGenericRecursion,
     invalidExtensionHeader,
     instantiationLimit,
+    unauthorizedIntrinsic,
 };
 
 // A conformance of a concrete type to a protocol (spec 20.3), with the witness of each requirement.
@@ -426,6 +427,9 @@ public:
     // The protocols a type parameter is constrained to, `Copyable` included.
     [[nodiscard]] const std::vector<semantic::SymbolId>& constraints(semantic::SymbolId typeParameter) const;
     [[nodiscard]] std::optional<semantic::SymbolId> copyableProtocol() const;
+    // The type argument of the layout intrinsic call `node` (spec 20.12.5), as written; it may mention
+    // type parameters that each instance substitutes.
+    [[nodiscard]] std::optional<TypeId> layoutIntrinsicType(const syntax::NodePtr& node) const;
     // The generic call `node` makes, or null.
     [[nodiscard]] const GenericCall* genericCall(const syntax::NodePtr& node) const;
     // The witness of `requirement` for the concrete `type`, or nullopt without a conformance.
@@ -466,6 +470,7 @@ private:
     std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> genericParameterLists;
     std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> constraintLists;
     std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
+    std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

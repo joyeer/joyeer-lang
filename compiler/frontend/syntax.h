@@ -618,6 +618,8 @@ struct CallExprSyntax final : ExprSyntax {
 
     ExprPtr callee;
     std::vector<CallArgumentSyntax::Ptr> arguments;
+    // `name<T>(...)` of a layout intrinsic (spec 20.12.5); empty for every other call.
+    std::vector<TypePtr> typeArguments;
 
     CallExprSyntax(SourceSpan span,
                    ExprPtr callee,

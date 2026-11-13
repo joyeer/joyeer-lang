@@ -388,3 +388,40 @@ foreach(profile IN ITEMS Debug Optimized)
     set_tests_properties("JoyeerCInterop.TargetArchitecture${profile}" PROPERTIES
         LABELS "c-interop;native" TIMEOUT 60)
 endforeach()
+
+# Layout intrinsics (spec 20.12.5): size, alignment and moves through raw memory, in a runtime unit.
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.LayoutIntrinsics${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/layout-intrinsics.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/layout-intrinsics-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.layout;--runtime-module;runtime.layout;${compile_flags}"
+            "-DEXPECTED_OUTPUT=layout intrinsics passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.LayoutIntrinsics${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+# A runtime-source generic Queue<T> over a raw buffer: the layout intrinsics, generic deinit and
+# destruction of queued noncopyable values (spec 20.12.4, 20.12.5).
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.GenericQueue${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/generic-queue.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generic-queue-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.queue;--runtime-module;runtime.queue;${compile_flags}"
+            "-DEXPECTED_OUTPUT=generic queue passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.GenericQueue${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()

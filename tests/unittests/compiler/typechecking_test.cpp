@@ -3657,3 +3657,29 @@ TEST_F(TypeCheckingTest, GenericTypesConformUnconditionallyAndSatisfyConstraints
           "extension Box<U>: Named {}\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingWitness));
 }
+
+// Spec 20.12.1: the expected type binds the parameters of a construction that the arguments leave open.
+TEST_F(TypeCheckingTest, ExpectedTypeFillsConstructionTypeArguments) {
+    check("struct Box<T> {\n"
+          "    var value: T\n"
+          "}\n"
+          "struct Marker<T> {\n"
+          "    var count: Int\n"
+          "}\n"
+          "func main() {\n"
+          "    var a: Box<Double> = Box(value: 1)\n"
+          "    var m: Marker<Int> = Marker(count: 0)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ConstructionWithoutExpectedTypeCannotInferOpenParameter) {
+    check("struct Marker<T> {\n"
+          "    var count: Int\n"
+          "}\n"
+          "func main() {\n"
+          "    var m = Marker(count: 0)\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("cannot-infer-type-parameter"), std::string::npos);
+}

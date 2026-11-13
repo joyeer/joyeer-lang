@@ -27,13 +27,14 @@ func runtimeIdentity(input value: Int): Int {
 
 class CInteropTest : public testing::Test {
 protected:
-    joyeer::syntax::SourceFileSyntax::Ptr parse(const std::string& text, uint32_t sourceId = 0) {
+    joyeer::syntax::SourceFileSyntax::Ptr parse(
+            const std::string& text, uint32_t sourceId = 0, bool intrinsicTypeArguments = true) {
         source = std::make_shared<SourceFile>(text);
         Diagnostics diagnostics;
         LexParser(&diagnostics).parse(source);
         EXPECT_FALSE(diagnostics.hasFailure());
         for (auto& token : source->tokens) token->span.sourceId = sourceId;
-        auto result = joyeer::parser::Parser(source->tokens).parse();
+        auto result = joyeer::parser::Parser(source->tokens, intrinsicTypeArguments).parse();
         EXPECT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
         return result.root;
     }

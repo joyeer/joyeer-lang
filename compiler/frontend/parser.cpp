@@ -187,7 +187,8 @@ void TokenCursor::rewind(Checkpoint checkpoint) {
     index = std::min(checkpoint, tokens.size());
 }
 
-Parser::Parser(const std::vector<Token::Ptr>& tokens): cursor(tokens) {
+Parser::Parser(const std::vector<Token::Ptr>& tokens, bool intrinsicTypeArguments):
+        cursor(tokens), intrinsicTypeArguments(intrinsicTypeArguments) {
 }
 
 ParseResult Parser::parse() {
@@ -1521,6 +1522,19 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
             continue;
         }
 
+        if (atIntrinsicTypeArguments(expression)) {
+            auto typeArguments = parseIntrinsicTypeArguments();
+            auto arguments = cursor.at(leftParen) ? parseArgumentClause()
+                    : std::vector<syntax::CallArgumentSyntax::Ptr> {};
+            auto call = std::make_shared<syntax::CallExprSyntax>(
+                    coveringSpan(expression->span, tokenSpan(cursor.previous())),
+                    std::move(expression),
+                    std::move(arguments));
+            call->typeArguments = std::move(typeArguments);
+            expression = std::move(call);
+            continue;
+        }
+
         if (cursor.at(leftParen)) {
             auto arguments = parseArgumentClause();
             expression = std::make_shared<syntax::CallExprSyntax>(
@@ -1553,6 +1567,31 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
         break;
     }
     return expression;
+}
+
+// `joyeer_intrinsic_size_of<T>(` and the other layout intrinsics (spec 20.12.5): a type-argument list
+// follows only these names, and only in a unit the toolchain authorized.
+bool Parser::atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const {
+    if (!intrinsicTypeArguments || !cursor.at(less) || callee->kind != syntax::Kind::nameExpr) return false;
+    const auto& name = std::static_pointer_cast<syntax::NameExprSyntax>(callee)->name->rawValue;
+    return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
+           name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
+           name == "joyeer_intrinsic_destroy_at";
+}
+
+std::vector<syntax::TypePtr> Parser::parseIntrinsicTypeArguments() {
+    std::vector<syntax::TypePtr> arguments;
+    cursor.advance();
+    DelimiterScope delimiter(activeClosers, greater);
+    while (!cursor.at(greater) && !cursor.atEnd()) {
+        const size_t before = cursor.position();
+        arguments.push_back(parseType());
+        if (cursor.position() == before) cursor.advance();
+        if (cursor.eat(comma) == nullptr) break;
+    }
+    expect(greater, "'>' to close the type arguments");
+    if (!cursor.at(leftParen)) reportExpected(DiagnosticId::expectedToken, "'(' after the type arguments");
+    return arguments;
 }
 
 syntax::ExprPtr Parser::parsePrimaryExpr() {

@@ -1,5 +1,6 @@
 #include "irlowering.h"
 #include "constants.h"
+#include "compiler/frontend/intrinsics.h"
 
 #include <algorithm>
 #include <bit>
@@ -2976,6 +2977,11 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
+            intrinsic::isLayoutIntrinsic(targetSymbol->name)) {
+            return lowerLayoutIntrinsic(expression, targetSymbol->name);
+        }
+        if (targetSymbol != nullptr &&
+            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
             targetSymbol->name == "channel") {
             return lowerChannelCreate(expression);
         }
@@ -3291,6 +3297,72 @@ private:
                 ? ValueOwnership::owned
                 : ValueOwnership::trivial);
         return result;
+    }
+
+    // The layout intrinsics (spec 20.12.5). The size and alignment are queries of the backend's
+    // layout; the other three treat an `Int` as the address of a `T` slot. The type argument is
+    // substituted for the current instance, so a generic function gets the layout of its `T`.
+    std::optional<ir::Value> lowerLayoutIntrinsic(
+            const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
+        const auto written = model->layoutIntrinsicType(expression);
+        if (!written.has_value()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' needs one type argument");
+            return std::nullopt;
+        }
+        const auto type = substituted(*written);
+        if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of") {
+            auto instruction = makeInstruction(
+                    name == "joyeer_intrinsic_size_of" ? ir::Opcode::typeSize : ir::Opcode::typeAlignment,
+                    expression->span);
+            instruction.integerValue = static_cast<int64_t>(type);
+            instruction.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
+        if (expression->arguments.empty()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes an address");
+            return std::nullopt;
+        }
+        auto address = lowerExpression(expression->arguments[0]->value);
+        if (!address.has_value()) return std::nullopt;
+        address = coerce(*address, model->types().intType(), expression->arguments[0]->value->span);
+        if (!address.has_value()) return std::nullopt;
+        const auto slot = emitValue(
+                ir::Opcode::integerAddress, type, ir::ValueCategory::address, { address->id }, expression->span);
+        if (name == "joyeer_intrinsic_move_out") {
+            return emitValue(ir::Opcode::take, type, ir::ValueCategory::value, { slot.id }, expression->span);
+        }
+        if (name == "joyeer_intrinsic_destroy_at") {
+            emitDestroyStorage(slot, expression->span);
+            return emitUnit(expression->span);
+        }
+        if (expression->arguments.size() != 2) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "move_in takes an address and a value");
+            return std::nullopt;
+        }
+        const auto& argument = expression->arguments[1];
+        std::optional<ir::Value> value;
+        if (isAddressable(argument->value)) {
+            const auto source = lowerAddress(argument->value);
+            if (source.has_value()) {
+                value = emitValue(ir::Opcode::take, source->type, ir::ValueCategory::value, { source->id },
+                                  argument->span);
+            }
+        } else {
+            value = lowerExpression(argument->value);
+        }
+        if (!value.has_value()) return std::nullopt;
+        value = coerce(*value, type, argument->value->span);
+        if (!value.has_value()) return std::nullopt;
+        if (requiresDestroy(value->type)) {
+            value = prepareOwned(*value, argument->span);
+            if (!value.has_value()) return std::nullopt;
+            if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
+        }
+        emitRawStore(*value, slot, expression->span);
+        return emitUnit(expression->span);
     }
 
     // `channel(capacity: n, sender: &s, receiver: &r)`: the runtime creates the block and stores both

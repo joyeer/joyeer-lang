@@ -136,6 +136,13 @@ inline constexpr std::array<Descriptor, 25> table {{
       { TypeKind::error, TypeKind::error, TypeKind::error }, 0, false },
 }};
 
+// The layout intrinsics (spec 20.12.5) are compiler-known generic functions, not `` imports.
+[[nodiscard]] inline bool isLayoutIntrinsic(std::string_view name) {
+    return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
+           name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
+           name == "joyeer_intrinsic_destroy_at";
+}
+
 [[nodiscard]] inline bool reserved(std::string_view symbol) {
     return symbol.substr(0, prefix.size()) == prefix;
 }

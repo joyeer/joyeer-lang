@@ -117,6 +117,12 @@ enum class Opcode {
     // type's parameter effects.
     functionAddress,
     callIndirect,
+    // Layout intrinsics (spec 20.12.5). `typeSize` and `typeAlignment` yield an `Int` for the type
+    // `integerValue` names; `integerAddress` turns an `Int` operand into the address of a slot of the
+    // result's type.
+    typeSize,
+    typeAlignment,
+    integerAddress,
 };
 
 enum class PatternKind {

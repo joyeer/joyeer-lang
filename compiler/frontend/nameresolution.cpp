@@ -488,6 +488,7 @@ private:
             case Kind::callExpr: {
                 const auto value = std::static_pointer_cast<syntax::CallExprSyntax>(node);
                 indexNode(value->callee);
+                for (const auto& typeArgument : value->typeArguments) indexNode(typeArgument);
                 for (const auto& argument : value->arguments) indexNode(argument);
                 break;
             }
@@ -934,6 +935,30 @@ private:
                 {});
         symbol(spawn).declaredType = voidType;
         symbol(spawn).callable = std::move(spawnSignature);
+
+        // The layout intrinsics (spec 20.12.5): compiler-known generic functions whose one type
+        // argument is written at the call. The type checker gives them their types and rejects them
+        // outside a toolchain-authorized unit.
+        const auto layoutIntrinsic = [&](const char* name, std::vector<CallableParameter> parameters,
+                                         SymbolId result) {
+            const auto id = declareSymbol(
+                    model->preludeScope_, SymbolNamespace::value, SymbolKind::builtinFunction, name, {});
+            symbol(id).declaredType = result;
+            symbol(id).callable = CallableSignature { CallableKind::function, true, std::move(parameters) };
+        };
+        const auto addressParameter = [&]() {
+            return CallableParameter { std::string("address"), true, std::nullopt, std::nullopt, intType };
+        };
+        layoutIntrinsic("joyeer_intrinsic_size_of", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_align_of", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_move_in",
+                { addressParameter(),
+                  CallableParameter {
+                      std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                      syntax::AccessEffect::consuming } },
+                voidType);
+        layoutIntrinsic("joyeer_intrinsic_move_out", { addressParameter() }, voidType);
+        layoutIntrinsic("joyeer_intrinsic_destroy_at", { addressParameter() }, voidType);
 
         CallableSignature byteConversionSignature {
             CallableKind::function,
@@ -2129,6 +2154,7 @@ private:
 
     void resolveCall(const syntax::CallExprSyntax::Ptr& expression, ScopeId currentScope) {
         resolveExpression(expression->callee, currentScope);
+        for (const auto& typeArgument : expression->typeArguments) resolveType(typeArgument, currentScope);
         for (const auto& argument : expression->arguments) {
             setContainingScope(argument, currentScope);
             resolveExpression(argument->value, currentScope);
