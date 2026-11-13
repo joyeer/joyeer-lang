@@ -177,6 +177,14 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-13: Phase 3 type checking, first slice: `TypeContext` interns generic structs/enums by arguments,
+  `Self` and extension parameters resolve per context, construction of a generic struct or enum case infers
+  its arguments through the existing generic-call inference, members and methods substitute the receiver's
+  arguments, `Box<Int>` displays with its arguments, and copyability/linearity are computed per instance.
+  Four new TypeCheckingTests pass; CompilerTypeCheckingTests 203 of 203 (Windows x64 Debug). Not done:
+  constraint/`Never`/linear checks on explicit type arguments, expected-type inference (B2),
+  `invalid-extension-header`, conformance of generic types, expanding recursion, intrinsics, and all of
+  instantiation, IR and backend.
 - 2026-11-13: Phase 3 name resolution: struct/enum type parameters are declared in the type's member scope
   (`Symbol::typeParameters`), methods see them through their function scope, and an `extension Box<U>` header
   declares fresh local parameters (`SemanticModel::extensionTypeParameters`) sharing the declaration's

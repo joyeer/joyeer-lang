@@ -3538,3 +3538,67 @@ TEST_F(TypeCheckingTest, TheProgramEntryPointCannotBeGeneric) {
     check("func main<T>() {}\n");
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidGenericDeclaration));
 }
+
+// Generic structs and enums (spec 20.12, decision 0022).
+TEST_F(TypeCheckingTest, GenericStructConstructionAndMembersUseTheInferredTypeArguments) {
+    check("struct Box<T: Copyable> {\n"
+          "    var value: T\n"
+          "    func get(): T { return self.value }\n"
+          "}\n"
+          "func main() {\n"
+          "    let b = Box(value: 1)\n"
+          "    let n = b.get()\n"
+          "    let v = b.value\n"
+          "    let s = Box(value: \"text\")\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto main = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[1]);
+    const auto& types = checking.model->types();
+    EXPECT_EQ(types.displayName(declaredType(main->body->items[0])), "Box<Int>");
+    EXPECT_EQ(types.displayName(declaredType(main->body->items[1])), "Int");
+    EXPECT_EQ(types.displayName(declaredType(main->body->items[2])), "Int");
+    EXPECT_EQ(types.displayName(declaredType(main->body->items[3])), "Box<String>");
+}
+
+TEST_F(TypeCheckingTest, GenericEnumCasesInferTheirTypeArguments) {
+    check("enum Tree<T> {\n"
+          "    Leaf,\n"
+          "    Node(T)\n"
+          "}\n"
+          "func main() {\n"
+          "    let t = Tree.Node(1)\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto main = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[1]);
+    EXPECT_EQ(checking.model->types().displayName(declaredType(main->body->items[0])), "Tree<Int>");
+}
+
+TEST_F(TypeCheckingTest, GenericTypesTakeExactlyTheirTypeArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct Box<T> { var value: T }\n"
+          "func a(value: Box) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidTypeArgumentCount));
+    check("struct Box<T> { var value: T }\n"
+          "func a(value: Box<Int, Int>) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidTypeArgumentCount));
+    check("struct Plain { var value: Int }\n"
+          "func a(value: Plain<Int>) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidTypeArgumentCount));
+    check("struct Box<T> { var value: T }\n"
+          "func a(value: Box<Int>): Box<Int> { return value }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ExtensionsOfGenericTypesBindTheirOwnParametersToTheDeclarations) {
+    check("struct Box<T: Copyable> { var value: T }\n"
+          "extension Box<U> {\n"
+          "    func other(): U { return self.value }\n"
+          "}\n"
+          "func main() {\n"
+          "    let b = Box(value: 2.5)\n"
+          "    let d = b.other()\n"
+          "}\n");
+    ASSERT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    const auto main = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(parseResult.root->items[2]);
+    EXPECT_EQ(checking.model->types().displayName(declaredType(main->body->items[1])), "Double");
+}

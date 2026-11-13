@@ -438,6 +438,9 @@ public:
 
 private:
     [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
+    // `declared` (a field or payload type written in a generic type's declaration) as `owner`, an
+    // instance of that type, sees it (spec 20.12).
+    [[nodiscard]] TypeId memberTypeOf(TypeId owner, TypeId declared) const;
     [[nodiscard]] bool isLinear(
             TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;
     friend class TypeCheckingBuilder;
@@ -448,7 +451,7 @@ private:
     explicit TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel);
 
     semantic::SemanticModel::Ptr semanticModelValue;
-    TypeContext typeContext;
+    mutable TypeContext typeContext;
     // Where the program starts a task and calls System's `runProcess`; the two cannot meet (spec 21.6).
     std::vector<SourceSpan> spawnCallSpans;
     std::vector<SourceSpan> runProcessCallSpans;

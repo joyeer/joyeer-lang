@@ -250,9 +250,21 @@ std::optional<TypeId> TypeContext::typeForSymbol(
     }
 
     const auto* declaration = model.symbol(symbolId);
-    if (declaration == nullptr || declaration->isInvalid || !arguments.empty()) {
-        return std::nullopt;
+    if (declaration == nullptr || declaration->isInvalid) return std::nullopt;
+    // A generic struct or enum (spec 20.12) takes exactly its parameters' worth of arguments.
+    if (!declaration->typeParameters.empty() &&
+        (declaration->kind == semantic::SymbolKind::structure ||
+         declaration->kind == semantic::SymbolKind::enumeration)) {
+        if (arguments.size() != declaration->typeParameters.size()) return std::nullopt;
+        for (const auto argument : arguments) {
+            if (type(argument) == nullptr) return std::nullopt;
+            if (argument == errorTypeId) return errorTypeId;
+        }
+        return intern(declaration->kind == semantic::SymbolKind::structure
+                              ? TypeKind::structure : TypeKind::enumeration,
+                      symbolId, arguments);
     }
+    if (!arguments.empty()) return std::nullopt;
 
     TypeKind kind;
     switch (declaration->kind) {
@@ -289,7 +301,7 @@ std::optional<size_t> TypeContext::typeArity(semantic::SymbolId symbolId) const 
         (declaration->kind == semantic::SymbolKind::structure ||
          declaration->kind == semantic::SymbolKind::enumeration ||
          declaration->kind == semantic::SymbolKind::typeParameter)) {
-        return 0;
+        return declaration->typeParameters.size();
     }
     return std::nullopt;
 }
@@ -354,8 +366,14 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
             const auto* declaration = model.symbol(value->symbol);
             if (declaration == nullptr) return "<invalid-type>";
             auto name = declaration->name;
-            if (!disambiguateNominals) return name;
-            if (value->kind != TypeKind::structure && value->kind != TypeKind::enumeration) return name;
+            // A generic struct or enum shows its arguments, `Box<Int>` (spec 20.12).
+            std::string suffix;
+            for (size_t index = 0; index < value->arguments.size(); ++index) {
+                suffix += (index == 0 ? "<" : ", ") + displayName(value->arguments[index], disambiguateNominals);
+            }
+            if (!suffix.empty()) suffix += ">";
+            if (!disambiguateNominals) return name + suffix;
+            if (value->kind != TypeKind::structure && value->kind != TypeKind::enumeration) return name + suffix;
             bool duplicate = false;
             bool sameModule = false;
             for (const auto& other : model.symbols()) {
@@ -371,7 +389,7 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
                     module != nullptr && !module->empty()) name = *module + "." + name;
                 if (sameModule) name += "@" + std::to_string(declaration->span.sourceId);
             }
-            return name;
+            return name + suffix;
         }
     }
 }
@@ -483,6 +501,20 @@ bool TypeCheckedModel::isDeclaredLinear(TypeId type) const {
     return structure != nullptr && structure->isLinear;
 }
 
+// A field or payload type declared inside a generic type, seen from one instance `owner` of it:
+// the type's parameters replaced by the instance's arguments (spec 20.12).
+TypeId TypeCheckedModel::memberTypeOf(TypeId owner, TypeId declared) const {
+    const auto* record = typeContext.type(owner);
+    if (record == nullptr || record->arguments.empty()) return declared;
+    const auto* parameters = genericParameters(record->symbol);
+    if (parameters == nullptr || parameters->size() != record->arguments.size()) return declared;
+    std::unordered_map<semantic::SymbolId, TypeId> substitution;
+    for (size_t index = 0; index < parameters->size(); ++index) {
+        substitution.emplace((*parameters)[index], record->arguments[index]);
+    }
+    return typeContext.substitute(declared, substitution);
+}
+
 bool TypeCheckedModel::isLinear(TypeId type) const {
     std::vector<TypeId> visiting;
     std::unordered_set<TypeId> clean;
@@ -518,7 +550,7 @@ bool TypeCheckedModel::isLinear(
                 const auto fieldType = fieldSymbol.has_value()
                         ? typeOf(*fieldSymbol)
                         : std::optional<TypeId>();
-                if (fieldType.has_value() && isLinear(*fieldType, visiting, clean)) {
+                if (fieldType.has_value() && isLinear(memberTypeOf(id, *fieldType), visiting, clean)) {
                     linear = true;
                     break;
                 }
@@ -535,8 +567,8 @@ bool TypeCheckedModel::isLinear(
                 const auto caseSymbol = semanticModelValue->declaredSymbol(enumCase);
                 const auto* signature = caseSymbol.has_value() ? callable(*caseSymbol) : nullptr;
                 if (signature == nullptr) continue;
-                for (const auto payload : signature->parameters) {
-                    if (isLinear(payload, visiting, clean)) { linear = true; break; }
+                for (const auto declaredPayload : signature->parameters) {
+                    if (isLinear(memberTypeOf(id, declaredPayload), visiting, clean)) { linear = true; break; }
                 }
                 if (linear) break;
             }
@@ -564,7 +596,7 @@ std::vector<std::vector<semantic::SymbolId>> TypeCheckedModel::linearLeafPaths(T
         const auto fieldSymbol = semanticModelValue->declaredSymbol(field);
         const auto fieldType = fieldSymbol.has_value() ? typeOf(*fieldSymbol) : std::optional<TypeId>();
         if (!fieldSymbol.has_value() || !fieldType.has_value()) continue;
-        auto fieldPaths = linearLeafPaths(*fieldType);
+        auto fieldPaths = linearLeafPaths(memberTypeOf(type, *fieldType));
         if (fieldPaths.empty() && structure->isLinear) fieldPaths.push_back({});
         for (auto& rest : fieldPaths) {
             rest.insert(rest.begin(), *fieldSymbol);
@@ -645,10 +677,10 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                         ? typeOf(*fieldSymbol)
                         : std::optional<TypeId>();
                 if (fieldType.has_value() &&
-                    noncopyableReason(*fieldType, visiting, clean).has_value()) {
+                    noncopyableReason(memberTypeOf(id, *fieldType), visiting, clean).has_value()) {
                     reason = name + " has the noncopyable field '" +
                             (field->name == nullptr ? std::string() : field->name->rawValue) +
-                            "' of type '" + typeContext.displayName(*fieldType) + "'";
+                            "' of type '" + typeContext.displayName(memberTypeOf(id, *fieldType)) + "'";
                     break;
                 }
             }
@@ -666,7 +698,8 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                         ? callable(*caseSymbol)
                         : nullptr;
                 if (signature == nullptr) continue;
-                for (const auto payload : signature->parameters) {
+                for (const auto declaredPayload : signature->parameters) {
+                    const auto payload = memberTypeOf(id, declaredPayload);
                     if (noncopyableReason(payload, visiting, clean).has_value()) {
                         reason = name + " has a noncopyable payload of type '" +
                                 typeContext.displayName(payload) + "'";
@@ -827,6 +860,14 @@ private:
     bool insideDeinit = false;
     // Type parameters with constraints, checked for conflicting requirements once all are known.
     std::vector<semantic::SymbolId> constrainedParameters;
+    // While the methods of a struct, enum or extension are resolved: the type they belong to and the
+    // type arguments `Self` stands for, which are the parameters in scope (spec 20.12).
+    std::optional<semantic::SymbolId> selfOwner;
+    std::vector<TypeId> selfArguments;
+    // The parameters in scope for a member, for substituting a receiver's arguments into its signature:
+    // the declaration's own, or those of the extension that declares the method (spec 20.12.2).
+    std::vector<semantic::SymbolId> selfParameters;
+    std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> methodParameters;
     std::optional<semantic::SymbolId> currentFunction;
 
     void report(
@@ -1088,6 +1129,15 @@ private:
 
                 const auto symbol = model->semanticModelValue->referencedSymbol(syntaxType);
                 if (!symbol.has_value()) break;
+                if (nominal->name != nullptr && nominal->name->rawValue == "Self" && arguments.empty() &&
+                    selfOwner.has_value() && *selfOwner == *symbol) {
+                    // `Self` in a generic type is the type applied to the parameters in scope.
+                    const auto selfType = model->typeContext.typeForSymbol(*symbol, selfArguments);
+                    if (selfType.has_value()) {
+                        result = *selfType;
+                        break;
+                    }
+                }
                 if (const auto* declaration = model->semanticModelValue->symbol(*symbol)) {
                     if (declaration->kind == semantic::SymbolKind::protocol) {
                         if (nominal->name != nullptr && nominal->name->rawValue == "Self" && arguments.empty()) {
@@ -1199,18 +1249,25 @@ private:
                 resolveStructure(declaration);
                 for (const auto& method : declaration->methods) resolveMethod(method);
                 if (declaration->deinitializer != nullptr) resolveFunction(declaration->deinitializer);
+                selfOwner.reset();
+                selfArguments.clear();
                 break;
             }
             case syntax::Kind::enumDecl: {
                 const auto declaration = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
                 resolveEnumeration(declaration);
                 for (const auto& method : declaration->methods) resolveMethod(method);
+                selfOwner.reset();
+                selfArguments.clear();
                 break;
             }
             case syntax::Kind::extensionDecl: {
                 const auto declaration = std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
+                enterExtension(declaration);
                 if (!declaration->conformances.empty()) (void) resolveType(declaration->extendedType);
                 for (const auto& method : declaration->methods) resolveMethod(method);
+                selfOwner.reset();
+                selfArguments.clear();
                 break;
             }
             default:
@@ -1237,35 +1294,12 @@ private:
         return false;
     }
 
-    // Records `T: P & Q`: the parameters of a top-level generic function and each parameter's
-    // constraint. A method, `init` or requirement with type parameters is reported by the caller's
-    // `misplaced` diagnostic, but its parameters still get constraints so their types resolve.
-    void resolveGenericParameters(
-            const syntax::FunctionDeclSyntax::Ptr& declaration,
-            std::optional<TypeCheckingDiagnosticId> misplaced) {
-        if (declaration->genericParameters.empty()) return;
-        const auto function = model->semanticModelValue->declaredSymbol(declaration);
-        if (!function.has_value()) return;
-        const auto clause = coveringSpan(declaration->genericParameters.front()->span,
-                                         declaration->genericParameters.back()->span);
-        if (misplaced.has_value()) {
-            report(*misplaced, clause,
-                   *misplaced == TypeCheckingDiagnosticId::invalidProtocolMember
-                           ? "a protocol requirement cannot declare type parameters"
-                           : "only a top-level function can declare type parameters (spec 20.4)",
-                   "generic methods, structs and enums are not supported yet (spec 20.10)");
-        }
-        for (const auto& attribute : declaration->attributes) {
-            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
-            if (name == "c_extern" || name == "c_export" || name == "c_data") {
-                report(TypeCheckingDiagnosticId::genericNativeBinding, clause,
-                       "a C binding cannot declare type parameters (spec 20.7)",
-                       "write a non-generic binding and call it from generic code");
-                break;
-            }
-        }
+    // Records `T: P & Q` for each parameter: its constraint protocols, and its type. Returns the
+    // parameter symbols in order.
+    std::vector<semantic::SymbolId> recordTypeParameters(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& syntaxParameters) {
         std::vector<semantic::SymbolId> parameters;
-        for (const auto& parameter : declaration->genericParameters) {
+        for (const auto& parameter : syntaxParameters) {
             const auto symbol = model->semanticModelValue->declaredSymbol(parameter);
             if (!symbol.has_value()) continue;
             parameters.push_back(*symbol);
@@ -1296,6 +1330,37 @@ private:
             (void) model->typeContext.typeParameterType(*symbol);
         }
         constrainedParameters.insert(constrainedParameters.end(), parameters.begin(), parameters.end());
+        return parameters;
+    }
+
+    // Records `T: P & Q`: the parameters of a top-level generic function and each parameter's
+    // constraint. A method, `init` or requirement with type parameters is reported by the caller's
+    // `misplaced` diagnostic, but its parameters still get constraints so their types resolve.
+    void resolveGenericParameters(
+            const syntax::FunctionDeclSyntax::Ptr& declaration,
+            std::optional<TypeCheckingDiagnosticId> misplaced) {
+        if (declaration->genericParameters.empty()) return;
+        const auto function = model->semanticModelValue->declaredSymbol(declaration);
+        if (!function.has_value()) return;
+        const auto clause = coveringSpan(declaration->genericParameters.front()->span,
+                                         declaration->genericParameters.back()->span);
+        if (misplaced.has_value()) {
+            report(*misplaced, clause,
+                   *misplaced == TypeCheckingDiagnosticId::invalidProtocolMember
+                           ? "a protocol requirement cannot declare type parameters"
+                           : "only a top-level function can declare type parameters (spec 20.4)",
+                   "generic methods, structs and enums are not supported yet (spec 20.10)");
+        }
+        for (const auto& attribute : declaration->attributes) {
+            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if (name == "c_extern" || name == "c_export" || name == "c_data") {
+                report(TypeCheckingDiagnosticId::genericNativeBinding, clause,
+                       "a C binding cannot declare type parameters (spec 20.7)",
+                       "write a non-generic binding and call it from generic code");
+                break;
+            }
+        }
+        auto parameters = recordTypeParameters(declaration->genericParameters);
         const auto* functionSymbol = symbolOf(*function);
         if (!misplaced.has_value() && functionSymbol != nullptr && functionSymbol->isRootModule &&
             functionSymbol->name == "main" && functionSymbol->kind == semantic::SymbolKind::function) {
@@ -2022,6 +2087,11 @@ private:
     }
 
     void resolveMethod(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        if (selfOwner.has_value()) {
+            if (const auto method = model->semanticModelValue->declaredSymbol(declaration)) {
+                methodParameters[*method] = selfParameters;
+            }
+        }
         resolveGenericParameters(declaration, TypeCheckingDiagnosticId::invalidGenericDeclaration);
         resolveFunction(declaration);
     }
@@ -2303,11 +2373,49 @@ private:
         }
     }
 
+    // `extension Box<U>` (spec 20.12.2): the header's parameters stand for the declaration's, with its
+    // constraints, and `Self` is `Box<U>`.
+    void enterExtension(const syntax::ExtensionDeclSyntax::Ptr& declaration) {
+        selfOwner.reset();
+        selfArguments.clear();
+        const auto owner = model->semanticModelValue->referencedSymbol(declaration->extendedType);
+        if (!owner.has_value()) return;
+        const auto* ownerSymbol = symbolOf(*owner);
+        if (ownerSymbol == nullptr || ownerSymbol->typeParameters.empty()) return;
+        const auto& declared = model->semanticModelValue->extensionTypeParameters(declaration);
+        selfOwner = *owner;
+        selfParameters.clear();
+        for (size_t index = 0; index < declared.size() && index < ownerSymbol->typeParameters.size(); ++index) {
+            selfParameters.push_back(declared[index]);
+            model->constraintLists[declared[index]] = model->constraints(ownerSymbol->typeParameters[index]);
+            selfArguments.push_back(model->typeContext.typeParameterType(declared[index]));
+            constrainedParameters.push_back(declared[index]);
+        }
+    }
+
+    // The type parameters a generic struct or enum declares, recorded with their constraints; the
+    // type's own parameters are the arguments of `Self` in its body.
+    std::vector<TypeId> enterGenericType(
+            semantic::SymbolId type, const std::vector<syntax::GenericParameterSyntax::Ptr>& declared) {
+        selfOwner.reset();
+        selfArguments.clear();
+        if (declared.empty()) return {};
+        const auto parameters = recordTypeParameters(declared);
+        model->genericParameterLists[type] = parameters;
+        selfOwner = type;
+        selfParameters = parameters;
+        for (const auto parameter : parameters) {
+            selfArguments.push_back(model->typeContext.typeParameterType(parameter));
+        }
+        return selfArguments;
+    }
+
     void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
         const auto structure = model->semanticModelValue->declaredSymbol(declaration);
         if (!structure.has_value()) return;
-        const auto structureType = model->typeContext.typeForSymbol(*structure).value_or(
-                model->typeContext.errorType());
+        const auto structureType = model->typeContext
+                .typeForSymbol(*structure, enterGenericType(*structure, declaration->genericParameters))
+                .value_or(model->typeContext.errorType());
         model->symbolTypes[*structure] = structureType;
         recordNodeType(declaration, structureType);
 
@@ -2329,14 +2437,18 @@ private:
         if (symbol != nullptr && symbol->synthesizedInitializer.has_value()) {
             model->symbolTypes[*symbol->synthesizedInitializer] = structureType;
             model->callables[*symbol->synthesizedInitializer] = std::move(initializer);
+            if (const auto* parameters = model->genericParameters(*structure)) {
+                model->genericParameterLists[*symbol->synthesizedInitializer] = *parameters;
+            }
         }
     }
 
     void resolveEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
         const auto enumeration = model->semanticModelValue->declaredSymbol(declaration);
         if (!enumeration.has_value()) return;
-        const auto enumerationType = model->typeContext.typeForSymbol(*enumeration).value_or(
-                model->typeContext.errorType());
+        const auto enumerationType = model->typeContext
+                .typeForSymbol(*enumeration, enterGenericType(*enumeration, declaration->genericParameters))
+                .value_or(model->typeContext.errorType());
         model->symbolTypes[*enumeration] = enumerationType;
         recordNodeType(declaration, enumerationType);
 
@@ -2358,6 +2470,9 @@ private:
             }
             model->symbolTypes[*caseSymbol] = enumerationType;
             model->callables[*caseSymbol] = std::move(signature);
+            if (const auto* parameters = model->genericParameters(*enumeration)) {
+                model->genericParameterLists[*caseSymbol] = *parameters;
+            }
         }
     }
 
@@ -3460,7 +3575,36 @@ private:
                 return model->typeContext.errorType();
             }
         }
-        return model->typeOf(*member).value_or(model->typeContext.errorType());
+        return substituteForBase(
+                model->typeOf(*member).value_or(model->typeContext.errorType()), base, *member);
+    }
+
+    // The substitution a use of a member of `base` applies: the generic type's parameters replaced by
+    // the arguments of `base` (spec 20.12). Empty when `base` is not an instance of a generic type.
+    std::unordered_map<semantic::SymbolId, TypeId> baseSubstitution(
+            TypeId base, const std::vector<semantic::SymbolId>* inScope = nullptr) const {
+        std::unordered_map<semantic::SymbolId, TypeId> substitution;
+        const auto* record = model->typeContext.type(base);
+        if (record == nullptr || record->arguments.empty() ||
+            (record->kind != TypeKind::structure && record->kind != TypeKind::enumeration)) {
+            return substitution;
+        }
+        const auto* parameters = inScope != nullptr ? inScope : model->genericParameters(record->symbol);
+        if (parameters == nullptr || parameters->size() != record->arguments.size()) return substitution;
+        for (size_t index = 0; index < parameters->size(); ++index) {
+            substitution.emplace((*parameters)[index], record->arguments[index]);
+        }
+        return substitution;
+    }
+
+    const std::vector<semantic::SymbolId>* parametersOfMember(semantic::SymbolId member) const {
+        const auto found = methodParameters.find(member);
+        return found == methodParameters.end() ? nullptr : &found->second;
+    }
+
+    TypeId substituteForBase(TypeId type, TypeId base, semantic::SymbolId member) const {
+        const auto substitution = baseSubstitution(base, parametersOfMember(member));
+        return substitution.empty() ? type : model->typeContext.substitute(type, substitution);
     }
 
     std::optional<semantic::SymbolId> lookupMember(
@@ -3607,9 +3751,26 @@ private:
             const auto* owner = calledSymbol->containingSymbol.has_value()
                     ? model->semanticModelValue->symbol(*calledSymbol->containingSymbol)
                     : nullptr;
-            if (genericParameters != nullptr && calledSymbol->kind == semantic::SymbolKind::function) {
+            const bool constructs = calledSymbol->kind == semantic::SymbolKind::synthesizedInitializer ||
+                    calledSymbol->kind == semantic::SymbolKind::enumCase;
+            if (genericParameters != nullptr &&
+                (calledSymbol->kind == semantic::SymbolKind::function || constructs)) {
                 substitutedSignature = inferGenericCall(
                         expression, *target, *calledSymbol, *signature, *genericParameters, preChecked);
+                signature = &substitutedSignature;
+            } else if (owner != nullptr && !owner->typeParameters.empty() &&
+                       calledSymbol->kind == semantic::SymbolKind::method &&
+                       expression->callee->kind == syntax::Kind::memberExpr) {
+                // A method of a generic type: its parameters are the receiver's type arguments.
+                const auto base = model->typeOf(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
+                const auto substitution = baseSubstitution(
+                        base.value_or(model->typeContext.errorType()), parametersOfMember(*target));
+                substitutedSignature = *signature;
+                for (auto& parameter : substitutedSignature.parameters) {
+                    parameter = model->typeContext.substitute(parameter, substitution);
+                }
+                substitutedSignature.result = model->typeContext.substitute(substitutedSignature.result, substitution);
                 signature = &substitutedSignature;
             } else if (owner != nullptr && owner->kind == semantic::SymbolKind::protocol &&
                        expression->callee->kind == syntax::Kind::memberExpr) {
