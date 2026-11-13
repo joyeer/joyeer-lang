@@ -25,7 +25,7 @@ func_decl         ::= attribute* [ visibility ] [ method_effect ] 'func' identif
                       [ ':' type ]
                       [ block ]
 
-generic_params    ::= '<' generic_param , ... '>'          // top-level functions only (§20.4)
+generic_params    ::= '<' generic_param , ... '>'          // functions, structs and enums (§20.4, §20.12)
 generic_param     ::= identifier [ ':' constraint ]
 constraint        ::= protocol_ref ( '&' protocol_ref )*
 protocol_ref      ::= nominal_type
@@ -46,7 +46,7 @@ function_type     ::= '(' [ param_type , ... ] ')' ':' type      // result exten
 param_type        ::= [ access_effect ] type             // no label, not Never
 nominal_type      ::= identifier ( '.' identifier )*         // primitive types included
 
-struct_decl       ::= [ visibility ] 'struct' identifier
+struct_decl       ::= [ visibility ] 'struct' identifier [ generic_params ]     // §20.12
                       '{' struct_member* '}'
 
 struct_member     ::= binding
@@ -59,7 +59,7 @@ init_decl         ::= [ visibility ] 'init' '(' [ param , ... ] ')'
 
 deinit_decl       ::= 'deinit' '(' ')' block
 
-enum_decl         ::= [ visibility ] 'enum' identifier
+enum_decl         ::= [ visibility ] 'enum' identifier [ generic_params ]       // §20.12
                       '{' enum_case ( ',' enum_case )* ','? ( func_decl | subscript_decl )* '}'
 
 enum_case         ::= [ 'indirect' ] identifier [ '(' assoc_type , ... ')' ]
@@ -67,7 +67,7 @@ assoc_type        ::= [ identifier ':' ] type
 
 extension_decl    ::= 'extension' extended_type [ ':' protocol_ref , ... ]
                       '{' ( func_decl | subscript_decl )* '}'
-extended_type     ::= nominal_type [ '<' type , ... '>' ]
+extended_type     ::= nominal_type [ '<' type , ... '>' ]     // a generic type's parameters (§20.12.2)
                    |  '[' type ']'
                    |  '[' type ':' type ']'
 
@@ -121,6 +121,9 @@ postfix_expr      ::= primary_expr ( '.' identifier
                                     | '[' expression , ... ']'
                                     | '?'
                                     | '!' )*
+intrinsic_call    ::= INTRINSIC_ID '<' type , ... '>' '(' [ call_arg , ... ] ')'
+                                 // toolchain-authorized units only (§20.12.5); a `>>` token
+                                 //   inside the type arguments is split
 call_arg          ::= [ label ':' ] [ '&' | 'consume' ] expression
                                  // unlabeled only through a function value
                                  //   or for an enum payload (§5.6, §5.6.1, §5.8)

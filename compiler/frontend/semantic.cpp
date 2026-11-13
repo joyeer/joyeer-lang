@@ -98,6 +98,14 @@ std::optional<ScopeId> SemanticModel::introducedScope(const syntax::NodePtr& nod
     return mappedValue(*this, node, introducedScopes_);
 }
 
+const std::vector<SymbolId>& SemanticModel::extensionTypeParameters(const syntax::NodePtr& node) const {
+    static const std::vector<SymbolId> none;
+    const auto id = nodeId(node);
+    if (!id.has_value()) return none;
+    const auto found = extensionTypeParameters_.find(*id);
+    return found == extensionTypeParameters_.end() ? none : found->second;
+}
+
 std::optional<SymbolId> SemanticModel::declaredSymbol(const syntax::NodePtr& node) const {
     return mappedValue(*this, node, declarationSymbols_);
 }

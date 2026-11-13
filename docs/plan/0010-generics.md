@@ -1,6 +1,6 @@
 # 0010: Generics
 
-- Status: in progress (updated 2026-11-12)
+- Status: in progress (updated 2026-11-13)
 - Decisions: [0020](../decisions/0020-function-values.md) (Phase 1),
   [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2). Background:
   [0009](../decisions/0009-runtime-core-capabilities.md), [0015](../decisions/0015-noncopyable-and-linear-types.md),
@@ -127,9 +127,13 @@ exactly. No closures, methods or generic functions as values.
 
 ### Phase 3: generic types and layout intrinsics
 
-- [ ] Decision record: generic structs and enums (lifting part of §20.10), and the runtime-only layout
-  intrinsics' surface.
-- [ ] Spec for generic structs, enums and their methods.
+- [x] Decision record: generic structs and enums (lifting part of §20.10), and the runtime-only layout
+  intrinsics' surface. Evidence: [0022](../decisions/0022-generic-types-and-layout-intrinsics.md), accepted
+  2026-11-13 after a language-designer review.
+- [x] Spec for generic structs, enums and their methods. Evidence: new §20.12 (construction inference,
+  extensions and unconditional conformance, ownership, termination, layout intrinsics) with §2.6, §3.2.3,
+  §3.3, §3.5, §3.9, §4.1.1, §5.6.1, §19.4.5, §20.4, §20.4.1, §20.4.2, §20.8, §20.10 and Appendix C amended
+  per 0022. Documentation only; not built or run.
 - [ ] Failing tests, then parsing, type checking and instantiation of generic types.
 - [ ] Runtime-only intrinsics: size and alignment of `T`, moving a `T` into and out of an address, and
   destroying a `T` at an address.
@@ -173,6 +177,25 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-13: Phase 3 name resolution: struct/enum type parameters are declared in the type's member scope
+  (`Symbol::typeParameters`), methods see them through their function scope, and an `extension Box<U>` header
+  declares fresh local parameters (`SemanticModel::extensionTypeParameters`) sharing the declaration's
+  constraint scopes. Tests `GenericStructsEnumsAndExtensionsBindTheirTypeParameters` and
+  `GenericTypeParametersDoNotEscapeTheirDeclaration`; CompilerNameResolutionTests 67 of 67 (Windows x64 Debug).
+  Not done: exposed-constraint check (§12.2) for struct/enum parameters; everything from type checking on.
+  Windows x64 Debug full build and unfiltered ctest: 1596 of 1597 pass; the one failure,
+  `JoyeerCInterop.MissingLibrary`, is a nested build that cannot find `kernel32.lib` in this shell (LNK1104),
+  not a result of these changes, but it was not re-run in a clean Developer shell.
+- 2026-11-13: Phase 3 parser stage: `struct` and `enum` accept `<T: P & Q>` (syntax `genericParameters`);
+  tests `ParsesGenericStructsEnumsAndExtensionHeaders`, `RejectsMalformedGenericTypeParameterClauses` and
+  fixture `tests/parser/ok/generic_types.joyeer` pass (CompilerParserTests, Windows x64 Debug). The parser
+  change was written before its tests, not after a failing run. Not done: intrinsic call-site type arguments,
+  name resolution, type checking and everything after. No other plan item checked.
+- 2026-11-13: 0022 accepted; spec item checked (§20.12 and the amendments listed in 0022). Next: failing
+  tests, then parser, name resolution, type checking, instantiation, IR/backend, intrinsics, fixture.
+- 2026-11-13: Phase 3 decision record 0022 drafted and reviewed by language-designer (5 blockers, 7 should-fix
+  items, all folded in) and accepted. Decision item checked; no spec,
+  tests or code exist for Phase 3.
 - 2026-11-12: adversarial review done and two of five findings fixed; Debug ctest 1593 of 1593. Only
   full validation (Release, Linux, `validate.py`) remains, blocked on Python.
 - 2026-11-12: Phase 2 implementation work completed: reporting, stage/CLI/module/e2e coverage,

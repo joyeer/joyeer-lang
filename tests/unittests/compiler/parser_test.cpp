@@ -93,6 +93,37 @@ TEST_F(ParserTest, ParsesProtocolsConformancesAndGenericConstraints) {
     EXPECT_EQ(function->genericParameters[0]->constraints.size(), 2u);
 }
 
+TEST_F(ParserTest, ParsesGenericStructsEnumsAndExtensionHeaders) {
+    parse(readFixture("parser/ok/generic_types.joyeer"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::parser::dump(result.diagnostics);
+    ASSERT_EQ(result.root->items.size(), 5u);
+    const auto box = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(result.root->items[0]);
+    ASSERT_EQ(box->genericParameters.size(), 1u);
+    EXPECT_EQ(box->genericParameters[0]->name->rawValue, "T");
+    const auto pair = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(result.root->items[1]);
+    ASSERT_EQ(pair->genericParameters.size(), 2u);
+    EXPECT_EQ(pair->genericParameters[0]->constraints.size(), 2u);
+    EXPECT_EQ(pair->genericParameters[1]->constraints.size(), 0u);
+    const auto tree = std::static_pointer_cast<joyeer::syntax::EnumDeclSyntax>(result.root->items[2]);
+    ASSERT_EQ(tree->genericParameters.size(), 1u);
+    EXPECT_EQ(tree->cases.size(), 2u);
+    const auto extension = std::static_pointer_cast<joyeer::syntax::ExtensionDeclSyntax>(result.root->items[3]);
+    EXPECT_EQ(extension->conformances.size(), 1u);
+    EXPECT_EQ(extension->methods.size(), 1u);
+}
+
+TEST_F(ParserTest, RejectsMalformedGenericTypeParameterClauses) {
+    for (const auto* text : {
+            "struct Box<> { var value: Int }\n",
+            "struct Box<T { var value: T }\n",
+            "enum Tree<T:> { Leaf }\n",
+            "struct Box<T: P &> { var value: T }\n"}) {
+        SCOPED_TRACE(text);
+        parse(text);
+        EXPECT_FALSE(result.succeeded());
+    }
+}
+
 TEST_F(ParserTest, RejectsMalformedGenericParameterClauses) {
     for (const auto* text : {
             "func f<>(value: Int) {}\n",

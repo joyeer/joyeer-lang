@@ -207,8 +207,9 @@ The generic types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
 `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
 below). Their angle brackets are **type arguments understood directly by the
 compiler**. User code may *use* these containers and may declare **generic
-top-level functions** bounded by protocols (§20), but may not declare generic
-`struct`s, `enum`s or methods (§20.10).
+top-level functions** and **generic `struct`s and `enum`s** bounded by protocols
+(§20, §20.12, [decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md)),
+but may not declare generic methods or conditional conformances (§20.10).
 
 ```joyeer
 let xs: [Int] = [1, 2, 3]               // built-in Array<Int>

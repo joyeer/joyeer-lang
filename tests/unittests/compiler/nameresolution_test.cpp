@@ -135,6 +135,37 @@ TEST_F(NameResolutionTest, ResolvesGenericParameterAndProtocolSelfInTheirOwnScop
     EXPECT_EQ(referenced(function->returnType).id, declared(parameter).id);
 }
 
+TEST_F(NameResolutionTest, GenericStructsEnumsAndExtensionsBindTheirTypeParameters) {
+    resolve(readFixture("name-resolution/generic_types.joyeer"));
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto protocol = std::static_pointer_cast<joyeer::syntax::ProtocolDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto box = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(parseResult.root->items[1]);
+    const auto& parameter = box->genericParameters[0];
+    EXPECT_EQ(declared(parameter).kind, SymbolKind::typeParameter);
+    EXPECT_EQ(referenced(parameter->constraints[0]).id, declared(protocol).id);
+    EXPECT_EQ(referenced(box->fields[0]->type).id, declared(parameter).id);
+    // Methods name the declaration's own parameter symbol, and its constraint's requirements.
+    EXPECT_EQ(referenced(box->methods[1]->returnType).id, declared(parameter).id);
+    const auto tree = std::static_pointer_cast<joyeer::syntax::EnumDeclSyntax>(parseResult.root->items[2]);
+    EXPECT_EQ(referenced(tree->cases[1]->associatedTypes[0]->type).id, declared(tree->genericParameters[0]).id);
+    // An extension header declares fresh parameters local to the extension.
+    const auto extension = std::static_pointer_cast<joyeer::syntax::ExtensionDeclSyntax>(
+            parseResult.root->items[3]);
+    const auto& declaredParameters = resolution.model->extensionTypeParameters(extension);
+    ASSERT_EQ(declaredParameters.size(), 1u);
+    EXPECT_NE(declaredParameters[0], declared(parameter).id);
+    EXPECT_EQ(referenced(extension->methods[1]->returnType).id, declaredParameters[0]);
+    EXPECT_EQ(referenced(extension->extendedType).id, declared(box).id);
+}
+
+TEST_F(NameResolutionTest, GenericTypeParametersDoNotEscapeTheirDeclaration) {
+    resolve("struct Box<T> { var value: T }\nfunc leak(value: T) {}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+    resolve("struct A<T> { var value: T }\nstruct B { var value: T }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+}
+
 TEST_F(NameResolutionTest, GenericParametersDoNotEscapeOrShareIdentity) {
     resolve("func first<T>(value: T) {}\nfunc second<T>(value: T) {}\n");
     ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);

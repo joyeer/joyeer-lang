@@ -110,6 +110,9 @@ struct Symbol {
     std::optional<ScopeId> memberScope;
     std::optional<SymbolId> declaredType;
     std::optional<SymbolId> synthesizedInitializer;
+    // The type parameters of a generic struct or enum in declaration order (spec 20.12); they live in
+    // its member scope.
+    std::vector<SymbolId> typeParameters;
     std::optional<CallableSignature> callable;
     bool isMutable = false;
     bool isInvalid = false;
@@ -156,6 +159,9 @@ public:
     [[nodiscard]] std::optional<SymbolId> qualifierSymbol(const syntax::NodePtr& node) const;
     [[nodiscard]] std::optional<SymbolId> callTarget(const syntax::NodePtr& node) const;
     [[nodiscard]] const DeferredReference* deferredReference(const syntax::NodePtr& node) const;
+    // The type parameters an `extension Box<T>` header declares, in order (spec 20.12.2); empty for
+    // any other node. Each is a `typeParameter` symbol local to the extension.
+    [[nodiscard]] const std::vector<SymbolId>& extensionTypeParameters(const syntax::NodePtr& node) const;
 
     [[nodiscard]] const std::vector<Symbol>& symbols() const;
     [[nodiscard]] const std::vector<Scope>& scopes() const;
@@ -192,6 +198,7 @@ private:
     std::unordered_map<NodeId, SymbolId> qualifierSymbols_;
     std::unordered_map<NodeId, SymbolId> callTargets_;
     std::unordered_map<NodeId, size_t> deferredReferenceIndices_;
+    std::unordered_map<NodeId, std::vector<SymbolId>> extensionTypeParameters_;
     std::unordered_map<uint32_t, uint32_t> sourceModules_;
     std::unordered_map<uint32_t, bool> runtimeSources_;
     std::unordered_map<uint32_t, bool> coreSources_;

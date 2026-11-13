@@ -60,8 +60,14 @@ with its own destruction obligation:
   contained types are copyable; heap-backed storage is cloned recursively;
 - a `struct` or `enum` is copyable when all of its stored fields or payloads
   are copyable and it does not declare a custom `deinit`.
-- a type parameter of a generic function (§20.4) is copyable exactly when its
-  constraint lists `Copyable` (§20.5), and is never linear.
+- a type parameter of a generic function or type (§20.4, §20.12) is copyable
+  exactly when its constraint lists `Copyable` (§20.5), and is never linear;
+- a generic `struct` or `enum` instance `Box<X>` is copyable when the type
+  declares no `deinit` and every field or payload, with the parameters replaced
+  by `X`, is copyable. A parameter that appears in no field does not affect
+  copyability. A type that owns `T` values through an `Int` address has no `T`
+  field, so it must declare `deinit` (§20.12.4); the compiler cannot detect the
+  omission. A type argument may not be linear (§20.12.3).
 
 A type that declares `deinit` is noncopyable by default. Ordinary
 initialization or assignment from a binding of that type is rejected rather

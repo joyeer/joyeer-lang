@@ -748,11 +748,15 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     const auto column = declarationColumn(start);
     cursor.advance();
     auto name = expect(identifier, "a struct name");
+    auto genericParameters = cursor.at(less) ? parseGenericParameters()
+                                             : std::vector<syntax::GenericParameterSyntax::Ptr> {};
 
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the struct body");
-        return std::make_shared<syntax::StructDeclSyntax>(
+        auto incomplete = std::make_shared<syntax::StructDeclSyntax>(
                 spanFrom(start), std::move(name), std::vector<syntax::StructFieldDeclSyntax::Ptr> {});
+        incomplete->genericParameters = std::move(genericParameters);
+        return incomplete;
     }
     DelimiterScope delimiter(activeClosers, rightCurly);
 
@@ -813,6 +817,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
 
     auto declaration = std::make_shared<syntax::StructDeclSyntax>(
             spanFrom(start), std::move(name), std::move(fields));
+    declaration->genericParameters = std::move(genericParameters);
     declaration->methods = std::move(methods);
     declaration->deinitializer = std::move(deinitializer);
     return declaration;
@@ -847,10 +852,14 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
     const auto column = declarationColumn(start);
     cursor.advance();
     auto name = expect(identifier, "an enum name");
+    auto genericParameters = cursor.at(less) ? parseGenericParameters()
+                                             : std::vector<syntax::GenericParameterSyntax::Ptr> {};
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the enum body");
-        return std::make_shared<syntax::EnumDeclSyntax>(
+        auto incomplete = std::make_shared<syntax::EnumDeclSyntax>(
                 spanFrom(start), std::move(name), std::vector<syntax::EnumCaseDeclSyntax::Ptr> {});
+        incomplete->genericParameters = std::move(genericParameters);
+        return incomplete;
     }
     DelimiterScope delimiter(activeClosers, rightCurly);
 
@@ -931,6 +940,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
 
     auto declaration = std::make_shared<syntax::EnumDeclSyntax>(
             spanFrom(start), std::move(name), std::move(cases));
+    declaration->genericParameters = std::move(genericParameters);
     declaration->methods = std::move(methods);
     return declaration;
 }

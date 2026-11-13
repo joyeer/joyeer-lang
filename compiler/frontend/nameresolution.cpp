@@ -314,6 +314,9 @@ private:
     uint32_t activeModule = 0;
     // The type `Self` denotes while resolving the signature or body of a member.
     std::optional<SymbolId> selfType;
+    // The type parameters of the generic struct, enum or extension whose methods are being resolved
+    // (spec 20.12): each method scope can name them.
+    std::vector<SymbolId> ambientTypeParameters;
     std::unordered_map<std::string, ScopeId> namedModules;
     std::unordered_map<ScopeId, std::unordered_map<std::string, ScopeId>> fileImports;
 
@@ -383,6 +386,7 @@ private:
             }
             case Kind::structDecl: {
                 const auto value = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                for (const auto& parameter : value->genericParameters) indexNode(parameter);
                 for (const auto& field : value->fields) indexNode(field);
                 for (const auto& method : value->methods) indexNode(method);
                 indexNode(value->deinitializer);
@@ -413,6 +417,7 @@ private:
             }
             case Kind::enumDecl: {
                 const auto value = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
+                for (const auto& parameter : value->genericParameters) indexNode(parameter);
                 for (const auto& enumCase : value->cases) indexNode(enumCase);
                 for (const auto& method : value->methods) indexNode(method);
                 break;
@@ -1042,7 +1047,7 @@ private:
 
     void collectExtension(const syntax::ExtensionDeclSyntax::Ptr& extension) {
         setContainingScope(extension, model->fileScope_);
-        const auto target = resolveType(extension->extendedType, model->fileScope_);
+        const auto target = resolveExtensionTarget(extension);
         if (!target.has_value()) return;
         const auto& type = symbol(*target);
         const auto isUserType = type.kind == SymbolKind::structure ||
@@ -1055,6 +1060,59 @@ private:
             return;
         }
         collectMethods(*target, extension->methods);
+    }
+
+    // `extension Box<T>` (spec 20.12.2): when the extended type is a generic struct or enum, each
+    // unresolvable bare argument name declares a type parameter local to the extension, so the header
+    // is not looked up as concrete types. An argument that already names a type is left for the type
+    // checker to reject as a specialization.
+    std::optional<SymbolId> resolveExtensionTarget(const syntax::ExtensionDeclSyntax::Ptr& extension) {
+        const auto& extended = extension->extendedType;
+        if (extended != nullptr && extended->kind == syntax::Kind::nominalType) {
+            const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(extended);
+            if (!nominal->arguments.empty()) {
+                const auto head = lookupType(model->fileScope_, tokenText(nominal->name)).symbol;
+                if (head.has_value() && !symbol(*head).typeParameters.empty()) {
+                    setContainingScope(extended, model->fileScope_);
+                    model->referenceSymbols_[nodeId(extended)] = *head;
+                    const auto scopeId = createScope(
+                            ScopeKind::typeMembers, model->fileScope_, nodeId(extension));
+                    model->introducedScopes_[nodeId(extension)] = scopeId;
+                    auto& declared = model->extensionTypeParameters_[nodeId(extension)];
+                    for (const auto& argument : nominal->arguments) {
+                        setContainingScope(argument, scopeId);
+                        const auto bare = argument->kind == syntax::Kind::nominalType
+                                ? std::static_pointer_cast<syntax::NominalTypeSyntax>(argument)
+                                : nullptr;
+                        if (bare != nullptr && bare->arguments.empty() &&
+                            !lookupType(model->fileScope_, tokenText(bare->name)).symbol.has_value() &&
+                            tokenText(bare->name) != "Self") {
+                            const auto id = declareSymbol(
+                                    scopeId,
+                                    SymbolNamespace::type,
+                                    SymbolKind::typeParameter,
+                                    tokenText(bare->name),
+                                    tokenSpan(bare->name, bare->span),
+                                    nodeId(argument),
+                                    true,
+                                    *head);
+                            // The requirements of the declaration's constraint at this position.
+                            const auto position = declared.size();
+                            symbol(id).memberScope = position < symbol(*head).typeParameters.size()
+                                    ? symbol(symbol(*head).typeParameters[position]).memberScope
+                                    : std::optional<ScopeId>(createScope(
+                                            ScopeKind::typeMembers, scopeId, nodeId(argument)));
+                            model->referenceSymbols_[nodeId(argument)] = id;
+                            declared.push_back(id);
+                        } else {
+                            resolveType(argument, model->fileScope_);
+                        }
+                    }
+                    return head;
+                }
+            }
+        }
+        return resolveType(extended, model->fileScope_);
     }
 
     void collectMethods(
@@ -1146,24 +1204,47 @@ private:
     // holds the requirements of its constraint protocols; when two protocols require one name, the
     // first is kept and the type checker compares them.
     void declareGenericParameters(
-            const syntax::FunctionDeclSyntax::Ptr& declaration,
-            SymbolId function,
-            ScopeId functionScope) {
-        for (const auto& parameter : declaration->genericParameters) {
-            setContainingScope(parameter, functionScope);
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& parameters,
+            SymbolId owner,
+            ScopeId parameterScope) {
+        const auto ids = declareTypeParameterSymbols(parameters, owner, parameterScope);
+        resolveTypeParameterConstraints(parameters, ids, parameterScope);
+    }
+
+    // Declares one `typeParameter` symbol per parameter in `parameterScope`, in order. A struct or
+    // enum does this when it is collected, before every protocol is known; the constraints follow in
+    // resolveTypeParameterConstraints.
+    std::vector<SymbolId> declareTypeParameterSymbols(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& parameters,
+            SymbolId owner,
+            ScopeId parameterScope) {
+        std::vector<SymbolId> ids;
+        for (const auto& parameter : parameters) {
+            setContainingScope(parameter, parameterScope);
             rejectReservedTypeName(parameter->name, parameter->span);
             const auto id = declareSymbol(
-                    functionScope,
+                    parameterScope,
                     SymbolNamespace::type,
                     SymbolKind::typeParameter,
                     tokenText(parameter->name),
                     tokenSpan(parameter->name, parameter->span),
                     nodeId(parameter),
                     true,
-                    function);
-            const auto members = createScope(ScopeKind::typeMembers, functionScope, nodeId(parameter));
-            symbol(id).memberScope = members;
-            for (const auto& constraint : parameter->constraints) {
+                    owner);
+            symbol(id).memberScope = createScope(
+                    ScopeKind::typeMembers, parameterScope, nodeId(parameter));
+            ids.push_back(id);
+        }
+        return ids;
+    }
+
+    void resolveTypeParameterConstraints(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& parameters,
+            const std::vector<SymbolId>& ids,
+            ScopeId) {
+        for (size_t index = 0; index < parameters.size() && index < ids.size(); ++index) {
+            const auto members = *symbol(ids[index]).memberScope;
+            for (const auto& constraint : parameters[index]->constraints) {
                 const auto protocol = resolveType(constraint, model->fileScope_);
                 if (!protocol.has_value() || symbol(*protocol).kind != SymbolKind::protocol ||
                     !symbol(*protocol).memberScope.has_value()) {
@@ -1197,6 +1278,8 @@ private:
                 nodeId(declaration));
         symbol(type).memberScope = members;
         model->introducedScopes_[nodeId(declaration)] = members;
+        symbol(type).typeParameters =
+                declareTypeParameterSymbols(declaration->genericParameters, type, members);
 
         CallableSignature initializerSignature {
             CallableKind::structureInitializer,
@@ -1258,6 +1341,8 @@ private:
                 nodeId(declaration));
         symbol(type).memberScope = members;
         model->introducedScopes_[nodeId(declaration)] = members;
+        symbol(type).typeParameters =
+                declareTypeParameterSymbols(declaration->genericParameters, type, members);
 
         for (const auto& enumCase : declaration->cases) {
             CallableSignature signature {
@@ -1488,7 +1573,8 @@ private:
                 const auto declaration =
                         std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
                 resolveMethodSignatures(
-                        referencedSymbol(declaration->extendedType), declaration->methods);
+                        referencedSymbol(declaration->extendedType), declaration->methods,
+                        &model->extensionTypeParameters_[nodeId(declaration)]);
                 for (const auto& conformance : declaration->conformances) {
                     resolveType(conformance, model->fileScope_);
                 }
@@ -1505,11 +1591,17 @@ private:
         }
     }
 
+    // `ambient` are the type parameters the methods may name: the owner's own, or those an
+    // extension header declares.
     void resolveMethodSignatures(
             std::optional<SymbolId> owner,
-            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods) {
+            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods,
+            const std::vector<SymbolId>* ambient = nullptr) {
         if (!owner.has_value()) return;
+        const auto previous = ambientTypeParameters;
+        ambientTypeParameters = ambient != nullptr ? *ambient : symbol(*owner).typeParameters;
         for (const auto& method : methods) resolveFunctionSignature(method, owner);
+        ambientTypeParameters = previous;
     }
 
     void resolveMethodBodies(
@@ -1620,7 +1712,10 @@ private:
                 nodeId(declaration));
         model->introducedScopes_[nodeId(declaration)] = functionScope;
 
-        declareGenericParameters(declaration, *functionSymbol, functionScope);
+        declareGenericParameters(declaration->genericParameters, *functionSymbol, functionScope);
+        for (const auto parameter : ambientTypeParameters) {
+            scope(functionScope).types.emplace(symbol(parameter).name, parameter);
+        }
 
         // The receiver is not a call parameter; the rest keep their written order.
         size_t callableIndex = 0;
@@ -1667,6 +1762,8 @@ private:
         }
         const auto memberScope = *symbol(*structure).memberScope;
         setContainingScope(declaration, model->fileScope_);
+        resolveTypeParameterConstraints(
+                declaration->genericParameters, symbol(*structure).typeParameters, memberScope);
 
         const auto initializer = *symbol(*structure).synthesizedInitializer;
         for (size_t index = 0; index < declaration->fields.size(); ++index) {
@@ -1685,6 +1782,8 @@ private:
         if (!enumeration.has_value() || !symbol(*enumeration).memberScope.has_value()) return;
         const auto memberScope = *symbol(*enumeration).memberScope;
         setContainingScope(declaration, model->fileScope_);
+        resolveTypeParameterConstraints(
+                declaration->genericParameters, symbol(*enumeration).typeParameters, memberScope);
 
         for (const auto& enumCase : declaration->cases) {
             setContainingScope(enumCase, memberScope);

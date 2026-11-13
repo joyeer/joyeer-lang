@@ -172,8 +172,10 @@ generic_param   ::= identifier [ ':' constraint ]
 constraint      ::= protocol_ref ( '&' protocol_ref )*
 ```
 
-In v1, `generic_params` is accepted only on **top-level functions**. Methods,
-`init`, subscripts, structs, enums, extensions, protocol requirements, and C
+In v1, `generic_params` is accepted on **top-level functions** and on
+**`struct` and `enum` declarations** (§20.12). Methods,
+`init`, subscripts, extensions (which bind their type's parameters instead,
+§20.12.2), protocol requirements, and C
 bindings (`@c_extern`, `@c_export`) may not declare type parameters
 (`type-checking.invalid-generic-declaration`; for a C binding,
 `type-checking.generic-native-binding`). A protocol repeated in one constraint
@@ -240,7 +242,8 @@ ordinary rules.
 Every use of one parameter must unify to one type, otherwise
 `type-checking.conflicting-type-argument`. A parameter that nothing
 determines is `type-checking.cannot-infer-type-parameter`; return-type-only
-inference is not performed.
+inference is not performed for function calls. Initializer and enum-case
+construction of a generic type is the one exception (§20.12.1).
 
 After inference, every constraint must hold, otherwise
 `type-checking.unsatisfied-constraint` names the type argument, the parameter
@@ -271,7 +274,9 @@ satisfies:
   always copyable, whatever it mentions;
 - a user protocol `P` only when it is exactly a parameter whose constraint
   lists `P`. A type built from a parameter (`[T]`, `T?`) satisfies no user
-  protocol in v1.
+  protocol in v1, with one exception: a generic type `Box<...>` with an
+  `extension Box<T>: P` (§20.12.2) satisfies `P`, since that extension
+  declares the conformance for every argument.
 
 ### 20.5 What generic code may do
 
@@ -425,6 +430,9 @@ Diagnostics follow the stable-ID and source-span rules of
 | `type-checking.generic-native-binding` | Generics on a C binding (§19) |
 | `type-checking.expanding-generic-recursion` | A cycle of generic calls whose type arguments grow |
 | `type-checking.instantiation-limit` | An implementation limit on instances exceeded |
+| `type-checking.invalid-type-arguments` | A generic type written with the wrong number of type arguments, or a non-generic type given some (§20.12) |
+| `type-checking.invalid-extension-header` | An extension of a generic type whose header is not its parameters, once each, without constraints (§20.12.2) |
+| `type-checking.unauthorized-intrinsic` | A layout intrinsic used outside a toolchain-authorized unit (§20.12.5) |
 
 ### 20.9 Grammar and lexical changes
 
@@ -438,8 +446,9 @@ Diagnostics follow the stable-ID and source-span rules of
 
 ### 20.10 Deferred, in a suggested order
 
-1. **Generic structs and enums**, so user containers can exist, plus generic
-   methods and extensions (`extension Array<T>: P where T: P`).
+1. ~~Generic structs and enums~~ (specified in §20.12). Still deferred: generic
+   methods, `where` clauses and conditional conformance
+   (`extension Array<T>: P where T: P`).
 2. **Operator-backed protocols**: `Equatable`, `Comparable`, `Display`, with
    `==`, `<`, and string interpolation (§1.7) defined through them.
 3. **Default implementations and refinement** (`protocol A: B`).
@@ -485,3 +494,92 @@ func main() {
 
 `serveOnce` borrows `handler` and never copies it, so it needs no `Copyable`
 bound. The call compiles to a direct call of `StaticFiles.handle`.
+
+### 20.12 Generic structs and enums
+
+[Decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md). A `struct` or `enum` may
+declare type parameters with the constraint syntax of §20.4: `struct Box<T> { var value: T }`,
+`enum Tree<T> { Leaf, Node(T) }`, `struct Pair<A, B: Copyable>`. Inside the declaration and its
+extensions each parameter is a distinct type (§20.4), noncopyable unless its constraint lists `Copyable`,
+never linear, and not `Never`. A generic declaration is checked once against its constraints and
+instantiated by monomorphization like a generic function (§20.6): each distinct `Box<Int>` is a concrete
+type, and each method is an instance keyed by the method and the type's arguments. `where` clauses, generic
+methods and conditional conformance are deferred (§20.10).
+
+A generic type is written with all its type arguments in every type position (`Box<Int>`, `Tree<[T]>`).
+A wrong number of arguments, or arguments given to a non-generic type, is
+`type-checking.invalid-type-arguments`; each argument must satisfy its constraints
+(`type-checking.unsatisfied-constraint`). A user type named like a builtin (`Array`, `Optional`) is an
+ordinary generic type in its scope, with its own arity.
+
+#### 20.12.1 Construction
+
+Type arguments are inferred by the rules of §20.4.1 from the arguments of an initializer or enum case,
+and, for a parameter they leave open, from the **expected type**. This is the only place a result type
+informs inference; a call of a generic function never does.
+
+- An expected type exists for a binding annotation, a `return` in a function with a declared result, an
+  assignment target or field of known type, and an argument whose parameter type does not mention a type
+  parameter still being inferred. A parameter of a generic callee provides none.
+- Non-literal arguments are unified first, then the expected type binds the parameters still open, then a
+  literal takes its default type. `var b: Box<Double> = Box(value: 1)` is a `Box<Double>`. The expected
+  type never overrides what non-literal arguments determined (`conflicting-type-argument`).
+- An expected `Box<Int>?` or `Tree<Int>?` supplies `Box<Int>` or `Tree<Int>` (one `?`, as §2.4 wrapping).
+- `nil`, `[]`, `[:]` and `.Case(...)` arguments determine nothing; the expected type may fill them.
+- A parameter still open is `type-checking.cannot-infer-type-parameter`.
+
+`Box<Int>(value: 1)`, `Box<Int>.make()` and `Tree<Int>.Leaf` are not expression forms. A case or static
+function of a generic type is reached as `Tree.Node(1)` with inference or through an expected type
+(`let t: Tree<Int> = .Leaf`). Static stored members of a generic type are not accepted.
+
+#### 20.12.2 Extensions and conformance
+
+`extension Box<T>: P { ... }` lists exactly the declaration's parameters, once each, as fresh names (§3.5).
+It cannot restate or loosen constraints, and a concrete argument (`extension Box<Int>: P`) would be a
+specialization (§20.6); each is `type-checking.invalid-extension-header`. The conformance is
+**unconditional**: `Box<X>` conforms to `P` for every `X` that satisfies `Box`'s constraints. Witnesses are
+checked once against the parameters' declared constraints. The conformance is keyed by `(type, protocol)`,
+so two such extensions in one module are `type-checking.duplicate-conformance` whatever the parameter names.
+
+#### 20.12.3 Ownership
+
+`Box<X>` is copyable and linear as §4.1.1 states. A generic type, like a generic function, does not accept
+a linear type argument (`type-checking.linear-type-argument`), or `Any` or `Never`
+(`type-checking.invalid-type-argument`). A `linear struct` may be generic; its parameters are affine. Where
+§21 names a more specific diagnostic (`linear-collection-element`, `linear-in-deinit-type`,
+`linear-channel-element`), that one is reported.
+
+#### 20.12.4 Termination
+
+The expanding-recursion rule of §20.6 extends to types: a call graph edge exists for every construction of
+a generic type, every method or initializer call on one, every conformance witness, and every field,
+signature or function-typed field naming a generic type. A cycle in which a parameter maps to a type
+strictly containing a parameter of the cycle (`struct S<T> { var next: S<[T]>? }`) is
+`type-checking.expanding-generic-recursion`. Instances are reported and bounded as in §20.6.
+
+A struct that owns values of `T` through an `Int` address has no field of type `T`; it must declare
+`deinit` (§4.1.1) or a copy would destroy the values twice.
+
+#### 20.12.5 Layout intrinsics (toolchain-authorized units only)
+
+Five compiler-known generic functions give runtime code the layout of a type. They are not `@c_extern`
+imports (§19.4.5), need no declaration, are in scope only in toolchain-authorized units (elsewhere
+`type-checking.unauthorized-intrinsic`), and cannot be used as function values or appear in a public
+signature. An address is an `Int`; no pointer type exists. `T` is not `Never`, `Any` or linear.
+
+| Function | Meaning |
+|---|---|
+| `joyeer_intrinsic_size_of<T>(): Int` | Size in bytes of one `T` in memory, a multiple of its alignment, the same for every use of the same concrete type in a program |
+| `joyeer_intrinsic_align_of<T>(): Int` | Alignment in bytes |
+| `joyeer_intrinsic_move_in<T>(address: Int, value: consuming T)` | Stores `value` at `address`; the slot now owns it |
+| `joyeer_intrinsic_move_out<T>(address: Int): T` | Returns the value at `address` as an owned `T`; the slot is uninitialized afterwards |
+| `joyeer_intrinsic_destroy_at<T>(address: Int)` | Destroys the value at `address` as a dropped `T` is (a `deinit`, then fields, releasing heap storage); the slot is uninitialized afterwards |
+
+Explicit type arguments are accepted only on these names, only in authorized units (`intrinsic_call`,
+Appendix C); in an ordinary program `joyeer_intrinsic_x < y > (z)` is a comparison. `Void` has size 0 and
+alignment 1; for a zero-size `T` the three memory operations do nothing. Every Joyeer value is bitwise
+relocatable, so a buffer of `T` may be moved with `memcpy` or `memmove`. The address must be aligned for `T`
+and, for `move_in`, hold no live value; nothing checks either. `destroy_at` equals discarding the result of
+`move_out`. `move_in`'s `value` is an ordinary `consuming` argument for exclusivity and ownership (§4). A
+leaked slot leaks, and destroying a slot twice is undefined: no safety claim is made. There is no borrowing
+access to a slot yet.

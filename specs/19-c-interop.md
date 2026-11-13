@@ -297,6 +297,10 @@ function values (§5.6.1).
 | `joyeer_intrinsic_syscall` | `(number: Int, first: Int, second: Int, third: Int, fourth: Int, fifth: Int, sixth: Int) -> Int` | A Linux system call: `number` and the six arguments in the architecture's registers, the kernel's result returned unchanged (-4095 to -1 is a negated `errno`). Lowers to inline assembly (`syscall` on x86-64, `svc #0` on AArch64); it is a diagnostic on any other architecture, and only a Linux program can run it. [Decision 0011](../docs/decisions/0011-runtime-without-the-c-library.md) |
 | `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
 
+The generic layout intrinsics (`joyeer_intrinsic_size_of`, `_align_of`,
+`_move_in`, `_move_out`, `_destroy_at`) are a separate family: they are not
+`@c_extern` imports and need no declaration (§20.12.5).
+
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
 location. The operations assume a little-endian target; the supported targets
 are. An address from `address_of` is meaningful only while the array it came

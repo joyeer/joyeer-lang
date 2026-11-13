@@ -165,6 +165,9 @@ through a function value (§5.6.1) and in enum construction (§5.8).
 
 #### 5.6.1 Function values and calls through them
 
+The layout intrinsics of §20.12.5 are compiler-known functions, not function
+values: they can only be called, and only in toolchain-authorized units.
+
 The name of a function, used as an expression where it is not called, is a
 **function value** of its function type (§2.3.1,
 [decision 0020](../docs/decisions/0020-function-values.md)):

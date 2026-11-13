@@ -394,6 +394,8 @@ struct StructDeclSyntax final : DeclSyntax {
     using Ptr = std::shared_ptr<StructDeclSyntax>;
 
     Token::Ptr name;
+    // `struct Box<T: P>` (spec 20.12): empty when not generic.
+    std::vector<GenericParameterSyntax::Ptr> genericParameters;
     std::vector<StructFieldDeclSyntax::Ptr> fields;
     std::vector<FunctionDeclSyntax::Ptr> methods;
     // The `deinit() { ... }` member, if any (spec 3.7.1). It is a method-like function
@@ -446,6 +448,8 @@ struct EnumDeclSyntax final : DeclSyntax {
     using Ptr = std::shared_ptr<EnumDeclSyntax>;
 
     Token::Ptr name;
+    // `enum Tree<T>` (spec 20.12): empty when not generic.
+    std::vector<GenericParameterSyntax::Ptr> genericParameters;
     std::vector<EnumCaseDeclSyntax::Ptr> cases;
     std::vector<FunctionDeclSyntax::Ptr> methods;
 
