@@ -1472,6 +1472,8 @@ add_joyeer_rejected_regression(TypeGenericsRejectsUnboundedCopy type-checking
         generic_copy type-checking.copy-of-noncopyable)
 add_joyeer_rejected_regression(TypeGenericsRejectsExpandingRecursion type-checking
         generic_recursion type-checking.expanding-generic-recursion)
+add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursion type-checking
+        generic_type_recursion type-checking.expanding-generic-recursion)
 
 add_test(NAME GenericsInstantiationReport
         COMMAND ${CMAKE_COMMAND}
@@ -1480,6 +1482,15 @@ add_test(NAME GenericsInstantiationReport
                 -DEXPECTED_FILE=${JOYEER_TESTS_DIR}/type-checking/generics_report.txt
                 -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstantiationReport.cmake)
 set_tests_properties(GenericsInstantiationReport PROPERTIES
+        LABELS "diagnostics;generics;ir-lowering" TIMEOUT 60)
+
+add_test(NAME GenericTypesInstantiationReport
+        COMMAND ${CMAKE_COMMAND}
+                -DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>
+                -DINPUT_FILE=${JOYEER_TESTS_DIR}/type-checking/generic_types_report.joyeer
+                -DEXPECTED_FILE=${JOYEER_TESTS_DIR}/type-checking/generic_types_report.txt
+                -P ${JOYEER_SOURCE_DIR}/scripts/cmake/verifyInstantiationReport.cmake)
+set_tests_properties(GenericTypesInstantiationReport PROPERTIES
         LABELS "diagnostics;generics;ir-lowering" TIMEOUT 60)
 
 add_test(NAME DiagnosticsCliRejectsUnsatisfiedGenericConstraint

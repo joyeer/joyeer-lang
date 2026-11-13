@@ -765,6 +765,18 @@ TEST_F(NameResolutionTest, MethodsCannotExposeLessAccessibleTypesThanTheirOwner)
     EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
 }
 
+TEST_F(NameResolutionTest, GenericTypesCannotExposeLessAccessibleConstraintProtocols) {
+    resolve("protocol Hidden { }\n"
+            "public struct Shown<T: Hidden> {\n"
+            "    var value: T\n"
+            "}\n"
+            "public enum Choice<T: Hidden> {\n"
+            "    Some(T),\n"
+            "    None\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
+}
+
 TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
     resolve(readFixture("parser/ok/json_mvp.joyeer"));
 

@@ -114,6 +114,18 @@ bool printInstantiationReport(
                << std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size())
                << ':' << line << " | " << size->second << " IR instructions\n";
     }
+    // Instances of generic structs and enums are listed after the functions (decision 0022).
+    std::vector<std::string> typeLines;
+    for (const auto& structure : module.structures) {
+        if (model.genericParameters(structure.symbol) == nullptr) continue;
+        typeLines.push_back(structure.name + " | struct | " + std::to_string(structure.fields.size()) + " fields\n");
+    }
+    for (const auto& enumeration : module.enumerations) {
+        if (model.genericParameters(enumeration.symbol) == nullptr) continue;
+        typeLines.push_back(enumeration.name + " | enum | " + std::to_string(enumeration.cases.size()) + " cases\n");
+    }
+    std::sort(typeLines.begin(), typeLines.end());
+    for (const auto& line : typeLines) report << line;
     std::cout << report.str();
     if (!std::cout) {
         diagnostics.reportDiagnostic(ErrorLevel::failure, "driver.instantiation-report-write-failed",

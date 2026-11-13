@@ -590,6 +590,7 @@ private:
         structure.name = declaration->name == nullptr
                 ? std::string()
                 : declaration->name->rawValue;
+        if (instance.has_value()) structure.name = model->types().displayName(*instance);
         for (const auto& field : declaration->fields) {
             const auto fieldSymbol = semanticModel.declaredSymbol(field);
             auto fieldType = fieldSymbol.has_value()
@@ -633,6 +634,7 @@ private:
         enumeration.name = declaration->name == nullptr
                 ? std::string()
                 : declaration->name->rawValue;
+        if (instance.has_value()) enumeration.name = model->types().displayName(*instance);
         for (const auto& enumCase : declaration->cases) {
             const auto caseSymbol = semanticModel.declaredSymbol(enumCase);
             if (!caseSymbol.has_value()) continue;

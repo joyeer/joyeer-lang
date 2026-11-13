@@ -164,6 +164,11 @@ The current instruction set covers:
   exact type, the operand count and categories, the result, and that a call (direct or indirect)
   returning `Never` is followed by `unreachable`. The backend lowers a function type to `ptr` and the call
   to one indirect call whose LLVM type comes from the same helper as every function definition;
+- layout intrinsics ([decision 0022](../decisions/0022-generic-types-and-layout-intrinsics.md)): `type_size` and
+  `type_alignment` yield an `Int` for the type in `integerValue`, as constant expressions the target's data layout
+  folds (the portable module has no layout), and `integer_address` turns an `Int` into the address of a slot of the
+  result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
+  wire format version is 17;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses

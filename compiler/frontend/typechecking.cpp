@@ -2013,6 +2013,7 @@ private:
             semantic::SymbolId to;
             bool expanding;
             SourceSpan span;
+            bool inType = false;
         };
         std::vector<Edge> edges;
         std::unordered_map<semantic::SymbolId, std::vector<size_t>> outgoing;
@@ -2035,6 +2036,65 @@ private:
                 }
             }
         }
+        // A field or payload of a generic type that names a generic type passes the declaration's
+        // parameters on, so the same rule applies to types: `struct S<T> { var next: S<Box<T>> }` has
+        // infinitely many layouts (spec 20.12.4).
+        std::vector<semantic::SymbolId> declarations;
+        for (const auto& [symbolId, parameters] : model->genericParameterLists) {
+            const auto* declared = symbolOf(symbolId);
+            if (declared != nullptr && (declared->kind == semantic::SymbolKind::structure ||
+                                        declared->kind == semantic::SymbolKind::enumeration)) {
+                declarations.push_back(symbolId);
+            }
+        }
+        std::sort(declarations.begin(), declarations.end());
+        for (const auto declaration : declarations) {
+            const auto* declared = symbolOf(declaration);
+            const auto& parameters = model->genericParameterLists.at(declaration);
+            if (!declared->declaration.has_value()) continue;
+            const auto node = model->semanticModelValue->node(*declared->declaration);
+            if (node == nullptr) continue;
+            std::vector<TypeId> memberTypes;
+            const auto addMember = [&](semantic::SymbolId member) {
+                if (const auto type = model->typeOf(member)) memberTypes.push_back(*type);
+            };
+            if (node->kind == syntax::Kind::structDecl) {
+                for (const auto& field : std::static_pointer_cast<syntax::StructDeclSyntax>(node)->fields) {
+                    if (const auto member = model->semanticModelValue->declaredSymbol(field)) addMember(*member);
+                }
+            } else if (node->kind == syntax::Kind::enumDecl) {
+                for (const auto& enumCase : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->cases) {
+                    const auto caseSymbol = model->semanticModelValue->declaredSymbol(enumCase);
+                    const auto* signature = caseSymbol.has_value() ? model->callable(*caseSymbol) : nullptr;
+                    if (signature != nullptr) {
+                        for (const auto payload : signature->parameters) memberTypes.push_back(payload);
+                    }
+                }
+            }
+            std::vector<TypeId> pending = std::move(memberTypes);
+            std::unordered_set<TypeId> seen;
+            while (!pending.empty()) {
+                const auto current = pending.back();
+                pending.pop_back();
+                if (!seen.insert(current).second) continue;
+                const auto* record = model->typeContext.type(current);
+                if (record == nullptr) continue;
+                const auto* targetParameters = (record->kind == TypeKind::structure ||
+                                                record->kind == TypeKind::enumeration)
+                        ? model->genericParameters(record->symbol) : nullptr;
+                for (size_t index = 0; index < record->arguments.size(); ++index) {
+                    pending.push_back(record->arguments[index]);
+                    if (targetParameters == nullptr || index >= targetParameters->size()) continue;
+                    for (const auto parameter : parameters) {
+                        if (!mentionsAny(record->arguments[index], { parameter })) continue;
+                        const auto* argument = model->typeContext.type(record->arguments[index]);
+                        const bool direct = argument != nullptr && argument->kind == TypeKind::typeParameter;
+                        outgoing[parameter].push_back(edges.size());
+                        edges.push_back({ parameter, (*targetParameters)[index], !direct, declared->span, true });
+                    }
+                }
+            }
+        }
         // An expanding edge from `a` to `b` closes a cycle when `a` is reachable from `b`.
         for (const auto& edge : edges) {
             if (!edge.expanding) continue;
@@ -2051,6 +2111,13 @@ private:
                 }
             }
             if (!cycle) continue;
+            if (edge.inType) {
+                report(TypeCheckingDiagnosticId::expandingGenericRecursion, edge.span,
+                       "type parameter '" + symbolName(edge.from) + "' is passed on inside a larger type by a field or "
+                       "case payload in a cycle of generic types, which would need infinitely many layouts (spec 20.12.4)",
+                       "make the recursive field use the same type arguments");
+                return;
+            }
             report(TypeCheckingDiagnosticId::expandingGenericRecursion, edge.span,
                    "this call passes type parameter '" + symbolName(edge.from) +
                            "' on inside a larger type in a cycle of generic calls, which would need "
@@ -2147,13 +2214,25 @@ private:
             instance.function = call.callee;
             instance.arguments = arguments;
             const auto* parameters = model->genericParameters(call.callee);
-            std::string name = model->functionDisplayName(call.callee) + "<";
+            std::string arguments_text;
             for (size_t index = 0; parameters != nullptr && index < parameters->size(); ++index) {
                 instance.substitution.emplace((*parameters)[index], arguments[index]);
-                if (index != 0) name += ", ";
-                name += model->typeContext.displayName(arguments[index], true);
+                if (index != 0) arguments_text += ", ";
+                arguments_text += model->typeContext.displayName(arguments[index], true);
             }
-            instance.name = name + ">";
+            // A method or `deinit` of a generic type is named for the receiver's instance:
+            // `Box<Int>.get` (decision 0022).
+            auto name = model->functionDisplayName(call.callee);
+            const auto* callee = symbolOf(call.callee);
+            const auto* owner = callee != nullptr && callee->containingSymbol.has_value()
+                    ? symbolOf(*callee->containingSymbol) : nullptr;
+            const auto ownerEnd = owner == nullptr ? std::string::npos : name.rfind(owner->name + ".");
+            if (ownerEnd != std::string::npos && !owner->typeParameters.empty()) {
+                name.insert(ownerEnd + owner->name.size(), "<" + arguments_text + ">");
+                instance.name = name;
+            } else {
+                instance.name = name + "<" + arguments_text + ">";
+            }
             instance.requiredAt = call.span;
             instance.requiredBy = requiredBy;
             instance.depth = depth;

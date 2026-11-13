@@ -3683,3 +3683,38 @@ TEST_F(TypeCheckingTest, ConstructionWithoutExpectedTypeCannotInferOpenParameter
     EXPECT_FALSE(checking.succeeded());
     EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("cannot-infer-type-parameter"), std::string::npos);
 }
+
+// Spec 20.12.4: a generic type whose field passes a parameter on inside a larger type of its own cycle
+// has infinitely many layouts.
+TEST_F(TypeCheckingTest, RejectsExpandingRecursionThroughGenericTypeFields) {
+    check("struct Box<T> {\n"
+          "    var value: T\n"
+          "}\n"
+          "struct Grow<T> {\n"
+          "    var next: Grow<Box<T>>\n"
+          "}\n");
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("expanding-generic-recursion"), std::string::npos);
+}
+
+TEST_F(TypeCheckingTest, RejectsExpandingRecursionThroughMutuallyRecursiveGenericTypes) {
+    check("struct Box<T> {\n"
+          "    var value: T\n"
+          "}\n"
+          "enum Left<T> {\n"
+          "    Go(Right<Box<T>>),\n"
+          "    Stop\n"
+          "}\n"
+          "enum Right<U> {\n"
+          "    Go(Left<U>),\n"
+          "    Stop\n"
+          "}\n");
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("expanding-generic-recursion"), std::string::npos);
+}
+
+TEST_F(TypeCheckingTest, AcceptsGenericTypeCyclesThatKeepTheirArguments) {
+    check("struct Swap<A, B> {\n"
+          "    var first: A\n"
+          "    var other: Optional<Swap<B, A>>\n"
+          "}\n");
+    EXPECT_EQ(joyeer::typing::dump(checking.diagnostics).find("expanding-generic-recursion"), std::string::npos);
+}

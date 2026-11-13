@@ -1461,6 +1461,16 @@ private:
                         validateExposedType(constraint, declaration);
                     }
                 }
+            } else if (declaration.kind == SymbolKind::structure || declaration.kind == SymbolKind::enumeration) {
+                // The constraint protocols of a generic type are exposed names too (spec 20.12, 12.2).
+                const auto& parameters = declaration.kind == SymbolKind::structure
+                        ? std::static_pointer_cast<syntax::StructDeclSyntax>(node)->genericParameters
+                        : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->genericParameters;
+                for (const auto& parameter : parameters) {
+                    for (const auto& constraint : parameter->constraints) {
+                        validateExposedType(constraint, declaration);
+                    }
+                }
             } else if (declaration.kind == SymbolKind::method) {
                 // A member is never more accessible than the type that owns it.
                 auto exposed = declaration;

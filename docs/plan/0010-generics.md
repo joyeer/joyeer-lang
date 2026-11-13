@@ -134,7 +134,7 @@ exactly. No closures, methods or generic functions as values.
   extensions and unconditional conformance, ownership, termination, layout intrinsics) with §2.6, §3.2.3,
   §3.3, §3.5, §3.9, §4.1.1, §5.6.1, §19.4.5, §20.4, §20.4.1, §20.4.2, §20.8, §20.10 and Appendix C amended
   per 0022. Documentation only; not built or run.
-- [ ] Failing tests, then parsing, type checking and instantiation of generic types.
+- [x] Failing tests, then parsing, type checking and instantiation of generic types. Evidence: parser, name-resolution and type-checking unit tests, `E2EGenericTypes`/`E2EGenericDeinit` at -O0 to -O3, `GenericTypesInstantiationReport`, `TypeGenericTypesRejectExpandingRecursion`; expected-type inference, type-level expanding recursion, the exposed-constraint check and report lines are included. Windows x64 Debug, full ctest 1628 of 1628.
 - [x] Runtime-only intrinsics: size and alignment of `T`, moving a `T` into and out of an address, and
   destroying a `T` at an address. Evidence: `tests/c-interop/layout-intrinsics.joyeer`
   (`JoyeerCInterop.LayoutIntrinsicsDebug`/`Optimized`) and four unit tests in `cinterop_test.cpp`; Windows x64

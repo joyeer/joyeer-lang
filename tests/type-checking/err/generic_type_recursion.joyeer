@@ -1,0 +1,11 @@
+// A field that passes a type parameter on inside a larger type in a cycle needs infinitely many layouts.
+struct Box<T> {
+    var value: T
+}
+
+struct Grow<T> {
+    var next: Grow<Box<T>>
+}
+
+func main() {
+}
