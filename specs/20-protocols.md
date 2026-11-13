@@ -577,7 +577,7 @@ signature. An address is an `Int`; no pointer type exists. `T` is not `Never`, `
 
 Explicit type arguments are accepted only on these names, only in authorized units (`intrinsic_call`,
 Appendix C); in an ordinary program `joyeer_intrinsic_x < y > (z)` is a comparison. `Void` has size 0 and
-alignment 1; for a zero-size `T` the three memory operations do nothing. Every Joyeer value is bitwise
+alignment 1; for `Void` the three memory operations do nothing (a struct without stored fields is accessed like any other value). Every Joyeer value is bitwise
 relocatable, so a buffer of `T` may be moved with `memcpy` or `memmove`. The address must be aligned for `T`
 and, for `move_in`, hold no live value; nothing checks either. `destroy_at` equals discarding the result of
 `move_out`. `move_in`'s `value` is an ordinary `consuming` argument for exclusivity and ownership (§4). A

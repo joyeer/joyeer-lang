@@ -198,7 +198,7 @@ or linear.
   arguments ')'`. A `>>` token inside the type arguments is split in type context (as `Box<Box<Int>>`
   already must be; both are parser tests).
 - **Semantics.** `Void` has size 0 and alignment 1; `Bool` and every other type has its store size.
-  A zero-size `T` makes `move_in`, `move_out` and `destroy_at` no-ops. Every Joyeer value is bitwise
+  `Void` makes `move_in`, `move_out` and `destroy_at` no-ops; a struct without stored fields is accessed like any other value. Every Joyeer value is bitwise
   relocatable (nothing stores its own address), which is what lets library code grow a buffer with
   `memcpy`/`memmove`. The address must be aligned for `T` and, for `move_in`, hold no live value;
   nothing checks either. `destroy_at` is equivalent to discarding the result of `move_out` and is kept

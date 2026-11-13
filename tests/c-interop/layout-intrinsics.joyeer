@@ -69,6 +69,11 @@ func exercise(): Int {
     if token.id != 7 { return 10 }
     if atomicLoad(address: slot(index: 50)) != 0 { return 11 }
 
+    // A heap value (a String) and a Bool move through memory too.
+    let text = roundTrip(value: consume "hello")
+    if text.count != 5 { return 13 }
+    if joyeer_intrinsic_size_of<Bool>() != 1 { return 14 }
+
     // destroy_at runs the deinit exactly once.
     discard(value: consume Token(id: 8))
     if atomicLoad(address: slot(index: 50)) != 1 { return 12 }

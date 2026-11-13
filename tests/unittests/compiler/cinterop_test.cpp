@@ -1355,3 +1355,82 @@ func run(): String {
     EXPECT_NE(text.find("call_indirect"), std::string::npos);
 }
 } // namespace
+
+namespace {
+const char* const layoutProgram = R"(
+struct Box<T> {
+    var value: T
+}
+func measure<T>(value: consuming T): Int {
+    let address = 4096
+    joyeer_intrinsic_move_in<T>(address: address, value: consume value)
+    let again = joyeer_intrinsic_move_out<T>(address: address)
+    return joyeer_intrinsic_size_of<T>()
+}
+func main() {
+    let a = measure(value: consume 3)
+    let b = measure(value: consume "text")
+    let c = Box(value: 1)
+    let d = Box(value: "s")
+}
+)";
+}
+
+// The layout opcodes verify only in a runtime function, with a known concrete queried type.
+TEST_F(CInteropTest, VerifierChecksLayoutOpcodes) {
+    lower(layoutProgram);
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+
+    const auto find = [&](joyeer::ir::Opcode opcode) -> joyeer::ir::Instruction* {
+        for (auto& value : module->functions) {
+            for (auto& block : value.blocks) {
+                for (auto& instruction : block.instructions) {
+                    if (instruction.opcode == opcode) return &instruction;
+                }
+            }
+        }
+        return nullptr;
+    };
+    auto* size = find(joyeer::ir::Opcode::typeSize);
+    auto* address = find(joyeer::ir::Opcode::integerAddress);
+    ASSERT_NE(size, nullptr);
+    ASSERT_NE(address, nullptr);
+
+    const auto original = size->integerValue;
+    size->integerValue = 1000000;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    size->integerValue = original;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+
+    address->result->category = joyeer::ir::ValueCategory::value;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    address->result->category = joyeer::ir::ValueCategory::address;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+
+    const auto operands = address->operands;
+    address->operands.clear();
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+    address->operands = operands;
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+
+    for (auto& value : module->functions) value.runtimeContext = false;
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}
+
+// One structure per concrete instance, named for it; a field symbol repeats across instances but not
+// within one structure.
+TEST_F(CInteropTest, GenericStructsLowerToOneStructurePerInstance) {
+    lower(layoutProgram);
+    std::vector<std::string> names;
+    for (const auto& structure : module->structures) names.push_back(structure.name);
+    EXPECT_NE(std::find(names.begin(), names.end(), "Box<Int>"), names.end());
+    EXPECT_NE(std::find(names.begin(), names.end(), "Box<String>"), names.end());
+    ASSERT_TRUE(joyeer::ir::Verifier().verify(*module).succeeded());
+
+    for (auto& structure : module->structures) {
+        if (structure.name != "Box<Int>") continue;
+        ASSERT_FALSE(structure.fields.empty());
+        structure.fields.push_back(structure.fields.front());
+    }
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*module).succeeded());
+}

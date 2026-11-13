@@ -1043,6 +1043,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EGenericDeinit generic_deinit
             "1\n300\ns\n400\n400\n7\n200\n100\n"
             0 1 2 3)
+    add_joyeer_native_regression(
+            E2EGenericCases generic_cases
+            "7\n0\n"
+            0 1 2 3)
     foreach(level 0 2)
         add_test(NAME E2EGenericDependencyO${level}
                 COMMAND ${CMAKE_COMMAND}
@@ -1474,6 +1478,8 @@ add_joyeer_rejected_regression(TypeGenericsRejectsExpandingRecursion type-checki
         generic_recursion type-checking.expanding-generic-recursion)
 add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursion type-checking
         generic_type_recursion type-checking.expanding-generic-recursion)
+add_joyeer_rejected_regression(TypeGenericTypesRejectExpandingRecursionWithUse type-checking
+        generic_type_recursion_use type-checking.expanding-generic-recursion)
 
 add_test(NAME GenericsInstantiationReport
         COMMAND ${CMAKE_COMMAND}

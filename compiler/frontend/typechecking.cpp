@@ -849,6 +849,11 @@ public:
         const auto& root = semanticModel->root();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+            const auto declarationDiagnostics = diagnostics.size();
+            checkExpandingRecursion(true);
+            if (diagnostics.size() != declarationDiagnostics) {
+                return TypeCheckingResult { model, std::move(diagnostics) };
+            }
             checkConstraintConflicts();
             for (const auto& item : root->items) {
                 if (item->kind == syntax::Kind::extensionDecl) {
@@ -859,6 +864,7 @@ public:
             for (const auto& [type, span] : enumPayloadChecks) requireNoLinearDictionary(type, span);
             validateNativeSymbols();
             for (const auto& item : root->items) checkTopLevelBody(item);
+            checkPendingTypeArguments();
         }
         validateDeferredReferences();
         // Instances are found only for a program that checked cleanly (decision 0021).
@@ -1726,7 +1732,19 @@ private:
     enum class ArgumentInformation { typed, literal, none };
 
     // Spec 20.4.1: literals are unified after typed arguments; `nil`, `[]`, `[:]`, `.Case` say nothing.
-    static ArgumentInformation argumentInformation(const syntax::ExprPtr& value) {
+    // `Tree.Leaf`: a payloadless case of a generic enum, whose type arguments only context can supply.
+    bool isOpenCaseReference(const syntax::ExprPtr& value) const {
+        if (value == nullptr) return false;
+        if (value->kind == syntax::Kind::contextualCaseExpr) return true;
+        if (value->kind != syntax::Kind::memberExpr) return false;
+        const auto referenced = model->referencedSymbol(value);
+        const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+        return symbol != nullptr && symbol->kind == semantic::SymbolKind::enumCase &&
+                (!symbol->callable.has_value() || symbol->callable->parameters.empty()) &&
+                symbol->containingSymbol.has_value() && model->genericParameters(*symbol->containingSymbol) != nullptr;
+    }
+
+    ArgumentInformation argumentInformation(const syntax::ExprPtr& value) const {
         if (value == nullptr) return ArgumentInformation::none;
         switch (value->kind) {
             case syntax::Kind::parenthesizedExpr:
@@ -1747,9 +1765,14 @@ private:
                 }
                 return ArgumentInformation::typed;
             }
-            case syntax::Kind::arrayExpr:
-                return std::static_pointer_cast<syntax::ArrayExprSyntax>(value)->elements.empty()
+            case syntax::Kind::memberExpr:
+                return isOpenCaseReference(value) ? ArgumentInformation::none : ArgumentInformation::typed;
+            case syntax::Kind::arrayExpr: {
+                const auto& elements = std::static_pointer_cast<syntax::ArrayExprSyntax>(value)->elements;
+                return std::all_of(elements.begin(), elements.end(),
+                                   [&](const auto& element) { return isOpenCaseReference(element); })
                         ? ArgumentInformation::none : ArgumentInformation::typed;
+            }
             case syntax::Kind::dictionaryExpr:
                 return std::static_pointer_cast<syntax::DictionaryExprSyntax>(value)->entries.empty()
                         ? ArgumentInformation::none : ArgumentInformation::typed;
@@ -1769,6 +1792,8 @@ private:
         const std::vector<semantic::SymbolId>& parameters;
         std::unordered_map<semantic::SymbolId, TypeId> bindings;
         std::unordered_set<semantic::SymbolId> conflicted;
+        // Parameters bound by the expected type of a construction, not by an argument.
+        std::unordered_set<semantic::SymbolId> fromExpected;
     };
 
     bool mentionsAny(TypeId type, const std::vector<semantic::SymbolId>& parameters) const {
@@ -1839,6 +1864,7 @@ private:
             if (inference.bindings.contains(parameters[index])) continue;
             if (expected->arguments[index] == model->typeContext.errorType()) continue;
             inference.bindings.emplace(parameters[index], expected->arguments[index]);
+            inference.fromExpected.insert(parameters[index]);
         }
     }
 
@@ -1896,7 +1922,14 @@ private:
                         pass == ArgumentInformation::literal && !mentionsAny(expected, parameters)
                                 ? std::optional<TypeId>(expected) : std::optional<TypeId>());
                 checked[index] = actual;
-                if (actual.has_value() && *actual != model->typeContext.neverType()) {
+                // A literal checked against a type the expected type fixed may be assignable to it
+                // without being it (`Box<Int?> = Box(value: 1)`); the argument check that follows decides.
+                const bool fixedByExpectedType = pass == ArgumentInformation::literal &&
+                        !mentionsAny(expected, parameters) &&
+                        std::any_of(parameters.begin(), parameters.end(), [&](const auto parameter) {
+                            return inference.fromExpected.contains(parameter) && mentionsAny(*type, { parameter });
+                        });
+                if (actual.has_value() && *actual != model->typeContext.neverType() && !fixedByExpectedType) {
                     unify(*type, *actual, inference, argument->value->span);
                 }
             }
@@ -1949,8 +1982,13 @@ private:
     };
     std::vector<PendingTypeArguments> pendingTypeArguments;
 
+    // Annotations inside bodies add to the list while the bodies are checked, so this runs again
+    // afterwards over the entries it has not seen.
+    size_t checkedPendingTypeArguments = 0;
+
     void checkPendingTypeArguments() {
-        for (const auto& pending : pendingTypeArguments) {
+        for (; checkedPendingTypeArguments < pendingTypeArguments.size(); ++checkedPendingTypeArguments) {
+            const auto& pending = pendingTypeArguments[checkedPendingTypeArguments];
             const auto* symbol = symbolOf(pending.type);
             const auto* parameters = model->genericParameters(pending.type);
             if (symbol == nullptr || parameters == nullptr || parameters->size() != pending.arguments.size()) continue;
@@ -2007,7 +2045,9 @@ private:
     // Spec 20.6: a cycle of generic calls in which a type parameter is passed on inside a larger
     // type would need infinitely many instances. Edges run from a caller's parameter to the
     // callee's parameter it reaches; an edge is expanding when the argument strictly contains it.
-    void checkExpandingRecursion() {
+    // `typesOnly` runs right after the declarations are resolved, before any body: a type that
+    // expands forever must be reported before a copyability or linearity walk follows its layout.
+    void checkExpandingRecursion(bool typesOnly = false) {
         struct Edge {
             semantic::SymbolId from;
             semantic::SymbolId to;
@@ -2021,7 +2061,7 @@ private:
         for (const auto& [node, call] : model->genericCalls) calls.emplace_back(node, &call);
         std::sort(calls.begin(), calls.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
         for (const auto& [node, call] : calls) {
-            if (!call->caller.has_value()) continue;
+            if (typesOnly || !call->caller.has_value()) continue;
             const auto* callerParameters = model->genericParameters(*call->caller);
             const auto* calleeParameters = model->genericParameters(call->callee);
             if (callerParameters == nullptr || calleeParameters == nullptr) continue;
@@ -2867,6 +2907,13 @@ private:
                     "binding requires a type annotation or an initializer");
         }
 
+        // A `Never` binding with no initializer could never be given a value.
+        if (declaration->initializer == nullptr && bindingType == model->typeContext.neverType()) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, declaration->span,
+                   "a binding cannot have the type 'Never': it has no values",
+                   "'Never' is only the result type of a function that does not return (spec 2.9)");
+        }
+
         // The parser rewrites `for x in source` into a hidden `$for<N>` copy of the
         // source that is later counted and subscripted. Reject a source that cannot
         // be, and poison the binding so the rewrite adds no follow-on errors.
@@ -3252,7 +3299,7 @@ private:
             }
             case syntax::Kind::memberExpr:
                 result = checkMember(
-                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression));
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression), expected);
                 break;
             case syntax::Kind::callExpr:
                 result = checkCall(
@@ -3843,7 +3890,9 @@ private:
         return type.value_or(model->typeContext.errorType());
     }
 
-    TypeId checkMember(const syntax::MemberExprSyntax::Ptr& expression) {
+    TypeId checkMember(
+            const syntax::MemberExprSyntax::Ptr& expression,
+            std::optional<TypeId> expectedResult = std::nullopt) {
         if (model->semanticModelValue->isModuleQualified(expression)) {
             if (expression.get() != currentCallee) {
                 if (const auto value = functionValueType(expression)) return *value;
@@ -3919,8 +3968,31 @@ private:
                 return model->typeContext.errorType();
             }
         }
-        return substituteForBase(
-                model->typeOf(*member).value_or(model->typeContext.errorType()), base, *member);
+        const auto declaredType = model->typeOf(*member).value_or(model->typeContext.errorType());
+        // `Tree.Leaf` of a generic enum names no type arguments: the expected type supplies them
+        // (spec 20.12.1), and without one they cannot be inferred.
+        if (memberSymbol != nullptr && memberSymbol->kind == semantic::SymbolKind::enumCase &&
+            (!memberSymbol->callable.has_value() || memberSymbol->callable->parameters.empty()) &&
+            model->typeContext.mentionsTypeParameter(declaredType) &&
+            memberSymbol->containingSymbol.has_value() &&
+            model->genericParameters(*memberSymbol->containingSymbol) != nullptr &&
+            expression->base != nullptr && model->semanticModelValue->referencedSymbol(expression->base).has_value() &&
+            model->semanticModelValue->referencedSymbol(expression->base) == memberSymbol->containingSymbol) {
+            const auto* expected = expectedResult.has_value() ? model->typeContext.type(*expectedResult) : nullptr;
+            if (expected != nullptr && expected->kind == TypeKind::optional && expected->arguments.size() == 1) {
+                expectedResult = expected->arguments[0];
+                expected = model->typeContext.type(*expectedResult);
+            }
+            if (expected != nullptr && expected->symbol == *memberSymbol->containingSymbol &&
+                !expected->arguments.empty()) {
+                return *expectedResult;
+            }
+            report(TypeCheckingDiagnosticId::cannotInferTypeParameter, expression->span,
+                   "cannot infer the type arguments of '" + memberSymbol->name + "' from the case alone",
+                   "give the binding or result an annotation, such as 'let t: Tree<Int> = Tree.Leaf' (spec 20.12.1)");
+            return model->typeContext.errorType();
+        }
+        return substituteForBase(declaredType, base, *member);
     }
 
     // The substitution a use of a member of `base` applies: the generic type's parameters replaced by

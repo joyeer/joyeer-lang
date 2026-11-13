@@ -3718,3 +3718,80 @@ TEST_F(TypeCheckingTest, AcceptsGenericTypeCyclesThatKeepTheirArguments) {
           "}\n");
     EXPECT_EQ(joyeer::typing::dump(checking.diagnostics).find("expanding-generic-recursion"), std::string::npos);
 }
+
+// A literal that the expected type fixed may be assignable to it without being it.
+TEST_F(TypeCheckingTest, ExpectedTypeMayBeOptionalWhileTheLiteralIsNot) {
+    check("struct Box<T> {\n"
+          "    var value: T\n"
+          "}\n"
+          "func make(): Box<Double> {\n"
+          "    return Box(value: 1)\n"
+          "}\n"
+          "func main() {\n"
+          "    var a: Box<Int?> = Box(value: 1)\n"
+          "    var b: Box<Int>? = Box(value: 2)\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(TypeCheckingTest, ExpectedTypeNeverOverridesAnArgument) {
+    check("struct Box<T> {\n"
+          "    var value: T\n"
+          "}\n"
+          "func main() {\n"
+          "    let n = \"text\"\n"
+          "    var a: Box<Int> = Box(value: n)\n"
+          "}\n");
+    EXPECT_FALSE(checking.succeeded());
+}
+
+// Annotations inside bodies get the same type-argument checks as signatures (spec 20.12).
+TEST_F(TypeCheckingTest, LocalAnnotationsCheckTheirTypeArguments) {
+    check("struct Box<T: Copyable> {\n"
+          "    var value: T\n"
+          "}\n"
+          "struct Wrap<T> {\n"
+          "    var inner: T\n"
+          "}\n"
+          "struct Ticket {\n"
+          "    var n: Int\n"
+          "    deinit() { }\n"
+          "}\n"
+          "func main() {\n"
+          "    let a: Box<Ticket>? = nil\n"
+          "    let b: [Box<Ticket>] = []\n"
+          "    let c: Wrap<Never>\n"
+          "}\n");
+    const auto text = joyeer::typing::dump(checking.diagnostics);
+    EXPECT_NE(text.find("unsatisfied-constraint"), std::string::npos) << text;
+    EXPECT_NE(text.find("invalid-type-argument"), std::string::npos) << text;
+}
+
+TEST_F(TypeCheckingTest, RejectsABindingOfTypeNeverWithoutAValue) {
+    check("func main() {\n"
+          "    let c: Never\n"
+          "}\n");
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("invalid-type-argument"), std::string::npos);
+}
+
+// `Tree.Leaf` names no type arguments: the expected type supplies them, and without one it is an error.
+TEST_F(TypeCheckingTest, PayloadlessCaseOfAGenericEnumTakesItsTypeFromContext) {
+    check("enum Tree<T: Copyable> {\n"
+          "    Leaf,\n"
+          "    Node(T, [Tree<T>])\n"
+          "}\n"
+          "func make(): Tree<Int> { return Tree.Leaf }\n"
+          "func main() {\n"
+          "    let a: Tree<Int> = Tree.Node(1, [Tree.Leaf, .Leaf])\n"
+          "    let b: Tree<Int>? = Tree.Leaf\n"
+          "}\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("enum Tree<T: Copyable> {\n"
+          "    Leaf,\n"
+          "    Node(T)\n"
+          "}\n"
+          "func main() {\n"
+          "    let a = Tree.Leaf\n"
+          "}\n");
+    EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("cannot-infer-type-parameter"), std::string::npos);
+}

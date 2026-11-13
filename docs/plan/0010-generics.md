@@ -74,8 +74,12 @@ exactly. No closures, methods or generic functions as values.
 - [x] Reviews (language-designer, type-system-reviewer, ir-backend-reviewer, adversarial-tester).
   Evidence: findings recorded in decision 0020; all fixed with regression tests, and the adversarial
   probes re-run clean.
-- [ ] Validation: `scripts/validate.py` (Debug and Release) and Linux. blocked: Windows has no Python
-  (plan 0009); Windows x64 Debug ctest run by hand instead.
+- [ ] Validation: `scripts/validate.py` (Debug and Release) and Linux. Linux x86_64 (Ubuntu on WSL, LLVM 22.1.8)
+  on the exact Phase 1 tree `945ced9`: Debug and Release build and ctest pass, 1511 of 1511 each. `fern test` is
+  6 of 7 in both: `SystemTests` fails its "stderr closed descriptor" check (exit status 1), which also failed
+  6 of 7 in an earlier Linux report on `82c493c`, before Phase 1, so it is not caused by function values.
+  Still open: `validate.py` on Windows (Python is installed now, not yet on the shell's PATH) and macOS;
+  Windows x64 Debug ctest was run by hand instead.
 - [x] Update [supported features](../impl/supported-features.md). Evidence: the "Function values" row.
 
 ### Found along the way (not function values)
@@ -179,6 +183,20 @@ protocol methods, protocol inheritance, explicit type arguments at call sites, a
 They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
+
+- 2026-11-14: Phase 3 role reviews (type-system, IR/backend, adversarial). Fixed with regression tests: a
+  compiler crash (stack overflow) on `struct S<T> { var next: S<[T]>? }` once a value is copied (the type-cycle
+  check now runs before any body); spurious `conflicting-type-argument` for `Box<Int?> = Box(value: 1)`;
+  type-argument checks now apply to annotations inside bodies; `let c: Never` and `Box<Never>` locals no longer
+  crash; payloadless cases of generic enums (`Tree.Leaf`, `[.Leaf]`) take their type from the expected type;
+  verifier rules for the layout opcodes (concrete queried type, not `Never`, runtime functions only);
+  `generic-queue` sizes its buffers with `size_of` (a struct with a `deinit` has a hidden live flag, which an
+  -O1 run exposed). Still open, not fixed: deep nesting overflows the stack with no diagnostic (also
+  pre-existing, see "Found along the way"); expanding recursion through witnesses, struct construction and
+  deinit ends at the instantiation limit; `internInstanceTypes` is quadratic; `spawn` of a generic function;
+  diagnostic IDs `invalid-type-argument-count` and `type-mismatch` differ from the names in §20.8/0022;
+  `size_of<Int>()` in an unauthorized unit reports a comparison error; `>=` is not split after a type argument;
+  `Any` is not expressible yet, so its rejection as a type argument is untested.
 
 - 2026-11-13: Phase 3 layout intrinsics and expected-type inference. `name<T>(...)` parses for the five
   `joyeer_intrinsic_*` layout names only in a unit selected with `--runtime-module` (`Parser` flag); they are

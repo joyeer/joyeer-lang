@@ -1,0 +1,10 @@
+// The cycle must be reported even when a value of the type is copied: a copy check that followed the
+// layout would never end.
+struct S<T> {
+    var next: S<[T]>?
+}
+
+func main() {
+    let a: S<Int> = S(next: nil)
+    let b = a
+}

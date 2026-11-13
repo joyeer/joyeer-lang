@@ -1540,6 +1540,19 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     VerificationErrorId::typeMismatch,
                                     functionId, block.id, location,
                                     "a size or alignment query names a known type and yields an Int");
+                        } else if (nonConcreteTypes.contains(queried) ||
+                                   types.at(queried)->kind == typing::TypeKind::never) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "a size or alignment query needs a concrete type with values, not '" +
+                                            types.at(queried)->name + "'");
+                        }
+                        if (!function.runtimeContext) {
+                            report(
+                                    VerificationErrorId::callMismatch,
+                                    functionId, block.id, location,
+                                    "a layout query requires runtime authorization");
                         }
                         break;
                     }
@@ -1555,6 +1568,17 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     VerificationErrorId::typeMismatch,
                                     functionId, block.id, location,
                                     "an integer address takes an Int and yields the address of a known type");
+                        } else if (types.at(instruction.result->type)->kind == typing::TypeKind::never) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "an integer address cannot address a slot of 'Never'");
+                        }
+                        if (!function.runtimeContext) {
+                            report(
+                                    VerificationErrorId::callMismatch,
+                                    functionId, block.id, location,
+                                    "an integer address requires runtime authorization");
                         }
                         break;
                     }
