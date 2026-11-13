@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -465,7 +466,8 @@ VerificationResult Verifier::verify(const Module& module) const {
     }
 
     std::unordered_map<TypeId, const StructureDefinition*> structures;
-    std::unordered_map<semantic::SymbolId, const FieldDefinition*> fields;
+    // A field symbol repeats across the instances of a generic type (spec 20.12), so it is unique per structure.
+    std::map<std::pair<TypeId, semantic::SymbolId>, const FieldDefinition*> fields;
     for (const auto& structure : module.structures) {
         verifyConcreteType(structure.type, std::nullopt, std::nullopt, std::nullopt, "structure");
         if (!types.contains(structure.type)) {
@@ -512,7 +514,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }
             }
             if (field.symbol != semantic::invalidSymbolId &&
-                !fields.emplace(field.symbol, &field).second) {
+                !fields.emplace(std::pair { structure.type, field.symbol }, &field).second) {
                 report(
                         VerificationErrorId::duplicateId,
                         std::nullopt,

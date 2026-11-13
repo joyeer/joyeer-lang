@@ -872,6 +872,16 @@ private:
     bool insideDeinit = false;
     // Type parameters with constraints, checked for conflicting requirements once all are known.
     std::vector<semantic::SymbolId> constrainedParameters;
+    // A call of a protocol requirement on a type parameter, inside a generic function or method. When
+    // an instance fixes the parameter to an instance of a generic type, the witness is itself an
+    // instance of that type's method (spec 20.12), found while instantiating.
+    struct RequirementCall {
+        semantic::SymbolId caller;
+        semantic::SymbolId requirement;
+        TypeId base;
+        SourceSpan span;
+    };
+    std::vector<RequirementCall> requirementCalls;
     // While the methods of a struct, enum or extension are resolved: the type they belong to and the
     // type arguments `Self` stands for, which are the parameters in scope (spec 20.12).
     std::optional<semantic::SymbolId> selfOwner;
@@ -1867,8 +1877,11 @@ private:
             substitution.emplace(parameters[index], arguments[index]);
         }
         checkTypeArguments(expression, targetSymbol, parameters, arguments);
-        model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
-            target, arguments, currentFunction, expression->span };
+        // Constructing a generic type needs a layout, found from its type, not a function instance.
+        if (targetSymbol.kind == semantic::SymbolKind::function) {
+            model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
+                target, arguments, currentFunction, expression->span };
+        }
         TypedCallableSignature result = signature;
         for (auto& parameter : result.parameters) parameter = model->typeContext.substitute(parameter, substitution);
         result.result = model->typeContext.substitute(result.result, substitution);
@@ -2121,6 +2134,21 @@ private:
                 }
                 if (!require(*call, std::move(arguments), index)) return;
             }
+            // A requirement call whose receiver this instance fixes to an instance of a generic type
+            // reaches an instance of that type's witness.
+            for (const auto& requirementCall : requirementCalls) {
+                if (requirementCall.caller != function) continue;
+                const auto concrete = model->typeContext.substitute(
+                        requirementCall.base, model->instanceList[index].substitution);
+                const auto witness = model->witness(concrete, requirementCall.requirement);
+                const auto* receiver = model->typeContext.type(concrete);
+                if (!witness.has_value() || receiver == nullptr || receiver->arguments.empty() ||
+                    model->genericParameters(*witness) == nullptr) {
+                    continue;
+                }
+                const GenericCall call { *witness, receiver->arguments, function, requirementCall.span };
+                if (!require(call, receiver->arguments, index)) return;
+            }
         }
         internInstanceTypes();
     }
@@ -2135,7 +2163,49 @@ private:
                 (void) model->typeContext.substitute(id, model->instanceList[index].substitution);
             }
         }
+        internInstanceMemberTypes();
     }
+
+    // Each concrete instance of a generic struct or enum needs its field and payload types
+    // interned before lowering snapshots the table (spec 20.12). Interning one can create another
+    // instance (`Box<Box<Int>>` holds a `Box<Int>`), so this runs to a fixpoint; the expanding
+    // recursion rule makes it finite, and the cap is a backstop.
+    void internInstanceMemberTypes() {
+        size_t visited = 0;
+        while (visited < model->typeContext.size()) {
+            const auto id = static_cast<TypeId>(visited++);
+            const auto* record = model->typeContext.type(id);
+            if (record == nullptr || record->arguments.empty() || model->typeContext.mentionsTypeParameter(id) ||
+                (record->kind != TypeKind::structure && record->kind != TypeKind::enumeration)) {
+                continue;
+            }
+            const auto* symbol = symbolOf(record->symbol);
+            if (symbol == nullptr || !symbol->declaration.has_value()) continue;
+            const auto node = model->semanticModelValue->node(*symbol->declaration);
+            if (node == nullptr) continue;
+            if (node->kind == syntax::Kind::structDecl) {
+                for (const auto& field : std::static_pointer_cast<syntax::StructDeclSyntax>(node)->fields) {
+                    const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
+                    const auto declared = fieldSymbol.has_value() ? model->typeOf(*fieldSymbol) : std::nullopt;
+                    if (declared.has_value()) (void) model->memberTypeOf(id, *declared);
+                }
+            } else if (node->kind == syntax::Kind::enumDecl) {
+                for (const auto& enumCase : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->cases) {
+                    const auto caseSymbol = model->semanticModelValue->declaredSymbol(enumCase);
+                    const auto* signature = caseSymbol.has_value() ? model->callable(*caseSymbol) : nullptr;
+                    if (signature == nullptr) continue;
+                    for (const auto payload : signature->parameters) (void) model->memberTypeOf(id, payload);
+                }
+            }
+            if (model->typeContext.size() > maximumTypeTableSize) {
+                report(TypeCheckingDiagnosticId::instantiationLimit, symbol->span,
+                       "instantiating '" + symbol->name + "' needs more than " +
+                               std::to_string(maximumTypeTableSize) + " distinct types");
+                return;
+            }
+        }
+    }
+    static constexpr size_t maximumTypeTableSize = 200000;
 
     std::vector<DiagnosticSourceNote> instantiationChain(std::optional<size_t> instance) const {
         std::vector<DiagnosticSourceNote> chain;
@@ -2167,6 +2237,13 @@ private:
         }
         resolveGenericParameters(declaration, TypeCheckingDiagnosticId::invalidGenericDeclaration);
         resolveFunction(declaration);
+        // A method of a generic type is instantiated per receiver type arguments (spec 20.12), like a
+        // generic function: its parameters are those of the type or extension that declares it.
+        if (selfOwner.has_value() && !selfParameters.empty()) {
+            if (const auto method = model->semanticModelValue->declaredSymbol(declaration)) {
+                model->genericParameterLists[*method] = selfParameters;
+            }
+        }
     }
 
     void resolveFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
@@ -3876,6 +3953,12 @@ private:
                         std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
                 const auto substitution = baseSubstitution(
                         base.value_or(model->typeContext.errorType()), parametersOfMember(*target));
+                if (const auto* receiver = base.has_value() ? model->typeContext.type(*base) : nullptr;
+                    receiver != nullptr && !receiver->arguments.empty() &&
+                    model->genericParameters(*target) != nullptr) {
+                    model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
+                        *target, receiver->arguments, currentFunction, expression->span };
+                }
                 substitutedSignature = *signature;
                 for (auto& parameter : substitutedSignature.parameters) {
                     parameter = model->typeContext.substitute(parameter, substitution);
@@ -3888,6 +3971,9 @@ private:
                         std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
                 const std::unordered_map<semantic::SymbolId, TypeId> self {
                     { owner->id, base.value_or(model->typeContext.errorType()) } };
+                if (base.has_value() && currentFunction.has_value() && model->typeContext.mentionsTypeParameter(*base)) {
+                    requirementCalls.push_back({ *currentFunction, *target, *base, expression->span });
+                }
                 substitutedSignature = *signature;
                 for (auto& parameter : substitutedSignature.parameters) {
                     parameter = model->typeContext.substitute(parameter, self);
@@ -5224,10 +5310,23 @@ private:
 
         if (symbol->kind == semantic::SymbolKind::enumCase) {
             const auto* signature = model->callable(caseSymbol);
-            if (signature == nullptr || signature->result != enumerationType) {
+            if (signature == nullptr) return std::nullopt;
+            if (signature->result == enumerationType) return *signature;
+            // A case of a generic enum, seen from one of its instances (spec 20.12): the declaration's
+            // parameters are replaced by the instance's arguments.
+            const auto* declared = model->typeContext.type(signature->result);
+            const auto* instance = model->typeContext.type(enumerationType);
+            if (declared == nullptr || instance == nullptr || declared->symbol != instance->symbol ||
+                declared->arguments.empty() || instance->arguments.size() != declared->arguments.size()) {
                 return std::nullopt;
             }
-            return *signature;
+            const auto substitution = baseSubstitution(enumerationType);
+            TypedCallableSignature substituted = *signature;
+            for (auto& parameter : substituted.parameters) {
+                parameter = model->typeContext.substitute(parameter, substitution);
+            }
+            substituted.result = enumerationType;
+            return substituted;
         }
 
         const auto* type = model->typeContext.type(enumerationType);

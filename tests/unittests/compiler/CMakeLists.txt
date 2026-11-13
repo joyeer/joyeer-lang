@@ -1035,6 +1035,10 @@ if(JOYEER_CLANG_EXECUTABLE)
             E2EGenericsPropagation generics_propagation
             "ok\n10\nerr\n20\nhello\n31\ncloned\n30\n"
             0 1 2 3)
+    add_joyeer_native_regression(
+            E2EGenericTypes generic_types
+            "6\nbox\n2\n7\ntwo\n9\nfalse\nstr\n"
+            0 1 2 3)
     foreach(level 0 2)
         add_test(NAME E2EGenericDependencyO${level}
                 COMMAND ${CMAKE_COMMAND}

@@ -400,6 +400,9 @@ public:
     // Copyability (spec 4.1.1, decision 0015). A struct that declares `deinit` is noncopyable,
     // and so is anything that holds one: a struct field, an enum payload, or the element, key,
     // value, payload or error type of Array, Dict, Optional and Result.
+    // `declared` (a field or payload type written in a generic type's declaration) as `owner`, an
+    // instance of that type, sees it (spec 20.12).
+    [[nodiscard]] TypeId memberTypeOf(TypeId owner, TypeId declared) const;
     [[nodiscard]] bool isCopyable(TypeId type) const;
     // Why `type` is noncopyable, or nullopt when it is copyable.
     [[nodiscard]] std::optional<std::string> noncopyableReason(TypeId type) const;
@@ -439,9 +442,6 @@ public:
 
 private:
     [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
-    // `declared` (a field or payload type written in a generic type's declaration) as `owner`, an
-    // instance of that type, sees it (spec 20.12).
-    [[nodiscard]] TypeId memberTypeOf(TypeId owner, TypeId declared) const;
     [[nodiscard]] bool conformanceSubjectMatches(TypeId subject, TypeId type) const;
     [[nodiscard]] bool isLinear(
             TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;

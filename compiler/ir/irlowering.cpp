@@ -522,13 +522,14 @@ private:
         if (root != nullptr) {
             for (const auto& item : root->items) {
                 if (item->kind == syntax::Kind::structDecl) {
-                    collectStructure(
-                            std::static_pointer_cast<syntax::StructDeclSyntax>(item));
+                    const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                    if (declaration->genericParameters.empty()) collectStructure(declaration);
                 } else if (item->kind == syntax::Kind::enumDecl) {
-                    collectEnumeration(
-                            std::static_pointer_cast<syntax::EnumDeclSyntax>(item));
+                    const auto declaration = std::static_pointer_cast<syntax::EnumDeclSyntax>(item);
+                    if (declaration->genericParameters.empty()) collectEnumeration(declaration);
                 }
             }
+            collectGenericTypeInstances(*root);
         }
         for (typing::TypeId id = 0; id < model->types().size(); ++id) {
             const auto* type = model->types().type(id);
@@ -546,12 +547,40 @@ private:
         }
     }
 
-    void collectStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
+    // One definition per concrete instance of a generic struct or enum (spec 20.12): the type
+    // checker interned each instance and its member types before lowering.
+    void collectGenericTypeInstances(const syntax::SourceFileSyntax& root) {
+        const auto& semanticModel = *model->semanticModel();
+        for (const auto& item : root.items) {
+            const bool isStructure = item->kind == syntax::Kind::structDecl;
+            if (!isStructure && item->kind != syntax::Kind::enumDecl) continue;
+            const auto symbol = semanticModel.declaredSymbol(item);
+            if (!symbol.has_value() || model->genericParameters(*symbol) == nullptr) continue;
+            for (typing::TypeId id = 0; id < model->types().size(); ++id) {
+                const auto* type = model->types().type(id);
+                if (type == nullptr || type->symbol != *symbol || type->arguments.empty() ||
+                    model->types().mentionsTypeParameter(id)) {
+                    continue;
+                }
+                if (isStructure) {
+                    collectStructure(std::static_pointer_cast<syntax::StructDeclSyntax>(item), id);
+                } else {
+                    collectEnumeration(std::static_pointer_cast<syntax::EnumDeclSyntax>(item), id);
+                }
+            }
+        }
+    }
+
+    // `instance` is the concrete type of a generic declaration's instance; its field types are the
+    // declared ones with the instance's arguments substituted.
+    void collectStructure(
+            const syntax::StructDeclSyntax::Ptr& declaration,
+            std::optional<typing::TypeId> instance = std::nullopt) {
         const auto& semanticModel = *model->semanticModel();
         const auto symbol = semanticModel.declaredSymbol(declaration);
-        const auto type = symbol.has_value()
-                ? typeOf(*symbol)
-                : std::optional<typing::TypeId>();
+        const auto type = instance.has_value()
+                ? instance
+                : symbol.has_value() ? typeOf(*symbol) : std::optional<typing::TypeId>();
         if (!symbol.has_value() || !type.has_value()) return;
 
         ir::StructureDefinition structure;
@@ -562,10 +591,11 @@ private:
                 : declaration->name->rawValue;
         for (const auto& field : declaration->fields) {
             const auto fieldSymbol = semanticModel.declaredSymbol(field);
-            const auto fieldType = fieldSymbol.has_value()
+            auto fieldType = fieldSymbol.has_value()
                     ? typeOf(*fieldSymbol)
                     : std::optional<typing::TypeId>();
             if (!fieldSymbol.has_value() || !fieldType.has_value()) continue;
+            if (instance.has_value()) fieldType = model->memberTypeOf(*instance, *fieldType);
             const auto* semanticField = semanticModel.symbol(*fieldSymbol);
             structure.fields.push_back(ir::FieldDefinition {
                 *fieldSymbol,
@@ -586,12 +616,14 @@ private:
         module->structures.push_back(std::move(structure));
     }
 
-    void collectEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
+    void collectEnumeration(
+            const syntax::EnumDeclSyntax::Ptr& declaration,
+            std::optional<typing::TypeId> instance = std::nullopt) {
         const auto& semanticModel = *model->semanticModel();
         const auto symbol = semanticModel.declaredSymbol(declaration);
-        const auto type = symbol.has_value()
-                ? typeOf(*symbol)
-                : std::optional<typing::TypeId>();
+        const auto type = instance.has_value()
+                ? instance
+                : symbol.has_value() ? typeOf(*symbol) : std::optional<typing::TypeId>();
         if (!symbol.has_value() || !type.has_value()) return;
 
         ir::EnumerationDefinition enumeration;
@@ -604,12 +636,15 @@ private:
             const auto caseSymbol = semanticModel.declaredSymbol(enumCase);
             if (!caseSymbol.has_value()) continue;
             const auto* signature = model->callable(*caseSymbol);
+            std::vector<typing::TypeId> payloads = signature == nullptr
+                    ? std::vector<typing::TypeId>() : signature->parameters;
+            if (instance.has_value()) {
+                for (auto& payload : payloads) payload = model->memberTypeOf(*instance, payload);
+            }
             enumeration.cases.push_back(ir::EnumCaseDefinition {
                 *caseSymbol,
                 enumCase->name == nullptr ? std::string() : enumCase->name->rawValue,
-                signature == nullptr
-                        ? std::vector<typing::TypeId>()
-                        : signature->parameters,
+                std::move(payloads),
             });
         }
         module->enumerations.push_back(std::move(enumeration));
@@ -678,7 +713,10 @@ private:
             }
         }
         // Methods are functions whose first parameter is the implicit receiver.
-        forEachMethod(*root, [this](const syntax::FunctionDeclSyntax::Ptr& method) {
+        forEachMethod(*root, [this, &semanticModel](const syntax::FunctionDeclSyntax::Ptr& method) {
+            // A method of a generic type is collected per instance below (spec 20.12).
+            const auto symbol = semanticModel.declaredSymbol(method);
+            if (symbol.has_value() && model->genericParameters(*symbol) != nullptr) return;
             collectFunction(method);
         });
         collectInstances(*root);
@@ -1077,7 +1115,7 @@ private:
         }
         forEachMethod(*root, [this, &semanticModel](const syntax::FunctionDeclSyntax::Ptr& method) {
             const auto symbol = semanticModel.declaredSymbol(method);
-            if (!symbol.has_value()) return;
+            if (!symbol.has_value() || model->genericParameters(*symbol) != nullptr) return;
             const auto found = functions.find(*symbol);
             if (found != functions.end()) lowerFunction(method, found->second);
         });
@@ -3035,6 +3073,17 @@ private:
             const auto base = typeOf(std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
             const auto witness = base.has_value() ? model->witness(*base, target) : std::nullopt;
             if (!witness.has_value()) return std::nullopt;
+            if (model->genericParameters(*witness) != nullptr) {
+                // A witness declared in a generic type is an instance of the receiver's arguments.
+                const auto* receiver = model->types().type(*base);
+                if (receiver == nullptr) return std::nullopt;
+                const auto instance = model->instanceIndex(*witness, receiver->arguments);
+                if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                    instanceFunctions[*instance] == ir::invalidFunctionId) {
+                    return std::nullopt;
+                }
+                return instanceFunctions[*instance];
+            }
             const auto found = functions.find(*witness);
             if (found == functions.end()) return std::nullopt;
             return found->second;
@@ -3509,8 +3558,9 @@ private:
         const auto structure = std::find_if(
                 module->structures.begin(),
                 module->structures.end(),
-                [initializerSymbol](const auto& candidate) {
-                    return candidate.symbol == *initializerSymbol->containingSymbol;
+                [initializerSymbol, &type](const auto& candidate) {
+                    return candidate.symbol == *initializerSymbol->containingSymbol &&
+                            candidate.type == *type;
                 });
         if (structure == module->structures.end()) {
             report(

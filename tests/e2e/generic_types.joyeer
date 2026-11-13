@@ -1,0 +1,60 @@
+// Generic structs and enums (spec 20.12, decision 0022): construction infers the type arguments, members
+// and methods see the instance's arguments, an extension header names its own parameters, and a generic
+// type satisfies a protocol constraint through an unconditional conformance.
+protocol Named {
+    func name(): String
+}
+
+struct Box<T: Copyable> {
+    var value: T
+    func get(): T { return self.value }
+    mutating func set(value: T) { &self.value = value }
+}
+
+extension Box<U>: Named {
+    func name(): String { return "box" }
+    func twice(): Int { return 2 }
+}
+
+struct Pair<A: Copyable, B: Copyable> {
+    var first: A
+    var second: B
+}
+
+enum Tree<T: Copyable> {
+    Leaf,
+    Node(T)
+
+    func isLeaf(): Bool {
+        return match self {
+            .Leaf => true,
+            .Node(v) => false
+        }
+    }
+}
+
+func describe<N: Named>(item: borrowing N): String { return item.name() }
+
+func unwrap(tree: Tree<Int>): Int {
+    return match tree {
+        .Leaf => 0,
+        .Node(v) => v
+    }
+}
+
+func main() {
+    var b = Box(value: 41)
+    &b.set(value: 5)
+    print(value: b.get() + 1)
+    print(value: describe(item: b))
+    print(value: b.twice())
+    let nested = Box(value: Box(value: 7))
+    print(value: nested.get().get())
+    let p = Pair(first: 1, second: "two")
+    print(value: p.second)
+    let t = Tree.Node(9)
+    print(value: unwrap(tree: t))
+    print(value: t.isLeaf())
+    let s = Box(value: "str")
+    print(value: s.get())
+}
