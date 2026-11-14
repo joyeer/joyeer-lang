@@ -1,0 +1,28 @@
+// Spawn and join 2048 tasks in batches of 64, including the linear array drain.
+func identity(value: consuming Int): Int {
+    return value
+}
+
+func main() {
+    var total = 0
+    var batch = 0
+    while batch < 32 {
+        var handles: [JoinHandle<Int>] = []
+        var index = 1
+        while index <= 64 {
+            &handles.append(element: consume spawn(function: identity,
+                    input: consume (batch * 64 + index)))
+            index = index + 1
+        }
+        while true {
+            let popped = &handles.removeLast()
+            match consume popped {
+                .Some(handle) => { total = total + consume handle.join() },
+                .None => { break },
+            }
+        }
+        consume handles.consumeEmpty()
+        batch = batch + 1
+    }
+    print(value: total)
+}

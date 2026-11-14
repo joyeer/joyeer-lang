@@ -1,0 +1,24 @@
+protocol Readable {
+    func read(): Int
+}
+
+struct Number {
+    let value: Int
+}
+
+extension Number: Readable {
+    func read(): Int { return self.value }
+}
+
+func read<T: Readable>(value: T): Int {
+    return value.read()
+}
+
+func relay<T: Readable>(value: T): Int {
+    return read(value: value)
+}
+
+func main() {
+    print(value: relay(value: Number(value: 7)))
+    print(value: read(value: Number(value: 8)))
+}

@@ -29,11 +29,13 @@ The model covers:
 - `Void`, `Never`, `Any`, `Bool`, `String`, `Int`/`UInt`,
   signed/unsigned 8/16/32/64-bit integers, `Float`, and `Double`;
 - user `struct` and `enum` nominal types;
+- function types with exact parameter access effects, and one distinct
+  `TypeKind::typeParameter` per generic parameter or protocol `Self`;
 - `[T]`, `[K: V]`, `T?`, and `Result<T, E>`;
 - a dedicated error type that suppresses cascading diagnostics.
 
 Built-in generic containers are compiler-known type constructors with fixed
-arity. They do not implement user-defined generics. An application such as
+arity; user-defined generic types remain deferred. An application such as
 `Result<[Int], Error>` retains both nested concrete arguments; it is not
 collapsed to the name resolver's coarse `Result` symbol.
 
@@ -67,6 +69,9 @@ The checker uses deterministic passes:
    become available.
 6. Verify that every `DeferredReference` was visited and either completed or
    diagnosed.
+7. If checking succeeded, reject expanding generic recursion and discover
+   concrete generic instances. Semantic analysis still runs once over the
+   checked bodies before lowering or reporting any instance.
 
 This ordering preserves forward function/type references while allowing local
 bindings to infer from previously checked initializers.
@@ -134,17 +139,18 @@ The current checker validates:
   the reason); `checkFunctionValueCall` checks positional arguments against the type's effects with the
   same marker, storage and exclusivity rules as a call by name (`checkArgumentAccess`), and rejects
   labels (`labeled-function-value-call`), a non-parenthesized field, element or call callee
-  (`not-callable`) and a `Never` parameter (`invalid-function-type`). Name resolution leaves a call of a
+  (`not-callable`) and a `Never` parameter (`invalid-function-type`); a `Never` stored field of a
+  structure is `never-field-type`. Name resolution leaves a call of a
   binding, parameter or field to the type checker;
-- Channels (decision 0019, spec 21.9): `ChannelSender<T>` and `ChannelReceiver<T>` are `TypeKind::channelSender`
-  and `channelReceiver` (noncopyable, not linear); `channel` is checked by `checkChannel` and `send`, `receive`
-  and `close` are builtin members whose results come from the end's element type; the element rules
-  (`linear-channel-element`, `channel-element-type`) run at every type position and enum payload, and
+- Channels (decisions 0019/0023, spec 21.9): the ends are ordinary generic structures with `deinit`
+  (noncopyable, not linear); creation and methods use their source signatures. A closed prelude
+  declaration role preserves contextual creation/element diagnostics without public-name dispatch. The element rules
+  (`linear-channel-element`, `channel-element-type`) run once at each offending type occurrence, and
   `channel-end-types` and `channel-capacity` check the creation call;
-- Tasks (decision 0018, spec 21): `JoinHandle<R>` is `TypeKind::task`, linear and noncopyable;
-  `spawn` is checked by `checkSpawn`, which reads `function:` as a name and reports
+- Tasks (decisions 0018/0023, spec 21): `JoinHandle<R>` is an ordinary linear generic structure;
+  its prelude function role validates `function:` as a name and reports
   `spawn-target-not-function`, `spawn-target-unsupported`, `spawn-target-parameters` and
-  `spawn-target-never`; `consume h.join()` is a builtin member with a consuming receiver that gives `R`;
+  `spawn-target-never`; `consume h.join()` is an ordinary method whose substituted signature gives `R`;
   the calls to `spawn` and System's `runProcess` are recorded for `semantic-analysis.run-process-with-tasks`;
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
@@ -245,11 +251,58 @@ independently rendered source spans.
 
 ---
 
-## 7. Deliberately not implemented here
+## 7. Protocols and bounded generic functions
+
+[Spec §20](../../specs/20-protocols.md) and
+[decision 0021](../decisions/0021-protocols-and-generic-functions.md) define
+the source rules. `TypeCheckedModel` records each generic function's ordered
+parameter symbols, constraints, inferred `GenericCall`s, concrete conformances
+and their witnesses, and a cache of `Instance`s keyed by function symbol and
+canonical type arguments.
+
+Bodies are checked once. A parameter is noncopyable unless its constraint
+includes builtin `Copyable`, and is never linear except for closed compiler-prelude transfer parameters.
+Those are conservatively must-transfer and may admit linear substitutions; user/runtime-module
+generics retain their restriction. Constraint entailment,
+requirement receiver/parameter effects, exclusivity and copy sites use that
+unsubstituted type, including `match`, `?` and `Dict.get`. Inference unifies
+typed arguments first, then literals; floating literals establish an
+otherwise undetermined numeric parameter before integer literals. A
+diverging argument contributes nothing, but a `Never` nested in an argument
+type is inferred and rejected as a type argument.
+
+Nonliteral arguments keep their context-free types during inference;
+earlier arguments cannot retype an arithmetic expression. Outer parentheses
+are ignored when classifying literals and context-free inputs such as
+`nil` or `[]`. Protocol references cannot carry type arguments, dictionary
+keys mentioning a parameter are rejected for nominal, bracket and inferred
+spellings, and witness visibility includes the conformance's source-file
+boundary. Chained `Self` results defer coarse member lookup so all of the
+caller's constraints remain available.
+
+Propagation owns its operand regardless of whether its result is stored,
+discarded or borrowed by another call. `checkPropagation` checks that copy
+directly; an explicit `(consume value)?` transfers an owned operand instead.
+
+An expanding edge in a cycle of generic parameter substitutions is rejected
+even without a non-generic caller. Successful discovery proceeds breadth
+first from non-generic functions, methods and deinitializers. Repeated
+instances share a cache entry; their reason is the shortest requiring chain,
+then the least call-site source position. Limits are 10,000 instances, 64
+levels of type nesting, 64 instances in a shortest chain, and 4,096 expanded
+type occurrences per type argument. The last bound stops a compact type DAG
+from expanding into an exponentially large display name.
+
+Discovery currently runs at the end of type checking, not after semantic
+analysis as originally proposed. No instances are lowered if semantic
+analysis fails. Lowering substitutes the cached arguments without checking
+bodies again; see [IR](ir.md#generic-function-instances).
+
+## 8. Deliberately not implemented here
 
 Type checking does not provide data layout, ownership lowering, Joyeer IR,
-LLVM IR, object emission, or linking. It also does not implement user-defined
-generics, function values, all-paths-return analysis, unreachable/unused
+LLVM IR, object emission, or linking. It also does not implement generic
+types or methods, all-paths-return analysis, unreachable/unused
 diagnostics, or enum representation. Control-flow and lint checks now live in
 the dedicated [semantic-analysis pass](semantic-analysis.md); representation
 and ownership decisions live in later lowering stages. None of these may be

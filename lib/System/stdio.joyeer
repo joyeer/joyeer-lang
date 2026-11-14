@@ -25,11 +25,10 @@ private func flushOutput(): Int32
 private func nextByte(): Int32
 
 public func writeStderr(contents: String): Result<Void, StderrError> {
-    if contents.count != 0 {
-        let bytes = contents.utf8()
-        let code = writeErrorBytes(buffer: bytes, count: bytes.count) as Int
-        if code != 0 { return .Err(.WriteFailed(code)) }
-    }
+    // An empty write still reaches the runtime, which checks that the descriptor is usable.
+    let bytes = contents.utf8()
+    let code = writeErrorBytes(buffer: bytes, count: bytes.count) as Int
+    if code != 0 { return .Err(.WriteFailed(code)) }
     return .Ok(())
 }
 

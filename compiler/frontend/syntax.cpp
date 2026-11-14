@@ -19,6 +19,8 @@ const char* kindName(Kind kind) {
         case Kind::enumCaseDecl: return "enum_case_decl";
         case Kind::associatedType: return "associated_type";
         case Kind::extensionDecl: return "extension_decl";
+        case Kind::protocolDecl: return "protocol_decl";
+        case Kind::genericParameter: return "generic_parameter";
         case Kind::errorType: return "error_type";
         case Kind::unitType: return "unit_type";
         case Kind::nominalType: return "nominal_type";
@@ -120,6 +122,7 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
                     appendNode(out, argument, depth + 2);
                 }
             }
+            for (const auto& parameter : value->genericParameters) appendNode(out, parameter, depth + 1);
             for (const auto& parameter : value->parameters) appendNode(out, parameter, depth + 1);
             if (value->returnType != nullptr) appendNode(out, value->returnType, depth + 1);
             appendNode(out, value->body, depth + 1);
@@ -148,7 +151,20 @@ void appendNode(std::ostringstream& out, const NodePtr& node, size_t depth) {
             const auto value = std::static_pointer_cast<ExtensionDeclSyntax>(node);
             out << '\n';
             appendNode(out, value->extendedType, depth + 1);
+            for (const auto& conformance : value->conformances) appendNode(out, conformance, depth + 1);
             for (const auto& method : value->methods) appendNode(out, method, depth + 1);
+            return;
+        }
+        case Kind::protocolDecl: {
+            const auto value = std::static_pointer_cast<ProtocolDeclSyntax>(node);
+            out << " name=" << tokenText(value->name) << '\n';
+            for (const auto& requirement : value->requirements) appendNode(out, requirement, depth + 1);
+            return;
+        }
+        case Kind::genericParameter: {
+            const auto value = std::static_pointer_cast<GenericParameterSyntax>(node);
+            out << " name=" << tokenText(value->name) << '\n';
+            for (const auto& constraint : value->constraints) appendNode(out, constraint, depth + 1);
             return;
         }
         case Kind::structFieldDecl: {

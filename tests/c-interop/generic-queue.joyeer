@@ -1,0 +1,102 @@
+// A runtime-source generic struct that owns a raw buffer of `T` (spec 20.12.4, 20.12.5): values are moved
+// into and out of the buffer with the layout intrinsics, and a `deinit` destroys the values still queued,
+// so a noncopyable element is destroyed exactly once. A struct with a `deinit` has a hidden live flag, so
+// buffers are sized with `size_of`, never from the field list.
+@c_extern(symbol: "malloc")
+func allocate(size: UInt64): Int
+
+@c_extern(symbol: "free")
+func release(address: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+func atomicAdd(address: Int, value: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_load")
+func atomicLoad(address: Int): Int
+
+struct Token {
+    var id: Int
+
+    deinit() {
+        atomicAdd(address: slot(index: 50), value: 1)
+    }
+}
+
+struct Queue<T> {
+    var buffer: Int
+    var head: Int
+    var count: Int
+    var capacity: Int
+
+    deinit() {
+        var index = 0
+        while index < self.count {
+            let position = (self.head + index) % self.capacity
+            joyeer_intrinsic_destroy_at<T>(address: self.buffer + position * joyeer_intrinsic_size_of<T>())
+            index = index + 1
+        }
+        release(address: self.buffer)
+    }
+
+    mutating func push(value: consuming T) {
+        let position = (self.head + self.count) % self.capacity
+        joyeer_intrinsic_move_in<T>(address: self.buffer + position * joyeer_intrinsic_size_of<T>(), value: consume value)
+        &self.count = self.count + 1
+    }
+
+    mutating func pop(): T {
+        let position = self.head
+        &self.head = (self.head + 1) % self.capacity
+        &self.count = self.count - 1
+        return joyeer_intrinsic_move_out<T>(address: self.buffer + position * joyeer_intrinsic_size_of<T>())
+    }
+
+    func size(): Int {
+        return self.count
+    }
+}
+
+// A queue of noncopyable tokens: popping hands the token to its owner, and the queue's deinit
+// destroys the ones still queued, each once.
+func tokens(): Int {
+    var queue: Queue<Token> = Queue(buffer: allocate(size: (4 * joyeer_intrinsic_size_of<Token>()) as UInt64), head: 0, count: 0, capacity: 4)
+    &queue.push(value: consume Token(id: 1))
+    &queue.push(value: consume Token(id: 2))
+    &queue.push(value: consume Token(id: 3))
+    let first = &queue.pop()
+    if first.id != 1 { return 6 }
+    if atomicLoad(address: slot(index: 50)) != 0 { return 7 }
+    return 0
+}
+
+func exercise(): Int {
+    // A queue of integers: first in, first out, wrapping around its small buffer.
+    var numbers: Queue<Int> = Queue(buffer: allocate(size: (3 * joyeer_intrinsic_size_of<Int>()) as UInt64), head: 0, count: 0, capacity: 3)
+    &numbers.push(value: consume 10)
+    &numbers.push(value: consume 20)
+    if &numbers.pop() != 10 { return 1 }
+    &numbers.push(value: consume 30)
+    &numbers.push(value: consume 40)
+    if numbers.size() != 3 { return 2 }
+    if &numbers.pop() != 20 { return 3 }
+    if &numbers.pop() != 30 { return 4 }
+    if &numbers.pop() != 40 { return 5 }
+
+    let failure = tokens()
+    if failure != 0 { return failure }
+    // The popped token and the two still queued are destroyed: three deinits, and nothing leaks.
+    if atomicLoad(address: slot(index: 50)) != 3 { return 8 }
+    return 0
+}
+
+func main() {
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    print(value: "generic queue passed")
+}

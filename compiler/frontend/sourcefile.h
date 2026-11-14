@@ -40,6 +40,7 @@ public:
             const std::filesystem::path& workingDirectory,
             const std::filesystem::path& path);
     explicit SourceFile(std::string sourceContent);
+    [[nodiscard]] static Ptr fromMemory(std::string sourceContent, std::filesystem::path sourcePath);
     
     // get .joyeer file's relative locationInParent against the working directory
     [[nodiscard]] std::string getLocation() const {

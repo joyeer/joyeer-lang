@@ -1,5 +1,5 @@
-// Bounded single-sender, single-receiver channels (decision 0019). The compiler lowers
-// `channel(...)`, `send`, `receive` and `close` to the four exports below; this unit is its own
+// Bounded single-sender, single-receiver channels (decision 0019). The source-library
+// ends and generic creation function use the four exports below; this unit is its own
 // object of the runtime archive, linked only into a program that creates a channel.
 //
 // One allocation holds the channel block. Both ends point at it; the receiver's handle has the

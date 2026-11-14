@@ -1,0 +1,3 @@
+Box<Int>.get | required by main at generic_types_report.joyeer:17 | 5 IR instructions
+Box<Int> | struct | 1 fields
+Tree<Double> | enum | 2 cases

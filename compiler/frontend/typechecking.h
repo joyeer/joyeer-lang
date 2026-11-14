@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -47,14 +48,13 @@ enum class TypeKind {
     unsignedInteger,
     float32,
     float64,
-    // `JoinHandle<R>`: a running task whose result type is the one argument (spec 21).
-    task,
-    // `ChannelSender<T>` and `ChannelReceiver<T>`: the ends of a channel (decision 0019).
-    channelSender,
-    channelReceiver,
     // `(E1 T1, ..., En Tn): R` (spec 2.3.1, decision 0020): `arguments` holds the parameter types and
     // then the result; `effects` holds one access effect per parameter.
     function,
+    // A type parameter of a generic function (spec 20.4), or `Self` inside a protocol: `symbol` is
+    // the parameter or the protocol. It is distinct from every other type (spec 20.4) and never
+    // reaches IR: each instance substitutes concrete types (decision 0021).
+    typeParameter,
 };
 
 [[nodiscard]] constexpr bool isSignedInteger(TypeKind kind) {
@@ -166,11 +166,15 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
-    [[nodiscard]] TypeId taskType(TypeId result);
-    [[nodiscard]] TypeId channelSenderType(TypeId element);
-    [[nodiscard]] TypeId channelReceiverType(TypeId element);
-    // `Result<success, ChannelClosed>`, what `send` and `receive` give.
-    [[nodiscard]] TypeId channelResultType(TypeId success);
+    // The type of a generic parameter, or of `Self` in a protocol when `symbol` is the protocol.
+    [[nodiscard]] TypeId typeParameterType(semantic::SymbolId symbol);
+    // `type` with every type parameter in `substitution` replaced; parameters not in it stay.
+    [[nodiscard]] TypeId substitute(
+            TypeId type, const std::unordered_map<semantic::SymbolId, TypeId>& substitution);
+    // True when `type` is or contains a type parameter.
+    [[nodiscard]] bool mentionsTypeParameter(TypeId type) const;
+    // How deeply `type` nests type arguments: 0 for a scalar or nominal type.
+    [[nodiscard]] size_t nestingDepth(TypeId type) const;
     // A function type: `parameters` and `effects` have one entry per parameter (spec 2.3.1).
     [[nodiscard]] TypeId functionType(
             const std::vector<TypeId>& parameters,
@@ -188,7 +192,7 @@ public:
 
     [[nodiscard]] const TypeRecord* type(TypeId id) const;
     [[nodiscard]] size_t size() const;
-    [[nodiscard]] std::string displayName(TypeId id) const;
+    [[nodiscard]] std::string displayName(TypeId id, bool disambiguateNominals = false) const;
     [[nodiscard]] bool isAssignable(TypeId source, TypeId destination) const;
 
 private:
@@ -298,6 +302,63 @@ enum class TypeCheckingDiagnosticId {
     invalidFunctionType,
     notAFunctionValue,
     labeledFunctionValueCall,
+    neverFieldType,
+    // Protocols and generic functions (spec 20.8, decision 0021).
+    protocolUsedAsType,
+    invalidProtocolMember,
+    reservedProtocolName,
+    invalidConformance,
+    missingWitness,
+    witnessMismatch,
+    witnessNotAccessible,
+    orphanConformance,
+    duplicateConformance,
+    invalidGenericDeclaration,
+    unsatisfiedConstraint,
+    cannotInferTypeParameter,
+    conflictingTypeArgument,
+    linearTypeArgument,
+    invalidTypeArgument,
+    unknownMemberOnTypeParameter,
+    genericNativeBinding,
+    expandingGenericRecursion,
+    invalidExtensionHeader,
+    instantiationLimit,
+    unauthorizedIntrinsic,
+    invalidPrelude,
+};
+
+// A conformance of a concrete type to a protocol (spec 20.3), with the witness of each requirement.
+struct Conformance {
+    TypeId type = invalidTypeId;
+    semantic::SymbolId protocol = semantic::invalidSymbolId;
+    std::unordered_map<semantic::SymbolId, semantic::SymbolId> witnesses;
+    SourceSpan span;
+};
+
+// A call of a generic function, with its inferred type arguments in parameter order. Inside another
+// generic function they may mention that function's parameters. `caller` is the enclosing function,
+// including non-generic functions, methods and deinitializers.
+struct GenericCall {
+    semantic::SymbolId callee = semantic::invalidSymbolId;
+    std::vector<TypeId> arguments;
+    std::optional<semantic::SymbolId> caller;
+    SourceSpan span;
+};
+
+// One instance of a generic function (spec 20.6, decision 0021): the function, its concrete type
+// arguments, and what required it, for the instantiation report.
+struct Instance {
+    semantic::SymbolId function = semantic::invalidSymbolId;
+    std::vector<TypeId> arguments;
+    std::unordered_map<semantic::SymbolId, TypeId> substitution;
+    // `totalArea<Square>`: the name in debug information and in the report.
+    std::string name;
+    // The call that first required it, and the instance that call is in, if it is in one.
+    SourceSpan requiredAt;
+    std::optional<size_t> requiredBy;
+    std::optional<semantic::SymbolId> requiredByFunction;
+    size_t depth = 1;
 };
 
 struct TypeCheckingDiagnostic {
@@ -320,6 +381,8 @@ public:
     [[nodiscard]] const TypeContext& types() const;
     [[nodiscard]] std::optional<TypeId> typeOf(const syntax::NodePtr& node) const;
     [[nodiscard]] std::optional<TypeId> typeOf(semantic::SymbolId symbol) const;
+    // Every typed node, for lowering's per-instance checks of a generic body.
+    [[nodiscard]] const std::unordered_map<semantic::NodeId, TypeId>& nodeTypeTable() const { return nodeTypes; }
     [[nodiscard]] const TypedCallableSignature* callable(semantic::SymbolId symbol) const;
     [[nodiscard]] const NativeBinding* nativeBinding(semantic::SymbolId symbol) const;
         [[nodiscard]] std::optional<semantic::SymbolId> referencedSymbol(
@@ -330,6 +393,9 @@ public:
     // Copyability (spec 4.1.1, decision 0015). A struct that declares `deinit` is noncopyable,
     // and so is anything that holds one: a struct field, an enum payload, or the element, key,
     // value, payload or error type of Array, Dict, Optional and Result.
+    // `declared` (a field or payload type written in a generic type's declaration) as `owner`, an
+    // instance of that type, sees it (spec 20.12).
+    [[nodiscard]] TypeId memberTypeOf(TypeId owner, TypeId declared) const;
     [[nodiscard]] bool isCopyable(TypeId type) const;
     // Why `type` is noncopyable, or nullopt when it is copyable.
     [[nodiscard]] std::optional<std::string> noncopyableReason(TypeId type) const;
@@ -347,12 +413,33 @@ public:
     [[nodiscard]] std::vector<std::vector<semantic::SymbolId>> linearLeafPaths(TypeId type) const;
     // True for a struct declared with the `linear` modifier.
     [[nodiscard]] bool isDeclaredLinear(TypeId type) const;
+    [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type) const;
+    // Generic functions (spec 20, decision 0021).
+    // The type parameters of a generic function in declaration order; null for any other function.
+    [[nodiscard]] const std::vector<semantic::SymbolId>* genericParameters(semantic::SymbolId function) const;
+    // The protocols a type parameter is constrained to, `Copyable` included.
+    [[nodiscard]] const std::vector<semantic::SymbolId>& constraints(semantic::SymbolId typeParameter) const;
+    [[nodiscard]] std::optional<semantic::SymbolId> copyableProtocol() const;
+    // The type argument of the layout intrinsic call `node` (spec 20.12.5), as written; it may mention
+    // type parameters that each instance substitutes.
+    [[nodiscard]] std::optional<TypeId> layoutIntrinsicType(const syntax::NodePtr& node) const;
+    // The generic call `node` makes, or null.
+    [[nodiscard]] const GenericCall* genericCall(const syntax::NodePtr& node) const;
+    // The witness of `requirement` for the concrete `type`, or nullopt without a conformance.
+    [[nodiscard]] std::optional<semantic::SymbolId> witness(TypeId type, semantic::SymbolId requirement) const;
+    [[nodiscard]] const std::vector<Conformance>& conformances() const { return conformanceList; }
+    // Every instance the program needs, in the order they were found.
+    [[nodiscard]] const std::vector<Instance>& instances() const { return instanceList; }
+    [[nodiscard]] std::optional<size_t> instanceIndex(
+            semantic::SymbolId function, const std::vector<TypeId>& arguments) const;
+    [[nodiscard]] std::string functionDisplayName(semantic::SymbolId function) const;
     // Where the program starts a task and where it calls System's `runProcess` (spec 21.6).
     [[nodiscard]] const std::vector<SourceSpan>& spawnCalls() const { return spawnCallSpans; }
     [[nodiscard]] const std::vector<SourceSpan>& runProcessCalls() const { return runProcessCallSpans; }
 
 private:
     [[nodiscard]] syntax::StructDeclSyntax::Ptr structureDeclaration(TypeId type) const;
+    [[nodiscard]] bool conformanceSubjectMatches(TypeId subject, TypeId type) const;
     [[nodiscard]] bool isLinear(
             TypeId type, std::vector<TypeId>& visiting, std::unordered_set<TypeId>& clean) const;
     friend class TypeCheckingBuilder;
@@ -363,7 +450,7 @@ private:
     explicit TypeCheckedModel(semantic::SemanticModel::Ptr semanticModel);
 
     semantic::SemanticModel::Ptr semanticModelValue;
-    TypeContext typeContext;
+    mutable TypeContext typeContext;
     // Where the program starts a task and calls System's `runProcess`; the two cannot meet (spec 21.6).
     std::vector<SourceSpan> spawnCallSpans;
     std::vector<SourceSpan> runProcessCallSpans;
@@ -373,6 +460,13 @@ private:
     std::unordered_map<semantic::SymbolId, NativeBinding> nativeBindings;
     std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedReferences;
     std::unordered_map<semantic::NodeId, semantic::SymbolId> resolvedCallTargets;
+    std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> genericParameterLists;
+    std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> constraintLists;
+    std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
+    std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
+    std::vector<Conformance> conformanceList;
+    std::vector<Instance> instanceList;
+    std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;
 };
 
 struct TypeCheckingResult {

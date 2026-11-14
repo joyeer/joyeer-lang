@@ -203,12 +203,13 @@ See §8 for error-handling semantics.
 
 ### 2.6 Generics
 
-v0.1 has **no user-defined generics**. The only generic types are the built-in
-types `Array<T>` / `[T]`, `Dict<K, V>` / `[K: V]`, `Optional<T>` / `T?`, and
-`Result<T, E>`. Their angle brackets are **type arguments understood directly
-by the compiler**, not a general type-parameter mechanism. User code may
-*use* these containers but may not declare new generic `func` / `struct` /
-`enum`, type parameters, or constraints.
+The generic types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
+`[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
+below). Their angle brackets are **type arguments understood directly by the
+compiler**. User code may *use* these containers and may declare **generic
+top-level functions** and **generic `struct`s and `enum`s** bounded by protocols
+(§20, §20.12, [decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md)),
+but may not declare generic methods or conditional conformances (§20.10).
 
 ```joyeer
 let xs: [Int] = [1, 2, 3]               // built-in Array<Int>
@@ -216,9 +217,11 @@ let m: [String: Int] = [:]             // built-in Dict<String, Int>
 let r: Result<Int, ParseError> = .Ok(1)
 ```
 
-User-defined generics will use `<T>`. They, along with constraints,
-associated types, and monomorphization, are reserved for a future version
-(Appendix A).
+Generic functions use `<T: P & Q>` and are instantiated by monomorphization
+(§20.4, §20.6). A type parameter may be a container's element, payload or
+error type (`[T]`, `T?`, `Result<T, E>`, `[String: T]`), but not a `Dict` key
+type (§20.5). Generic user types and associated types remain deferred
+(§20.10).
 
 #### 2.6.1 Safe dictionary lookup
 
@@ -269,22 +272,20 @@ temporary, and a `match` that moves the payload (§7.1.2) can take the element o
 of it. **Implementation status:** implemented; the runtime
 removes the element in constant time and does not shrink the array's capacity.
 
-#### 2.6.3 Concurrency builtin types (provisional)
+#### 2.6.3 Concurrency library types
 
-The concurrency design ([decision 0013](../docs/decisions/0013-concurrency-model.md)) adds three
-compiler-known generic types, in the same manner as `Array`, `Dict`, `Optional` and `Result`:
-`JoinHandle<R>`, `ChannelSender<T>` and `ChannelReceiver<T>` (the first draft's `SendError<T>` is dropped from
-v1, [decision 0019](../docs/decisions/0019-channels.md)), and the builtin enumeration `ChannelClosed`. Their type
-arguments are understood by the compiler, not by a general parameter mechanism, so this does not
-introduce user-defined generics. A user declaration of the same name takes precedence over the
-builtin in its scope.
+The source prelude declares `JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>`, and the
+enumeration `ChannelClosed` ([decision 0023](../docs/decisions/0023-library-concurrency.md)).
+They use the generic declaration mechanism of §20.12, not dedicated compiler type kinds.
+The first draft's `SendError<T>` remains out of v1 ([decision 0019](../docs/decisions/0019-channels.md)).
+A user declaration of the same name takes precedence over the prelude declaration in its scope.
 
 - `JoinHandle<R>` is **linear** (§4.1.1): it must be ended, by `join`, on every path (§4.7.1). Tasks are specified in [§21](21-concurrency.md).
 - `ChannelSender<T>` and `ChannelReceiver<T>` are **noncopyable** and close their channel when
   destroyed, like a handle with a `deinit` (§3.7.1); an explicit consuming `close` also exists.
   `T` may not be linear, because a value queued when the channel closes would be destroyed; `Any` and
   `Never` are not element types either ([§21.9](21-concurrency.md#219-channels)).
-- A channel is created by `channel(capacity:, sender: &s, receiver: &r)`, a builtin returning
+- A channel is created by `channel(capacity:, sender: &s, receiver: &r)`, a prelude library function returning
   `Void` whose two outputs are `initializing` parameters (§4.10), so both variables are declared,
   uninitialised, with their types, and the element type comes from those types, which must
   agree. A capacity below 1 traps, and a literal below 1 is a compile-time error (§21.9.1).
@@ -343,6 +344,13 @@ value. This is what lets the right operand of `??` be `return .Err(e)` or
 The subtyping applies to expressions only. It does not extend to function types
 (§2.3.1): a `(Int): Never` value is not a `(Int): Int` value, and `Never` is not
 allowed as a function-type parameter.
+
+`Never` is not a type argument of a generic function (§20.4.1), whether
+written or inferred: a `Result<Int, Never>` argument for a `Result<T, E>`
+parameter is rejected (`type-checking.invalid-type-argument`).
+
+`Never` is not the type of a stored field of a structure, because no value of
+that structure could be constructed (`type-checking.never-field-type`).
 
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:

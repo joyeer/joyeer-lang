@@ -1,0 +1,36 @@
+// A generic struct with a deinit (spec 20.12): each instance runs its own deinit exactly once, a wrapper
+// of a noncopyable value destroys it, and values die in reverse declaration order.
+struct Ticket {
+    var number: Int
+
+    deinit() {
+        print(value: self.number)
+    }
+}
+
+struct Holder<T: Copyable> {
+    var value: T
+    var label: Int
+
+    deinit() {
+        print(value: self.label)
+    }
+}
+
+struct Wrap<T> {
+    var inner: T
+}
+
+func consume_it<T>(value: consuming T) {
+}
+
+func main() {
+    let a = Holder(value: 1, label: 100)
+    let b = Holder(value: "s", label: 200)
+    print(value: a.value)
+    let w = Wrap(inner: Ticket(number: 7))
+    consume_it(value: consume Holder(value: 2.5, label: 300))
+    let nested = Wrap(inner: Holder(value: 3, label: 400))
+    print(value: b.value)
+    print(value: nested.inner.label)
+}

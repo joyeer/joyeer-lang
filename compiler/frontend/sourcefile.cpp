@@ -33,6 +33,13 @@ SourceFile::SourceFile(std::string sourceContent):
         location("<memory>") {
 }
 
+SourceFile::Ptr SourceFile::fromMemory(std::string sourceContent, std::filesystem::path sourcePath) {
+    auto source = std::make_shared<SourceFile>(std::move(sourceContent));
+    source->pathInWorkingDirectory = pathUtf8(sourcePath);
+    source->location = std::move(sourcePath);
+    return source;
+}
+
 void SourceFile::open(const std::filesystem::path& path) {
     content.clear();
     loadError = LoadError::none;

@@ -36,6 +36,8 @@ enum class Kind {
     enumCaseDecl,
     associatedType,
     extensionDecl,
+    protocolDecl,
+    genericParameter,
 
     errorType,
     unitType,
@@ -326,10 +328,26 @@ struct ParameterDeclSyntax final : Node {
 
 struct BlockExprSyntax;
 
+// `T: P & Q` in a generic parameter clause (spec 20.4). Each constraint is a nominal type naming a
+// protocol.
+struct GenericParameterSyntax final : Node {
+    using Ptr = std::shared_ptr<GenericParameterSyntax>;
+
+    Token::Ptr name;
+    std::vector<TypePtr> constraints;
+
+    GenericParameterSyntax(SourceSpan span, Token::Ptr name, std::vector<TypePtr> constraints):
+            Node(Kind::genericParameter, span),
+            name(std::move(name)),
+            constraints(std::move(constraints)) {}
+};
+
 struct FunctionDeclSyntax final : DeclSyntax {
     using Ptr = std::shared_ptr<FunctionDeclSyntax>;
 
     Token::Ptr name;
+    // `<T: P, U>` after the name (spec 20.4); only top-level functions may declare them.
+    std::vector<GenericParameterSyntax::Ptr> genericParameters;
     std::vector<ParameterDeclSyntax::Ptr> parameters;
     TypePtr returnType;
     std::shared_ptr<BlockExprSyntax> body;
@@ -376,6 +394,8 @@ struct StructDeclSyntax final : DeclSyntax {
     using Ptr = std::shared_ptr<StructDeclSyntax>;
 
     Token::Ptr name;
+    // `struct Box<T: P>` (spec 20.12): empty when not generic.
+    std::vector<GenericParameterSyntax::Ptr> genericParameters;
     std::vector<StructFieldDeclSyntax::Ptr> fields;
     std::vector<FunctionDeclSyntax::Ptr> methods;
     // The `deinit() { ... }` member, if any (spec 3.7.1). It is a method-like function
@@ -428,6 +448,8 @@ struct EnumDeclSyntax final : DeclSyntax {
     using Ptr = std::shared_ptr<EnumDeclSyntax>;
 
     Token::Ptr name;
+    // `enum Tree<T>` (spec 20.12): empty when not generic.
+    std::vector<GenericParameterSyntax::Ptr> genericParameters;
     std::vector<EnumCaseDeclSyntax::Ptr> cases;
     std::vector<FunctionDeclSyntax::Ptr> methods;
 
@@ -443,6 +465,8 @@ struct ExtensionDeclSyntax final : DeclSyntax {
     using Ptr = std::shared_ptr<ExtensionDeclSyntax>;
 
     TypePtr extendedType;
+    // `extension T: P, Q` (spec 20.3): the protocols the extension declares conformance to.
+    std::vector<TypePtr> conformances;
     std::vector<FunctionDeclSyntax::Ptr> methods;
 
     ExtensionDeclSyntax(SourceSpan span,
@@ -451,6 +475,22 @@ struct ExtensionDeclSyntax final : DeclSyntax {
             DeclSyntax(Kind::extensionDecl, span),
             extendedType(std::move(extendedType)),
             methods(std::move(methods)) {}
+};
+
+// `protocol P { func m(): Int }` (spec 20.2). Each requirement is a method declaration with a
+// receiver parameter and, when written correctly, no body.
+struct ProtocolDeclSyntax final : DeclSyntax {
+    using Ptr = std::shared_ptr<ProtocolDeclSyntax>;
+
+    Token::Ptr name;
+    std::vector<FunctionDeclSyntax::Ptr> requirements;
+
+    ProtocolDeclSyntax(SourceSpan span,
+                       Token::Ptr name,
+                       std::vector<FunctionDeclSyntax::Ptr> requirements):
+            DeclSyntax(Kind::protocolDecl, span),
+            name(std::move(name)),
+            requirements(std::move(requirements)) {}
 };
 
 struct NameExprSyntax final : ExprSyntax {
@@ -578,6 +618,8 @@ struct CallExprSyntax final : ExprSyntax {
 
     ExprPtr callee;
     std::vector<CallArgumentSyntax::Ptr> arguments;
+    // `name<T>(...)` of a layout intrinsic (spec 20.12.5); empty for every other call.
+    std::vector<TypePtr> typeArguments;
 
     CallExprSyntax(SourceSpan span,
                    ExprPtr callee,

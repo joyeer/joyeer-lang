@@ -45,7 +45,7 @@ or propagate that context; see [C binding coverage](c-interop.md).
 Resolution is deliberately split into three deterministic passes:
 
 1. **Index and collect declarations.** Assign every syntax node a stable
-   `NodeId`; collect all top-level functions, bindings, structs, enums,
+   `NodeId`; collect all top-level functions, bindings, structs, enums, protocols,
    fields, and cases.
 2. **Resolve signatures.** Resolve all parameter, return, field, and enum
    payload type names before inspecting any function body. This permits
@@ -114,6 +114,15 @@ The current prelude declares:
   `System` standard module, reached with `import System`. The prelude declares
   only the enumerations they return (`IOError`, `FileSystemError`, `FileKind`,
   `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`).
+- the builtin marker protocol `Copyable`, distinct from a runtime type.
+
+Protocols have type-namespace symbols and member scopes holding requirement
+methods. A generic function introduces distinct type-parameter symbols in its
+function scope before its signature is resolved; those symbols do not escape
+the function. Constraint names resolve to protocol symbols, and `Self` in a
+requirement resolves to its protocol. Calls on parameter values can resolve
+through their constraints, with final witness and effect checks in
+[type checking](type-checking.md#7-protocols-and-bounded-generic-functions).
 
 An internal `Any` marker also exists in the semantic prelude; the source
 spelling is reserved and is not a supported dynamic-value type.

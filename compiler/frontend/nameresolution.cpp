@@ -1,4 +1,5 @@
 #include "nameresolution.h"
+#include "prelude.h"
 #include "hostbuiltins.h"
 
 #include <algorithm>
@@ -21,7 +22,9 @@ std::string tokenText(const Token::Ptr& token) {
 bool isTypeSymbol(SymbolKind kind) {
     return kind == SymbolKind::builtinType ||
            kind == SymbolKind::structure ||
-           kind == SymbolKind::enumeration;
+           kind == SymbolKind::enumeration ||
+           kind == SymbolKind::protocol ||
+           kind == SymbolKind::typeParameter;
 }
 
 bool isEnumCaseSymbol(SymbolKind kind) {
@@ -207,20 +210,29 @@ public:
         return NameResolutionResult { model, std::move(diagnostics) };
     }
 
-    NameResolutionResult build(const std::vector<ModuleInput>& modules) {
+    NameResolutionResult build(const std::vector<ModuleInput>& modules, bool singleFile = false) {
         auto root = std::make_shared<syntax::SourceFileSyntax>(
+                SourceSpan {}, std::vector<syntax::NodePtr> {});
+        auto compilationRoot = std::make_shared<syntax::SourceFileSyntax>(
                 SourceSpan {}, std::vector<syntax::NodePtr> {});
         for (const auto& module : modules) {
             for (const auto& file : module.files) {
-                root->items.insert(root->items.end(), file->items.begin(), file->items.end());
+                if (!module.preludeContext) {
+                    root->items.insert(root->items.end(), file->items.begin(), file->items.end());
+                }
+                compilationRoot->items.insert(compilationRoot->items.end(), file->items.begin(), file->items.end());
             }
         }
+        if (singleFile && !modules.empty() && !modules.front().files.empty()) root = modules.front().files.front();
         model = SemanticModel::Ptr(new SemanticModel(root));
+        model->compilationRoot_ = compilationRoot;
         indexNode(root);
+        indexNode(compilationRoot);
         buildPrelude();
         std::vector<ScopeId> moduleScopes;
         for (const auto& module : modules) {
-            const auto id = createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
+            const auto id = singleFile && moduleScopes.empty()
+                    ? model->preludeScope_ : createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
             moduleScopes.push_back(id);
             model->moduleNames_.push_back(module.name);
             namedModules.emplace(module.name, id);
@@ -238,12 +250,14 @@ public:
                 model->sourceModules_[file->span.sourceId] = activeModule;
                 model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
                 model->coreSources_[file->span.sourceId] = modules[index].coreContext;
+                model->preludeSources_[file->span.sourceId] = modules[index].preludeContext;
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;
                 setContainingScope(file, model->fileScope_);
                 files.push_back({file, model->fileScope_, activeModule});
                 collectTopLevelDeclarations(file);
+                if (singleFile && index == 0) continue;
                 for (const auto& item : file->items) {
                     const auto id = declaredSymbolId(item);
                     if (!id.has_value()) continue;
@@ -259,6 +273,15 @@ public:
                         auto& names = declaration.nameSpace == SymbolNamespace::type
                                 ? moduleScope.types : moduleScope.values;
                         names.emplace(declaration.name, *id);
+                        if (modules[index].preludeContext) {
+                            auto& prelude = scope(model->preludeScope_);
+                            auto& exported = declaration.nameSpace == SymbolNamespace::type
+                                    ? prelude.types : prelude.values;
+                            if (!exported.emplace(declaration.name, *id).second) {
+                                report(NameResolutionDiagnosticId::invalidPrelude, declaration.span,
+                                       "runtime prelude conflicts with '" + declaration.name + "'");
+                            }
+                        }
                     }
                 }
             }
@@ -312,6 +335,9 @@ private:
     uint32_t activeModule = 0;
     // The type `Self` denotes while resolving the signature or body of a member.
     std::optional<SymbolId> selfType;
+    // The type parameters of the generic struct, enum or extension whose methods are being resolved
+    // (spec 20.12): each method scope can name them.
+    std::vector<SymbolId> ambientTypeParameters;
     std::unordered_map<std::string, ScopeId> namedModules;
     std::unordered_map<ScopeId, std::unordered_map<std::string, ScopeId>> fileImports;
 
@@ -368,6 +394,7 @@ private:
             }
             case Kind::functionDecl: {
                 const auto value = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+                for (const auto& parameter : value->genericParameters) indexNode(parameter);
                 for (const auto& parameter : value->parameters) indexNode(parameter);
                 indexNode(value->returnType);
                 indexNode(value->body);
@@ -380,6 +407,7 @@ private:
             }
             case Kind::structDecl: {
                 const auto value = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                for (const auto& parameter : value->genericParameters) indexNode(parameter);
                 for (const auto& field : value->fields) indexNode(field);
                 for (const auto& method : value->methods) indexNode(method);
                 indexNode(value->deinitializer);
@@ -388,7 +416,18 @@ private:
             case Kind::extensionDecl: {
                 const auto value = std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
                 indexNode(value->extendedType);
+                for (const auto& conformance : value->conformances) indexNode(conformance);
                 for (const auto& method : value->methods) indexNode(method);
+                break;
+            }
+            case Kind::protocolDecl: {
+                const auto value = std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node);
+                for (const auto& requirement : value->requirements) indexNode(requirement);
+                break;
+            }
+            case Kind::genericParameter: {
+                const auto value = std::static_pointer_cast<syntax::GenericParameterSyntax>(node);
+                for (const auto& constraint : value->constraints) indexNode(constraint);
                 break;
             }
             case Kind::structFieldDecl: {
@@ -399,6 +438,7 @@ private:
             }
             case Kind::enumDecl: {
                 const auto value = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
+                for (const auto& parameter : value->genericParameters) indexNode(parameter);
                 for (const auto& enumCase : value->cases) indexNode(enumCase);
                 for (const auto& method : value->methods) indexNode(method);
                 break;
@@ -469,6 +509,7 @@ private:
             case Kind::callExpr: {
                 const auto value = std::static_pointer_cast<syntax::CallExprSyntax>(node);
                 indexNode(value->callee);
+                for (const auto& typeArgument : value->typeArguments) indexNode(typeArgument);
                 for (const auto& argument : value->arguments) indexNode(argument);
                 break;
             }
@@ -594,6 +635,35 @@ private:
         value.isRootModule = activeModule == 0;
         if (declaration.has_value()) {
             value.visibility = model->node(*declaration)->visibility;
+            if (model->isPreludeSource(span) &&
+                (kind == SymbolKind::function || kind == SymbolKind::method ||
+                 kind == SymbolKind::structure || kind == SymbolKind::enumeration)) {
+                const auto node = std::static_pointer_cast<syntax::DeclSyntax>(model->node(*declaration));
+                for (const auto& attribute : node->attributes) {
+                    const auto attributeName = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+                    if (attributeName == "compiler_transfer" && attribute.arguments.empty()) {
+                        value.acceptsLinearArguments = true;
+                    } else if (attributeName == "compiler_role" && attribute.arguments.size() == 1) {
+                        const auto& argument = attribute.arguments.front();
+                        const auto role = argument->value != nullptr && argument->value->kind == syntax::Kind::nameExpr
+                                ? std::static_pointer_cast<syntax::NameExprSyntax>(argument->value)->name : nullptr;
+                        if (argument->label != nullptr || argument->accessMarker != nullptr || role == nullptr) {
+                            report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
+                                   "a compiler prelude role requires one unlabelled role name");
+                            continue;
+                        }
+                        const auto& name = role->rawValue;
+                        if (name == "task_start") value.libraryRole = LibraryRole::taskStart;
+                        else if (name == "task_handle") value.libraryRole = LibraryRole::taskHandle;
+                        else if (name == "channel_create") value.libraryRole = LibraryRole::channelCreate;
+                        else if (name == "channel_sender") value.libraryRole = LibraryRole::channelSender;
+                        else if (name == "channel_receiver") value.libraryRole = LibraryRole::channelReceiver;
+                        else if (name == "stored_consumer") value.libraryRole = LibraryRole::storedConsumer;
+                        else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
+                                    "unknown compiler prelude role '" + name + "'");
+                    }
+                }
+            }
         }
 
         if (insertIntoScope) {
@@ -658,6 +728,11 @@ private:
 
         const auto voidType = declareBuiltinType("Void");
         declareBuiltinType("Never");
+        // The builtin marker protocol of spec 20.5: no requirements, satisfied by copyable types.
+        const auto copyable = declareSymbol(
+                model->preludeScope_, SymbolNamespace::type, SymbolKind::protocol, "Copyable", {});
+        symbol(copyable).memberScope =
+                createScope(ScopeKind::typeMembers, model->preludeScope_, std::nullopt);
         const auto intType = declareBuiltinType("Int");
         declareBuiltinType("Bool");
         const auto stringType = declareBuiltinType("String");
@@ -667,9 +742,6 @@ private:
         const auto dictionaryType = declareBuiltinType("Dict");
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
-        const auto joinHandleType = declareBuiltinType("JoinHandle");
-        const auto channelSenderType = declareBuiltinType("ChannelSender");
-        const auto channelReceiverType = declareBuiltinType("ChannelReceiver");
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
@@ -740,55 +812,6 @@ private:
                     {},
                     CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
                 });
-
-        // `consume handle.join()` waits for the task and gives back its result (spec 21.3). Like
-        // `consumeEmpty`, the receiver is consumed; the result type is the handle's argument, computed
-        // by the type checker.
-        declareBuiltinMember(
-                joinHandleType,
-                SymbolKind::builtinMember,
-                "join",
-                voidType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    {},
-                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
-                });
-
-        // The ends of a channel (spec 21.9). `send` and `receive` borrow their end, `close` consumes it;
-        // the type checker computes their result types from the end's element type.
-        declareBuiltinMember(
-                channelSenderType,
-                SymbolKind::builtinMember,
-                "send",
-                voidType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    { CallableParameter {
-                        std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
-                        syntax::AccessEffect::consuming } },
-                });
-        declareBuiltinMember(
-                channelReceiverType,
-                SymbolKind::builtinMember,
-                "receive",
-                voidType,
-                CallableSignature { CallableKind::function, true, {} });
-        for (const auto end : { channelSenderType, channelReceiverType }) {
-            declareBuiltinMember(
-                    end,
-                    SymbolKind::builtinMember,
-                    "close",
-                    voidType,
-                    CallableSignature {
-                        CallableKind::function,
-                        true,
-                        {},
-                        CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
-                    });
-        }
 
         CallableSignature singlePayload {
             CallableKind::enumCase,
@@ -866,50 +889,35 @@ private:
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
 
-        // `channel(capacity: n, sender: &s, receiver: &r)` creates a channel (spec 21.9.1). Both ends are
-        // `initializing` outputs; the type checker requires a sender and a receiver of one element type.
-        const auto channel = declareSymbol(
-                model->preludeScope_,
-                SymbolNamespace::value,
-                SymbolKind::builtinFunction,
-                "channel",
-                {});
-        symbol(channel).declaredType = voidType;
-        symbol(channel).callable = CallableSignature {
-            CallableKind::function,
-            true,
-            {
-                CallableParameter { std::string("capacity"), true, std::nullopt, std::nullopt, intType },
-                CallableParameter {
-                    std::string("sender"), true, std::nullopt, std::nullopt, std::nullopt,
-                    syntax::AccessEffect::initializing },
-                CallableParameter {
-                    std::string("receiver"), true, std::nullopt, std::nullopt, std::nullopt,
-                    syntax::AccessEffect::initializing },
-            },
+        // The layout intrinsics (spec 20.12.5): compiler-known generic functions whose one type
+        // argument is written at the call. The type checker gives them their types and rejects them
+        // outside a toolchain-authorized unit.
+        const auto layoutIntrinsic = [&](const char* name, std::vector<CallableParameter> parameters,
+                                         SymbolId result) {
+            const auto id = declareSymbol(
+                    model->preludeScope_, SymbolNamespace::value, SymbolKind::builtinFunction, name, {});
+            symbol(id).declaredType = result;
+            symbol(id).callable = CallableSignature { CallableKind::function, true, std::move(parameters) };
         };
-
-        // `spawn(function: f, input: consume x)` starts a task (spec 21.2). Its parameters only fix the
-        // labels, their order and that `input` is consumed; the type checker derives the result type from
-        // the named function.
-        CallableSignature spawnSignature {
-            CallableKind::function,
-            true,
-            {
-                CallableParameter { std::string("function"), true, std::nullopt, std::nullopt, std::nullopt },
-                CallableParameter {
-                    std::string("input"), true, std::nullopt, std::nullopt, std::nullopt,
-                    syntax::AccessEffect::consuming },
-            },
+        const auto addressParameter = [&]() {
+            return CallableParameter { std::string("address"), true, std::nullopt, std::nullopt, intType };
         };
-        const auto spawn = declareSymbol(
-                model->preludeScope_,
-                SymbolNamespace::value,
-                SymbolKind::builtinFunction,
-                "spawn",
-                {});
-        symbol(spawn).declaredType = voidType;
-        symbol(spawn).callable = std::move(spawnSignature);
+        layoutIntrinsic("joyeer_intrinsic_size_of", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_align_of", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_move_in",
+                { addressParameter(),
+                  CallableParameter {
+                      std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                      syntax::AccessEffect::consuming } },
+                voidType);
+        layoutIntrinsic("joyeer_intrinsic_move_out", { addressParameter() }, voidType);
+        layoutIntrinsic("joyeer_intrinsic_destroy_at", { addressParameter() }, voidType);
+        layoutIntrinsic("joyeer_intrinsic_stack_slot", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_needs_destroy", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_callback_address",
+                { CallableParameter {
+                    std::string("function"), true, std::nullopt, std::nullopt, std::nullopt } },
+                intType);
 
         CallableSignature byteConversionSignature {
             CallableKind::function,
@@ -962,6 +970,9 @@ private:
                 case syntax::Kind::enumDecl:
                     collectEnumeration(std::static_pointer_cast<syntax::EnumDeclSyntax>(item));
                     break;
+                case syntax::Kind::protocolDecl:
+                    collectProtocol(std::static_pointer_cast<syntax::ProtocolDeclSyntax>(item));
+                    break;
                 default:
                     break;
             }
@@ -990,6 +1001,19 @@ private:
                 case syntax::Kind::extensionDecl:
                     collectExtension(std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item));
                     break;
+                case syntax::Kind::protocolDecl: {
+                    const auto declaration =
+                            std::static_pointer_cast<syntax::ProtocolDeclSyntax>(item);
+                    const auto protocol = declaredSymbolId(declaration);
+                    if (!protocol.has_value()) break;
+                    collectMethods(*protocol, declaration->requirements);
+                    // A requirement has the visibility of its protocol (spec 20.2).
+                    for (const auto& requirement : declaration->requirements) {
+                        const auto id = declaredSymbolId(requirement);
+                        if (id.has_value()) symbol(*id).visibility = symbol(*protocol).visibility;
+                    }
+                    break;
+                }
                 default:
                     break;
             }
@@ -1007,7 +1031,7 @@ private:
 
     void collectExtension(const syntax::ExtensionDeclSyntax::Ptr& extension) {
         setContainingScope(extension, model->fileScope_);
-        const auto target = resolveType(extension->extendedType, model->fileScope_);
+        const auto target = resolveExtensionTarget(extension);
         if (!target.has_value()) return;
         const auto& type = symbol(*target);
         const auto isUserType = type.kind == SymbolKind::structure ||
@@ -1020,6 +1044,59 @@ private:
             return;
         }
         collectMethods(*target, extension->methods);
+    }
+
+    // `extension Box<T>` (spec 20.12.2): when the extended type is a generic struct or enum, each
+    // unresolvable bare argument name declares a type parameter local to the extension, so the header
+    // is not looked up as concrete types. An argument that already names a type is left for the type
+    // checker to reject as a specialization.
+    std::optional<SymbolId> resolveExtensionTarget(const syntax::ExtensionDeclSyntax::Ptr& extension) {
+        const auto& extended = extension->extendedType;
+        if (extended != nullptr && extended->kind == syntax::Kind::nominalType) {
+            const auto nominal = std::static_pointer_cast<syntax::NominalTypeSyntax>(extended);
+            if (!nominal->arguments.empty()) {
+                const auto head = lookupType(model->fileScope_, tokenText(nominal->name)).symbol;
+                if (head.has_value() && !symbol(*head).typeParameters.empty()) {
+                    setContainingScope(extended, model->fileScope_);
+                    model->referenceSymbols_[nodeId(extended)] = *head;
+                    const auto scopeId = createScope(
+                            ScopeKind::typeMembers, model->fileScope_, nodeId(extension));
+                    model->introducedScopes_[nodeId(extension)] = scopeId;
+                    auto& declared = model->extensionTypeParameters_[nodeId(extension)];
+                    for (const auto& argument : nominal->arguments) {
+                        setContainingScope(argument, scopeId);
+                        const auto bare = argument->kind == syntax::Kind::nominalType
+                                ? std::static_pointer_cast<syntax::NominalTypeSyntax>(argument)
+                                : nullptr;
+                        if (bare != nullptr && bare->arguments.empty() &&
+                            !lookupType(model->fileScope_, tokenText(bare->name)).symbol.has_value() &&
+                            tokenText(bare->name) != "Self") {
+                            const auto id = declareSymbol(
+                                    scopeId,
+                                    SymbolNamespace::type,
+                                    SymbolKind::typeParameter,
+                                    tokenText(bare->name),
+                                    tokenSpan(bare->name, bare->span),
+                                    nodeId(argument),
+                                    true,
+                                    *head);
+                            // The requirements of the declaration's constraint at this position.
+                            const auto position = declared.size();
+                            symbol(id).memberScope = position < symbol(*head).typeParameters.size()
+                                    ? symbol(symbol(*head).typeParameters[position]).memberScope
+                                    : std::optional<ScopeId>(createScope(
+                                            ScopeKind::typeMembers, scopeId, nodeId(argument)));
+                            model->referenceSymbols_[nodeId(argument)] = id;
+                            declared.push_back(id);
+                        } else {
+                            resolveType(argument, model->fileScope_);
+                        }
+                    }
+                    return head;
+                }
+            }
+        }
+        return resolveType(extended, model->fileScope_);
     }
 
     void collectMethods(
@@ -1094,6 +1171,77 @@ private:
         symbol(id).callable = std::move(signature);
     }
 
+    void collectProtocol(const syntax::ProtocolDeclSyntax::Ptr& declaration) {
+        rejectReservedTypeName(declaration->name, declaration->span);
+        const auto protocol = declareSymbol(
+                model->fileScope_,
+                SymbolNamespace::type,
+                SymbolKind::protocol,
+                tokenText(declaration->name),
+                tokenSpan(declaration->name, declaration->span),
+                nodeId(declaration));
+        symbol(protocol).memberScope = createScope(
+                ScopeKind::typeMembers, model->fileScope_, nodeId(declaration));
+    }
+
+    // `<T: P & Q>` (spec 20.4): each parameter is a type in the function's scope. Its member scope
+    // holds the requirements of its constraint protocols; when two protocols require one name, the
+    // first is kept and the type checker compares them.
+    void declareGenericParameters(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& parameters,
+            SymbolId owner,
+            ScopeId parameterScope) {
+        const auto ids = declareTypeParameterSymbols(parameters, owner, parameterScope);
+        resolveTypeParameterConstraints(parameters, ids, parameterScope);
+    }
+
+    // Declares one `typeParameter` symbol per parameter in `parameterScope`, in order. A struct or
+    // enum does this when it is collected, before every protocol is known; the constraints follow in
+    // resolveTypeParameterConstraints.
+    std::vector<SymbolId> declareTypeParameterSymbols(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& parameters,
+            SymbolId owner,
+            ScopeId parameterScope) {
+        std::vector<SymbolId> ids;
+        for (const auto& parameter : parameters) {
+            setContainingScope(parameter, parameterScope);
+            rejectReservedTypeName(parameter->name, parameter->span);
+            const auto id = declareSymbol(
+                    parameterScope,
+                    SymbolNamespace::type,
+                    SymbolKind::typeParameter,
+                    tokenText(parameter->name),
+                    tokenSpan(parameter->name, parameter->span),
+                    nodeId(parameter),
+                    true,
+                    owner);
+            symbol(id).memberScope = createScope(
+                    ScopeKind::typeMembers, parameterScope, nodeId(parameter));
+            symbol(id).mustTransferParameter = symbol(owner).acceptsLinearArguments;
+            ids.push_back(id);
+        }
+        return ids;
+    }
+
+    void resolveTypeParameterConstraints(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& parameters,
+            const std::vector<SymbolId>& ids,
+            ScopeId) {
+        for (size_t index = 0; index < parameters.size() && index < ids.size(); ++index) {
+            const auto members = *symbol(ids[index]).memberScope;
+            for (const auto& constraint : parameters[index]->constraints) {
+                const auto protocol = resolveType(constraint, model->fileScope_);
+                if (!protocol.has_value() || symbol(*protocol).kind != SymbolKind::protocol ||
+                    !symbol(*protocol).memberScope.has_value()) {
+                    continue;
+                }
+                for (const auto& [name, requirement] : scope(*symbol(*protocol).memberScope).values) {
+                    scope(members).values.emplace(name, requirement);
+                }
+            }
+        }
+    }
+
     void rejectReservedTypeName(const Token::Ptr& name, SourceSpan fallback) {
         if (tokenText(name) != "Self") return;
         report(NameResolutionDiagnosticId::reservedName, tokenSpan(name, fallback),
@@ -1115,6 +1263,8 @@ private:
                 nodeId(declaration));
         symbol(type).memberScope = members;
         model->introducedScopes_[nodeId(declaration)] = members;
+        symbol(type).typeParameters =
+                declareTypeParameterSymbols(declaration->genericParameters, type, members);
 
         CallableSignature initializerSignature {
             CallableKind::structureInitializer,
@@ -1152,6 +1302,7 @@ private:
                 false,
                 type);
         symbol(initializer).declaredType = type;
+        symbol(initializer).acceptsLinearArguments = symbol(type).acceptsLinearArguments;
         symbol(initializer).callable = std::move(initializerSignature);
         for (const auto& field : declaration->fields) {
             symbol(initializer).visibility = std::min(
@@ -1176,6 +1327,8 @@ private:
                 nodeId(declaration));
         symbol(type).memberScope = members;
         model->introducedScopes_[nodeId(declaration)] = members;
+        symbol(type).typeParameters =
+                declareTypeParameterSymbols(declaration->genericParameters, type, members);
 
         for (const auto& enumCase : declaration->cases) {
             CallableSignature signature {
@@ -1213,6 +1366,7 @@ private:
         if (type == nullptr) return;
         const auto referenced = referencedSymbol(type);
         if (referenced.has_value() &&
+            symbol(*referenced).kind != SymbolKind::typeParameter &&
             symbol(*referenced).visibility < declaration.visibility) {
             report(NameResolutionDiagnosticId::inaccessibleExposedType, type->span,
                    "declaration '" + declaration.name + "' exposes less accessible type '" +
@@ -1261,6 +1415,22 @@ private:
                 validateExposedType(function->returnType, declaration);
                 for (const auto& parameter : function->parameters) {
                     validateExposedType(parameter->type, declaration);
+                }
+                // Constraint protocols are exposed names of a generic signature (spec 12.2).
+                for (const auto& parameter : function->genericParameters) {
+                    for (const auto& constraint : parameter->constraints) {
+                        validateExposedType(constraint, declaration);
+                    }
+                }
+            } else if (declaration.kind == SymbolKind::structure || declaration.kind == SymbolKind::enumeration) {
+                // The constraint protocols of a generic type are exposed names too (spec 20.12, 12.2).
+                const auto& parameters = declaration.kind == SymbolKind::structure
+                        ? std::static_pointer_cast<syntax::StructDeclSyntax>(node)->genericParameters
+                        : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->genericParameters;
+                for (const auto& parameter : parameters) {
+                    for (const auto& constraint : parameter->constraints) {
+                        validateExposedType(constraint, declaration);
+                    }
                 }
             } else if (declaration.kind == SymbolKind::method) {
                 // A member is never more accessible than the type that owns it.
@@ -1399,7 +1569,17 @@ private:
                 const auto declaration =
                         std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
                 resolveMethodSignatures(
-                        referencedSymbol(declaration->extendedType), declaration->methods);
+                        referencedSymbol(declaration->extendedType), declaration->methods,
+                        &model->extensionTypeParameters_[nodeId(declaration)]);
+                for (const auto& conformance : declaration->conformances) {
+                    resolveType(conformance, model->fileScope_);
+                }
+                break;
+            }
+            case syntax::Kind::protocolDecl: {
+                const auto declaration =
+                        std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node);
+                resolveMethodSignatures(declaredSymbolId(declaration), declaration->requirements);
                 break;
             }
             default:
@@ -1407,11 +1587,17 @@ private:
         }
     }
 
+    // `ambient` are the type parameters the methods may name: the owner's own, or those an
+    // extension header declares.
     void resolveMethodSignatures(
             std::optional<SymbolId> owner,
-            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods) {
+            const std::vector<syntax::FunctionDeclSyntax::Ptr>& methods,
+            const std::vector<SymbolId>* ambient = nullptr) {
         if (!owner.has_value()) return;
+        const auto previous = ambientTypeParameters;
+        ambientTypeParameters = ambient != nullptr ? *ambient : symbol(*owner).typeParameters;
         for (const auto& method : methods) resolveFunctionSignature(method, owner);
+        ambientTypeParameters = previous;
     }
 
     void resolveMethodBodies(
@@ -1469,6 +1655,14 @@ private:
                         referencedSymbol(declaration->extendedType), declaration->methods);
                 break;
             }
+            case syntax::Kind::protocolDecl: {
+                // A requirement has no body; one written anyway is resolved so the type checker can
+                // report it without cascading errors.
+                const auto declaration =
+                        std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node);
+                resolveMethodBodies(declaredSymbolId(declaration), declaration->requirements);
+                break;
+            }
             default:
                 break;
         }
@@ -1513,6 +1707,11 @@ private:
                 model->fileScope_,
                 nodeId(declaration));
         model->introducedScopes_[nodeId(declaration)] = functionScope;
+
+        declareGenericParameters(declaration->genericParameters, *functionSymbol, functionScope);
+        for (const auto parameter : ambientTypeParameters) {
+            scope(functionScope).types.emplace(symbol(parameter).name, parameter);
+        }
 
         // The receiver is not a call parameter; the rest keep their written order.
         size_t callableIndex = 0;
@@ -1559,6 +1758,8 @@ private:
         }
         const auto memberScope = *symbol(*structure).memberScope;
         setContainingScope(declaration, model->fileScope_);
+        resolveTypeParameterConstraints(
+                declaration->genericParameters, symbol(*structure).typeParameters, memberScope);
 
         const auto initializer = *symbol(*structure).synthesizedInitializer;
         for (size_t index = 0; index < declaration->fields.size(); ++index) {
@@ -1577,6 +1778,8 @@ private:
         if (!enumeration.has_value() || !symbol(*enumeration).memberScope.has_value()) return;
         const auto memberScope = *symbol(*enumeration).memberScope;
         setContainingScope(declaration, model->fileScope_);
+        resolveTypeParameterConstraints(
+                declaration->genericParameters, symbol(*enumeration).typeParameters, memberScope);
 
         for (const auto& enumCase : declaration->cases) {
             setContainingScope(enumCase, memberScope);
@@ -1884,6 +2087,13 @@ private:
         }
 
         const auto& type = symbol(*baseType);
+        const auto baseSymbol = referencedSymbol(expression->base);
+        if (type.kind == SymbolKind::protocol &&
+            (!baseSymbol.has_value() || symbol(*baseSymbol).kind != SymbolKind::protocol)) {
+            addDeferred(expression, DeferredResolutionKind::memberNeedsBaseType, name,
+                        tokenSpan(expression->member, expression->span));
+            return;
+        }
         if (!type.memberScope.has_value()) {
             report(
                     NameResolutionDiagnosticId::unknownMember,
@@ -1892,6 +2102,15 @@ private:
             return;
         }
         const auto member = lookupMember(*baseType, name);
+        if (!member.has_value() && type.kind == SymbolKind::typeParameter) {
+            // The type checker reports the operation the constraint does not provide (spec 20.5).
+            addDeferred(
+                    expression,
+                    DeferredResolutionKind::memberNeedsBaseType,
+                    name,
+                    tokenSpan(expression->member, expression->span));
+            return;
+        }
         if (!member.has_value()) {
             report(
                     NameResolutionDiagnosticId::unknownMember,
@@ -1906,6 +2125,7 @@ private:
 
     void resolveCall(const syntax::CallExprSyntax::Ptr& expression, ScopeId currentScope) {
         resolveExpression(expression->callee, currentScope);
+        for (const auto& typeArgument : expression->typeArguments) resolveType(typeArgument, currentScope);
         for (const auto& argument : expression->arguments) {
             setContainingScope(argument, currentScope);
             resolveExpression(argument->value, currentScope);
@@ -2286,12 +2506,39 @@ private:
 
 NameResolutionResult NameResolver::resolve(
         const syntax::SourceFileSyntax::Ptr& root) const {
-    NameResolutionBuilder builder;
-    return builder.build(root);
+    if (root == nullptr) return NameResolutionBuilder().build(root);
+    return resolveWithPrelude({{"", {root}}}, true);
 }
 
 NameResolutionResult NameResolver::resolve(const std::vector<ModuleInput>& modules) const {
-    return NameResolutionBuilder().build(modules);
+    return resolveWithPrelude(modules, false);
+}
+
+NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> modules, bool singleFile) const {
+    const bool supplied = std::any_of(modules.begin(), modules.end(),
+            [](const auto& module) { return module.preludeContext; });
+    if (supplied) return NameResolutionBuilder().build(modules, singleFile);
+    uint32_t sourceId = 0;
+    for (const auto& module : modules) {
+        for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);
+    }
+    if (sourceId == std::numeric_limits<uint32_t>::max()) {
+        auto result = NameResolutionBuilder().build(modules, singleFile);
+        result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude, {},
+                                      "source identities leave no space for the runtime prelude"});
+        return result;
+    }
+    auto prelude = parsePrelude(sourceId + 1);
+    if (prelude.root != nullptr) {
+        modules.push_back({"$prelude", {prelude.root}, true, false, true});
+    }
+    auto result = NameResolutionBuilder().build(modules, singleFile);
+    result.model->preludeSource_ = std::move(prelude.source);
+    if (!prelude.problem.empty()) {
+        result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude,
+                                      SourceSpan {0, 0, sourceId + 1}, std::move(prelude.problem)});
+    }
+    return result;
 }
 
 const char* diagnosticName(NameResolutionDiagnosticId id) {
@@ -2334,6 +2581,8 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.self-outside-type";
         case NameResolutionDiagnosticId::reservedName:
             return "name-resolution.reserved-name";
+        case NameResolutionDiagnosticId::invalidPrelude:
+            return "name-resolution.invalid-prelude";
     }
     return "name-resolution.unknown";
 }

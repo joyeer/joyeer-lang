@@ -19,8 +19,8 @@ enum_pattern_arg
 
 > **Note.** Type-test / cast patterns (`x as T`) and the `is` / `as` type-test
 > operators are deferred to v0.2 (Appendix A). v0.1 has no runtime type tests because
-> it has no subtyping, protocols, or inheritance, so there is no type
-> relationship to query.
+> it has no subtyping, inheritance, or protocol-typed values (protocols only
+> constrain generic functions, §20), so there is no type relationship to query.
 
 ### 7.1 Identifier
 

@@ -1,0 +1,20 @@
+protocol Named {
+    func name(): String
+}
+
+struct Box<T: Named> {
+    var value: T
+    func describe(): String { return self.value.name() }
+    func get(): T { return self.value }
+}
+
+enum Tree<T> {
+    Leaf,
+    Node(T)
+    func first(): T? { return nil }
+}
+
+extension Box<U>: Named {
+    func name(): String { return "box" }
+    func other(value: U): U { return value }
+}

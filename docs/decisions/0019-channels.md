@@ -6,7 +6,7 @@
   ([0018](0018-tasks.md)). It amends two details of [0013](0013-concurrency-model.md) (see
   "Amendments"). Implemented on Linux and Windows.
 - Spec: [§21.9](../../specs/21-concurrency.md#219-channels) (new) and
-  [§2.6.3](../../specs/02-types.md#263-concurrency-builtin-types-provisional).
+  [§2.6.3](../../specs/02-types.md#263-concurrency-library-types).
 
 ## Context
 
@@ -20,7 +20,9 @@ the exact results of `send` and `receive`.
 
 Constraints:
 
-- No user generics, so the ends are compiler-known builtin generic types like `JoinHandle<R>`.
+- No user generics, so the ends are compiler-known builtin generic types like `JoinHandle<R>`. (Superseded
+  by [0023](0023-library-concurrency.md): the ends, `channel`, `send`, `receive` and `close` are library
+  source over the runtime ABI below, and the `channel_*` instructions and `usesThreads` rule are removed.)
 - An end is an opaque handle (one pointer), and the operations are IR instructions the backend lowers
   to runtime calls, as for tasks.
 - A queued value is owned by the channel and must be destroyed if nobody receives it, with the

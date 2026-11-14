@@ -8,11 +8,24 @@
 namespace joyeer::semantic {
 
 SemanticModel::SemanticModel(syntax::SourceFileSyntax::Ptr root):
-        root_(std::move(root)) {
+        root_(std::move(root)), compilationRoot_(root_) {
 }
 
 const syntax::SourceFileSyntax::Ptr& SemanticModel::root() const {
     return root_;
+}
+
+const syntax::SourceFileSyntax::Ptr& SemanticModel::compilationRoot() const {
+    return compilationRoot_;
+}
+
+const std::shared_ptr<SourceFile>& SemanticModel::preludeSource() const {
+    return preludeSource_;
+}
+
+bool SemanticModel::isPreludeSource(SourceSpan span) const {
+    const auto found = preludeSources_.find(span.sourceId);
+    return found != preludeSources_.end() && found->second;
 }
 
 ScopeId SemanticModel::preludeScope() const {
@@ -26,6 +39,11 @@ ScopeId SemanticModel::fileScope() const {
 bool SemanticModel::isRuntimeSource(SourceSpan span) const {
     const auto found = runtimeSources_.find(span.sourceId);
     return found != runtimeSources_.end() && found->second;
+}
+
+uint32_t SemanticModel::moduleOf(SourceSpan span) const {
+    const auto found = sourceModules_.find(span.sourceId);
+    return found == sourceModules_.end() ? 0 : found->second;
 }
 
 const std::string* SemanticModel::moduleName(uint32_t module) const {
@@ -91,6 +109,14 @@ std::optional<ScopeId> SemanticModel::containingScope(const syntax::NodePtr& nod
 
 std::optional<ScopeId> SemanticModel::introducedScope(const syntax::NodePtr& node) const {
     return mappedValue(*this, node, introducedScopes_);
+}
+
+const std::vector<SymbolId>& SemanticModel::extensionTypeParameters(const syntax::NodePtr& node) const {
+    static const std::vector<SymbolId> none;
+    const auto id = nodeId(node);
+    if (!id.has_value()) return none;
+    const auto found = extensionTypeParameters_.find(*id);
+    return found == extensionTypeParameters_.end() ? none : found->second;
 }
 
 std::optional<SymbolId> SemanticModel::declaredSymbol(const syntax::NodePtr& node) const {
@@ -174,6 +200,8 @@ const char* symbolKindName(SymbolKind kind) {
         case SymbolKind::enumCase: return "enum-case";
         case SymbolKind::patternBinding: return "pattern-binding";
         case SymbolKind::method: return "method";
+        case SymbolKind::protocol: return "protocol";
+        case SymbolKind::typeParameter: return "type-parameter";
     }
     return "unknown";
 }

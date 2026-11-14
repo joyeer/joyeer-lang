@@ -1,0 +1,8 @@
+#ifndef JOYEER_COMPILER_PRELUDE_SOURCE_H
+#define JOYEER_COMPILER_PRELUDE_SOURCE_H
+
+namespace joyeer::semantic {
+inline constexpr char concurrencyPreludeSource[] = R"JOYEER_PRELUDE(@JOYEER_PRELUDE_SOURCE@)JOYEER_PRELUDE";
+}
+
+#endif

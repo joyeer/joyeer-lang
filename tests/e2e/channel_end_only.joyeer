@@ -1,0 +1,7 @@
+// A program that only names a channel end, without creating a channel, still links (decision 0023).
+func finish(end: consuming ChannelSender<Int>): Void {
+    consume end.close()
+}
+func main() {
+    print(value: "no channel created")
+}

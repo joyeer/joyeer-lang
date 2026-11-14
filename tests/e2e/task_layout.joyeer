@@ -1,0 +1,40 @@
+// Task block layout: results and inputs of mixed size and alignment (spec 21.2; decision 0023).
+struct Wide {
+    var flag: UInt8
+    var d: Double
+    var n: Int
+}
+struct Tiny { var a: UInt8
+ var b: UInt8 }
+func narrow(w: consuming Wide): UInt8 {
+    if w.d > 1.5 { return 200 }
+    return 7
+}
+func tinyIn(x: consuming UInt8): Tiny {
+    return Tiny(a: x, b: 9)
+}
+func negI8(x: consuming Int8): Int8 { return 0 - 5 }
+func flip(b: consuming Bool): Bool { return !b }
+func dbl(x: consuming Double): Double { return x * 2.5 }
+func f32(x: consuming Float): Float { return x }
+func main() {
+    let h = spawn(function: narrow, input: consume Wide(flag: 1, d: 2.0, n: 3))
+    let r_h = consume h.join()
+    print(value: r_h)
+    let h2 = spawn(function: narrow, input: consume Wide(flag: 1, d: 1.0, n: 3))
+    let r_h2 = consume h2.join()
+    print(value: r_h2)
+    let h3 = spawn(function: tinyIn, input: consume 4)
+    let t = consume h3.join()
+    print(value: t.a)
+    print(value: t.b)
+    let h4 = spawn(function: negI8, input: consume 1)
+    let r_h4 = consume h4.join()
+    print(value: r_h4)
+    let h5 = spawn(function: flip, input: consume true)
+    let r_h5 = consume h5.join()
+    print(value: r_h5)
+    let h6 = spawn(function: dbl, input: consume 4.0)
+    let r_h6 = consume h6.join()
+    print(value: r_h6)
+}

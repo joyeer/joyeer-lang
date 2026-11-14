@@ -25,6 +25,7 @@ struct CommandLineArguments {
     std::filesystem::path sysroot;       // --sysroot; empty means the executable's directory
     bool standardLibrary = true;         // --no-stdlib clears it
     bool printSysroot = false;
+    bool reportInstantiations = false;
 
     bool accepted = false;
     joyeer::OutputMode outputMode = joyeer::OutputMode::validate;

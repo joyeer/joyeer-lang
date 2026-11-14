@@ -1,0 +1,27 @@
+// Task block layout: empty and Void inputs and results (spec 21.2; decision 0023).
+struct Unit {}
+struct Quiet {}
+func nothing(u: consuming Unit): Void { }
+func unitOut(u: consuming Unit): Quiet { return Quiet() }
+func voidIn(x: consuming Int) { print(value: x) }
+func main() {
+    let h = spawn(function: nothing, input: consume Unit())
+    consume h.join()
+    let h2 = spawn(function: unitOut, input: consume Unit())
+    consume h2.join()
+    print(value: "after unit")
+    let h3 = spawn(function: voidIn, input: consume 12)
+    consume h3.join()
+    var hs: [JoinHandle<Void>] = []
+    &hs.append(element: consume spawn(function: nothing, input: consume Unit()))
+    &hs.append(element: consume spawn(function: nothing, input: consume Unit()))
+    while true {
+        let p = &hs.removeLast()
+        match consume p {
+            .Some(h) => { consume h.join() },
+            .None => { break }
+        }
+    }
+    consume hs.consumeEmpty()
+    print(value: "done")
+}

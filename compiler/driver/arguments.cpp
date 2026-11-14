@@ -289,6 +289,8 @@ void CommandLineArguments::parse(std::vector<std::string>& arguments) {
             printSysroot = true;
         } else if (parseOptions && *iterator == "--no-stdlib") {
             standardLibrary = false;
+        } else if (parseOptions && *iterator == "--report-instantiations") {
+            reportInstantiations = true;
         } else if (parseOptions && *iterator == "--sysroot") {
             ++iterator;
             if (iterator == arguments.end() || iterator->empty() || iterator->starts_with('-')) {
@@ -507,6 +509,7 @@ void CommandLineArguments::printUsage() {
     std::cout << "  --sysroot <dir>      toolchain root whose lib/ holds the standard modules (default: the compiler's directory)" << std::endl;
     std::cout << "  --print-sysroot      print the toolchain root and exit" << std::endl;
     std::cout << "  --no-stdlib          do not resolve imports from the toolchain's standard modules" << std::endl;
+    std::cout << "  --report-instantiations print generic instances, their requiring calls and unoptimized IR sizes" << std::endl;
     std::cout << "  --emit-runtime-object <file> write an internal runtime object without startup or linking" << std::endl;
     std::cout << "  -O0|-O1|-O2|-O3    native optimization level (default: -O2)" << std::endl;
     std::cout << "  -g0                  disable debug line tables (default)" << std::endl;

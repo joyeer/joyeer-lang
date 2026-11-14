@@ -65,9 +65,6 @@ TypeContext::TypeContext(const semantic::SemanticModel& model): model(model) {
     registerGenericBuiltin("Dict", TypeKind::dictionary, 2);
     registerGenericBuiltin("Optional", TypeKind::optional, 1);
     registerGenericBuiltin("Result", TypeKind::result, 2);
-    registerGenericBuiltin("JoinHandle", TypeKind::task, 1);
-    registerGenericBuiltin("ChannelSender", TypeKind::channelSender, 1);
-    registerGenericBuiltin("ChannelReceiver", TypeKind::channelReceiver, 1);
     for (const auto& [name, kind] : {
             std::pair {"Int8", TypeKind::int8}, {"Int16", TypeKind::int16},
             {"Int32", TypeKind::int32}, {"Int64", TypeKind::int64},
@@ -138,31 +135,6 @@ TypeId TypeContext::optionalType(TypeId wrapped) {
     return typeForSymbol(*symbol, { wrapped }).value_or(errorTypeId);
 }
 
-TypeId TypeContext::taskType(TypeId result) {
-    const auto symbol = builtinSymbol("JoinHandle");
-    assert(symbol.has_value());
-    return typeForSymbol(*symbol, { result }).value_or(errorTypeId);
-}
-
-TypeId TypeContext::channelSenderType(TypeId element) {
-    const auto symbol = builtinSymbol("ChannelSender");
-    assert(symbol.has_value());
-    return typeForSymbol(*symbol, { element }).value_or(errorTypeId);
-}
-
-TypeId TypeContext::channelReceiverType(TypeId element) {
-    const auto symbol = builtinSymbol("ChannelReceiver");
-    assert(symbol.has_value());
-    return typeForSymbol(*symbol, { element }).value_or(errorTypeId);
-}
-
-TypeId TypeContext::channelResultType(TypeId success) {
-    const auto closed = builtinSymbol("ChannelClosed");
-    assert(closed.has_value());
-    const auto closedType = typeForSymbol(*closed).value_or(errorTypeId);
-    return resultType(success, closedType);
-}
-
 TypeId TypeContext::functionType(
         const std::vector<TypeId>& parameters,
         const std::vector<syntax::AccessEffect>& effects,
@@ -180,6 +152,54 @@ TypeId TypeContext::resultType(TypeId success, TypeId failure) {
     const auto symbol = builtinSymbol("Result");
     assert(symbol.has_value());
     return typeForSymbol(*symbol, { success, failure }).value_or(errorTypeId);
+}
+
+TypeId TypeContext::typeParameterType(semantic::SymbolId symbol) {
+    return intern(TypeKind::typeParameter, symbol);
+}
+
+TypeId TypeContext::substitute(
+        TypeId id, const std::unordered_map<semantic::SymbolId, TypeId>& substitution) {
+    if (substitution.empty()) return id;
+    const auto* value = type(id);
+    if (value == nullptr) return id;
+    if (value->kind == TypeKind::typeParameter) {
+        const auto found = substitution.find(value->symbol);
+        return found == substitution.end() ? id : found->second;
+    }
+    if (value->arguments.empty()) return id;
+    // Copy before interning: substituting can grow `types` and invalidate `value`.
+    const auto kind = value->kind;
+    const auto symbol = value->symbol;
+    auto arguments = value->arguments;
+    const auto effects = value->effects;
+    bool changed = false;
+    for (auto& argument : arguments) {
+        const auto replaced = substitute(argument, substitution);
+        // An error argument makes the whole type an error, as typeForSymbol and functionType do,
+        // so one inference failure does not cascade into a mismatch against "(<error>): Int".
+        if (replaced == errorTypeId) return errorTypeId;
+        changed = changed || replaced != argument;
+        argument = replaced;
+    }
+    if (!changed) return id;
+    return intern(kind, symbol, std::move(arguments), effects);
+}
+
+bool TypeContext::mentionsTypeParameter(TypeId id) const {
+    const auto* value = type(id);
+    if (value == nullptr) return false;
+    if (value->kind == TypeKind::typeParameter) return true;
+    return std::any_of(value->arguments.begin(), value->arguments.end(),
+            [this](TypeId argument) { return mentionsTypeParameter(argument); });
+}
+
+size_t TypeContext::nestingDepth(TypeId id) const {
+    const auto* value = type(id);
+    if (value == nullptr || value->arguments.empty()) return 0;
+    size_t deepest = 0;
+    for (const auto argument : value->arguments) deepest = std::max(deepest, nestingDepth(argument));
+    return deepest + 1;
 }
 
 std::optional<TypeId> TypeContext::typeForSymbol(
@@ -202,9 +222,21 @@ std::optional<TypeId> TypeContext::typeForSymbol(
     }
 
     const auto* declaration = model.symbol(symbolId);
-    if (declaration == nullptr || declaration->isInvalid || !arguments.empty()) {
-        return std::nullopt;
+    if (declaration == nullptr || declaration->isInvalid) return std::nullopt;
+    // A generic struct or enum (spec 20.12) takes exactly its parameters' worth of arguments.
+    if (!declaration->typeParameters.empty() &&
+        (declaration->kind == semantic::SymbolKind::structure ||
+         declaration->kind == semantic::SymbolKind::enumeration)) {
+        if (arguments.size() != declaration->typeParameters.size()) return std::nullopt;
+        for (const auto argument : arguments) {
+            if (type(argument) == nullptr) return std::nullopt;
+            if (argument == errorTypeId) return errorTypeId;
+        }
+        return intern(declaration->kind == semantic::SymbolKind::structure
+                              ? TypeKind::structure : TypeKind::enumeration,
+                      symbolId, arguments);
     }
+    if (!arguments.empty()) return std::nullopt;
 
     TypeKind kind;
     switch (declaration->kind) {
@@ -214,6 +246,8 @@ std::optional<TypeId> TypeContext::typeForSymbol(
         case semantic::SymbolKind::enumeration:
             kind = TypeKind::enumeration;
             break;
+        case semantic::SymbolKind::typeParameter:
+            return typeParameterType(symbolId);
         default:
             return std::nullopt;
     }
@@ -237,8 +271,9 @@ std::optional<size_t> TypeContext::typeArity(semantic::SymbolId symbolId) const 
     const auto* declaration = model.symbol(symbolId);
     if (declaration != nullptr && !declaration->isInvalid &&
         (declaration->kind == semantic::SymbolKind::structure ||
-         declaration->kind == semantic::SymbolKind::enumeration)) {
-        return 0;
+         declaration->kind == semantic::SymbolKind::enumeration ||
+         declaration->kind == semantic::SymbolKind::typeParameter)) {
+        return declaration->typeParameters.size();
     }
     return std::nullopt;
 }
@@ -252,7 +287,7 @@ size_t TypeContext::size() const {
     return types.size();
 }
 
-std::string TypeContext::displayName(TypeId id) const {
+std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const {
     const auto* value = type(id);
     if (value == nullptr) return "<invalid-type>";
 
@@ -260,25 +295,25 @@ std::string TypeContext::displayName(TypeId id) const {
         case TypeKind::error:
             return "<error>";
         case TypeKind::array:
-            return "[" + displayName(value->arguments[0]) + "]";
+            return "[" + displayName(value->arguments[0], disambiguateNominals) + "]";
         case TypeKind::dictionary:
-            return "[" + displayName(value->arguments[0]) + ": " +
-                    displayName(value->arguments[1]) + "]";
+            return "[" + displayName(value->arguments[0], disambiguateNominals) + ": " +
+                    displayName(value->arguments[1], disambiguateNominals) + "]";
         case TypeKind::optional: {
             // `((Int): Int)?` is an optional function; `(Int): Int?` returns an optional.
             const auto* wrapped = type(value->arguments[0]);
             const bool function = wrapped != nullptr && wrapped->kind == TypeKind::function;
-            return (function ? "(" : "") + displayName(value->arguments[0]) + (function ? ")?" : "?");
+            return (function ? "(" : "") + displayName(value->arguments[0], disambiguateNominals) +
+                    (function ? ")?" : "?");
         }
         case TypeKind::result:
-            return "Result<" + displayName(value->arguments[0]) + ", " +
-                    displayName(value->arguments[1]) + ">";
-        case TypeKind::task:
-            return "JoinHandle<" + displayName(value->arguments[0]) + ">";
-        case TypeKind::channelSender:
-            return "ChannelSender<" + displayName(value->arguments[0]) + ">";
-        case TypeKind::channelReceiver:
-            return "ChannelReceiver<" + displayName(value->arguments[0]) + ">";
+            return "Result<" + displayName(value->arguments[0], disambiguateNominals) + ", " +
+                    displayName(value->arguments[1], disambiguateNominals) + ">";
+        case TypeKind::typeParameter: {
+            const auto* declaration = model.symbol(value->symbol);
+            if (declaration != nullptr && declaration->kind == semantic::SymbolKind::protocol) return "Self";
+            return declaration == nullptr ? "<invalid-type>" : declaration->name;
+        }
         case TypeKind::function: {
             std::string text = "(";
             for (size_t index = 0; index + 1 < value->arguments.size(); ++index) {
@@ -289,13 +324,38 @@ std::string TypeContext::displayName(TypeId id) const {
                     case syntax::AccessEffect::initializing: text += "initializing "; break;
                     case syntax::AccessEffect::borrowing: break;
                 }
-                text += displayName(value->arguments[index]);
+                text += displayName(value->arguments[index], disambiguateNominals);
             }
-            return text + "): " + displayName(value->arguments.back());
+            return text + "): " + displayName(value->arguments.back(), disambiguateNominals);
         }
         default: {
             const auto* declaration = model.symbol(value->symbol);
-            return declaration == nullptr ? "<invalid-type>" : declaration->name;
+            if (declaration == nullptr) return "<invalid-type>";
+            auto name = declaration->name;
+            // A generic struct or enum shows its arguments, `Box<Int>` (spec 20.12).
+            std::string suffix;
+            for (size_t index = 0; index < value->arguments.size(); ++index) {
+                suffix += (index == 0 ? "<" : ", ") + displayName(value->arguments[index], disambiguateNominals);
+            }
+            if (!suffix.empty()) suffix += ">";
+            if (!disambiguateNominals) return name + suffix;
+            if (value->kind != TypeKind::structure && value->kind != TypeKind::enumeration) return name + suffix;
+            bool duplicate = false;
+            bool sameModule = false;
+            for (const auto& other : model.symbols()) {
+                if (other.id == declaration->id || other.name != name ||
+                    (other.kind != semantic::SymbolKind::structure &&
+                     other.kind != semantic::SymbolKind::enumeration &&
+                     other.kind != semantic::SymbolKind::builtinType)) continue;
+                duplicate = true;
+                sameModule |= other.moduleId == declaration->moduleId;
+            }
+            if (duplicate) {
+                if (const auto* module = model.moduleName(declaration->moduleId);
+                    module != nullptr && !module->empty()) name = *module + "." + name;
+                if (sameModule) name += "@" + std::to_string(declaration->span.sourceId);
+            }
+            return name + suffix;
         }
     }
 }
@@ -407,10 +467,58 @@ bool TypeCheckedModel::isDeclaredLinear(TypeId type) const {
     return structure != nullptr && structure->isLinear;
 }
 
+// A field or payload type declared inside a generic type, seen from one instance `owner` of it:
+// the type's parameters replaced by the instance's arguments (spec 20.12).
+TypeId TypeCheckedModel::memberTypeOf(TypeId owner, TypeId declared) const {
+    const auto* record = typeContext.type(owner);
+    if (record == nullptr || record->arguments.empty()) return declared;
+    const auto* parameters = genericParameters(record->symbol);
+    if (parameters == nullptr || parameters->size() != record->arguments.size()) return declared;
+    std::unordered_map<semantic::SymbolId, TypeId> substitution;
+    for (size_t index = 0; index < parameters->size(); ++index) {
+        substitution.emplace((*parameters)[index], record->arguments[index]);
+    }
+    return typeContext.substitute(declared, substitution);
+}
+
 bool TypeCheckedModel::isLinear(TypeId type) const {
     std::vector<TypeId> visiting;
     std::unordered_set<TypeId> clean;
     return isLinear(type, visiting, clean);
+}
+
+std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) const {
+    std::unordered_set<TypeId> visited;
+    std::function<std::optional<std::string>(TypeId)> visit = [&](TypeId id) -> std::optional<std::string> {
+        if (!visited.insert(id).second || !isLinear(id)) return std::nullopt;
+        const auto* record = typeContext.type(id);
+        if (record == nullptr) return std::nullopt;
+        const auto arguments = record->arguments;
+        const auto* declaration = semanticModelValue->symbol(record->symbol);
+        if (declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::taskHandle &&
+            declaration->memberScope.has_value()) {
+            const auto* members = semanticModelValue->scope(*declaration->memberScope);
+            for (const auto& [name, symbol] : members->values) {
+                const auto* method = semanticModelValue->symbol(symbol);
+                if (method->libraryRole == semantic::LibraryRole::storedConsumer) return name;
+            }
+        }
+        if (const auto structure = structureDeclaration(id)) {
+            for (const auto& field : structure->fields) {
+                const auto symbol = semanticModelValue->declaredSymbol(field);
+                const auto fieldType = symbol.has_value() ? typeOf(*symbol) : std::optional<TypeId>();
+                if (fieldType.has_value()) {
+                    if (const auto ending = visit(memberTypeOf(id, *fieldType))) return ending;
+                }
+            }
+        } else if (record->kind != TypeKind::function) {
+            for (const auto argument : arguments) {
+                if (const auto ending = visit(argument)) return ending;
+            }
+        }
+        return std::nullopt;
+    };
+    return visit(type);
 }
 
 bool TypeCheckedModel::isLinear(
@@ -429,10 +537,11 @@ bool TypeCheckedModel::isLinear(
                 if (isLinear(argument, visiting, clean)) { linear = true; break; }
             }
             break;
-        case TypeKind::task:
-            // A running task must be joined, never dropped (spec 21.3).
-            linear = true;
+        case TypeKind::typeParameter: {
+            const auto* parameter = semanticModelValue->symbol(type->symbol);
+            linear = parameter != nullptr && parameter->mustTransferParameter;
             break;
+        }
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
@@ -442,7 +551,7 @@ bool TypeCheckedModel::isLinear(
                 const auto fieldType = fieldSymbol.has_value()
                         ? typeOf(*fieldSymbol)
                         : std::optional<TypeId>();
-                if (fieldType.has_value() && isLinear(*fieldType, visiting, clean)) {
+                if (fieldType.has_value() && isLinear(memberTypeOf(id, *fieldType), visiting, clean)) {
                     linear = true;
                     break;
                 }
@@ -459,8 +568,8 @@ bool TypeCheckedModel::isLinear(
                 const auto caseSymbol = semanticModelValue->declaredSymbol(enumCase);
                 const auto* signature = caseSymbol.has_value() ? callable(*caseSymbol) : nullptr;
                 if (signature == nullptr) continue;
-                for (const auto payload : signature->parameters) {
-                    if (isLinear(payload, visiting, clean)) { linear = true; break; }
+                for (const auto declaredPayload : signature->parameters) {
+                    if (isLinear(memberTypeOf(id, declaredPayload), visiting, clean)) { linear = true; break; }
                 }
                 if (linear) break;
             }
@@ -488,7 +597,7 @@ std::vector<std::vector<semantic::SymbolId>> TypeCheckedModel::linearLeafPaths(T
         const auto fieldSymbol = semanticModelValue->declaredSymbol(field);
         const auto fieldType = fieldSymbol.has_value() ? typeOf(*fieldSymbol) : std::optional<TypeId>();
         if (!fieldSymbol.has_value() || !fieldType.has_value()) continue;
-        auto fieldPaths = linearLeafPaths(*fieldType);
+        auto fieldPaths = linearLeafPaths(memberTypeOf(type, *fieldType));
         if (fieldPaths.empty() && structure->isLinear) fieldPaths.push_back({});
         for (auto& rest : fieldPaths) {
             rest.insert(rest.begin(), *fieldSymbol);
@@ -534,14 +643,29 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                 }
             }
             break;
-        case TypeKind::task:
-            reason = name + " is a task handle, which has exactly one owner";
+        case TypeKind::typeParameter: {
+            // Copyable only when its constraint says so (spec 20.5). `Self` in a protocol is never
+            // copied: requirements have no bodies.
+            const auto copyable = copyableProtocol();
+            const auto& protocols = constraints(type->symbol);
+            if (!copyable.has_value() ||
+                std::find(protocols.begin(), protocols.end(), *copyable) == protocols.end()) {
+                reason = name + " is a type parameter not constrained to 'Copyable'";
+            }
             break;
-        case TypeKind::channelSender:
-        case TypeKind::channelReceiver:
-            reason = name + " is a channel end, which has exactly one owner";
-            break;
+        }
         case TypeKind::structure: {
+            const auto* declaration = semanticModelValue->symbol(type->symbol);
+            if (declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::taskHandle) {
+                reason = name + " is a task handle, which has exactly one owner";
+                break;
+            }
+            if (declaration != nullptr &&
+                (declaration->libraryRole == semantic::LibraryRole::channelSender ||
+                 declaration->libraryRole == semantic::LibraryRole::channelReceiver)) {
+                reason = name + " is a channel end, which has exactly one owner";
+                break;
+            }
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
             if (structure->deinitializer != nullptr) {
@@ -558,10 +682,10 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                         ? typeOf(*fieldSymbol)
                         : std::optional<TypeId>();
                 if (fieldType.has_value() &&
-                    noncopyableReason(*fieldType, visiting, clean).has_value()) {
+                    noncopyableReason(memberTypeOf(id, *fieldType), visiting, clean).has_value()) {
                     reason = name + " has the noncopyable field '" +
                             (field->name == nullptr ? std::string() : field->name->rawValue) +
-                            "' of type '" + typeContext.displayName(*fieldType) + "'";
+                            "' of type '" + typeContext.displayName(memberTypeOf(id, *fieldType)) + "'";
                     break;
                 }
             }
@@ -579,7 +703,8 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
                         ? callable(*caseSymbol)
                         : nullptr;
                 if (signature == nullptr) continue;
-                for (const auto payload : signature->parameters) {
+                for (const auto declaredPayload : signature->parameters) {
+                    const auto payload = memberTypeOf(id, declaredPayload);
                     if (noncopyableReason(payload, visiting, clean).has_value()) {
                         reason = name + " has a noncopyable payload of type '" +
                                 typeContext.displayName(payload) + "'";
@@ -631,6 +756,94 @@ std::optional<semantic::SymbolId> TypeCheckedModel::callTarget(
     return semanticModelValue->callTarget(node);
 }
 
+const std::vector<semantic::SymbolId>* TypeCheckedModel::genericParameters(semantic::SymbolId function) const {
+    const auto found = genericParameterLists.find(function);
+    return found == genericParameterLists.end() ? nullptr : &found->second;
+}
+
+const std::vector<semantic::SymbolId>& TypeCheckedModel::constraints(semantic::SymbolId typeParameter) const {
+    static const std::vector<semantic::SymbolId> none;
+    const auto found = constraintLists.find(typeParameter);
+    return found == constraintLists.end() ? none : found->second;
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::copyableProtocol() const {
+    const auto* prelude = semanticModelValue->scope(semanticModelValue->preludeScope());
+    if (prelude == nullptr) return std::nullopt;
+    const auto found = prelude->types.find("Copyable");
+    if (found == prelude->types.end()) return std::nullopt;
+    return found->second;
+}
+
+std::optional<TypeId> TypeCheckedModel::layoutIntrinsicType(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (!id.has_value()) return std::nullopt;
+    const auto found = layoutIntrinsicTypes.find(*id);
+    if (found == layoutIntrinsicTypes.end()) return std::nullopt;
+    return found->second;
+}
+
+const GenericCall* TypeCheckedModel::genericCall(const syntax::NodePtr& node) const {
+    const auto id = semanticModelValue->nodeId(node);
+    if (!id.has_value()) return nullptr;
+    const auto found = genericCalls.find(*id);
+    return found == genericCalls.end() ? nullptr : &found->second;
+}
+
+// A conformance of a generic type (`extension Box<T>: P`) holds for every instance (spec 20.12.2), so
+// it is recorded against the declaration's own instance and matches any instance of that type.
+bool TypeCheckedModel::conformanceSubjectMatches(TypeId subject, TypeId type) const {
+    if (subject == type) return true;
+    const auto* left = typeContext.type(subject);
+    const auto* right = typeContext.type(type);
+    if (left == nullptr || right == nullptr || left->arguments.empty()) return false;
+    if (left->kind != right->kind || left->symbol != right->symbol) return false;
+    return left->kind == TypeKind::structure || left->kind == TypeKind::enumeration;
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::witness(
+        TypeId type, semantic::SymbolId requirement) const {
+    for (const auto& conformance : conformanceList) {
+        if (!conformanceSubjectMatches(conformance.type, type)) continue;
+        const auto found = conformance.witnesses.find(requirement);
+        if (found != conformance.witnesses.end()) return found->second;
+    }
+    return std::nullopt;
+}
+
+std::optional<size_t> TypeCheckedModel::instanceIndex(
+        semantic::SymbolId function, const std::vector<TypeId>& arguments) const {
+    const auto found = instanceIndices.find({function, arguments});
+    if (found == instanceIndices.end()) return std::nullopt;
+    return found->second;
+}
+
+std::string TypeCheckedModel::functionDisplayName(semantic::SymbolId function) const {
+    const auto* symbol = semanticModelValue->symbol(function);
+    assert(symbol != nullptr);
+    const auto localName = [this](const semantic::Symbol& value) {
+        if (value.containingSymbol.has_value()) {
+            const auto* owner = semanticModelValue->symbol(*value.containingSymbol);
+            if (owner != nullptr) return owner->name + "." + value.name;
+        }
+        return value.name;
+    };
+    const auto local = localName(*symbol);
+    auto name = local;
+    if (const auto* module = semanticModelValue->moduleName(symbol->moduleId);
+        module != nullptr && !module->empty()) {
+        name = *module + "." + name;
+    }
+    if (std::any_of(semanticModelValue->symbols().begin(), semanticModelValue->symbols().end(),
+            [&](const auto& other) {
+                return other.id != function && other.kind == symbol->kind &&
+                        other.moduleId == symbol->moduleId && localName(other) == local;
+            })) {
+        name += "@" + std::to_string(symbol->span.sourceId);
+    }
+    return name;
+}
+
 class TypeCheckingBuilder {
 public:
     TypeCheckingResult build(const semantic::SemanticModel::Ptr& semanticModel) {
@@ -638,14 +851,31 @@ public:
         model = TypeCheckedModel::Ptr(new TypeCheckedModel(semanticModel));
         resolveBuiltinSignatures();
 
-        const auto& root = semanticModel->root();
+        const auto& root = semanticModel->compilationRoot();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
+            validatePreludeContracts();
+            const auto declarationDiagnostics = diagnostics.size();
+            checkExpandingRecursion(true);
+            if (diagnostics.size() != declarationDiagnostics) {
+                return TypeCheckingResult { model, std::move(diagnostics) };
+            }
+            checkConstraintConflicts();
+            for (const auto& item : root->items) {
+                if (item->kind == syntax::Kind::extensionDecl) {
+                    checkConformances(std::static_pointer_cast<syntax::ExtensionDeclSyntax>(item));
+                }
+            }
+            checkPendingTypeArguments();
             for (const auto& [type, span] : enumPayloadChecks) requireNoLinearDictionary(type, span);
             validateNativeSymbols();
             for (const auto& item : root->items) checkTopLevelBody(item);
+            checkPendingTypeArguments();
         }
         validateDeferredReferences();
+        // Instances are found only for a program that checked cleanly (decision 0021).
+        if (diagnostics.empty()) checkExpandingRecursion();
+        if (diagnostics.empty()) instantiate();
         return TypeCheckingResult { model, std::move(diagnostics) };
     }
 
@@ -660,6 +890,27 @@ private:
     // `consume` access expressions that appear where a value is stored (see permitMove).
     std::unordered_set<const syntax::Node*> permittedMoves;
     bool insideDeinit = false;
+    // Type parameters with constraints, checked for conflicting requirements once all are known.
+    std::vector<semantic::SymbolId> constrainedParameters;
+    // A call of a protocol requirement on a type parameter, inside a generic function or method. When
+    // an instance fixes the parameter to an instance of a generic type, the witness is itself an
+    // instance of that type's method (spec 20.12), found while instantiating.
+    struct RequirementCall {
+        semantic::SymbolId caller;
+        semantic::SymbolId requirement;
+        TypeId base;
+        SourceSpan span;
+    };
+    std::vector<RequirementCall> requirementCalls;
+    // While the methods of a struct, enum or extension are resolved: the type they belong to and the
+    // type arguments `Self` stands for, which are the parameters in scope (spec 20.12).
+    std::optional<semantic::SymbolId> selfOwner;
+    std::vector<TypeId> selfArguments;
+    // The parameters in scope for a member, for substituting a receiver's arguments into its signature:
+    // the declaration's own, or those of the extension that declares the method (spec 20.12.2).
+    std::vector<semantic::SymbolId> selfParameters;
+    std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> methodParameters;
+    std::optional<semantic::SymbolId> currentFunction;
 
     void report(
             TypeCheckingDiagnosticId id,
@@ -676,6 +927,111 @@ private:
             std::move(fixIt),
             std::move(notes),
         });
+    }
+
+    void validatePreludeContracts() {
+        const auto isRoleType = [&](TypeId id, semantic::LibraryRole role) {
+            const auto* type = model->typeContext.type(id);
+            const auto* symbol = type == nullptr ? nullptr : model->semanticModelValue->symbol(type->symbol);
+            return type != nullptr && type->kind == TypeKind::structure &&
+                    symbol != nullptr && symbol->libraryRole == role;
+        };
+        for (const auto& symbol : model->semanticModelValue->symbols()) {
+            if (!symbol.declaration.has_value() || !model->semanticModelValue->isPreludeSource(symbol.span) ||
+                (symbol.kind != semantic::SymbolKind::function && symbol.kind != semantic::SymbolKind::method &&
+                 symbol.kind != semantic::SymbolKind::structure)) {
+                continue;
+            }
+            const auto node = model->semanticModelValue->node(*symbol.declaration);
+            const auto declaration = std::static_pointer_cast<syntax::DeclSyntax>(node);
+            const auto* parameters = model->genericParameters(symbol.id);
+            const auto* signature = model->callable(symbol.id);
+            std::unordered_set<std::string> annotations;
+            bool valid = true;
+            for (const auto& attribute : declaration->attributes) {
+                const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+                if (name != "compiler_transfer" && name != "compiler_role") continue;
+                if (!annotations.insert(name).second) {
+                    report(TypeCheckingDiagnosticId::invalidPrelude, attribute.span,
+                           "a compiler prelude declaration may carry each metadata annotation only once");
+                    valid = false;
+                } else if (name == "compiler_transfer" &&
+                           (!attribute.arguments.empty() || parameters == nullptr || parameters->empty())) {
+                    report(TypeCheckingDiagnosticId::invalidPrelude, attribute.span,
+                           "compiler transfer metadata requires an argument-free annotation on a generic declaration");
+                    valid = false;
+                } else if (name == "compiler_role" &&
+                           (attribute.arguments.size() != 1 || symbol.libraryRole == semantic::LibraryRole::none)) {
+                    report(TypeCheckingDiagnosticId::invalidPrelude, attribute.span,
+                           "compiler role metadata requires one recognized role");
+                    valid = false;
+                }
+            }
+            if (!valid || symbol.libraryRole == semantic::LibraryRole::none) continue;
+            bool matches = false;
+            switch (symbol.libraryRole) {
+                case semantic::LibraryRole::taskHandle:
+                case semantic::LibraryRole::channelSender:
+                case semantic::LibraryRole::channelReceiver:
+                    if (node->kind == syntax::Kind::structDecl && parameters != nullptr && parameters->size() == 1) {
+                        const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                        matches = symbol.libraryRole == semantic::LibraryRole::taskHandle
+                                ? structure->isLinear && structure->deinitializer == nullptr &&
+                                          symbol.acceptsLinearArguments
+                                : !structure->isLinear && structure->deinitializer != nullptr &&
+                                          !symbol.acceptsLinearArguments;
+                    }
+                    break;
+                case semantic::LibraryRole::storedConsumer:
+                    matches = symbol.kind == semantic::SymbolKind::method && symbol.callable.has_value() &&
+                            symbol.callable->receiver.has_value() &&
+                            symbol.callable->receiver->access == syntax::AccessEffect::consuming &&
+                            symbol.callable->parameters.empty();
+                    break;
+                case semantic::LibraryRole::taskStart:
+                    if (symbol.kind == semantic::SymbolKind::function && parameters != nullptr &&
+                        parameters->size() == 2 && symbol.acceptsLinearArguments && signature != nullptr &&
+                        signature->parameters.size() == 2 && symbol.callable.has_value()) {
+                        const auto* function = model->typeContext.type(signature->parameters[0]);
+                        const auto* result = model->typeContext.type(signature->result);
+                        const auto input = model->typeContext.typeParameterType((*parameters)[0]);
+                        const auto output = model->typeContext.typeParameterType((*parameters)[1]);
+                        matches = function != nullptr && function->kind == TypeKind::function &&
+                                function->arguments == std::vector<TypeId> {input, output} &&
+                                function->effects == std::vector<syntax::AccessEffect> {syntax::AccessEffect::consuming} &&
+                                signature->parameters[1] == input &&
+                                symbol.callable->parameters[0].access == syntax::AccessEffect::borrowing &&
+                                symbol.callable->parameters[1].access == syntax::AccessEffect::consuming &&
+                                isRoleType(signature->result, semantic::LibraryRole::taskHandle) &&
+                                result->arguments == std::vector<TypeId> {output};
+                    }
+                    break;
+                case semantic::LibraryRole::channelCreate:
+                    if (symbol.kind == semantic::SymbolKind::function && parameters != nullptr &&
+                        parameters->size() == 1 && !symbol.acceptsLinearArguments && signature != nullptr &&
+                        signature->parameters.size() == 3 && symbol.callable.has_value()) {
+                        const auto* sender = model->typeContext.type(signature->parameters[1]);
+                        const auto* receiver = model->typeContext.type(signature->parameters[2]);
+                        const auto element = model->typeContext.typeParameterType(parameters->front());
+                        matches = signature->parameters[0] == model->typeContext.intType() &&
+                                signature->result == model->typeContext.voidType() &&
+                                isRoleType(signature->parameters[1], semantic::LibraryRole::channelSender) &&
+                                isRoleType(signature->parameters[2], semantic::LibraryRole::channelReceiver) &&
+                                sender->arguments == std::vector<TypeId> {element} &&
+                                receiver->arguments == std::vector<TypeId> {element} &&
+                                symbol.callable->parameters[0].access == syntax::AccessEffect::borrowing &&
+                                symbol.callable->parameters[1].access == syntax::AccessEffect::initializing &&
+                                symbol.callable->parameters[2].access == syntax::AccessEffect::initializing;
+                    }
+                    break;
+                case semantic::LibraryRole::none:
+                    break;
+            }
+            if (!matches) {
+                report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                       "compiler prelude role does not match the declaration's kind, ownership, or signature");
+            }
+        }
     }
 
     // A core unit (spec 19.4.6) is part of the runtime, so it may use only the
@@ -920,9 +1276,48 @@ private:
 
                 const auto symbol = model->semanticModelValue->referencedSymbol(syntaxType);
                 if (!symbol.has_value()) break;
+                if (nominal->name != nullptr && nominal->name->rawValue == "Self" && arguments.empty() &&
+                    selfOwner.has_value() && *selfOwner == *symbol) {
+                    // `Self` in a generic type is the type applied to the parameters in scope.
+                    const auto selfType = model->typeContext.typeForSymbol(*symbol, selfArguments);
+                    if (selfType.has_value()) {
+                        result = *selfType;
+                        break;
+                    }
+                }
+                if (const auto* declaration = model->semanticModelValue->symbol(*symbol)) {
+                    if (declaration->kind == semantic::SymbolKind::protocol) {
+                        if (nominal->name != nullptr && nominal->name->rawValue == "Self" && arguments.empty()) {
+                            result = model->typeContext.typeParameterType(*symbol);
+                            break;
+                        }
+                        report(TypeCheckingDiagnosticId::protocolUsedAsType, syntaxType->span,
+                               "'" + declaration->name + "' is a protocol, not a type (spec 20.2)",
+                               "declare a type parameter constrained to it, as in 'func f<T: " +
+                                       declaration->name + ">(value: T)'");
+                        break;
+                    }
+                    if (declaration->kind == semantic::SymbolKind::typeParameter && !arguments.empty()) {
+                        report(TypeCheckingDiagnosticId::invalidGenericDeclaration, syntaxType->span,
+                               "type parameter '" + declaration->name + "' takes no type arguments");
+                        break;
+                    }
+                }
                 const auto resolved = model->typeContext.typeForSymbol(*symbol, arguments);
                 if (resolved.has_value()) {
                     result = *resolved;
+                    if (!arguments.empty()) {
+                        if (const auto* generic = model->semanticModelValue->symbol(*symbol);
+                            generic != nullptr && !generic->typeParameters.empty() &&
+                            (generic->kind == semantic::SymbolKind::structure ||
+                             generic->kind == semantic::SymbolKind::enumeration)) {
+                            pendingTypeArguments.push_back({ syntaxType->span, *symbol, arguments });
+                        }
+                    }
+                    const auto* record = model->typeContext.type(result);
+                    if (record != nullptr && record->kind == TypeKind::dictionary) {
+                        rejectInvalidDictionaryKey(record->arguments[0], nominal->arguments[0]->span);
+                    }
                     break;
                 }
 
@@ -951,7 +1346,7 @@ private:
                         model->typeContext.errorType());
                 const auto value = resolveType(dictionary->value).value_or(
                         model->typeContext.errorType());
-                rejectFunctionKey(key, dictionary->key->span);
+                rejectInvalidDictionaryKey(key, dictionary->key->span);
                 result = model->typeContext.dictionaryType(key, value);
                 break;
             }
@@ -995,31 +1390,1176 @@ private:
             case syntax::Kind::bindingDecl:
                 resolveBinding(std::static_pointer_cast<syntax::BindingDeclSyntax>(node));
                 break;
-            case syntax::Kind::functionDecl:
-                resolveFunction(std::static_pointer_cast<syntax::FunctionDeclSyntax>(node));
+            case syntax::Kind::functionDecl: {
+                const auto declaration = std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+                resolveGenericParameters(declaration, std::nullopt);
+                resolveFunction(declaration);
+                break;
+            }
+            case syntax::Kind::protocolDecl:
+                resolveProtocol(std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node));
                 break;
             case syntax::Kind::structDecl: {
                 const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
                 resolveStructure(declaration);
-                for (const auto& method : declaration->methods) resolveFunction(method);
-                if (declaration->deinitializer != nullptr) resolveFunction(declaration->deinitializer);
+                for (const auto& method : declaration->methods) resolveMethod(method);
+                if (declaration->deinitializer != nullptr) {
+                    resolveFunction(declaration->deinitializer);
+                    // The `deinit` of a generic struct is an instance per instance of the struct.
+                    if (selfOwner.has_value() && !selfParameters.empty()) {
+                        if (const auto deinit = model->semanticModelValue->declaredSymbol(declaration->deinitializer)) {
+                            methodParameters[*deinit] = selfParameters;
+                            model->genericParameterLists[*deinit] = selfParameters;
+                        }
+                    }
+                }
+                selfOwner.reset();
+                selfArguments.clear();
                 break;
             }
             case syntax::Kind::enumDecl: {
                 const auto declaration = std::static_pointer_cast<syntax::EnumDeclSyntax>(node);
                 resolveEnumeration(declaration);
-                for (const auto& method : declaration->methods) resolveFunction(method);
+                for (const auto& method : declaration->methods) resolveMethod(method);
+                selfOwner.reset();
+                selfArguments.clear();
                 break;
             }
-            case syntax::Kind::extensionDecl:
-                for (const auto& method :
-                     std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node)->methods) {
-                    resolveFunction(method);
-                }
+            case syntax::Kind::extensionDecl: {
+                const auto declaration = std::static_pointer_cast<syntax::ExtensionDeclSyntax>(node);
+                enterExtension(declaration);
+                if (!declaration->conformances.empty()) (void) resolveType(declaration->extendedType);
+                for (const auto& method : declaration->methods) resolveMethod(method);
+                selfOwner.reset();
+                selfArguments.clear();
                 break;
+            }
             default:
                 break;
         }
+    }
+
+    // ---- Protocols and generic functions (spec 20, decision 0021) ----
+
+    const semantic::Symbol* symbolOf(semantic::SymbolId id) const {
+        return model->semanticModelValue->symbol(id);
+    }
+
+    std::string symbolName(semantic::SymbolId id) const {
+        const auto* symbol = symbolOf(id);
+        return symbol == nullptr ? std::string("<unknown>") : symbol->name;
+    }
+
+    bool checkProtocolReference(const syntax::TypePtr& reference) {
+        if (reference->kind == syntax::Kind::nominalType &&
+            std::static_pointer_cast<syntax::NominalTypeSyntax>(reference)->arguments.empty()) return true;
+        report(TypeCheckingDiagnosticId::invalidConformance, reference->span,
+               "a protocol reference must name a protocol without type arguments (spec 20.2)");
+        return false;
+    }
+
+    // Records `T: P & Q` for each parameter: its constraint protocols, and its type. Returns the
+    // parameter symbols in order.
+    std::vector<semantic::SymbolId> recordTypeParameters(
+            const std::vector<syntax::GenericParameterSyntax::Ptr>& syntaxParameters) {
+        std::vector<semantic::SymbolId> parameters;
+        for (const auto& parameter : syntaxParameters) {
+            const auto symbol = model->semanticModelValue->declaredSymbol(parameter);
+            if (!symbol.has_value()) continue;
+            parameters.push_back(*symbol);
+            const auto* declared = model->semanticModelValue->symbol(*symbol);
+            if (declared != nullptr && declared->mustTransferParameter && !parameter->constraints.empty()) {
+                report(TypeCheckingDiagnosticId::invalidGenericDeclaration, parameter->span,
+                       "a compiler-prelude transfer parameter cannot declare constraints");
+            }
+            if (parameter->name != nullptr && parameter->name->rawValue == "Copyable") {
+                report(TypeCheckingDiagnosticId::reservedProtocolName, parameter->name->span,
+                       "'Copyable' is reserved for the builtin protocol (spec 20.5)");
+            }
+            std::vector<semantic::SymbolId> protocols;
+            for (const auto& constraint : parameter->constraints) {
+                if (!checkProtocolReference(constraint)) continue;
+                const auto referenced = model->semanticModelValue->referencedSymbol(constraint);
+                if (!referenced.has_value()) continue;
+                const auto* protocol = symbolOf(*referenced);
+                if (protocol == nullptr || protocol->kind != semantic::SymbolKind::protocol) {
+                    report(TypeCheckingDiagnosticId::invalidConformance, constraint->span,
+                           "'" + symbolName(*referenced) + "' is not a protocol; a constraint lists protocols");
+                    continue;
+                }
+                if (std::find(protocols.begin(), protocols.end(), *referenced) != protocols.end()) {
+                    report(TypeCheckingDiagnosticId::invalidConformance, constraint->span,
+                           "the constraint of '" + symbolName(*symbol) + "' names '" +
+                                   protocol->name + "' twice");
+                    continue;
+                }
+                protocols.push_back(*referenced);
+            }
+            model->constraintLists[*symbol] = std::move(protocols);
+            (void) model->typeContext.typeParameterType(*symbol);
+        }
+        constrainedParameters.insert(constrainedParameters.end(), parameters.begin(), parameters.end());
+        return parameters;
+    }
+
+    // Records `T: P & Q`: the parameters of a top-level generic function and each parameter's
+    // constraint. A method, `init` or requirement with type parameters is reported by the caller's
+    // `misplaced` diagnostic, but its parameters still get constraints so their types resolve.
+    void resolveGenericParameters(
+            const syntax::FunctionDeclSyntax::Ptr& declaration,
+            std::optional<TypeCheckingDiagnosticId> misplaced) {
+        if (declaration->genericParameters.empty()) return;
+        const auto function = model->semanticModelValue->declaredSymbol(declaration);
+        if (!function.has_value()) return;
+        const auto clause = coveringSpan(declaration->genericParameters.front()->span,
+                                         declaration->genericParameters.back()->span);
+        if (misplaced.has_value()) {
+            report(*misplaced, clause,
+                   *misplaced == TypeCheckingDiagnosticId::invalidProtocolMember
+                           ? "a protocol requirement cannot declare type parameters"
+                           : "only a top-level function can declare type parameters (spec 20.4)",
+                   "generic methods, structs and enums are not supported yet (spec 20.10)");
+        }
+        for (const auto& attribute : declaration->attributes) {
+            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if (name == "c_extern" || name == "c_export" || name == "c_data") {
+                report(TypeCheckingDiagnosticId::genericNativeBinding, clause,
+                       "a C binding cannot declare type parameters (spec 20.7)",
+                       "write a non-generic binding and call it from generic code");
+                break;
+            }
+        }
+        auto parameters = recordTypeParameters(declaration->genericParameters);
+        const auto* functionSymbol = symbolOf(*function);
+        if (!misplaced.has_value() && functionSymbol != nullptr && functionSymbol->isRootModule &&
+            functionSymbol->name == "main" && functionSymbol->kind == semantic::SymbolKind::function) {
+            report(TypeCheckingDiagnosticId::invalidGenericDeclaration, clause,
+                   "the program entry point 'main' cannot declare type parameters",
+                   "move the work into a generic function that 'main' calls");
+        }
+        if (!misplaced.has_value()) model->genericParameterLists[*function] = std::move(parameters);
+    }
+
+    static DiagnosticSourceNote sourceNote(SourceSpan span, std::string message) {
+        return DiagnosticSourceNote { span.offset, span.length, std::move(message) };
+    }
+
+    static SourceSpan coveringSpan(SourceSpan first, SourceSpan last) {
+        if (first.sourceId != last.sourceId || last.offset < first.offset) return first;
+        first.length = last.offset + last.length - first.offset;
+        return first;
+    }
+
+    void resolveProtocol(const syntax::ProtocolDeclSyntax::Ptr& declaration) {
+        const auto name = declaration->name == nullptr ? std::string() : declaration->name->rawValue;
+        if (name == "Copyable" || name == "Display" || name == "Equatable" || name == "Comparable" ||
+            name == "Any") {
+            report(TypeCheckingDiagnosticId::reservedProtocolName,
+                   declaration->name == nullptr ? declaration->span : declaration->name->span,
+                   "'" + name + "' is reserved and cannot be declared (spec 20.2)",
+                   name == "Copyable" ? std::optional<std::string>("'Copyable' is the builtin protocol of spec 20.5")
+                                      : std::nullopt);
+        }
+        for (const auto& requirement : declaration->requirements) {
+            if (requirement->body != nullptr) {
+                report(TypeCheckingDiagnosticId::invalidProtocolMember, requirement->body->span,
+                       "a protocol requirement has no body (spec 20.2)",
+                       "implement the method in a conformance extension");
+            }
+            if (requirement->explicitVisibility) {
+                report(TypeCheckingDiagnosticId::invalidProtocolMember, requirement->span,
+                       "a protocol requirement has no visibility modifier; it has the protocol's");
+            }
+            resolveGenericParameters(requirement, TypeCheckingDiagnosticId::invalidProtocolMember);
+            resolveFunction(requirement);
+        }
+    }
+
+    // What must match between a requirement and its witness (spec 20.3), with `Self` replaced.
+    struct MethodShape {
+        syntax::AccessEffect receiver = syntax::AccessEffect::borrowing;
+        std::vector<std::optional<std::string>> labels;
+        std::vector<syntax::AccessEffect> effects;
+        std::vector<TypeId> parameters;
+        TypeId result = invalidTypeId;
+    };
+
+    std::optional<MethodShape> methodShape(
+            semantic::SymbolId method,
+            const std::unordered_map<semantic::SymbolId, TypeId>& substitution) {
+        const auto* symbol = symbolOf(method);
+        const auto* signature = model->callable(method);
+        if (symbol == nullptr || signature == nullptr || !symbol->callable.has_value()) return std::nullopt;
+        MethodShape shape;
+        if (symbol->callable->receiver.has_value()) shape.receiver = symbol->callable->receiver->access;
+        for (const auto& parameter : symbol->callable->parameters) {
+            shape.labels.push_back(parameter.label);
+            shape.effects.push_back(parameter.access);
+        }
+        for (const auto parameter : signature->parameters) {
+            shape.parameters.push_back(model->typeContext.substitute(parameter, substitution));
+        }
+        shape.result = model->typeContext.substitute(signature->result, substitution);
+        return shape;
+    }
+
+    static const char* effectWord(syntax::AccessEffect effect) {
+        switch (effect) {
+            case syntax::AccessEffect::inout: return "inout";
+            case syntax::AccessEffect::consuming: return "consuming";
+            case syntax::AccessEffect::initializing: return "initializing";
+            case syntax::AccessEffect::borrowing: return "borrowing";
+        }
+        return "borrowing";
+    }
+
+    // Why `witness` does not match `requirement`, or nullopt when it matches.
+    std::optional<std::string> shapeMismatch(const MethodShape& requirement, const MethodShape& witness) const {
+        if (requirement.receiver != witness.receiver) {
+            return std::string("its receiver is ") + effectWord(witness.receiver) + ", the requirement's is " +
+                    effectWord(requirement.receiver);
+        }
+        if (requirement.parameters.size() != witness.parameters.size()) {
+            return "it takes " + std::to_string(witness.parameters.size()) + " parameter(s), the requirement " +
+                    std::to_string(requirement.parameters.size());
+        }
+        for (size_t index = 0; index < requirement.parameters.size(); ++index) {
+            const auto position = "parameter " + std::to_string(index + 1);
+            if (requirement.labels[index] != witness.labels[index]) {
+                return position + " is labeled '" + witness.labels[index].value_or("") + "', the requirement's '" +
+                        requirement.labels[index].value_or("") + "'";
+            }
+            if (requirement.effects[index] != witness.effects[index]) {
+                return position + " is " + effectWord(witness.effects[index]) + ", the requirement's is " +
+                        effectWord(requirement.effects[index]);
+            }
+            if (requirement.parameters[index] != witness.parameters[index]) {
+                return position + " has type '" + model->typeContext.displayName(witness.parameters[index]) +
+                        "', the requirement's '" + model->typeContext.displayName(requirement.parameters[index]) + "'";
+            }
+        }
+        if (requirement.result != witness.result) {
+            return "it returns '" + model->typeContext.displayName(witness.result) + "', the requirement '" +
+                    model->typeContext.displayName(requirement.result) + "'";
+        }
+        return std::nullopt;
+    }
+
+    std::vector<semantic::SymbolId> requirementsOf(semantic::SymbolId protocol) const {
+        std::vector<semantic::SymbolId> requirements;
+        const auto* symbol = symbolOf(protocol);
+        if (symbol == nullptr || !symbol->declaration.has_value()) return requirements;
+        const auto node = model->semanticModelValue->node(*symbol->declaration);
+        if (node == nullptr || node->kind != syntax::Kind::protocolDecl) return requirements;
+        for (const auto& requirement : std::static_pointer_cast<syntax::ProtocolDeclSyntax>(node)->requirements) {
+            const auto id = model->semanticModelValue->declaredSymbol(requirement);
+            if (id.has_value()) requirements.push_back(*id);
+        }
+        return requirements;
+    }
+
+    std::string requirementTitle(semantic::SymbolId requirement) const {
+        const auto* symbol = symbolOf(requirement);
+        if (symbol == nullptr) return "<requirement>";
+        std::string title = symbol->name + "(";
+        if (symbol->callable.has_value()) {
+            for (const auto& parameter : symbol->callable->parameters) title += parameter.label.value_or("_") + ":";
+        }
+        return title + ")";
+    }
+
+    // Two protocols of one constraint that require one name must require the same method
+    // (spec 20.5): witnesses are found by name.
+    void checkConstraintConflicts() {
+        for (const auto parameter : constrainedParameters) {
+            const auto& protocols = model->constraints(parameter);
+            if (protocols.size() < 2) continue;
+            const std::unordered_map<semantic::SymbolId, TypeId> none;
+            std::unordered_map<std::string, std::pair<semantic::SymbolId, semantic::SymbolId>> seen;
+            for (const auto protocol : protocols) {
+                const std::unordered_map<semantic::SymbolId, TypeId> self {
+                    { protocol, model->typeContext.typeParameterType(parameter) } };
+                for (const auto requirement : requirementsOf(protocol)) {
+                    const auto name = symbolName(requirement);
+                    const auto previous = seen.find(name);
+                    if (previous == seen.end()) {
+                        seen.emplace(name, std::pair { protocol, requirement });
+                        continue;
+                    }
+                    const std::unordered_map<semantic::SymbolId, TypeId> previousSelf {
+                        { previous->second.first, model->typeContext.typeParameterType(parameter) } };
+                    const auto first = methodShape(previous->second.second, previousSelf);
+                    const auto second = methodShape(requirement, self);
+                    if (!first.has_value() || !second.has_value() || !shapeMismatch(*first, *second).has_value()) {
+                        continue;
+                    }
+                    report(TypeCheckingDiagnosticId::invalidConformance, symbolOf(parameter)->span,
+                           "protocols '" + symbolName(previous->second.first) + "' and '" + symbolName(protocol) +
+                                   "' both require '" + name + "' with different signatures, so no type can "
+                                   "satisfy the constraint of '" + symbolName(parameter) + "'");
+                }
+            }
+        }
+    }
+
+    // Spec 20.3: each requirement has exactly one matching, accessible witness, and at most one
+    // conformance of a type to a protocol exists.
+    void checkConformances(const syntax::ExtensionDeclSyntax::Ptr& extension) {
+        if (extension->conformances.empty()) return;
+        const auto extended = model->typeOf(extension->extendedType);
+        const auto typeSymbolId = model->semanticModelValue->referencedSymbol(extension->extendedType);
+        if (!extended.has_value() || !typeSymbolId.has_value() || *extended == model->typeContext.errorType()) return;
+        const auto* typeSymbol = symbolOf(*typeSymbolId);
+        if (typeSymbol == nullptr) return;
+        // `extension Box<U>` states the conformance of `Box<T>`, the declaration's own instance: the
+        // header's parameters are renamed to the declaration's (spec 20.12.2).
+        std::unordered_map<semantic::SymbolId, TypeId> toDeclaration;
+        const auto& headerParameters = model->semanticModelValue->extensionTypeParameters(extension);
+        if (const auto* declared = model->genericParameters(*typeSymbolId)) {
+            for (size_t index = 0; index < headerParameters.size() && index < declared->size(); ++index) {
+                toDeclaration.emplace(headerParameters[index], model->typeContext.typeParameterType((*declared)[index]));
+            }
+        }
+        const auto subject = toDeclaration.empty() ? *extended : model->typeContext.substitute(*extended, toDeclaration);
+        const auto copyable = model->copyableProtocol();
+        const auto module = model->semanticModelValue->moduleOf(extension->span);
+        std::vector<semantic::SymbolId> listed;
+        for (const auto& conformance : extension->conformances) {
+            if (!checkProtocolReference(conformance)) continue;
+            const auto referenced = model->semanticModelValue->referencedSymbol(conformance);
+            if (!referenced.has_value()) continue;
+            const auto* protocol = symbolOf(*referenced);
+            if (protocol == nullptr || protocol->kind != semantic::SymbolKind::protocol) {
+                report(TypeCheckingDiagnosticId::invalidConformance, conformance->span,
+                       "'" + symbolName(*referenced) + "' is not a protocol; an extension can only conform to protocols");
+                continue;
+            }
+            if (copyable.has_value() && *referenced == *copyable) {
+                report(TypeCheckingDiagnosticId::invalidConformance, conformance->span,
+                       "'Copyable' cannot be declared; a type is copyable exactly when spec 4.1.1 says so");
+                continue;
+            }
+            if (std::find(listed.begin(), listed.end(), *referenced) != listed.end()) {
+                report(TypeCheckingDiagnosticId::invalidConformance, conformance->span,
+                       "'" + protocol->name + "' is listed twice");
+                continue;
+            }
+            listed.push_back(*referenced);
+            if (module != typeSymbol->moduleId && module != protocol->moduleId) {
+                report(TypeCheckingDiagnosticId::orphanConformance, conformance->span,
+                       "a conformance of '" + typeSymbol->name + "' to '" + protocol->name +
+                               "' must be declared in the module of the type or of the protocol (spec 20.3)");
+                continue;
+            }
+            const auto duplicate = std::find_if(model->conformanceList.begin(), model->conformanceList.end(),
+                    [&](const Conformance& existing) {
+                        return model->conformanceSubjectMatches(existing.type, subject) &&
+                                existing.protocol == *referenced;
+                    });
+            if (duplicate != model->conformanceList.end()) {
+                report(TypeCheckingDiagnosticId::duplicateConformance, conformance->span,
+                       "'" + typeSymbol->name + "' already conforms to '" + protocol->name + "'",
+                       std::nullopt, std::nullopt,
+                       { sourceNote(duplicate->span, "the first conformance is here") });
+                continue;
+            }
+            Conformance result { subject, *referenced, {}, conformance->span };
+            const auto conformanceVisibility = std::min(protocol->visibility, typeSymbol->visibility);
+            const std::unordered_map<semantic::SymbolId, TypeId> self { { *referenced, subject } };
+            bool valid = true;
+            for (const auto requirement : requirementsOf(*referenced)) {
+                const auto witness = lookupMember(*extended, symbolName(requirement));
+                const auto* witnessSymbol = witness.has_value() ? symbolOf(*witness) : nullptr;
+                if (witnessSymbol == nullptr || witnessSymbol->kind != semantic::SymbolKind::method) {
+                    report(TypeCheckingDiagnosticId::missingWitness, conformance->span,
+                           "'" + typeSymbol->name + "' does not implement '" + requirementTitle(requirement) +
+                                   "' required by '" + protocol->name + "'",
+                           witnessSymbol != nullptr
+                                   ? std::optional<std::string>("a builtin member is not a declared method and cannot be a witness")
+                                   : std::optional<std::string>("declare the method in this extension"));
+                    valid = false;
+                    continue;
+                }
+                const auto required = methodShape(requirement, self);
+                // A witness declared in the type or in an extension names that declaration's own
+                // parameters; compare it as the declaration's instance.
+                std::unordered_map<semantic::SymbolId, TypeId> witnessToDeclaration;
+                if (const auto* own = parametersOfMember(*witness)) {
+                    if (const auto* declared = model->genericParameters(*typeSymbolId)) {
+                        for (size_t index = 0; index < own->size() && index < declared->size(); ++index) {
+                            witnessToDeclaration.emplace(
+                                    (*own)[index], model->typeContext.typeParameterType((*declared)[index]));
+                        }
+                    }
+                }
+                const auto provided = methodShape(*witness, witnessToDeclaration);
+                if (!required.has_value() || !provided.has_value()) { valid = false; continue; }
+                if (const auto reason = shapeMismatch(*required, *provided)) {
+                    report(TypeCheckingDiagnosticId::witnessMismatch, witnessSymbol->span,
+                           "'" + typeSymbol->name + "." + witnessSymbol->name + "' does not match '" +
+                                   requirementTitle(requirement) + "' of '" + protocol->name + "': " + *reason,
+                           std::nullopt, std::nullopt,
+                           { sourceNote(symbolOf(requirement)->span, "the requirement is here") });
+                    valid = false;
+                    continue;
+                }
+                if (std::min(witnessSymbol->visibility, typeSymbol->visibility) < conformanceVisibility ||
+                    !model->semanticModelValue->isAccessible(*witness, conformance->span)) {
+                    report(TypeCheckingDiagnosticId::witnessNotAccessible, witnessSymbol->span,
+                           "'" + typeSymbol->name + "." + witnessSymbol->name +
+                                   "' is less accessible than the conformance to '" + protocol->name + "'",
+                           "give the method the visibility of the protocol and the type");
+                    valid = false;
+                    continue;
+                }
+                result.witnesses.emplace(requirement, *witness);
+            }
+            // An invalid conformance is still recorded, so a call does not also report it as missing.
+            (void) valid;
+            model->conformanceList.push_back(std::move(result));
+        }
+    }
+
+    // Whether `type` satisfies `protocol` (spec 20.4.2). Inside a generic body a type that mentions
+    // a parameter satisfies a user protocol only when it is that parameter and its constraint
+    // lists the protocol.
+    bool satisfies(TypeId type, semantic::SymbolId protocol) const {
+        if (type == model->typeContext.errorType()) return true;
+        const auto copyable = model->copyableProtocol();
+        if (copyable.has_value() && protocol == *copyable) return model->isCopyable(type);
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return false;
+        if (record->kind == TypeKind::typeParameter) {
+            const auto& protocols = model->constraints(record->symbol);
+            return std::find(protocols.begin(), protocols.end(), protocol) != protocols.end();
+        }
+        const bool genericType = !record->arguments.empty() &&
+                (record->kind == TypeKind::structure || record->kind == TypeKind::enumeration);
+        // An explicit extension of a generic type conforms every instance, including one built from a
+        // parameter (spec 20.12.2); a builtin container built from a parameter satisfies nothing.
+        if (model->typeContext.mentionsTypeParameter(type) && !genericType) return false;
+        return std::any_of(model->conformanceList.begin(), model->conformanceList.end(),
+                [&](const Conformance& conformance) {
+                    return model->conformanceSubjectMatches(conformance.type, type) &&
+                            conformance.protocol == protocol;
+                });
+    }
+
+    enum class ArgumentInformation { typed, literal, none };
+
+    // Spec 20.4.1: literals are unified after typed arguments; `nil`, `[]`, `[:]`, `.Case` say nothing.
+    // `Tree.Leaf`: a payloadless case of a generic enum, whose type arguments only context can supply.
+    bool isOpenCaseReference(const syntax::ExprPtr& value) const {
+        if (value == nullptr) return false;
+        if (value->kind == syntax::Kind::contextualCaseExpr) return true;
+        if (value->kind != syntax::Kind::memberExpr) return false;
+        const auto referenced = model->referencedSymbol(value);
+        const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+        return symbol != nullptr && symbol->kind == semantic::SymbolKind::enumCase &&
+                (!symbol->callable.has_value() || symbol->callable->parameters.empty()) &&
+                symbol->containingSymbol.has_value() && model->genericParameters(*symbol->containingSymbol) != nullptr;
+    }
+
+    ArgumentInformation argumentInformation(const syntax::ExprPtr& value) const {
+        if (value == nullptr) return ArgumentInformation::none;
+        switch (value->kind) {
+            case syntax::Kind::parenthesizedExpr:
+                return argumentInformation(
+                        std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(value)->expression);
+            case syntax::Kind::literalExpr: {
+                const auto literal = std::static_pointer_cast<syntax::LiteralExprSyntax>(value);
+                if (literal->literal != nullptr && literal->literal->kind == nilLiteral) {
+                    return ArgumentInformation::none;
+                }
+                return ArgumentInformation::literal;
+            }
+            case syntax::Kind::prefixExpr: {
+                const auto prefix = std::static_pointer_cast<syntax::PrefixExprSyntax>(value);
+                if (prefix->castTarget == nullptr && prefix->op != nullptr && prefix->op->kind == minus &&
+                    prefix->operand != nullptr && prefix->operand->kind == syntax::Kind::literalExpr) {
+                    return ArgumentInformation::literal;
+                }
+                return ArgumentInformation::typed;
+            }
+            case syntax::Kind::memberExpr:
+                return isOpenCaseReference(value) ? ArgumentInformation::none : ArgumentInformation::typed;
+            case syntax::Kind::arrayExpr: {
+                const auto& elements = std::static_pointer_cast<syntax::ArrayExprSyntax>(value)->elements;
+                return std::all_of(elements.begin(), elements.end(),
+                                   [&](const auto& element) { return isOpenCaseReference(element); })
+                        ? ArgumentInformation::none : ArgumentInformation::typed;
+            }
+            case syntax::Kind::dictionaryExpr:
+                return std::static_pointer_cast<syntax::DictionaryExprSyntax>(value)->entries.empty()
+                        ? ArgumentInformation::none : ArgumentInformation::typed;
+            case syntax::Kind::contextualCaseExpr:
+                return ArgumentInformation::none;
+            case syntax::Kind::callExpr: {
+                const auto call = std::static_pointer_cast<syntax::CallExprSyntax>(value);
+                return call->callee != nullptr && call->callee->kind == syntax::Kind::contextualCaseExpr
+                        ? ArgumentInformation::none : ArgumentInformation::typed;
+            }
+            default:
+                return ArgumentInformation::typed;
+        }
+    }
+
+    struct Inference {
+        const std::vector<semantic::SymbolId>& parameters;
+        std::unordered_map<semantic::SymbolId, TypeId> bindings;
+        std::unordered_set<semantic::SymbolId> conflicted;
+        // Parameters bound by the expected type of a construction, not by an argument.
+        std::unordered_set<semantic::SymbolId> fromExpected;
+    };
+
+    bool mentionsAny(TypeId type, const std::vector<semantic::SymbolId>& parameters) const {
+        const auto* record = model->typeContext.type(type);
+        if (record == nullptr) return false;
+        if (record->kind == TypeKind::typeParameter) {
+            return std::find(parameters.begin(), parameters.end(), record->symbol) != parameters.end();
+        }
+        const auto arguments = record->arguments;
+        return std::any_of(arguments.begin(), arguments.end(),
+                [&](TypeId argument) { return mentionsAny(argument, parameters); });
+    }
+
+    // Structural unification of a parameter type with an argument type (spec 20.4.1). A mismatch
+    // binds nothing; the ordinary argument check reports it afterwards.
+    void unify(TypeId parameter, TypeId argument, Inference& inference, SourceSpan span) {
+        if (argument == model->typeContext.errorType()) return;
+        const auto* record = model->typeContext.type(parameter);
+        if (record == nullptr) return;
+        if (record->kind == TypeKind::typeParameter &&
+            std::find(inference.parameters.begin(), inference.parameters.end(), record->symbol) !=
+                    inference.parameters.end()) {
+            const auto symbol = record->symbol;
+            const auto bound = inference.bindings.find(symbol);
+            if (bound == inference.bindings.end()) {
+                inference.bindings.emplace(symbol, argument);
+            } else if (bound->second != argument && !inference.conflicted.contains(symbol)) {
+                inference.conflicted.insert(symbol);
+                report(TypeCheckingDiagnosticId::conflictingTypeArgument, span,
+                       "type parameter '" + symbolName(symbol) + "' is inferred as both '" +
+                               model->typeContext.displayName(bound->second) + "' and '" +
+                               model->typeContext.displayName(argument) + "'",
+                       "every use of one type parameter must have one type (spec 20.4.1)");
+            }
+            return;
+        }
+        if (!mentionsAny(parameter, inference.parameters)) return;
+        const auto* actual = model->typeContext.type(argument);
+        if (actual == nullptr || actual->kind != record->kind || actual->symbol != record->symbol ||
+            actual->arguments.size() != record->arguments.size() || actual->effects != record->effects) {
+            return;
+        }
+        const auto parameterArguments = record->arguments;
+        const auto argumentArguments = actual->arguments;
+        for (size_t index = 0; index < parameterArguments.size(); ++index) {
+            unify(parameterArguments[index], argumentArguments[index], inference, span);
+        }
+    }
+
+    // Spec 20.12.1: after the non-literal arguments, the expected type of a construction binds the
+    // parameters still open, so `var b: Box<Double> = Box(value: 1)` is a `Box<Double>`. It never
+    // overrides what an argument determined, and one `?` around the expected type is looked through.
+    void bindFromExpectedType(
+            const semantic::Symbol& targetSymbol,
+            const std::vector<semantic::SymbolId>& parameters,
+            std::optional<TypeId> expectedResult,
+            Inference& inference) {
+        if (!expectedResult.has_value() || !targetSymbol.containingSymbol.has_value()) return;
+        const auto* expected = model->typeContext.type(*expectedResult);
+        if (expected != nullptr && expected->kind == TypeKind::optional && expected->arguments.size() == 1) {
+            expected = model->typeContext.type(expected->arguments[0]);
+        }
+        if (expected == nullptr || (expected->kind != TypeKind::structure && expected->kind != TypeKind::enumeration) ||
+            expected->symbol != *targetSymbol.containingSymbol || expected->arguments.size() != parameters.size()) {
+            return;
+        }
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            if (inference.bindings.contains(parameters[index])) continue;
+            if (expected->arguments[index] == model->typeContext.errorType()) continue;
+            inference.bindings.emplace(parameters[index], expected->arguments[index]);
+            inference.fromExpected.insert(parameters[index]);
+        }
+    }
+
+    // Infers the type arguments of a call of a generic function, checks their constraints, records
+    // the call, and returns the signature with the arguments substituted. Arguments checked here
+    // are marked in `checked`, so the caller does not check them again.
+    TypedCallableSignature inferGenericCall(
+            const syntax::CallExprSyntax::Ptr& expression,
+            semantic::SymbolId target,
+            const semantic::Symbol& targetSymbol,
+            const TypedCallableSignature& signature,
+            const std::vector<semantic::SymbolId>& parameters,
+            std::vector<std::optional<std::optional<TypeId>>>& checked,
+            std::optional<TypeId> expectedResult = std::nullopt) {
+        Inference inference { parameters, {}, {} };
+        std::vector<std::optional<size_t>> parameterIndices;
+        for (size_t index = 0; index < expression->arguments.size(); ++index) {
+            parameterIndices.push_back(
+                    parameterIndexForArgument(targetSymbol, *expression->arguments[index], index));
+        }
+        const auto parameterType = [&](size_t index) -> std::optional<TypeId> {
+            const auto parameter = parameterIndices[index];
+            if (!parameter.has_value() || *parameter >= signature.parameters.size()) return std::nullopt;
+            return signature.parameters[*parameter];
+        };
+        std::vector<size_t> order;
+        for (size_t index = 0; index < expression->arguments.size(); ++index) order.push_back(index);
+        const auto floatingLiteral = [&](size_t index) {
+            auto value = expression->arguments[index]->value;
+            while (value != nullptr && value->kind == syntax::Kind::parenthesizedExpr) {
+                value = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(value)->expression;
+            }
+            if (value != nullptr && value->kind == syntax::Kind::prefixExpr) {
+                value = std::static_pointer_cast<syntax::PrefixExprSyntax>(value)->operand;
+            }
+            return value != nullptr && value->kind == syntax::Kind::literalExpr &&
+                    std::static_pointer_cast<syntax::LiteralExprSyntax>(value)->literal->kind == floatLiteral;
+        };
+        std::stable_sort(order.begin(), order.end(), [&](size_t left, size_t right) {
+            return floatingLiteral(left) && !floatingLiteral(right);
+        });
+        for (const auto pass : { ArgumentInformation::typed, ArgumentInformation::literal }) {
+            if (pass == ArgumentInformation::literal) bindFromExpectedType(
+                    targetSymbol, parameters, expectedResult, inference);
+            for (const auto index : order) {
+                const auto& argument = expression->arguments[index];
+                const auto type = parameterType(index);
+                if (!type.has_value() || !mentionsAny(*type, parameters) ||
+                    argumentInformation(argument->value) != pass) {
+                    continue;
+                }
+                const auto expected = model->typeContext.substitute(*type, inference.bindings);
+                const bool taskInput = targetSymbol.libraryRole == semantic::LibraryRole::taskStart &&
+                        parameterIndices[index] == std::optional<size_t>(1) &&
+                        !mentionsAny(expected, parameters);
+                const auto actual = checkExpression(
+                        argument->value,
+                        taskInput || (pass == ArgumentInformation::literal && !mentionsAny(expected, parameters))
+                                ? std::optional<TypeId>(expected) : std::optional<TypeId>());
+                checked[index] = actual;
+                // A literal checked against a type the expected type fixed may be assignable to it
+                // without being it (`Box<Int?> = Box(value: 1)`); the argument check that follows decides.
+                const bool fixedByExpectedType = pass == ArgumentInformation::literal &&
+                        !mentionsAny(expected, parameters) &&
+                        std::any_of(parameters.begin(), parameters.end(), [&](const auto parameter) {
+                            return inference.fromExpected.contains(parameter) && mentionsAny(*type, { parameter });
+                        });
+                if (actual.has_value() && *actual != model->typeContext.neverType() &&
+                    !fixedByExpectedType && !taskInput) {
+                    unify(*type, *actual, inference, argument->value->span);
+                }
+            }
+        }
+        std::vector<TypeId> arguments;
+        for (const auto parameter : parameters) {
+            const auto bound = inference.bindings.find(parameter);
+            if (bound != inference.bindings.end()) {
+                arguments.push_back(inference.conflicted.contains(parameter)
+                        ? model->typeContext.errorType() : bound->second);
+                continue;
+            }
+            report(TypeCheckingDiagnosticId::cannotInferTypeParameter, expression->span,
+                   "cannot infer type parameter '" + symbolName(parameter) + "' of '" + targetSymbol.name +
+                           "' from the arguments",
+                   "pass an argument whose type determines it; 'nil', '[]', '.Case' and the result type do not "
+                   "(spec 20.4.1)");
+            arguments.push_back(model->typeContext.errorType());
+        }
+        std::unordered_map<semantic::SymbolId, TypeId> substitution;
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            substitution.emplace(parameters[index], arguments[index]);
+        }
+        checkTypeArguments(expression, targetSymbol, parameters, arguments);
+        // Constructing a generic type needs a layout, found from its type, not a function instance.
+        if (targetSymbol.kind == semantic::SymbolKind::function) {
+            model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
+                target, arguments, currentFunction, expression->span };
+        }
+        TypedCallableSignature result = signature;
+        for (auto& parameter : result.parameters) parameter = model->typeContext.substitute(parameter, substitution);
+        result.result = model->typeContext.substitute(result.result, substitution);
+        return result;
+    }
+
+    void checkTypeArguments(
+            const syntax::CallExprSyntax::Ptr& expression,
+            const semantic::Symbol& targetSymbol,
+            const std::vector<semantic::SymbolId>& parameters,
+            const std::vector<TypeId>& arguments) {
+        checkTypeArguments(expression->span, targetSymbol, parameters, arguments);
+    }
+
+    // The explicit type arguments of a generic type written in a type position (spec 20.12) are
+    // checked once every declaration's constraints are known.
+    struct PendingTypeArguments {
+        SourceSpan span;
+        semantic::SymbolId type;
+        std::vector<TypeId> arguments;
+    };
+    std::vector<PendingTypeArguments> pendingTypeArguments;
+
+    // Annotations inside bodies add to the list while the bodies are checked, so this runs again
+    // afterwards over the entries it has not seen.
+    size_t checkedPendingTypeArguments = 0;
+
+    void checkPendingTypeArguments() {
+        for (; checkedPendingTypeArguments < pendingTypeArguments.size(); ++checkedPendingTypeArguments) {
+            const auto& pending = pendingTypeArguments[checkedPendingTypeArguments];
+            const auto* symbol = symbolOf(pending.type);
+            const auto* parameters = model->genericParameters(pending.type);
+            if (symbol == nullptr || parameters == nullptr || parameters->size() != pending.arguments.size()) continue;
+            checkTypeArguments(pending.span, *symbol, *parameters, pending.arguments);
+        }
+    }
+
+    void checkTypeArguments(
+            SourceSpan span,
+            const semantic::Symbol& targetSymbol,
+            const std::vector<semantic::SymbolId>& parameters,
+            const std::vector<TypeId>& arguments) {
+        const auto copyable = model->copyableProtocol();
+        const auto* owner = targetSymbol.containingSymbol.has_value()
+                ? symbolOf(*targetSymbol.containingSymbol) : nullptr;
+        const auto role = targetSymbol.kind == semantic::SymbolKind::synthesizedInitializer && owner != nullptr
+                ? owner->libraryRole : targetSymbol.libraryRole;
+        const bool channel = role == semantic::LibraryRole::channelSender ||
+                role == semantic::LibraryRole::channelReceiver;
+        for (size_t index = 0; index < parameters.size(); ++index) {
+            const auto argument = arguments[index];
+            if (argument == model->typeContext.errorType()) continue;
+            if (targetSymbol.libraryRole == semantic::LibraryRole::channelCreate &&
+                (argument == model->typeContext.neverType() || argument == model->typeContext.anyType() ||
+                 model->isLinear(argument))) {
+                // The initializing output type occurrences already own the element diagnostics.
+                continue;
+            }
+            const auto parameter = symbolName(parameters[index]);
+            const auto argumentName = "'" + model->typeContext.displayName(argument) + "'";
+            const auto* element = model->typeContext.type(argument);
+            if (channel && element != nullptr &&
+                (element->kind == TypeKind::never || element->kind == TypeKind::any)) {
+                report(TypeCheckingDiagnosticId::channelElementType, span,
+                       argumentName + " cannot be the element type of a channel",
+                       "use a concrete type, or Void for a signal that carries no value");
+                continue;
+            }
+            if (channel && model->isLinear(argument)) {
+                report(TypeCheckingDiagnosticId::linearChannelElement, span,
+                       argumentName + " is linear, so it cannot be the element type of a channel",
+                       "a value still queued when the channel closes would be dropped; send the result of "
+                       "'consume handle.join()' (or another value that can be destroyed) instead of the handle");
+                continue;
+            }
+            if (argument == model->typeContext.neverType()) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+                       "type parameter '" + parameter + "' of '" + targetSymbol.name + "' cannot be 'Never'",
+                       "'Never' has no values, so a generic function cannot take or hold one (spec 2.9)");
+                continue;
+            }
+            if (model->isLinear(argument) && !targetSymbol.acceptsLinearArguments) {
+                report(TypeCheckingDiagnosticId::linearTypeArgument, span,
+                       "type parameter '" + parameter + "' of '" + targetSymbol.name + "' cannot be the linear type " +
+                               argumentName,
+                       "generic code may drop a value of a type parameter, and a linear value must be ended "
+                       "(spec 4.1.1, 20.5)");
+                continue;
+            }
+            for (const auto protocol : model->constraints(parameters[index])) {
+                if (satisfies(argument, protocol)) continue;
+                const bool isCopyable = copyable.has_value() && protocol == *copyable;
+                std::optional<std::string> help;
+                if (isCopyable) {
+                    if (const auto reason = model->noncopyableReason(argument)) help = *reason;
+                } else if (model->typeContext.mentionsTypeParameter(argument)) {
+                    help = "inside a generic function, only a type parameter whose constraint lists '" +
+                            symbolName(protocol) + "' satisfies it";
+                } else {
+                    help = "declare 'extension " + model->typeContext.displayName(argument) + ": " +
+                            symbolName(protocol) + " { ... }'";
+                }
+                report(TypeCheckingDiagnosticId::unsatisfiedConstraint, span,
+                       "type " + argumentName + " does not satisfy '" + symbolName(protocol) +
+                               "', required by type parameter '" + parameter + "' of '" + targetSymbol.name + "'",
+                       help);
+            }
+        }
+    }
+
+    // Spec 20.6: a cycle of generic calls in which a type parameter is passed on inside a larger
+    // type would need infinitely many instances. Edges run from a caller's parameter to the
+    // callee's parameter it reaches; an edge is expanding when the argument strictly contains it.
+    // `typesOnly` runs right after the declarations are resolved, before any body: a type that
+    // expands forever must be reported before a copyability or linearity walk follows its layout.
+    void checkExpandingRecursion(bool typesOnly = false) {
+        struct Edge {
+            semantic::SymbolId from;
+            semantic::SymbolId to;
+            bool expanding;
+            SourceSpan span;
+            bool inType = false;
+        };
+        std::vector<Edge> edges;
+        std::unordered_map<semantic::SymbolId, std::vector<size_t>> outgoing;
+        std::vector<std::pair<semantic::NodeId, const GenericCall*>> calls;
+        for (const auto& [node, call] : model->genericCalls) calls.emplace_back(node, &call);
+        std::sort(calls.begin(), calls.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
+        for (const auto& [node, call] : calls) {
+            if (typesOnly || !call->caller.has_value()) continue;
+            const auto* callerParameters = model->genericParameters(*call->caller);
+            const auto* calleeParameters = model->genericParameters(call->callee);
+            if (callerParameters == nullptr || calleeParameters == nullptr) continue;
+            for (size_t index = 0; index < call->arguments.size() && index < calleeParameters->size(); ++index) {
+                const auto argument = call->arguments[index];
+                for (const auto parameter : *callerParameters) {
+                    if (!mentionsAny(argument, { parameter })) continue;
+                    const auto* record = model->typeContext.type(argument);
+                    const bool direct = record != nullptr && record->kind == TypeKind::typeParameter;
+                    outgoing[parameter].push_back(edges.size());
+                    edges.push_back({ parameter, (*calleeParameters)[index], !direct, call->span });
+                }
+            }
+        }
+        // A field or payload of a generic type that names a generic type passes the declaration's
+        // parameters on, so the same rule applies to types: `struct S<T> { var next: S<Box<T>> }` has
+        // infinitely many layouts (spec 20.12.4).
+        std::vector<semantic::SymbolId> declarations;
+        for (const auto& [symbolId, parameters] : model->genericParameterLists) {
+            const auto* declared = symbolOf(symbolId);
+            if (declared != nullptr && (declared->kind == semantic::SymbolKind::structure ||
+                                        declared->kind == semantic::SymbolKind::enumeration)) {
+                declarations.push_back(symbolId);
+            }
+        }
+        std::sort(declarations.begin(), declarations.end());
+        for (const auto declaration : declarations) {
+            const auto* declared = symbolOf(declaration);
+            const auto& parameters = model->genericParameterLists.at(declaration);
+            if (!declared->declaration.has_value()) continue;
+            const auto node = model->semanticModelValue->node(*declared->declaration);
+            if (node == nullptr) continue;
+            std::vector<TypeId> memberTypes;
+            const auto addMember = [&](semantic::SymbolId member) {
+                if (const auto type = model->typeOf(member)) memberTypes.push_back(*type);
+            };
+            if (node->kind == syntax::Kind::structDecl) {
+                for (const auto& field : std::static_pointer_cast<syntax::StructDeclSyntax>(node)->fields) {
+                    if (const auto member = model->semanticModelValue->declaredSymbol(field)) addMember(*member);
+                }
+            } else if (node->kind == syntax::Kind::enumDecl) {
+                for (const auto& enumCase : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->cases) {
+                    const auto caseSymbol = model->semanticModelValue->declaredSymbol(enumCase);
+                    const auto* signature = caseSymbol.has_value() ? model->callable(*caseSymbol) : nullptr;
+                    if (signature != nullptr) {
+                        for (const auto payload : signature->parameters) memberTypes.push_back(payload);
+                    }
+                }
+            }
+            std::vector<TypeId> pending = std::move(memberTypes);
+            std::unordered_set<TypeId> seen;
+            while (!pending.empty()) {
+                const auto current = pending.back();
+                pending.pop_back();
+                if (!seen.insert(current).second) continue;
+                const auto* record = model->typeContext.type(current);
+                if (record == nullptr) continue;
+                const auto* targetParameters = (record->kind == TypeKind::structure ||
+                                                record->kind == TypeKind::enumeration)
+                        ? model->genericParameters(record->symbol) : nullptr;
+                for (size_t index = 0; index < record->arguments.size(); ++index) {
+                    pending.push_back(record->arguments[index]);
+                    if (targetParameters == nullptr || index >= targetParameters->size()) continue;
+                    for (const auto parameter : parameters) {
+                        if (!mentionsAny(record->arguments[index], { parameter })) continue;
+                        const auto* argument = model->typeContext.type(record->arguments[index]);
+                        const bool direct = argument != nullptr && argument->kind == TypeKind::typeParameter;
+                        outgoing[parameter].push_back(edges.size());
+                        edges.push_back({ parameter, (*targetParameters)[index], !direct, declared->span, true });
+                    }
+                }
+            }
+        }
+        // An expanding edge from `a` to `b` closes a cycle when `a` is reachable from `b`.
+        for (const auto& edge : edges) {
+            if (!edge.expanding) continue;
+            std::vector<semantic::SymbolId> stack { edge.to };
+            std::unordered_set<semantic::SymbolId> visited { edge.to };
+            bool cycle = edge.to == edge.from;
+            while (!stack.empty() && !cycle) {
+                const auto current = stack.back();
+                stack.pop_back();
+                for (const auto next : outgoing[current]) {
+                    const auto target = edges[next].to;
+                    if (target == edge.from) { cycle = true; break; }
+                    if (visited.insert(target).second) stack.push_back(target);
+                }
+            }
+            if (!cycle) continue;
+            if (edge.inType) {
+                report(TypeCheckingDiagnosticId::expandingGenericRecursion, edge.span,
+                       "type parameter '" + symbolName(edge.from) + "' is passed on inside a larger type by a field or "
+                       "case payload in a cycle of generic types, which would need infinitely many layouts (spec 20.12.4)",
+                       "make the recursive field use the same type arguments");
+                return;
+            }
+            report(TypeCheckingDiagnosticId::expandingGenericRecursion, edge.span,
+                   "this call passes type parameter '" + symbolName(edge.from) +
+                           "' on inside a larger type in a cycle of generic calls, which would need "
+                           "infinitely many instances (spec 20.6)",
+                   "make the recursion keep the same type arguments, or move it into a non-generic function");
+            return;
+        }
+    }
+
+    // Decision 0021: the instances reachable from non-generic code, each once, with a cap as a
+    // backstop for programs the expanding-recursion rule allows but that are still huge.
+    static constexpr size_t maximumInstances = 10000;
+    static constexpr size_t maximumTypeNesting = 64;
+    static constexpr size_t maximumInstanceDepth = 64;
+    static constexpr size_t maximumTypeOccurrences = 4096;
+
+    void instantiate() {
+        std::vector<std::pair<semantic::NodeId, const GenericCall*>> calls;
+        for (const auto& [node, call] : model->genericCalls) calls.emplace_back(node, &call);
+        std::sort(calls.begin(), calls.end(), [](const auto& left, const auto& right) {
+            return left.second->span.sourceId != right.second->span.sourceId
+                    ? left.second->span.sourceId < right.second->span.sourceId
+                    : left.second->span.offset < right.second->span.offset;
+        });
+        std::unordered_map<semantic::SymbolId, std::vector<const GenericCall*>> callsIn;
+        std::vector<const GenericCall*> roots;
+        for (const auto& [node, call] : calls) {
+            if (call->caller.has_value() && model->genericParameters(*call->caller) != nullptr) {
+                callsIn[*call->caller].push_back(call);
+            }
+            else roots.push_back(call);
+        }
+        // Breadth first, so an instance's "required by" is the shortest chain from a root.
+        std::vector<size_t> queue;
+        const auto require = [&](const GenericCall& call, std::vector<TypeId> arguments,
+                                 std::optional<size_t> requiredBy) -> bool {
+            for (const auto argument : arguments) {
+                std::vector<TypeId> pending { argument };
+                size_t occurrences = 0;
+                while (!pending.empty() && occurrences <= maximumTypeOccurrences) {
+                    const auto* type = model->typeContext.type(pending.back());
+                    pending.pop_back();
+                    ++occurrences;
+                    if (type != nullptr) pending.insert(pending.end(), type->arguments.begin(), type->arguments.end());
+                }
+                if (occurrences > maximumTypeOccurrences) {
+                    report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
+                           "this call needs an instance whose type arguments contain more than " +
+                                   std::to_string(maximumTypeOccurrences) + " type occurrences",
+                           std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                    return false;
+                }
+                if (model->typeContext.nestingDepth(argument) > maximumTypeNesting) {
+                    report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
+                           "this call needs an instance of '" + symbolName(call.callee) +
+                                   "' whose type arguments nest more than " + std::to_string(maximumTypeNesting) +
+                                   " levels deep",
+                           std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                    return false;
+                }
+            }
+            const auto depth = requiredBy.has_value() ? model->instanceList[*requiredBy].depth + 1 : 1;
+            if (const auto existing = model->instanceIndices.find({call.callee, arguments});
+                existing != model->instanceIndices.end()) {
+                auto& instance = model->instanceList[existing->second];
+                const auto before = call.span.sourceId < instance.requiredAt.sourceId ||
+                        (call.span.sourceId == instance.requiredAt.sourceId &&
+                         call.span.offset < instance.requiredAt.offset);
+                if (depth < instance.depth || (depth == instance.depth && before)) {
+                    instance.depth = depth;
+                    instance.requiredAt = call.span;
+                    instance.requiredBy = requiredBy;
+                    instance.requiredByFunction = requiredBy.has_value()
+                            ? std::optional<semantic::SymbolId>(model->instanceList[*requiredBy].function)
+                            : call.caller;
+                }
+                return true;
+            }
+            if (depth > maximumInstanceDepth) {
+                report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
+                       "this call needs an instantiation chain longer than " +
+                               std::to_string(maximumInstanceDepth),
+                       std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                return false;
+            }
+            if (model->instanceList.size() >= maximumInstances) {
+                report(TypeCheckingDiagnosticId::instantiationLimit, call.span,
+                       "the program needs more than " + std::to_string(maximumInstances) +
+                               " instances of generic functions",
+                       std::nullopt, std::nullopt, instantiationChain(requiredBy));
+                return false;
+            }
+            Instance instance;
+            instance.function = call.callee;
+            instance.arguments = arguments;
+            const auto* parameters = model->genericParameters(call.callee);
+            std::string arguments_text;
+            for (size_t index = 0; parameters != nullptr && index < parameters->size(); ++index) {
+                instance.substitution.emplace((*parameters)[index], arguments[index]);
+                if (index != 0) arguments_text += ", ";
+                arguments_text += model->typeContext.displayName(arguments[index], true);
+            }
+            // A method or `deinit` of a generic type is named for the receiver's instance:
+            // `Box<Int>.get` (decision 0022).
+            auto name = model->functionDisplayName(call.callee);
+            const auto* callee = symbolOf(call.callee);
+            const auto* owner = callee != nullptr && callee->containingSymbol.has_value()
+                    ? symbolOf(*callee->containingSymbol) : nullptr;
+            const auto ownerEnd = owner == nullptr ? std::string::npos : name.rfind(owner->name + ".");
+            if (ownerEnd != std::string::npos && !owner->typeParameters.empty()) {
+                name.insert(ownerEnd + owner->name.size(), "<" + arguments_text + ">");
+                instance.name = name;
+            } else {
+                instance.name = name + "<" + arguments_text + ">";
+            }
+            instance.requiredAt = call.span;
+            instance.requiredBy = requiredBy;
+            instance.depth = depth;
+            instance.requiredByFunction = requiredBy.has_value()
+                    ? std::optional<semantic::SymbolId>(model->instanceList[*requiredBy].function)
+                    : call.caller;
+            model->instanceIndices.emplace(std::pair { call.callee, arguments }, model->instanceList.size());
+            queue.push_back(model->instanceList.size());
+            model->instanceList.push_back(std::move(instance));
+            return true;
+        };
+        for (const auto* call : roots) {
+            if (!require(*call, call->arguments, std::nullopt)) return;
+        }
+        // The `deinit` of every concrete instance of a generic struct is an instance too (spec 20.12);
+        // finding one can intern new types, so the two are run until neither adds anything.
+        const auto requireDeinitInstances = [&]() -> std::optional<bool> {
+            bool added = false;
+            for (TypeId id = 0; id < model->typeContext.size(); ++id) {
+                const auto* record = model->typeContext.type(id);
+                if (record == nullptr || record->kind != TypeKind::structure || record->arguments.empty() ||
+                    model->typeContext.mentionsTypeParameter(id)) {
+                    continue;
+                }
+                const auto* symbol = symbolOf(record->symbol);
+                if (symbol == nullptr || !symbol->declaration.has_value()) continue;
+                const auto node = model->semanticModelValue->node(*symbol->declaration);
+                if (node == nullptr || node->kind != syntax::Kind::structDecl) continue;
+                const auto deinitializer = std::static_pointer_cast<syntax::StructDeclSyntax>(node)->deinitializer;
+                if (deinitializer == nullptr) continue;
+                const auto deinit = model->semanticModelValue->declaredSymbol(deinitializer);
+                if (!deinit.has_value() || model->genericParameters(*deinit) == nullptr ||
+                    model->instanceIndex(*deinit, record->arguments).has_value()) {
+                    continue;
+                }
+                const GenericCall call { *deinit, record->arguments, std::nullopt, deinitializer->span };
+                if (!require(call, record->arguments, std::nullopt)) return std::nullopt;
+                added = true;
+            }
+            return added;
+        };
+        size_t next = 0;
+        while (true) {
+        for (; next < queue.size(); ++next) {
+            const auto index = queue[next];
+            const auto function = model->instanceList[index].function;
+            for (const auto* call : callsIn[function]) {
+                std::vector<TypeId> arguments;
+                for (const auto argument : call->arguments) {
+                    arguments.push_back(model->typeContext.substitute(argument, model->instanceList[index].substitution));
+                }
+                if (!require(*call, std::move(arguments), index)) return;
+            }
+            // A requirement call whose receiver this instance fixes to an instance of a generic type
+            // reaches an instance of that type's witness.
+            for (const auto& requirementCall : requirementCalls) {
+                if (requirementCall.caller != function) continue;
+                const auto concrete = model->typeContext.substitute(
+                        requirementCall.base, model->instanceList[index].substitution);
+                const auto witness = model->witness(concrete, requirementCall.requirement);
+                const auto* receiver = model->typeContext.type(concrete);
+                if (!witness.has_value() || receiver == nullptr || receiver->arguments.empty() ||
+                    model->genericParameters(*witness) == nullptr) {
+                    continue;
+                }
+                const GenericCall call { *witness, receiver->arguments, function, requirementCall.span };
+                if (!require(call, receiver->arguments, index)) return;
+            }
+        }
+        internInstanceTypes();
+        const auto more = requireDeinitInstances();
+        if (!more.has_value()) return;
+        if (!*more) break;
+        }
+    }
+
+    // Lowering substitutes every type it reads, and the IR type table is a snapshot taken before
+    // it starts, so each instance's concrete types are interned here.
+    void internInstanceTypes() {
+        const auto known = model->typeContext.size();
+        for (TypeId id = 0; id < known; ++id) {
+            if (!model->typeContext.mentionsTypeParameter(id)) continue;
+            for (size_t index = 0; index < model->instanceList.size(); ++index) {
+                (void) model->typeContext.substitute(id, model->instanceList[index].substitution);
+            }
+        }
+        internInstanceMemberTypes();
+    }
+
+    // Each concrete instance of a generic struct or enum needs its field and payload types
+    // interned before lowering snapshots the table (spec 20.12). Interning one can create another
+    // instance (`Box<Box<Int>>` holds a `Box<Int>`), so this runs to a fixpoint; the expanding
+    // recursion rule makes it finite, and the cap is a backstop.
+    void internInstanceMemberTypes() {
+        size_t visited = 0;
+        while (visited < model->typeContext.size()) {
+            const auto id = static_cast<TypeId>(visited++);
+            const auto* record = model->typeContext.type(id);
+            if (record == nullptr || record->arguments.empty() || model->typeContext.mentionsTypeParameter(id) ||
+                (record->kind != TypeKind::structure && record->kind != TypeKind::enumeration)) {
+                continue;
+            }
+            const auto* symbol = symbolOf(record->symbol);
+            if (symbol == nullptr || !symbol->declaration.has_value()) continue;
+            const auto node = model->semanticModelValue->node(*symbol->declaration);
+            if (node == nullptr) continue;
+            if (node->kind == syntax::Kind::structDecl) {
+                for (const auto& field : std::static_pointer_cast<syntax::StructDeclSyntax>(node)->fields) {
+                    const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
+                    const auto declared = fieldSymbol.has_value() ? model->typeOf(*fieldSymbol) : std::nullopt;
+                    if (declared.has_value()) (void) model->memberTypeOf(id, *declared);
+                }
+            } else if (node->kind == syntax::Kind::enumDecl) {
+                for (const auto& enumCase : std::static_pointer_cast<syntax::EnumDeclSyntax>(node)->cases) {
+                    const auto caseSymbol = model->semanticModelValue->declaredSymbol(enumCase);
+                    const auto* signature = caseSymbol.has_value() ? model->callable(*caseSymbol) : nullptr;
+                    if (signature == nullptr) continue;
+                    for (const auto payload : signature->parameters) (void) model->memberTypeOf(id, payload);
+                }
+            }
+            if (model->typeContext.size() > maximumTypeTableSize) {
+                report(TypeCheckingDiagnosticId::instantiationLimit, symbol->span,
+                       "instantiating '" + symbol->name + "' needs more than " +
+                               std::to_string(maximumTypeTableSize) + " distinct types");
+                return;
+            }
+        }
+    }
+    static constexpr size_t maximumTypeTableSize = 200000;
+
+    std::vector<DiagnosticSourceNote> instantiationChain(std::optional<size_t> instance) const {
+        std::vector<DiagnosticSourceNote> chain;
+        while (instance.has_value()) {
+            const auto& current = model->instanceList[*instance];
+            chain.push_back(sourceNote(current.requiredAt, "required for '" + current.name + "'"));
+            instance = current.requiredBy;
+        }
+        // The first three and the last three steps are enough to see the shape of a chain.
+        if (chain.size() > 6) chain.erase(chain.begin() + 3, chain.end() - 3);
+        return chain;
     }
 
     void resolveBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
@@ -1030,6 +2570,23 @@ private:
                    "name the function directly, or bind the value to a local 'let'");
         }
         if (type.has_value()) recordDeclaredType(declaration, *type);
+    }
+
+    void resolveMethod(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        if (selfOwner.has_value()) {
+            if (const auto method = model->semanticModelValue->declaredSymbol(declaration)) {
+                methodParameters[*method] = selfParameters;
+            }
+        }
+        resolveGenericParameters(declaration, TypeCheckingDiagnosticId::invalidGenericDeclaration);
+        resolveFunction(declaration);
+        // A method of a generic type is instantiated per receiver type arguments (spec 20.12), like a
+        // generic function: its parameters are those of the type or extension that declares it.
+        if (selfOwner.has_value() && !selfParameters.empty()) {
+            if (const auto method = model->semanticModelValue->declaredSymbol(declaration)) {
+                model->genericParameterLists[*method] = selfParameters;
+            }
+        }
     }
 
     void resolveFunction(const syntax::FunctionDeclSyntax::Ptr& declaration) {
@@ -1083,6 +2640,15 @@ private:
         std::optional<NativeBinding> binding;
         for (const auto& attribute : declaration->attributes) {
             const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if (name == "compiler_role" || name == "compiler_transfer") {
+                if (!model->semanticModelValue->isPreludeSource(attribute.span) ||
+                    (name == "compiler_transfer" && !attribute.arguments.empty()) ||
+                    (name == "compiler_role" && attribute.arguments.size() != 1)) {
+                    report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                           "compiler prelude metadata is reserved for compiler-bundled declarations");
+                }
+                continue;
+            }
             if (name != "c_extern" && name != "c_export" && name != "c_data") {
                 report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
                        "unknown annotation '@" + name + "'");
@@ -1309,11 +2875,94 @@ private:
         }
     }
 
+    // `extension Box<U>` (spec 20.12.2): the header's parameters stand for the declaration's, with its
+    // constraints, and `Self` is `Box<U>`.
+    void enterExtension(const syntax::ExtensionDeclSyntax::Ptr& declaration) {
+        selfOwner.reset();
+        selfArguments.clear();
+        const auto owner = model->semanticModelValue->referencedSymbol(declaration->extendedType);
+        if (!owner.has_value()) return;
+        const auto* ownerSymbol = symbolOf(*owner);
+        if (ownerSymbol == nullptr || ownerSymbol->typeParameters.empty()) return;
+        const auto& declared = model->semanticModelValue->extensionTypeParameters(declaration);
+        checkExtensionHeader(declaration, *ownerSymbol, declared);
+        selfOwner = *owner;
+        selfParameters.clear();
+        for (size_t index = 0; index < declared.size() && index < ownerSymbol->typeParameters.size(); ++index) {
+            selfParameters.push_back(declared[index]);
+            model->constraintLists[declared[index]] = model->constraints(ownerSymbol->typeParameters[index]);
+            selfArguments.push_back(model->typeContext.typeParameterType(declared[index]));
+            constrainedParameters.push_back(declared[index]);
+        }
+    }
+
+    // Spec 20.12.2: the header lists exactly the declaration's parameters, once each, as fresh names.
+    void checkExtensionHeader(
+            const syntax::ExtensionDeclSyntax::Ptr& declaration,
+            const semantic::Symbol& owner,
+            const std::vector<semantic::SymbolId>& declared) {
+        const auto& extended = declaration->extendedType;
+        if (extended == nullptr || extended->kind != syntax::Kind::nominalType) return;
+        const auto& arguments = std::static_pointer_cast<syntax::NominalTypeSyntax>(extended)->arguments;
+        const auto reason = [&](const std::string& text) {
+            report(TypeCheckingDiagnosticId::invalidExtensionHeader, extended->span, text,
+                   "write exactly the type's parameters as new names, as in 'extension " + owner.name + "<" +
+                           (owner.typeParameters.empty() ? std::string("T") : symbolName(owner.typeParameters[0])) +
+                           ">' (spec 20.12.2)");
+        };
+        if (arguments.size() != owner.typeParameters.size()) {
+            reason("'" + owner.name + "' has " + std::to_string(owner.typeParameters.size()) +
+                   " type parameter(s), but this extension header lists " + std::to_string(arguments.size()));
+            return;
+        }
+        std::unordered_set<std::string> names;
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const auto referenced = model->semanticModelValue->referencedSymbol(arguments[index]);
+            const auto* symbol = referenced.has_value() ? symbolOf(*referenced) : nullptr;
+            if (symbol == nullptr || symbol->kind != semantic::SymbolKind::typeParameter ||
+                std::find(declared.begin(), declared.end(), *referenced) == declared.end()) {
+                reason("an extension of a generic type cannot name a concrete type argument; "
+                       "that would be a specialization");
+                return;
+            }
+            if (!names.insert(symbol->name).second) {
+                reason("the type parameter '" + symbol->name + "' is listed twice");
+                return;
+            }
+        }
+    }
+
+    // The type parameters a generic struct or enum declares, recorded with their constraints; the
+    // type's own parameters are the arguments of `Self` in its body.
+    std::vector<TypeId> enterGenericType(
+            semantic::SymbolId type, const std::vector<syntax::GenericParameterSyntax::Ptr>& declared) {
+        selfOwner.reset();
+        selfArguments.clear();
+        if (declared.empty()) return {};
+        const auto parameters = recordTypeParameters(declared);
+        model->genericParameterLists[type] = parameters;
+        selfOwner = type;
+        selfParameters = parameters;
+        for (const auto parameter : parameters) {
+            selfArguments.push_back(model->typeContext.typeParameterType(parameter));
+        }
+        return selfArguments;
+    }
+
     void resolveStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
         const auto structure = model->semanticModelValue->declaredSymbol(declaration);
         if (!structure.has_value()) return;
-        const auto structureType = model->typeContext.typeForSymbol(*structure).value_or(
-                model->typeContext.errorType());
+        for (const auto& attribute : declaration->attributes) {
+            const auto name = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+            if ((name == "compiler_role" || name == "compiler_transfer") &&
+                !model->semanticModelValue->isPreludeSource(attribute.span)) {
+                report(TypeCheckingDiagnosticId::invalidAnnotation, attribute.span,
+                       "compiler prelude metadata is reserved for compiler-bundled declarations");
+            }
+        }
+        const auto structureType = model->typeContext
+                .typeForSymbol(*structure, enterGenericType(*structure, declaration->genericParameters))
+                .value_or(model->typeContext.errorType());
         model->symbolTypes[*structure] = structureType;
         recordNodeType(declaration, structureType);
 
@@ -1325,8 +2974,14 @@ private:
         };
         initializer.parameters.reserve(declaration->fields.size());
         for (const auto& field : declaration->fields) {
-            const auto fieldType = resolveType(field->type).value_or(
+            auto fieldType = resolveType(field->type).value_or(
                     model->typeContext.errorType());
+            if (fieldType == model->typeContext.neverType()) {
+                report(TypeCheckingDiagnosticId::neverFieldType, field->type->span,
+                       "a stored field cannot have type 'Never'",
+                       "a structure holding a value that cannot exist could never be constructed (spec 2.9)");
+                fieldType = model->typeContext.errorType();
+            }
             recordDeclaredType(field, fieldType);
             initializer.parameters.push_back(fieldType);
         }
@@ -1335,14 +2990,18 @@ private:
         if (symbol != nullptr && symbol->synthesizedInitializer.has_value()) {
             model->symbolTypes[*symbol->synthesizedInitializer] = structureType;
             model->callables[*symbol->synthesizedInitializer] = std::move(initializer);
+            if (const auto* parameters = model->genericParameters(*structure)) {
+                model->genericParameterLists[*symbol->synthesizedInitializer] = *parameters;
+            }
         }
     }
 
     void resolveEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
         const auto enumeration = model->semanticModelValue->declaredSymbol(declaration);
         if (!enumeration.has_value()) return;
-        const auto enumerationType = model->typeContext.typeForSymbol(*enumeration).value_or(
-                model->typeContext.errorType());
+        const auto enumerationType = model->typeContext
+                .typeForSymbol(*enumeration, enterGenericType(*enumeration, declaration->genericParameters))
+                .value_or(model->typeContext.errorType());
         model->symbolTypes[*enumeration] = enumerationType;
         recordNodeType(declaration, enumerationType);
 
@@ -1364,6 +3023,9 @@ private:
             }
             model->symbolTypes[*caseSymbol] = enumerationType;
             model->callables[*caseSymbol] = std::move(signature);
+            if (const auto* parameters = model->genericParameters(*enumeration)) {
+                model->genericParameterLists[*caseSymbol] = *parameters;
+            }
         }
     }
 
@@ -1413,6 +3075,13 @@ private:
                     TypeCheckingDiagnosticId::missingContextualType,
                     declaration->span,
                     "binding requires a type annotation or an initializer");
+        }
+
+        // A `Never` binding with no initializer could never be given a value.
+        if (declaration->initializer == nullptr && bindingType == model->typeContext.neverType()) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, declaration->span,
+                   "a binding cannot have the type 'Never': it has no values",
+                   "'Never' is only the result type of a function that does not return (spec 2.9)");
         }
 
         // The parser rewrites `for x in source` into a hidden `$for<N>` copy of the
@@ -1512,25 +3181,6 @@ private:
                    "use an array and drain it with removeLast");
             return;
         }
-        if ((type->kind == TypeKind::channelSender || type->kind == TypeKind::channelReceiver) &&
-            arguments.size() == 1) {
-            const auto* element = model->typeContext.type(arguments[0]);
-            if (model->isLinear(arguments[0])) {
-                report(TypeCheckingDiagnosticId::linearChannelElement, span,
-                       "'" + model->typeContext.displayName(arguments[0]) +
-                               "' is linear, so it cannot be the element type of '" + model->typeContext.displayName(id) + "'",
-                       "a value still queued when the channel closes would be dropped; send the result of "
-                       "'consume handle.join()' (or another value that can be destroyed) instead of the handle");
-                return;
-            }
-            if (element != nullptr && (element->kind == TypeKind::any || element->kind == TypeKind::never)) {
-                report(TypeCheckingDiagnosticId::channelElementType, span,
-                       "'" + model->typeContext.displayName(arguments[0]) + "' cannot be the element type of a channel ('" +
-                               model->typeContext.displayName(id) + "')",
-                       "use a concrete type, or Void for a signal that carries no value");
-                return;
-            }
-        }
         for (const auto argument : arguments) requireNoLinearDictionary(argument, span);
     }
 
@@ -1608,6 +3258,8 @@ private:
         const auto previousReturnType = currentReturnType;
         const auto previousLoopDepth = loopDepth;
         loopDepth = 0;
+        const auto previousFunction = currentFunction;
+        currentFunction = functionSymbol;
         currentReturnType = signature == nullptr
             ? model->typeContext.errorType()
             : signature->result;
@@ -1622,6 +3274,7 @@ private:
         }
         currentReturnType = previousReturnType;
         loopDepth = previousLoopDepth;
+        currentFunction = previousFunction;
     }
 
     TypeId checkBlock(const syntax::BlockExprSyntax::Ptr& block,
@@ -1797,12 +3450,13 @@ private:
             }
             case syntax::Kind::memberExpr:
                 result = checkMember(
-                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression));
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression), expected);
                 break;
             case syntax::Kind::callExpr:
                 result = checkCall(
                         std::static_pointer_cast<syntax::CallExprSyntax>(expression),
-                        receiverMarker);
+                        receiverMarker,
+                        expected);
                 break;
             case syntax::Kind::arrayExpr:
                 result = checkArray(
@@ -1965,6 +3619,7 @@ private:
                 operandExpected = model->typeContext.optionalType(*expected);
             }
         }
+        permitMove(expression->operand);
         const auto operand = checkExpression(expression->operand, operandExpected).value_or(
                 model->typeContext.errorType());
         if (operand == model->typeContext.errorType()) return operand;
@@ -1983,6 +3638,7 @@ private:
         const auto* returnType = currentReturnType.has_value()
                 ? model->typeContext.type(*currentReturnType)
                 : nullptr;
+        auto result = operandType->arguments[0];
         if (returnType == nullptr || returnType->kind != operandType->kind) {
             report(
                     TypeCheckingDiagnosticId::invalidPropagationContext,
@@ -1990,10 +3646,9 @@ private:
                     operandType->kind == TypeKind::result
                             ? "postfix '?' on Result requires a Result-returning function"
                             : "postfix '?' on Optional requires an Optional-returning function");
-            return model->typeContext.errorType();
-        }
-        if (operandType->kind == TypeKind::result &&
-            operandType->arguments[1] != returnType->arguments[1]) {
+            result = model->typeContext.errorType();
+        } else if (operandType->kind == TypeKind::result &&
+                   operandType->arguments[1] != returnType->arguments[1]) {
             report(
                     TypeCheckingDiagnosticId::mismatchedPropagationError,
                     expression->span,
@@ -2001,9 +3656,10 @@ private:
                             model->typeContext.displayName(operandType->arguments[1]) +
                             "' but function returns '" +
                             model->typeContext.displayName(returnType->arguments[1]) + "'");
-            return model->typeContext.errorType();
+            result = model->typeContext.errorType();
         }
-        return operandType->arguments[0];
+        requireNoImplicitCopy(expression->operand, operand);
+        return result;
     }
 
     TypeId checkCast(const syntax::PrefixExprSyntax::Ptr& expression) {
@@ -2125,6 +3781,7 @@ private:
                 // (spec 2.3.1).
                 if (left == right && left != model->typeContext.voidType() && model->isCopyable(left) &&
                     !containsFunctionType(left) &&
+                    !model->typeContext.mentionsTypeParameter(left) &&
                     model->typeContext.type(left) != nullptr &&
                     model->typeContext.type(left)->kind != TypeKind::enumeration &&
                     model->typeContext.type(left)->kind != TypeKind::structure) {
@@ -2200,27 +3857,35 @@ private:
         return model->typeContext.errorType();
     }
 
+    // A type may name a constructor or qualify a member, but is not itself a value (spec 5.6.1).
+    bool rejectTypeAsValue(const syntax::ExprPtr& expression) {
+        if (expression.get() == currentCallee || expression.get() == currentMemberBase) return false;
+        const auto referenced = model->referencedSymbol(expression);
+        const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
+        if (symbol == nullptr ||
+            (symbol->kind != semantic::SymbolKind::structure &&
+             symbol->kind != semantic::SymbolKind::enumeration &&
+             symbol->kind != semantic::SymbolKind::builtinType &&
+             symbol->kind != semantic::SymbolKind::typeParameter &&
+             symbol->kind != semantic::SymbolKind::protocol)) return false;
+        std::optional<std::string> help;
+        if (symbol->kind == semantic::SymbolKind::structure) {
+            help = "construct a value with its initializer, as in '" + symbol->name + "(...)'";
+        } else if (symbol->kind == semantic::SymbolKind::protocol) {
+            help = "declare a type parameter constrained to '" + symbol->name + "'";
+        }
+        report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
+               "'" + symbol->name + "' is a " +
+                       (symbol->kind == semantic::SymbolKind::protocol ? "protocol" : "type") +
+                       ", not a value or a function value", help);
+        return true;
+    }
+
     TypeId checkName(const syntax::NameExprSyntax::Ptr& expression) {
         if (expression.get() != currentCallee) {
             if (const auto value = functionValueType(expression)) return *value;
         }
-        // A type named as a value is neither a value nor a function value; its initializer must be
-        // called (spec 5.6.1). As a member's base (`Color.Red`) it names the type.
-        if (expression.get() != currentCallee && expression.get() != currentMemberBase) {
-            const auto referenced = model->referencedSymbol(expression);
-            const auto* symbol = referenced.has_value() ? model->semanticModelValue->symbol(*referenced) : nullptr;
-            if (symbol != nullptr && (symbol->kind == semantic::SymbolKind::structure ||
-                                      symbol->kind == semantic::SymbolKind::enumeration ||
-                                      symbol->kind == semantic::SymbolKind::builtinType)) {
-                report(TypeCheckingDiagnosticId::notAFunctionValue, expression->span,
-                       "'" + symbol->name + "' is a type, not a value or a function value",
-                       symbol->kind == semantic::SymbolKind::structure
-                               ? std::optional<std::string>("construct a value with its initializer, as in '" +
-                                                            symbol->name + "(...)'")
-                               : std::nullopt);
-                return model->typeContext.errorType();
-            }
-        }
+        if (rejectTypeAsValue(expression)) return model->typeContext.errorType();
         return referencedValueType(expression);
     }
 
@@ -2252,6 +3917,8 @@ private:
                 reason = "it is a '@c_extern' declaration, which uses the C calling convention";
             } else if (symbol->isRootModule && symbol->name == "main") {
                 reason = "it is the program entry point";
+            } else if (model->genericParameters(*referenced) != nullptr) {
+                reason = "it is generic; a generic function can only be called (spec 20.4.1)";
             }
             if (reason.empty() && binding != nullptr &&
                 !model->semanticModelValue->isRuntimeSource(expression->span)) {
@@ -2347,12 +4014,19 @@ private:
         }
     }
 
-    // A dictionary key needs equality, which function types do not have (spec 2.3.1).
-    void rejectFunctionKey(TypeId key, SourceSpan span) {
-        if (!containsFunctionType(key)) return;
-        report(TypeCheckingDiagnosticId::invalidFunctionType, span,
-               "a function type cannot be a dictionary key: function values have no equality",
-               "key the dictionary by a name or a number and store the function value as the value");
+    void rejectInvalidDictionaryKey(TypeId key, SourceSpan span) {
+        if (containsFunctionType(key)) {
+            report(TypeCheckingDiagnosticId::invalidFunctionType, span,
+                   "a function type cannot be a dictionary key: function values have no equality",
+                   "key the dictionary by a name or a number and store the function value as the value");
+        }
+        if (model->typeContext.mentionsTypeParameter(key)) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, span,
+                   "a dictionary key cannot be the type parameter type '" +
+                           model->typeContext.displayName(key) + "'",
+                   "keys are restricted to Int, Bool, UInt8 and String, and no protocol states that "
+                   "yet (spec 20.5)");
+        }
     }
 
     bool isOptionalFunction(TypeId type) const {
@@ -2367,11 +4041,14 @@ private:
         return type.value_or(model->typeContext.errorType());
     }
 
-    TypeId checkMember(const syntax::MemberExprSyntax::Ptr& expression) {
+    TypeId checkMember(
+            const syntax::MemberExprSyntax::Ptr& expression,
+            std::optional<TypeId> expectedResult = std::nullopt) {
         if (model->semanticModelValue->isModuleQualified(expression)) {
             if (expression.get() != currentCallee) {
                 if (const auto value = functionValueType(expression)) return *value;
             }
+            if (rejectTypeAsValue(expression)) return model->typeContext.errorType();
             return referencedValueType(expression);
         }
         const auto* savedMemberBase = currentMemberBase;
@@ -2395,6 +4072,23 @@ private:
         }
         if (!member.has_value()) {
             if (base != model->typeContext.errorType()) {
+                const auto* baseRecord = model->typeContext.type(base);
+                if (baseRecord != nullptr && baseRecord->kind == TypeKind::typeParameter) {
+                    markDeferredReferenceHandled(expression);
+                    const auto& protocols = model->constraints(baseRecord->symbol);
+                    std::string provided;
+                    for (const auto protocol : protocols) {
+                        provided += (provided.empty() ? "" : ", ") + std::string("'") + symbolName(protocol) + "'";
+                    }
+                    report(TypeCheckingDiagnosticId::unknownMemberOnTypeParameter,
+                           expression->member == nullptr ? expression->span : expression->member->span,
+                           "type parameter '" + model->typeContext.displayName(base) + "' has no member '" +
+                                   (expression->member == nullptr ? std::string() : expression->member->rawValue) + "'",
+                           provided.empty()
+                                   ? std::string("an unconstrained type parameter has no members; add a protocol to its constraint")
+                                   : "only the requirements of " + provided + " are available on it (spec 20.5)");
+                    return model->typeContext.errorType();
+                }
                 report(
                         TypeCheckingDiagnosticId::unknownMember,
                         expression->member == nullptr
@@ -2425,7 +4119,59 @@ private:
                 return model->typeContext.errorType();
             }
         }
-        return model->typeOf(*member).value_or(model->typeContext.errorType());
+        const auto declaredType = model->typeOf(*member).value_or(model->typeContext.errorType());
+        // `Tree.Leaf` of a generic enum names no type arguments: the expected type supplies them
+        // (spec 20.12.1), and without one they cannot be inferred.
+        if (memberSymbol != nullptr && memberSymbol->kind == semantic::SymbolKind::enumCase &&
+            (!memberSymbol->callable.has_value() || memberSymbol->callable->parameters.empty()) &&
+            model->typeContext.mentionsTypeParameter(declaredType) &&
+            memberSymbol->containingSymbol.has_value() &&
+            model->genericParameters(*memberSymbol->containingSymbol) != nullptr &&
+            expression->base != nullptr && model->semanticModelValue->referencedSymbol(expression->base).has_value() &&
+            model->semanticModelValue->referencedSymbol(expression->base) == memberSymbol->containingSymbol) {
+            const auto* expected = expectedResult.has_value() ? model->typeContext.type(*expectedResult) : nullptr;
+            if (expected != nullptr && expected->kind == TypeKind::optional && expected->arguments.size() == 1) {
+                expectedResult = expected->arguments[0];
+                expected = model->typeContext.type(*expectedResult);
+            }
+            if (expected != nullptr && expected->symbol == *memberSymbol->containingSymbol &&
+                !expected->arguments.empty()) {
+                return *expectedResult;
+            }
+            report(TypeCheckingDiagnosticId::cannotInferTypeParameter, expression->span,
+                   "cannot infer the type arguments of '" + memberSymbol->name + "' from the case alone",
+                   "give the binding or result an annotation, such as 'let t: Tree<Int> = Tree.Leaf' (spec 20.12.1)");
+            return model->typeContext.errorType();
+        }
+        return substituteForBase(declaredType, base, *member);
+    }
+
+    // The substitution a use of a member of `base` applies: the generic type's parameters replaced by
+    // the arguments of `base` (spec 20.12). Empty when `base` is not an instance of a generic type.
+    std::unordered_map<semantic::SymbolId, TypeId> baseSubstitution(
+            TypeId base, const std::vector<semantic::SymbolId>* inScope = nullptr) const {
+        std::unordered_map<semantic::SymbolId, TypeId> substitution;
+        const auto* record = model->typeContext.type(base);
+        if (record == nullptr || record->arguments.empty() ||
+            (record->kind != TypeKind::structure && record->kind != TypeKind::enumeration)) {
+            return substitution;
+        }
+        const auto* parameters = inScope != nullptr ? inScope : model->genericParameters(record->symbol);
+        if (parameters == nullptr || parameters->size() != record->arguments.size()) return substitution;
+        for (size_t index = 0; index < parameters->size(); ++index) {
+            substitution.emplace((*parameters)[index], record->arguments[index]);
+        }
+        return substitution;
+    }
+
+    const std::vector<semantic::SymbolId>* parametersOfMember(semantic::SymbolId member) const {
+        const auto found = methodParameters.find(member);
+        return found == methodParameters.end() ? nullptr : &found->second;
+    }
+
+    TypeId substituteForBase(TypeId type, TypeId base, semantic::SymbolId member) const {
+        const auto substitution = baseSubstitution(base, parametersOfMember(member));
+        return substitution.empty() ? type : model->typeContext.substitute(type, substitution);
     }
 
     std::optional<semantic::SymbolId> lookupMember(
@@ -2498,7 +4244,8 @@ private:
 
     TypeId checkCall(
             const syntax::CallExprSyntax::Ptr& expression,
-            ReceiverMarker receiverMarker = ReceiverMarker::none) {
+            ReceiverMarker receiverMarker = ReceiverMarker::none,
+            std::optional<TypeId> expectedResult = std::nullopt) {
         const auto* savedCallee = currentCallee;
         currentCallee = expression->callee.get();
         const auto calleeType = checkExpression(expression->callee).value_or(
@@ -2561,6 +4308,71 @@ private:
         }
 
         const auto* signature = target.has_value() ? model->callable(*target) : nullptr;
+        // A generic call infers its type arguments (spec 20.4.1), and a requirement call on `T`
+        // replaces the protocol's `Self` with `T` (spec 20.5); either way the argument checks below
+        // use the substituted signature.
+        TypedCallableSignature substitutedSignature;
+        std::vector<std::optional<std::optional<TypeId>>> preChecked(expression->arguments.size());
+        const auto* calledSymbol = target.has_value() ? model->semanticModelValue->symbol(*target) : nullptr;
+        if (calledSymbol != nullptr && calledSymbol->libraryRole == semantic::LibraryRole::taskStart) {
+            model->spawnCallSpans.push_back(expression->span);
+            if (!validateTaskTarget(expression)) return model->typeContext.errorType();
+        }
+        if (calledSymbol != nullptr && calledSymbol->libraryRole == semantic::LibraryRole::channelCreate) {
+            const auto before = diagnostics.size();
+            (void) checkChannel(expression, *calledSymbol);
+            if (diagnostics.size() != before) return model->typeContext.voidType();
+        }
+        if (signature != nullptr && calledSymbol != nullptr) {
+            const auto* genericParameters = model->genericParameters(*target);
+            const auto* owner = calledSymbol->containingSymbol.has_value()
+                    ? model->semanticModelValue->symbol(*calledSymbol->containingSymbol)
+                    : nullptr;
+            const bool constructs = calledSymbol->kind == semantic::SymbolKind::synthesizedInitializer ||
+                    calledSymbol->kind == semantic::SymbolKind::enumCase;
+            if (genericParameters != nullptr &&
+                (calledSymbol->kind == semantic::SymbolKind::function || constructs)) {
+                substitutedSignature = inferGenericCall(
+                        expression, *target, *calledSymbol, *signature, *genericParameters, preChecked,
+                        constructs ? expectedResult : std::nullopt);
+                signature = &substitutedSignature;
+            } else if (owner != nullptr && !owner->typeParameters.empty() &&
+                       calledSymbol->kind == semantic::SymbolKind::method &&
+                       expression->callee->kind == syntax::Kind::memberExpr) {
+                // A method of a generic type: its parameters are the receiver's type arguments.
+                const auto base = model->typeOf(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
+                const auto substitution = baseSubstitution(
+                        base.value_or(model->typeContext.errorType()), parametersOfMember(*target));
+                if (const auto* receiver = base.has_value() ? model->typeContext.type(*base) : nullptr;
+                    receiver != nullptr && !receiver->arguments.empty() &&
+                    model->genericParameters(*target) != nullptr) {
+                    model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
+                        *target, receiver->arguments, currentFunction, expression->span };
+                }
+                substitutedSignature = *signature;
+                for (auto& parameter : substitutedSignature.parameters) {
+                    parameter = model->typeContext.substitute(parameter, substitution);
+                }
+                substitutedSignature.result = model->typeContext.substitute(substitutedSignature.result, substitution);
+                signature = &substitutedSignature;
+            } else if (owner != nullptr && owner->kind == semantic::SymbolKind::protocol &&
+                       expression->callee->kind == syntax::Kind::memberExpr) {
+                const auto base = model->typeOf(
+                        std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
+                const std::unordered_map<semantic::SymbolId, TypeId> self {
+                    { owner->id, base.value_or(model->typeContext.errorType()) } };
+                if (base.has_value() && currentFunction.has_value() && model->typeContext.mentionsTypeParameter(*base)) {
+                    requirementCalls.push_back({ *currentFunction, *target, *base, expression->span });
+                }
+                substitutedSignature = *signature;
+                for (auto& parameter : substitutedSignature.parameters) {
+                    parameter = model->typeContext.substitute(parameter, self);
+                }
+                substitutedSignature.result = model->typeContext.substitute(substitutedSignature.result, self);
+                signature = &substitutedSignature;
+            }
+        }
         if (target.has_value() && model->nativeBinding(*target) != nullptr &&
             !model->semanticModelValue->isRuntimeSource(expression->span)) {
             report(TypeCheckingDiagnosticId::unauthorizedNativeBinding, expression->span,
@@ -2581,19 +4393,10 @@ private:
                    "a runtime core unit must not call print, which is implemented by the runtime");
         }
         if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
-            semanticTarget->name == "spawn") {
-            model->spawnCallSpans.push_back(expression->span);
-            return checkSpawn(expression);
+            intrinsic::isLayoutIntrinsic(semanticTarget->name)) {
+            return checkLayoutIntrinsic(expression, *semanticTarget);
         }
-        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
-            semanticTarget->name == "channel") {
-            return checkChannel(expression, *semanticTarget);
-        }
-        if (semanticTarget != nullptr &&
-            (semanticTarget->kind == semantic::SymbolKind::method ||
-             (semanticTarget->kind == semantic::SymbolKind::builtinMember &&
-              (semanticTarget->name == "send" || semanticTarget->name == "receive" ||
-               semanticTarget->name == "close" || semanticTarget->name == "join")))) {
+        if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::method) {
             // A method needs a receiver value; `Type.method(...)` has none.
             const auto base = expression->callee->kind == syntax::Kind::memberExpr
                     ? std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base
@@ -2608,6 +4411,8 @@ private:
                 (baseDeclaration != nullptr &&
                  (baseDeclaration->kind == semantic::SymbolKind::structure ||
                   baseDeclaration->kind == semantic::SymbolKind::enumeration ||
+                  baseDeclaration->kind == semantic::SymbolKind::typeParameter ||
+                  baseDeclaration->kind == semantic::SymbolKind::protocol ||
                   baseDeclaration->kind == semantic::SymbolKind::builtinType))) {
                 report(
                         TypeCheckingDiagnosticId::invalidCallArguments,
@@ -2671,7 +4476,8 @@ private:
                         "value to a local first");
             } else if (requiredReceiver == syntax::AccessEffect::consuming &&
                        semanticTarget != nullptr &&
-                       semanticTarget->kind == semantic::SymbolKind::builtinMember) {
+                       (semanticTarget->kind == semantic::SymbolKind::builtinMember ||
+                        semanticTarget->libraryRole == semantic::LibraryRole::storedConsumer)) {
                 // A builtin consuming member works on the receiver's storage in place, so it needs a
                 // named place: not a temporary, an array element or a file-scope constant.
                 const auto path = storagePath(member->base);
@@ -2721,20 +4527,6 @@ private:
                        baseType->arguments.size() == 1) {
                 const auto elementType = baseType->arguments[0];
                 receiverResultType = model->typeContext.optionalType(elementType);
-            } else if (semanticTarget->name == "join" &&
-                       baseType != nullptr && baseType->kind == TypeKind::task &&
-                       baseType->arguments.size() == 1) {
-                receiverResultType = baseType->arguments[0];
-            } else if (semanticTarget->name == "send" &&
-                       baseType != nullptr && baseType->kind == TypeKind::channelSender &&
-                       baseType->arguments.size() == 1) {
-                receiverArgumentType = baseType->arguments[0];
-                receiverResultType = model->typeContext.channelResultType(model->typeContext.voidType());
-            } else if (semanticTarget->name == "receive" &&
-                       baseType != nullptr && baseType->kind == TypeKind::channelReceiver &&
-                       baseType->arguments.size() == 1) {
-                const auto element = baseType->arguments[0];
-                receiverResultType = model->typeContext.channelResultType(element);
             } else if (semanticTarget->name == "get" &&
                        baseType != nullptr && baseType->kind == TypeKind::dictionary &&
                        baseType->arguments.size() == 2) {
@@ -2785,7 +4577,9 @@ private:
                       *parameterIndex < signature->parameters.size()
                     ? std::optional<TypeId>(signature->parameters[*parameterIndex])
                     : std::optional<TypeId>();
-            const auto actual = checkExpression(argument->value, expected);
+            const auto actual = preChecked[index].has_value()
+                    ? *preChecked[index]
+                    : checkExpression(argument->value, expected);
             // A memberwise initializer, an enum case and `append` store their argument, so it
             // is an owned context; every other parameter borrows or is marked `consume`.
             const auto storesArgument = semanticTarget != nullptr && storesItsArguments(*semanticTarget);
@@ -2800,7 +4594,8 @@ private:
                 requireAssignable(*actual, *expected, argument->value->span);
             }
             if (semanticTarget != nullptr && semanticTarget->kind == semantic::SymbolKind::builtinFunction &&
-                semanticTarget->name == "print" && actual.has_value() && containsFunctionType(*actual)) {
+                semanticTarget->name == "print" && actual.has_value() && (containsFunctionType(*actual) ||
+                                                       model->typeContext.mentionsTypeParameter(*actual))) {
                 report(TypeCheckingDiagnosticId::typeMismatch, argument->value->span,
                        "'print' cannot print a value of type '" +
                                model->typeContext.displayName(*actual) + "'",
@@ -2830,8 +4625,120 @@ private:
                 signature == nullptr ? model->typeContext.errorType() : signature->result);
     }
 
-    // `channel(capacity: n, sender: &s, receiver: &r)` (spec 21.9.1): the two outputs are `initializing`
-    // arguments of a sender and a receiver type with the same element type.
+    TypeId checkCallbackAddress(const syntax::CallExprSyntax::Ptr& expression) {
+        const auto error = model->typeContext.errorType();
+        if (expression->arguments.size() != 1) return error;
+        checkArgumentAccess(syntax::AccessEffect::borrowing, *expression->arguments.front());
+        auto entry = expression->arguments[0]->value;
+        while (entry != nullptr && entry->kind == syntax::Kind::parenthesizedExpr) {
+            entry = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(entry)->expression;
+        }
+        if (entry != nullptr) markDeferredReferenceHandled(entry);
+        const auto named = entry != nullptr &&
+                (entry->kind == syntax::Kind::nameExpr || entry->kind == syntax::Kind::memberExpr)
+                ? model->referencedSymbol(entry) : std::optional<semantic::SymbolId>();
+        const auto* target = named.has_value() ? model->semanticModelValue->symbol(*named) : nullptr;
+        const auto* parameters = named.has_value() ? model->genericParameters(*named) : nullptr;
+        const auto* signature = named.has_value() ? model->callable(*named) : nullptr;
+        const auto declaration = target != nullptr && target->declaration.has_value()
+                ? model->semanticModelValue->node(*target->declaration) : syntax::NodePtr();
+        const auto function = declaration != nullptr && declaration->kind == syntax::Kind::functionDecl
+                ? std::static_pointer_cast<syntax::FunctionDeclSyntax>(declaration) : nullptr;
+        if (target == nullptr || target->kind != semantic::SymbolKind::function ||
+            function == nullptr || function->returnType == nullptr ||
+            model->nativeBinding(target->id) != nullptr || parameters == nullptr ||
+            signature == nullptr || signature->parameters != std::vector<TypeId> { model->typeContext.intType() } ||
+            signature->result != model->typeContext.voidType() || !target->callable.has_value() ||
+            target->callable->parameters.size() != 1 ||
+            target->callable->parameters[0].access != syntax::AccessEffect::consuming) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument,
+                   entry == nullptr ? expression->span : entry->span,
+                   "a callback address requires a named generic Joyeer function with exactly one "
+                   "'consuming Int' parameter and a 'Void' result",
+                   "write func entry<T>(address: consuming Int): Void { ... }");
+            return error;
+        }
+        if (!model->semanticModelValue->isRuntimeSource(target->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedIntrinsic, entry->span,
+                   "a runtime callback entry must be declared in an authorized runtime unit");
+            return error;
+        }
+        if (expression->typeArguments.size() != parameters->size()) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->span,
+                   "a callback address must supply every type argument of '" + target->name + "'");
+            return error;
+        }
+        std::vector<TypeId> arguments;
+        for (const auto& argument : expression->typeArguments) {
+            arguments.push_back(resolveType(argument).value_or(error));
+        }
+        checkTypeArguments(expression, *target, *parameters, arguments);
+        model->genericCalls[*model->semanticModelValue->nodeId(expression)] = GenericCall {
+            target->id, arguments, currentFunction, expression->span };
+        model->nodeTypes[*model->semanticModelValue->nodeId(entry)] = model->typeContext.functionType(
+                { model->typeContext.intType() }, { syntax::AccessEffect::consuming }, model->typeContext.voidType());
+        return model->typeContext.intType();
+    }
+
+    // `joyeer_intrinsic_size_of<T>()` and the other four layout intrinsics (spec 20.12.5). They exist
+    // only in a toolchain-authorized unit; the type argument is recorded for lowering, which
+    // substitutes it per instance.
+    TypeId checkLayoutIntrinsic(const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol& target) {
+        const auto error = model->typeContext.errorType();
+        const auto& name = target.name;
+        if (!model->semanticModelValue->isRuntimeSource(expression->span)) {
+            report(TypeCheckingDiagnosticId::unauthorizedIntrinsic, expression->span,
+                   "'" + name + "' is available only in a toolchain-authorized runtime unit",
+                   "write a checked Joyeer wrapper in a unit selected with --runtime-module");
+            return error;
+        }
+        if (name == "joyeer_intrinsic_callback_address") return checkCallbackAddress(expression);
+        if (expression->typeArguments.size() != 1) {
+            report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->span,
+                   "'" + name + "' takes exactly one explicit type argument",
+                   "write " + name + "<T>(...)");
+            return error;
+        }
+        const auto written = resolveType(expression->typeArguments[0]);
+        const auto type = written.value_or(error);
+        std::optional<TypeId> result;
+        if (type != error) {
+            const bool transfer = model->semanticModelValue->isPreludeSource(expression->span) &&
+                    name != "joyeer_intrinsic_destroy_at" && name != "joyeer_intrinsic_needs_destroy";
+            if (type == model->typeContext.neverType() || (model->isLinear(type) && !transfer)) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
+                       "'" + name + "' cannot take " + (type == model->typeContext.neverType() ? "'Never'" :
+                               "the linear type '" + model->typeContext.displayName(type) + "'"),
+                       "a layout intrinsic needs a type with a representation that is not linear (spec 20.12.5)");
+            } else {
+                model->layoutIntrinsicTypes[*model->semanticModelValue->nodeId(expression)] = type;
+            }
+        }
+        const auto expectedAddress = model->typeContext.intType();
+        const auto checkAddress = [&](size_t index) {
+            const auto& argument = expression->arguments[index];
+            const auto actual = checkExpression(argument->value, expectedAddress);
+            if (actual.has_value()) requireAssignable(*actual, expectedAddress, argument->value->span);
+            checkCallArgumentAccess(target, index, *argument);
+        };
+        if (name == "joyeer_intrinsic_needs_destroy") return model->typeContext.boolType();
+        if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
+            name == "joyeer_intrinsic_stack_slot") {
+            return model->typeContext.intType();
+        }
+        if (expression->arguments.empty()) return error;
+        checkAddress(0);
+        if (name == "joyeer_intrinsic_move_in") {
+            if (expression->arguments.size() != 2) return error;
+            const auto& argument = expression->arguments[1];
+            const auto actual = checkExpression(argument->value, type == error ? std::nullopt : std::optional<TypeId>(type));
+            if (actual.has_value() && type != error) requireAssignable(*actual, type, argument->value->span);
+            checkCallArgumentAccess(target, 1, *argument);
+            return model->typeContext.voidType();
+        }
+        return name == "joyeer_intrinsic_move_out" ? type : model->typeContext.voidType();
+    }
+
     TypeId checkChannel(const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol& target) {
         const auto error = model->typeContext.errorType();
         // Labels, their order and the argument count are name resolution's ordinary call rules.
@@ -2875,12 +4782,15 @@ private:
         validateCallExclusivity(accesses);
         const auto* senderType = model->typeContext.type(endTypes[0]);
         const auto* receiverType = model->typeContext.type(endTypes[1]);
+        const auto* sender = senderType == nullptr ? nullptr : model->semanticModelValue->symbol(senderType->symbol);
+        const auto* receiver = receiverType == nullptr ? nullptr : model->semanticModelValue->symbol(receiverType->symbol);
         // An operand that already failed (a marker, a non-variable, the same variable twice) has its own diagnostic.
         if (endTypes[0] == error || endTypes[1] == error || diagnostics.size() != diagnosticsBefore) {
             return model->typeContext.voidType();
         }
-        if (senderType == nullptr || receiverType == nullptr ||
-            senderType->kind != TypeKind::channelSender || receiverType->kind != TypeKind::channelReceiver ||
+        if (senderType == nullptr || receiverType == nullptr || sender == nullptr || receiver == nullptr ||
+            sender->libraryRole != semantic::LibraryRole::channelSender ||
+            receiver->libraryRole != semantic::LibraryRole::channelReceiver ||
             senderType->arguments.size() != 1 || receiverType->arguments.size() != 1 ||
             senderType->arguments[0] != receiverType->arguments[0]) {
             report(TypeCheckingDiagnosticId::channelEndTypes, expression->span,
@@ -2895,12 +4805,10 @@ private:
 
     // `spawn(function: f, input: consume x)` (spec 21.2): `f` must name one top-level function with a
     // single consuming parameter; the call has type `JoinHandle<R>` for the function's result `R`.
-    TypeId checkSpawn(const syntax::CallExprSyntax::Ptr& expression) {
-        const auto error = model->typeContext.errorType();
+    bool validateTaskTarget(const syntax::CallExprSyntax::Ptr& expression) {
         // Labels, their order and the argument count are checked with the ordinary call rules.
-        if (expression->arguments.size() != 2) return error;
+        if (expression->arguments.size() != 2) return false;
         const auto& functionArgument = expression->arguments[0];
-        const auto& inputArgument = expression->arguments[1];
         const auto span = functionArgument->value != nullptr ? functionArgument->value->span : functionArgument->span;
 
         // `function:` is read as a name, not checked as a value, so a member reference that name
@@ -2925,24 +4833,26 @@ private:
             // (a variable, a call, any other expression).
             if (functionExpression != nullptr && !model->referencedSymbol(functionExpression).has_value() &&
                 functionExpression->kind == syntax::Kind::nameExpr) {
-                return error;
+                return false;
             }
             report(TypeCheckingDiagnosticId::spawnTargetNotFunction, span,
                    "'function:' must name a top-level function; a function value held in a variable or an expression is not accepted here (spec 21.2.1)",
                    "pass the name of a top-level function, for example spawn(function: work, input: consume value)");
-            return error;
+            return false;
         }
         const bool isMain = target->isRootModule && target->name == "main";
-        if (target->kind != semantic::SymbolKind::function || isMain ||
+        const bool isGeneric = model->genericParameters(*named) != nullptr;
+        if (target->kind != semantic::SymbolKind::function || isMain || isGeneric ||
             model->nativeBinding(*named) != nullptr) {
             report(TypeCheckingDiagnosticId::spawnTargetUnsupported, span,
                    "'" + target->name + "' cannot be a task: " +
                            (target->kind == semantic::SymbolKind::method ? "it is a method"
                             : isMain ? "it is the program entry point"
+                            : isGeneric ? "it is generic (spec 20.4.1)"
                             : target->kind == semantic::SymbolKind::builtinFunction ? "it is a builtin function"
                                                                                     : "it is a native binding"),
                    "a task runs a top-level Joyeer function other than 'main'");
-            return error;
+            return false;
         }
         const auto* signature = model->callable(*named);
         const auto& parameters = target->callable.has_value()
@@ -2959,24 +4869,16 @@ private:
                            ? "wrap the input in a struct (an empty struct if there is none) and take it as the one consuming parameter"
                            : "declare the parameter 'consuming'; a borrowed or inout parameter cannot cross to another thread");
 
-            return error;
+            return false;
         }
         if (signature->result == model->typeContext.neverType()) {
             report(TypeCheckingDiagnosticId::spawnTargetNever, span,
                    "'" + target->name + "' never returns, so its task could not be joined",
                    "declare a result type, or call the function directly");
-            return error;
+            return false;
         }
 
-        // The input is the target's one consuming argument, checked as for a direct call.
-        const auto expected = signature->parameters.at(0);
-        const auto actual = checkExpression(inputArgument->value, expected);
-        checkCallArgumentAccess(*target, 0, *inputArgument);
-        if (actual.has_value()) requireAssignable(*actual, expected, inputArgument->value->span);
-        std::vector<CallAccess> accesses;
-        collectCallArgumentAccess(*inputArgument, syntax::AccessEffect::consuming, accesses);
-        validateCallExclusivity(accesses);
-        return model->typeContext.taskType(signature->result);
+        return true;
     }
 
     void collectCallReceiverAccess(
@@ -3672,13 +5574,8 @@ private:
                     collectCopiedPlaces(arm->body, places);
                 }
                 return;
-            case syntax::Kind::propagateExpr: {
-                // `place?` takes a copy of the whole `Result` or `Optional` it unwraps.
-                const auto operand =
-                        std::static_pointer_cast<syntax::PropagateExprSyntax>(expression)->operand;
-                if (isPlaceExpression(operand)) places.push_back(operand);
-                return;
-            }
+            case syntax::Kind::propagateExpr:
+                return; // checkPropagation checks its owned operand independently of the result's context.
             default:
                 if (isPlaceExpression(expression)) places.push_back(expression);
                 return;
@@ -3887,10 +5784,23 @@ private:
 
         if (symbol->kind == semantic::SymbolKind::enumCase) {
             const auto* signature = model->callable(caseSymbol);
-            if (signature == nullptr || signature->result != enumerationType) {
+            if (signature == nullptr) return std::nullopt;
+            if (signature->result == enumerationType) return *signature;
+            // A case of a generic enum, seen from one of its instances (spec 20.12): the declaration's
+            // parameters are replaced by the instance's arguments.
+            const auto* declared = model->typeContext.type(signature->result);
+            const auto* instance = model->typeContext.type(enumerationType);
+            if (declared == nullptr || instance == nullptr || declared->symbol != instance->symbol ||
+                declared->arguments.empty() || instance->arguments.size() != declared->arguments.size()) {
                 return std::nullopt;
             }
-            return *signature;
+            const auto substitution = baseSubstitution(enumerationType);
+            TypedCallableSignature substituted = *signature;
+            for (auto& parameter : substituted.parameters) {
+                parameter = model->typeContext.substitute(parameter, substitution);
+            }
+            substituted.result = enumerationType;
+            return substituted;
         }
 
         const auto* type = model->typeContext.type(enumerationType);
@@ -3994,6 +5904,12 @@ private:
         permitMove(expression->scrutinee);
         const auto scrutinee = checkExpression(expression->scrutinee).value_or(
                 model->typeContext.errorType());
+        if (const auto* scrutineeType = model->typeContext.type(scrutinee);
+            scrutineeType != nullptr && scrutineeType->kind == TypeKind::typeParameter) {
+            report(TypeCheckingDiagnosticId::typeMismatch, expression->scrutinee->span,
+                   "cannot match on a value of type parameter '" + model->typeContext.displayName(scrutinee) + "'",
+                   "a type parameter is opaque; call a requirement of its constraint instead (spec 20.5)");
+        }
         std::vector<PatternCoverage> coverage;
         coverage.reserve(expression->arms.size());
         std::optional<TypeId> result;
@@ -4396,7 +6312,8 @@ private:
             if (!valueType.has_value()) valueType = actualValue;
             else requireAssignable(actualValue, *valueType, entry->value->span);
         }
-        if (!expression->entries.empty()) rejectFunctionKey(*keyType, expression->entries.front()->key->span);
+        rejectInvalidDictionaryKey(*keyType, expression->entries.empty()
+                ? expression->span : expression->entries.front()->key->span);
         return model->typeContext.dictionaryType(*keyType, *valueType);
     }
 };
@@ -4423,10 +6340,8 @@ const char* typeKindName(TypeKind kind) {
         case TypeKind::dictionary: return "dictionary";
         case TypeKind::optional: return "optional";
         case TypeKind::result: return "result";
-        case TypeKind::task: return "task";
-        case TypeKind::channelSender: return "channel-sender";
-        case TypeKind::channelReceiver: return "channel-receiver";
         case TypeKind::function: return "function";
+        case TypeKind::typeParameter: return "type-parameter";
         case TypeKind::int8: return "int8";
         case TypeKind::int16: return "int16";
         case TypeKind::int32: return "int32";
@@ -4511,6 +6426,52 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.not-a-function-value";
         case TypeCheckingDiagnosticId::labeledFunctionValueCall:
             return "type-checking.labeled-function-value-call";
+        case TypeCheckingDiagnosticId::neverFieldType:
+            return "type-checking.never-field-type";
+        case TypeCheckingDiagnosticId::protocolUsedAsType:
+            return "type-checking.protocol-used-as-type";
+        case TypeCheckingDiagnosticId::invalidProtocolMember:
+            return "type-checking.invalid-protocol-member";
+        case TypeCheckingDiagnosticId::reservedProtocolName:
+            return "type-checking.reserved-protocol-name";
+        case TypeCheckingDiagnosticId::invalidConformance:
+            return "type-checking.invalid-conformance";
+        case TypeCheckingDiagnosticId::missingWitness:
+            return "type-checking.missing-witness";
+        case TypeCheckingDiagnosticId::witnessMismatch:
+            return "type-checking.witness-mismatch";
+        case TypeCheckingDiagnosticId::witnessNotAccessible:
+            return "type-checking.witness-not-accessible";
+        case TypeCheckingDiagnosticId::orphanConformance:
+            return "type-checking.orphan-conformance";
+        case TypeCheckingDiagnosticId::duplicateConformance:
+            return "type-checking.duplicate-conformance";
+        case TypeCheckingDiagnosticId::invalidGenericDeclaration:
+            return "type-checking.invalid-generic-declaration";
+        case TypeCheckingDiagnosticId::unsatisfiedConstraint:
+            return "type-checking.unsatisfied-constraint";
+        case TypeCheckingDiagnosticId::cannotInferTypeParameter:
+            return "type-checking.cannot-infer-type-parameter";
+        case TypeCheckingDiagnosticId::conflictingTypeArgument:
+            return "type-checking.conflicting-type-argument";
+        case TypeCheckingDiagnosticId::linearTypeArgument:
+            return "type-checking.linear-type-argument";
+        case TypeCheckingDiagnosticId::invalidTypeArgument:
+            return "type-checking.invalid-type-argument";
+        case TypeCheckingDiagnosticId::unknownMemberOnTypeParameter:
+            return "type-checking.unknown-member-on-type-parameter";
+        case TypeCheckingDiagnosticId::genericNativeBinding:
+            return "type-checking.generic-native-binding";
+        case TypeCheckingDiagnosticId::expandingGenericRecursion:
+            return "type-checking.expanding-generic-recursion";
+        case TypeCheckingDiagnosticId::invalidExtensionHeader:
+            return "type-checking.invalid-extension-header";
+        case TypeCheckingDiagnosticId::instantiationLimit:
+            return "type-checking.instantiation-limit";
+        case TypeCheckingDiagnosticId::unauthorizedIntrinsic:
+            return "type-checking.unauthorized-intrinsic";
+        case TypeCheckingDiagnosticId::invalidPrelude:
+            return "type-checking.invalid-prelude";
         case TypeCheckingDiagnosticId::invalidConsumeArgument:
             return "type-checking.invalid-consume-argument";
         case TypeCheckingDiagnosticId::invalidInitializingArgument:

@@ -1,0 +1,46 @@
+// User declarations may reuse the names the concurrency library keeps private (decision 0023).
+struct TaskBlock { var a: Int
+ var b: Int }
+func allocate(size: Int): Int { return size * 2 }
+func release(address: Int, size: Int): Int { return address + size }
+func panic(message: Int): Int { return message + 1 }
+func zero(address: Int): Int { return 77 }
+func load64(address: Int): Int { return address }
+func store64(address: Int, value: Int): Int { return value }
+func startThread(thread: Int): Int { return 1 }
+func joinThread(thread: Int): Int { return 2 }
+func destroyElement(address: Int): Int { return 3 }
+func taskEntry(x: Int): Int { return 4 }
+func literalAddress(text: String): Int { return 5 }
+func createChannel(a: Int): Int { return 6 }
+func work(v: consuming Int): Int { return v + 1 }
+func main() {
+    let t = TaskBlock(a: 1, b: 2)
+    print(value: t.a + t.b)
+    print(value: allocate(size: 4))
+    print(value: release(address: 1, size: 2))
+    print(value: panic(message: 9))
+    print(value: zero(address: 0))
+    print(value: load64(address: 3))
+    print(value: store64(address: 3, value: 4))
+    print(value: startThread(thread: 1))
+    print(value: joinThread(thread: 1))
+    print(value: destroyElement(address: 1))
+    print(value: taskEntry(x: 1))
+    print(value: literalAddress(text: "a"))
+    print(value: createChannel(a: 1))
+    let h = spawn(function: work, input: consume 41)
+    let r = consume h.join()
+    print(value: r)
+    var s: ChannelSender<String>
+    var rc: ChannelReceiver<String>
+    channel(capacity: 2, sender: &s, receiver: &rc)
+    match s.send(value: consume "hi") {
+        .Ok(_) => print(value: "sent"),
+        .Err(_) => print(value: "refused")
+    }
+    match rc.receive() {
+        .Ok(v) => print(value: v),
+        .Err(_) => print(value: "closed")
+    }
+}

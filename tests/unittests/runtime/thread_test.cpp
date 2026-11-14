@@ -12,9 +12,9 @@
 #include <cstdint>
 #include <vector>
 
-// The compiler's task block (decision 0018, taskRecordBytes in compiler/backend/native_collections.cpp)
+// The source-library task block and the runtime's thread record share this ABI size.
 // reserves exactly this many bytes for the thread record; change them together.
-static_assert(JOYEER_THREAD_BYTES == 128, "update taskRecordBytes in the backend with this value");
+static_assert(JOYEER_THREAD_BYTES == 128, "update the source-library task block with this ABI size");
 
 #ifdef _WIN32
 #include <windows.h>

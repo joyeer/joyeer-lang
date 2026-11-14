@@ -118,6 +118,75 @@ return item.count
     EXPECT_EQ(referenced(field).name, "count");
 }
 
+TEST_F(NameResolutionTest, ResolvesGenericParameterAndProtocolSelfInTheirOwnScopes) {
+    resolve(readFixture("name-resolution/generics.joyeer"));
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto protocol = std::static_pointer_cast<joyeer::syntax::ProtocolDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto& requirement = protocol->requirements[0];
+    EXPECT_EQ(referenced(requirement->parameters[0]->type).id, declared(protocol).id);
+    EXPECT_EQ(referenced(requirement->returnType).id, declared(protocol).id);
+    const auto function = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[1]);
+    const auto& parameter = function->genericParameters[0];
+    EXPECT_EQ(declared(parameter).kind, SymbolKind::typeParameter);
+    EXPECT_EQ(referenced(parameter->constraints[0]).id, declared(protocol).id);
+    EXPECT_EQ(referenced(function->parameters[0]->type).id, declared(parameter).id);
+    EXPECT_EQ(referenced(function->returnType).id, declared(parameter).id);
+}
+
+TEST_F(NameResolutionTest, GenericStructsEnumsAndExtensionsBindTheirTypeParameters) {
+    resolve(readFixture("name-resolution/generic_types.joyeer"));
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto protocol = std::static_pointer_cast<joyeer::syntax::ProtocolDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto box = std::static_pointer_cast<joyeer::syntax::StructDeclSyntax>(parseResult.root->items[1]);
+    const auto& parameter = box->genericParameters[0];
+    EXPECT_EQ(declared(parameter).kind, SymbolKind::typeParameter);
+    EXPECT_EQ(referenced(parameter->constraints[0]).id, declared(protocol).id);
+    EXPECT_EQ(referenced(box->fields[0]->type).id, declared(parameter).id);
+    // Methods name the declaration's own parameter symbol, and its constraint's requirements.
+    EXPECT_EQ(referenced(box->methods[1]->returnType).id, declared(parameter).id);
+    const auto tree = std::static_pointer_cast<joyeer::syntax::EnumDeclSyntax>(parseResult.root->items[2]);
+    EXPECT_EQ(referenced(tree->cases[1]->associatedTypes[0]->type).id, declared(tree->genericParameters[0]).id);
+    // An extension header declares fresh parameters local to the extension.
+    const auto extension = std::static_pointer_cast<joyeer::syntax::ExtensionDeclSyntax>(
+            parseResult.root->items[3]);
+    const auto& declaredParameters = resolution.model->extensionTypeParameters(extension);
+    ASSERT_EQ(declaredParameters.size(), 1u);
+    EXPECT_NE(declaredParameters[0], declared(parameter).id);
+    EXPECT_EQ(referenced(extension->methods[1]->returnType).id, declaredParameters[0]);
+    EXPECT_EQ(referenced(extension->extendedType).id, declared(box).id);
+}
+
+TEST_F(NameResolutionTest, GenericTypeParametersDoNotEscapeTheirDeclaration) {
+    resolve("struct Box<T> { var value: T }\nfunc leak(value: T) {}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+    resolve("struct A<T> { var value: T }\nstruct B { var value: T }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+}
+
+TEST_F(NameResolutionTest, GenericParametersDoNotEscapeOrShareIdentity) {
+    resolve("func first<T>(value: T) {}\nfunc second<T>(value: T) {}\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    const auto first = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[0]);
+    const auto second = std::static_pointer_cast<joyeer::syntax::FunctionDeclSyntax>(
+            parseResult.root->items[1]);
+    EXPECT_NE(declared(first->genericParameters[0]).id, declared(second->genericParameters[0]).id);
+    resolve(readFixture("name-resolution/err/generic_scope.joyeer"));
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::undefinedType));
+}
+
+TEST_F(NameResolutionTest, PublicGenericSignaturesExposeConstraintsNotTheirOwnParameters) {
+    resolve("public protocol P {}\n"
+            "public func identity<T: P>(value: consuming T): T { return value }\n");
+    EXPECT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    resolve("private protocol P {}\n"
+            "public func identity<T: P>(value: consuming T): T { return value }\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
+}
+
 TEST_F(NameResolutionTest, UnitTypeUsesBuiltinIdentityWhenVoidIsShadowed) {
     resolve("struct Void {}\nfunc accept(value: ()): () { return value }\n"
             "func run() { accept(value: ()) }\n");
@@ -696,6 +765,18 @@ TEST_F(NameResolutionTest, MethodsCannotExposeLessAccessibleTypesThanTheirOwner)
     EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
 }
 
+TEST_F(NameResolutionTest, GenericTypesCannotExposeLessAccessibleConstraintProtocols) {
+    resolve("protocol Hidden { }\n"
+            "public struct Shown<T: Hidden> {\n"
+            "    var value: T\n"
+            "}\n"
+            "public enum Choice<T: Hidden> {\n"
+            "    Some(T),\n"
+            "    None\n"
+            "}\n");
+    EXPECT_TRUE(hasDiagnostic(NameResolutionDiagnosticId::inaccessibleExposedType));
+}
+
 TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
     resolve(readFixture("parser/ok/json_mvp.joyeer"));
 
@@ -704,8 +785,9 @@ TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
     EXPECT_TRUE(std::all_of(
             resolution.model->deferredReferences().begin(),
             resolution.model->deferredReferences().end(),
-            [](const auto& deferred) {
-                return deferred.kind == DeferredResolutionKind::contextualEnumCaseNeedsType ||
+            [&](const auto& deferred) {
+                return resolution.model->isPreludeSource(deferred.span) ||
+                       deferred.kind == DeferredResolutionKind::contextualEnumCaseNeedsType ||
                        deferred.kind == DeferredResolutionKind::contextualEnumPatternNeedsType;
             }));
 }

@@ -1,0 +1,7 @@
+protocol Echo {
+    func echo(other: Self): Self
+}
+
+func relay<T: Echo>(value: T): T {
+    return value.echo(other: value)
+}

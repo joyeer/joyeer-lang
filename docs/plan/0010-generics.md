@@ -1,7 +1,10 @@
 # 0010: Generics
 
-- Status: in progress (updated 2026-11-12)
-- Decisions: none yet; each phase records one (see "Open questions"). Background:
+- Status: in progress (updated 2026-11-14)
+- Decisions: [0020](../decisions/0020-function-values.md) (Phase 1),
+  [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2),
+  [0022](../decisions/0022-generic-types-and-layout-intrinsics.md) (Phase 3),
+  [0023](../decisions/0023-library-concurrency.md) (Phase 4). Background:
   [0009](../decisions/0009-runtime-core-capabilities.md), [0015](../decisions/0015-noncopyable-and-linear-types.md),
   [0018](../decisions/0018-tasks.md), [0019](../decisions/0019-channels.md)
 - Spec: [§2.3](../../specs/02-types.md), [§2.6](../../specs/02-types.md), [§3.2.3](../../specs/03-declarations.md),
@@ -10,10 +13,10 @@
 ## Goal
 
 Add function values, generic code and type-layout knowledge to the language, so that the compiler's
-hard-coded generic builtins become ordinary Joyeer library types. Today the compiler supplies type
-knowledge the runtime cannot express (element layouts, destructors, the task entry thunk, `Result`
-construction) through dedicated IR opcodes (`taskSpawn`, `taskJoin`, `channelCreate`, `channelSend`,
-`channelReceive`), although the algorithms are already Joyeer in [lib/Runtime/core/](../../lib/Runtime/core/).
+hard-coded generic builtins become ordinary Joyeer library types. The starting compiler supplied
+element layouts, destructors, task entry thunks, and `Result` construction through dedicated
+concurrency IR opcodes, although the algorithms were already Joyeer in
+[lib/Runtime/core/](../../lib/Runtime/core/). Phase 4 moves those public APIs to source declarations.
 
 ## Definition of done
 
@@ -30,11 +33,12 @@ construction) through dedicated IR opcodes (`taskSpawn`, `taskJoin`, `channelCre
 
 | Feature | State |
 |---|---|
-| Function types `(T): R` | Syntax described in §2.3; no `TypeKind`, not accepted. A function used as a value gives a late or misleading diagnostic ([concurrency plan](0009-concurrency.md)). |
-| Indirect calls | Runtime-only and untyped: `joyeer_intrinsic_call_void1/2` (decision 0009, D2). |
-| Protocols and generic functions | Proposed in §20, not implemented; `protocol` and `trait` are reserved. |
-| Generic structs, enums, methods | Deferred by §20.10; v0.1 forbids them (§2.6, §3.2.3). |
-| Layout intrinsics | None; runtime code sees only `Int` addresses ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)). |
+| Function types `(T): R` | Implemented in Phase 1 ([0020](../decisions/0020-function-values.md)); non-capturing top-level function values, with exact access effects. |
+| Indirect calls | Typed function-value calls are implemented; the runtime-only untyped `joyeer_intrinsic_call_void1/2` also remain (decision 0009, D2). |
+| Protocols and generic functions | §20 is normative for v1; Phase 2 implementation and acceptance are tracked below. `trait` remains reserved. |
+| Generic structs, enums, methods | Implemented in Phase 3; methods instantiate with their receiver's arguments. Method-owned type parameters remain deferred. |
+| Layout intrinsics | Typed size/alignment and raw moves/destruction are implemented in Phase 3. Phase 4 adds stack slots, destruction queries, and specialized callback addresses. |
+| Task and channel APIs | Implemented in Phase 4 as source declarations ([0023](../decisions/0023-library-concurrency.md)); the dedicated compiler/backend machinery is removed. Validated on Windows and Linux x86_64; native macOS and AArch64 gates are open (see Phase 4). |
 
 ## Todo
 
@@ -73,56 +77,132 @@ exactly. No closures, methods or generic functions as values.
 - [x] Reviews (language-designer, type-system-reviewer, ir-backend-reviewer, adversarial-tester).
   Evidence: findings recorded in decision 0020; all fixed with regression tests, and the adversarial
   probes re-run clean.
-- [ ] Validation: `scripts/validate.py` (Debug and Release) and Linux. blocked: Windows has no Python
-  (plan 0009); Windows x64 Debug ctest run by hand instead.
+- [x] Validation: `scripts/validate.py` (Debug and Release) and Linux. Evidence: the final tree (Phase 3 plus the
+  stderr, `Never`-field and nesting fixes), `validate.py` unfiltered, fresh build trees: Windows x64 Debug and
+  Release build, ctest 1648 of 1648 each, `fern test` 7 of 7 each; Linux x86_64 (Ubuntu on WSL, LLVM 22.1.8) Debug
+  and Release build, ctest 1624 of 1624 each, `fern test` 7 of 7 each. On the Phase 1 tree `945ced9` Linux had
+  passed ctest 1511 of 1511 with the pre-existing `SystemTests` stderr failure, fixed since (see the progress
+  log). macOS is not run.
 - [x] Update [supported features](../impl/supported-features.md). Evidence: the "Function values" row.
 
 ### Found along the way (not function values)
 
-- [ ] The compiler overflows its stack on deep nesting (about 200 parenthesized expressions, 400
-  parenthesized types, a 300-term `+` chain); add a depth limit with a diagnostic. Pre-existing.
-- [ ] `struct S { var n: Never }` is accepted; reject `Never` as a stored field type. Pre-existing.
+- [x] The compiler overflows its stack on deep nesting (about 200 parenthesized expressions, 400
+  parenthesized types, a 300-term `+` chain); add a depth limit with a diagnostic. Pre-existing. Evidence: the
+  parser bounds the syntax depth at 100 and reports `parser.nesting-too-deep` once
+  (`ParserTest.DeepNestingIsDiagnosedOnceInsteadOfOverflowingTheStack`, 20,000-deep parentheses, types, `+`
+  chains, prefix operators, member chains, calls, casts and blocks; `NestingWithinTheLimitParsesWithoutADiagnostic`);
+  programs 94 levels deep compile and run with the Windows Debug compiler. Documented in `docs/impl/parser.md` and
+  Appendix C. Deeper nesting through types of generic instances is bounded by the instantiation limit.
+- [x] `struct S { var n: Never }` is accepted; reject `Never` as a stored field type. Pre-existing. Evidence:
+  `type-checking.never-field-type` (`TypeCheckingTest.StructuresCannotStoreNever`), spec §2.9.
 
 ### Phase 2: protocols and generic functions (§20 v1)
 
-- [ ] Decision record: reviewability of monomorphized generics, ownership of a type parameter, and
-  where instantiation happens.
-- [ ] Spec: settle §20 v1 and update §2.6, §3.2.3 and the reserved-keyword appendix.
-- [ ] Failing GoogleTests and stage fixtures for protocols, conformances, constraints and `Copyable`.
-- [ ] Parsing and name resolution: `protocol`, conformance extensions, generic parameters.
-- [ ] Type checking: check a generic body once against its constraints; call-site errors name the
-  unmet constraint.
-- [ ] Instantiation with a cache keyed by function and type arguments; spans and debug scopes point at
-  the generic source.
-- [ ] IR, verifier and backend see only concrete functions; end-to-end fixtures.
-- [ ] Measure compile time and code size on fern and the web-server example.
-- [ ] Reviews and validation; update supported features.
+- [x] Decision record: reviewability of monomorphized generics, ownership of a type parameter, and
+  where instantiation happens. Evidence: [0021](../decisions/0021-protocols-and-generic-functions.md),
+  accepted 2026-11-12 after a language-designer review (8d9d643).
+- [x] Spec: settle §20 v1 and update §2.6, §3.2.3 and the reserved-keyword appendix. Evidence: §20
+  made normative (inference §20.4.1, entailment §20.4.2, expanding recursion §20.6), with §1.4, §2.6,
+  §2.9, §3.2.3, §3.5, §4.1.1, §5.4, §7, §12.2, §12.4, §21.2.1 and Appendix C amended as listed in 0021.
+- [x] Failing GoogleTests and stage fixtures for protocols, conformances, constraints and `Copyable`.
+  Evidence: parser/name-resolution/type-checking fixtures, CLI rejection/report fixtures, and focused
+  tests in the existing stage suites. The initial implementation preceded these tests; failing
+  regressions reproduced all nine distinct implementation-review findings before their fixes.
+- [x] Parsing and name resolution: `protocol`, conformance extensions, generic parameters.
+  Evidence: `ParsesProtocolsConformancesAndGenericConstraints`,
+  `ResolvesGenericParameterAndProtocolSelfInTheirOwnScopes`, and the public-signature/module fixtures.
+- [x] Type checking: check a generic body once against its constraints; call-site errors name the
+  unmet constraint. Evidence: generic inference, conformance, ownership, visibility and unused-body
+  regressions, plus `DiagnosticsCliRejectsUnsatisfiedGenericConstraint`.
+- [x] Instantiation with a cache keyed by function and type arguments; spans and debug scopes point at
+  the generic source. Evidence: transitive/cache and source-scope tests, bounded recursion/depth tests,
+  private-name collision coverage and the byte-exact `GenericsInstantiationReport` at `-O0`/`-O2`.
+- [x] IR, verifier and backend see only concrete functions; end-to-end fixtures. Evidence:
+  `GenericInstanceNamesAndConcreteDebugTypesSurviveTheBackendWire`, literal/used/nested placeholder
+  rejection, `E2EGenericsO0`..`O3`, `E2EGenericsPropagationO0`..`O3` and `E2EGenericDependencyO0`/`O2`.
+- [x] Measure compile time and code size on fern and the web-server example. Evidence:
+  [local sample](../impl/backend.md#phase-2-generics-completion-sample), against `3feb624`; code/file
+  sizes unchanged and compile/link medians effectively unchanged to 1.4% higher in this sample.
+- [x] Type-system and IR/backend implementation reviews, separately from the author. Evidence:
+  nine distinct findings reproduced and fixed with passing regressions, recorded in 0021.
+- [x] Independent adversarial review. Evidence: adversarial-tester found five minor defects and no crash or
+  miscompile; the `<error>` cascade and generic `main` are fixed with regression tests
+  (`AConflictingTypeArgumentDoesNotCascadeIntoAFunctionTypeMismatch`, `TheProgramEntryPointCannotBeGeneric`).
+  Three are recorded as open in 0021: a literal does not take an already-inferred `T?`, user structs may
+  reuse reserved protocol names, and a method named `Self` is accepted.
+- [x] Full validation in Debug and Release, and Linux. Evidence: the `validate.py` runs recorded under Phase 1 on
+  the final tree (Windows x64 and Linux x86_64, Debug and Release, all suites green); the baseline `SystemTests`
+  stderr failure noted in 0021 is fixed. The debugger breakpoint check and macOS were not run.
+- [x] Update supported features and implementation notes, correct the spec example, and record
+  implementation deviations in 0021. Evidence: the linked source-of-truth documents in this change.
 
 ### Phase 3: generic types and layout intrinsics
 
-- [ ] Decision record: generic structs and enums (lifting part of §20.10), and the runtime-only layout
-  intrinsics' surface.
-- [ ] Spec for generic structs, enums and their methods.
-- [ ] Failing tests, then parsing, type checking and instantiation of generic types.
-- [ ] Runtime-only intrinsics: size and alignment of `T`, moving a `T` into and out of an address, and
-  destroying a `T` at an address.
-- [ ] Fixture: a runtime-source generic struct owns a raw buffer of `T` and destroys queued noncopyable
-  values correctly.
-- [ ] Reviews and validation; update supported features.
+- [x] Decision record: generic structs and enums (lifting part of §20.10), and the runtime-only layout
+  intrinsics' surface. Evidence: [0022](../decisions/0022-generic-types-and-layout-intrinsics.md), accepted
+  2026-11-13 after a language-designer review.
+- [x] Spec for generic structs, enums and their methods. Evidence: new §20.12 (construction inference,
+  extensions and unconditional conformance, ownership, termination, layout intrinsics) with §2.6, §3.2.3,
+  §3.3, §3.5, §3.9, §4.1.1, §5.6.1, §19.4.5, §20.4, §20.4.1, §20.4.2, §20.8, §20.10 and Appendix C amended
+  per 0022. Documentation only; not built or run.
+- [x] Failing tests, then parsing, type checking and instantiation of generic types. Evidence: parser, name-resolution and type-checking unit tests, `E2EGenericTypes`/`E2EGenericDeinit` at -O0 to -O3, `GenericTypesInstantiationReport`, `TypeGenericTypesRejectExpandingRecursion`; expected-type inference, type-level expanding recursion, the exposed-constraint check and report lines are included. Windows x64 Debug, full ctest 1628 of 1628.
+- [x] Runtime-only intrinsics: size and alignment of `T`, moving a `T` into and out of an address, and
+  destroying a `T` at an address. Evidence: `tests/c-interop/layout-intrinsics.joyeer`
+  (`JoyeerCInterop.LayoutIntrinsicsDebug`/`Optimized`) and four unit tests in `cinterop_test.cpp`; Windows x64
+  Debug only.
+- [x] Fixture: a runtime-source generic struct owns a raw buffer of `T` and destroys queued noncopyable
+  values correctly. Evidence: `tests/c-interop/generic-queue.joyeer` (`JoyeerCInterop.GenericQueueDebug`/
+  `Optimized`), including the runtime's allocation-balance check at exit.
+- [x] Reviews and validation; update supported features. Evidence: type-system, IR/backend and adversarial
+  reviews with fixes (progress log, 2026-11-14); the `validate.py` runs recorded under Phase 1 cover this tree
+  (Windows x64 and Linux x86_64, Debug and Release). macOS is not run; the open review items are listed in the
+  progress log.
 
 ### Phase 4: concurrency builtins in the library
 
-- [ ] Benchmark today's tasks and channels as the baseline.
-- [ ] Declare `JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>`, `spawn` and `channel` in Joyeer,
+- [x] Benchmark today's tasks and channels as the baseline. Evidence: unchanged compiler/runtime
+  `c6b5b4d`, Windows x64 Debug/`-O0` and Release/`-O2`, 15 samples per workload; checked checksums and
+  preserved executables. Workloads, measurements and methodology are recorded in
+  [0023](../decisions/0023-library-concurrency.md#evidence); exact commands are in the progress log.
+- [x] Declare `JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>`, `spawn` and `channel` in Joyeer,
   keeping §21: linear handles, `Result` from `send` and `receive`, destruction of unsent and unreceived
-  values, the 256-task limit and its traps.
-- [ ] Existing §21 fixtures and diagnostics pass unchanged.
-- [ ] Benchmark again; no regression in either profile.
-- [ ] Delete the opcodes, type kinds, backend cases and compiler-known names.
-- [ ] Reviews and validation; update supported features, runtime notes and §21.
-- [ ] Write a follow-up plan for `Optional` and `Result` as library enums, and later `Array` and `Dict`.
+  values, the 256-task limit and its traps. Evidence: `lib/Runtime/concurrency.joyeer`, decision 0023,
+  the unchanged durable task/channel fixtures and the creation ABI/callback/live-flag fixture.
+- [x] Existing §21 fixtures and diagnostics pass unchanged. Evidence: the full unfiltered Windows
+  and Linux runs below, including all existing stage/CLI and O0..O3 runtime fixtures; no `.joyeer`
+  fixture or diagnostic expectation was changed. Unit tests that count source files or walk every
+  method were adjusted only for the extra bundled prelude source.
+- [x] Benchmark again; no regression outside sampled noise in either profile. Evidence: 31 final
+  paired samples per workload/profile and the predeclared confidence criterion in
+  [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation). Point estimates
+  are +0.5% to +2.5% (every interval includes 1, upper bounds up to +7%), so "not slower than today"
+  is established only within noise. Per-operation cost, hello-world size and compile time with the
+  bundled prelude were not measured.
+- [x] Delete the opcodes, type kinds, backend cases and compiler-known names. Evidence: six
+  concurrency opcodes, three type kinds, native task thunk/layout and special ownership cases,
+  and builtin declarations are removed; the IR tests now verify ordinary calls/structs and wire 18.
+- [x] Reviews and validation; update supported features, runtime notes and §21. Evidence: four
+  separate role reviews, reproduced/fixed review regressions and 64 hostile case executions;
+  `validate.py` Debug/Release, Windows CTest 1665/1665 and fern 7/7 each; Linux CTest 1641/1641 and
+  fern 7/7 each. Native platform gates below remain explicitly unverified.
+- [x] Write a follow-up plan for `Optional` and `Result` as library enums, and later `Array` and `Dict`.
+  Evidence: [0011](0011-library-containers.md), using the plan template with phased checklists,
+  ownership/borrowing prerequisites and every implementation item open.
+
+### Remaining native acceptance gates
+
+The feature phases above are complete on the verified x86_64 hosts. Keep this plan in progress
+until the unrun native gates are recorded; do not infer them from WSL or x64.
+
+- [ ] Native macOS Debug/Release `validate.py`, including task/channel and callback ABI paths.
+  Blocked here: no macOS execution host/SDK.
+- [ ] Native AArch64 Debug/Release `validate.py` on a supported OS.
+  Blocked here: no native AArch64 execution host/SDK.
 
 ## Open questions
+
+Questions 1 to 3 are answered in [0021](../decisions/0021-protocols-and-generic-functions.md) (accepted).
 
 1. **Reviewability.** The preamble wants code that humans review; monomorphization compiles one body many
    times. How do bounded, statically dispatched generics keep behavior predictable, and what does the
@@ -132,6 +212,9 @@ exactly. No closures, methods or generic functions as values.
 3. **Where instantiation happens:** on the typed model after type checking, or during IR lowering.
    Phase 2 record.
 4. **Captures.** What would justify closures later, given ownership of captured state? Phase 1 record.
+5. **Linear values in generic types.** 0021 bans linear type arguments of generic functions, but a
+   library `Array<T>` must hold `JoinHandle<R>`. How does generic code end a linear value? Phase 3
+   record.
 
 ## Out of scope
 
@@ -141,6 +224,175 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-14: Independent post-implementation verification of the uncommitted Phase 4 tree (separate
+  language, type-system, IR/backend reviews and a separate adversarial run of about 150 programs at
+  `-O0`/`-O2`): no ownership, memory-safety, ABI or §21 break found. Windows x64 fresh Debug and Release
+  builds ran 1664 of 1665 CTest cases each; the one miss, `ValidationScriptTests`, timed out at 30 s
+  under load while reviewers and a build ran, and passes alone in under a second in both trees. After
+  the tests below were added, the final tree ran Release 1695 of 1695 and Debug 1694 of 1695 (the same
+  pure-Python test timed out again at 33 s with `-j3`; 0.4 to 0.6 s alone, three runs). Fixed
+  from the reviews: stale status and evidence wording here, decisions 0018/0019/0022 now point at 0023,
+  and `callback_address<T...>` is described consistently. Added durable tests: three task layout/handle
+  fixtures (`task_layout`, `task_unit_layout`, `task_handle_inputs`), `library_name_shadowing`,
+  `channel_end_only`, and unit tests for exactly-once prelude roles, metadata spoofing on structs, enums
+  and methods, unauthorized prelude-only intrinsics, `break`/`continue` escaping a pending move, and each
+  `pointerToInteger` verifier rule (143 focused tests pass in Debug). A dictionary cannot hold a linear
+  value at all (`type-checking.linear-collection-element`), so the dictionary pending-move path is not
+  reachable for transfer types. Open, not fixed: a method whose declared result is a function type is
+  rejected as `type-checking.not-callable` (Phase 1 `checkCall`, exists at `c6b5b4d`), so
+  `JoinHandle<(Int): Int>.join()` cannot be called; the task block offsets (136/128) are repeated in three
+  places in `concurrency.joyeer` and tied to `JOYEER_THREAD_BYTES` only by a `static_assert`; runtime
+  clone traps for task and channel ends were replaced by the narrower verifier rule on `copyValue`; the
+  prelude source id is derived in two places without a cross-check, and its debug path depends on the
+  working directory; the prelude is one string literal (MSVC limit about 16 KB, now 7 KB); dead
+  by-name `send`/`receive`/`close`/`join` typing remains in `typechecking.cpp`. Not rerun by this
+  entry: Linux/WSL, `fern test`, macOS, AArch64.
+- 2026-11-14: Completed Phase 4 on the current uncommitted tree. Full `validate.py` with every gate
+  enabled: Windows x64 Debug/Release build, CTest 1665/1665 and fern 7/7 in each; Linux x86_64
+  (WSL Ubuntu, isolated Git archive + exact working patch/new files) Debug/Release build, CTest
+  1641/1641 and fern 7/7 in each. Final 31-pair A/B comparisons from the validated Windows builds
+  resolve no regression outside sampled noise in either profile (0023 has all medians, intervals,
+  sizes and methodology). Role findings, malformed-IR regressions and independent hostile programs
+  are recorded there. Native macOS/AArch64 and the earlier debugger breakpoint check remain unrun;
+  the two native gates are now explicit checklist items, so the plan is not retired prematurely.
+  No commit, push, branch switch, or toolchain installation was performed.
+- 2026-11-14: Implemented the Phase 4 source prelude, sealed compatibility/must-transfer metadata,
+  runtime stack slots/destruction query/specialized callback addresses, and wire version 18.
+  Removed six concurrency opcodes, three type kinds, backend task thunks/layout and special ownership
+  cases, and public builtin declarations. Public generic task targets remain rejected; the internal
+  callback specialization is the compatible equivalent selected in 0023. Separate language,
+  type-system, IR/backend, and adversarial reviews ran. Review regressions were reproduced and fixed;
+  final Windows x64 Debug default build and 226 focused tests pass. The independently authored hostile
+  set has 64 passing case instances after correcting probe-only syntax. Initial 31-pair A/B timing
+  meets the predeclared sampled-noise criterion in both profiles; final candidate timing and full
+  `validate.py` acceptance are still in progress. Created [0011](0011-library-containers.md), with
+  every future implementation gate open. Do not treat this progress entry as full Phase 4 acceptance.
+- 2026-11-14: Started Phase 4 on unchanged `c6b5b4d`. Both existing build trees built successfully;
+  `ctest --test-dir out/build/x64-debug-comp -j 4 -R "Task|Channel|Concurrency|Spawn"
+  --output-on-failure --no-tests=error` and the same command for `x64-release-comp` each passed
+  98 of 98. Added two concurrency performance fixtures and a standard-library Python runner.
+  From an MSVC x64 Developer shell, using Python 3.12:
+  `python tests/perf/benchmark_concurrency.py build
+  --debug-compiler C:\Source\joyeer-lang\out\build\x64-debug-comp\bin\joyeer.exe
+  --release-compiler C:\Source\joyeer-lang\out\build\x64-release-comp\bin\joyeer.exe
+  --output-dir <session-files>\phase4-baseline`, then
+  `python tests/perf/benchmark_concurrency.py measure --baseline-dir <session-files>\phase4-baseline
+  --repetitions 15 --report <session-files>\phase4-baseline.json`. `<session-files>` is the current
+  session's artifact directory, not a product dependency. Every run checked the complete output and
+  empty stderr. [0023](../decisions/0023-library-concurrency.md) proposes the missing generic-target,
+  linear-instance and runtime-prelude mechanisms; it is not accepted or implemented. No compiler or
+  runtime implementation was changed for the baseline. The branch remains uncommitted and unpushed.
+- 2026-11-14: Closed the Phase 1 "found along the way" items (a `Never` stored field is
+  `type-checking.never-field-type`; the parser bounds syntax depth at 100 with `parser.nesting-too-deep`) and
+  re-ran everything on the resulting tree with `validate.py`, unfiltered, fresh trees. Windows x64: Debug and
+  Release ctest 1648 of 1648, `fern test` 7 of 7. Linux x86_64 (WSL): ctest 1624 of 1624, `fern test` 7 of 7, both
+  configs. The earlier `SystemTests` stderr failures and the Phase 1, 2 and 3 validation items are closed by this
+  run. Not run: macOS, and the Phase 2 debugger breakpoint check.
+- 2026-11-14: Phase 3 validation on Linux x86_64 (WSL Ubuntu, `validate.py`, tree 2317f09): Debug and Release
+  build, ctest 1621 of 1621 each; `fern test` 6 of 7 in both. The failure is the SystemTests stderr check
+  `UNEXPECTED stderr closed descriptor (0 bytes): ok` (a zero-byte write to a closed descriptor reports `ok`,
+  the test expects `err:9`). The same check fails the same way on `main` under WSL, so it is not caused by
+  this phase. Fixed afterwards: `System.writeStderr` now reaches the runtime for an empty write (which probes
+  the descriptor), and the Windows runtime reports a write to a handle without write access as 9, as the C
+  library did; `fern test` is then 7 of 7 on Windows Debug and WSL Debug, and the 97 runtime/stdio ctest
+  tests pass on Windows Debug (full suites not rerun). Windows x64 Debug ctest 1644 of 1645
+  (`ValidationScriptTests` timeout under load, passes alone). Windows x64 `validate.py` (same tree plus the
+  plan note, f9ca550): Debug and Release build, ctest 1645 of 1645 each; `fern test` 6 of 7 in both, again only
+  `SystemTests`, which prints two stderr failures: `read-only descriptor: err:13` (expected `err:9`) and the
+  same zero-byte closed-descriptor `ok`. This branch does not touch `tests/lib` or `lib/System`; the Windows
+  failures were not compared against `main`. macOS is not run, so the "Reviews and validation" item stays
+  open.
+- 2026-11-14: Phase 3 role reviews (type-system, IR/backend, adversarial). Fixed with regression tests: a
+  compiler crash (stack overflow) on `struct S<T> { var next: S<[T]>? }` once a value is copied (the type-cycle
+  check now runs before any body); spurious `conflicting-type-argument` for `Box<Int?> = Box(value: 1)`;
+  type-argument checks now apply to annotations inside bodies; `let c: Never` and `Box<Never>` locals no longer
+  crash; payloadless cases of generic enums (`Tree.Leaf`, `[.Leaf]`) take their type from the expected type;
+  verifier rules for the layout opcodes (concrete queried type, not `Never`, runtime functions only);
+  `generic-queue` sizes its buffers with `size_of` (a struct with a `deinit` has a hidden live flag, which an
+  -O1 run exposed). Still open, not fixed: deep nesting overflows the stack with no diagnostic (also
+  pre-existing, see "Found along the way"); expanding recursion through witnesses, struct construction and
+  deinit ends at the instantiation limit; `internInstanceTypes` is quadratic; `spawn` of a generic function;
+  diagnostic IDs `invalid-type-argument-count` and `type-mismatch` differ from the names in §20.8/0022;
+  `size_of<Int>()` in an unauthorized unit reports a comparison error; `>=` is not split after a type argument;
+  `Any` is not expressible yet, so its rejection as a type argument is untested.
+
+- 2026-11-13: Phase 3 layout intrinsics and expected-type inference. `name<T>(...)` parses for the five
+  `joyeer_intrinsic_*` layout names only in a unit selected with `--runtime-module` (`Parser` flag); they are
+  prelude builtins that the type checker rejects elsewhere with `unauthorized-intrinsic`. New IR opcodes
+  `typeSize`, `typeAlignment` (constant expressions the target layout folds, since the portable module has no
+  layout) and `integerAddress`; `move_in`/`move_out`/`destroy_at` lower to store, take and destroy on it. Wire
+  format 17. A construction's expected type now fills open type parameters (spec 20.12.1). Fixtures
+  `layout-intrinsics` and `generic-queue` pass at -O0 and -O2. Windows x64 Debug full ctest 1627 of 1627. Not done: expanding
+  recursion through types, instantiation report lines for types/methods, the exposed-constraint check, role
+  reviews, Release/Linux and `validate.py` (no Python here), supported-features update.
+
+- 2026-11-13: Phase 3 generic `deinit`: the `deinit` of a generic struct is an instance per concrete instance of the
+  struct (found to a fixpoint with the instance types) and is linked to that instance's IR definition. New fixture
+  `tests/e2e/generic_deinit.joyeer` (`E2EGenericDeinitO0`..`O3`): each instance runs its own `deinit` once, in
+  reverse declaration order. Windows x64 Debug full ctest 1614 of 1614. Not done: the layout intrinsics, expected-type
+  inference (B2), expanding recursion through types, instantiation report lines for types/methods, the Queue fixture.
+- 2026-11-13: Phase 3 instantiation and lowering of generic structs and enums: concrete instance layouts are
+  interned (to a fixpoint) and lowered per type, methods of generic types are instances keyed by the receiver's
+  arguments (including witnesses reached through a requirement call), enum cases substitute the instance's
+  arguments, and the IR verifier allows a field symbol to repeat across instances. New e2e fixture
+  `tests/e2e/generic_types.joyeer` (`E2EGenericTypesO0`..`O3`) passes; full Windows x64 Debug ctest
+  (before the fixture was registered) passed 1605 of 1605 after the lowering and verifier edits. Not done: `deinit` of a generic
+  struct, the intrinsics, expected-type inference (B2), expanding recursion through types, `--report-instantiations`
+  for types and methods, Self-in-extension edge cases, and the Queue fixture.
+- 2026-11-13: Phase 3 type checking, second slice: explicit type arguments of generic types are checked against
+  their constraints, `Never` and linear (deferred until constraints are known); `invalid-extension-header`;
+  conformance of generic types (`extension Box<U>: P`) is recorded against the declaration's instance, matches
+  every instance, and satisfies constraints inside generic bodies. CompilerTypeCheckingTests 206 of 206.
+  Not done: expected-type inference (B2), expanding recursion through types, intrinsics, and all of
+  instantiation of types and methods, IR and backend. A duplicate extension-parameter name is reported by
+  name resolution, not the type checker.
+- 2026-11-13: Phase 3 type checking, first slice: `TypeContext` interns generic structs/enums by arguments,
+  `Self` and extension parameters resolve per context, construction of a generic struct or enum case infers
+  its arguments through the existing generic-call inference, members and methods substitute the receiver's
+  arguments, `Box<Int>` displays with its arguments, and copyability/linearity are computed per instance.
+  Four new TypeCheckingTests pass; CompilerTypeCheckingTests 203 of 203 (Windows x64 Debug). Not done:
+  constraint/`Never`/linear checks on explicit type arguments, expected-type inference (B2),
+  `invalid-extension-header`, conformance of generic types, expanding recursion, intrinsics, and all of
+  instantiation, IR and backend.
+- 2026-11-13: Phase 3 name resolution: struct/enum type parameters are declared in the type's member scope
+  (`Symbol::typeParameters`), methods see them through their function scope, and an `extension Box<U>` header
+  declares fresh local parameters (`SemanticModel::extensionTypeParameters`) sharing the declaration's
+  constraint scopes. Tests `GenericStructsEnumsAndExtensionsBindTheirTypeParameters` and
+  `GenericTypeParametersDoNotEscapeTheirDeclaration`; CompilerNameResolutionTests 67 of 67 (Windows x64 Debug).
+  Not done: exposed-constraint check (§12.2) for struct/enum parameters; everything from type checking on.
+  Windows x64 Debug full build and unfiltered ctest: 1596 of 1597 pass; the one failure,
+  `JoyeerCInterop.MissingLibrary`, is a nested build that cannot find `kernel32.lib` in this shell (LNK1104),
+  not a result of these changes, but it was not re-run in a clean Developer shell.
+- 2026-11-13: Phase 3 parser stage: `struct` and `enum` accept `<T: P & Q>` (syntax `genericParameters`);
+  tests `ParsesGenericStructsEnumsAndExtensionHeaders`, `RejectsMalformedGenericTypeParameterClauses` and
+  fixture `tests/parser/ok/generic_types.joyeer` pass (CompilerParserTests, Windows x64 Debug). The parser
+  change was written before its tests, not after a failing run. Not done: intrinsic call-site type arguments,
+  name resolution, type checking and everything after. No other plan item checked.
+- 2026-11-13: 0022 accepted; spec item checked (§20.12 and the amendments listed in 0022). Next: failing
+  tests, then parser, name resolution, type checking, instantiation, IR/backend, intrinsics, fixture.
+- 2026-11-13: Phase 3 decision record 0022 drafted and reviewed by language-designer (5 blockers, 7 should-fix
+  items, all folded in) and accepted. Decision item checked; no spec,
+  tests or code exist for Phase 3.
+- 2026-11-12: adversarial review done and two of five findings fixed; Debug ctest 1593 of 1593. Only
+  full validation (Release, Linux, `validate.py`) remains, blocked on Python.
+- 2026-11-12: Phase 2 implementation work completed: reporting, stage/CLI/module/e2e coverage,
+  nine distinct implementation-review findings fixed, and follow-up inference, diagnostic and
+  naming regressions covered. Windows x64 Debug default build and unfiltered CTest pass 1591/1591.
+  Final fern/web-server timing and footprint samples recorded; code/file sizes unchanged and both
+  reports have zero user generic instances. Acceptance remains open: Python is absent,
+  root `SystemTests` repeats its baseline stderr failure, the adversarial review was rejected by the
+  service before execution, and Release-host/Linux/debugger checks are unrun. Docs and portable
+  skill references updated; only verified items checked.
+- 2026-11-12: Phase 2 implementation in progress, not reviewed: parser (`protocol`, conformance lists,
+  `<T: P & Q>`), name resolution, type checking (inference, constraints, conformances, expanding
+  recursion, instantiation) and lowering of instances are written; `tests/e2e/generics.joyeer` builds and
+  prints the expected output by hand. Not done: GoogleTests and stage fixtures, the
+  `--report-instantiations` flag, the full ctest run, the role reviews, the docs. No items checked.
+- 2026-11-12: spec item checked (§20 normative for v1).
+- 2026-11-12: decision 0021 accepted; the decision-record item checked.
+- 2026-11-12: Phase 2 decision record 0021 drafted (open questions 1 to 3) and reviewed by
+  language-designer (3 blockers and 14 should-fix items, all folded in); awaiting acceptance. No items
+  done.
 - 2026-11-12: implementation review fixes (use-after-free through nested value calls and seven more);
   three items checked (gap, reviews, supported features); validation blocked on Python; two pre-existing
   bugs added under "Found along the way".
