@@ -189,8 +189,12 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
   `UNEXPECTED stderr closed descriptor (0 bytes): ok` (a zero-byte write to a closed descriptor reports `ok`,
   the test expects `err:9`). The same check fails the same way on `main` under WSL, so it is not caused by
   this phase; it needs its own fix or an expected-platform note. Windows x64 Debug ctest 1644 of 1645
-  (`ValidationScriptTests` timeout under load, passes alone). Windows `validate.py` and macOS are not run, so
-  the "Reviews and validation" item stays open.
+  (`ValidationScriptTests` timeout under load, passes alone). Windows x64 `validate.py` (same tree plus the
+  plan note, f9ca550): Debug and Release build, ctest 1645 of 1645 each; `fern test` 6 of 7 in both, again only
+  `SystemTests`, which prints two stderr failures: `read-only descriptor: err:13` (expected `err:9`) and the
+  same zero-byte closed-descriptor `ok`. This branch does not touch `tests/lib` or `lib/System`; the Windows
+  failures were not compared against `main`. macOS is not run, so the "Reviews and validation" item stays
+  open.
 - 2026-11-14: Phase 3 role reviews (type-system, IR/backend, adversarial). Fixed with regression tests: a
   compiler crash (stack overflow) on `struct S<T> { var next: S<[T]>? }` once a value is copied (the type-cycle
   check now runs before any body); spurious `conflicting-type-argument` for `Box<Int?> = Box(value: 1)`;
