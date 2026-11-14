@@ -161,7 +161,7 @@ Options A1, B2, C1 and D3, as the following rules.
 
 C1. A generic *type* cannot take a linear type argument (`type-checking.linear-type-argument`), the same
 rule as for functions, and `Any` and `Never` are not type arguments either. A `linear struct` may itself
-be generic: its parameters are affine, and it must be ended as any linear struct (0015); as today,
+be generic: its parameters are affine (amended by [0023](0023-library-concurrency.md): the closed toolchain-prelude `JoinHandle<R>` accepts a linear `R`), and it must be ended as any linear struct (0015); as today,
 `linear` is honored only in toolchain-authorized sources (§4.1.1). Consequently `JoinHandle<R>` can be a
 linear generic struct, and a user `Stack<T>` can never hold one (so a user `Wrapper<T>` cannot wrap
 `[JoinHandle<Int>]`: a stated limitation). Builtin `Array`, `Dict`, `Optional` and `Result` keep their

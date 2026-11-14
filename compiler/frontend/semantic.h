@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+class SourceFile;
+
 namespace joyeer::semantic {
 
 using NodeId = uint32_t;
@@ -57,6 +59,16 @@ enum class SymbolKind {
     // `T` in `func f<T: P>` (spec 20.4). Its member scope holds the requirements of its
     // constraint protocols, so `t.m()` resolves to a requirement.
     typeParameter,
+};
+
+enum class LibraryRole {
+    none,
+    taskStart,
+    taskHandle,
+    channelCreate,
+    channelSender,
+    channelReceiver,
+    storedConsumer,
 };
 
 enum class CallableKind {
@@ -119,6 +131,9 @@ struct Symbol {
     syntax::Visibility visibility = syntax::Visibility::public_;
     uint32_t moduleId = 0;
     bool isRootModule = true;
+    LibraryRole libraryRole = LibraryRole::none;
+    bool acceptsLinearArguments = false;
+    bool mustTransferParameter = false;
 };
 
 struct Scope {
@@ -144,6 +159,8 @@ public:
     using Ptr = std::shared_ptr<SemanticModel>;
 
     [[nodiscard]] const syntax::SourceFileSyntax::Ptr& root() const;
+    [[nodiscard]] const syntax::SourceFileSyntax::Ptr& compilationRoot() const;
+    [[nodiscard]] const std::shared_ptr<SourceFile>& preludeSource() const;
     [[nodiscard]] ScopeId preludeScope() const;
     [[nodiscard]] ScopeId fileScope() const;
 
@@ -170,6 +187,7 @@ public:
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
     [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
     [[nodiscard]] bool isCoreSource(SourceSpan span) const;
+    [[nodiscard]] bool isPreludeSource(SourceSpan span) const;
     // The module whose source contains `span` (the root module is 0).
     [[nodiscard]] uint32_t moduleOf(SourceSpan span) const;
     // The name a module was compiled under (the root module is index 0), or null for an unknown index.
@@ -177,11 +195,14 @@ public:
 
 private:
     friend class NameResolutionBuilder;
+    friend class NameResolver;
     friend std::string dump(const SemanticModel& model);
 
     explicit SemanticModel(syntax::SourceFileSyntax::Ptr root);
 
     syntax::SourceFileSyntax::Ptr root_;
+    syntax::SourceFileSyntax::Ptr compilationRoot_;
+    std::shared_ptr<SourceFile> preludeSource_;
     ScopeId preludeScope_ = invalidScopeId;
     ScopeId fileScope_ = invalidScopeId;
 
@@ -202,6 +223,7 @@ private:
     std::unordered_map<uint32_t, uint32_t> sourceModules_;
     std::unordered_map<uint32_t, bool> runtimeSources_;
     std::unordered_map<uint32_t, bool> coreSources_;
+    std::unordered_map<uint32_t, bool> preludeSources_;
     std::vector<std::string> moduleNames_;
     std::unordered_map<NodeId, bool> moduleQualified_;
 };

@@ -199,7 +199,7 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
             return joyeer::typing::invalidTypeId;
         }();
         for (const auto& symbol : model.symbols()) {
-            if (symbol.kind != joyeer::semantic::SymbolKind::method) continue;
+            if (symbol.kind != joyeer::semantic::SymbolKind::method || model.isPreludeSource(symbol.span)) continue;
             const auto* signature = checking.model->callable(symbol.id);
             ASSERT_NE(signature, nullptr) << symbol.name;
             EXPECT_EQ(signature->receiverType, std::optional<joyeer::typing::TypeId>(counter))

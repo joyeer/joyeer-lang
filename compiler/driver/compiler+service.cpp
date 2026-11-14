@@ -533,6 +533,9 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
 
     const auto resolution = joyeer::semantic::NameResolver().resolve(modules);
     sourcefile->semanticModel = resolution.model;
+    if (resolution.model != nullptr && resolution.model->preludeSource() != nullptr) {
+        compilationSources.push_back(resolution.model->preludeSource());
+    }
     for (const auto& diagnostic : resolution.diagnostics) {
         reportSpannedDiagnostic(
                 diagnostics,
@@ -615,19 +618,14 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
             });
     sourcefile->llvmIR = llvm.text;
     sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
-    // An end type brings its destroy helper, which calls the channel runtime and so the thread object, even
-    // when the program never creates a channel.
-    for (const auto& type : lowering.module->types) {
-        if (type.kind == joyeer::typing::TypeKind::channelSender ||
-            type.kind == joyeer::typing::TypeKind::channelReceiver) {
-            sourcefile->llvmUsesThreads = true;
-        }
-    }
     for (const auto& function : lowering.module->functions) {
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
-                if (instruction.opcode == joyeer::ir::Opcode::taskSpawn ||
-                    instruction.opcode == joyeer::ir::Opcode::channelCreate) {
+                if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee.has_value()) continue;
+                const auto& callee = lowering.module->functions.at(*instruction.callee);
+                if (callee.nativeBinding.has_value() &&
+                    (callee.nativeBinding->symbol.starts_with("joyeer_thread_") ||
+                     callee.nativeBinding->symbol.starts_with("joyeer_channel_"))) {
                     sourcefile->llvmUsesThreads = true;
                 }
             }

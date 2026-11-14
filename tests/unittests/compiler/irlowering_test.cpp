@@ -693,7 +693,8 @@ TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
 TEST_F(IRLoweringTest, PreservesGraphSymbolIdentityAndFileLocalDebugSpans) {
     result = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    ASSERT_EQ(result.module->sourceFiles.size(), 3u);
+    ASSERT_EQ(result.module->sourceFiles.size(), 4u);
+    EXPECT_EQ(result.module->sourceFiles.back().fileName, "concurrency.joyeer");
     EXPECT_FALSE(result.module->sourceInfo.has_value());
     std::unordered_map<joyeer::semantic::SymbolId, joyeer::ir::FunctionId> symbols;
     size_t helpers = 0;
@@ -2139,47 +2140,42 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
 }
 
 
-// Tasks (spec 21): `spawn` lowers to one task_spawn naming the target and `join` to one task_join on the
-// handle's address; the verifier checks both against the target's signature.
-TEST_F(IRLoweringTest, SpawnAndJoinLowerToOneInstructionEach) {
+// Section 21 operations are ordinary source-library calls, including the typed target reference.
+TEST_F(IRLoweringTest, SpawnAndJoinLowerToLibraryCalls) {
     ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
                                   "func run(): Int {\n"
                                   "    let handle = spawn(function: square, input: consume 4)\n"
                                   "    return consume handle.join()\n"
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::taskSpawn), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::taskJoin), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::functionAddress), 1u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, TaskSpawnAndJoinAreCheckedAgainstTheTargetSignature) {
+TEST_F(NewOpcodeVerifierTest, TaskLibraryCallsAreCheckedAgainstOrdinarySignatures) {
     ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
                                   "func run(): Int {\n"
                                   "    let handle = spawn(function: square, input: consume 4)\n"
                                   "    return consume handle.join()\n"
                                   "}\n"));
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.clear();
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.callee = 987654;
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto& module) {
         instruction.result->type = typeNamed(module, "Int");
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto& module) {
-        instruction.result->type = typeNamed(module, "String");
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].parameters[0].isConsuming = false;
     }));
 }
 
 
-TEST_F(NewOpcodeVerifierTest, TaskSpawnRejectsAMalformedTargetOrResult) {
+TEST_F(NewOpcodeVerifierTest, TaskReferencesRejectMalformedTargetsOrResults) {
     ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
                                   "func run(): Int {\n"
                                   "    let handle = spawn(function: square, input: consume 4)\n"
@@ -2187,35 +2183,25 @@ TEST_F(NewOpcodeVerifierTest, TaskSpawnRejectsAMalformedTargetOrResult) {
                                   "}\n"));
     using joyeer::ir::Opcode;
     using joyeer::ir::ValueCategory;
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.result->category = ValueCategory::address;
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
-        module.functions[*instruction.callee].parameters[0].isConsuming = false;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
         module.functions[*instruction.callee].isExternal = true;
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
         module.functions[*instruction.callee].parameters.clear();
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
         module.functions[*instruction.callee].resultType = typeNamed(module, "String");
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
-        module.functions[*instruction.callee].returnsValue = false;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
-        instruction.result->category = ValueCategory::address;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.result.reset();
     }));
 }
 
 
-// Channels (spec 21.9): one instruction per operation; the verifier checks the ends against each other.
-TEST_F(IRLoweringTest, ChannelOperationsLowerToOneInstructionEach) {
+TEST_F(IRLoweringTest, ChannelOperationsLowerToLibraryCalls) {
     ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
                                   "    var sender: ChannelSender<Int>\n"
                                   "    var receiver: ChannelReceiver<Int>\n"
@@ -2227,14 +2213,11 @@ TEST_F(IRLoweringTest, ChannelOperationsLowerToOneInstructionEach) {
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     using joyeer::ir::Opcode;
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelCreate), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelSend), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelReceive), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelClose), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), Opcode::call), 4u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, ChannelInstructionsAreCheckedAgainstTheirEnds) {
+TEST_F(NewOpcodeVerifierTest, ChannelLibraryCallsAreCheckedAgainstTheirEnds) {
     ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
                                   "    var sender: ChannelSender<Int>\n"
                                   "    var receiver: ChannelReceiver<Int>\n"
@@ -2246,76 +2229,12 @@ TEST_F(NewOpcodeVerifierTest, ChannelInstructionsAreCheckedAgainstTheirEnds) {
                                   "}\n"));
     using joyeer::ir::Opcode;
     using joyeer::ir::ValueCategory;
-    EXPECT_TRUE(rejects("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.pop_back();
     }));
-    EXPECT_TRUE(rejects("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         std::swap(instruction.operands[1], instruction.operands[2]);
     }));
-    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto&) {
-        instruction.operands.pop_back();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto& module) {
-        instruction.result->type = typeNamed(module, "Int");
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto&) {
-        instruction.result->category = ValueCategory::address;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelReceive, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelReceive, [](auto& instruction, auto& module) {
-        instruction.result->type = typeNamed(module, "Int");
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelClose, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelClose, [](auto& instruction, auto&) {
-        instruction.operands.push_back(instruction.operands.at(0));
-    }));
-}
-
-
-// Each rule of the channel instructions, with the rule's own message asserted.
-TEST_F(NewOpcodeVerifierTest, EachChannelRuleFiresOnItsOwnMutation) {
-    ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
-                                  "    var sender: ChannelSender<Int>\n"
-                                  "    var receiver: ChannelReceiver<Int>\n"
-                                  "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
-                                  "    let sent = sender.send(value: consume 4)\n"
-                                  "    let got = receiver.receive()\n"
-                                  "    consume sender.close()\n"
-                                  "    return 0\n"
-                                  "}\n"));
-    using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelCreate, [](auto& instruction, auto&) {
-        std::swap(instruction.operands[1], instruction.operands[2]);
-    }, "channel_create requires"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelCreate, [](auto& instruction, auto&) {
-        instruction.operands.pop_back();
-    }, "channel_create expects 3 operand"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelSend, [](auto& instruction, auto&) {
-        instruction.operands.pop_back();
-    }, "channel_send expects 2 operand"));
-    // The error type of the result must be the one-case ChannelClosed: point it at Int.
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelSend, [](auto& instruction, auto& module) {
-        const auto intType = typeNamed(module, "Int");
-        std::find_if(module.types.begin(), module.types.end(), [&](auto& type) {
-            return type.id == instruction.result->type;
-        })->arguments[1] = intType;
-    }, "channel_send requires"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelReceive, [](auto& instruction, auto& module) {
-        const auto intType = typeNamed(module, "Int");
-        std::find_if(module.types.begin(), module.types.end(), [&](auto& type) {
-            return type.id == instruction.result->type;
-        })->arguments[1] = intType;
-    }, "channel_receive requires"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelReceive, [](auto& instruction, auto&) {
-        instruction.result.reset();
-    }, "channel_receive must define a result"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelClose, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }, "channel_close expects 1 operand"));
 }
 
 // Function values (decision 0020): a function named as a value lowers to one function_address, and a

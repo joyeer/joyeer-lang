@@ -1,10 +1,11 @@
 ## §21 Concurrency: Tasks
 
-> **Status:** implemented (phase P5a of the [concurrency plan](../docs/plan/0009-concurrency.md), stages 0
-> and 1) on Linux and Windows. Channels (§21.9) are specified with
-> [decision 0019](../docs/decisions/0019-channels.md) and join this chapter when they are built. The
-> design record is [decision 0018](../docs/decisions/0018-tasks.md); the model it builds on is
-> [decision 0013](../docs/decisions/0013-concurrency-model.md).
+> **Status:** tasks and channels are implemented on Linux and Windows. Their source-library
+> migration ([decision 0023](../docs/decisions/0023-library-concurrency.md), plan 0010 Phase 4)
+> retains this chapter's behavior; migration acceptance is tracked in that plan. The task and
+> channel contracts are [0018](../docs/decisions/0018-tasks.md) and
+> [0019](../docs/decisions/0019-channels.md), on the model in
+> [0013](../docs/decisions/0013-concurrency-model.md).
 
 ### 21.1 Purpose and model
 
@@ -30,7 +31,7 @@ func main() {
 }
 ```
 
-`spawn` is a builtin function in the prelude, not a keyword, declared with the parameters `function`
+`spawn` is a generic source-library function in the prelude, not a keyword, declared with the parameters `function`
 and `input`. The ordinary call rules check the labels and their order
 (`name-resolution.argument-out-of-order`, `argument-count-mismatch`). A declaration of the name in the current module, file or
 lexical scope takes precedence over it; a name imported from another module does not (§12.3).
@@ -61,10 +62,11 @@ The function must be:
 (A generic function is also rejected: it is not a function value, §20.4.1.) A public
 function of a source dependency may be a target; a private one is not visible (§12).
 
-`function:` takes a function's name, not an arbitrary function value (§5.6.1): this is a subset of a
-future `function:` argument of a function type (§2.3.1), provided `spawn` is then redeclared as a
-generic builtin, and every call the compiler accepts stays valid. A function value may itself be a
-task's input or result and may be sent through a channel.
+`function:` still takes a function's name, not an arbitrary function value (§5.6.1). The source
+signature uses `(consuming I): R`, but its closed prelude compatibility contract preserves this
+restriction and the diagnostics above. The internal generic task entry is specialized through the
+runtime-only callback-address operation (§20.12.5); that does not admit public generic task targets.
+A function value may itself be a task's input or result and may be sent through a channel.
 
 #### 21.2.2 Ownership
 
@@ -77,7 +79,7 @@ partially moved). A top-level constant array (§3.1.1) passed as the input, or r
 
 ### 21.3 Joining
 
-`JoinHandle<R>` is a compiler-known builtin type (§2.6.3) with a single member:
+`JoinHandle<R>` is a linear generic source-library struct (§2.6.3) with a single public member:
 
 ```joyeer
 consuming func join(): R     // spelled consume handle.join()
@@ -219,7 +221,7 @@ var receiver: ChannelReceiver<Int>
 channel(capacity: 8, sender: &sender, receiver: &receiver)
 ```
 
-`channel` is a builtin function whose last two parameters are `initializing` (§4.10): each argument is `&`
+`channel` is a generic prelude library function whose last two parameters are `initializing` (§4.10): each argument is `&`
 of an uninitialized (or wholly consumed) mutable local, or of an `initializing` parameter, so a wrapper
 function can take two `initializing` parameters and call `channel`. The two have types `ChannelSender<T>`
 and `ChannelReceiver<T>` for the same `T`, and both are initialized by the call. `T` is any type that is not
@@ -229,7 +231,7 @@ that is an integer literal below 1 is a compile-time error; any other capacity b
 (`invalid channel capacity`), and one whose buffer size overflows traps (`channel too large`).
 
 `ChannelSender<T>`, `ChannelReceiver<T>` and the enumeration `ChannelClosed` (one case, `Closed`) are
-builtin names; a user declaration of the same name takes precedence in its scope (§21.2).
+source-prelude declarations; a user declaration of the same name takes precedence in its scope (§21.2).
 
 #### 21.9.2 The ends
 

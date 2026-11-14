@@ -83,15 +83,6 @@ enum class Opcode {
     arrayAppend,
     arrayRemoveLast,
     arrayConsumeEmpty,
-    // Starts a task running `callee(input)` and yields its handle; `taskJoin` waits for it (spec 21).
-    taskSpawn,
-    taskJoin,
-    // Channels (decision 0019): create both ends in two addresses; send a moved value; receive one;
-    // close an end and zero its storage.
-    channelCreate,
-    channelSend,
-    channelReceive,
-    channelClose,
     constructDictionary,
     dictionarySet,
     dictionaryGet,
@@ -123,6 +114,8 @@ enum class Opcode {
     typeSize,
     typeAlignment,
     integerAddress,
+    // Runtime-only conversion of a typed slot or function address to the scalar native ABI.
+    pointerToInteger,
 };
 
 enum class PatternKind {

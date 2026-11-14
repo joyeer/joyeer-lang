@@ -1,6 +1,7 @@
 #include "irlowering.h"
 #include "constants.h"
 #include "compiler/frontend/intrinsics.h"
+#include "compiler/frontend/sourcefile.h"
 
 #include <algorithm>
 #include <bit>
@@ -50,6 +51,16 @@ public:
         module->sourceName = std::move(sourceName);
         module->sourceInfo = std::move(sourceInfo);
         module->sourceFiles = std::move(sources);
+        const auto& prelude = model->semanticModel()->preludeSource();
+        if (prelude != nullptr && (!module->sourceFiles.empty() || module->sourceInfo.has_value())) {
+            if (module->sourceFiles.empty()) module->sourceFiles.push_back(*module->sourceInfo);
+            const auto sourceId = prelude->tokens.front()->span.sourceId;
+            if (module->sourceFiles.size() == sourceId) {
+                module->sourceFiles.push_back(ir::SourceInfo {
+                    prelude->getAbstractPath().filename().string(), prelude->getParentFolder(),
+                    prelude->content.size(), prelude->lineStarts });
+            }
+        }
 
         snapshotTypes();
         collectAggregateDefinitions();
@@ -519,7 +530,7 @@ private:
 
     void collectAggregateDefinitions() {
         const auto& semanticModel = *model->semanticModel();
-        const auto& root = semanticModel.root();
+        const auto& root = semanticModel.compilationRoot();
         if (root != nullptr) {
             for (const auto& item : root->items) {
                 if (item->kind == syntax::Kind::structDecl) {
@@ -702,7 +713,7 @@ private:
         collectPrint();
         collectByteConversions();
         const auto& semanticModel = *model->semanticModel();
-        const auto& root = semanticModel.root();
+        const auto& root = semanticModel.compilationRoot();
         if (root == nullptr) return;
         for (const auto& item : root->items) {
             if (item->kind == syntax::Kind::functionDecl) {
@@ -1121,7 +1132,7 @@ private:
 
     void lowerFunctions() {
         const auto& semanticModel = *model->semanticModel();
-        const auto& root = semanticModel.root();
+        const auto& root = semanticModel.compilationRoot();
         if (root == nullptr) return;
         for (const auto& item : root->items) {
             if (item->kind != syntax::Kind::functionDecl) continue;
@@ -2983,28 +2994,6 @@ private:
             return lowerLayoutIntrinsic(expression, targetSymbol->name);
         }
         if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
-            targetSymbol->name == "channel") {
-            return lowerChannelCreate(expression);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            (targetSymbol->name == "send" || targetSymbol->name == "receive" ||
-             targetSymbol->name == "close") &&
-            isChannelEndReceiver(expression)) {
-            return lowerChannelMember(expression, targetSymbol->name);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
-            targetSymbol->name == "spawn") {
-            return lowerSpawn(expression);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            targetSymbol->name == "join") {
-            return lowerTaskJoin(expression);
-        }
-        if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
             targetSymbol->name == "consumeEmpty") {
             return lowerArrayConsumeEmpty(expression);
@@ -3249,69 +3238,61 @@ private:
         return result;
     }
 
-    // `spawn(function: f, input: consume x)`: the input moves into the task exactly as it would into a
-    // direct call of `f`, and the instruction yields the handle (spec 21.2).
-    std::optional<ir::Value> lowerSpawn(const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->arguments.size() != 2) {
-            report(DiagnosticId::unsupportedSyntax, expression->span,
-                   "spawn takes a function and an input");
-            return std::nullopt;
-        }
-        const auto named = model->referencedSymbol(expression->arguments[0]->value);
-        const auto resultType = typeOf(expression);
-        if (!named.has_value() || !functions.contains(*named) || !resultType.has_value()) {
-            report(DiagnosticId::missingSymbol, expression->span,
-                   "spawn target has no IR function declaration");
-            return std::nullopt;
-        }
-        const auto calleeId = functions.at(*named);
-        const auto& callee = module->functions[calleeId];
-        const auto& argument = expression->arguments[1];
-        std::optional<ir::Value> value;
-        if (isAddressable(argument->value)) {
-            const auto address = lowerAddress(argument->value);
-            if (address.has_value()) {
-                value = emitValue(
-                        ir::Opcode::take,
-                        address->type,
-                        ir::ValueCategory::value,
-                        { address->id },
-                        argument->span);
-            }
-        } else {
-            value = lowerExpression(argument->value);
-        }
-        if (!value.has_value()) return std::nullopt;
-        value = coerce(*value, callee.parameters[0].value.type, argument->value->span);
-        if (!value.has_value()) return std::nullopt;
-        if (requiresDestroy(value->type)) {
-            value = prepareOwned(*value, argument->span);
-            if (!value.has_value()) return std::nullopt;
-            if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
-        }
-        auto instruction = makeInstruction(ir::Opcode::taskSpawn, expression->span);
-        instruction.operands = { value->id };
-        instruction.callee = calleeId;
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
-    }
-
     // The layout intrinsics (spec 20.12.5). The size and alignment are queries of the backend's
     // layout; the other three treat an `Int` as the address of a `T` slot. The type argument is
     // substituted for the current instance, so a generic function gets the layout of its `T`.
     std::optional<ir::Value> lowerLayoutIntrinsic(
             const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
+        if (name == "joyeer_intrinsic_callback_address") {
+            const auto* reference = model->genericCall(expression);
+            if (reference == nullptr) {
+                report(DiagnosticId::missingSymbol, expression->span, "callback has no typed function reference");
+                return std::nullopt;
+            }
+            std::vector<typing::TypeId> arguments;
+            for (const auto argument : reference->arguments) arguments.push_back(substituted(argument));
+            const auto instance = model->instanceIndex(reference->callee, arguments);
+            if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                instanceFunctions[*instance] == ir::invalidFunctionId) {
+                report(DiagnosticId::missingSymbol, expression->span, "callback has no lowered instance");
+                return std::nullopt;
+            }
+            auto instruction = makeInstruction(ir::Opcode::functionAddress, expression->span);
+            instruction.callee = instanceFunctions[*instance];
+            instruction.result = makeValue(model->types().functionType(
+                    { model->types().intType() }, { syntax::AccessEffect::consuming }, model->types().voidType()),
+                    ir::ValueCategory::value);
+            const auto address = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(address, ValueOwnership::trivial);
+            return emitValue(ir::Opcode::pointerToInteger, model->types().intType(), ir::ValueCategory::value,
+                             { address.id }, expression->span);
+        }
         const auto written = model->layoutIntrinsicType(expression);
         if (!written.has_value()) {
             report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' needs one type argument");
             return std::nullopt;
         }
         const auto type = substituted(*written);
+        if (name == "joyeer_intrinsic_stack_slot") {
+            if (type == model->types().voidType()) {
+                return emitValue(ir::Opcode::integerConstant, model->types().intType(),
+                                 ir::ValueCategory::value, {}, expression->span);
+            }
+            const auto slot = emitValue(ir::Opcode::stackAllocate, type, ir::ValueCategory::address,
+                                        {}, expression->span);
+            return emitValue(ir::Opcode::pointerToInteger, model->types().intType(), ir::ValueCategory::value,
+                             { slot.id }, expression->span);
+        }
+        if (name == "joyeer_intrinsic_needs_destroy") {
+            auto instruction = makeInstruction(ir::Opcode::booleanConstant, expression->span);
+            instruction.integerValue = requiresDestroy(type) ? 1 : 0;
+            instruction.result = makeValue(model->types().boolType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
         if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of") {
             auto instruction = makeInstruction(
                     name == "joyeer_intrinsic_size_of" ? ir::Opcode::typeSize : ir::Opcode::typeAlignment,
@@ -3365,126 +3346,6 @@ private:
         }
         emitRawStore(*value, slot, expression->span);
         return emitUnit(expression->span);
-    }
-
-    // `channel(capacity: n, sender: &s, receiver: &r)`: the runtime creates the block and stores both
-    // ends in the two addresses (decision 0019).
-    std::optional<ir::Value> lowerChannelCreate(const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->arguments.size() != 3) {
-            report(DiagnosticId::unsupportedSyntax, expression->span,
-                   "channel takes a capacity, a sender and a receiver");
-            return std::nullopt;
-        }
-        auto capacity = lowerExpression(expression->arguments[0]->value);
-        if (!capacity.has_value()) return std::nullopt;
-        capacity = coerce(*capacity, model->types().intType(), expression->arguments[0]->value->span);
-        const auto sender = lowerAddress(expression->arguments[1]->value);
-        const auto receiver = lowerAddress(expression->arguments[2]->value);
-        if (!capacity.has_value() || !sender.has_value() || !receiver.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::channelCreate, expression->span);
-        instruction.operands = { capacity->id, sender->id, receiver->id };
-        emit(std::move(instruction));
-        return emitUnit(expression->span);
-    }
-
-    bool isChannelEndReceiver(const syntax::CallExprSyntax::Ptr& expression) const {
-        if (expression->callee->kind != syntax::Kind::memberExpr) return false;
-        const auto base = typeOf(
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
-        const auto* type = base.has_value() ? model->types().type(*base) : nullptr;
-        return type != nullptr && (type->kind == typing::TypeKind::channelSender ||
-                                   type->kind == typing::TypeKind::channelReceiver);
-    }
-
-    // `send`, `receive` and `close` on a channel end. `send` moves its value into the instruction, which
-    // consumes it on both outcomes; `close` leaves the end's storage zeroed.
-    std::optional<ir::Value> lowerChannelMember(
-            const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
-        if (expression->callee->kind != syntax::Kind::memberExpr) {
-            report(DiagnosticId::unsupportedSyntax, expression->span,
-                   "a channel operation requires a receiver expression");
-            return std::nullopt;
-        }
-        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        if (!isAddressable(member->base)) {
-            report(DiagnosticId::unsupportedSyntax, member->base->span,
-                   "a channel operation needs its end stored in a variable, parameter or field, not a temporary");
-            return std::nullopt;
-        }
-        const auto end = lowerAddress(member->base);
-        if (!end.has_value()) return std::nullopt;
-        if (name == "close") {
-            auto instruction = makeInstruction(ir::Opcode::channelClose, expression->span);
-            instruction.operands = { end->id };
-            emit(std::move(instruction));
-            return emitUnit(expression->span);
-        }
-        const auto resultType = typeOf(expression);
-        if (!resultType.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(
-                name == "send" ? ir::Opcode::channelSend : ir::Opcode::channelReceive, expression->span);
-        instruction.operands = { end->id };
-        if (name == "send") {
-            if (expression->arguments.size() != 1) {
-                report(DiagnosticId::unsupportedSyntax, expression->span, "send takes one value");
-                return std::nullopt;
-            }
-            const auto& argument = expression->arguments[0];
-            const auto* endType = model->types().type(end->type);
-            if (endType == nullptr || endType->arguments.size() != 1) return std::nullopt;
-            std::optional<ir::Value> value;
-            if (isAddressable(argument->value)) {
-                const auto address = lowerAddress(argument->value);
-                if (address.has_value()) {
-                    value = emitValue(
-                            ir::Opcode::take,
-                            address->type,
-                            ir::ValueCategory::value,
-                            { address->id },
-                            argument->span);
-                }
-            } else {
-                value = lowerExpression(argument->value);
-            }
-            if (!value.has_value()) return std::nullopt;
-            value = coerce(*value, endType->arguments[0], argument->value->span);
-            if (!value.has_value()) return std::nullopt;
-            if (requiresDestroy(value->type)) {
-                value = prepareOwned(*value, argument->span);
-                if (!value.has_value()) return std::nullopt;
-                if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
-            }
-            instruction.operands.push_back(value->id);
-        }
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
-    }
-
-    // `consume handle.join()`: waits for the task, moves its result out, and frees the task block. The
-    // handle's storage is zeroed, so the binding's scope-end destroy has nothing to drop.
-    std::optional<ir::Value> lowerTaskJoin(const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->callee->kind != syntax::Kind::memberExpr || !expression->arguments.empty()) {
-            report(DiagnosticId::unsupportedSyntax, expression->span, "JoinHandle.join takes no arguments");
-            return std::nullopt;
-        }
-        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        const auto handle = lowerAddress(member->base);
-        const auto resultType = typeOf(expression);
-        if (!handle.has_value() || !resultType.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::taskJoin, expression->span);
-        instruction.operands = { handle->id };
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
     }
 
     // `consume a.consumeEmpty()`: the runtime traps unless the array is empty, then frees its storage

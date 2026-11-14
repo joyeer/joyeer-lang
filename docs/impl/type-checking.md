@@ -142,15 +142,15 @@ The current checker validates:
   (`not-callable`) and a `Never` parameter (`invalid-function-type`); a `Never` stored field of a
   structure is `never-field-type`. Name resolution leaves a call of a
   binding, parameter or field to the type checker;
-- Channels (decision 0019, spec 21.9): `ChannelSender<T>` and `ChannelReceiver<T>` are `TypeKind::channelSender`
-  and `channelReceiver` (noncopyable, not linear); `channel` is checked by `checkChannel` and `send`, `receive`
-  and `close` are builtin members whose results come from the end's element type; the element rules
-  (`linear-channel-element`, `channel-element-type`) run at every type position and enum payload, and
+- Channels (decisions 0019/0023, spec 21.9): the ends are ordinary generic structures with `deinit`
+  (noncopyable, not linear); creation and methods use their source signatures. A closed prelude
+  declaration role preserves contextual creation/element diagnostics without public-name dispatch. The element rules
+  (`linear-channel-element`, `channel-element-type`) run once at each offending type occurrence, and
   `channel-end-types` and `channel-capacity` check the creation call;
-- Tasks (decision 0018, spec 21): `JoinHandle<R>` is `TypeKind::task`, linear and noncopyable;
-  `spawn` is checked by `checkSpawn`, which reads `function:` as a name and reports
+- Tasks (decisions 0018/0023, spec 21): `JoinHandle<R>` is an ordinary linear generic structure;
+  its prelude function role validates `function:` as a name and reports
   `spawn-target-not-function`, `spawn-target-unsupported`, `spawn-target-parameters` and
-  `spawn-target-never`; `consume h.join()` is a builtin member with a consuming receiver that gives `R`;
+  `spawn-target-never`; `consume h.join()` is an ordinary method whose substituted signature gives `R`;
   the calls to `spawn` and System's `runProcess` are recorded for `semantic-analysis.run-process-with-tasks`;
 - `type-checking.overlapping-access` for calls that combine an exclusive
   inout/consuming/initializing projection with another overlapping access; the
@@ -261,7 +261,9 @@ and their witnesses, and a cache of `Instance`s keyed by function symbol and
 canonical type arguments.
 
 Bodies are checked once. A parameter is noncopyable unless its constraint
-includes builtin `Copyable`, and is never linear. Constraint entailment,
+includes builtin `Copyable`, and is never linear except for closed compiler-prelude transfer parameters.
+Those are conservatively must-transfer and may admit linear substitutions; user/runtime-module
+generics retain their restriction. Constraint entailment,
 requirement receiver/parameter effects, exclusivity and copy sites use that
 unsubstituted type, including `match`, `?` and `Dict.get`. Inference unifies
 typed arguments first, then literals; floating literals establish an

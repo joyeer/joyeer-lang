@@ -153,9 +153,6 @@ llvm::Type* Builder::llvmType(ir::TypeId id) {
         case typing::TypeKind::voidType: result = llvm::StructType::get(context()); break;
         case typing::TypeKind::never: result = builder.getVoidTy(); break;
         case typing::TypeKind::boolean: result = builder.getInt1Ty(); break;
-        case typing::TypeKind::task:
-        case typing::TypeKind::channelSender:
-        case typing::TypeKind::channelReceiver:
         case typing::TypeKind::function: result = pointer(); break;
         case typing::TypeKind::string: name = "joyeer.string"; break;
         case typing::TypeKind::array: name = "joyeer.array"; break;
@@ -204,9 +201,6 @@ Layout Builder::layout(ir::TypeId id) {
         case typing::TypeKind::boolean:
         case typing::TypeKind::uint8: result = {1, 1}; break;
         case typing::TypeKind::integer:
-        case typing::TypeKind::task:
-        case typing::TypeKind::channelSender:
-        case typing::TypeKind::channelReceiver:
         // A function value is a code address; its parameter types are not part of its layout.
         case typing::TypeKind::function: result = {8, 8}; break;
         case typing::TypeKind::string: result = {16, 8}; break;

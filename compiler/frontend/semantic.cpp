@@ -8,11 +8,24 @@
 namespace joyeer::semantic {
 
 SemanticModel::SemanticModel(syntax::SourceFileSyntax::Ptr root):
-        root_(std::move(root)) {
+        root_(std::move(root)), compilationRoot_(root_) {
 }
 
 const syntax::SourceFileSyntax::Ptr& SemanticModel::root() const {
     return root_;
+}
+
+const syntax::SourceFileSyntax::Ptr& SemanticModel::compilationRoot() const {
+    return compilationRoot_;
+}
+
+const std::shared_ptr<SourceFile>& SemanticModel::preludeSource() const {
+    return preludeSource_;
+}
+
+bool SemanticModel::isPreludeSource(SourceSpan span) const {
+    const auto found = preludeSources_.find(span.sourceId);
+    return found != preludeSources_.end() && found->second;
 }
 
 ScopeId SemanticModel::preludeScope() const {

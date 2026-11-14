@@ -16,6 +16,7 @@ top_decl          ::= func_decl
                    |  protocol_decl
                    |  extension_decl
                    |  binding
+                   |  prelude_struct                        // compiler-bundled source only
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
@@ -48,6 +49,13 @@ nominal_type      ::= identifier ( '.' identifier )*         // primitive types 
 
 struct_decl       ::= [ visibility ] 'struct' identifier [ generic_params ]     // §20.12
                       '{' struct_member* '}'
+
+// Compiler-bundled prelude only (§20.12.5); not admitted by ordinary or --runtime-module input.
+prelude_struct    ::= prelude_metadata+ [ visibility ] [ 'linear' ] 'struct' identifier
+                      [ generic_params ] '{' struct_member* '}'
+prelude_metadata  ::= '@compiler_transfer' '(' ')'
+                   |  '@compiler_role' '(' identifier ')'
+// A bundled struct method may also carry @compiler_role before its visibility/effect.
 
 struct_member     ::= binding
                    |  init_decl | deinit_decl
@@ -131,6 +139,7 @@ call_arg          ::= [ label ':' ] [ '&' | 'consume' ] expression
 primary_expr      ::= literal
                    |  '(' ')'                                  // unit value, type Void
                    |  identifier
+                   |  intrinsic_call                          // authorized runtime units only
                    |  '(' expression ( ',' expression )* ')'   // parens (1) or tuple (≥2)
                    |  array_literal
                    |  dict_literal

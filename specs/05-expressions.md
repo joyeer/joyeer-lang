@@ -189,11 +189,14 @@ These are not function values (`type-checking.not-a-function-value`, which
 states the reason):
 
 - methods, declared and synthesized initializers, and enum cases;
-- the compiler-known builtins (`print`, `spawn`, `channel`, `byteToInt`,
+- the compiler-known builtins (`print`, `byteToInt`,
   `byteToString`) and the runtime intrinsics (§19.4.5); a user declaration
   that shadows a builtin is an ordinary function and is a value;
 - `@c_extern` and `@c_data` declarations (§19.5);
 - the root module's `main` (§3.2.6); a dependency's `main` is ordinary.
+
+The prelude `spawn` and `channel` are generic source-library functions (§21), not builtin functions;
+the ordinary prohibition on generic function values (§20.4.1) still applies to them.
 
 A function's default parameter values (§3.2.5) do not carry over: a call
 through the value supplies every argument.

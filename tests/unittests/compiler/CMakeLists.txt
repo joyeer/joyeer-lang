@@ -1024,6 +1024,26 @@ if(JOYEER_CLANG_EXECUTABLE)
             "338350\n37\n60\n3\n3\n9\n"
             0 1 2 3)
     add_joyeer_native_regression(
+            E2ETaskLayout task_layout
+            "200\n7\n4\n9\n-5\nfalse\n10\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ETaskUnitLayout task_unit_layout
+            "after unit\n12\ndone\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ETaskHandleInputs task_handle_inputs
+            "37\n25\n3\n65\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2ELibraryNameShadowing library_name_shadowing
+            "3\n8\n3\n10\n77\n3\n4\n1\n2\n3\n4\n5\n6\n42\nsent\nhi\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
+            E2EChannelEndOnly channel_end_only
+            "no channel created\n"
+            0 1 2 3)
+    add_joyeer_native_regression(
             E2EFunctionValues function_values
             "9\n-4\n25\n2\nmade?\nhello!\n11\n-7\n81\n-2\n8\n121\n3\n36\n-12\n"
             0 1 2 3)

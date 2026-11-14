@@ -61,13 +61,15 @@ with its own destruction obligation:
 - a `struct` or `enum` is copyable when all of its stored fields or payloads
   are copyable and it does not declare a custom `deinit`.
 - a type parameter of a generic function or type (§20.4, §20.12) is copyable
-  exactly when its constraint lists `Copyable` (§20.5), and is never linear;
+  exactly when its constraint lists `Copyable` (§20.5), and is never linear except for closed
+  compiler-prelude transfer parameters (§20.12.3/.5);
 - a generic `struct` or `enum` instance `Box<X>` is copyable when the type
   declares no `deinit` and every field or payload, with the parameters replaced
   by `X`, is copyable. A parameter that appears in no field does not affect
   copyability. A type that owns `T` values through an `Int` address has no `T`
   field, so it must declare `deinit` (§20.12.4); the compiler cannot detect the
-  omission. A type argument may not be linear (§20.12.3).
+  omission. User generic declarations may not take a linear type argument (§20.12.3); the
+  compiler-prelude task declarations use its closed must-transfer exception.
 
 A type that declares `deinit` is noncopyable by default. Ordinary
 initialization or assignment from a binding of that type is rejected rather
@@ -87,14 +89,15 @@ opt back into copying; it is not part of v0.1.
 ##### Linear types (provisional)
 
 A **linear** type is a noncopyable type whose value must be explicitly ended: it is never
-destroyed implicitly. The builtin `JoinHandle<R>` (§2.6, with the concurrency design in
+destroyed implicitly. The source-library `JoinHandle<R>` (§2.6, with the concurrency design in
 [decision 0013](../docs/decisions/0013-concurrency-model.md)) is the only linear type of the first
 implementation. A `struct` or `enum` that holds a linear field or payload, and an `Array`,
 `Optional` or `Result` whose element, payload or error type is linear, is itself linear; a `Dict`
 key or value may not be. A linear type is noncopyable, so it does not satisfy `Copyable`
 (§20.5), and it may not declare `deinit`; a type with `deinit` may not hold a linear field.
 A linear type may not be a type argument of a generic function
-(`type-checking.linear-type-argument`, §20.4.1): generic code may drop a `T`.
+(`type-checking.linear-type-argument`, §20.4.1): ordinary generic code may drop a `T`. The
+compiler-prelude transfer exception checks owning values as potentially linear instead (§20.12.5).
 
 A linear binding must not be **live** at any exit of its scope (§4.7.1). **Implementation
 status:** the checks are implemented for a struct declared `linear` in a toolchain-authorized
@@ -485,7 +488,7 @@ introduced. A call that cannot return, and a trap, are not exits.
 
 - **Ending.** A linear value is consumed by moving it (`consume`, a `consuming` argument, a
   return, an initializer, an enum payload, an `append`, a binding): the receiver takes on the
-  obligation. It ends only in a builtin consuming operation (`join` for a `JoinHandle`;
+  obligation. It ends through its consuming implementation (`join` for a `JoinHandle`;
   `consumeEmpty()` for an array, which traps before any effect if the array is not empty).
   A linear aggregate ends by consuming every linear field path; its remaining fields are
   destroyed as usual.

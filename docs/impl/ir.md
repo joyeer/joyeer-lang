@@ -168,7 +168,9 @@ The current instruction set covers:
   `type_alignment` yield an `Int` for the type in `integerValue`, as constant expressions the target's data layout
   folds (the portable module has no layout), and `integer_address` turns an `Int` into the address of a slot of the
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
-  wire format version is 17;
+  runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
+  addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
+  the existing IR destruction analysis. The wire format version is 18;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
@@ -177,15 +179,9 @@ The current instruction set covers:
 - mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
 - `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
   empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
-- `task_spawn` (the target function and one moved input, yielding a `JoinHandle<R>`) and `task_join` (a
-  handle address, yielding `R`): the backend allocates one block per task (zeroed 128-byte thread record,
-  block size, result, input), emits a thunk per target, starts the thread through the runtime thread
-  API, and `task_join` waits, moves the result out, frees the block and zeroes the handle (decision 0018);
-- `channel_create` (a capacity and the addresses of a sender and a receiver of one element type),
-  `channel_send` (a sender address and a moved value, yielding `Result<Void, ChannelClosed>`; the backend
-  destroys the value when the receiver is closed), `channel_receive` (a receiver address, yielding
-  `Result<T, ChannelClosed>`) and `channel_close` (an end address, zeroed afterwards), lowered to the
-  `joyeer_channel_*_abi` runtime calls (decision 0019);
+- ordinary source calls for task/channel APIs ([0023](../decisions/0023-library-concurrency.md)).
+  Their concrete structs, `deinit` methods, result construction, raw typed moves and callback
+  references use the same operations as other library code. There are no concurrency opcodes;
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned

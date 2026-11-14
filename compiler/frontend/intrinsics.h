@@ -140,7 +140,8 @@ inline constexpr std::array<Descriptor, 25> table {{
 [[nodiscard]] inline bool isLayoutIntrinsic(std::string_view name) {
     return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
            name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
-           name == "joyeer_intrinsic_destroy_at";
+           name == "joyeer_intrinsic_destroy_at" || name == "joyeer_intrinsic_stack_slot" ||
+           name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address";
 }
 
 [[nodiscard]] inline bool reserved(std::string_view symbol) {

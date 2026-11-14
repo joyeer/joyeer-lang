@@ -1,4 +1,5 @@
 #include "nameresolution.h"
+#include "prelude.h"
 #include "hostbuiltins.h"
 
 #include <algorithm>
@@ -209,20 +210,29 @@ public:
         return NameResolutionResult { model, std::move(diagnostics) };
     }
 
-    NameResolutionResult build(const std::vector<ModuleInput>& modules) {
+    NameResolutionResult build(const std::vector<ModuleInput>& modules, bool singleFile = false) {
         auto root = std::make_shared<syntax::SourceFileSyntax>(
+                SourceSpan {}, std::vector<syntax::NodePtr> {});
+        auto compilationRoot = std::make_shared<syntax::SourceFileSyntax>(
                 SourceSpan {}, std::vector<syntax::NodePtr> {});
         for (const auto& module : modules) {
             for (const auto& file : module.files) {
-                root->items.insert(root->items.end(), file->items.begin(), file->items.end());
+                if (!module.preludeContext) {
+                    root->items.insert(root->items.end(), file->items.begin(), file->items.end());
+                }
+                compilationRoot->items.insert(compilationRoot->items.end(), file->items.begin(), file->items.end());
             }
         }
+        if (singleFile && !modules.empty() && !modules.front().files.empty()) root = modules.front().files.front();
         model = SemanticModel::Ptr(new SemanticModel(root));
+        model->compilationRoot_ = compilationRoot;
         indexNode(root);
+        indexNode(compilationRoot);
         buildPrelude();
         std::vector<ScopeId> moduleScopes;
         for (const auto& module : modules) {
-            const auto id = createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
+            const auto id = singleFile && moduleScopes.empty()
+                    ? model->preludeScope_ : createScope(ScopeKind::module, model->preludeScope_, std::nullopt);
             moduleScopes.push_back(id);
             model->moduleNames_.push_back(module.name);
             namedModules.emplace(module.name, id);
@@ -240,12 +250,14 @@ public:
                 model->sourceModules_[file->span.sourceId] = activeModule;
                 model->runtimeSources_[file->span.sourceId] = modules[index].runtimeContext;
                 model->coreSources_[file->span.sourceId] = modules[index].coreContext;
+                model->preludeSources_[file->span.sourceId] = modules[index].preludeContext;
                 model->fileScope_ = createScope(
                         ScopeKind::file, moduleScopes[index], nodeId(file));
                 model->introducedScopes_[nodeId(file)] = model->fileScope_;
                 setContainingScope(file, model->fileScope_);
                 files.push_back({file, model->fileScope_, activeModule});
                 collectTopLevelDeclarations(file);
+                if (singleFile && index == 0) continue;
                 for (const auto& item : file->items) {
                     const auto id = declaredSymbolId(item);
                     if (!id.has_value()) continue;
@@ -261,6 +273,15 @@ public:
                         auto& names = declaration.nameSpace == SymbolNamespace::type
                                 ? moduleScope.types : moduleScope.values;
                         names.emplace(declaration.name, *id);
+                        if (modules[index].preludeContext) {
+                            auto& prelude = scope(model->preludeScope_);
+                            auto& exported = declaration.nameSpace == SymbolNamespace::type
+                                    ? prelude.types : prelude.values;
+                            if (!exported.emplace(declaration.name, *id).second) {
+                                report(NameResolutionDiagnosticId::invalidPrelude, declaration.span,
+                                       "runtime prelude conflicts with '" + declaration.name + "'");
+                            }
+                        }
                     }
                 }
             }
@@ -614,6 +635,35 @@ private:
         value.isRootModule = activeModule == 0;
         if (declaration.has_value()) {
             value.visibility = model->node(*declaration)->visibility;
+            if (model->isPreludeSource(span) &&
+                (kind == SymbolKind::function || kind == SymbolKind::method ||
+                 kind == SymbolKind::structure || kind == SymbolKind::enumeration)) {
+                const auto node = std::static_pointer_cast<syntax::DeclSyntax>(model->node(*declaration));
+                for (const auto& attribute : node->attributes) {
+                    const auto attributeName = attribute.name == nullptr ? std::string() : attribute.name->rawValue;
+                    if (attributeName == "compiler_transfer" && attribute.arguments.empty()) {
+                        value.acceptsLinearArguments = true;
+                    } else if (attributeName == "compiler_role" && attribute.arguments.size() == 1) {
+                        const auto& argument = attribute.arguments.front();
+                        const auto role = argument->value != nullptr && argument->value->kind == syntax::Kind::nameExpr
+                                ? std::static_pointer_cast<syntax::NameExprSyntax>(argument->value)->name : nullptr;
+                        if (argument->label != nullptr || argument->accessMarker != nullptr || role == nullptr) {
+                            report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
+                                   "a compiler prelude role requires one unlabelled role name");
+                            continue;
+                        }
+                        const auto& name = role->rawValue;
+                        if (name == "task_start") value.libraryRole = LibraryRole::taskStart;
+                        else if (name == "task_handle") value.libraryRole = LibraryRole::taskHandle;
+                        else if (name == "channel_create") value.libraryRole = LibraryRole::channelCreate;
+                        else if (name == "channel_sender") value.libraryRole = LibraryRole::channelSender;
+                        else if (name == "channel_receiver") value.libraryRole = LibraryRole::channelReceiver;
+                        else if (name == "stored_consumer") value.libraryRole = LibraryRole::storedConsumer;
+                        else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
+                                    "unknown compiler prelude role '" + name + "'");
+                    }
+                }
+            }
         }
 
         if (insertIntoScope) {
@@ -692,9 +742,6 @@ private:
         const auto dictionaryType = declareBuiltinType("Dict");
         const auto optionalType = declareBuiltinType("Optional");
         const auto resultType = declareBuiltinType("Result");
-        const auto joinHandleType = declareBuiltinType("JoinHandle");
-        const auto channelSenderType = declareBuiltinType("ChannelSender");
-        const auto channelReceiverType = declareBuiltinType("ChannelReceiver");
         const auto ioErrorType = declareBuiltinType("IOError");
 
         declareBuiltinMember(stringType, SymbolKind::builtinMember, "count", intType);
@@ -765,55 +812,6 @@ private:
                     {},
                     CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
                 });
-
-        // `consume handle.join()` waits for the task and gives back its result (spec 21.3). Like
-        // `consumeEmpty`, the receiver is consumed; the result type is the handle's argument, computed
-        // by the type checker.
-        declareBuiltinMember(
-                joinHandleType,
-                SymbolKind::builtinMember,
-                "join",
-                voidType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    {},
-                    CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
-                });
-
-        // The ends of a channel (spec 21.9). `send` and `receive` borrow their end, `close` consumes it;
-        // the type checker computes their result types from the end's element type.
-        declareBuiltinMember(
-                channelSenderType,
-                SymbolKind::builtinMember,
-                "send",
-                voidType,
-                CallableSignature {
-                    CallableKind::function,
-                    true,
-                    { CallableParameter {
-                        std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
-                        syntax::AccessEffect::consuming } },
-                });
-        declareBuiltinMember(
-                channelReceiverType,
-                SymbolKind::builtinMember,
-                "receive",
-                voidType,
-                CallableSignature { CallableKind::function, true, {} });
-        for (const auto end : { channelSenderType, channelReceiverType }) {
-            declareBuiltinMember(
-                    end,
-                    SymbolKind::builtinMember,
-                    "close",
-                    voidType,
-                    CallableSignature {
-                        CallableKind::function,
-                        true,
-                        {},
-                        CallableReceiver { std::nullopt, syntax::AccessEffect::consuming, std::nullopt },
-                    });
-        }
 
         CallableSignature singlePayload {
             CallableKind::enumCase,
@@ -891,51 +889,6 @@ private:
         symbol(print).declaredType = voidType;
         symbol(print).callable = std::move(printSignature);
 
-        // `channel(capacity: n, sender: &s, receiver: &r)` creates a channel (spec 21.9.1). Both ends are
-        // `initializing` outputs; the type checker requires a sender and a receiver of one element type.
-        const auto channel = declareSymbol(
-                model->preludeScope_,
-                SymbolNamespace::value,
-                SymbolKind::builtinFunction,
-                "channel",
-                {});
-        symbol(channel).declaredType = voidType;
-        symbol(channel).callable = CallableSignature {
-            CallableKind::function,
-            true,
-            {
-                CallableParameter { std::string("capacity"), true, std::nullopt, std::nullopt, intType },
-                CallableParameter {
-                    std::string("sender"), true, std::nullopt, std::nullopt, std::nullopt,
-                    syntax::AccessEffect::initializing },
-                CallableParameter {
-                    std::string("receiver"), true, std::nullopt, std::nullopt, std::nullopt,
-                    syntax::AccessEffect::initializing },
-            },
-        };
-
-        // `spawn(function: f, input: consume x)` starts a task (spec 21.2). Its parameters only fix the
-        // labels, their order and that `input` is consumed; the type checker derives the result type from
-        // the named function.
-        CallableSignature spawnSignature {
-            CallableKind::function,
-            true,
-            {
-                CallableParameter { std::string("function"), true, std::nullopt, std::nullopt, std::nullopt },
-                CallableParameter {
-                    std::string("input"), true, std::nullopt, std::nullopt, std::nullopt,
-                    syntax::AccessEffect::consuming },
-            },
-        };
-        const auto spawn = declareSymbol(
-                model->preludeScope_,
-                SymbolNamespace::value,
-                SymbolKind::builtinFunction,
-                "spawn",
-                {});
-        symbol(spawn).declaredType = voidType;
-        symbol(spawn).callable = std::move(spawnSignature);
-
         // The layout intrinsics (spec 20.12.5): compiler-known generic functions whose one type
         // argument is written at the call. The type checker gives them their types and rejects them
         // outside a toolchain-authorized unit.
@@ -959,6 +912,12 @@ private:
                 voidType);
         layoutIntrinsic("joyeer_intrinsic_move_out", { addressParameter() }, voidType);
         layoutIntrinsic("joyeer_intrinsic_destroy_at", { addressParameter() }, voidType);
+        layoutIntrinsic("joyeer_intrinsic_stack_slot", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_needs_destroy", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_callback_address",
+                { CallableParameter {
+                    std::string("function"), true, std::nullopt, std::nullopt, std::nullopt } },
+                intType);
 
         CallableSignature byteConversionSignature {
             CallableKind::function,
@@ -1258,6 +1217,7 @@ private:
                     owner);
             symbol(id).memberScope = createScope(
                     ScopeKind::typeMembers, parameterScope, nodeId(parameter));
+            symbol(id).mustTransferParameter = symbol(owner).acceptsLinearArguments;
             ids.push_back(id);
         }
         return ids;
@@ -1342,6 +1302,7 @@ private:
                 false,
                 type);
         symbol(initializer).declaredType = type;
+        symbol(initializer).acceptsLinearArguments = symbol(type).acceptsLinearArguments;
         symbol(initializer).callable = std::move(initializerSignature);
         for (const auto& field : declaration->fields) {
             symbol(initializer).visibility = std::min(
@@ -2545,12 +2506,39 @@ private:
 
 NameResolutionResult NameResolver::resolve(
         const syntax::SourceFileSyntax::Ptr& root) const {
-    NameResolutionBuilder builder;
-    return builder.build(root);
+    if (root == nullptr) return NameResolutionBuilder().build(root);
+    return resolveWithPrelude({{"", {root}}}, true);
 }
 
 NameResolutionResult NameResolver::resolve(const std::vector<ModuleInput>& modules) const {
-    return NameResolutionBuilder().build(modules);
+    return resolveWithPrelude(modules, false);
+}
+
+NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> modules, bool singleFile) const {
+    const bool supplied = std::any_of(modules.begin(), modules.end(),
+            [](const auto& module) { return module.preludeContext; });
+    if (supplied) return NameResolutionBuilder().build(modules, singleFile);
+    uint32_t sourceId = 0;
+    for (const auto& module : modules) {
+        for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);
+    }
+    if (sourceId == std::numeric_limits<uint32_t>::max()) {
+        auto result = NameResolutionBuilder().build(modules, singleFile);
+        result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude, {},
+                                      "source identities leave no space for the runtime prelude"});
+        return result;
+    }
+    auto prelude = parsePrelude(sourceId + 1);
+    if (prelude.root != nullptr) {
+        modules.push_back({"$prelude", {prelude.root}, true, false, true});
+    }
+    auto result = NameResolutionBuilder().build(modules, singleFile);
+    result.model->preludeSource_ = std::move(prelude.source);
+    if (!prelude.problem.empty()) {
+        result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude,
+                                      SourceSpan {0, 0, sourceId + 1}, std::move(prelude.problem)});
+    }
+    return result;
 }
 
 const char* diagnosticName(NameResolutionDiagnosticId id) {
@@ -2593,6 +2581,8 @@ const char* diagnosticName(NameResolutionDiagnosticId id) {
             return "name-resolution.self-outside-type";
         case NameResolutionDiagnosticId::reservedName:
             return "name-resolution.reserved-name";
+        case NameResolutionDiagnosticId::invalidPrelude:
+            return "name-resolution.invalid-prelude";
     }
     return "name-resolution.unknown";
 }

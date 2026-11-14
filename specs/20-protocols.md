@@ -317,7 +317,8 @@ added note that adding `& Copyable` to the constraint permits it.
 
 **Linearity.** A type parameter is never linear, so a `T` value may be
 dropped: it is destroyed at the end of its owner's scope like any noncopyable
-value. A linear type therefore cannot be a type argument (§4.1.1).
+value. A linear type therefore cannot be a type argument (§4.1.1), except for the
+closed compiler-prelude transfer declarations described in §20.12.3.
 
 `Copyable` is compiler-defined. It has no requirements, cannot be declared or
 conformed manually, and is satisfied by a concrete type exactly when §4.1.1
@@ -549,6 +550,10 @@ a linear type argument (`type-checking.linear-type-argument`), or `Any` or `Neve
 §21 names a more specific diagnostic (`linear-collection-element`, `linear-in-deinit-type`,
 `linear-channel-element`), that one is reported.
 
+The closed compiler-prelude task declarations are the sole exception to the linear-argument
+prohibition: their parameters are checked as must-transfer values (§20.12.5), not as ordinary
+affine placeholders. This does not change the rule for user or explicit runtime-module generics.
+
 #### 20.12.4 Termination
 
 The expanding-recursion rule of §20.6 extends to types: a call graph edge exists for every construction of
@@ -562,10 +567,10 @@ A struct that owns values of `T` through an `Int` address has no field of type `
 
 #### 20.12.5 Layout intrinsics (toolchain-authorized units only)
 
-Five compiler-known generic functions give runtime code the layout of a type. They are not `@c_extern`
+Five compiler-known generic functions give runtime code the layout of a type (the three further operations of the second table below are authorized the same way). They are not `@c_extern`
 imports (§19.4.5), need no declaration, are in scope only in toolchain-authorized units (elsewhere
 `type-checking.unauthorized-intrinsic`), and cannot be used as function values or appear in a public
-signature. An address is an `Int`; no pointer type exists. `T` is not `Never`, `Any` or linear.
+signature. An address is an `Int`; no pointer type exists. `T` is not `Never`, `Any` or linear, except in the closed toolchain-prelude task declarations (decision 0023).
 
 | Function | Meaning |
 |---|---|
@@ -583,3 +588,36 @@ and, for `move_in`, hold no live value; nothing checks either. `destroy_at` equa
 `move_out`. `move_in`'s `value` is an ordinary `consuming` argument for exclusivity and ownership (§4). A
 leaked slot leaks, and destroying a slot twice is undefined: no safety claim is made. There is no borrowing
 access to a slot yet.
+
+**Provisional Phase 4 extension** ([0023](../docs/decisions/0023-library-concurrency.md)): three
+additional runtime-only operations use the same explicit-intrinsic syntax:
+
+| Function | Meaning |
+|---|---|
+| `joyeer_intrinsic_stack_slot<T>(): Int` | Uninitialized, correctly sized/aligned storage in the enclosing invocation, with no implicit destruction; valid only until that invocation returns |
+| `joyeer_intrinsic_needs_destroy<T>(): Bool` | A compile-time query: whether destroying a `T` needs code (including heap storage, an indirect case, or a `deinit`) |
+| `joyeer_intrinsic_callback_address<T...>(function: entry): Int` | The address of a named top-level generic function specialized with one written type argument per type parameter of the entry, in its declaration order |
+
+A callback is itself declared in an authorized runtime unit, has exactly one by-value
+`consuming Int` parameter and explicitly returns `Void`, with no receiver or native binding.
+This is the scalar entry compatible with the runtime's
+`void(void*)` callback on supported 64-bit targets; it does not enable generic `@c_export` or
+generic function values in user code. Its address reference participates in ordinary instantiation
+discovery, constraints, caching, reports, expanding-recursion checks, and limits, even if no direct
+call reaches the function. A raw stack slot is allocated once per invocation, not on loop
+backedges. Code must transfer, move out, or destroy each value stored in it exactly once. These
+operations preserve the existing authorization gate and make no additional memory-safety claim.
+
+**Provisional compiler-prelude transfer declarations** (0023): the bundled source prelude may mark
+its task declarations with `@compiler_transfer()`. Their unconstrained parameters are conservatively
+must-transfer, noncopyable, and potentially linear. Every owning value must be moved into a consuming
+call, a raw slot, or a return on every returning path, even for affine substitutions. A marked
+declaration may accept a linear type argument; no user declaration or `--runtime-module` unit may
+claim this metadata. The body is still checked once. Structures with an implicitly destructible
+field of such a parameter remain subject to the ordinary linear/deinit restrictions.
+
+In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, and `move_out` may
+operate on linear/must-transfer types. `destroy_at` never accepts one. The private affine task-block
+owner traps on abandonment rather than attempting to destroy a raw linear task input or result.
+`@compiler_role(...)` is a closed compatibility role for prelude declarations: it selects the
+existing contextual §21 diagnostics and restrictions, never layout or executable lowering.

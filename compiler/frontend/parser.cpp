@@ -188,8 +188,8 @@ void TokenCursor::rewind(Checkpoint checkpoint) {
     index = std::min(checkpoint, tokens.size());
 }
 
-Parser::Parser(const std::vector<Token::Ptr>& tokens, bool intrinsicTypeArguments):
-        cursor(tokens), intrinsicTypeArguments(intrinsicTypeArguments) {
+Parser::Parser(const std::vector<Token::Ptr>& tokens, bool intrinsicTypeArguments, bool preludeAnnotations):
+        cursor(tokens), intrinsicTypeArguments(intrinsicTypeArguments), preludeAnnotations(preludeAnnotations) {
 }
 
 ParseResult Parser::parse() {
@@ -244,6 +244,26 @@ syntax::NodePtr Parser::parseTopLevelItem() {
         while (cursor.at(atSign)) attributes.push_back(parseAttribute());
         Token::Ptr modifier;
         if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
+        const bool compilerAttributes = preludeAnnotations && std::all_of(attributes.begin(), attributes.end(),
+                [](const auto& attribute) {
+                    return attribute.name != nullptr && (attribute.name->rawValue == "compiler_role" ||
+                                                         attribute.name->rawValue == "compiler_transfer");
+                });
+        if (!cursor.at(kwFunc) && compilerAttributes) {
+            auto declaration = parseTopLevelItem();
+            if (declaration != nullptr && declaration->kind == syntax::Kind::structDecl) {
+                std::static_pointer_cast<syntax::StructDeclSyntax>(declaration)->attributes = std::move(attributes);
+                if (modifier != nullptr) {
+                    declaration->visibility = visibilityFor(modifier->kind);
+                    declaration->explicitVisibility = true;
+                }
+                declaration->span = spanFrom(start);
+                return declaration;
+            }
+            report(DiagnosticId::unsupportedSyntax, spanFrom(start),
+                   "compiler prelude annotations require a struct or function");
+            return declaration;
+        }
         if (!cursor.at(kwFunc)) {
             report(DiagnosticId::unsupportedSyntax, spanFrom(start),
                    "declaration annotations are supported only on top-level functions");
@@ -770,6 +790,24 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
         // An annotation at or left of the struct begins the next top-level
         // declaration, as in an unclosed body.
         if (cursor.at(atSign) && cursor.peek()->startsLine && !isNestedAnnotation(column)) break;
+        if (preludeAnnotations && cursor.at(atSign)) {
+            std::vector<syntax::AttributeSyntax> attributes;
+            while (cursor.at(atSign)) attributes.push_back(parseAttribute());
+            const bool allowed = std::all_of(attributes.begin(), attributes.end(), [](const auto& attribute) {
+                return attribute.name != nullptr && attribute.name->rawValue == "compiler_role";
+            });
+            if (!allowed || !isNestedMethodStart(column)) {
+                report(DiagnosticId::unsupportedSyntax, spanFrom(before),
+                       "compiler prelude member metadata requires a method role");
+                continue;
+            }
+            auto method = parseMethodDecl();
+            method->attributes = std::move(attributes);
+            method->span = spanFrom(before);
+            methods.push_back(std::move(method));
+            enforceItemBoundary(false);
+            continue;
+        }
         if (rejectMemberAnnotations()) continue;
         if (isDeinitStart() &&
             !(cursor.peek()->startsLine && cursor.peek()->columnAt <= column)) {
@@ -1594,7 +1632,8 @@ bool Parser::atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const {
     const auto& name = std::static_pointer_cast<syntax::NameExprSyntax>(callee)->name->rawValue;
     return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
            name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
-           name == "joyeer_intrinsic_destroy_at";
+           name == "joyeer_intrinsic_destroy_at" || name == "joyeer_intrinsic_stack_slot" ||
+           name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address";
 }
 
 std::vector<syntax::TypePtr> Parser::parseIntrinsicTypeArguments() {

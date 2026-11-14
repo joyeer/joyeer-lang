@@ -48,11 +48,6 @@ enum class TypeKind {
     unsignedInteger,
     float32,
     float64,
-    // `JoinHandle<R>`: a running task whose result type is the one argument (spec 21).
-    task,
-    // `ChannelSender<T>` and `ChannelReceiver<T>`: the ends of a channel (decision 0019).
-    channelSender,
-    channelReceiver,
     // `(E1 T1, ..., En Tn): R` (spec 2.3.1, decision 0020): `arguments` holds the parameter types and
     // then the result; `effects` holds one access effect per parameter.
     function,
@@ -171,11 +166,6 @@ public:
     [[nodiscard]] TypeId dictionaryType(TypeId key, TypeId value);
     [[nodiscard]] TypeId optionalType(TypeId wrapped);
     [[nodiscard]] TypeId resultType(TypeId success, TypeId failure);
-    [[nodiscard]] TypeId taskType(TypeId result);
-    [[nodiscard]] TypeId channelSenderType(TypeId element);
-    [[nodiscard]] TypeId channelReceiverType(TypeId element);
-    // `Result<success, ChannelClosed>`, what `send` and `receive` give.
-    [[nodiscard]] TypeId channelResultType(TypeId success);
     // The type of a generic parameter, or of `Self` in a protocol when `symbol` is the protocol.
     [[nodiscard]] TypeId typeParameterType(semantic::SymbolId symbol);
     // `type` with every type parameter in `substitution` replaced; parameters not in it stay.
@@ -335,6 +325,7 @@ enum class TypeCheckingDiagnosticId {
     invalidExtensionHeader,
     instantiationLimit,
     unauthorizedIntrinsic,
+    invalidPrelude,
 };
 
 // A conformance of a concrete type to a protocol (spec 20.3), with the witness of each requirement.
@@ -422,6 +413,7 @@ public:
     [[nodiscard]] std::vector<std::vector<semantic::SymbolId>> linearLeafPaths(TypeId type) const;
     // True for a struct declared with the `linear` modifier.
     [[nodiscard]] bool isDeclaredLinear(TypeId type) const;
+    [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type) const;
     // Generic functions (spec 20, decision 0021).
     // The type parameters of a generic function in declaration order; null for any other function.
     [[nodiscard]] const std::vector<semantic::SymbolId>* genericParameters(semantic::SymbolId function) const;

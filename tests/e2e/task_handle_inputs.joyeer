@@ -1,0 +1,35 @@
+// A JoinHandle as a task input and as a task result, nested (spec 21.2.2; decision 0023).
+func square(v: consuming Int): Int { return v * v }
+func joinIt(h: consuming JoinHandle<Int>): Int { return consume h.join() + 1 }
+func launch(v: consuming Int): JoinHandle<Int> { return spawn(function: square, input: consume v) }
+func launch2(v: consuming Int): JoinHandle<JoinHandle<Int>> { return spawn(function: launch, input: consume v) }
+func joinTwice(h: consuming JoinHandle<JoinHandle<JoinHandle<Int>>>): Int {
+    let a = consume h.join()
+    let b = consume a.join()
+    return consume b.join()
+}
+func nop(v: consuming Int): Void { }
+func voidHandle(h: consuming JoinHandle<Void>): Int {
+    consume h.join()
+    return 3
+}
+func main() {
+    let h = spawn(function: square, input: consume 6)
+    let j = spawn(function: joinIt, input: consume h)
+    let r_j = consume j.join()
+    print(value: r_j)
+    let l2 = spawn(function: launch2, input: consume 5)
+    let lj = spawn(function: joinTwice, input: consume l2)
+    let r_lj = consume lj.join()
+    print(value: r_lj)
+    let vh = spawn(function: nop, input: consume 1)
+    let vj = spawn(function: voidHandle, input: consume vh)
+    let r_vj = consume vj.join()
+    print(value: r_vj)
+    // handle returned by a task, then passed as input again
+    let l = spawn(function: launch, input: consume 8)
+    let inner = consume l.join()
+    let k = spawn(function: joinIt, input: consume inner)
+    let r_k = consume k.join()
+    print(value: r_k)
+}

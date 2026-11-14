@@ -49,7 +49,7 @@ public:
     Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
         assert(checkedModel != nullptr);
         model = checkedModel;
-        const auto& root = model->semanticModel()->root();
+        const auto& root = model->semanticModel()->compilationRoot();
         if (root != nullptr) {
             forEachFunction(root, [this](const syntax::FunctionDeclSyntax::Ptr& function) {
                 analyzeFunction(function);
@@ -325,7 +325,7 @@ public:
     Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
         assert(checkedModel != nullptr);
         model = checkedModel;
-        const auto& root = model->semanticModel()->root();
+        const auto& root = model->semanticModel()->compilationRoot();
         if (root != nullptr) {
             forEachFunction(root, [this](const syntax::FunctionDeclSyntax::Ptr& function) {
                 analyzeFunction(function);
@@ -354,6 +354,7 @@ private:
         size_t scopeDepth;
         std::vector<InitializationState> breaks;
         std::vector<InitializationState> continues;
+        size_t pendingAtEntry = 0;
     };
     std::vector<LoopFlow> loops;
 
@@ -439,6 +440,7 @@ private:
         }
         if (!live) return;
         const auto* declaration = model->semanticModel()->symbol(symbol);
+        const auto ending = model->linearEndingMethod(*type);
         diagnostics.push_back(Diagnostic {
             DiagnosticId::linearNotConsumed,
             Severity::error,
@@ -446,8 +448,26 @@ private:
             "'" + (declaration == nullptr ? std::string() : declaration->name) +
                     "' holds a linear value of type '" + model->types().displayName(*type) +
                     "' that is not consumed before " + where,
-            "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'",
+            ending.has_value()
+                    ? "end each handle with its consuming '" + *ending +
+                              "' method (or return it) on every path before this point"
+                    : "consume it (or return it) on every path before this point; a function that only needs to use it can take it 'inout'",
         });
+    }
+
+    void checkPendingLinearExit(const InitializationState& state, SourceSpan span, const std::string& exit,
+                                size_t pendingAtEntry = 0) {
+        if (!state.reachable || pendingLinearMoves <= pendingAtEntry) return;
+        diagnostics.push_back(Diagnostic {
+            DiagnosticId::linearNotConsumed, Severity::error, span,
+            "a linear value already moved into the enclosing call would be dropped by " + exit,
+            "evaluate the exiting operand first, then move the value into the call",
+        });
+    }
+
+    void trackPendingOwnedValue(const syntax::ExprPtr& value, const InitializationState& state) {
+        const auto type = model->typeOf(value);
+        if (state.reachable && type.has_value() && model->isLinear(*type)) ++pendingLinearMoves;
     }
 
     // Every owning binding in scope, innermost first, and the consuming parameters: an exit of the
@@ -622,6 +642,8 @@ private:
         assert(!loops.empty());
         auto edge = state;
         auto& loop = loops.back();
+        checkPendingLinearExit(state, span,
+                kind == syntax::Kind::breakStmt ? "this 'break'" : "this 'continue'", loop.pendingAtEntry);
         for (size_t scope = loop.scopeDepth; scope < localScopes.size(); ++scope) {
             for (const auto symbol : localScopes[scope]) {
                 checkLinearEnded(symbol, edge, span,
@@ -638,7 +660,7 @@ private:
             const syntax::WhileStmtSyntax::Ptr& statement,
             InitializationState& state) {
         const auto analyzeIteration = [&](InitializationState entry) {
-            loops.push_back(LoopFlow { localScopes.size(), {}, {} });
+            loops.push_back(LoopFlow { localScopes.size(), {}, {}, pendingLinearMoves });
             analyzeExpression(statement->condition, entry);
             auto bodyState = entry;
             analyzeBlock(statement->body, bodyState, false);
@@ -756,6 +778,7 @@ private:
                         : nullptr;
                 std::vector<semantic::SymbolId> initializedArguments;
                 std::vector<semantic::SymbolId> mutatedArguments;
+                const auto pendingAtEntry = pendingLinearMoves;
                 // A user method's receiver follows the access convention of its
                 // `self` parameter: consuming it consumes the receiver storage.
                 const auto receiverEffect = callableSymbol != nullptr &&
@@ -771,6 +794,8 @@ private:
                     analyzeConsume(
                             std::static_pointer_cast<syntax::MemberExprSyntax>(call->callee)->base,
                             state);
+                    trackPendingOwnedValue(
+                            std::static_pointer_cast<syntax::MemberExprSyntax>(call->callee)->base, state);
                 } else {
                     analyzeExpression(call->callee, state);
                     if (receiverEffect == syntax::AccessEffect::inout) {
@@ -787,7 +812,6 @@ private:
                     const auto* record = calleeType.has_value() ? model->types().type(*calleeType) : nullptr;
                     if (record != nullptr && record->kind == typing::TypeKind::function) valueEffects = record->effects;
                 }
-                size_t countedPendingMoves = 0;
                 for (size_t index = 0; state.reachable && index < call->arguments.size(); ++index) {
                     const auto& argument = call->arguments[index];
                     // A `consume` marker on an argument that is stored (initializer, enum case,
@@ -828,10 +852,9 @@ private:
                         (effect == syntax::AccessEffect::consuming ||
                          !storagePath(argument->value).has_value())) {
                         ++pendingLinearMoves;
-                        ++countedPendingMoves;
                     }
                 }
-                pendingLinearMoves -= countedPendingMoves;
+                pendingLinearMoves = pendingAtEntry;
                 if (state.reachable &&
                     model->typeOf(expression) != model->types().neverType()) {
 
@@ -864,23 +887,31 @@ private:
             }
             case syntax::Kind::arrayExpr: {
                 const auto array = std::static_pointer_cast<syntax::ArrayExprSyntax>(expression);
+                const auto pendingAtEntry = pendingLinearMoves;
                 for (const auto& element : array->elements) {
                     analyzeExpression(element, state);
+                    trackPendingOwnedValue(element, state);
                 }
+                pendingLinearMoves = pendingAtEntry;
                 break;
             }
             case syntax::Kind::dictionaryExpr: {
                 const auto dictionary =
                         std::static_pointer_cast<syntax::DictionaryExprSyntax>(expression);
+                const auto pendingAtEntry = pendingLinearMoves;
                 for (const auto& entry : dictionary->entries) {
                     analyzeExpression(entry->key, state);
+                    trackPendingOwnedValue(entry->key, state);
                     analyzeExpression(entry->value, state);
+                    trackPendingOwnedValue(entry->value, state);
                 }
+                pendingLinearMoves = pendingAtEntry;
                 break;
             }
             case syntax::Kind::contextualCaseExpr: {
                 const auto enumCase =
                         std::static_pointer_cast<syntax::ContextualCaseExprSyntax>(expression);
+                const auto pendingAtEntry = pendingLinearMoves;
                 for (const auto& argument : enumCase->arguments) {
                     if (argument->accessMarker != nullptr &&
                         argument->accessMarker->kind == kwConsume) {
@@ -888,7 +919,9 @@ private:
                     } else {
                         analyzeExpression(argument->value, state);
                     }
+                    trackPendingOwnedValue(argument->value, state);
                 }
+                pendingLinearMoves = pendingAtEntry;
                 break;
             }
             case syntax::Kind::blockExpr:
@@ -911,6 +944,7 @@ private:
                     analyzeExpression(returned, state);
                 }
                 if (state.reachable) {
+                    checkPendingLinearExit(state, expression->span, "this 'return'");
                     checkAllLinearEnded(state, expression->span, "this 'return'");
                     reportUninitializedParameters(expression->span, state);
                 }
@@ -1628,7 +1662,7 @@ public:
     Result build(const typing::TypeCheckedModel::Ptr& checkedModel) {
         assert(checkedModel != nullptr);
         model = checkedModel;
-        const auto& root = model->semanticModel()->root();
+        const auto& root = model->semanticModel()->compilationRoot();
         if (root != nullptr) {
             forEachFunction(root, [this](const syntax::FunctionDeclSyntax::Ptr& function) {
                 analyzeFunction(function);

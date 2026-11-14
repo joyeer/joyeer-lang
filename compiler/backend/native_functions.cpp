@@ -231,6 +231,9 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::integerAddress:
             result = builder.CreateIntToPtr(argument(0), pointer());
             break;
+        case Opcode::pointerToInteger:
+            result = builder.CreatePtrToInt(argument(0), builder.getInt64Ty());
+            break;
         case Opcode::callIndirect: {
             // One indirect call with the type's signature: definitions are declared from the same
             // helper, so caller and callee agree on convention and attributes (decision 0020).

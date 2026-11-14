@@ -23,20 +23,22 @@ thread-safe runtime (P4), tasks (P5a), channels (P5b, P6) and the worker-pool we
 The implementation notes are in [runtime](../impl/runtime.md) and
 [supported features](../impl/supported-features.md).
 
-`scripts/validate.py` ran on Linux x86-64 (WSL2, Debug and Release): ctest 1476 of 1476 in both. On
-Windows the Debug ctest suite was run by hand (1504 of 1504 on the last tree), because there is no
-Python there.
+The source-library migration in [0010](0010-generics.md) ran full `scripts/validate.py` on Windows
+x64 and Linux x86_64 (WSL Ubuntu), Debug and Release: Windows CTest 1665/1665 and fern 7/7 in each;
+Linux CTest 1641/1641 and fern 7/7 in each. Native AArch64 and macOS remain unverified.
 
 ## Todo
 
 ### Acceptance gates
 
-- [ ] Run `scripts/validate.py` on Windows, on a machine with Python 3.9 or later.
-- [ ] Windows Release.
+- [x] Run `scripts/validate.py` on Windows, on a machine with Python 3.9 or later.
+  Evidence: plan 0010 Phase 4, Windows x64 Debug/Release, unfiltered CTest 1665/1665 and fern 7/7 each.
+- [x] Windows Release. Evidence: the same full Phase 4 validator run.
 - [ ] AArch64 Linux (the thread and channel paths are written but untested there).
 - [ ] macOS, including the `os_unfair_lock` path.
-- [ ] Find the cause of the `SystemTests` "write zero bytes to a closed stderr" failure under `fern test`
-  on Linux WSL2. It fails identically before the runtime-thread-safety work, so it is not a regression.
+- [x] Find the cause of the `SystemTests` "write zero bytes to a closed stderr" failure under `fern test`
+  on Linux WSL2. Evidence: the pre-Phase-4 fix `863530f` probes empty writes; Phase 4 full Debug/Release
+  fern suites are 7/7 on both Windows and WSL Linux, including `SystemTests`.
 - [ ] Test the `-lpthread` link argument (emitted for a program that starts a task or names a channel
   end type) on glibc older than 2.34.
 - [ ] Stop the Windows C-startup link (`/WHOLEARCHIVE`) and macOS (`-force_load`) from loading every
@@ -49,7 +51,9 @@ Python there.
 - [ ] Track linear moves into array literals, dictionary literals and enum payloads as pending until
   construction commits, so a `?` in a later element cannot drop a handle (today the run-time backstop
   traps `task dropped without join`).
-- [ ] Qualified builtin enum cases (`ChannelClosed.Closed`, `ConversionError.OutOfRange`) lower in IR.
+- [ ] Qualified builtin enum cases (`ConversionError.OutOfRange`) lower in IR.
+  `ChannelClosed.Closed` is now an ordinary source enum case (plan 0010 Phase 4, the durable
+  `generic-callbacks.joyeer` fixture), so that part no longer needs builtin lowering.
 - [ ] `consume Chain.End` (a qualified payload-less case) is accepted.
 - [ ] `==` on a struct or enum, or a diagnostic with a workaround.
 - [ ] Early, accurate diagnostics for `spawn(...).join()`. (A function or method used as a value is done:
@@ -93,6 +97,11 @@ Deferred, not forgotten:
 
 ## Progress log
 
+- 2026-11-14: Plan 0010 Phase 4 moves the public task/channel types and operations into the source
+  prelude without changing this plan's runtime contract. Its callback fixture covers qualified
+  `ChannelClosed.Closed`; `ConversionError.OutOfRange` remains open. Conservative task-transfer
+  checking adds regressions for pending arguments, consuming receivers, array construction and
+  early exits; the broader gap/acceptance items above remain open until their own evidence is recorded.
 - 2026-11-12: the function-used-as-a-value half of one compiler-gap item was done by plan 0010 Phase 1;
   the item now covers only `spawn(...).join()`.
 - 2026-11-12: converted to the plan template; no items changed.

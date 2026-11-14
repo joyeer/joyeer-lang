@@ -1,8 +1,10 @@
 # 0010: Generics
 
-- Status: in progress (updated 2026-11-13)
+- Status: in progress (updated 2026-11-14)
 - Decisions: [0020](../decisions/0020-function-values.md) (Phase 1),
-  [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2). Background:
+  [0021](../decisions/0021-protocols-and-generic-functions.md) (Phase 2),
+  [0022](../decisions/0022-generic-types-and-layout-intrinsics.md) (Phase 3),
+  [0023](../decisions/0023-library-concurrency.md) (Phase 4). Background:
   [0009](../decisions/0009-runtime-core-capabilities.md), [0015](../decisions/0015-noncopyable-and-linear-types.md),
   [0018](../decisions/0018-tasks.md), [0019](../decisions/0019-channels.md)
 - Spec: [§2.3](../../specs/02-types.md), [§2.6](../../specs/02-types.md), [§3.2.3](../../specs/03-declarations.md),
@@ -11,10 +13,10 @@
 ## Goal
 
 Add function values, generic code and type-layout knowledge to the language, so that the compiler's
-hard-coded generic builtins become ordinary Joyeer library types. Today the compiler supplies type
-knowledge the runtime cannot express (element layouts, destructors, the task entry thunk, `Result`
-construction) through dedicated IR opcodes (`taskSpawn`, `taskJoin`, `channelCreate`, `channelSend`,
-`channelReceive`), although the algorithms are already Joyeer in [lib/Runtime/core/](../../lib/Runtime/core/).
+hard-coded generic builtins become ordinary Joyeer library types. The starting compiler supplied
+element layouts, destructors, task entry thunks, and `Result` construction through dedicated
+concurrency IR opcodes, although the algorithms were already Joyeer in
+[lib/Runtime/core/](../../lib/Runtime/core/). Phase 4 moves those public APIs to source declarations.
 
 ## Definition of done
 
@@ -34,8 +36,9 @@ construction) through dedicated IR opcodes (`taskSpawn`, `taskJoin`, `channelCre
 | Function types `(T): R` | Implemented in Phase 1 ([0020](../decisions/0020-function-values.md)); non-capturing top-level function values, with exact access effects. |
 | Indirect calls | Typed function-value calls are implemented; the runtime-only untyped `joyeer_intrinsic_call_void1/2` also remain (decision 0009, D2). |
 | Protocols and generic functions | §20 is normative for v1; Phase 2 implementation and acceptance are tracked below. `trait` remains reserved. |
-| Generic structs, enums, methods | Deferred by §20.10; v0.1 forbids them (§2.6, §3.2.3). |
-| Layout intrinsics | None; runtime code sees only `Int` addresses ([decision 0005](../decisions/0005-runtime-unsafe-memory.md)). |
+| Generic structs, enums, methods | Implemented in Phase 3; methods instantiate with their receiver's arguments. Method-owned type parameters remain deferred. |
+| Layout intrinsics | Typed size/alignment and raw moves/destruction are implemented in Phase 3. Phase 4 adds stack slots, destruction queries, and specialized callback addresses. |
+| Task and channel APIs | Implemented in Phase 4 as source declarations ([0023](../decisions/0023-library-concurrency.md)); the dedicated compiler/backend machinery is removed. Validated on Windows and Linux x86_64; native macOS and AArch64 gates are open (see Phase 4). |
 
 ## Todo
 
@@ -158,15 +161,44 @@ exactly. No closures, methods or generic functions as values.
 
 ### Phase 4: concurrency builtins in the library
 
-- [ ] Benchmark today's tasks and channels as the baseline.
-- [ ] Declare `JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>`, `spawn` and `channel` in Joyeer,
+- [x] Benchmark today's tasks and channels as the baseline. Evidence: unchanged compiler/runtime
+  `c6b5b4d`, Windows x64 Debug/`-O0` and Release/`-O2`, 15 samples per workload; checked checksums and
+  preserved executables. Workloads, measurements and methodology are recorded in
+  [0023](../decisions/0023-library-concurrency.md#evidence); exact commands are in the progress log.
+- [x] Declare `JoinHandle<R>`, `ChannelSender<T>`, `ChannelReceiver<T>`, `spawn` and `channel` in Joyeer,
   keeping §21: linear handles, `Result` from `send` and `receive`, destruction of unsent and unreceived
-  values, the 256-task limit and its traps.
-- [ ] Existing §21 fixtures and diagnostics pass unchanged.
-- [ ] Benchmark again; no regression in either profile.
-- [ ] Delete the opcodes, type kinds, backend cases and compiler-known names.
-- [ ] Reviews and validation; update supported features, runtime notes and §21.
-- [ ] Write a follow-up plan for `Optional` and `Result` as library enums, and later `Array` and `Dict`.
+  values, the 256-task limit and its traps. Evidence: `lib/Runtime/concurrency.joyeer`, decision 0023,
+  the unchanged durable task/channel fixtures and the creation ABI/callback/live-flag fixture.
+- [x] Existing §21 fixtures and diagnostics pass unchanged. Evidence: the full unfiltered Windows
+  and Linux runs below, including all existing stage/CLI and O0..O3 runtime fixtures; no `.joyeer`
+  fixture or diagnostic expectation was changed. Unit tests that count source files or walk every
+  method were adjusted only for the extra bundled prelude source.
+- [x] Benchmark again; no regression outside sampled noise in either profile. Evidence: 31 final
+  paired samples per workload/profile and the predeclared confidence criterion in
+  [0023](../decisions/0023-library-concurrency.md#final-comparison-and-validation). Point estimates
+  are +0.5% to +2.5% (every interval includes 1, upper bounds up to +7%), so "not slower than today"
+  is established only within noise. Per-operation cost, hello-world size and compile time with the
+  bundled prelude were not measured.
+- [x] Delete the opcodes, type kinds, backend cases and compiler-known names. Evidence: six
+  concurrency opcodes, three type kinds, native task thunk/layout and special ownership cases,
+  and builtin declarations are removed; the IR tests now verify ordinary calls/structs and wire 18.
+- [x] Reviews and validation; update supported features, runtime notes and §21. Evidence: four
+  separate role reviews, reproduced/fixed review regressions and 64 hostile case executions;
+  `validate.py` Debug/Release, Windows CTest 1665/1665 and fern 7/7 each; Linux CTest 1641/1641 and
+  fern 7/7 each. Native platform gates below remain explicitly unverified.
+- [x] Write a follow-up plan for `Optional` and `Result` as library enums, and later `Array` and `Dict`.
+  Evidence: [0011](0011-library-containers.md), using the plan template with phased checklists,
+  ownership/borrowing prerequisites and every implementation item open.
+
+### Remaining native acceptance gates
+
+The feature phases above are complete on the verified x86_64 hosts. Keep this plan in progress
+until the unrun native gates are recorded; do not infer them from WSL or x64.
+
+- [ ] Native macOS Debug/Release `validate.py`, including task/channel and callback ABI paths.
+  Blocked here: no macOS execution host/SDK.
+- [ ] Native AArch64 Debug/Release `validate.py` on a supported OS.
+  Blocked here: no native AArch64 execution host/SDK.
 
 ## Open questions
 
@@ -192,6 +224,64 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-14: Independent post-implementation verification of the uncommitted Phase 4 tree (separate
+  language, type-system, IR/backend reviews and a separate adversarial run of about 150 programs at
+  `-O0`/`-O2`): no ownership, memory-safety, ABI or §21 break found. Windows x64 fresh Debug and Release
+  builds ran 1664 of 1665 CTest cases each; the one miss, `ValidationScriptTests`, timed out at 30 s
+  under load while reviewers and a build ran, and passes alone in under a second in both trees. After
+  the tests below were added, the final tree ran Release 1695 of 1695 and Debug 1694 of 1695 (the same
+  pure-Python test timed out again at 33 s with `-j3`; 0.4 to 0.6 s alone, three runs). Fixed
+  from the reviews: stale status and evidence wording here, decisions 0018/0019/0022 now point at 0023,
+  and `callback_address<T...>` is described consistently. Added durable tests: three task layout/handle
+  fixtures (`task_layout`, `task_unit_layout`, `task_handle_inputs`), `library_name_shadowing`,
+  `channel_end_only`, and unit tests for exactly-once prelude roles, metadata spoofing on structs, enums
+  and methods, unauthorized prelude-only intrinsics, `break`/`continue` escaping a pending move, and each
+  `pointerToInteger` verifier rule (143 focused tests pass in Debug). A dictionary cannot hold a linear
+  value at all (`type-checking.linear-collection-element`), so the dictionary pending-move path is not
+  reachable for transfer types. Open, not fixed: a method whose declared result is a function type is
+  rejected as `type-checking.not-callable` (Phase 1 `checkCall`, exists at `c6b5b4d`), so
+  `JoinHandle<(Int): Int>.join()` cannot be called; the task block offsets (136/128) are repeated in three
+  places in `concurrency.joyeer` and tied to `JOYEER_THREAD_BYTES` only by a `static_assert`; runtime
+  clone traps for task and channel ends were replaced by the narrower verifier rule on `copyValue`; the
+  prelude source id is derived in two places without a cross-check, and its debug path depends on the
+  working directory; the prelude is one string literal (MSVC limit about 16 KB, now 7 KB); dead
+  by-name `send`/`receive`/`close`/`join` typing remains in `typechecking.cpp`. Not rerun by this
+  entry: Linux/WSL, `fern test`, macOS, AArch64.
+- 2026-11-14: Completed Phase 4 on the current uncommitted tree. Full `validate.py` with every gate
+  enabled: Windows x64 Debug/Release build, CTest 1665/1665 and fern 7/7 in each; Linux x86_64
+  (WSL Ubuntu, isolated Git archive + exact working patch/new files) Debug/Release build, CTest
+  1641/1641 and fern 7/7 in each. Final 31-pair A/B comparisons from the validated Windows builds
+  resolve no regression outside sampled noise in either profile (0023 has all medians, intervals,
+  sizes and methodology). Role findings, malformed-IR regressions and independent hostile programs
+  are recorded there. Native macOS/AArch64 and the earlier debugger breakpoint check remain unrun;
+  the two native gates are now explicit checklist items, so the plan is not retired prematurely.
+  No commit, push, branch switch, or toolchain installation was performed.
+- 2026-11-14: Implemented the Phase 4 source prelude, sealed compatibility/must-transfer metadata,
+  runtime stack slots/destruction query/specialized callback addresses, and wire version 18.
+  Removed six concurrency opcodes, three type kinds, backend task thunks/layout and special ownership
+  cases, and public builtin declarations. Public generic task targets remain rejected; the internal
+  callback specialization is the compatible equivalent selected in 0023. Separate language,
+  type-system, IR/backend, and adversarial reviews ran. Review regressions were reproduced and fixed;
+  final Windows x64 Debug default build and 226 focused tests pass. The independently authored hostile
+  set has 64 passing case instances after correcting probe-only syntax. Initial 31-pair A/B timing
+  meets the predeclared sampled-noise criterion in both profiles; final candidate timing and full
+  `validate.py` acceptance are still in progress. Created [0011](0011-library-containers.md), with
+  every future implementation gate open. Do not treat this progress entry as full Phase 4 acceptance.
+- 2026-11-14: Started Phase 4 on unchanged `c6b5b4d`. Both existing build trees built successfully;
+  `ctest --test-dir out/build/x64-debug-comp -j 4 -R "Task|Channel|Concurrency|Spawn"
+  --output-on-failure --no-tests=error` and the same command for `x64-release-comp` each passed
+  98 of 98. Added two concurrency performance fixtures and a standard-library Python runner.
+  From an MSVC x64 Developer shell, using Python 3.12:
+  `python tests/perf/benchmark_concurrency.py build
+  --debug-compiler C:\Source\joyeer-lang\out\build\x64-debug-comp\bin\joyeer.exe
+  --release-compiler C:\Source\joyeer-lang\out\build\x64-release-comp\bin\joyeer.exe
+  --output-dir <session-files>\phase4-baseline`, then
+  `python tests/perf/benchmark_concurrency.py measure --baseline-dir <session-files>\phase4-baseline
+  --repetitions 15 --report <session-files>\phase4-baseline.json`. `<session-files>` is the current
+  session's artifact directory, not a product dependency. Every run checked the complete output and
+  empty stderr. [0023](../decisions/0023-library-concurrency.md) proposes the missing generic-target,
+  linear-instance and runtime-prelude mechanisms; it is not accepted or implemented. No compiler or
+  runtime implementation was changed for the baseline. The branch remains uncommitted and unpushed.
 - 2026-11-14: Closed the Phase 1 "found along the way" items (a `Never` stored field is
   `type-checking.never-field-type`; the parser bounds syntax depth at 100 with `parser.nesting-too-deep`) and
   re-ran everything on the resulting tree with `validate.py`, unfiltered, fresh trees. Windows x64: Debug and

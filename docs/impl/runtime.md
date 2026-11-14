@@ -324,6 +324,13 @@ depend on `readStdinLine` flushing standard output before it blocks.
 
 ## Channels
 
+The public generic ends and their methods are declared in `lib/Runtime/concurrency.joyeer`,
+bundled into the compiler's source prelude ([0023](../decisions/0023-library-concurrency.md)).
+They are ordinary `deinit` structs, including the hidden live flag; the ABI handle remains a private
+`Int`. Creation uses raw `Int` output slots and then constructs both ends. Sending/receiving use
+typed stack slots, not message allocations. A failed send destroys its unsent value, and the
+destruction query leaves the callback null for trivial element types.
+
 `lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
 spec §21.9), linked only into a program that creates a channel (which also links the thread object and
 `-lpthread`). One allocation holds the channel block: a mutex, two conditions, the capacity, stride, head,
@@ -336,10 +343,13 @@ zero) traps as `channel deadlock`. The tests are `tests/unittests/runtime/channe
 ## Tasks
 
 A task (decision [0018](../decisions/0018-tasks.md), spec §21) is one heap block from `joyeer_alloc`:
-a zeroed 128-byte thread record (`JOYEER_THREAD_BYTES`), the block's own size, the result, then the
-input. The backend emits a thunk per target that loads the input, calls the function and stores the
-result; `joyeer_thread_start_abi` runs it, and `join` calls `joyeer_thread_join_abi`, moves the result
+a zeroed 128-byte thread record (`JOYEER_THREAD_BYTES`), the block's own size, the aligned result,
+typed target function, and aligned input. A specialized source-library entry moves the input out,
+calls the typed function value and stores the result; `joyeer_thread_start_abi` runs it, and the
+source `join` calls `joyeer_thread_join_abi`, moves the result
 out and frees the block with the stored size. A refused thread traps with `too many tasks` or `cannot
 start task`. Because the block is ordinary allocator memory, the leak counter needs no task rule, and
-the generated destroy helper for a handle traps (`task dropped without join`) if one is ever dropped
-live. Linux links `-lpthread` after the runtime archive group for a program that starts a task.
+the private task-block owner's `deinit` traps (`task dropped without join`) if one is ever dropped
+live. `join` consumes that owner field and clears its address after freeing the block. Linux links
+`-lpthread` after the runtime archive group when emitted source functions reference the thread/channel
+ABI, including destruction paths. No concurrency type kind, opcode, or backend task thunk remains.

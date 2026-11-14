@@ -40,6 +40,7 @@ foreach(provider IN ITEMS CInteropNativeStatic CInteropNativeShared)
     target_compile_definitions(${provider} PRIVATE
         "CINTEROP_CHAR_SIGNED=$<BOOL:${JOYEER_CINTEROP_SIGNED_CHAR}>")
 endforeach()
+
 set_target_properties(CInteropNativeStatic CInteropNativeShared PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED ON MSVC_RUNTIME_LIBRARY MultiThreaded)
 
@@ -432,4 +433,22 @@ foreach(profile IN ITEMS Debug O1 Optimized O3)
             "-DEXPECTED_OUTPUT=generic queue passed\n"
             -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
     set_tests_properties("JoyeerCInterop.GenericQueue${profile}" PROPERTIES LABELS "c-interop;native" TIMEOUT 60)
+endforeach()
+
+foreach(profile IN ITEMS Debug Optimized)
+    if(profile STREQUAL Debug)
+        set(compile_flags -O0 -gfull)
+    else()
+        set(compile_flags -O2 -g0)
+    endif()
+    add_test(NAME "JoyeerCInterop.GenericCallbacks${profile}"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJOYEER_EXECUTABLE=$<TARGET_FILE:joyeer>"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/generic-callbacks.joyeer"
+            "-DOUTPUT_FILE=${CMAKE_CURRENT_BINARY_DIR}/generic-callbacks-${profile}${CMAKE_EXECUTABLE_SUFFIX}"
+            "-DCOMPILER_ARGS=--module-name;runtime.callbacks;--runtime-module;runtime.callbacks;${compile_flags}"
+            "-DEXPECTED_OUTPUT=42\ngeneric callbacks passed\n"
+            -P "${JOYEER_SOURCE_DIR}/scripts/cmake/verifyNativeExecutable.cmake")
+    set_tests_properties("JoyeerCInterop.GenericCallbacks${profile}" PROPERTIES
+        LABELS "c-interop;native" TIMEOUT 60)
 endforeach()

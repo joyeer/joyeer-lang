@@ -785,8 +785,9 @@ TEST_F(NameResolutionTest, ResolvesAllLexicalNamesInJsonMvpFixture) {
     EXPECT_TRUE(std::all_of(
             resolution.model->deferredReferences().begin(),
             resolution.model->deferredReferences().end(),
-            [](const auto& deferred) {
-                return deferred.kind == DeferredResolutionKind::contextualEnumCaseNeedsType ||
+            [&](const auto& deferred) {
+                return resolution.model->isPreludeSource(deferred.span) ||
+                       deferred.kind == DeferredResolutionKind::contextualEnumCaseNeedsType ||
                        deferred.kind == DeferredResolutionKind::contextualEnumPatternNeedsType;
             }));
 }

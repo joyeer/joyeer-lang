@@ -298,7 +298,7 @@ function values (§5.6.1).
 | `joyeer_intrinsic_target_architecture` | `() -> Int` | A constant: 1 for an x86-64 target, 2 for AArch64, 0 otherwise, so a runtime unit can choose the system call numbers of its architecture |
 
 The generic layout intrinsics (`joyeer_intrinsic_size_of`, `_align_of`,
-`_move_in`, `_move_out`, `_destroy_at`) are a separate family: they are not
+`_move_in`, `_move_out`, `_destroy_at`, `_stack_slot`, `_needs_destroy`, `_callback_address`) are a separate family: they are not
 `@c_extern` imports and need no declaration (§20.12.5).
 
 Loads and stores need no alignment. The atomic add requires an 8-byte-aligned
