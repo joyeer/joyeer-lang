@@ -13,15 +13,23 @@ file              ::= import_decl* top_decl*
 top_decl          ::= func_decl
                    |  struct_decl
                    |  enum_decl
+                   |  protocol_decl
                    |  extension_decl
                    |  binding
+                   |  prelude_struct                        // compiler-bundled source only
 
 binding           ::= ( 'let' | 'var' ) pattern [ ':' type ] [ '=' expression ]
 
 func_decl         ::= attribute* [ visibility ] [ method_effect ] 'func' identifier
+                      [ generic_params ]
                       '(' [ param , ... ] ')'
                       [ ':' type ]
                       [ block ]
+
+generic_params    ::= '<' generic_param , ... '>'          // functions, structs and enums (§20.4, §20.12)
+generic_param     ::= identifier [ ':' constraint ]
+constraint        ::= protocol_ref ( '&' protocol_ref )*
+protocol_ref      ::= nominal_type
 
 method_effect     ::= 'borrowing' | 'mutating' | 'consuming'
 param             ::= label [ identifier ] ':' [ access_effect ] type [ '=' expression ]
@@ -39,8 +47,15 @@ function_type     ::= '(' [ param_type , ... ] ')' ':' type      // result exten
 param_type        ::= [ access_effect ] type             // no label, not Never
 nominal_type      ::= identifier ( '.' identifier )*         // primitive types included
 
-struct_decl       ::= [ visibility ] 'struct' identifier
+struct_decl       ::= [ visibility ] 'struct' identifier [ generic_params ]     // §20.12
                       '{' struct_member* '}'
+
+// Compiler-bundled prelude only (§20.12.5); not admitted by ordinary or --runtime-module input.
+prelude_struct    ::= prelude_metadata+ [ visibility ] [ 'linear' ] 'struct' identifier
+                      [ generic_params ] '{' struct_member* '}'
+prelude_metadata  ::= '@compiler_transfer' '(' ')'
+                   |  '@compiler_role' '(' identifier ')'
+// A bundled struct method may also carry @compiler_role before its visibility/effect.
 
 struct_member     ::= binding
                    |  init_decl | deinit_decl
@@ -52,14 +67,24 @@ init_decl         ::= [ visibility ] 'init' '(' [ param , ... ] ')'
 
 deinit_decl       ::= 'deinit' '(' ')' block
 
-enum_decl         ::= [ visibility ] 'enum' identifier
+enum_decl         ::= [ visibility ] 'enum' identifier [ generic_params ]       // §20.12
                       '{' enum_case ( ',' enum_case )* ','? ( func_decl | subscript_decl )* '}'
 
 enum_case         ::= [ 'indirect' ] identifier [ '(' assoc_type , ... ')' ]
 assoc_type        ::= [ identifier ':' ] type
 
-extension_decl    ::= 'extension' type
+extension_decl    ::= 'extension' extended_type [ ':' protocol_ref , ... ]
                       '{' ( func_decl | subscript_decl )* '}'
+extended_type     ::= nominal_type [ '<' type , ... '>' ]     // a generic type's parameters (§20.12.2)
+                   |  '[' type ']'
+                   |  '[' type ':' type ']'
+
+protocol_decl     ::= [ visibility ] 'protocol' identifier
+                      '{' protocol_requirement* '}'
+protocol_requirement
+                  ::= [ method_effect ] 'func' identifier
+                      '(' [ requirement_param , ... ] ')' [ ':' type ]
+requirement_param ::= label [ identifier ] ':' [ access_effect ] type
 
 subscript_decl    ::= [ visibility ] 'subscript' [ identifier ]
                       '(' [ param , ... ] ')' ':' type
@@ -104,6 +129,9 @@ postfix_expr      ::= primary_expr ( '.' identifier
                                     | '[' expression , ... ']'
                                     | '?'
                                     | '!' )*
+intrinsic_call    ::= INTRINSIC_ID '<' type , ... '>' '(' [ call_arg , ... ] ')'
+                                 // toolchain-authorized units only (§20.12.5); a `>>` token
+                                 //   inside the type arguments is split
 call_arg          ::= [ label ':' ] [ '&' | 'consume' ] expression
                                  // unlabeled only through a function value
                                  //   or for an enum payload (§5.6, §5.6.1, §5.8)
@@ -111,6 +139,7 @@ call_arg          ::= [ label ':' ] [ '&' | 'consume' ] expression
 primary_expr      ::= literal
                    |  '(' ')'                                  // unit value, type Void
                    |  identifier
+                   |  intrinsic_call                          // authorized runtime units only
                    |  '(' expression ( ',' expression )* ')'   // parens (1) or tuple (≥2)
                    |  array_literal
                    |  dict_literal
@@ -171,3 +200,10 @@ the same production as [§3.2](03-declarations.md#32-function-declarations).
 > `let v = opt ?? fatalError(...)` well-typed (§8.5, §9.3).
 
 ---
+
+> **Nesting limit.** An implementation bounds how deeply the syntax may
+> nest, because later stages recurse over the syntax tree. Parentheses,
+> types, blocks, patterns, prefix operators, and each operand added to a
+> chain (`a + b + c`, `a.b.c`, `f(x)(y)`, `x as T as U`) count one level
+> each. The reference compiler's limit is 100 levels; a deeper program is
+> rejected with the single diagnostic `parser.nesting-too-deep`.

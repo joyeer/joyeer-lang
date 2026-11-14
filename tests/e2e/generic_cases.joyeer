@@ -1,0 +1,15 @@
+// Payloadless cases of a generic enum take their type arguments from the expected type (spec 20.12.1).
+enum Tree<T: Copyable> { Leaf, Node(T, [Tree<T>]) }
+func make(): Tree<Int> { return Tree.Leaf }
+func count(tree: Tree<Int>): Int {
+    return match tree {
+        .Leaf => 0,
+        .Node(v, kids) => v + kids.count,
+    }
+}
+func main() {
+    let a: Tree<Int> = Tree.Node(5, [Tree.Leaf, .Leaf])
+    let b: Tree<Int>? = Tree.Leaf
+    print(value: count(tree: a))
+    print(value: count(tree: make()))
+}

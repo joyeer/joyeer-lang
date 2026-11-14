@@ -26,7 +26,7 @@ Start with the [preamble](00-preamble.md), [memory model](04-memory.md), and
 | 13 | [Naming conventions](13-naming.md) |
 | 18 | [Portable host operations](18-host.md) |
 | 19 | [C interoperation](19-c-interop.md) |
-| 20 | [Protocols and bounded generics (proposed)](20-protocols.md) |
+| 20 | [Protocols and bounded generics](20-protocols.md) |
 | 21 | [Concurrency](21-concurrency.md) |
 
 Add future chapters at the end of this table, preserving existing chapter

@@ -116,7 +116,9 @@ optional_chain  ::= postfix_expr '?.' identifier
 Methods declared in a `struct`, `enum`, or `extension` are called via
 member syntax: `a.size()`, `point.distance(to: other)`.
 
-`a.f(args)` always calls a method. A stored field of function type is called
+`a.f(args)` always calls a method. When `a` has a type-parameter type (§20.4), the
+method is a requirement of a protocol in its constraint and the call reaches
+that requirement's witness (§20.5, §20.6). A stored field of function type is called
 with a parenthesized callee, `(a.f)(args)` (§5.6.1). A type may not have a
 stored field and a method with the same name
 (`name-resolution.duplicate-declaration`).
@@ -163,6 +165,9 @@ through a function value (§5.6.1) and in enum construction (§5.8).
 
 #### 5.6.1 Function values and calls through them
 
+The layout intrinsics of §20.12.5 are compiler-known functions, not function
+values: they can only be called, and only in toolchain-authorized units.
+
 The name of a function, used as an expression where it is not called, is a
 **function value** of its function type (§2.3.1,
 [decision 0020](../docs/decisions/0020-function-values.md)):
@@ -184,11 +189,14 @@ These are not function values (`type-checking.not-a-function-value`, which
 states the reason):
 
 - methods, declared and synthesized initializers, and enum cases;
-- the compiler-known builtins (`print`, `spawn`, `channel`, `byteToInt`,
+- the compiler-known builtins (`print`, `byteToInt`,
   `byteToString`) and the runtime intrinsics (§19.4.5); a user declaration
   that shadows a builtin is an ordinary function and is a value;
 - `@c_extern` and `@c_data` declarations (§19.5);
 - the root module's `main` (§3.2.6); a dependency's `main` is ordinary.
+
+The prelude `spawn` and `channel` are generic source-library functions (§21), not builtin functions;
+the ordinary prohibition on generic function values (§20.4.1) still applies to them.
 
 A function's default parameter values (§3.2.5) do not carry over: a call
 through the value supplies every argument.

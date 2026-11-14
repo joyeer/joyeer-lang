@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+class SourceFile;
+
 namespace joyeer::semantic {
 
 using NodeId = uint32_t;
@@ -51,6 +53,22 @@ enum class SymbolKind {
     enumCase,
     patternBinding,
     method,
+    // `protocol P` (spec 20.2); its member scope holds the requirements, which are methods.
+    // The prelude `Copyable` is one with no requirements.
+    protocol,
+    // `T` in `func f<T: P>` (spec 20.4). Its member scope holds the requirements of its
+    // constraint protocols, so `t.m()` resolves to a requirement.
+    typeParameter,
+};
+
+enum class LibraryRole {
+    none,
+    taskStart,
+    taskHandle,
+    channelCreate,
+    channelSender,
+    channelReceiver,
+    storedConsumer,
 };
 
 enum class CallableKind {
@@ -104,12 +122,18 @@ struct Symbol {
     std::optional<ScopeId> memberScope;
     std::optional<SymbolId> declaredType;
     std::optional<SymbolId> synthesizedInitializer;
+    // The type parameters of a generic struct or enum in declaration order (spec 20.12); they live in
+    // its member scope.
+    std::vector<SymbolId> typeParameters;
     std::optional<CallableSignature> callable;
     bool isMutable = false;
     bool isInvalid = false;
     syntax::Visibility visibility = syntax::Visibility::public_;
     uint32_t moduleId = 0;
     bool isRootModule = true;
+    LibraryRole libraryRole = LibraryRole::none;
+    bool acceptsLinearArguments = false;
+    bool mustTransferParameter = false;
 };
 
 struct Scope {
@@ -135,6 +159,8 @@ public:
     using Ptr = std::shared_ptr<SemanticModel>;
 
     [[nodiscard]] const syntax::SourceFileSyntax::Ptr& root() const;
+    [[nodiscard]] const syntax::SourceFileSyntax::Ptr& compilationRoot() const;
+    [[nodiscard]] const std::shared_ptr<SourceFile>& preludeSource() const;
     [[nodiscard]] ScopeId preludeScope() const;
     [[nodiscard]] ScopeId fileScope() const;
 
@@ -150,6 +176,9 @@ public:
     [[nodiscard]] std::optional<SymbolId> qualifierSymbol(const syntax::NodePtr& node) const;
     [[nodiscard]] std::optional<SymbolId> callTarget(const syntax::NodePtr& node) const;
     [[nodiscard]] const DeferredReference* deferredReference(const syntax::NodePtr& node) const;
+    // The type parameters an `extension Box<T>` header declares, in order (spec 20.12.2); empty for
+    // any other node. Each is a `typeParameter` symbol local to the extension.
+    [[nodiscard]] const std::vector<SymbolId>& extensionTypeParameters(const syntax::NodePtr& node) const;
 
     [[nodiscard]] const std::vector<Symbol>& symbols() const;
     [[nodiscard]] const std::vector<Scope>& scopes() const;
@@ -158,16 +187,22 @@ public:
     [[nodiscard]] bool isModuleQualified(const syntax::NodePtr& node) const;
     [[nodiscard]] bool isRuntimeSource(SourceSpan span) const;
     [[nodiscard]] bool isCoreSource(SourceSpan span) const;
+    [[nodiscard]] bool isPreludeSource(SourceSpan span) const;
+    // The module whose source contains `span` (the root module is 0).
+    [[nodiscard]] uint32_t moduleOf(SourceSpan span) const;
     // The name a module was compiled under (the root module is index 0), or null for an unknown index.
     [[nodiscard]] const std::string* moduleName(uint32_t module) const;
 
 private:
     friend class NameResolutionBuilder;
+    friend class NameResolver;
     friend std::string dump(const SemanticModel& model);
 
     explicit SemanticModel(syntax::SourceFileSyntax::Ptr root);
 
     syntax::SourceFileSyntax::Ptr root_;
+    syntax::SourceFileSyntax::Ptr compilationRoot_;
+    std::shared_ptr<SourceFile> preludeSource_;
     ScopeId preludeScope_ = invalidScopeId;
     ScopeId fileScope_ = invalidScopeId;
 
@@ -184,9 +219,11 @@ private:
     std::unordered_map<NodeId, SymbolId> qualifierSymbols_;
     std::unordered_map<NodeId, SymbolId> callTargets_;
     std::unordered_map<NodeId, size_t> deferredReferenceIndices_;
+    std::unordered_map<NodeId, std::vector<SymbolId>> extensionTypeParameters_;
     std::unordered_map<uint32_t, uint32_t> sourceModules_;
     std::unordered_map<uint32_t, bool> runtimeSources_;
     std::unordered_map<uint32_t, bool> coreSources_;
+    std::unordered_map<uint32_t, bool> preludeSources_;
     std::vector<std::string> moduleNames_;
     std::unordered_map<NodeId, bool> moduleQualified_;
 };

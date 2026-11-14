@@ -31,6 +31,7 @@ enum class DiagnosticId {
     labeledFunctionTypeParameter,
     missingFunctionTypeResult,
     parenthesizedType,
+    nestingTooDeep,
 };
 
 struct Diagnostic {
@@ -76,7 +77,10 @@ private:
 
 class Parser {
 public:
-    explicit Parser(const std::vector<Token::Ptr>& tokens);
+    // `intrinsicTypeArguments` admits `name<T>(...)` on the layout intrinsics (spec 20.12.5); only a
+    // toolchain-authorized unit sets it, and elsewhere `a < b > (c)` stays a comparison.
+    explicit Parser(const std::vector<Token::Ptr>& tokens, bool intrinsicTypeArguments = false,
+                    bool preludeAnnotations = false);
 
     ParseResult parse();
 
@@ -86,6 +90,29 @@ private:
         bool rightAssociative;
         bool nonAssociative;
         bool assignment;
+    };
+
+    // The deepest syntax tree the parser builds (parentheses, types, blocks, patterns and the operands
+    // chained by one operator all count). Later stages recurse over the tree, so a deeper one is
+    // reported instead of overflowing the compiler's stack.
+    static constexpr size_t maximumNesting = 100;
+
+    // Counts one level of nesting for the lifetime of the scope; `grow` counts one more, for a node that
+    // wraps the expression built so far. Past the limit it reports once and consumes the rest of the
+    // input, so every loop and recursion unwinds and no further diagnostic is added.
+    class NestingScope {
+    public:
+        // `countSelf` is false for a loop that only wraps (`grow`) and adds no level of its own.
+        explicit NestingScope(Parser& parser, bool countSelf = true);
+        ~NestingScope();
+        NestingScope(const NestingScope&) = delete;
+        NestingScope& operator=(const NestingScope&) = delete;
+        bool grow();
+        [[nodiscard]] bool ok() const;
+
+    private:
+        Parser& parser;
+        size_t depth = 0;
     };
 
     syntax::NodePtr parseTopLevelItem();
@@ -103,6 +130,11 @@ private:
     syntax::ParameterDeclSyntax::Ptr makeReceiverParameter(
             const Token::Ptr& effect, const Token::Ptr& anchor);
     syntax::ExtensionDeclSyntax::Ptr parseExtensionDecl();
+    // `protocol P { requirement* }` (spec 20.2). A requirement is parsed like a method whose body is
+    // optional; the type checker rejects a body.
+    syntax::ProtocolDeclSyntax::Ptr parseProtocolDecl();
+    // `<T: P & Q, U>` after a function name (spec 20.4).
+    std::vector<syntax::GenericParameterSyntax::Ptr> parseGenericParameters();
     syntax::ParameterDeclSyntax::Ptr parseParameter();
     syntax::StructDeclSyntax::Ptr parseStructDecl();
     syntax::StructFieldDeclSyntax::Ptr parseStructField();
@@ -131,6 +163,8 @@ private:
     syntax::ReturnExprSyntax::Ptr parseReturnExpr();
     syntax::MatchExprSyntax::Ptr parseMatchExpr();
     syntax::CallArgumentSyntax::Ptr parseCallArgument();
+    [[nodiscard]] bool atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const;
+    std::vector<syntax::TypePtr> parseIntrinsicTypeArguments();
     std::vector<syntax::CallArgumentSyntax::Ptr> parseArgumentClause();
 
     syntax::PatternPtr parsePattern();
@@ -180,11 +214,15 @@ private:
 
 private:
     TokenCursor cursor;
+    bool intrinsicTypeArguments;
+    bool preludeAnnotations;
     std::vector<Diagnostic> diagnostics;
     std::vector<TokenKind> activeClosers;
     // Declarations a for-in loop adds before its loop; the enclosing block takes them.
     std::vector<syntax::NodePtr> pendingItems;
     size_t forLoopCount = 0;
+    size_t nesting = 0;
+    bool nestingExceeded = false;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

@@ -1,0 +1,3 @@
+func duplicate<T>(value: T) {
+    let copy = value
+}

@@ -1,0 +1,186 @@
+@c_extern(symbol: "joyeer_alloc")
+private func allocate(size: Int): Int
+
+@c_extern(symbol: "joyeer_free")
+private func release(address: Int, size: Int): Void
+
+@c_extern(symbol: "joyeer_panic")
+private func panic(message: Int): Never
+
+@c_extern(symbol: "joyeer_intrinsic_literal_address")
+private func literalAddress(text: String): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+private func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+private func store64(address: Int, value: UInt64): Void
+
+@c_extern(symbol: "joyeer_intrinsic_memset")
+private func zero(address: Int, value: UInt8, count: Int): Void
+
+@c_extern(symbol: "joyeer_thread_start_abi")
+private func startThread(thread: Int, entry: Int, argument: Int): Int
+
+@c_extern(symbol: "joyeer_thread_join_abi")
+private func joinThread(thread: Int): Int
+
+@c_extern(symbol: "joyeer_channel_create_abi")
+private func createChannel(capacity: Int, stride: Int, alignment: Int, destroy: Int,
+        sender: Int, receiver: Int): Int
+
+@c_extern(symbol: "joyeer_channel_send_abi")
+private func sendChannel(end: Int, value: Int): Int
+
+@c_extern(symbol: "joyeer_channel_receive_abi")
+private func receiveChannel(end: Int, value: Int): Int
+
+@c_extern(symbol: "joyeer_channel_close_abi")
+private func closeChannel(end: Int): Void
+
+@compiler_transfer()
+private struct TaskBlock<R> {
+    var address: Int
+
+    deinit() {
+        if self.address != 0 {
+            panic(message: literalAddress(text: "task dropped without join"))
+        }
+    }
+}
+
+@compiler_transfer()
+@compiler_role(task_handle)
+public linear struct JoinHandle<R> {
+    private var storage: TaskBlock<R>
+
+    @compiler_role(stored_consumer)
+    public consuming func join(): R {
+        var block = consume self.storage
+        if joinThread(thread: block.address) < 0 {
+            panic(message: literalAddress(text: "cannot join task"))
+        }
+        let alignment = joyeer_intrinsic_align_of<R>()
+        let offset = (136 + alignment - 1) / alignment * alignment
+        let answer = joyeer_intrinsic_move_out<R>(address: block.address + offset)
+        let size = load64(address: block.address + 128) as Int
+        release(address: block.address, size: size)
+        block.address = 0
+        return answer
+    }
+}
+
+// The result offset depends only on R, so join does not need the input's layout.
+@compiler_transfer()
+private func taskEntry<I, R>(block: consuming Int): Void {
+    let resultAlignment = joyeer_intrinsic_align_of<R>()
+    let resultOffset = (136 + resultAlignment - 1) / resultAlignment * resultAlignment
+    let functionAlignment = joyeer_intrinsic_align_of<(consuming I): R>()
+    let functionOffset = (resultOffset + joyeer_intrinsic_size_of<R>() + functionAlignment - 1) /
+            functionAlignment * functionAlignment
+    let inputAlignment = joyeer_intrinsic_align_of<I>()
+    let inputOffset = (functionOffset + joyeer_intrinsic_size_of<(consuming I): R>() + inputAlignment - 1) /
+            inputAlignment * inputAlignment
+    let function = joyeer_intrinsic_move_out<(consuming I): R>(address: block + functionOffset)
+    let input = joyeer_intrinsic_move_out<I>(address: block + inputOffset)
+    let answer = function(consume input)
+    joyeer_intrinsic_move_in<R>(address: block + resultOffset, value: consume answer)
+}
+
+@compiler_transfer()
+@compiler_role(task_start)
+public func spawn<I, R>(function: (consuming I): R, input: consuming I): JoinHandle<R> {
+    let resultAlignment = joyeer_intrinsic_align_of<R>()
+    let resultOffset = (136 + resultAlignment - 1) / resultAlignment * resultAlignment
+    let functionAlignment = joyeer_intrinsic_align_of<(consuming I): R>()
+    let functionOffset = (resultOffset + joyeer_intrinsic_size_of<R>() + functionAlignment - 1) /
+            functionAlignment * functionAlignment
+    let inputAlignment = joyeer_intrinsic_align_of<I>()
+    let inputOffset = (functionOffset + joyeer_intrinsic_size_of<(consuming I): R>() + inputAlignment - 1) /
+            inputAlignment * inputAlignment
+    let size = inputOffset + joyeer_intrinsic_size_of<I>()
+    let block = allocate(size: size)
+    zero(address: block, value: 0, count: 128)
+    store64(address: block + 128, value: size as UInt64)
+    let target = function
+    joyeer_intrinsic_move_in<(consuming I): R>(address: block + functionOffset, value: consume target)
+    joyeer_intrinsic_move_in<I>(address: block + inputOffset, value: consume input)
+    let entry = joyeer_intrinsic_callback_address<I, R>(function: taskEntry)
+    let status = startThread(thread: block, entry: entry, argument: block)
+    if status == 0 - 1073741824 { panic(message: literalAddress(text: "too many tasks")) }
+    if status < 0 { panic(message: literalAddress(text: "cannot start task")) }
+    let storage: TaskBlock<R> = TaskBlock(address: block)
+    return JoinHandle(storage: consume storage)
+}
+
+public enum ChannelClosed {
+    Closed
+}
+
+@compiler_role(channel_sender)
+public struct ChannelSender<T> {
+    private var handle: Int
+
+    deinit() {
+        closeChannel(end: self.handle)
+    }
+
+    public func send(value: consuming T): Result<Void, ChannelClosed> {
+        let address = joyeer_intrinsic_stack_slot<T>()
+        joyeer_intrinsic_move_in<T>(address: address, value: consume value)
+        if sendChannel(end: self.handle, value: address) == 0 {
+            joyeer_intrinsic_destroy_at<T>(address: address)
+            return .Err(.Closed)
+        }
+        return .Ok(())
+    }
+
+    @compiler_role(stored_consumer)
+    public consuming func close(): Void {
+        closeChannel(end: self.handle)
+        &self.handle = 0
+    }
+}
+
+@compiler_role(channel_receiver)
+public struct ChannelReceiver<T> {
+    private var handle: Int
+
+    deinit() {
+        closeChannel(end: self.handle)
+    }
+
+    public func receive(): Result<T, ChannelClosed> {
+        let address = joyeer_intrinsic_stack_slot<T>()
+        if receiveChannel(end: self.handle, value: address) == 0 {
+            return .Err(.Closed)
+        }
+        return .Ok(joyeer_intrinsic_move_out<T>(address: address))
+    }
+
+    @compiler_role(stored_consumer)
+    public consuming func close(): Void {
+        closeChannel(end: self.handle)
+        &self.handle = 0
+    }
+}
+
+private func destroyElement<T>(address: consuming Int): Void {
+    joyeer_intrinsic_destroy_at<T>(address: address)
+}
+
+@compiler_role(channel_create)
+public func channel<T>(capacity: Int, sender: initializing ChannelSender<T>,
+        receiver: initializing ChannelReceiver<T>): Void {
+    let senderSlot = joyeer_intrinsic_stack_slot<Int>()
+    let receiverSlot = joyeer_intrinsic_stack_slot<Int>()
+    var destroy = 0
+    if joyeer_intrinsic_needs_destroy<T>() {
+        destroy = joyeer_intrinsic_callback_address<T>(function: destroyElement)
+    }
+    createChannel(capacity: capacity, stride: joyeer_intrinsic_size_of<T>(),
+            alignment: joyeer_intrinsic_align_of<T>(), destroy: destroy,
+            sender: senderSlot, receiver: receiverSlot)
+    &sender = ChannelSender(handle: load64(address: senderSlot) as Int)
+    &receiver = ChannelReceiver(handle: load64(address: receiverSlot) as Int)
+}

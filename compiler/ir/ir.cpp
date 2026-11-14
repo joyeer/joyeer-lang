@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cmath>
 #include <functional>
+#include <map>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -68,10 +69,6 @@ bool producesValue(Opcode opcode) {
         case Opcode::constructStruct:
         case Opcode::constructArray:
         case Opcode::arrayRemoveLast:
-        case Opcode::taskSpawn:
-        case Opcode::taskJoin:
-        case Opcode::channelSend:
-        case Opcode::channelReceive:
         case Opcode::constructDictionary:
         case Opcode::dictionaryGet:
         case Opcode::fieldAddress:
@@ -84,6 +81,10 @@ bool producesValue(Opcode opcode) {
         case Opcode::subscript:
         case Opcode::subscriptAddress:
         case Opcode::functionAddress:
+        case Opcode::typeSize:
+        case Opcode::typeAlignment:
+        case Opcode::integerAddress:
+        case Opcode::pointerToInteger:
             return true;
         default:
             return false;
@@ -190,9 +191,6 @@ DestructionAnalysis::DestructionAnalysis(const Module& module) {
             case typing::TypeKind::string:
             case typing::TypeKind::array:
             case typing::TypeKind::dictionary:
-            case typing::TypeKind::task:
-            case typing::TypeKind::channelSender:
-            case typing::TypeKind::channelReceiver:
                 result = true;
                 break;
             case typing::TypeKind::structure: {
@@ -394,6 +392,14 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
     for (const auto& type : module.types) {
+        if (type.kind == typing::TypeKind::typeParameter) {
+            report(
+                    VerificationErrorId::typeMismatch,
+                    std::nullopt,
+                    std::nullopt,
+                    std::nullopt,
+                    "type parameter '" + type.name + "' must be substituted before IR lowering");
+        }
         for (const auto argument : type.arguments) {
             if (!types.contains(argument)) {
                 report(
@@ -427,9 +433,66 @@ VerificationResult Verifier::verify(const Module& module) const {
         }
     }
 
-    std::unordered_map<TypeId, const StructureDefinition*> structures;
-    std::unordered_map<semantic::SymbolId, const FieldDefinition*> fields;
+    std::unordered_map<TypeId, std::vector<TypeId>> copyDependents;
+    std::unordered_set<TypeId> noncopyableTypes;
+    std::vector<TypeId> pendingNoncopyable;
+    for (const auto& type : module.types) {
+        if (type.kind == typing::TypeKind::array || type.kind == typing::TypeKind::dictionary ||
+            type.kind == typing::TypeKind::optional || type.kind == typing::TypeKind::result) {
+            for (const auto argument : type.arguments) copyDependents[argument].push_back(type.id);
+        }
+    }
     for (const auto& structure : module.structures) {
+        if (structure.deinitializer.has_value() && noncopyableTypes.insert(structure.type).second) {
+            pendingNoncopyable.push_back(structure.type);
+        }
+        for (const auto& field : structure.fields) copyDependents[field.type].push_back(structure.type);
+    }
+    for (const auto& enumeration : module.enumerations) {
+        for (const auto& element : enumeration.cases) {
+            for (const auto payload : element.payloadTypes) copyDependents[payload].push_back(enumeration.type);
+        }
+    }
+    for (size_t index = 0; index < pendingNoncopyable.size(); ++index) {
+        for (const auto dependent : copyDependents[pendingNoncopyable[index]]) {
+            if (noncopyableTypes.insert(dependent).second) pendingNoncopyable.push_back(dependent);
+        }
+    }
+
+    std::unordered_map<TypeId, std::vector<TypeId>> typeDependents;
+    std::unordered_set<TypeId> nonConcreteTypes;
+    std::vector<TypeId> pendingTypes;
+    for (const auto& type : module.types) {
+        for (const auto argument : type.arguments) typeDependents[argument].push_back(type.id);
+        if (type.kind == typing::TypeKind::error || type.kind == typing::TypeKind::typeParameter) {
+            if (nonConcreteTypes.insert(type.id).second) pendingTypes.push_back(type.id);
+        }
+    }
+    for (size_t next = 0; next < pendingTypes.size(); ++next) {
+        const auto dependents = typeDependents.find(pendingTypes[next]);
+        if (dependents == typeDependents.end()) continue;
+        for (const auto dependent : dependents->second) {
+            if (nonConcreteTypes.insert(dependent).second) pendingTypes.push_back(dependent);
+        }
+    }
+    const auto verifyConcreteType = [&](TypeId type,
+                                        std::optional<FunctionId> function,
+                                        std::optional<BlockId> block,
+                                        std::optional<size_t> instruction,
+                                        const std::string& owner) {
+        if (!nonConcreteTypes.contains(type)) return;
+        report(VerificationErrorId::typeMismatch, function, block, instruction,
+               owner + " uses non-concrete type '" + types.at(type)->name + "'");
+    };
+    for (const auto& constant : module.constants) {
+        verifyConcreteType(constant.type, std::nullopt, std::nullopt, std::nullopt, "constant");
+    }
+
+    std::unordered_map<TypeId, const StructureDefinition*> structures;
+    // A field symbol repeats across the instances of a generic type (spec 20.12), so it is unique per structure.
+    std::map<std::pair<TypeId, semantic::SymbolId>, const FieldDefinition*> fields;
+    for (const auto& structure : module.structures) {
+        verifyConcreteType(structure.type, std::nullopt, std::nullopt, std::nullopt, "structure");
         if (!types.contains(structure.type)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -448,6 +511,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                             std::to_string(structure.type));
         }
         for (const auto& field : structure.fields) {
+            verifyConcreteType(field.type, std::nullopt, std::nullopt, std::nullopt,
+                               "field '" + field.name + "'");
             if (!types.contains(field.type)) {
                 report(
                         VerificationErrorId::invalidReference,
@@ -472,7 +537,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                 }
             }
             if (field.symbol != semantic::invalidSymbolId &&
-                !fields.emplace(field.symbol, &field).second) {
+                !fields.emplace(std::pair { structure.type, field.symbol }, &field).second) {
                 report(
                         VerificationErrorId::duplicateId,
                         std::nullopt,
@@ -485,6 +550,7 @@ VerificationResult Verifier::verify(const Module& module) const {
 
     std::unordered_map<TypeId, const EnumerationDefinition*> enumerations;
     for (const auto& enumeration : module.enumerations) {
+        verifyConcreteType(enumeration.type, std::nullopt, std::nullopt, std::nullopt, "enumeration");
         if (!types.contains(enumeration.type)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -515,6 +581,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                                 std::to_string(enumeration.type));
             }
             for (const auto payloadType : enumCase.payloadTypes) {
+                verifyConcreteType(payloadType, std::nullopt, std::nullopt, std::nullopt,
+                                   "enum case '" + enumCase.name + "'");
                 if (!types.contains(payloadType)) {
                     report(
                             VerificationErrorId::invalidReference,
@@ -673,6 +741,8 @@ VerificationResult Verifier::verify(const Module& module) const {
     std::unordered_map<DebugVariableId, const DebugVariable*> debugVariables;
     std::unordered_map<FunctionId, std::unordered_set<uint32_t>> parameterIndices;
     for (const auto& variable : module.debugVariables) {
+        verifyConcreteType(variable.type, variable.function, std::nullopt, std::nullopt,
+                           "debug variable '" + variable.name + "'");
         if (!debugVariables.emplace(variable.id, &variable).second) {
             report(
                     VerificationErrorId::duplicateId,
@@ -952,6 +1022,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                         "function location does not reference its root debug scope");
                     }
         }
+        verifyConcreteType(function.resultType, functionId, std::nullopt, std::nullopt, "function result");
         if (!types.contains(function.resultType)) {
             report(
                     VerificationErrorId::invalidReference,
@@ -964,6 +1035,8 @@ VerificationResult Verifier::verify(const Module& module) const {
 
         std::unordered_map<ValueId, Value> values;
         for (const auto& parameter : function.parameters) {
+            verifyConcreteType(parameter.value.type, functionId, std::nullopt, std::nullopt,
+                               "parameter '" + parameter.name + "'");
             if (!types.contains(parameter.value.type)) {
                 report(
                         VerificationErrorId::invalidReference,
@@ -1098,6 +1171,7 @@ VerificationResult Verifier::verify(const Module& module) const {
                     }
                 }
                 if (!instruction.result.has_value()) continue;
+                verifyConcreteType(instruction.result->type, functionId, block.id, index, "instruction result");
                 if (!types.contains(instruction.result->type)) {
                     report(
                             VerificationErrorId::invalidReference,
@@ -1473,6 +1547,104 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
+                    case Opcode::typeSize:
+                    case Opcode::typeAlignment: {
+                        requireShape(0, 0);
+                        const auto queried = static_cast<TypeId>(instruction.integerValue);
+                        const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type) : nullptr;
+                        if (!types.contains(queried) || result == nullptr ||
+                            result->kind != typing::TypeKind::integer ||
+                            instruction.result->category != ValueCategory::value) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "a size or alignment query names a known type and yields an Int");
+                        } else if (nonConcreteTypes.contains(queried) ||
+                                   types.at(queried)->kind == typing::TypeKind::never) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "a size or alignment query needs a concrete type with values, not '" +
+                                            types.at(queried)->name + "'");
+                        }
+                        if (!function.runtimeContext) {
+                            report(
+                                    VerificationErrorId::callMismatch,
+                                    functionId, block.id, location,
+                                    "a layout query requires runtime authorization");
+                        }
+                        break;
+                    }
+                    case Opcode::integerAddress: {
+                        const auto* source = requireShape(1, 0) && operands[0] != nullptr && types.contains(operands[0]->type)
+                                ? types.at(operands[0]->type) : nullptr;
+                        if (source == nullptr || source->kind != typing::TypeKind::integer ||
+                            operands[0]->category != ValueCategory::value ||
+                            !instruction.result.has_value() ||
+                            instruction.result->category != ValueCategory::address ||
+                            !types.contains(instruction.result->type)) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "an integer address takes an Int and yields the address of a known type");
+                        } else if (types.at(instruction.result->type)->kind == typing::TypeKind::never) {
+                            report(
+                                    VerificationErrorId::typeMismatch,
+                                    functionId, block.id, location,
+                                    "an integer address cannot address a slot of 'Never'");
+                        }
+                        if (!function.runtimeContext) {
+                            report(
+                                    VerificationErrorId::callMismatch,
+                                    functionId, block.id, location,
+                                    "an integer address requires runtime authorization");
+                        }
+                        break;
+                    }
+                    case Opcode::pointerToInteger: {
+                        const auto* source = requireShape(1, 0) && operands[0] != nullptr &&
+                                types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
+                        const auto* result = instruction.result.has_value() && types.contains(instruction.result->type)
+                                ? types.at(instruction.result->type) : nullptr;
+                        if (source == nullptr || result == nullptr || result->kind != typing::TypeKind::integer ||
+                            instruction.result->category != ValueCategory::value ||
+                            (operands[0]->category != ValueCategory::address &&
+                             source->kind != typing::TypeKind::function)) {
+                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
+                                   "a pointer conversion takes a typed slot or function address and yields an Int");
+                        }
+                        if (!function.runtimeContext) {
+                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                   "a pointer conversion requires runtime authorization");
+                        }
+                        if (source != nullptr && operands[0]->category == ValueCategory::value &&
+                            source->kind == typing::TypeKind::function) {
+                            const auto definition = valueDefinitions.find(operands[0]->id);
+                            const auto definingBlock = definition == valueDefinitions.end() ? blocks.end()
+                                    : blocks.find(definition->second.first);
+                            const auto* address = definingBlock != blocks.end() &&
+                                    definition->second.second < definingBlock->second->instructions.size()
+                                    ? &definingBlock->second->instructions[definition->second.second] : nullptr;
+                            const auto callee = address != nullptr && address->opcode == Opcode::functionAddress &&
+                                    address->callee.has_value() ? functions.find(*address->callee) : functions.end();
+                            const bool matches = source->arguments.size() == 2 &&
+                                    source->effects == std::vector<syntax::AccessEffect> {syntax::AccessEffect::consuming} &&
+                                    types.contains(source->arguments[0]) &&
+                                    types.at(source->arguments[0])->kind == typing::TypeKind::integer &&
+                                    types.contains(source->arguments[1]) &&
+                                    types.at(source->arguments[1])->kind == typing::TypeKind::voidType &&
+                                    callee != functions.end() && callee->second->runtimeContext &&
+                                    !callee->second->nativeBinding.has_value() && !callee->second->isExternal &&
+                                    !callee->second->returnsValue;
+                            if (!matches) {
+                                report(VerificationErrorId::callMismatch, functionId, block.id, location,
+                                       "a runtime callback address requires a named authorized Joyeer "
+                                       "function with one consuming Int parameter and a Void result");
+                            }
+                        }
+                        break;
+                    }
                     case Opcode::integerFits:
                         if (requireShape(1, 0) && operands[0] != nullptr &&
                             instruction.result.has_value()) {
@@ -1621,6 +1793,11 @@ VerificationResult Verifier::verify(const Module& module) const {
                                     block.id,
                                     location,
                                     "copied value and result types must match");
+                        }
+                        if (!operands.empty() && operands[0] != nullptr &&
+                            noncopyableTypes.contains(operands[0]->type)) {
+                            report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                   "copy cannot duplicate a noncopyable deinit owner or a value containing one");
                         }
                         break;
                     case Opcode::take:
@@ -2055,130 +2232,6 @@ VerificationResult Verifier::verify(const Module& module) const {
                         }
                         break;
                     }
-                    case Opcode::taskSpawn: {
-                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
-                        const auto* taskType = instruction.result.has_value() && types.contains(instruction.result->type)
-                                ? types.at(instruction.result->type)
-                                : nullptr;
-                        if (!knownCallee) {
-                            report(VerificationErrorId::invalidReference, functionId, block.id, location,
-                                   "task_spawn references an unknown function");
-                            break;
-                        }
-                        const auto& callee = *functions.at(*instruction.callee);
-                        // The target is a Joyeer function with exactly one consuming parameter; the
-                        // handle's argument is the target's result (Void when it returns nothing).
-                        const bool matches = !callee.isExternal && !callee.nativeBinding.has_value() &&
-                                callee.parameters.size() == 1 && callee.parameters[0].isConsuming &&
-                                callee.parameters[0].value.category == ValueCategory::value &&
-                                operands[0]->category == ValueCategory::value &&
-                                operands[0]->type == callee.parameters[0].value.type &&
-                                taskType != nullptr && taskType->kind == typing::TypeKind::task &&
-                                taskType->arguments.size() == 1 &&
-                                instruction.result->category == ValueCategory::value &&
-                                (callee.returnsValue ? taskType->arguments[0] == callee.resultType
-                                                     : types.contains(taskType->arguments[0]) &&
-                                                       types.at(taskType->arguments[0])->kind == typing::TypeKind::voidType);
-                        if (!matches) {
-                            report(VerificationErrorId::callMismatch, functionId, block.id, location,
-                                   "task_spawn requires a Joyeer function with one consuming parameter matching its operand and a task of its result type");
-                        }
-                        break;
-                    }
-                    case Opcode::channelCreate: {
-                        if (!requireShape(3, 0) || operands[0] == nullptr || operands[1] == nullptr ||
-                            operands[2] == nullptr) {
-                            break;
-                        }
-                        const auto* senderType = types.contains(operands[1]->type) ? types.at(operands[1]->type) : nullptr;
-                        const auto* receiverType = types.contains(operands[2]->type) ? types.at(operands[2]->type) : nullptr;
-                        const auto* capacityType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
-                        if (operands[0]->category != ValueCategory::value || capacityType == nullptr ||
-                            capacityType->kind != typing::TypeKind::integer ||
-                            operands[1]->category != ValueCategory::address ||
-                            operands[2]->category != ValueCategory::address ||
-                            senderType == nullptr || receiverType == nullptr ||
-                            senderType->kind != typing::TypeKind::channelSender ||
-                            receiverType->kind != typing::TypeKind::channelReceiver ||
-                            senderType->arguments.size() != 1 || receiverType->arguments.size() != 1 ||
-                            senderType->arguments[0] != receiverType->arguments[0]) {
-                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                                   "channel_create requires an Int capacity and the addresses of a sender and a receiver of one element type");
-                        }
-                        break;
-                    }
-                    case Opcode::channelSend: {
-                        if (!requireShape(2, 0) || operands[0] == nullptr || operands[1] == nullptr) break;
-                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
-                        const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
-                                ? types.at(instruction.result->type)
-                                : nullptr;
-                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
-                            endType->kind != typing::TypeKind::channelSender || endType->arguments.size() != 1 ||
-                            operands[1]->category != ValueCategory::value ||
-                            operands[1]->type != endType->arguments[0] ||
-                            !instruction.result.has_value() || resultType == nullptr ||
-                            resultType->kind != typing::TypeKind::result || resultType->arguments.size() != 2 ||
-                            instruction.result->category != ValueCategory::value ||
-                            !types.contains(resultType->arguments[0]) ||
-                            types.at(resultType->arguments[0])->kind != typing::TypeKind::voidType ||
-                            !types.contains(resultType->arguments[1]) ||
-                            types.at(resultType->arguments[1])->kind != typing::TypeKind::enumeration ||
-                            types.at(resultType->arguments[1])->name != "ChannelClosed") {
-                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                                   "channel_send requires a sender address, a value of its element type, and a Result of Void");
-                        }
-                        break;
-                    }
-                    case Opcode::channelReceive: {
-                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
-                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
-                        const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
-                                ? types.at(instruction.result->type)
-                                : nullptr;
-                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
-                            endType->kind != typing::TypeKind::channelReceiver || endType->arguments.size() != 1 ||
-                            !instruction.result.has_value() || resultType == nullptr ||
-                            resultType->kind != typing::TypeKind::result || resultType->arguments.size() != 2 ||
-                            instruction.result->category != ValueCategory::value ||
-                            resultType->arguments[0] != endType->arguments[0] ||
-                            !types.contains(resultType->arguments[1]) ||
-                            types.at(resultType->arguments[1])->kind != typing::TypeKind::enumeration ||
-                            types.at(resultType->arguments[1])->name != "ChannelClosed") {
-                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                                   "channel_receive requires a receiver address and a Result of its element type");
-                        }
-                        break;
-                    }
-                    case Opcode::channelClose: {
-                        if (!requireShape(1, 0) || operands[0] == nullptr) break;
-                        const auto* endType = types.contains(operands[0]->type) ? types.at(operands[0]->type) : nullptr;
-                        if (operands[0]->category != ValueCategory::address || endType == nullptr ||
-                            (endType->kind != typing::TypeKind::channelSender &&
-                             endType->kind != typing::TypeKind::channelReceiver)) {
-                            report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                                   "channel_close requires the address of a channel end");
-                        }
-                        break;
-                    }
-                    case Opcode::taskJoin:
-                        if (requireShape(1, 0) && operands[0] != nullptr) {
-                            const auto* taskType = types.contains(operands[0]->type)
-                                    ? types.at(operands[0]->type)
-                                    : nullptr;
-                            const auto* resultType = instruction.result.has_value() && types.contains(instruction.result->type)
-                                    ? types.at(instruction.result->type)
-                                    : nullptr;
-                            if (operands[0]->category != ValueCategory::address || taskType == nullptr ||
-                                taskType->kind != typing::TypeKind::task || taskType->arguments.size() != 1 ||
-                                !instruction.result.has_value() || resultType == nullptr ||
-                                instruction.result->category != ValueCategory::value ||
-                                instruction.result->type != taskType->arguments[0]) {
-                                report(VerificationErrorId::typeMismatch, functionId, block.id, location,
-                                       "task_join requires a task handle address and yields the task's result type");
-                            }
-                        }
-                        break;
                     case Opcode::arrayConsumeEmpty:
                         if (requireShape(1, 0) && operands[0] != nullptr) {
                             const auto* arrayType = types.contains(operands[0]->type)
@@ -2615,6 +2668,10 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::convertWrapping: return "convert_wrapping";
         case Opcode::constantValue: return "constant";
         case Opcode::integerFits: return "fits";
+        case Opcode::typeSize: return "type_size";
+        case Opcode::typeAlignment: return "type_alignment";
+        case Opcode::integerAddress: return "integer_address";
+        case Opcode::pointerToInteger: return "pointer_to_integer";
         case Opcode::call: return "call";
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
@@ -2623,12 +2680,6 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::arrayAppend: return "array_append";
         case Opcode::arrayRemoveLast: return "array_remove_last";
         case Opcode::arrayConsumeEmpty: return "array_consume_empty";
-        case Opcode::taskSpawn: return "task_spawn";
-        case Opcode::taskJoin: return "task_join";
-        case Opcode::channelCreate: return "channel_create";
-        case Opcode::channelSend: return "channel_send";
-        case Opcode::channelReceive: return "channel_receive";
-        case Opcode::channelClose: return "channel_close";
         case Opcode::constructDictionary: return "construct_dictionary";
         case Opcode::dictionarySet: return "dictionary_set";
         case Opcode::dictionaryGet: return "dictionary_get";
@@ -2873,6 +2924,14 @@ std::string dump(const Module& module) {
                         out << ' ' << valueName(instruction.operands[0]) << " in type "
                             << instruction.integerValue;
                         break;
+                    case Opcode::typeSize:
+                    case Opcode::typeAlignment:
+                        out << " of type " << instruction.integerValue;
+                        break;
+                    case Opcode::integerAddress:
+                    case Opcode::pointerToInteger:
+                        out << ' ' << valueName(instruction.operands[0]);
+                        break;
                     case Opcode::stringConstant:
                         out << " \"" << escape(instruction.text) << "\"";
                         break;
@@ -2895,11 +2954,6 @@ std::string dump(const Module& module) {
                         break;
                     case Opcode::arrayRemoveLast:
                     case Opcode::arrayConsumeEmpty:
-                    case Opcode::taskJoin:
-                    case Opcode::channelCreate:
-                    case Opcode::channelSend:
-                    case Opcode::channelReceive:
-                    case Opcode::channelClose:
                     case Opcode::store:
                     case Opcode::arrayAppend:
                     case Opcode::dictionarySet:
@@ -2935,7 +2989,6 @@ std::string dump(const Module& module) {
                         }
                         out << (instruction.operands.size() <= 1 ? "()" : ")");
                         break;
-                    case Opcode::taskSpawn:
                     case Opcode::call:
                         out << " @" << instruction.callee.value_or(invalidFunctionId) << '(';
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {

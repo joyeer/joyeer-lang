@@ -1,0 +1,24 @@
+protocol Counter {
+    func read(): Int
+    mutating func add(by amount: Int)
+    consuming func finish(): Int
+}
+
+protocol Named {
+    func name(): String
+}
+
+struct Tally {
+    var value: Int
+}
+
+extension Tally: Counter, Named {
+    func read(): Int { return self.value }
+    mutating func add(by amount: Int) { &self.value += amount }
+    consuming func finish(): Int { return self.value }
+    func name(): String { return "tally" }
+}
+
+func inspect<T: Counter & Named>(value: T): Int {
+    return value.read()
+}

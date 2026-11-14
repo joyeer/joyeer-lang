@@ -28,6 +28,7 @@ enum class NameResolutionDiagnosticId {
     invalidExtensionTarget,
     selfOutsideType,
     reservedName,
+    invalidPrelude,
 };
 
 struct ModuleInput {
@@ -36,6 +37,8 @@ struct ModuleInput {
     bool runtimeContext = false;
     // A core unit may use only scalars (spec 19.4.6); implies runtimeContext.
     bool coreContext = false;
+    // Set only by the compiler, never by --runtime-module.
+    bool preludeContext = false;
 };
 
 struct NameResolutionDiagnostic {
@@ -59,6 +62,10 @@ public:
             const syntax::SourceFileSyntax::Ptr& root) const;
     [[nodiscard]] NameResolutionResult resolve(
             const std::vector<ModuleInput>& modules) const;
+
+private:
+    [[nodiscard]] NameResolutionResult resolveWithPrelude(
+            std::vector<ModuleInput> modules, bool singleFile) const;
 };
 
 [[nodiscard]] std::vector<NameResolutionDiagnostic> validateCallArguments(

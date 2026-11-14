@@ -1,0 +1,93 @@
+// Runtime-only slots and address-only generic callback discovery (spec 20.12.5).
+@c_extern(symbol: "joyeer_intrinsic_call_void1")
+func invoke(target: Int, first: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_load_u64")
+func load64(address: Int): UInt64
+
+@c_extern(symbol: "joyeer_intrinsic_store_u64")
+func store64(address: Int, value: UInt64): Void
+
+// Inspect the actual creation ABI, not net allocation balance: trivial elements must supply
+// a null destroy callback, which keeps the real runtime out of its pending-close allocation path.
+@c_export(symbol: "joyeer_channel_create_abi")
+func createProbe(capacity: Int, stride: Int, alignment: Int, destroy: Int,
+        sender: Int, receiver: Int): Int {
+    if (capacity % 2 == 0) != (destroy != 0) { print(value: "wrong destroy callback") }
+    store64(address: sender, value: 16)
+    store64(address: receiver, value: 17)
+    return 0
+}
+
+@c_export(symbol: "joyeer_channel_send_abi")
+func sendProbe(end: Int, value: Int): Int { return 0 }
+
+@c_export(symbol: "joyeer_channel_receive_abi")
+func receiveProbe(end: Int, value: Int): Int { return 0 }
+
+@c_export(symbol: "joyeer_channel_close_abi")
+func closeProbe(end: Int): Void {
+    if end != 0 {
+        let counter = slot(index: 52)
+        store64(address: counter, value: load64(address: counter) + 1)
+    }
+}
+
+struct Token {
+    var value: Int
+
+    deinit() {
+        print(value: self.value)
+    }
+}
+
+func destroyValue<T>(address: consuming Int): Void {
+    joyeer_intrinsic_destroy_at<T>(address: address)
+}
+
+func exercise<T>(value: consuming T): Void {
+    let address = joyeer_intrinsic_stack_slot<T>()
+    joyeer_intrinsic_move_in<T>(address: address, value: consume value)
+    let callback = joyeer_intrinsic_callback_address<T>(function: destroyValue)
+    invoke(target: callback, first: address)
+}
+
+func creationABI(): Void {
+    var integers: ChannelSender<Int>
+    var integerInput: ChannelReceiver<Int>
+    channel(capacity: 1, sender: &integers, receiver: &integerInput)
+    var tokens: ChannelSender<Token>
+    var tokenInput: ChannelReceiver<Token>
+    channel(capacity: 2, sender: &tokens, receiver: &tokenInput)
+    var signals: ChannelSender<Void>
+    var signalInput: ChannelReceiver<Void>
+    channel(capacity: 3, sender: &signals, receiver: &signalInput)
+    var strings: ChannelSender<String>
+    var stringInput: ChannelReceiver<String>
+    channel(capacity: 4, sender: &strings, receiver: &stringInput)
+}
+
+func main() {
+    let closed = ChannelClosed.Closed
+    match closed { .Closed => () }
+    creationABI()
+    if load64(address: slot(index: 52)) != 8 { return }
+    if joyeer_intrinsic_needs_destroy<Int>() { return }
+    if joyeer_intrinsic_needs_destroy<Void>() { return }
+    if !joyeer_intrinsic_needs_destroy<String>() { return }
+    if !joyeer_intrinsic_needs_destroy<Token>() { return }
+    exercise(value: consume Token(value: 42))
+    var index = 0
+    while index < 10000 {
+        let address = joyeer_intrinsic_stack_slot<Int>()
+        joyeer_intrinsic_move_in<Int>(address: address, value: consume (index + 1))
+        let value = joyeer_intrinsic_move_out<Int>(address: address)
+        if value != index + 1 { return }
+        index = index + 1
+    }
+    exercise(value: consume ())
+    print(value: "generic callbacks passed")
+}

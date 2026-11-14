@@ -1,0 +1,20 @@
+import generic.library
+
+struct Ticket {
+    let number: Int
+
+    deinit() {
+        print(value: 99)
+    }
+}
+
+extension Ticket: generic.library.Readable {
+    func read(): Int {
+        return self.number
+    }
+}
+
+func main() {
+    let ticket = Ticket(number: 7)
+    print(value: generic.library.read(value: ticket))
+}

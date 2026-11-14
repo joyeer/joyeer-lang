@@ -1,0 +1,90 @@
+// Layout intrinsics (spec 20.12.5): size and alignment of a type, and moving a value into and out of
+// raw memory, including a noncopyable value whose deinit must run exactly once.
+@c_extern(symbol: "malloc")
+func allocate(size: UInt64): Int
+
+@c_extern(symbol: "free")
+func release(address: Int): Void
+
+@c_extern(symbol: "joyeer_intrinsic_static_slot")
+func slot(index: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_add")
+func atomicAdd(address: Int, value: Int): Int
+
+@c_extern(symbol: "joyeer_intrinsic_atomic_load")
+func atomicLoad(address: Int): Int
+
+struct Pair {
+    var first: Int
+    var second: UInt8
+}
+
+struct Token {
+    var id: Int
+
+    deinit() {
+        atomicAdd(address: slot(index: 50), value: 1)
+    }
+}
+
+struct Box<T> {
+    var inner: T
+}
+
+func sizeOf<T>(value: T): Int {
+    return joyeer_intrinsic_size_of<T>()
+}
+
+func roundTrip<T>(value: consuming T): T {
+    let block = allocate(size: joyeer_intrinsic_size_of<T>() as UInt64)
+    joyeer_intrinsic_move_in<T>(address: block, value: consume value)
+    let moved = joyeer_intrinsic_move_out<T>(address: block)
+    release(address: block)
+    return moved
+}
+
+func discard<T>(value: consuming T) {
+    let block = allocate(size: joyeer_intrinsic_size_of<T>() as UInt64)
+    joyeer_intrinsic_move_in<T>(address: block, value: consume value)
+    joyeer_intrinsic_destroy_at<T>(address: block)
+    release(address: block)
+}
+
+func exercise(): Int {
+    if joyeer_intrinsic_size_of<Int>() != 8 { return 1 }
+    if joyeer_intrinsic_align_of<Int>() != 8 { return 2 }
+    if joyeer_intrinsic_size_of<UInt8>() != 1 { return 3 }
+    if joyeer_intrinsic_size_of<Pair>() != 16 { return 4 }
+    if joyeer_intrinsic_align_of<Pair>() != 8 { return 5 }
+    if joyeer_intrinsic_size_of<Void>() != 0 { return 6 }
+    if joyeer_intrinsic_size_of<Box<Pair>>() != 16 { return 7 }
+    if sizeOf(value: 1.5) != 8 { return 8 }
+
+    let back = roundTrip(value: consume Pair(first: 41, second: 1))
+    if back.first != 41 { return 9 }
+
+    // A noncopyable value moved through memory is destroyed once, when its owner drops it.
+    let token = roundTrip(value: consume Token(id: 7))
+    if token.id != 7 { return 10 }
+    if atomicLoad(address: slot(index: 50)) != 0 { return 11 }
+
+    // A heap value (a String) and a Bool move through memory too.
+    let text = roundTrip(value: consume "hello")
+    if text.count != 5 { return 13 }
+    if joyeer_intrinsic_size_of<Bool>() != 1 { return 14 }
+
+    // destroy_at runs the deinit exactly once.
+    discard(value: consume Token(id: 8))
+    if atomicLoad(address: slot(index: 50)) != 1 { return 12 }
+    return 0
+}
+
+func main() {
+    let failure = exercise()
+    if failure != 0 {
+        print(value: failure)
+        return
+    }
+    print(value: "layout intrinsics passed")
+}

@@ -1,5 +1,10 @@
 add_subdirectory(backend)
 
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer")
+file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer" JOYEER_PRELUDE_SOURCE)
+configure_file(frontend/prelude_source.h.in generated/prelude_source.h @ONLY)
+
 # One private object target serves the compiler and its stage-specific tests.
 # Source directories describe responsibilities, not separately shipped libraries.
 add_library(JoyeerCompilerCore OBJECT
@@ -28,6 +33,8 @@ add_library(JoyeerCompilerCore OBJECT
 	frontend/parser.h
 	frontend/platform.cpp
 	frontend/platform.h
+	frontend/prelude.cpp
+	frontend/prelude.h
 	frontend/semantic.cpp
 	frontend/semantic.h
 	frontend/semanticanalysis.cpp
@@ -48,6 +55,7 @@ add_library(JoyeerCompilerCore OBJECT
 	ir/irlowering.h
 )
 target_include_directories(JoyeerCompilerCore PUBLIC ${JOYEER_SOURCE_DIR} ${JOYEER_RUNTIME_INCLUDE_DIR})
+target_include_directories(JoyeerCompilerCore PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(JoyeerCompilerCore PRIVATE JoyeerBackend)
 target_compile_definitions(JoyeerCompilerCore PRIVATE
 	JOYEER_RUNTIME_PATH="$<TARGET_FILE_NAME:JoyeerRuntime>"

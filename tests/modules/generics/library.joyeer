@@ -1,0 +1,7 @@
+public protocol Readable {
+    func read(): Int
+}
+
+public func read<T: Readable>(value: T): Int {
+    return value.read()
+}

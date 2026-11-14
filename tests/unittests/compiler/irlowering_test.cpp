@@ -144,6 +144,138 @@ TEST_F(IRLoweringTest, LowersMethodsAsFunctionsWithALeadingReceiverParameter) {
     EXPECT_EQ(entries, 0);
 }
 
+TEST_F(IRLoweringTest, GenericInstancesHaveConcreteTypesDirectWitnessCallsAndSourceScopes) {
+    ASSERT_NO_FATAL_FAILURE(lower(readFixture("type-checking/generics.joyeer")));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto verification = joyeer::ir::Verifier().verify(*result.module);
+    ASSERT_TRUE(verification.succeeded()) << joyeer::ir::dump(verification);
+    EXPECT_EQ(std::count_if(result.module->functions.begin(), result.module->functions.end(),
+            [](const auto& candidate) { return candidate.name == "read<Number>"; }), 1);
+    EXPECT_EQ(opcodeCount(function("read<Number>"), joyeer::ir::Opcode::call), 1u);
+    for (const auto& block : function("read<Number>").blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::call) continue;
+            ASSERT_TRUE(instruction.callee.has_value());
+            EXPECT_EQ(result.module->functions[*instruction.callee].name, "Number.read");
+            ASSERT_TRUE(instruction.debugLocation.has_value());
+            ASSERT_TRUE(instruction.debugLocation->scope.has_value());
+            EXPECT_EQ(result.module->debugScopes[*instruction.debugLocation->scope].function,
+                      function("read<Number>").id);
+        }
+    }
+    EXPECT_TRUE(std::none_of(result.module->types.begin(), result.module->types.end(),
+            [](const auto& type) { return type.kind == joyeer::typing::TypeKind::typeParameter; }));
+}
+
+TEST_F(IRLoweringTest, GenericConsumptionAndCopyableCopiesFollowTheCheckedBody) {
+    ASSERT_NO_FATAL_FAILURE(lower(
+            "struct Ticket { let n: Int\n    deinit() {} }\n"
+            "func identity<T>(value: consuming T): T { return value }\n"
+            "func duplicate<T: Copyable>(value: T): [T] { return [value, value] }\n"
+            "func main() { let a = identity(value: consume Ticket(n: 1))\n"
+            "let b = identity(value: consume 2)\nlet c = duplicate(value: \"x\") }\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("identity<Ticket>"), joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(function("identity<Int>"), joyeer::ir::Opcode::copyValue), 0u);
+    EXPECT_EQ(opcodeCount(function("duplicate<String>"), joyeer::ir::Opcode::copyValue), 2u);
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, VerifierRejectsATypeParameterEvenInAnUnusedTypeRecord) {
+    ASSERT_NO_FATAL_FAILURE(lower("func main() {}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    auto& type = result.module->types.emplace_back();
+    type.id = static_cast<joyeer::ir::TypeId>(result.module->types.size() - 1);
+    type.kind = joyeer::typing::TypeKind::typeParameter;
+    type.name = "T";
+    EXPECT_FALSE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, VerifierRejectsUsedGenericPlaceholdersAndTypesContainingThem) {
+    for (const auto nested : {false, true}) {
+        ASSERT_NO_FATAL_FAILURE(lower(
+                "func sink<T>(value: T) {}\nfunc main() { sink(value: 1) }\n"));
+        ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+        const auto placeholder = std::find_if(result.module->types.begin(), result.module->types.end(),
+                [](const auto& type) {
+                    return type.kind == joyeer::typing::TypeKind::error && type.name == "T";
+                });
+        ASSERT_NE(placeholder, result.module->types.end());
+        auto type = placeholder->id;
+        if (nested) {
+            const auto id = static_cast<joyeer::ir::TypeId>(result.module->types.size());
+            result.module->types.push_back({id, "[T]", joyeer::typing::TypeKind::array,
+                                           joyeer::semantic::invalidSymbolId, {type}});
+            type = id;
+        }
+        auto& main = result.module->functions[function("main").id];
+        joyeer::ir::Instruction allocation {joyeer::ir::Opcode::stackAllocate};
+        allocation.result = joyeer::ir::Value {1000000, type, joyeer::ir::ValueCategory::address};
+        main.blocks[0].instructions.insert(main.blocks[0].instructions.begin(), std::move(allocation));
+        const auto verification = joyeer::ir::Verifier().verify(*result.module);
+        EXPECT_FALSE(verification.succeeded());
+        EXPECT_TRUE(std::any_of(verification.errors.begin(), verification.errors.end(),
+                [](const auto& error) { return error.message.find("non-concrete type") != std::string::npos; }))
+                << joyeer::ir::dump(verification);
+    }
+}
+
+TEST_F(IRLoweringTest, GenericDependencyUsesTheRootTypesConformanceAndSourceFile) {
+    result = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer",
+          "import library\nstruct Number { let value: Int }\n"
+          "extension Number: library.Readable { func read(): Int { return self.value } }\n"
+          "func main() { print(value: library.read(value: Number(value: 7))) }\n" },
+        { "library", "library.joyeer",
+          "public protocol Readable { func read(): Int }\n"
+          "public func read<T: Readable>(value: T): Int { return value.read() }\n" },
+    });
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    const auto& instance = function("library.read<Number>");
+    ASSERT_TRUE(instance.debugLocation.has_value());
+    EXPECT_EQ(instance.debugLocation->span.sourceId, 1u);
+    for (const auto& block : instance.blocks) {
+        for (const auto& instruction : block.instructions) {
+            if (instruction.opcode != joyeer::ir::Opcode::call) continue;
+            ASSERT_TRUE(instruction.callee.has_value());
+            EXPECT_EQ(result.module->functions[*instruction.callee].name, "Number.read");
+        }
+    }
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
+}
+
+TEST_F(IRLoweringTest, DiscoversGenericCallsInMethodsAndDeinitializers) {
+    ASSERT_NO_FATAL_FAILURE(lower(
+            "func identity<T: Copyable>(value: T): T { return value }\n"
+            "struct Ticket {\n    let n: Int\n"
+            "    func read(): Int { return identity(value: self.n) }\n"
+            "    deinit() { print(value: identity(value: self.n)) }\n}\n"));
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(opcodeCount(function("Ticket.read"), joyeer::ir::Opcode::call), 1u);
+    EXPECT_EQ(opcodeCount(function("identity<Int>"), joyeer::ir::Opcode::copyValue), 0u);
+}
+
+TEST_F(IRLoweringTest, GenericInstanceNamesDisambiguatePrivateFunctionsAndTypeArguments) {
+    result = joyeer::testing::lowerGraph({
+        { "app", "main.joyeer",
+          "private struct Box { let value: Int }\n"
+          "func identity<T: Copyable>(value: T): T { return value }\n"
+          "private func helper<T: Copyable>(value: T): T { return value }\n"
+          "func main() { let box = identity(value: Box(value: 7))\n"
+          "print(value: helper(value: box.value)) }\n" },
+        { "app", "other.joyeer",
+          "private struct Box { let value: String }\n"
+          "private func helper<T: Copyable>(value: T): T { return value }\n"
+          "func other() { let box = identity(value: Box(value: \"x\"))\n"
+          "print(value: helper(value: box.value)) }\n" },
+    });
+    ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
+    EXPECT_EQ(function("app.identity<app.Box@0>").parameters.size(), 1u);
+    EXPECT_EQ(function("app.identity<app.Box@1>").parameters.size(), 1u);
+    EXPECT_EQ(function("app.helper@0<Int>").parameters.size(), 1u);
+    EXPECT_EQ(function("app.helper@1<String>").parameters.size(), 1u);
+}
+
 TEST_F(IRLoweringTest, LowersParametersOperatorsAndReturns) {
     lower(R"JOYEER(func add(left: Int, right: Int): Int {
 return left + right
@@ -561,7 +693,8 @@ TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
 TEST_F(IRLoweringTest, PreservesGraphSymbolIdentityAndFileLocalDebugSpans) {
     result = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    ASSERT_EQ(result.module->sourceFiles.size(), 3u);
+    ASSERT_EQ(result.module->sourceFiles.size(), 4u);
+    EXPECT_EQ(result.module->sourceFiles.back().fileName, "concurrency.joyeer");
     EXPECT_FALSE(result.module->sourceInfo.has_value());
     std::unordered_map<joyeer::semantic::SymbolId, joyeer::ir::FunctionId> symbols;
     size_t helpers = 0;
@@ -2007,47 +2140,42 @@ TEST_F(NewOpcodeVerifierTest, ArrayConsumeEmptyRejectsANonArrayATargetAndAnUnkno
 }
 
 
-// Tasks (spec 21): `spawn` lowers to one task_spawn naming the target and `join` to one task_join on the
-// handle's address; the verifier checks both against the target's signature.
-TEST_F(IRLoweringTest, SpawnAndJoinLowerToOneInstructionEach) {
+// Section 21 operations are ordinary source-library calls, including the typed target reference.
+TEST_F(IRLoweringTest, SpawnAndJoinLowerToLibraryCalls) {
     ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
                                   "func run(): Int {\n"
                                   "    let handle = spawn(function: square, input: consume 4)\n"
                                   "    return consume handle.join()\n"
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::taskSpawn), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::taskJoin), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 0u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::call), 2u);
+    EXPECT_EQ(opcodeCount(function("run"), joyeer::ir::Opcode::functionAddress), 1u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, TaskSpawnAndJoinAreCheckedAgainstTheTargetSignature) {
+TEST_F(NewOpcodeVerifierTest, TaskLibraryCallsAreCheckedAgainstOrdinarySignatures) {
     ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
                                   "func run(): Int {\n"
                                   "    let handle = spawn(function: square, input: consume 4)\n"
                                   "    return consume handle.join()\n"
                                   "}\n"));
     using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.clear();
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.callee = 987654;
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto& module) {
         instruction.result->type = typeNamed(module, "Int");
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto& module) {
-        instruction.result->type = typeNamed(module, "String");
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
+        module.functions[*instruction.callee].parameters[0].isConsuming = false;
     }));
 }
 
 
-TEST_F(NewOpcodeVerifierTest, TaskSpawnRejectsAMalformedTargetOrResult) {
+TEST_F(NewOpcodeVerifierTest, TaskReferencesRejectMalformedTargetsOrResults) {
     ASSERT_NO_FATAL_FAILURE(lower("func square(value: consuming Int): Int { return value * value }\n"
                                   "func run(): Int {\n"
                                   "    let handle = spawn(function: square, input: consume 4)\n"
@@ -2055,35 +2183,25 @@ TEST_F(NewOpcodeVerifierTest, TaskSpawnRejectsAMalformedTargetOrResult) {
                                   "}\n"));
     using joyeer::ir::Opcode;
     using joyeer::ir::ValueCategory;
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.result->category = ValueCategory::address;
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
-        module.functions[*instruction.callee].parameters[0].isConsuming = false;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
         module.functions[*instruction.callee].isExternal = true;
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
         module.functions[*instruction.callee].parameters.clear();
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
+    EXPECT_TRUE(rejects("run", Opcode::functionAddress, [](auto& instruction, auto& module) {
         module.functions[*instruction.callee].resultType = typeNamed(module, "String");
     }));
-    EXPECT_TRUE(rejects("run", Opcode::taskSpawn, [](auto& instruction, auto& module) {
-        module.functions[*instruction.callee].returnsValue = false;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
-        instruction.result->category = ValueCategory::address;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::taskJoin, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.result.reset();
     }));
 }
 
 
-// Channels (spec 21.9): one instruction per operation; the verifier checks the ends against each other.
-TEST_F(IRLoweringTest, ChannelOperationsLowerToOneInstructionEach) {
+TEST_F(IRLoweringTest, ChannelOperationsLowerToLibraryCalls) {
     ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
                                   "    var sender: ChannelSender<Int>\n"
                                   "    var receiver: ChannelReceiver<Int>\n"
@@ -2095,14 +2213,11 @@ TEST_F(IRLoweringTest, ChannelOperationsLowerToOneInstructionEach) {
                                   "}\n"));
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
     using joyeer::ir::Opcode;
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelCreate), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelSend), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelReceive), 1u);
-    EXPECT_EQ(opcodeCount(function("run"), Opcode::channelClose), 1u);
+    EXPECT_EQ(opcodeCount(function("run"), Opcode::call), 4u);
     EXPECT_TRUE(joyeer::ir::Verifier().verify(*result.module).succeeded());
 }
 
-TEST_F(NewOpcodeVerifierTest, ChannelInstructionsAreCheckedAgainstTheirEnds) {
+TEST_F(NewOpcodeVerifierTest, ChannelLibraryCallsAreCheckedAgainstTheirEnds) {
     ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
                                   "    var sender: ChannelSender<Int>\n"
                                   "    var receiver: ChannelReceiver<Int>\n"
@@ -2114,76 +2229,12 @@ TEST_F(NewOpcodeVerifierTest, ChannelInstructionsAreCheckedAgainstTheirEnds) {
                                   "}\n"));
     using joyeer::ir::Opcode;
     using joyeer::ir::ValueCategory;
-    EXPECT_TRUE(rejects("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         instruction.operands.pop_back();
     }));
-    EXPECT_TRUE(rejects("run", Opcode::channelCreate, [](auto& instruction, auto&) {
+    EXPECT_TRUE(rejects("run", Opcode::call, [](auto& instruction, auto&) {
         std::swap(instruction.operands[1], instruction.operands[2]);
     }));
-    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto&) {
-        instruction.operands.pop_back();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto& module) {
-        instruction.result->type = typeNamed(module, "Int");
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelSend, [](auto& instruction, auto&) {
-        instruction.result->category = ValueCategory::address;
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelReceive, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelReceive, [](auto& instruction, auto& module) {
-        instruction.result->type = typeNamed(module, "Int");
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelClose, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }));
-    EXPECT_TRUE(rejects("run", Opcode::channelClose, [](auto& instruction, auto&) {
-        instruction.operands.push_back(instruction.operands.at(0));
-    }));
-}
-
-
-// Each rule of the channel instructions, with the rule's own message asserted.
-TEST_F(NewOpcodeVerifierTest, EachChannelRuleFiresOnItsOwnMutation) {
-    ASSERT_NO_FATAL_FAILURE(lower("func run(): Int {\n"
-                                  "    var sender: ChannelSender<Int>\n"
-                                  "    var receiver: ChannelReceiver<Int>\n"
-                                  "    channel(capacity: 2, sender: &sender, receiver: &receiver)\n"
-                                  "    let sent = sender.send(value: consume 4)\n"
-                                  "    let got = receiver.receive()\n"
-                                  "    consume sender.close()\n"
-                                  "    return 0\n"
-                                  "}\n"));
-    using joyeer::ir::Opcode;
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelCreate, [](auto& instruction, auto&) {
-        std::swap(instruction.operands[1], instruction.operands[2]);
-    }, "channel_create requires"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelCreate, [](auto& instruction, auto&) {
-        instruction.operands.pop_back();
-    }, "channel_create expects 3 operand"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelSend, [](auto& instruction, auto&) {
-        instruction.operands.pop_back();
-    }, "channel_send expects 2 operand"));
-    // The error type of the result must be the one-case ChannelClosed: point it at Int.
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelSend, [](auto& instruction, auto& module) {
-        const auto intType = typeNamed(module, "Int");
-        std::find_if(module.types.begin(), module.types.end(), [&](auto& type) {
-            return type.id == instruction.result->type;
-        })->arguments[1] = intType;
-    }, "channel_send requires"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelReceive, [](auto& instruction, auto& module) {
-        const auto intType = typeNamed(module, "Int");
-        std::find_if(module.types.begin(), module.types.end(), [&](auto& type) {
-            return type.id == instruction.result->type;
-        })->arguments[1] = intType;
-    }, "channel_receive requires"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelReceive, [](auto& instruction, auto&) {
-        instruction.result.reset();
-    }, "channel_receive must define a result"));
-    EXPECT_TRUE(rejectsWith("run", Opcode::channelClose, [](auto& instruction, auto&) {
-        instruction.operands.clear();
-    }, "channel_close expects 1 operand"));
 }
 
 // Function values (decision 0020): a function named as a value lowers to one function_address, and a

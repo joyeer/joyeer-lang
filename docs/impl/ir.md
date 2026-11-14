@@ -114,6 +114,35 @@ This is intentionally allocation-based rather than SSA. LLVM's `mem2reg` can
 promote eligible slots after lowering, while source variables retain simple
 and debuggable semantics in the language IR.
 
+### Generic function instances
+
+The frontend checks each generic body once and caches concrete instances
+([decision 0021](../decisions/0021-protocols-and-generic-functions.md)).
+Lowering emits one function per instance, not a function for the generic
+declaration itself. It reads the same syntax with an instance substitution
+and resolves each protocol requirement to the concrete conformance's
+witness. Direct calls therefore remain ordinary `call` instructions.
+
+Every emitted type is concrete. Generic-only type-table entries become
+unusable error placeholders so canonical IDs stay stable; the verifier
+rejects an actual `typeParameter` record even when unused. Concrete types
+are interned before lowering snapshots the table.
+The verifier also rejects error-placeholder types, or types transitively
+containing them, in executable values, signatures, aggregate definitions,
+constants and debug variables; only unused placeholders may remain.
+
+Each instance has its own function/debug scopes and concrete local types;
+instruction spans still point to the generic source. Its display name,
+such as `totalArea<Square>`, uses the existing function `name` wire field.
+No wire layout or version change is needed. Disambiguating an instance's
+type arguments does not rename ordinary nominal types in debug information.
+
+Copy-versus-move decisions use the checked body's unsubstituted types.
+`prepareOwned` additionally rejects a resource-owning copy at a span that
+was noncopyable in that body. This lowering backstop does not check trivial
+values such as `Int`: they need no ownership instruction, and source-level
+copy restrictions are enforced by type checking.
+
 ---
 
 ## 3. Implemented instructions
@@ -135,6 +164,13 @@ The current instruction set covers:
   exact type, the operand count and categories, the result, and that a call (direct or indirect)
   returning `Never` is followed by `unreachable`. The backend lowers a function type to `ptr` and the call
   to one indirect call whose LLVM type comes from the same helper as every function definition;
+- layout intrinsics ([decision 0022](../decisions/0022-generic-types-and-layout-intrinsics.md)): `type_size` and
+  `type_alignment` yield an `Int` for the type in `integerValue`, as constant expressions the target's data layout
+  folds (the portable module has no layout), and `integer_address` turns an `Int` into the address of a slot of the
+  result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
+  runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
+  addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
+  the existing IR destruction analysis. The wire format version is 18;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
@@ -143,15 +179,9 @@ The current instruction set covers:
 - mutating `array_remove_last` with an addressable array receiver, giving `Optional<T>`;
 - `array_consume_empty` with an addressable array receiver and no result: traps unless the array is
   empty, then frees its storage and zeroes the handle (`consume a.consumeEmpty()`);
-- `task_spawn` (the target function and one moved input, yielding a `JoinHandle<R>`) and `task_join` (a
-  handle address, yielding `R`): the backend allocates one block per task (zeroed 128-byte thread record,
-  block size, result, input), emits a thunk per target, starts the thread through the runtime thread
-  API, and `task_join` waits, moves the result out, frees the block and zeroes the handle (decision 0018);
-- `channel_create` (a capacity and the addresses of a sender and a receiver of one element type),
-  `channel_send` (a sender address and a moved value, yielding `Result<Void, ChannelClosed>`; the backend
-  destroys the value when the receiver is closed), `channel_receive` (a receiver address, yielding
-  `Result<T, ChannelClosed>`) and `channel_close` (an end address, zeroed afterwards), lowered to the
-  `joyeer_channel_*_abi` runtime calls (decision 0019);
+- ordinary source calls for task/channel APIs ([0023](../decisions/0023-library-concurrency.md)).
+  Their concrete structs, `deinit` methods, result construction, raw typed moves and callback
+  references use the same operations as other library code. There are no concurrency opcodes;
 - inserting/updating `dictionary_set` with an addressable receiver and
   transferred key/value;
 - `dictionary_get` with borrowed dictionary/key values and an owned
@@ -286,6 +316,8 @@ plus case symbol, including distinct builtin container instantiations.
 `ir::Verifier` implements checks for:
 
 - duplicate or unknown type/function/block/value identifiers;
+- unsubstituted generic type parameters, including unused type records;
+- executable uses of generic/error placeholders, including nested type arguments;
 - malformed instruction operand/target counts;
 - invalid value/address categories;
 - selected load/store, return, operator, call, field, aggregate, and payload

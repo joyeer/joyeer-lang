@@ -1,0 +1,34 @@
+// A producer and consumer move 100000 messages through a bounded queue.
+struct Feed {
+    var sender: ChannelSender<Int>
+}
+
+func produce(feed: consuming Feed): Int {
+    var index = 1
+    while index <= 100000 {
+        let value = index
+        match feed.sender.send(value: consume value) {
+            .Ok(_) => (),
+            .Err(_) => { return index - 1 },
+        }
+        index = index + 1
+    }
+    return 100000
+}
+
+func main() {
+    var sender: ChannelSender<Int>
+    var receiver: ChannelReceiver<Int>
+    channel(capacity: 64, sender: &sender, receiver: &receiver)
+    let producer = spawn(function: produce, input: consume Feed(sender: consume sender))
+    var total = 0
+    while true {
+        match receiver.receive() {
+            .Ok(value) => { total = total + value },
+            .Err(_) => { break },
+        }
+    }
+    let delivered = consume producer.join()
+    print(value: total)
+    print(value: delivered)
+}

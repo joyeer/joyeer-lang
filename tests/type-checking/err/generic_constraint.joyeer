@@ -1,0 +1,9 @@
+protocol Readable {
+    func read(): Int
+}
+
+func inspect<T: Readable>(value: T) {}
+
+func main() {
+    inspect(value: 7)
+}

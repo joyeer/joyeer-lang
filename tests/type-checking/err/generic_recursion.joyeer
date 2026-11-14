@@ -1,0 +1,3 @@
+func grow<T: Copyable>(value: T) {
+    grow(value: [value])
+}

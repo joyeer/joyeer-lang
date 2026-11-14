@@ -162,7 +162,9 @@ void CompilerService::compile(const std::filesystem::path& inputFile) {
     auto sourcefile = findSourceFile(inputFile);
     lastCompiledSourceFile = sourcefile;
     if (!protectInputs({sourcefile->getAbstractPath()})) return;
-    auto root = parse(sourcefile);
+    const bool authorized = std::find(options.runtimeModules.begin(), options.runtimeModules.end(),
+            options.moduleName) != options.runtimeModules.end();
+    auto root = parse(sourcefile, authorized);
     if (root == nullptr) return;
     if (options.standardLibrary && !root->imports.empty()) {
         // A single file may import the toolchain's standard modules.
@@ -394,7 +396,7 @@ void CompilerService::compileModules(const std::filesystem::path& singleFile) {
         for (const auto& path : module.files) {
             auto file = findSourceFile(path);
             if (lastCompiledSourceFile == nullptr) lastCompiledSourceFile = file;
-            auto syntax = parse(file);
+            auto syntax = parse(file, module.syntax.runtimeContext);
             if (syntax == nullptr) return false;
             module.syntax.files.push_back(std::move(syntax));
         }
@@ -450,7 +452,7 @@ SourceFile::Ptr CompilerService::findSourceFile(
 }
 
 
-joyeer::syntax::SourceFileSyntax::Ptr CompilerService::parse(const SourceFile::Ptr& sourcefile) {
+joyeer::syntax::SourceFileSyntax::Ptr CompilerService::parse(const SourceFile::Ptr& sourcefile, bool authorized) {
     if (!sourcefile->loaded()) {
         const auto tooLarge = sourcefile->loadingError() == SourceFile::LoadError::sourceTooLarge;
         diagnostics->reportDiagnostic(
@@ -479,7 +481,7 @@ joyeer::syntax::SourceFileSyntax::Ptr CompilerService::parse(const SourceFile::P
     sourcefile->joyeerIR.reset();
     sourcefile->llvmIR.clear();
     sourcefile->llvmHasEntryPoint = false;
-    joyeer::parser::Parser parser(sourcefile->tokens);
+    joyeer::parser::Parser parser(sourcefile->tokens, authorized);
     auto result = parser.parse();
     for(const auto& diagnostic : result.diagnostics) {
         reportSpannedDiagnostic(
@@ -531,6 +533,9 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
 
     const auto resolution = joyeer::semantic::NameResolver().resolve(modules);
     sourcefile->semanticModel = resolution.model;
+    if (resolution.model != nullptr && resolution.model->preludeSource() != nullptr) {
+        compilationSources.push_back(resolution.model->preludeSource());
+    }
     for (const auto& diagnostic : resolution.diagnostics) {
         reportSpannedDiagnostic(
                 diagnostics,
@@ -613,19 +618,14 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
             });
     sourcefile->llvmIR = llvm.text;
     sourcefile->llvmHasEntryPoint = llvm.hasEntryPoint;
-    // An end type brings its destroy helper, which calls the channel runtime and so the thread object, even
-    // when the program never creates a channel.
-    for (const auto& type : lowering.module->types) {
-        if (type.kind == joyeer::typing::TypeKind::channelSender ||
-            type.kind == joyeer::typing::TypeKind::channelReceiver) {
-            sourcefile->llvmUsesThreads = true;
-        }
-    }
     for (const auto& function : lowering.module->functions) {
         for (const auto& block : function.blocks) {
             for (const auto& instruction : block.instructions) {
-                if (instruction.opcode == joyeer::ir::Opcode::taskSpawn ||
-                    instruction.opcode == joyeer::ir::Opcode::channelCreate) {
+                if (instruction.opcode != joyeer::ir::Opcode::call || !instruction.callee.has_value()) continue;
+                const auto& callee = lowering.module->functions.at(*instruction.callee);
+                if (callee.nativeBinding.has_value() &&
+                    (callee.nativeBinding->symbol.starts_with("joyeer_thread_") ||
+                     callee.nativeBinding->symbol.starts_with("joyeer_channel_"))) {
                     sourcefile->llvmUsesThreads = true;
                 }
             }

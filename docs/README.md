@@ -80,7 +80,8 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0007](plan/0007-filesystem.md) | Remaining work after the host operations moved into `System`: POSIX verification, Compression/moss verification, and the allocation contract |
 | [0008](plan/0008-runtime-in-joyeer.md) | The plan to write the whole runtime in Joyeer: definition of done, the core dialect, open design decisions, capabilities, phases and acceptance gates |
 | [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
-| [0010](plan/0010-generics.md) | Function values, protocols and generic functions, generic types and layout intrinsics, then moving the task and channel builtins into the library (proposed) |
+| [0010](plan/0010-generics.md) | Generics and source-library concurrency are complete on Windows/Linux x86_64; native macOS/AArch64 acceptance remains open |
+| [0011](plan/0011-library-containers.md) | Source-library Optional/Result, then borrowed element access and linear-safe Array/Dict |
 
 ## Decisions
 
@@ -110,6 +111,9 @@ in the spec.
 | [0018](decisions/0018-tasks.md) | Tasks (accepted design, in implementation): `spawn`, `JoinHandle<R>` and `consume h.join()`, one heap block per task, `Array.consumeEmpty()` |
 | [0019](decisions/0019-channels.md) | Channels (accepted, implemented): single-sender, single-receiver bounded channels, `send` returns `Result<Void, ChannelClosed>`, a runtime object with a lock-protected close protocol |
 | [0020](decisions/0020-function-values.md) | Function values (accepted, in implementation): non-capturing references to top-level functions, `(effect T, ...): R` types without labels, positional calls, parenthesized non-identifier callees, one indirect call |
+| [0021](decisions/0021-protocols-and-generic-functions.md) | Protocols and monomorphized generic functions |
+| [0022](decisions/0022-generic-types-and-layout-intrinsics.md) | Generic structs/enums and runtime-only typed layout operations |
+| [0023](decisions/0023-library-concurrency.md) | Concurrency as a source prelude, with closed compatibility/transfer metadata and verified x86_64 acceptance |
 
 ## Conventions
 

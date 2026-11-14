@@ -1,5 +1,7 @@
 #include "irlowering.h"
 #include "constants.h"
+#include "compiler/frontend/intrinsics.h"
+#include "compiler/frontend/sourcefile.h"
 
 #include <algorithm>
 #include <bit>
@@ -49,6 +51,16 @@ public:
         module->sourceName = std::move(sourceName);
         module->sourceInfo = std::move(sourceInfo);
         module->sourceFiles = std::move(sources);
+        const auto& prelude = model->semanticModel()->preludeSource();
+        if (prelude != nullptr && (!module->sourceFiles.empty() || module->sourceInfo.has_value())) {
+            if (module->sourceFiles.empty()) module->sourceFiles.push_back(*module->sourceInfo);
+            const auto sourceId = prelude->tokens.front()->span.sourceId;
+            if (module->sourceFiles.size() == sourceId) {
+                module->sourceFiles.push_back(ir::SourceInfo {
+                    prelude->getAbstractPath().filename().string(), prelude->getParentFolder(),
+                    prelude->content.size(), prelude->lineStarts });
+            }
+        }
 
         snapshotTypes();
         collectAggregateDefinitions();
@@ -56,6 +68,10 @@ public:
         collectFunctions();
         lowerFunctions();
 
+        if (model->types().size() != module->types.size()) {
+            report(DiagnosticId::missingType, {},
+                   "an instance needed a type the type checker did not intern before lowering");
+        }
         if (diagnostics.empty()) {
             const auto verification = ir::Verifier().verify(*module);
             for (const auto& error : verification.errors) {
@@ -111,8 +127,17 @@ private:
     std::unordered_set<semantic::SymbolId> failedConstants;
     std::unordered_map<semantic::SymbolId, uint32_t> constantIds;
     std::optional<ConstantEvaluator> constantEvaluator;
-    std::unordered_map<semantic::ScopeId, ir::DebugScopeId> debugScopes;
-    std::unordered_map<semantic::SymbolId, ir::DebugVariableId> debugVariables;
+    // Keyed by `instanceKey`, so each instance of a generic function has its own scopes and variables.
+    std::unordered_map<uint64_t, ir::DebugScopeId> debugScopes;
+    std::unordered_map<uint64_t, ir::DebugVariableId> debugVariables;
+    // The instance of a generic function being collected or lowered (decision 0021): every type
+    // lowering reads is substituted with its arguments, and requirement calls reach witnesses.
+    const typing::Instance* currentInstance = nullptr;
+    std::optional<size_t> currentInstanceIndex;
+    std::vector<ir::FunctionId> instanceFunctions;
+    // Per generic function: spans of the expressions whose type is noncopyable in the generic body
+    // (see prepareOwned).
+    std::unordered_map<semantic::SymbolId, std::unordered_set<uint64_t>> genericNoncopyableSpans;
     std::unordered_map<semantic::SymbolId, ir::Value> slots;
     std::unordered_map<ir::ValueId, ValueOwnership> ownership;
     std::unordered_set<ir::ValueId> liveOwnedTemporaries;
@@ -127,11 +152,68 @@ private:
         diagnostics.push_back(Diagnostic { id, span, std::move(message) });
     }
 
+    uint64_t instanceKey(uint32_t id) const {
+        const uint64_t slot = currentInstanceIndex.has_value() ? *currentInstanceIndex + 1 : 0;
+        return (slot << 32U) | id;
+    }
+
+    // The type lowering uses for a node or symbol: in an instance, with the type arguments
+    // substituted. Every concrete type was interned by the type checker, so this never grows the
+    // type table after it was snapshotted (checked at the end of `build`).
+    typing::TypeId substituted(typing::TypeId type) const {
+        if (currentInstance == nullptr) return type;
+        return model->types().substitute(type, currentInstance->substitution);
+    }
+
+    std::optional<typing::TypeId> typeOf(const syntax::NodePtr& node) const {
+        const auto type = model->typeOf(node);
+        return type.has_value() ? std::optional<typing::TypeId>(substituted(*type)) : std::nullopt;
+    }
+
+    std::optional<typing::TypeId> typeOf(semantic::SymbolId symbol) const {
+        const auto type = model->typeOf(symbol);
+        return type.has_value() ? std::optional<typing::TypeId>(substituted(*type)) : std::nullopt;
+    }
+
+    // Whether a value is copied or moved is decided by the generic body (decision 0021): in an
+    // instance, `node`'s unsubstituted type decides, not the concrete one.
+    bool copyableInBody(const syntax::NodePtr& node, typing::TypeId concrete) const {
+        if (currentInstance != nullptr && node != nullptr) {
+            if (const auto raw = model->typeOf(node)) return model->isCopyable(*raw);
+        }
+        return model->isCopyable(concrete);
+    }
+
+    static uint64_t spanKey(SourceSpan span) {
+        return (static_cast<uint64_t>(span.sourceId) << 48U) ^ (static_cast<uint64_t>(span.offset) << 20U) ^
+                span.length;
+    }
+
+    // Spans in a generic function's body whose expressions have a type that mentions a type
+    // parameter and is noncopyable there. A copy at one of them is a type-checking gap.
+    const std::unordered_set<uint64_t>& noncopyableSpans(const syntax::FunctionDeclSyntax::Ptr& declaration) {
+        const auto symbol = model->semanticModel()->declaredSymbol(declaration);
+        auto& spans = genericNoncopyableSpans[symbol.value_or(semantic::invalidSymbolId)];
+        if (!spans.empty() || !symbol.has_value()) return spans;
+        const auto within = declaration->span;
+        for (const auto& [node, type] : model->nodeTypeTable()) {
+            const auto span = model->semanticModel()->node(node)->span;
+            if (span.sourceId != within.sourceId || span.offset < within.offset ||
+                span.offset + span.length > within.offset + within.length) {
+                continue;
+            }
+            if (model->types().mentionsTypeParameter(type) && !model->isCopyable(type)) spans.insert(spanKey(span));
+        }
+        spans.insert(0);
+        return spans;
+    }
+    const std::unordered_set<uint64_t>* currentNoncopyableSpans = nullptr;
+
     std::optional<ir::DebugScopeId> ensureDebugScope(
             semantic::ScopeId semanticScopeId,
             ir::FunctionId functionId) {
         if (module->sourceFile(0) == nullptr) return std::nullopt;
-        const auto existing = debugScopes.find(semanticScopeId);
+        const auto existing = debugScopes.find(instanceKey(semanticScopeId));
         if (existing != debugScopes.end()) return existing->second;
 
         const auto* semanticScope = model->semanticModel()->scope(semanticScopeId);
@@ -168,7 +250,7 @@ private:
             semanticScopeId,
             span,
         });
-        debugScopes.emplace(semanticScopeId, id);
+        debugScopes.emplace(instanceKey(semanticScopeId), id);
         return id;
     }
 
@@ -186,11 +268,11 @@ private:
             ir::FunctionId functionId,
             std::optional<uint32_t> parameterIndex = std::nullopt) {
         if (module->sourceFile(0) == nullptr) return std::nullopt;
-        const auto existing = debugVariables.find(symbolId);
+        const auto existing = debugVariables.find(instanceKey(symbolId));
         if (existing != debugVariables.end()) return existing->second;
 
         const auto* symbol = model->semanticModel()->symbol(symbolId);
-        const auto type = model->typeOf(symbolId);
+        const auto type = typeOf(symbolId);
         if (symbol == nullptr || !type.has_value()) return std::nullopt;
         ir::DebugVariableKind kind;
         switch (symbol->kind) {
@@ -222,7 +304,7 @@ private:
             parameterIndex,
             symbol->isMutable,
         });
-        debugVariables.emplace(symbolId, id);
+        debugVariables.emplace(instanceKey(symbolId), id);
         return id;
     }
 
@@ -276,6 +358,16 @@ private:
                 return std::nullopt;
             }
             return value;
+        }
+        // In an instance, a copy of a value whose type is noncopyable in the generic body is a
+        // type-checking gap, whatever the concrete type is (decision 0021).
+        if (currentNoncopyableSpans != nullptr && currentNoncopyableSpans->contains(spanKey(span))) {
+            report(
+                    DiagnosticId::ownershipViolation,
+                    span,
+                    "a value whose type is noncopyable in the generic body would be copied in '" +
+                            currentInstance->name + "'");
+            return std::nullopt;
         }
         // Type checking rejects every source-level copy of a noncopyable value, so reaching
         // here means a lowering path moves where it should not copy.
@@ -414,6 +506,13 @@ private:
         for (typing::TypeId id = 0; id < types.size(); ++id) {
             const auto* type = types.type(id);
             assert(type != nullptr);
+            // A type that mentions a type parameter exists only in a generic body; IR sees each
+            // instance's concrete types, so it is an error type here and the verifier rejects any use.
+            if (types.mentionsTypeParameter(id)) {
+                module->types.push_back(ir::TypeName {
+                    id, types.displayName(id), typing::TypeKind::error, semantic::invalidSymbolId, {}, {} });
+                continue;
+            }
             module->types.push_back(ir::TypeName {
                 id,
                 types.displayName(id),
@@ -431,24 +530,25 @@ private:
 
     void collectAggregateDefinitions() {
         const auto& semanticModel = *model->semanticModel();
-        const auto& root = semanticModel.root();
+        const auto& root = semanticModel.compilationRoot();
         if (root != nullptr) {
             for (const auto& item : root->items) {
                 if (item->kind == syntax::Kind::structDecl) {
-                    collectStructure(
-                            std::static_pointer_cast<syntax::StructDeclSyntax>(item));
+                    const auto declaration = std::static_pointer_cast<syntax::StructDeclSyntax>(item);
+                    if (declaration->genericParameters.empty()) collectStructure(declaration);
                 } else if (item->kind == syntax::Kind::enumDecl) {
-                    collectEnumeration(
-                            std::static_pointer_cast<syntax::EnumDeclSyntax>(item));
+                    const auto declaration = std::static_pointer_cast<syntax::EnumDeclSyntax>(item);
+                    if (declaration->genericParameters.empty()) collectEnumeration(declaration);
                 }
             }
+            collectGenericTypeInstances(*root);
         }
         for (typing::TypeId id = 0; id < model->types().size(); ++id) {
             const auto* type = model->types().type(id);
             const auto* symbol = type == nullptr
                     ? nullptr
                     : semanticModel.symbol(type->symbol);
-            if (type != nullptr &&
+            if (type != nullptr && !model->types().mentionsTypeParameter(id) &&
                 (type->kind == typing::TypeKind::optional ||
                  type->kind == typing::TypeKind::result ||
                  (type->kind == typing::TypeKind::enumeration &&
@@ -459,12 +559,40 @@ private:
         }
     }
 
-    void collectStructure(const syntax::StructDeclSyntax::Ptr& declaration) {
+    // One definition per concrete instance of a generic struct or enum (spec 20.12): the type
+    // checker interned each instance and its member types before lowering.
+    void collectGenericTypeInstances(const syntax::SourceFileSyntax& root) {
+        const auto& semanticModel = *model->semanticModel();
+        for (const auto& item : root.items) {
+            const bool isStructure = item->kind == syntax::Kind::structDecl;
+            if (!isStructure && item->kind != syntax::Kind::enumDecl) continue;
+            const auto symbol = semanticModel.declaredSymbol(item);
+            if (!symbol.has_value() || model->genericParameters(*symbol) == nullptr) continue;
+            for (typing::TypeId id = 0; id < model->types().size(); ++id) {
+                const auto* type = model->types().type(id);
+                if (type == nullptr || type->symbol != *symbol || type->arguments.empty() ||
+                    model->types().mentionsTypeParameter(id)) {
+                    continue;
+                }
+                if (isStructure) {
+                    collectStructure(std::static_pointer_cast<syntax::StructDeclSyntax>(item), id);
+                } else {
+                    collectEnumeration(std::static_pointer_cast<syntax::EnumDeclSyntax>(item), id);
+                }
+            }
+        }
+    }
+
+    // `instance` is the concrete type of a generic declaration's instance; its field types are the
+    // declared ones with the instance's arguments substituted.
+    void collectStructure(
+            const syntax::StructDeclSyntax::Ptr& declaration,
+            std::optional<typing::TypeId> instance = std::nullopt) {
         const auto& semanticModel = *model->semanticModel();
         const auto symbol = semanticModel.declaredSymbol(declaration);
-        const auto type = symbol.has_value()
-                ? model->typeOf(*symbol)
-                : std::optional<typing::TypeId>();
+        const auto type = instance.has_value()
+                ? instance
+                : symbol.has_value() ? typeOf(*symbol) : std::optional<typing::TypeId>();
         if (!symbol.has_value() || !type.has_value()) return;
 
         ir::StructureDefinition structure;
@@ -473,12 +601,14 @@ private:
         structure.name = declaration->name == nullptr
                 ? std::string()
                 : declaration->name->rawValue;
+        if (instance.has_value()) structure.name = model->types().displayName(*instance);
         for (const auto& field : declaration->fields) {
             const auto fieldSymbol = semanticModel.declaredSymbol(field);
-            const auto fieldType = fieldSymbol.has_value()
-                    ? model->typeOf(*fieldSymbol)
+            auto fieldType = fieldSymbol.has_value()
+                    ? typeOf(*fieldSymbol)
                     : std::optional<typing::TypeId>();
             if (!fieldSymbol.has_value() || !fieldType.has_value()) continue;
+            if (instance.has_value()) fieldType = model->memberTypeOf(*instance, *fieldType);
             const auto* semanticField = semanticModel.symbol(*fieldSymbol);
             structure.fields.push_back(ir::FieldDefinition {
                 *fieldSymbol,
@@ -499,12 +629,14 @@ private:
         module->structures.push_back(std::move(structure));
     }
 
-    void collectEnumeration(const syntax::EnumDeclSyntax::Ptr& declaration) {
+    void collectEnumeration(
+            const syntax::EnumDeclSyntax::Ptr& declaration,
+            std::optional<typing::TypeId> instance = std::nullopt) {
         const auto& semanticModel = *model->semanticModel();
         const auto symbol = semanticModel.declaredSymbol(declaration);
-        const auto type = symbol.has_value()
-                ? model->typeOf(*symbol)
-                : std::optional<typing::TypeId>();
+        const auto type = instance.has_value()
+                ? instance
+                : symbol.has_value() ? typeOf(*symbol) : std::optional<typing::TypeId>();
         if (!symbol.has_value() || !type.has_value()) return;
 
         ir::EnumerationDefinition enumeration;
@@ -513,16 +645,20 @@ private:
         enumeration.name = declaration->name == nullptr
                 ? std::string()
                 : declaration->name->rawValue;
+        if (instance.has_value()) enumeration.name = model->types().displayName(*instance);
         for (const auto& enumCase : declaration->cases) {
             const auto caseSymbol = semanticModel.declaredSymbol(enumCase);
             if (!caseSymbol.has_value()) continue;
             const auto* signature = model->callable(*caseSymbol);
+            std::vector<typing::TypeId> payloads = signature == nullptr
+                    ? std::vector<typing::TypeId>() : signature->parameters;
+            if (instance.has_value()) {
+                for (auto& payload : payloads) payload = model->memberTypeOf(*instance, payload);
+            }
             enumeration.cases.push_back(ir::EnumCaseDefinition {
                 *caseSymbol,
                 enumCase->name == nullptr ? std::string() : enumCase->name->rawValue,
-                signature == nullptr
-                        ? std::vector<typing::TypeId>()
-                        : signature->parameters,
+                std::move(payloads),
             });
         }
         module->enumerations.push_back(std::move(enumeration));
@@ -577,21 +713,67 @@ private:
         collectPrint();
         collectByteConversions();
         const auto& semanticModel = *model->semanticModel();
-        const auto& root = semanticModel.root();
+        const auto& root = semanticModel.compilationRoot();
         if (root == nullptr) return;
         for (const auto& item : root->items) {
             if (item->kind == syntax::Kind::functionDecl) {
-                collectFunction(std::static_pointer_cast<syntax::FunctionDeclSyntax>(item));
+                const auto declaration = std::static_pointer_cast<syntax::FunctionDeclSyntax>(item);
+                // A generic function has no code of its own; each instance is collected below.
+                const auto symbol = semanticModel.declaredSymbol(declaration);
+                if (symbol.has_value() && model->genericParameters(*symbol) != nullptr) continue;
+                collectFunction(declaration);
             } else if (item->kind == syntax::Kind::bindingDecl) {
                 collectConstant(std::static_pointer_cast<syntax::BindingDeclSyntax>(item));
             }
         }
         // Methods are functions whose first parameter is the implicit receiver.
-        forEachMethod(*root, [this](const syntax::FunctionDeclSyntax::Ptr& method) {
+        forEachMethod(*root, [this, &semanticModel](const syntax::FunctionDeclSyntax::Ptr& method) {
+            // A method of a generic type is collected per instance below (spec 20.12).
+            const auto symbol = semanticModel.declaredSymbol(method);
+            if (symbol.has_value() && model->genericParameters(*symbol) != nullptr) return;
             collectFunction(method);
         });
+        collectInstances(*root);
         linkDeinitializers(*root);
         evaluateConstants();
+    }
+
+    // One IR function per instance of a generic function (decision 0021), named for its type
+    // arguments and lowered from the generic declaration's own syntax.
+    void collectInstances(const syntax::SourceFileSyntax& root) {
+        const auto& instances = model->instances();
+        instanceFunctions.assign(instances.size(), ir::invalidFunctionId);
+        for (size_t index = 0; index < instances.size(); ++index) {
+            const auto declaration = genericDeclaration(root, instances[index].function);
+            if (declaration == nullptr) continue;
+            enterInstance(index);
+            const auto before = module->functions.size();
+            collectFunction(declaration);
+            if (module->functions.size() > before) instanceFunctions[index] = static_cast<ir::FunctionId>(before);
+            leaveInstance();
+        }
+    }
+
+    syntax::FunctionDeclSyntax::Ptr genericDeclaration(
+            const syntax::SourceFileSyntax& root, semantic::SymbolId function) const {
+        const auto* symbol = model->semanticModel()->symbol(function);
+        if (symbol == nullptr || !symbol->declaration.has_value()) return nullptr;
+        const auto node = model->semanticModel()->node(*symbol->declaration);
+        if (node == nullptr || node->kind != syntax::Kind::functionDecl) return nullptr;
+        (void) root;
+        return std::static_pointer_cast<syntax::FunctionDeclSyntax>(node);
+    }
+
+    void enterInstance(size_t index) {
+        currentInstanceIndex = index;
+        currentInstance = &model->instances()[index];
+        currentNoncopyableSpans = nullptr;
+    }
+
+    void leaveInstance() {
+        currentInstanceIndex.reset();
+        currentInstance = nullptr;
+        currentNoncopyableSpans = nullptr;
     }
 
     // A `deinit` is collected as a method (see forEachMethod); the structure it belongs to
@@ -604,6 +786,23 @@ private:
             if (declaration->deinitializer == nullptr) continue;
             const auto structureSymbol = semanticModel.declaredSymbol(declaration);
             const auto deinitSymbol = semanticModel.declaredSymbol(declaration->deinitializer);
+            if (deinitSymbol.has_value() && model->genericParameters(*deinitSymbol) != nullptr) {
+                // Each instance of a generic struct runs its own instance of the `deinit`.
+                for (auto& instance : module->structures) {
+                    if (!structureSymbol.has_value() || instance.symbol != *structureSymbol) continue;
+                    const auto* record = model->types().type(instance.type);
+                    const auto index = record == nullptr ? std::nullopt
+                            : model->instanceIndex(*deinitSymbol, record->arguments);
+                    if (!index.has_value() || *index >= instanceFunctions.size() ||
+                        instanceFunctions[*index] == ir::invalidFunctionId) {
+                        report(DiagnosticId::missingSymbol, declaration->deinitializer->span,
+                               "'deinit' has no lowered instance for '" + instance.name + "'");
+                        continue;
+                    }
+                    instance.deinitializer = instanceFunctions[*index];
+                }
+                continue;
+            }
             const auto function = deinitSymbol.has_value()
                     ? functions.find(*deinitSymbol)
                     : functions.end();
@@ -677,7 +876,7 @@ private:
                     "a top-level constant requires an explicit type");
             return;
         }
-        const auto type = model->typeOf(*symbol);
+        const auto type = typeOf(*symbol);
         if (declaration->initializer == nullptr || !type.has_value() || !isConstantType(*type)) {
             report(DiagnosticId::invalidConstant, declaration->span,
                     "a top-level constant must be a Bool, number, String, or array of those, "
@@ -703,7 +902,7 @@ private:
         for (const auto symbol : constantOrder) {
             const auto& declaration = constantDeclarations.at(symbol);
             const auto value = constantEvaluator->evaluateSymbol(symbol, declaration->span);
-            const auto type = model->typeOf(symbol);
+            const auto type = typeOf(symbol);
             // Encoding enforces the size limit, so an oversized table fails here once.
             if (!value.has_value() ||
                 (model->types().type(*type)->kind == typing::TypeKind::array &&
@@ -714,7 +913,7 @@ private:
     }
 
     std::optional<ir::Value> lowerConstant(semantic::SymbolId symbol, SourceSpan span) {
-        const auto type = model->typeOf(symbol);
+        const auto type = typeOf(symbol);
         if (!type.has_value()) {
             report(DiagnosticId::missingType, span, "constant has no resolved type");
             return std::nullopt;
@@ -858,6 +1057,7 @@ private:
             const auto* owner = semanticModel.symbol(*semanticSymbol->containingSymbol);
             if (owner != nullptr) function.name = owner->name + "." + function.name;
         }
+        if (currentInstance != nullptr) function.name = currentInstance->name;
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
         function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
         function.coreContext = semanticModel.isCoreSource(declaration->span);
@@ -873,9 +1073,9 @@ private:
                 function.debugScope,
             };
         }
-        function.resultType = signature->result;
-        function.returnsValue = signature->result != model->types().voidType() &&
-                signature->result != model->types().neverType();
+        function.resultType = substituted(signature->result);
+        function.returnsValue = function.resultType != model->types().voidType() &&
+                function.resultType != model->types().neverType();
         function.entry = function.isExternal ? ir::invalidBlockId : 0;
 
         for (size_t index = 0; index < declaration->parameters.size(); ++index) {
@@ -886,7 +1086,7 @@ private:
                     parameterEffect == syntax::AccessEffect::initializing;
             const auto parameterSymbol = semanticModel.declaredSymbol(parameter);
             const auto parameterType = parameterSymbol.has_value()
-                    ? model->typeOf(*parameterSymbol)
+                    ? typeOf(*parameterSymbol)
                     : std::optional<typing::TypeId>();
             if (!parameterSymbol.has_value() || !parameterType.has_value()) {
                 report(
@@ -926,13 +1126,13 @@ private:
             }
         }
 
-        functions.emplace(*symbol, function.id);
+        if (currentInstance == nullptr) functions.emplace(*symbol, function.id);
         module->functions.push_back(std::move(function));
     }
 
     void lowerFunctions() {
         const auto& semanticModel = *model->semanticModel();
-        const auto& root = semanticModel.root();
+        const auto& root = semanticModel.compilationRoot();
         if (root == nullptr) return;
         for (const auto& item : root->items) {
             if (item->kind != syntax::Kind::functionDecl) continue;
@@ -946,10 +1146,18 @@ private:
         }
         forEachMethod(*root, [this, &semanticModel](const syntax::FunctionDeclSyntax::Ptr& method) {
             const auto symbol = semanticModel.declaredSymbol(method);
-            if (!symbol.has_value()) return;
+            if (!symbol.has_value() || model->genericParameters(*symbol) != nullptr) return;
             const auto found = functions.find(*symbol);
             if (found != functions.end()) lowerFunction(method, found->second);
         });
+        for (size_t index = 0; index < instanceFunctions.size(); ++index) {
+            if (instanceFunctions[index] == ir::invalidFunctionId) continue;
+            const auto declaration = genericDeclaration(*root, model->instances()[index].function);
+            enterInstance(index);
+            currentNoncopyableSpans = &noncopyableSpans(declaration);
+            lowerFunction(declaration, instanceFunctions[index]);
+            leaveInstance();
+        }
     }
 
     void lowerFunction(
@@ -1094,7 +1302,7 @@ private:
     void lowerBinding(const syntax::BindingDeclSyntax::Ptr& declaration) {
         const auto symbol = model->semanticModel()->declaredSymbol(declaration);
         const auto type = symbol.has_value()
-                ? model->typeOf(*symbol)
+                ? typeOf(*symbol)
                 : std::optional<typing::TypeId>();
         if (!symbol.has_value() || !type.has_value()) {
             report(
@@ -1224,7 +1432,7 @@ private:
 
     std::optional<ir::Value> lowerLiteral(
             const syntax::LiteralExprSyntax::Ptr& expression) {
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!type.has_value() || expression->literal == nullptr) {
             report(DiagnosticId::missingType, expression->span, "literal has no type");
             return std::nullopt;
@@ -1280,7 +1488,7 @@ private:
 
     // A function named where it is not called (spec 5.6.1).
     std::optional<ir::Value> lowerFunctionAddress(semantic::SymbolId symbol, const syntax::NodePtr& expression) {
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!functions.contains(symbol) || !type.has_value()) {
             report(DiagnosticId::missingSymbol, expression->span,
                    "function value has no IR function declaration");
@@ -1298,7 +1506,7 @@ private:
     bool namesFunctionValue(const syntax::NodePtr& expression, std::optional<semantic::SymbolId> symbol) const {
         if (!symbol.has_value()) return false;
         const auto* declaration = model->semanticModel()->symbol(*symbol);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         const auto* record = type.has_value() ? model->types().type(*type) : nullptr;
         return declaration != nullptr && declaration->kind == semantic::SymbolKind::function &&
                 record != nullptr && record->kind == typing::TypeKind::function;
@@ -1330,7 +1538,7 @@ private:
     }
 
     std::optional<ir::Value> lowerPrefix(const syntax::PrefixExprSyntax::Ptr& expression) {
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (type.has_value() && expression->op != nullptr && expression->op->kind == minus &&
                 typing::isInteger(model->types().type(*type)->kind) &&
                 expression->operand->kind == syntax::Kind::literalExpr) {
@@ -1425,7 +1633,7 @@ private:
         left = prepareOwned(*left, expression->left->span);
         if (!left.has_value()) return std::nullopt;
         const auto right = lowerExpression(expression->right);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!left.has_value() || !right.has_value() || !type.has_value() ||
             expression->op == nullptr) {
             return std::nullopt;
@@ -1601,7 +1809,7 @@ private:
         }
         if (target != nullptr && target->kind == syntax::Kind::subscriptExpr) {
             const auto subscript = std::static_pointer_cast<syntax::SubscriptExprSyntax>(target);
-            const auto baseType = model->typeOf(subscript->base);
+            const auto baseType = typeOf(subscript->base);
             const auto* dictionaryType = baseType.has_value()
                     ? model->types().type(*baseType) : nullptr;
             if (dictionaryType != nullptr &&
@@ -1711,7 +1919,7 @@ private:
             if (semanticSymbol != nullptr &&
                 semanticSymbol->kind == semantic::SymbolKind::structureField) {
                 const auto base = lowerAddress(member->base);
-                const auto type = model->typeOf(member);
+                const auto type = typeOf(member);
                 if (!base.has_value() || !type.has_value()) return std::nullopt;
                 return emitValue(
                         ir::Opcode::fieldAddress,
@@ -1727,7 +1935,7 @@ private:
                     expression);
             const auto base = lowerAddress(subscript->base);
             const auto index = lowerExpression(subscript->index);
-            const auto type = model->typeOf(subscript);
+            const auto type = typeOf(subscript);
             if (!base.has_value() || !index.has_value() || !type.has_value()) {
                 return std::nullopt;
             }
@@ -1767,7 +1975,7 @@ private:
             auto base = prepareAddress(subscript->base);
             if (!base.has_value()) return std::nullopt;
             const auto index = lowerExpression(subscript->index);
-            const auto type = model->typeOf(subscript);
+            const auto type = typeOf(subscript);
             if (!index.has_value() || !type.has_value()) return std::nullopt;
             return DeferredAddress([this, base = std::move(*base), index = *index, type = *type,
                                     span = subscript->span]() -> std::optional<ir::Value> {
@@ -1787,7 +1995,7 @@ private:
             const auto* semanticSymbol = symbol.has_value()
                     ? model->semanticModel()->symbol(*symbol)
                     : nullptr;
-            const auto type = model->typeOf(member);
+            const auto type = typeOf(member);
             if (semanticSymbol != nullptr &&
                 semanticSymbol->kind == semantic::SymbolKind::structureField &&
                 type.has_value()) {
@@ -1839,7 +2047,7 @@ private:
         const auto* semanticSymbol = symbol.has_value()
                 ? model->semanticModel()->symbol(*symbol)
                 : nullptr;
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (semanticSymbol == nullptr || !type.has_value()) {
             report(
                     DiagnosticId::missingSymbol,
@@ -1905,7 +2113,7 @@ private:
             const syntax::SubscriptExprSyntax::Ptr& expression) {
         const auto base = lowerExpression(expression->base);
         const auto index = lowerExpression(expression->index);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!base.has_value() || !index.has_value() || !type.has_value()) {
             return std::nullopt;
         }
@@ -1918,7 +2126,7 @@ private:
     }
 
     std::optional<ir::Value> lowerArray(const syntax::ArrayExprSyntax::Ptr& expression) {
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!type.has_value()) return std::nullopt;
         const auto* arrayType = model->types().type(*type);
         if (arrayType == nullptr || arrayType->kind != typing::TypeKind::array ||
@@ -1944,7 +2152,7 @@ private:
 
     std::optional<ir::Value> lowerDictionary(
             const syntax::DictionaryExprSyntax::Ptr& expression) {
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!type.has_value()) return std::nullopt;
         const auto* dictionaryType = model->types().type(*type);
         if (dictionaryType == nullptr ||
@@ -1980,7 +2188,7 @@ private:
     std::optional<ir::Value> lowerContextualCase(
             const syntax::ContextualCaseExprSyntax::Ptr& expression) {
         const auto caseSymbol = model->referencedSymbol(expression);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!caseSymbol.has_value() || !type.has_value()) {
             report(
                     DiagnosticId::missingSymbol,
@@ -2098,7 +2306,7 @@ private:
     std::optional<ir::Value> lowerPropagation(
             const syntax::PropagateExprSyntax::Ptr& expression) {
         auto operand = lowerExpression(expression->operand);
-        const auto resultType = model->typeOf(expression);
+        const auto resultType = typeOf(expression);
         if (!operand.has_value() || !resultType.has_value()) return std::nullopt;
         const auto* operandType = model->types().type(operand->type);
         const bool isResult = operandType != nullptr &&
@@ -2118,7 +2326,7 @@ private:
             return std::nullopt;
         }
 
-        operand = acquireOwned(*operand, expression->span);
+        operand = acquireOwned(*operand, expression->operand->span);
         if (!operand.has_value()) return std::nullopt;
         const bool neverSuccess = *resultType == model->types().neverType();
         const bool neverFailure = isResult &&
@@ -2231,8 +2439,8 @@ private:
     bool patternBindsNoncopyable(const syntax::PatternPtr& pattern) const {
         if (pattern == nullptr) return false;
         if (pattern->kind == syntax::Kind::bindingPattern) {
-            const auto type = model->typeOf(pattern);
-            return type.has_value() && !model->isCopyable(*type);
+            const auto type = typeOf(pattern);
+            return type.has_value() && !copyableInBody(pattern, *type);
         }
         if (pattern->kind != syntax::Kind::enumCasePattern) return false;
         const auto enumPattern = std::static_pointer_cast<syntax::EnumCasePatternSyntax>(pattern);
@@ -2291,7 +2499,7 @@ private:
         } else {
             scrutinee = lowerExpression(expression->scrutinee);
         }
-        const auto resultType = model->typeOf(expression);
+        const auto resultType = typeOf(expression);
         if (!scrutinee.has_value() || !resultType.has_value()) return std::nullopt;
 
         const auto producesResult = *resultType != model->types().voidType() &&
@@ -2358,7 +2566,7 @@ private:
         registerOwnedStorage(*resultAddress);
         // A noncopyable result moves out of its slot; loading it would copy it.
         return emitValue(
-                model->isCopyable(resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
+                copyableInBody(expression, resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
                 resultAddress->type,
                 ir::ValueCategory::value,
                 { resultAddress->id },
@@ -2367,7 +2575,7 @@ private:
 
     std::optional<ir::Pattern> lowerPattern(const syntax::PatternPtr& pattern) {
         if (pattern == nullptr) return std::nullopt;
-        const auto type = model->typeOf(pattern);
+        const auto type = typeOf(pattern);
         if (!type.has_value()) {
             report(DiagnosticId::missingType, pattern->span, "pattern has no type");
             return std::nullopt;
@@ -2487,7 +2695,7 @@ private:
                  payloadPattern->kind != syntax::Kind::enumCasePattern)) {
                 continue;
             }
-            const auto payloadType = model->typeOf(payloadPattern);
+            const auto payloadType = typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
             auto instruction = makeInstruction(ir::Opcode::payloadAddress, payloadPattern->span);
             instruction.result = makeValue(*payloadType, ir::ValueCategory::address);
@@ -2499,7 +2707,7 @@ private:
             if (payloadPattern->kind == syntax::Kind::bindingPattern) {
                 const auto symbol = model->semanticModel()->declaredSymbol(payloadPattern);
                 if (!symbol.has_value()) continue;
-                if (model->isCopyable(*payloadType)) {
+                if (copyableInBody(payloadPattern, *payloadType)) {
                     // A copyable payload beside a moved one still binds by copy.
                     const auto loaded = emitValue(
                             ir::Opcode::load,
@@ -2536,7 +2744,7 @@ private:
         if (pattern->kind == syntax::Kind::bindingPattern) {
             const auto symbol = model->semanticModel()->declaredSymbol(pattern);
             if (!symbol.has_value()) return;
-            if (!model->isCopyable(value.type)) {
+            if (!copyableInBody(pattern, value.type)) {
                 // Type checking rejects this; a copy here would destroy the value twice.
                 report(
                         DiagnosticId::ownershipViolation,
@@ -2584,7 +2792,7 @@ private:
                 payloadPattern->kind != syntax::Kind::enumCasePattern) {
                 continue;
             }
-            const auto payloadType = model->typeOf(payloadPattern);
+            const auto payloadType = typeOf(payloadPattern);
             if (!payloadType.has_value()) continue;
             const auto payload = emitExtractPayload(
                     *payloadType,
@@ -2598,7 +2806,7 @@ private:
 
     std::optional<ir::Value> lowerIf(const syntax::IfExprSyntax::Ptr& expression) {
         const auto condition = lowerExpression(expression->condition);
-        const auto resultType = model->typeOf(expression);
+        const auto resultType = typeOf(expression);
         if (!condition.has_value() || !resultType.has_value()) return std::nullopt;
 
         const auto producesResult = *resultType != model->types().voidType() &&
@@ -2669,7 +2877,7 @@ private:
         registerOwnedStorage(*resultAddress);
         // A noncopyable result moves out of its slot; loading it would copy it.
         return emitValue(
-                model->isCopyable(resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
+                copyableInBody(expression, resultAddress->type) ? ir::Opcode::load : ir::Opcode::take,
                 resultAddress->type,
                 ir::ValueCategory::value,
                 { resultAddress->id },
@@ -2745,7 +2953,7 @@ private:
     std::optional<ir::Value> lowerCall(const syntax::CallExprSyntax::Ptr& expression) {
         const auto target = model->callTarget(expression);
         if (!target.has_value()) {
-            const auto calleeType = model->typeOf(expression->callee);
+            const auto calleeType = typeOf(expression->callee);
             const auto* record = calleeType.has_value() ? model->types().type(*calleeType) : nullptr;
             if (record != nullptr && record->kind == typing::TypeKind::function) {
                 return lowerFunctionValueCall(expression, *calleeType);
@@ -2765,7 +2973,7 @@ private:
         if (targetSymbol != nullptr &&
             (targetSymbol->kind == semantic::SymbolKind::enumCase ||
              targetSymbol->kind == semantic::SymbolKind::builtinEnumCase)) {
-            const auto type = model->typeOf(expression);
+            const auto type = typeOf(expression);
             if (!type.has_value()) return std::nullopt;
             return lowerEnumArguments(
                     *type, *target, expression->arguments, expression->span);
@@ -2782,25 +2990,8 @@ private:
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
-            targetSymbol->name == "channel") {
-            return lowerChannelCreate(expression);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            (targetSymbol->name == "send" || targetSymbol->name == "receive" ||
-             targetSymbol->name == "close") &&
-            isChannelEndReceiver(expression)) {
-            return lowerChannelMember(expression, targetSymbol->name);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinFunction &&
-            targetSymbol->name == "spawn") {
-            return lowerSpawn(expression);
-        }
-        if (targetSymbol != nullptr &&
-            targetSymbol->kind == semantic::SymbolKind::builtinMember &&
-            targetSymbol->name == "join") {
-            return lowerTaskJoin(expression);
+            intrinsic::isLayoutIntrinsic(targetSymbol->name)) {
+            return lowerLayoutIntrinsic(expression, targetSymbol->name);
         }
         if (targetSymbol != nullptr &&
             targetSymbol->kind == semantic::SymbolKind::builtinMember &&
@@ -2817,7 +3008,8 @@ private:
             targetSymbol->name == "utf8") {
             return lowerStringUtf8(expression);
         }
-        if (!functions.contains(*target)) {
+        const auto calleeId = calledFunction(expression, *target, targetSymbol);
+        if (!calleeId.has_value()) {
             report(
                     DiagnosticId::missingSymbol,
                     expression->span,
@@ -2850,7 +3042,7 @@ private:
 
         std::vector<ir::ValueId> arguments;
         std::vector<ir::Value> consumedArguments;
-        const auto& callee = module->functions[functions.at(*target)];
+        const auto& callee = module->functions[*calleeId];
         for (size_t index = 0; index < operands.size(); ++index) {
             const auto& operand = operands[index];
             const auto* parameter = index < callee.parameters.size() ? &callee.parameters[index] : nullptr;
@@ -2867,8 +3059,52 @@ private:
             arguments.push_back(value->id);
         }
         auto instruction = makeInstruction(ir::Opcode::call, expression->span);
-        instruction.callee = functions.at(*target);
+        instruction.callee = *calleeId;
         return finishCall(expression, std::move(instruction), std::move(arguments), consumedArguments);
+    }
+
+    // The IR function a direct call reaches: an instance for a call of a generic function, the
+    // witness for a requirement call on a type parameter (decision 0021), else the target.
+    std::optional<ir::FunctionId> calledFunction(
+            const syntax::CallExprSyntax::Ptr& expression,
+            semantic::SymbolId target,
+            const semantic::Symbol* targetSymbol) {
+        if (const auto* call = model->genericCall(expression)) {
+            std::vector<typing::TypeId> arguments;
+            for (const auto argument : call->arguments) arguments.push_back(substituted(argument));
+            const auto instance = model->instanceIndex(call->callee, arguments);
+            if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                instanceFunctions[*instance] == ir::invalidFunctionId) {
+                return std::nullopt;
+            }
+            return instanceFunctions[*instance];
+        }
+        const auto* owner = targetSymbol != nullptr && targetSymbol->containingSymbol.has_value()
+                ? model->semanticModel()->symbol(*targetSymbol->containingSymbol)
+                : nullptr;
+        if (owner != nullptr && owner->kind == semantic::SymbolKind::protocol &&
+            expression->callee->kind == syntax::Kind::memberExpr) {
+            const auto base = typeOf(std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
+            const auto witness = base.has_value() ? model->witness(*base, target) : std::nullopt;
+            if (!witness.has_value()) return std::nullopt;
+            if (model->genericParameters(*witness) != nullptr) {
+                // A witness declared in a generic type is an instance of the receiver's arguments.
+                const auto* receiver = model->types().type(*base);
+                if (receiver == nullptr) return std::nullopt;
+                const auto instance = model->instanceIndex(*witness, receiver->arguments);
+                if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                    instanceFunctions[*instance] == ir::invalidFunctionId) {
+                    return std::nullopt;
+                }
+                return instanceFunctions[*instance];
+            }
+            const auto found = functions.find(*witness);
+            if (found == functions.end()) return std::nullopt;
+            return found->second;
+        }
+        const auto found = functions.find(target);
+        if (found == functions.end()) return std::nullopt;
+        return found->second;
     }
 
     // One argument of a call: an address for `inout` and `initializing`, a moved value for `consuming`,
@@ -2953,7 +3189,7 @@ private:
             if (!acquireOwned(argument, expression->span).has_value()) return std::nullopt;
         }
         instruction.operands = std::move(arguments);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (type.has_value() && *type != model->types().voidType() &&
             *type != model->types().neverType()) {
             instruction.result = makeValue(*type, ir::ValueCategory::value);
@@ -2988,7 +3224,7 @@ private:
         const auto member =
                 std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
         const auto array = lowerAddress(member->base);
-        const auto resultType = model->typeOf(expression);
+        const auto resultType = typeOf(expression);
         if (!array.has_value() || !resultType.has_value()) return std::nullopt;
         auto instruction = makeInstruction(ir::Opcode::arrayRemoveLast, expression->span);
         instruction.result = makeValue(*resultType, ir::ValueCategory::value);
@@ -3002,176 +3238,114 @@ private:
         return result;
     }
 
-    // `spawn(function: f, input: consume x)`: the input moves into the task exactly as it would into a
-    // direct call of `f`, and the instruction yields the handle (spec 21.2).
-    std::optional<ir::Value> lowerSpawn(const syntax::CallExprSyntax::Ptr& expression) {
+    // The layout intrinsics (spec 20.12.5). The size and alignment are queries of the backend's
+    // layout; the other three treat an `Int` as the address of a `T` slot. The type argument is
+    // substituted for the current instance, so a generic function gets the layout of its `T`.
+    std::optional<ir::Value> lowerLayoutIntrinsic(
+            const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
+        if (name == "joyeer_intrinsic_callback_address") {
+            const auto* reference = model->genericCall(expression);
+            if (reference == nullptr) {
+                report(DiagnosticId::missingSymbol, expression->span, "callback has no typed function reference");
+                return std::nullopt;
+            }
+            std::vector<typing::TypeId> arguments;
+            for (const auto argument : reference->arguments) arguments.push_back(substituted(argument));
+            const auto instance = model->instanceIndex(reference->callee, arguments);
+            if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+                instanceFunctions[*instance] == ir::invalidFunctionId) {
+                report(DiagnosticId::missingSymbol, expression->span, "callback has no lowered instance");
+                return std::nullopt;
+            }
+            auto instruction = makeInstruction(ir::Opcode::functionAddress, expression->span);
+            instruction.callee = instanceFunctions[*instance];
+            instruction.result = makeValue(model->types().functionType(
+                    { model->types().intType() }, { syntax::AccessEffect::consuming }, model->types().voidType()),
+                    ir::ValueCategory::value);
+            const auto address = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(address, ValueOwnership::trivial);
+            return emitValue(ir::Opcode::pointerToInteger, model->types().intType(), ir::ValueCategory::value,
+                             { address.id }, expression->span);
+        }
+        const auto written = model->layoutIntrinsicType(expression);
+        if (!written.has_value()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' needs one type argument");
+            return std::nullopt;
+        }
+        const auto type = substituted(*written);
+        if (name == "joyeer_intrinsic_stack_slot") {
+            if (type == model->types().voidType()) {
+                return emitValue(ir::Opcode::integerConstant, model->types().intType(),
+                                 ir::ValueCategory::value, {}, expression->span);
+            }
+            const auto slot = emitValue(ir::Opcode::stackAllocate, type, ir::ValueCategory::address,
+                                        {}, expression->span);
+            return emitValue(ir::Opcode::pointerToInteger, model->types().intType(), ir::ValueCategory::value,
+                             { slot.id }, expression->span);
+        }
+        if (name == "joyeer_intrinsic_needs_destroy") {
+            auto instruction = makeInstruction(ir::Opcode::booleanConstant, expression->span);
+            instruction.integerValue = requiresDestroy(type) ? 1 : 0;
+            instruction.result = makeValue(model->types().boolType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
+        if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of") {
+            auto instruction = makeInstruction(
+                    name == "joyeer_intrinsic_size_of" ? ir::Opcode::typeSize : ir::Opcode::typeAlignment,
+                    expression->span);
+            instruction.integerValue = static_cast<int64_t>(type);
+            instruction.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
+        if (expression->arguments.empty()) {
+            report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes an address");
+            return std::nullopt;
+        }
+        auto address = lowerExpression(expression->arguments[0]->value);
+        if (!address.has_value()) return std::nullopt;
+        address = coerce(*address, model->types().intType(), expression->arguments[0]->value->span);
+        if (!address.has_value()) return std::nullopt;
+        const auto slot = emitValue(
+                ir::Opcode::integerAddress, type, ir::ValueCategory::address, { address->id }, expression->span);
+        if (name == "joyeer_intrinsic_move_out") {
+            return emitValue(ir::Opcode::take, type, ir::ValueCategory::value, { slot.id }, expression->span);
+        }
+        if (name == "joyeer_intrinsic_destroy_at") {
+            emitDestroyStorage(slot, expression->span);
+            return emitUnit(expression->span);
+        }
         if (expression->arguments.size() != 2) {
-            report(DiagnosticId::unsupportedSyntax, expression->span,
-                   "spawn takes a function and an input");
+            report(DiagnosticId::unsupportedSyntax, expression->span, "move_in takes an address and a value");
             return std::nullopt;
         }
-        const auto named = model->referencedSymbol(expression->arguments[0]->value);
-        const auto resultType = model->typeOf(expression);
-        if (!named.has_value() || !functions.contains(*named) || !resultType.has_value()) {
-            report(DiagnosticId::missingSymbol, expression->span,
-                   "spawn target has no IR function declaration");
-            return std::nullopt;
-        }
-        const auto calleeId = functions.at(*named);
-        const auto& callee = module->functions[calleeId];
         const auto& argument = expression->arguments[1];
         std::optional<ir::Value> value;
         if (isAddressable(argument->value)) {
-            const auto address = lowerAddress(argument->value);
-            if (address.has_value()) {
-                value = emitValue(
-                        ir::Opcode::take,
-                        address->type,
-                        ir::ValueCategory::value,
-                        { address->id },
-                        argument->span);
+            const auto source = lowerAddress(argument->value);
+            if (source.has_value()) {
+                value = emitValue(ir::Opcode::take, source->type, ir::ValueCategory::value, { source->id },
+                                  argument->span);
             }
         } else {
             value = lowerExpression(argument->value);
         }
         if (!value.has_value()) return std::nullopt;
-        value = coerce(*value, callee.parameters[0].value.type, argument->value->span);
+        value = coerce(*value, type, argument->value->span);
         if (!value.has_value()) return std::nullopt;
         if (requiresDestroy(value->type)) {
             value = prepareOwned(*value, argument->span);
             if (!value.has_value()) return std::nullopt;
             if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
         }
-        auto instruction = makeInstruction(ir::Opcode::taskSpawn, expression->span);
-        instruction.operands = { value->id };
-        instruction.callee = calleeId;
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
-    }
-
-    // `channel(capacity: n, sender: &s, receiver: &r)`: the runtime creates the block and stores both
-    // ends in the two addresses (decision 0019).
-    std::optional<ir::Value> lowerChannelCreate(const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->arguments.size() != 3) {
-            report(DiagnosticId::unsupportedSyntax, expression->span,
-                   "channel takes a capacity, a sender and a receiver");
-            return std::nullopt;
-        }
-        auto capacity = lowerExpression(expression->arguments[0]->value);
-        if (!capacity.has_value()) return std::nullopt;
-        capacity = coerce(*capacity, model->types().intType(), expression->arguments[0]->value->span);
-        const auto sender = lowerAddress(expression->arguments[1]->value);
-        const auto receiver = lowerAddress(expression->arguments[2]->value);
-        if (!capacity.has_value() || !sender.has_value() || !receiver.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::channelCreate, expression->span);
-        instruction.operands = { capacity->id, sender->id, receiver->id };
-        emit(std::move(instruction));
+        emitRawStore(*value, slot, expression->span);
         return emitUnit(expression->span);
-    }
-
-    bool isChannelEndReceiver(const syntax::CallExprSyntax::Ptr& expression) const {
-        if (expression->callee->kind != syntax::Kind::memberExpr) return false;
-        const auto base = model->typeOf(
-                std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee)->base);
-        const auto* type = base.has_value() ? model->types().type(*base) : nullptr;
-        return type != nullptr && (type->kind == typing::TypeKind::channelSender ||
-                                   type->kind == typing::TypeKind::channelReceiver);
-    }
-
-    // `send`, `receive` and `close` on a channel end. `send` moves its value into the instruction, which
-    // consumes it on both outcomes; `close` leaves the end's storage zeroed.
-    std::optional<ir::Value> lowerChannelMember(
-            const syntax::CallExprSyntax::Ptr& expression, const std::string& name) {
-        if (expression->callee->kind != syntax::Kind::memberExpr) {
-            report(DiagnosticId::unsupportedSyntax, expression->span,
-                   "a channel operation requires a receiver expression");
-            return std::nullopt;
-        }
-        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        if (!isAddressable(member->base)) {
-            report(DiagnosticId::unsupportedSyntax, member->base->span,
-                   "a channel operation needs its end stored in a variable, parameter or field, not a temporary");
-            return std::nullopt;
-        }
-        const auto end = lowerAddress(member->base);
-        if (!end.has_value()) return std::nullopt;
-        if (name == "close") {
-            auto instruction = makeInstruction(ir::Opcode::channelClose, expression->span);
-            instruction.operands = { end->id };
-            emit(std::move(instruction));
-            return emitUnit(expression->span);
-        }
-        const auto resultType = model->typeOf(expression);
-        if (!resultType.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(
-                name == "send" ? ir::Opcode::channelSend : ir::Opcode::channelReceive, expression->span);
-        instruction.operands = { end->id };
-        if (name == "send") {
-            if (expression->arguments.size() != 1) {
-                report(DiagnosticId::unsupportedSyntax, expression->span, "send takes one value");
-                return std::nullopt;
-            }
-            const auto& argument = expression->arguments[0];
-            const auto* endType = model->types().type(end->type);
-            if (endType == nullptr || endType->arguments.size() != 1) return std::nullopt;
-            std::optional<ir::Value> value;
-            if (isAddressable(argument->value)) {
-                const auto address = lowerAddress(argument->value);
-                if (address.has_value()) {
-                    value = emitValue(
-                            ir::Opcode::take,
-                            address->type,
-                            ir::ValueCategory::value,
-                            { address->id },
-                            argument->span);
-                }
-            } else {
-                value = lowerExpression(argument->value);
-            }
-            if (!value.has_value()) return std::nullopt;
-            value = coerce(*value, endType->arguments[0], argument->value->span);
-            if (!value.has_value()) return std::nullopt;
-            if (requiresDestroy(value->type)) {
-                value = prepareOwned(*value, argument->span);
-                if (!value.has_value()) return std::nullopt;
-                if (!acquireOwned(*value, expression->span).has_value()) return std::nullopt;
-            }
-            instruction.operands.push_back(value->id);
-        }
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
-    }
-
-    // `consume handle.join()`: waits for the task, moves its result out, and frees the task block. The
-    // handle's storage is zeroed, so the binding's scope-end destroy has nothing to drop.
-    std::optional<ir::Value> lowerTaskJoin(const syntax::CallExprSyntax::Ptr& expression) {
-        if (expression->callee->kind != syntax::Kind::memberExpr || !expression->arguments.empty()) {
-            report(DiagnosticId::unsupportedSyntax, expression->span, "JoinHandle.join takes no arguments");
-            return std::nullopt;
-        }
-        const auto member = std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
-        const auto handle = lowerAddress(member->base);
-        const auto resultType = model->typeOf(expression);
-        if (!handle.has_value() || !resultType.has_value()) return std::nullopt;
-        auto instruction = makeInstruction(ir::Opcode::taskJoin, expression->span);
-        instruction.operands = { handle->id };
-        instruction.result = makeValue(*resultType, ir::ValueCategory::value);
-        const auto result = *instruction.result;
-        emit(std::move(instruction));
-        recordValue(result, requiresDestroy(result.type)
-                ? ValueOwnership::owned
-                : ValueOwnership::trivial);
-        return result;
     }
 
     // `consume a.consumeEmpty()`: the runtime traps unless the array is empty, then frees its storage
@@ -3230,7 +3404,7 @@ private:
             return std::nullopt;
         }
         auto key = lowerExpression(expression->arguments[0]->value);
-        const auto resultType = model->typeOf(expression);
+        const auto resultType = typeOf(expression);
         if (!key.has_value() || !resultType.has_value()) return std::nullopt;
         key = coerce(
                 *key,
@@ -3261,7 +3435,7 @@ private:
         const auto member =
                 std::static_pointer_cast<syntax::MemberExprSyntax>(expression->callee);
         const auto string = lowerExpression(member->base);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (!string.has_value() || !type.has_value()) return std::nullopt;
 
         auto instruction = makeInstruction(ir::Opcode::stringUtf8, expression->span);
@@ -3324,7 +3498,7 @@ private:
             const syntax::CallExprSyntax::Ptr& expression,
             semantic::SymbolId initializer) {
         const auto* initializerSymbol = model->semanticModel()->symbol(initializer);
-        const auto type = model->typeOf(expression);
+        const auto type = typeOf(expression);
         if (initializerSymbol == nullptr || !initializerSymbol->containingSymbol.has_value() ||
             !type.has_value()) {
             report(
@@ -3336,8 +3510,9 @@ private:
         const auto structure = std::find_if(
                 module->structures.begin(),
                 module->structures.end(),
-                [initializerSymbol](const auto& candidate) {
-                    return candidate.symbol == *initializerSymbol->containingSymbol;
+                [initializerSymbol, &type](const auto& candidate) {
+                    return candidate.symbol == *initializerSymbol->containingSymbol &&
+                            candidate.type == *type;
                 });
         if (structure == module->structures.end()) {
             report(
@@ -3433,8 +3608,8 @@ private:
     // Returning an owning local of a noncopyable type moves it out (decision 0015): a copy
     // would leave the local to be destroyed, running the `deinit` of a value that escaped.
     std::optional<ir::Value> lowerReturnedValue(const syntax::ExprPtr& expression) {
-        const auto type = model->typeOf(expression);
-        if (!type.has_value() || model->isCopyable(*type) || !isAddressable(expression)) {
+        const auto type = typeOf(expression);
+        if (!type.has_value() || copyableInBody(expression, *type) || !isAddressable(expression)) {
             return lowerExpression(expression);
         }
         const auto address = lowerAddress(expression);

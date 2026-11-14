@@ -96,12 +96,6 @@ void Builder::emitClone(ir::TypeId id) {
     destination->setName("destination");
     sourceAddress->setName("source");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::task || kind == typing::TypeKind::channelSender ||
-        kind == typing::TypeKind::channelReceiver) {
-        // A task or a channel end has one owner and is never cloned; reaching this is a compiler bug.
-        trap(builder.getTrue(), kind == typing::TypeKind::task ? "a task cannot be copied" : "a channel end cannot be copied");
-        return;
-    }
     if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
             kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_clone_abi"
@@ -149,20 +143,6 @@ void Builder::emitDestroy(ir::TypeId id) {
     auto* address = activeFunction->getArg(0);
     address->setName("value");
     const auto kind = type(id).kind;
-    if (kind == typing::TypeKind::channelSender || kind == typing::TypeKind::channelReceiver) {
-        // Dropping an end closes it; a null end (never initialized, closed, or moved from) is nothing.
-        auto* end = builder.CreateLoad(pointer(), address, "end");
-        call("joyeer_channel_close_abi", builder.getVoidTy(), {end});
-        builder.CreateStore(nullPointer(), address);
-        return;
-    }
-    if (kind == typing::TypeKind::task) {
-        // `join` zeroes the handle and a moved-from handle is zero, so a live one here was dropped
-        // without being joined: the linear check should have refused the program (defence in depth).
-        auto* block = builder.CreateLoad(pointer(), address, "task");
-        trap(builder.CreateIsNotNull(block), "task dropped without join");
-        return;
-    }
     if (kind == typing::TypeKind::string || kind == typing::TypeKind::array ||
             kind == typing::TypeKind::dictionary) {
         const auto name = kind == typing::TypeKind::string ? "joyeer_string_destroy_abi"

@@ -219,7 +219,10 @@ private func systemWrite(descriptor: Int, data: Int, count: Int, scratch: Int, w
     var chunk = count
     if chunk > 1048576 { chunk = 1048576 }
     if writeFile(handle: handle, buffer: data, count: chunk as UInt32, written: scratch, overlapped: 0) == 0 {
-        return 0 - systemCode(code: lastError())
+        let code = lastError()
+        // A handle without write access is a bad descriptor, as the C library reported it.
+        if code == 5 { return 0 - 9 }
+        return 0 - systemCode(code: code)
     }
     return load32(address: scratch) as Int
 }

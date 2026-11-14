@@ -1,0 +1,4 @@
+early<Int> | required by main at generics_report.joyeer:17 | 5 IR instructions
+late<Int> | required by main at generics_report.joyeer:16 | 5 IR instructions
+leaf<Int> | required by early<Int> at generics_report.joyeer:6 | 4 IR instructions
+leaf<String> | required by main at generics_report.joyeer:18 | 5 IR instructions

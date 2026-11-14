@@ -126,11 +126,14 @@ specified in §4.10.
 
 #### 3.2.3 Generics & constraints
 
-v0.1 has **no user-defined generics** (§2.6): a `func` may not declare type
-parameters, `where` clauses, or constraints. Generic *containers* (`Array`,
-`Dict`, `Optional`, `Result`) are built-ins. User-defined generics and the
-protocol system needed for constraints (`Comparable`, etc.) are reserved for a
-future version (Appendix A).
+A **top-level** `func` may declare type parameters with protocol constraints,
+`func totalArea<S: Shape>(shapes: [S]): Int` (§20.4). Methods, `init`,
+subscripts, protocol requirements and C bindings may not
+(`type-checking.invalid-generic-declaration`; a method's message names the
+deferred generic methods of §20.10), and there are no `where` clauses. A
+`struct` or `enum` may declare type parameters (§3.3, §3.4, §20.12), and its
+methods use them. The generic *containers* `Array`, `Dict`, `Optional` and
+`Result` remain built-ins. Operator protocols such as `Comparable` are reserved (§20.10).
 
 #### 3.2.4 Method receiver effects
 
@@ -233,7 +236,7 @@ Struct construction uses call syntax `Point(x:1, y:2)`.
 The record-literal form `Point { x:1, y:2 }` is reserved (⏳).
 
 ```
-struct_decl     ::= [ visibility ] 'struct' identifier
+struct_decl     ::= [ visibility ] 'struct' identifier [ generic_params ]
                     '{' struct_member* '}'
 
 struct_member   ::= binding
@@ -271,10 +274,15 @@ synthesized initializer takes the **least visible** access of the struct's
 stored fields (a `private` field makes the memberwise `init` `private`), so
 synthesis never widens access to a field.
 
+A struct may declare type parameters, `struct Box<T> { var value: T }`, with
+the constraints of §20.4 (§20.12). The memberwise initializer has the field
+types in terms of the parameters, and `Self` inside the struct means
+`Box<T>` (§3.9).
+
 ### 3.4 Enum declarations (ADT)
 
 ```
-enum_decl       ::= [ visibility ] 'enum' identifier
+enum_decl       ::= [ visibility ] 'enum' identifier [ generic_params ]
                     '{' enum_case ( ',' enum_case )* ','? enum_member* '}'
 
 enum_case       ::= [ 'indirect' ] identifier [ '(' assoc_type , ... ')' ]
@@ -340,14 +348,21 @@ and visible** in the declaration — no hidden boxing.
 ### 3.5 Extension declarations
 
 ```
-extension_decl  ::= 'extension' type
+extension_decl  ::= 'extension' extended_type [ ':' protocol_ref , ... ]
                     '{' extension_member* '}'
 
 extension_member ::= func_decl | subscript_decl
 ```
 
 Extensions add methods (functions tied to a type) and subscripts to an
-existing type. They cannot add stored fields.
+existing type. They cannot add stored fields. An extension with a
+conformance list declares that the type conforms to protocols (§20.3).
+
+The header of an extension of a generic type lists exactly the declaration's
+type parameters, once each, as fresh names bound to them in order:
+`extension Box<T>: P { ... }`. A concrete argument, a repeated name, the wrong
+count, or constraints on the names is `type-checking.invalid-extension-header`
+(§20.12).
 
 ```joyeer
 extension Array<Int> {
@@ -456,7 +471,9 @@ not supported. See §12 for module rules.
 ### 3.9 `self` and `Self`
 
 **Implementation status:** implemented for non-generic methods of structs and
-enums and for extensions of such types in the same module. Implicit-`self` field
+enums and for extensions of such types in the same module. In a generic type
+and its extensions `Self` means `Name<A, B>` with the header's parameters
+(§20.12); that is specified, not yet implemented. Implicit-`self` field
 access is not implemented: write `self.field`. See
 [methods](../docs/impl/methods.md).
 

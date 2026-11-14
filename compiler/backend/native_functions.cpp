@@ -203,6 +203,37 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
         case Opcode::functionAddress:
             result = functions.at(*instruction.callee);
             break;
+        case Opcode::typeSize:
+        case Opcode::typeAlignment: {
+            // A `Void` slot is empty: it has no storage and needs no alignment (spec 20.12.5). The
+            // portable module has no target layout yet, so the answer is the classic constant
+            // expression the target's data layout folds: the offset of the next element of an array,
+            // and of a `T` that follows one byte.
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            if (unit(id)) {
+                result = llvm::ConstantInt::get(resultType(), instruction.opcode == Opcode::typeSize ? 0 : 1);
+                break;
+            }
+            auto* slot = llvmType(id);
+            auto* null = llvm::ConstantPointerNull::get(builder.getPtrTy());
+            llvm::Constant* address = nullptr;
+            if (instruction.opcode == Opcode::typeSize) {
+                address = llvm::ConstantExpr::getGetElementPtr(slot, null, llvm::ArrayRef<llvm::Constant*> {
+                        llvm::ConstantInt::get(builder.getInt32Ty(), 1) });
+            } else {
+                auto* padded = llvm::StructType::get(context(), { builder.getInt8Ty(), slot });
+                address = llvm::ConstantExpr::getGetElementPtr(padded, null, llvm::ArrayRef<llvm::Constant*> {
+                        llvm::ConstantInt::get(builder.getInt32Ty(), 0), llvm::ConstantInt::get(builder.getInt32Ty(), 1) });
+            }
+            result = llvm::ConstantExpr::getPtrToInt(address, resultType());
+            break;
+        }
+        case Opcode::integerAddress:
+            result = builder.CreateIntToPtr(argument(0), pointer());
+            break;
+        case Opcode::pointerToInteger:
+            result = builder.CreatePtrToInt(argument(0), builder.getInt64Ty());
+            break;
         case Opcode::callIndirect: {
             // One indirect call with the type's signature: definitions are declared from the same
             // helper, so caller and callee agree on convention and attributes (decision 0020).

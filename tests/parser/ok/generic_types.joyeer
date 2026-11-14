@@ -1,0 +1,19 @@
+struct Box<T> {
+    var value: T
+}
+
+struct Pair<A: Counter & Named, B> {
+    var first: A
+    var second: B
+}
+
+enum Tree<T> {
+    Leaf,
+    Node(T)
+}
+
+extension Box<T>: Named {
+    func name(): String { return "box" }
+}
+
+let nested: Box<Box<Int>> = Box(value: Box(value: 1))

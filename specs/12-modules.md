@@ -62,6 +62,8 @@ always an error, regardless of visibility.
 An exposed type must be at least as accessible as the declaration exposing it.
 This includes function parameters/results, public stored fields, enum payloads,
 and types nested inside containers, optionals or function types (§2.3.1).
+The protocols in a public generic function's constraints (§20.4) are exposed
+names too.
 Visibility applies to names, not values: a private function's value (§5.6.1)
 may be returned by a public function. A member's effective
 accessibility is limited by its enclosing type. Inferred member lookup must
@@ -140,6 +142,7 @@ The draft standard-library prelude includes:
   `ProcessStatus`, `ProcessError`, `StderrError`, `StdinError`
 - `Array`, `Dict`, `Tuple`
 - `print`, `assert`, `precondition`, `fatalError`
+- `Copyable`, the builtin marker protocol of §20.5
 
 The prelude holds the language's own vocabulary: types and the few functions
 every program needs without an import. Operations on the host are **not**
@@ -153,9 +156,9 @@ tuple support. See the
 [implemented name-resolution prelude](../docs/impl/name-resolution.md#3-scopes-and-symbols)
 for the authoritative current list.
 
-The names `Display`, `Equatable`, `Comparable` are reserved for a future
-protocol system (Appendix A) but are **not** usable as constraints or conformances
-in v0.1.
+The names `Display`, `Equatable`, `Comparable` are reserved for future
+operator-backed protocols (§20.10) and are **not** usable as constraints or
+conformances in v1; user code may not declare them (§20.2).
 
 ### 12.5 Standard modules
 

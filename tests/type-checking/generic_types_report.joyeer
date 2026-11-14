@@ -1,0 +1,19 @@
+struct Box<T: Copyable> {
+    var value: T
+    func get(): T { return self.value }
+}
+
+enum Tree<T> {
+    Leaf,
+    Node(T)
+}
+
+func weigh(tree: Tree<Double>): Int {
+    return 1
+}
+
+func main() {
+    let b = Box(value: 1)
+    print(value: b.get())
+    print(value: weigh(tree: Tree.Node(2.5)))
+}

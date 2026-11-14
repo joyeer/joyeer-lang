@@ -5,7 +5,7 @@
   work in [0013](0013-concurrency-model.md). Implemented: stage 0 (`consumeEmpty`) and stage 1
   (`JoinHandle`, `spawn`, `join`) on Linux and Windows. Channels are
   [0019](0019-channels.md) (P5b with the runtime of P6), so tasks ship on the P3 and P4 runtime alone.
-- Spec: [§21 Concurrency](../../specs/21-concurrency.md) (new), [§2.6.3](../../specs/02-types.md#263-concurrency-builtin-types-provisional)
+- Spec: [§21 Concurrency](../../specs/21-concurrency.md) (new), [§2.6.3](../../specs/02-types.md#263-concurrency-library-types)
   and, as the first stage, `Array.consumeEmpty()` (§2.6.4, new).
 
 ## Context
@@ -18,7 +18,9 @@ owned input, get a handle, and join it for an owned result.
 Constraints, from 0013 and the compiler as it is:
 
 - No closures and no function values (§20.1): the target is a *named* function.
-- No user generics: `JoinHandle<R>` is a compiler-known builtin like `Optional<T>`.
+- No user generics: `JoinHandle<R>` is a compiler-known builtin like `Optional<T>`. (Superseded by
+  [0023](0023-library-concurrency.md): `JoinHandle<R>`, `spawn` and the `task_spawn`/`task_join`
+  operations are now library source; the compiler keeps only sealed compatibility checks.)
 - A borrow cannot cross to another thread: the target takes one `consuming` parameter.
 - The grammar already has `call_arg ::= label ':' [ '&' | 'consume' ] expression`: no new syntax.
 - Each pipeline stage keeps its own model (AGENTS.md): a task is a builtin *call* through the front end

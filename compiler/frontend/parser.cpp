@@ -98,6 +98,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::labeledFunctionTypeParameter: return "parser.labeled-function-type-parameter";
         case DiagnosticId::missingFunctionTypeResult: return "parser.missing-function-type-result";
         case DiagnosticId::parenthesizedType: return "parser.parenthesized-type";
+        case DiagnosticId::nestingTooDeep: return "parser.nesting-too-deep";
     }
     return "parser.unknown";
 }
@@ -187,7 +188,8 @@ void TokenCursor::rewind(Checkpoint checkpoint) {
     index = std::min(checkpoint, tokens.size());
 }
 
-Parser::Parser(const std::vector<Token::Ptr>& tokens): cursor(tokens) {
+Parser::Parser(const std::vector<Token::Ptr>& tokens, bool intrinsicTypeArguments, bool preludeAnnotations):
+        cursor(tokens), intrinsicTypeArguments(intrinsicTypeArguments), preludeAnnotations(preludeAnnotations) {
 }
 
 ParseResult Parser::parse() {
@@ -242,6 +244,26 @@ syntax::NodePtr Parser::parseTopLevelItem() {
         while (cursor.at(atSign)) attributes.push_back(parseAttribute());
         Token::Ptr modifier;
         if (isVisibility(cursor.peek()->kind)) modifier = cursor.advance();
+        const bool compilerAttributes = preludeAnnotations && std::all_of(attributes.begin(), attributes.end(),
+                [](const auto& attribute) {
+                    return attribute.name != nullptr && (attribute.name->rawValue == "compiler_role" ||
+                                                         attribute.name->rawValue == "compiler_transfer");
+                });
+        if (!cursor.at(kwFunc) && compilerAttributes) {
+            auto declaration = parseTopLevelItem();
+            if (declaration != nullptr && declaration->kind == syntax::Kind::structDecl) {
+                std::static_pointer_cast<syntax::StructDeclSyntax>(declaration)->attributes = std::move(attributes);
+                if (modifier != nullptr) {
+                    declaration->visibility = visibilityFor(modifier->kind);
+                    declaration->explicitVisibility = true;
+                }
+                declaration->span = spanFrom(start);
+                return declaration;
+            }
+            report(DiagnosticId::unsupportedSyntax, spanFrom(start),
+                   "compiler prelude annotations require a struct or function");
+            return declaration;
+        }
         if (!cursor.at(kwFunc)) {
             report(DiagnosticId::unsupportedSyntax, spanFrom(start),
                    "declaration annotations are supported only on top-level functions");
@@ -307,6 +329,8 @@ syntax::NodePtr Parser::parseTopLevelItem() {
             return parseEnumDecl();
         case kwExtension:
             return parseExtensionDecl();
+        case kwProtocol:
+            return parseProtocolDecl();
         default:
             reportExpected(DiagnosticId::expectedDeclaration, "a top-level declaration");
             {
@@ -375,6 +399,9 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl(bool hasAttributes) {
     const size_t start = cursor.position();
     cursor.advance();
     auto name = expect(identifier, "a function name");
+    auto genericParameters = cursor.at(less)
+            ? parseGenericParameters()
+            : std::vector<syntax::GenericParameterSyntax::Ptr> {};
     std::vector<syntax::ParameterDeclSyntax::Ptr> parameters;
     if (cursor.eat(leftParen) == nullptr) {
         reportExpected(DiagnosticId::expectedToken, "'(' to begin the parameter clause");
@@ -415,12 +442,14 @@ syntax::FunctionDeclSyntax::Ptr Parser::parseFunctionDecl(bool hasAttributes) {
     // Body presence depends on the annotation's meaning, not on parser trust.
     // Semantic checking admits only c_extern without a body.
     auto body = cursor.at(leftCurly) || !hasAttributes ? parseBlock() : nullptr;
-    return std::make_shared<syntax::FunctionDeclSyntax>(
+    auto declaration = std::make_shared<syntax::FunctionDeclSyntax>(
             spanFrom(start),
             std::move(name),
             std::move(parameters),
             std::move(returnType),
             std::move(body));
+    declaration->genericParameters = std::move(genericParameters);
+    return declaration;
 }
 
 syntax::ParameterDeclSyntax::Ptr Parser::parseParameter() {
@@ -592,12 +621,29 @@ syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
     const auto column = declarationColumn(start);
     cursor.advance();
     auto extended = parseType();
+    // `extension T: P` (spec 20.3): the extended type is nominal, an array or a dictionary, so
+    // `extension (Int): Int: P` is not confusingly valid.
+    if (extended != nullptr && (extended->kind == syntax::Kind::functionType ||
+                                extended->kind == syntax::Kind::optionalType ||
+                                extended->kind == syntax::Kind::unitType)) {
+        report(DiagnosticId::unsupportedSyntax, extended->span,
+               "an extension must name a struct, enum, array or dictionary type");
+    }
+    std::vector<syntax::TypePtr> conformances;
+    if (cursor.eat(colon) != nullptr) {
+        while (true) {
+            conformances.push_back(parseType());
+            if (cursor.eat(comma) == nullptr) break;
+        }
+    }
 
     std::vector<syntax::FunctionDeclSyntax::Ptr> methods;
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the extension body");
-        return std::make_shared<syntax::ExtensionDeclSyntax>(
+        auto declaration = std::make_shared<syntax::ExtensionDeclSyntax>(
                 spanFrom(start), std::move(extended), std::move(methods));
+        declaration->conformances = std::move(conformances);
+        return declaration;
     }
     DelimiterScope delimiter(activeClosers, rightCurly);
 
@@ -628,8 +674,95 @@ syntax::ExtensionDeclSyntax::Ptr Parser::parseExtensionDecl() {
     }
     expect(rightCurly, "'}' to close the extension body");
 
-    return std::make_shared<syntax::ExtensionDeclSyntax>(
+    auto declaration = std::make_shared<syntax::ExtensionDeclSyntax>(
             spanFrom(start), std::move(extended), std::move(methods));
+    declaration->conformances = std::move(conformances);
+    return declaration;
+}
+
+syntax::ProtocolDeclSyntax::Ptr Parser::parseProtocolDecl() {
+    const size_t start = cursor.position();
+    const auto column = declarationColumn(start);
+    cursor.advance();
+    auto name = expect(identifier, "a protocol name");
+
+    std::vector<syntax::FunctionDeclSyntax::Ptr> requirements;
+    if (cursor.eat(leftCurly) == nullptr) {
+        reportExpected(DiagnosticId::expectedBlock, "'{' to begin the protocol body");
+        return std::make_shared<syntax::ProtocolDeclSyntax>(
+                spanFrom(start), std::move(name), std::move(requirements));
+    }
+    DelimiterScope delimiter(activeClosers, rightCurly);
+
+    while (!cursor.at(rightCurly) && !cursor.atEnd()) {
+        if (cursor.peek()->startsLine && cursor.peek()->columnAt <= column &&
+            isTopLevelStart(cursor.peek())) {
+            break;
+        }
+        const size_t before = cursor.position();
+        if (rejectMemberAnnotations()) continue;
+        if (isNestedMethodStart(column)) {
+            // Parsed as a method whose body is optional; the type checker reports a body,
+            // a visibility or type parameters (spec 20.2).
+            const size_t requirementStart = cursor.position();
+            Token::Ptr visibility;
+            if (isVisibility(cursor.peek()->kind)) visibility = cursor.advance();
+            Token::Ptr effect;
+            if (cursor.at(kwMutating) || cursor.at(kwConsuming) || cursor.at(kwBorrowing)) {
+                effect = cursor.advance();
+            }
+            auto requirement = parseFunctionDecl(true);
+            requirement->parameters.insert(
+                    requirement->parameters.begin(),
+                    makeReceiverParameter(effect, requirement->name));
+            if (visibility != nullptr) {
+                requirement->visibility = visibilityFor(visibility->kind);
+                requirement->explicitVisibility = true;
+            }
+            requirement->span = spanFrom(requirementStart);
+            requirements.push_back(std::move(requirement));
+        } else if (cursor.at(invalid) || cursor.at(deferredKeyword)) {
+            cursor.advance();
+        } else {
+            report(DiagnosticId::unsupportedSyntax,
+                   tokenSpan(cursor.peek()),
+                   "only method requirements are supported in a protocol");
+            cursor.advance();
+            synchronizeBlock();
+        }
+        if (cursor.position() == before) cursor.advance();
+        enforceItemBoundary(false);
+    }
+    expect(rightCurly, "'}' to close the protocol body");
+
+    return std::make_shared<syntax::ProtocolDeclSyntax>(
+            spanFrom(start), std::move(name), std::move(requirements));
+}
+
+std::vector<syntax::GenericParameterSyntax::Ptr> Parser::parseGenericParameters() {
+    std::vector<syntax::GenericParameterSyntax::Ptr> parameters;
+    cursor.advance();
+    DelimiterScope delimiter(activeClosers, greater);
+    if (cursor.at(greater)) {
+        reportExpected(DiagnosticId::expectedToken, "a type parameter name");
+    }
+    while (!cursor.at(greater) && !cursor.atEnd()) {
+        const size_t start = cursor.position();
+        auto name = expect(identifier, "a type parameter name");
+        std::vector<syntax::TypePtr> constraints;
+        if (cursor.eat(colon) != nullptr) {
+            while (true) {
+                constraints.push_back(parseType());
+                if (cursor.eat(ampersand) == nullptr) break;
+            }
+        }
+        parameters.push_back(std::make_shared<syntax::GenericParameterSyntax>(
+                spanFrom(start), std::move(name), std::move(constraints)));
+        if (cursor.position() == start) cursor.advance();
+        if (cursor.eat(comma) == nullptr) break;
+    }
+    expect(greater, "'>' to close the type parameter list");
+    return parameters;
 }
 
 syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
@@ -637,11 +770,15 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
     const auto column = declarationColumn(start);
     cursor.advance();
     auto name = expect(identifier, "a struct name");
+    auto genericParameters = cursor.at(less) ? parseGenericParameters()
+                                             : std::vector<syntax::GenericParameterSyntax::Ptr> {};
 
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the struct body");
-        return std::make_shared<syntax::StructDeclSyntax>(
+        auto incomplete = std::make_shared<syntax::StructDeclSyntax>(
                 spanFrom(start), std::move(name), std::vector<syntax::StructFieldDeclSyntax::Ptr> {});
+        incomplete->genericParameters = std::move(genericParameters);
+        return incomplete;
     }
     DelimiterScope delimiter(activeClosers, rightCurly);
 
@@ -653,6 +790,24 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
         // An annotation at or left of the struct begins the next top-level
         // declaration, as in an unclosed body.
         if (cursor.at(atSign) && cursor.peek()->startsLine && !isNestedAnnotation(column)) break;
+        if (preludeAnnotations && cursor.at(atSign)) {
+            std::vector<syntax::AttributeSyntax> attributes;
+            while (cursor.at(atSign)) attributes.push_back(parseAttribute());
+            const bool allowed = std::all_of(attributes.begin(), attributes.end(), [](const auto& attribute) {
+                return attribute.name != nullptr && attribute.name->rawValue == "compiler_role";
+            });
+            if (!allowed || !isNestedMethodStart(column)) {
+                report(DiagnosticId::unsupportedSyntax, spanFrom(before),
+                       "compiler prelude member metadata requires a method role");
+                continue;
+            }
+            auto method = parseMethodDecl();
+            method->attributes = std::move(attributes);
+            method->span = spanFrom(before);
+            methods.push_back(std::move(method));
+            enforceItemBoundary(false);
+            continue;
+        }
         if (rejectMemberAnnotations()) continue;
         if (isDeinitStart() &&
             !(cursor.peek()->startsLine && cursor.peek()->columnAt <= column)) {
@@ -674,7 +829,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
         }
         if (cursor.peek()->startsLine &&
             (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum) ||
-             cursor.at(kwExtension))) {
+             cursor.at(kwExtension) || cursor.at(kwProtocol))) {
             break;
         }
         Token::Ptr modifier;
@@ -702,6 +857,7 @@ syntax::StructDeclSyntax::Ptr Parser::parseStructDecl() {
 
     auto declaration = std::make_shared<syntax::StructDeclSyntax>(
             spanFrom(start), std::move(name), std::move(fields));
+    declaration->genericParameters = std::move(genericParameters);
     declaration->methods = std::move(methods);
     declaration->deinitializer = std::move(deinitializer);
     return declaration;
@@ -736,10 +892,14 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
     const auto column = declarationColumn(start);
     cursor.advance();
     auto name = expect(identifier, "an enum name");
+    auto genericParameters = cursor.at(less) ? parseGenericParameters()
+                                             : std::vector<syntax::GenericParameterSyntax::Ptr> {};
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "'{' to begin the enum body");
-        return std::make_shared<syntax::EnumDeclSyntax>(
+        auto incomplete = std::make_shared<syntax::EnumDeclSyntax>(
                 spanFrom(start), std::move(name), std::vector<syntax::EnumCaseDeclSyntax::Ptr> {});
+        incomplete->genericParameters = std::move(genericParameters);
+        return incomplete;
     }
     DelimiterScope delimiter(activeClosers, rightCurly);
 
@@ -820,6 +980,7 @@ syntax::EnumDeclSyntax::Ptr Parser::parseEnumDecl() {
 
     auto declaration = std::make_shared<syntax::EnumDeclSyntax>(
             spanFrom(start), std::move(name), std::move(cases));
+    declaration->genericParameters = std::move(genericParameters);
     declaration->methods = std::move(methods);
     return declaration;
 }
@@ -883,6 +1044,8 @@ syntax::AssociatedTypeSyntax::Ptr Parser::parseAssociatedType() {
 
 syntax::TypePtr Parser::parseType() {
     const size_t start = cursor.position();
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) return std::make_shared<syntax::ErrorTypeSyntax>(spanFrom(start));
     auto type = parseTypePrimary();
     if (type == nullptr) {
         reportExpected(DiagnosticId::expectedType, "a type");
@@ -1017,6 +1180,10 @@ syntax::TypePtr Parser::parseParenthesizedType() {
 
 syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
     const size_t start = cursor.position();
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) {
+        return std::make_shared<syntax::BlockExprSyntax>(insertionSpan(), std::vector<syntax::NodePtr> {});
+    }
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "a '{ ... }' block");
         return std::make_shared<syntax::BlockExprSyntax>(
@@ -1028,7 +1195,7 @@ syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
     while (!cursor.at(rightCurly) && !cursor.atEnd()) {
         if (cursor.peek()->startsLine &&
             (cursor.at(kwFunc) || cursor.at(kwStruct) || cursor.at(kwEnum) ||
-             cursor.at(kwExtension) || cursor.at(kwMutating))) {
+             cursor.at(kwExtension) || cursor.at(kwMutating) || cursor.at(kwProtocol))) {
             break;
         }
         const size_t before = cursor.position();
@@ -1256,6 +1423,8 @@ syntax::ExprPtr Parser::parseExpression() {
 }
 
 syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) return std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
     auto left = parseCastExpr();
     if (left == nullptr) return nullptr;
 
@@ -1299,6 +1468,7 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
             right = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         }
 
+        if (!nestingScope.grow()) return left;
         const SourceSpan span = coveringSpan(left->span, right->span);
         if (info.assignment) {
             if (!isAssignmentTarget(left)) {
@@ -1321,6 +1491,7 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
 // than binary operators and looser than prefix operators, and the target is a
 // plain type name so a following `<` is a comparison, not generic arguments.
 syntax::ExprPtr Parser::parseCastExpr() {
+    NestingScope nestingScope(*this, false);
     auto expression = parsePrefixExpr();
     if (expression == nullptr) return nullptr;
 
@@ -1352,13 +1523,17 @@ syntax::ExprPtr Parser::parseCastExpr() {
                 span, std::move(op), std::move(expression));
         cast->castTarget = std::move(target);
         expression = std::move(cast);
+        if (!nestingScope.grow()) return expression;
     }
     return expression;
 }
 
 syntax::ExprPtr Parser::parsePrefixExpr() {
     const size_t start = cursor.position();
+    NestingScope nestingScope(*this, false);
     if (cursor.at(minus) || cursor.at(bang) || cursor.at(tilde)) {
+        // Only a prefix operator nests; an operand without one is the postfix expression itself.
+        if (!nestingScope.grow()) return std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         auto op = cursor.advance();
         auto operand = parsePrefixExpr();
         if (operand == nullptr) {
@@ -1390,13 +1565,29 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
     auto expression = parsePrimaryExpr();
     if (expression == nullptr) return nullptr;
 
+    NestingScope nestingScope(*this, false);
     while (!cursor.atEnd() && !cursor.peek()->startsLine) {
+        // Every wrapper below is one level deeper than `expression`.
+        if (!nestingScope.grow()) break;
         if (cursor.eat(dot) != nullptr) {
             auto member = expect(identifier, "a member name after '.'");
             expression = std::make_shared<syntax::MemberExprSyntax>(
                     coveringSpan(expression->span, tokenSpan(member)),
                     std::move(expression),
                     std::move(member));
+            continue;
+        }
+
+        if (atIntrinsicTypeArguments(expression)) {
+            auto typeArguments = parseIntrinsicTypeArguments();
+            auto arguments = cursor.at(leftParen) ? parseArgumentClause()
+                    : std::vector<syntax::CallArgumentSyntax::Ptr> {};
+            auto call = std::make_shared<syntax::CallExprSyntax>(
+                    coveringSpan(expression->span, tokenSpan(cursor.previous())),
+                    std::move(expression),
+                    std::move(arguments));
+            call->typeArguments = std::move(typeArguments);
+            expression = std::move(call);
             continue;
         }
 
@@ -1432,6 +1623,32 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
         break;
     }
     return expression;
+}
+
+// `joyeer_intrinsic_size_of<T>(` and the other layout intrinsics (spec 20.12.5): a type-argument list
+// follows only these names, and only in a unit the toolchain authorized.
+bool Parser::atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const {
+    if (!intrinsicTypeArguments || !cursor.at(less) || callee->kind != syntax::Kind::nameExpr) return false;
+    const auto& name = std::static_pointer_cast<syntax::NameExprSyntax>(callee)->name->rawValue;
+    return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
+           name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
+           name == "joyeer_intrinsic_destroy_at" || name == "joyeer_intrinsic_stack_slot" ||
+           name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address";
+}
+
+std::vector<syntax::TypePtr> Parser::parseIntrinsicTypeArguments() {
+    std::vector<syntax::TypePtr> arguments;
+    cursor.advance();
+    DelimiterScope delimiter(activeClosers, greater);
+    while (!cursor.at(greater) && !cursor.atEnd()) {
+        const size_t before = cursor.position();
+        arguments.push_back(parseType());
+        if (cursor.position() == before) cursor.advance();
+        if (cursor.eat(comma) == nullptr) break;
+    }
+    expect(greater, "'>' to close the type arguments");
+    if (!cursor.at(leftParen)) reportExpected(DiagnosticId::expectedToken, "'(' after the type arguments");
+    return arguments;
 }
 
 syntax::ExprPtr Parser::parsePrimaryExpr() {
@@ -1692,6 +1909,8 @@ std::vector<syntax::CallArgumentSyntax::Ptr> Parser::parseArgumentClause() {
 }
 
 syntax::PatternPtr Parser::parsePattern() {
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) return std::make_shared<syntax::WildcardPatternSyntax>(insertionSpan(), nullptr);
     if (cursor.at(leftParen) && cursor.at(rightParen, 1)) {
         const size_t start = cursor.position();
         cursor.advance();
@@ -1832,6 +2051,7 @@ bool Parser::isTopLevelStart(const Token::Ptr& token) const {
            token->kind == kwFunc || token->kind == kwStruct ||
            token->kind == kwEnum || token->kind == kwImport ||
            token->kind == kwExtension ||
+           token->kind == kwProtocol ||
            token->kind == atSign || isVisibility(token->kind);
 }
 
@@ -1922,12 +2142,37 @@ Token::Ptr Parser::synthetic(TokenKind kind) const {
 }
 
 void Parser::report(DiagnosticId id, SourceSpan span, std::string message) {
+    if (nestingExceeded) return;
     diagnostics.push_back(Diagnostic { id, span, std::move(message) });
+}
+
+Parser::NestingScope::NestingScope(Parser& parser, bool countSelf): parser(parser) {
+    if (countSelf) grow();
+}
+
+Parser::NestingScope::~NestingScope() {
+    parser.nesting -= depth;
+}
+
+bool Parser::NestingScope::grow() {
+    ++parser.nesting;
+    ++depth;
+    if (parser.nesting > maximumNesting && !parser.nestingExceeded) {
+        parser.report(DiagnosticId::nestingTooDeep, parser.tokenSpan(parser.cursor.peek()),
+                      "the syntax nests deeper than " + std::to_string(maximumNesting) + " levels");
+        parser.nestingExceeded = true;
+        while (!parser.cursor.atEnd()) parser.cursor.advance();
+    }
+    return !parser.nestingExceeded;
+}
+
+bool Parser::NestingScope::ok() const {
+    return !parser.nestingExceeded;
 }
 
 void Parser::addExpectedTokenFixIt(TokenKind kind) {
     const auto spelling = canonicalTokenSpelling(kind);
-    if (!spelling.has_value() || diagnostics.empty()) return;
+    if (!spelling.has_value() || diagnostics.empty() || nestingExceeded) return;
     if (tryAddExpectedTokenReplacementFixIt(kind)) return;
     const auto insertion = insertionSpan();
     auto& diagnostic = diagnostics.back();
@@ -1938,7 +2183,7 @@ void Parser::addExpectedTokenFixIt(TokenKind kind) {
 }
 
 bool Parser::tryAddExpectedTokenReplacementFixIt(TokenKind kind) {
-    if (diagnostics.empty() || cursor.atEnd()) return false;
+    if (diagnostics.empty() || nestingExceeded || cursor.atEnd()) return false;
 
     const auto current = cursor.peek();
     SourceSpan replacementSpan;
@@ -1979,7 +2224,7 @@ bool Parser::tryAddExpectedTokenReplacementFixIt(TokenKind kind) {
 }
 
 void Parser::addTokenDeletionFixIt(SourceSpan span, std::string help) {
-    if (diagnostics.empty() || span.length == 0) return;
+    if (diagnostics.empty() || nestingExceeded || span.length == 0) return;
     auto& diagnostic = diagnostics.back();
     diagnostic.help = std::move(help);
     diagnostic.fixIt = DiagnosticFixIt { span.offset, span.length, "" };

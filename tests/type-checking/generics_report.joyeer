@@ -1,0 +1,19 @@
+func leaf<T: Copyable>(value: T): T {
+    return value
+}
+
+func early<T: Copyable>(value: T): T {
+    return leaf(value: value)
+}
+
+func late<T: Copyable>(value: T): T {
+    return leaf(value: value)
+}
+
+func unused<T>(value: T) {}
+
+func main() {
+    print(value: late(value: 1))
+    print(value: early(value: 2))
+    print(value: leaf(value: "text"))
+}

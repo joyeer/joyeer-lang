@@ -50,6 +50,18 @@ TEST(ModuleArgumentsTest, CollectsNamedRootAndRepeatedDependencySources) {
     EXPECT_EQ(arguments->optimizationLevel, joyeer::OptimizationLevel::O0);
 }
 
+TEST(ModuleArgumentsTest, AcceptsInstantiationReportingWithoutAnOutputFile) {
+    Diagnostics diagnostics;
+    const auto arguments = parseArguments(diagnostics, {
+        "joyeer", "--report-instantiations", source().string(),
+    });
+    ASSERT_FALSE(diagnostics.hasFailure());
+    EXPECT_TRUE(arguments->accepted);
+    EXPECT_TRUE(arguments->reportInstantiations);
+    EXPECT_EQ(arguments->outputMode, joyeer::OutputMode::validate);
+    EXPECT_TRUE(arguments->outputFile.empty());
+}
+
 TEST(ModuleArgumentsTest, ResolvesSourcePathsAgainstCompilerWorkingDirectory) {
     Diagnostics diagnostics;
     const auto relative = std::filesystem::relative(source(), std::filesystem::current_path());
