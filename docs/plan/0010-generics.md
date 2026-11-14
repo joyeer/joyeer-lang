@@ -74,19 +74,25 @@ exactly. No closures, methods or generic functions as values.
 - [x] Reviews (language-designer, type-system-reviewer, ir-backend-reviewer, adversarial-tester).
   Evidence: findings recorded in decision 0020; all fixed with regression tests, and the adversarial
   probes re-run clean.
-- [ ] Validation: `scripts/validate.py` (Debug and Release) and Linux. Linux x86_64 (Ubuntu on WSL, LLVM 22.1.8)
-  on the exact Phase 1 tree `945ced9`: Debug and Release build and ctest pass, 1511 of 1511 each. `fern test` is
-  6 of 7 in both: `SystemTests` fails its "stderr closed descriptor" check (exit status 1), which also failed
-  6 of 7 in an earlier Linux report on `82c493c`, before Phase 1, so it is not caused by function values.
-  Still open: `validate.py` on Windows (Python is installed now, not yet on the shell's PATH) and macOS;
-  Windows x64 Debug ctest was run by hand instead.
+- [x] Validation: `scripts/validate.py` (Debug and Release) and Linux. Evidence: the final tree (Phase 3 plus the
+  stderr, `Never`-field and nesting fixes), `validate.py` unfiltered, fresh build trees: Windows x64 Debug and
+  Release build, ctest 1648 of 1648 each, `fern test` 7 of 7 each; Linux x86_64 (Ubuntu on WSL, LLVM 22.1.8) Debug
+  and Release build, ctest 1624 of 1624 each, `fern test` 7 of 7 each. On the Phase 1 tree `945ced9` Linux had
+  passed ctest 1511 of 1511 with the pre-existing `SystemTests` stderr failure, fixed since (see the progress
+  log). macOS is not run.
 - [x] Update [supported features](../impl/supported-features.md). Evidence: the "Function values" row.
 
 ### Found along the way (not function values)
 
-- [ ] The compiler overflows its stack on deep nesting (about 200 parenthesized expressions, 400
-  parenthesized types, a 300-term `+` chain); add a depth limit with a diagnostic. Pre-existing.
-- [ ] `struct S { var n: Never }` is accepted; reject `Never` as a stored field type. Pre-existing.
+- [x] The compiler overflows its stack on deep nesting (about 200 parenthesized expressions, 400
+  parenthesized types, a 300-term `+` chain); add a depth limit with a diagnostic. Pre-existing. Evidence: the
+  parser bounds the syntax depth at 100 and reports `parser.nesting-too-deep` once
+  (`ParserTest.DeepNestingIsDiagnosedOnceInsteadOfOverflowingTheStack`, 20,000-deep parentheses, types, `+`
+  chains, prefix operators, member chains, calls, casts and blocks; `NestingWithinTheLimitParsesWithoutADiagnostic`);
+  programs 94 levels deep compile and run with the Windows Debug compiler. Documented in `docs/impl/parser.md` and
+  Appendix C. Deeper nesting through types of generic instances is bounded by the instantiation limit.
+- [x] `struct S { var n: Never }` is accepted; reject `Never` as a stored field type. Pre-existing. Evidence:
+  `type-checking.never-field-type` (`TypeCheckingTest.StructuresCannotStoreNever`), spec §2.9.
 
 ### Phase 2: protocols and generic functions (§20 v1)
 
@@ -122,10 +128,9 @@ exactly. No closures, methods or generic functions as values.
   (`AConflictingTypeArgumentDoesNotCascadeIntoAFunctionTypeMismatch`, `TheProgramEntryPointCannotBeGeneric`).
   Three are recorded as open in 0021: a literal does not take an already-inferred `T?`, user structs may
   reuse reserved protocol names, and a method named `Self` is accepted.
-- [ ] Full validation in Debug and Release, and Linux. blocked: Python is absent, so `validate.py`
-  cannot run; manual Debug root `fern test` also reproduces the baseline `SystemTests` stderr
-  descriptor failure (0021). Windows x64 Debug default build and unfiltered CTest pass 1591/1591.
-  Release-host/Linux and the debugger breakpoint check remain unrun.
+- [x] Full validation in Debug and Release, and Linux. Evidence: the `validate.py` runs recorded under Phase 1 on
+  the final tree (Windows x64 and Linux x86_64, Debug and Release, all suites green); the baseline `SystemTests`
+  stderr failure noted in 0021 is fixed. The debugger breakpoint check and macOS were not run.
 - [x] Update supported features and implementation notes, correct the spec example, and record
   implementation deviations in 0021. Evidence: the linked source-of-truth documents in this change.
 
@@ -146,7 +151,10 @@ exactly. No closures, methods or generic functions as values.
 - [x] Fixture: a runtime-source generic struct owns a raw buffer of `T` and destroys queued noncopyable
   values correctly. Evidence: `tests/c-interop/generic-queue.joyeer` (`JoyeerCInterop.GenericQueueDebug`/
   `Optimized`), including the runtime's allocation-balance check at exit.
-- [ ] Reviews and validation; update supported features.
+- [x] Reviews and validation; update supported features. Evidence: type-system, IR/backend and adversarial
+  reviews with fixes (progress log, 2026-11-14); the `validate.py` runs recorded under Phase 1 cover this tree
+  (Windows x64 and Linux x86_64, Debug and Release). macOS is not run; the open review items are listed in the
+  progress log.
 
 ### Phase 4: concurrency builtins in the library
 
@@ -184,6 +192,12 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
 
 ## Progress log
 
+- 2026-11-14: Closed the Phase 1 "found along the way" items (a `Never` stored field is
+  `type-checking.never-field-type`; the parser bounds syntax depth at 100 with `parser.nesting-too-deep`) and
+  re-ran everything on the resulting tree with `validate.py`, unfiltered, fresh trees. Windows x64: Debug and
+  Release ctest 1648 of 1648, `fern test` 7 of 7. Linux x86_64 (WSL): ctest 1624 of 1624, `fern test` 7 of 7, both
+  configs. The earlier `SystemTests` stderr failures and the Phase 1, 2 and 3 validation items are closed by this
+  run. Not run: macOS, and the Phase 2 debugger breakpoint check.
 - 2026-11-14: Phase 3 validation on Linux x86_64 (WSL Ubuntu, `validate.py`, tree 2317f09): Debug and Release
   build, ctest 1621 of 1621 each; `fern test` 6 of 7 in both. The failure is the SystemTests stderr check
   `UNEXPECTED stderr closed descriptor (0 bytes): ok` (a zero-byte write to a closed descriptor reports `ok`,
