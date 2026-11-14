@@ -188,7 +188,10 @@ They stay deferred per §20.10 unless a phase's record shows they are needed.
   build, ctest 1621 of 1621 each; `fern test` 6 of 7 in both. The failure is the SystemTests stderr check
   `UNEXPECTED stderr closed descriptor (0 bytes): ok` (a zero-byte write to a closed descriptor reports `ok`,
   the test expects `err:9`). The same check fails the same way on `main` under WSL, so it is not caused by
-  this phase; it needs its own fix or an expected-platform note. Windows x64 Debug ctest 1644 of 1645
+  this phase. Fixed afterwards: `System.writeStderr` now reaches the runtime for an empty write (which probes
+  the descriptor), and the Windows runtime reports a write to a handle without write access as 9, as the C
+  library did; `fern test` is then 7 of 7 on Windows Debug and WSL Debug, and the 97 runtime/stdio ctest
+  tests pass on Windows Debug (full suites not rerun). Windows x64 Debug ctest 1644 of 1645
   (`ValidationScriptTests` timeout under load, passes alone). Windows x64 `validate.py` (same tree plus the
   plan note, f9ca550): Debug and Release build, ctest 1645 of 1645 each; `fern test` 6 of 7 in both, again only
   `SystemTests`, which prints two stderr failures: `read-only descriptor: err:13` (expected `err:9`) and the
