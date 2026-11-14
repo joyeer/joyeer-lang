@@ -98,6 +98,7 @@ const char* diagnosticName(DiagnosticId id) {
         case DiagnosticId::labeledFunctionTypeParameter: return "parser.labeled-function-type-parameter";
         case DiagnosticId::missingFunctionTypeResult: return "parser.missing-function-type-result";
         case DiagnosticId::parenthesizedType: return "parser.parenthesized-type";
+        case DiagnosticId::nestingTooDeep: return "parser.nesting-too-deep";
     }
     return "parser.unknown";
 }
@@ -1005,6 +1006,8 @@ syntax::AssociatedTypeSyntax::Ptr Parser::parseAssociatedType() {
 
 syntax::TypePtr Parser::parseType() {
     const size_t start = cursor.position();
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) return std::make_shared<syntax::ErrorTypeSyntax>(spanFrom(start));
     auto type = parseTypePrimary();
     if (type == nullptr) {
         reportExpected(DiagnosticId::expectedType, "a type");
@@ -1139,6 +1142,10 @@ syntax::TypePtr Parser::parseParenthesizedType() {
 
 syntax::BlockExprSyntax::Ptr Parser::parseBlock() {
     const size_t start = cursor.position();
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) {
+        return std::make_shared<syntax::BlockExprSyntax>(insertionSpan(), std::vector<syntax::NodePtr> {});
+    }
     if (cursor.eat(leftCurly) == nullptr) {
         reportExpected(DiagnosticId::expectedBlock, "a '{ ... }' block");
         return std::make_shared<syntax::BlockExprSyntax>(
@@ -1378,6 +1385,8 @@ syntax::ExprPtr Parser::parseExpression() {
 }
 
 syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) return std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
     auto left = parseCastExpr();
     if (left == nullptr) return nullptr;
 
@@ -1421,6 +1430,7 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
             right = std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         }
 
+        if (!nestingScope.grow()) return left;
         const SourceSpan span = coveringSpan(left->span, right->span);
         if (info.assignment) {
             if (!isAssignmentTarget(left)) {
@@ -1443,6 +1453,7 @@ syntax::ExprPtr Parser::parsePrecedence(int minimumBindingPower) {
 // than binary operators and looser than prefix operators, and the target is a
 // plain type name so a following `<` is a comparison, not generic arguments.
 syntax::ExprPtr Parser::parseCastExpr() {
+    NestingScope nestingScope(*this, false);
     auto expression = parsePrefixExpr();
     if (expression == nullptr) return nullptr;
 
@@ -1474,13 +1485,17 @@ syntax::ExprPtr Parser::parseCastExpr() {
                 span, std::move(op), std::move(expression));
         cast->castTarget = std::move(target);
         expression = std::move(cast);
+        if (!nestingScope.grow()) return expression;
     }
     return expression;
 }
 
 syntax::ExprPtr Parser::parsePrefixExpr() {
     const size_t start = cursor.position();
+    NestingScope nestingScope(*this, false);
     if (cursor.at(minus) || cursor.at(bang) || cursor.at(tilde)) {
+        // Only a prefix operator nests; an operand without one is the postfix expression itself.
+        if (!nestingScope.grow()) return std::make_shared<syntax::ErrorExprSyntax>(insertionSpan());
         auto op = cursor.advance();
         auto operand = parsePrefixExpr();
         if (operand == nullptr) {
@@ -1512,7 +1527,10 @@ syntax::ExprPtr Parser::parsePostfixExpr() {
     auto expression = parsePrimaryExpr();
     if (expression == nullptr) return nullptr;
 
+    NestingScope nestingScope(*this, false);
     while (!cursor.atEnd() && !cursor.peek()->startsLine) {
+        // Every wrapper below is one level deeper than `expression`.
+        if (!nestingScope.grow()) break;
         if (cursor.eat(dot) != nullptr) {
             auto member = expect(identifier, "a member name after '.'");
             expression = std::make_shared<syntax::MemberExprSyntax>(
@@ -1852,6 +1870,8 @@ std::vector<syntax::CallArgumentSyntax::Ptr> Parser::parseArgumentClause() {
 }
 
 syntax::PatternPtr Parser::parsePattern() {
+    NestingScope nestingScope(*this);
+    if (!nestingScope.ok()) return std::make_shared<syntax::WildcardPatternSyntax>(insertionSpan(), nullptr);
     if (cursor.at(leftParen) && cursor.at(rightParen, 1)) {
         const size_t start = cursor.position();
         cursor.advance();
@@ -2083,12 +2103,37 @@ Token::Ptr Parser::synthetic(TokenKind kind) const {
 }
 
 void Parser::report(DiagnosticId id, SourceSpan span, std::string message) {
+    if (nestingExceeded) return;
     diagnostics.push_back(Diagnostic { id, span, std::move(message) });
+}
+
+Parser::NestingScope::NestingScope(Parser& parser, bool countSelf): parser(parser) {
+    if (countSelf) grow();
+}
+
+Parser::NestingScope::~NestingScope() {
+    parser.nesting -= depth;
+}
+
+bool Parser::NestingScope::grow() {
+    ++parser.nesting;
+    ++depth;
+    if (parser.nesting > maximumNesting && !parser.nestingExceeded) {
+        parser.report(DiagnosticId::nestingTooDeep, parser.tokenSpan(parser.cursor.peek()),
+                      "the syntax nests deeper than " + std::to_string(maximumNesting) + " levels");
+        parser.nestingExceeded = true;
+        while (!parser.cursor.atEnd()) parser.cursor.advance();
+    }
+    return !parser.nestingExceeded;
+}
+
+bool Parser::NestingScope::ok() const {
+    return !parser.nestingExceeded;
 }
 
 void Parser::addExpectedTokenFixIt(TokenKind kind) {
     const auto spelling = canonicalTokenSpelling(kind);
-    if (!spelling.has_value() || diagnostics.empty()) return;
+    if (!spelling.has_value() || diagnostics.empty() || nestingExceeded) return;
     if (tryAddExpectedTokenReplacementFixIt(kind)) return;
     const auto insertion = insertionSpan();
     auto& diagnostic = diagnostics.back();
@@ -2099,7 +2144,7 @@ void Parser::addExpectedTokenFixIt(TokenKind kind) {
 }
 
 bool Parser::tryAddExpectedTokenReplacementFixIt(TokenKind kind) {
-    if (diagnostics.empty() || cursor.atEnd()) return false;
+    if (diagnostics.empty() || nestingExceeded || cursor.atEnd()) return false;
 
     const auto current = cursor.peek();
     SourceSpan replacementSpan;
@@ -2140,7 +2185,7 @@ bool Parser::tryAddExpectedTokenReplacementFixIt(TokenKind kind) {
 }
 
 void Parser::addTokenDeletionFixIt(SourceSpan span, std::string help) {
-    if (diagnostics.empty() || span.length == 0) return;
+    if (diagnostics.empty() || nestingExceeded || span.length == 0) return;
     auto& diagnostic = diagnostics.back();
     diagnostic.help = std::move(help);
     diagnostic.fixIt = DiagnosticFixIt { span.offset, span.length, "" };

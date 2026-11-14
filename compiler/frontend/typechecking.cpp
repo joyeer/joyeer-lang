@@ -2810,8 +2810,14 @@ private:
         };
         initializer.parameters.reserve(declaration->fields.size());
         for (const auto& field : declaration->fields) {
-            const auto fieldType = resolveType(field->type).value_or(
+            auto fieldType = resolveType(field->type).value_or(
                     model->typeContext.errorType());
+            if (fieldType == model->typeContext.neverType()) {
+                report(TypeCheckingDiagnosticId::neverFieldType, field->type->span,
+                       "a stored field cannot have type 'Never'",
+                       "a structure holding a value that cannot exist could never be constructed (spec 2.9)");
+                fieldType = model->typeContext.errorType();
+            }
             recordDeclaredType(field, fieldType);
             initializer.parameters.push_back(fieldType);
         }
@@ -6244,6 +6250,8 @@ const char* diagnosticName(TypeCheckingDiagnosticId id) {
             return "type-checking.not-a-function-value";
         case TypeCheckingDiagnosticId::labeledFunctionValueCall:
             return "type-checking.labeled-function-value-call";
+        case TypeCheckingDiagnosticId::neverFieldType:
+            return "type-checking.never-field-type";
         case TypeCheckingDiagnosticId::protocolUsedAsType:
             return "type-checking.protocol-used-as-type";
         case TypeCheckingDiagnosticId::invalidProtocolMember:

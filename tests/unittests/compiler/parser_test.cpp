@@ -252,6 +252,52 @@ let z = a = b = value
     EXPECT_EQ(outerAssignment->value->kind, Kind::assignmentExpr);
 }
 
+namespace {
+
+std::string repeated(const std::string& text, size_t count) {
+    std::string out;
+    for (size_t index = 0; index < count; ++index) out += text;
+    return out;
+}
+
+} // namespace
+
+// Later stages recurse over the syntax tree, so the parser bounds its depth and says so once, instead of
+// the compiler overflowing its stack.
+TEST_F(ParserTest, DeepNestingIsDiagnosedOnceInsteadOfOverflowingTheStack) {
+    const auto onlyNestingDiagnostic = [this] {
+        return hasDiagnostic(DiagnosticId::nestingTooDeep) && result.diagnostics.size() == 1u;
+    };
+    const size_t deep = 20000;
+    parse("let x = " + repeated("(", deep) + "1" + repeated(")", deep) + "\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("let x: " + repeated("[", deep) + "Int" + repeated("]", deep) + " = 0\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("let x = 1" + repeated(" + 1", deep) + "\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("let x = " + repeated("!", deep) + "true\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("let x = a" + repeated(".b", deep) + "\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("let x = a" + repeated("(1)", deep) + "\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("let x = 1" + repeated(" as Int", deep) + "\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+    parse("func f() {\n" + repeated("if true {\n", deep) + repeated("}\n", deep) + "}\n");
+    EXPECT_TRUE(onlyNestingDiagnostic());
+}
+
+TEST_F(ParserTest, NestingWithinTheLimitParsesWithoutADiagnostic) {
+    parse("let x = " + repeated("(", 90) + "1" + repeated(")", 90) + "\n");
+    EXPECT_TRUE(result.diagnostics.empty());
+    parse("let x: " + repeated("[", 90) + "Int" + repeated("]", 90) + " = 0\n");
+    EXPECT_TRUE(result.diagnostics.empty());
+    parse("let x = 1" + repeated(" + 1", 90) + "\n");
+    EXPECT_TRUE(result.diagnostics.empty());
+    parse("let x = a" + repeated(".b", 90) + "\n");
+    EXPECT_TRUE(result.diagnostics.empty());
+}
+
 TEST_F(ParserTest, DiagnosesChainedComparisonsAndInvalidAssignmentTargets) {
     parse(R"JOYEER(let chained = a < b < c
 let invalid = (a + b) = c

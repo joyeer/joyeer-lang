@@ -3101,6 +3101,16 @@ TEST_F(TypeCheckingTest, StoredFunctionValuesNeedAParenthesizedCallee) {
     EXPECT_TRUE(hasTypeDiagnostic(checking, Id::notCallable));
 }
 
+TEST_F(TypeCheckingTest, StructuresCannotStoreNever) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("struct S { var n: Never }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::neverFieldType));
+    check("struct S { let n: Never }\nfunc run(s: S) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::neverFieldType));
+    check("struct Box<T> { var value: T }\nstruct S { var n: Int }\nfunc run(s: S) {}\n");
+    EXPECT_TRUE(checking.succeeded());
+}
+
 TEST_F(TypeCheckingTest, FunctionTypesRejectNeverParametersAndEquality) {
     using Id = joyeer::typing::TypeCheckingDiagnosticId;
     check("func run(f: (Never): Int) {}\n");

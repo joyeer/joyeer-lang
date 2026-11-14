@@ -69,6 +69,13 @@ The implementation lives in `parser.h` / `parser.cpp`, with its syntax-only
 AST in `syntax.h` / `syntax.cpp`. A successful tree flows through name
 resolution, type checking, semantic analysis, Joyeer IR, and the native backend.
 
+The parser bounds the depth of the tree it builds (`Parser::maximumNesting`, 100): later stages recurse over
+the tree, so a deeper one would overflow the compiler's stack. `NestingScope` counts one level per
+parenthesized expression, type, block, pattern and prefix operator, and one per wrapper added to the
+expression built so far (a binary operator, member access, call, subscript, `?` or cast). Past the limit the
+parser reports `parser.nesting-too-deep` once, consumes the rest of the input and adds no further
+diagnostic. A Debug compiler on Windows (1 MiB stack) compiles programs at the limit.
+
 ---
 
 ## 3. Parser boundaries

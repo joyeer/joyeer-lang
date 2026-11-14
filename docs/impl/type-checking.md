@@ -139,7 +139,8 @@ The current checker validates:
   the reason); `checkFunctionValueCall` checks positional arguments against the type's effects with the
   same marker, storage and exclusivity rules as a call by name (`checkArgumentAccess`), and rejects
   labels (`labeled-function-value-call`), a non-parenthesized field, element or call callee
-  (`not-callable`) and a `Never` parameter (`invalid-function-type`). Name resolution leaves a call of a
+  (`not-callable`) and a `Never` parameter (`invalid-function-type`); a `Never` stored field of a
+  structure is `never-field-type`. Name resolution leaves a call of a
   binding, parameter or field to the type checker;
 - Channels (decision 0019, spec 21.9): `ChannelSender<T>` and `ChannelReceiver<T>` are `TypeKind::channelSender`
   and `channelReceiver` (noncopyable, not linear); `channel` is checked by `checkChannel` and `send`, `receive`

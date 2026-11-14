@@ -312,6 +312,7 @@ enum class TypeCheckingDiagnosticId {
     invalidFunctionType,
     notAFunctionValue,
     labeledFunctionValueCall,
+    neverFieldType,
     // Protocols and generic functions (spec 20.8, decision 0021).
     protocolUsedAsType,
     invalidProtocolMember,

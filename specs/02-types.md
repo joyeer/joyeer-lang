@@ -351,6 +351,9 @@ allowed as a function-type parameter.
 written or inferred: a `Result<Int, Never>` argument for a `Result<T, E>`
 parameter is rejected (`type-checking.invalid-type-argument`).
 
+`Never` is not the type of a stored field of a structure, because no value of
+that structure could be constructed (`type-checking.never-field-type`).
+
 `Never` may appear in a signature as an explicit "this function never returns"
 marker:
 

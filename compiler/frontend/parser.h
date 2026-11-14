@@ -31,6 +31,7 @@ enum class DiagnosticId {
     labeledFunctionTypeParameter,
     missingFunctionTypeResult,
     parenthesizedType,
+    nestingTooDeep,
 };
 
 struct Diagnostic {
@@ -88,6 +89,29 @@ private:
         bool rightAssociative;
         bool nonAssociative;
         bool assignment;
+    };
+
+    // The deepest syntax tree the parser builds (parentheses, types, blocks, patterns and the operands
+    // chained by one operator all count). Later stages recurse over the tree, so a deeper one is
+    // reported instead of overflowing the compiler's stack.
+    static constexpr size_t maximumNesting = 100;
+
+    // Counts one level of nesting for the lifetime of the scope; `grow` counts one more, for a node that
+    // wraps the expression built so far. Past the limit it reports once and consumes the rest of the
+    // input, so every loop and recursion unwinds and no further diagnostic is added.
+    class NestingScope {
+    public:
+        // `countSelf` is false for a loop that only wraps (`grow`) and adds no level of its own.
+        explicit NestingScope(Parser& parser, bool countSelf = true);
+        ~NestingScope();
+        NestingScope(const NestingScope&) = delete;
+        NestingScope& operator=(const NestingScope&) = delete;
+        bool grow();
+        [[nodiscard]] bool ok() const;
+
+    private:
+        Parser& parser;
+        size_t depth = 0;
     };
 
     syntax::NodePtr parseTopLevelItem();
@@ -195,6 +219,8 @@ private:
     // Declarations a for-in loop adds before its loop; the enclosing block takes them.
     std::vector<syntax::NodePtr> pendingItems;
     size_t forLoopCount = 0;
+    size_t nesting = 0;
+    bool nestingExceeded = false;
 };
 
 [[nodiscard]] const char* diagnosticName(DiagnosticId id);

@@ -191,3 +191,10 @@ the same production as [§3.2](03-declarations.md#32-function-declarations).
 > `let v = opt ?? fatalError(...)` well-typed (§8.5, §9.3).
 
 ---
+
+> **Nesting limit.** An implementation bounds how deeply the syntax may
+> nest, because later stages recurse over the syntax tree. Parentheses,
+> types, blocks, patterns, prefix operators, and each operand added to a
+> chain (`a + b + c`, `a.b.c`, `f(x)(y)`, `x as T as U`) count one level
+> each. The reference compiler's limit is 100 levels; a deeper program is
+> rejected with the single diagnostic `parser.nesting-too-deep`.
