@@ -53,7 +53,7 @@ source -> lexer -> parser -> name resolution -> type checking
 
 ## Coding rules
 
-  and implementations live together under `compiler/` (the compiler, with the
+- Headers and implementations live together under `compiler/` (the compiler, with the
   backend in `compiler/backend/`) and `lib/` (standard modules and the runtime
   in `lib/Runtime/`); same-directory includes use the filename, cross-directory
   includes use paths relative to the repository root for `compiler/...` and
@@ -73,6 +73,10 @@ source -> lexer -> parser -> name resolution -> type checking
   with argument arrays, never `shell=True` or shell command strings; do not
   maintain parallel `.sh` and `.ps1` implementations. Python must not become
   a source-build or released-program requirement.
+- Do not edit fetched third-party dependencies (LLVM, GoogleTest, and other
+  pinned sources) in a build tree or cache. Change the pin under the
+  [dependency policy](docs/building.md#dependency-policy), or fix the problem
+  in the owning project.
 - Keep test SDKs and LLVM tools out of product packages. Required third-party
   notices must be assembled before redistribution; follow
   [release staging](docs/building.md#release-staging).
@@ -87,6 +91,19 @@ source -> lexer -> parser -> name resolution -> type checking
   stage-specific [tests/](tests/) directories (compile-and-run programs live in
   `tests/e2e/`). Label filters are for iteration,
   not full acceptance.
+- **Bug fixes:** add or find a failing test first, run it, and observe the
+  expected failure before editing the implementation. Keep test and fix edits
+  separate so the failure is real, then confirm the same test passes. A
+  regenerated expected output is not an observed failure.
+- **Generated expectations:** regenerate golden or expected-output files with
+  the project's own tool rather than editing them by hand, then inspect the
+  resulting diff. If the tool produces unexpected output, stop and report it
+  instead of patching the file.
+- **High-risk areas:** changes to name resolution, type checking, semantic
+  analysis, IR lowering or the IR verifier, the `joyeer-backend` C ABI, and
+  ownership or destruction semantics need the matching reviewer
+  (`type-system-reviewer` or `ir-backend-reviewer`) before acceptance, even
+  for small or bug-fix changes.
 - **User-visible features:** follow the
   [feature workflow](docs/decisions/README.md). Record contested decisions,
   update the spec, add failing GoogleTests and a durable stage or end-to-end fixture,
@@ -106,6 +123,15 @@ source -> lexer -> parser -> name resolution -> type checking
   fixtures, not CMake `file(WRITE)`: Windows text writes can change byte counts.
 - Claim parallel test directories exclusively with process-specific names.
   Cleanup may remove only paths the current test successfully created.
+
+## Before pushing
+
+After committing and before pushing, once ask the user to confirm
+understanding and testing of the change and personal review of the complete
+diff after the latest change. Agent review does not count. Remind the user to
+disclose LLM use in the PR description. Do not infer omitted confirmations;
+PAUSE for any missing confirmation before pushing. Do NOT add `Co-Authored-By`
+trailers to commits.
 
 ## Documentation map
 
