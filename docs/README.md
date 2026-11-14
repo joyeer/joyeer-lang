@@ -82,6 +82,7 @@ iteration, a progress log, and deletion once every item is done. Start from the
 | [0009](plan/0009-concurrency.md) | What is left of the concurrency work (tasks, channels and the worker-pool server are done): gates not yet run, compiler gaps, deferred features |
 | [0010](plan/0010-generics.md) | Generics and source-library concurrency are complete on Windows/Linux x86_64; native macOS/AArch64 acceptance remains open |
 | [0011](plan/0011-library-containers.md) | Source-library Optional/Result, then borrowed element access and linear-safe Array/Dict |
+| [0012](plan/0012-equatable.md) | `==` and `!=` through the `Equatable` protocol: builtin, derived and generic equality, `nil` comparison |
 
 ## Decisions
 

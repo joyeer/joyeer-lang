@@ -3,7 +3,8 @@
 - Status: proposed (updated 2026-11-14)
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
-  [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration)
+  [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
+  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, proposed)
 - Spec: [§2](../../specs/02-types.md), [§20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -107,3 +108,14 @@ redesign. No prerequisite is considered accepted merely because this plan names 
 
 - 2026-11-14: Created the Phase 4 follow-up plan requested by 0010. All implementation and
   acceptance items in this plan remain open; 0023 records the completed x86_64 concurrency prerequisite.
+- 2026-11-14: Drafted [0024](../decisions/0024-library-optional-and-result.md) (proposed) for
+  Phase 1: role-bound prelude enums with shape-identified cases. The decision item stays open until
+  a language-designer review accepts it.
+- 2026-11-14: The first language-designer review of 0024 asked for revision. It found two blocking
+  gaps: linear payloads checked against unsubstituted case types, and `Never` arguments used by
+  `tests/e2e/propagation.joyeer`. It also found silent behavior changes and misstated diagnostic
+  stages. 0024 is revised to address them and awaits a second review.
+- 2026-11-14: The second review of 0024 accepted it with changes, and the changes are applied.
+  `==`/`!=` on `Optional`/`Result` are now rejected; restoring them through `Equatable` is
+  [plan 0012](0012-equatable.md). The decision item stays open: the applied changes have not been
+  re-reviewed.
