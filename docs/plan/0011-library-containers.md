@@ -4,7 +4,8 @@
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
-  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted; implemented, reviewed twice, validated on Windows and Linux; macOS validation open)
+  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
+  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, proposed)
 - Spec: [§2](../../specs/02-types.md), [§20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -82,9 +83,12 @@ cannot express element-dependent copyability, linearity, and destruction through
 ### Phase 2: borrowing and linear collection ownership
 
 - [ ] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
-  and element-dependent ownership of a raw-address container.
+  and element-dependent ownership of a raw-address container. Drafted as
+  [0025](../decisions/0025-library-collection-capabilities.md) (proposed); open until a
+  language-designer review accepts it.
 - [ ] Decide how generic code transfers or ends linear elements without allowing them to be
   silently dropped. The closed task-transfer exception in 0023 is not a general solution.
+  Proposed in 0025 section 4 (must-transfer bodies plus an ending method); open with the item above.
 - [ ] Add failing ownership tests for mutation during a borrow, escaped borrows, partial moves,
   linear elements, early exits, and expanding generic recursion.
 - [ ] Implement the minimum runtime-only capability and verification needed by safe library
@@ -268,3 +272,23 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   (no regression outside noise, bounded hello growth) is met: hello grew by 0 bytes. The paired bootstrap
   interval of `benchmark_concurrency.py` was not run; the ratios above are plain medians.
   Phase 1 remains open only for the macOS validation item.
+- 2026-11-15: Phase 2 started on branch `docs/decision-0025-collection-capabilities`. Inventory of the
+  current array/dictionary machinery (read-only): the compiler owns the type kinds, the 24-byte layout,
+  element access (an inline bounds check plus a typed address, with no user subscript or projection),
+  construction and constant arrays, per-type clone/destroy callbacks and all ownership rules, in about
+  450 lines of verifier, 450 of lowering, 300 of backend collection code and 90 of type checking; the
+  algorithms already live in `lib/Runtime/core/arrays.joyeer` and `dictionaries.joyeer`. Eight obstacles
+  to a library `struct Array<T>` are listed in 0025 (no borrowed element projection, unconditional
+  noncopyability of a `deinit` struct, linear elements held through an address, the hidden `$live` flag
+  breaking the C ABI layout, zero-filled moved-out slots, inline `-O0` access cost). Drafted 0025
+  (proposed): a `slot<T>(address)` place, an `array_element` addressor role, `@compiler_owns` and
+  `@compiler_copy` prelude metadata, an ending-method rule for linear containers and
+  `@compiler_inert_zero`. No code changed; the decision item stays open pending review.
+- 2026-11-15: First language-designer review of 0025 requested changes (four blockers: the linear
+  destroy and ending story contradicted 0022's `destroy_at` rule and 0015's exit check; the copy method
+  could not be written without a clone intrinsic; the owner-pin claim was misattributed and the IR escape
+  rule undefined; the inert-zero contract lacked idempotence). Revision 2 replaces three free attributes
+  and a source-visible slot with one `array_type` role plus `array_element`, `array_copy` and
+  `container_end` method roles and a compiler-internal slot, adds `clone_at` and `is_linear`
+  intrinsics, makes the destroy helper zero-fill, and expands the tests. No code changed; the decision
+  item stays open until a review accepts revision 2.
