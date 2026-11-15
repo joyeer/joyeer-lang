@@ -176,7 +176,7 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 21;
+  the existing IR destruction analysis. The wire format version is 22;
 - collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
   `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
   value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
@@ -190,6 +190,9 @@ The current instruction set covers:
 - `slot_address` (operands base and index, the element type in `integerValue`, an `Int` result): `base + index *
   size` with no overflow or bounds check, a plain (not `inbounds`) GEP in the backend, `base` for a zero-size type;
   runtime-only. A library addressor uses it after its own bounds check;
+- `stack_block` (operand: a constant count, the element type in `integerValue`, an `Int` address result): contiguous stack
+  storage for that many slots, allocated in the prologue (once per invocation) and never destroyed; 0 for a zero count or
+  a unit type. The verifier requires the operand to be an `integer` constant; runtime-only;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses

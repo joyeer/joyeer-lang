@@ -513,6 +513,7 @@ std::optional<semantic::SymbolId> TypeCheckedModel::arrayRoleMethod(
         case semantic::LibraryRole::arrayElement: return found->second[0];
         case semantic::LibraryRole::arrayCopy: return found->second[1];
         case semantic::LibraryRole::containerEnd: return found->second[2];
+        case semantic::LibraryRole::arrayLiteral: return found->second[3];
         default: return std::nullopt;
     }
 }
@@ -981,6 +982,8 @@ private:
     // `consume` access expressions that appear where a value is stored (see permitMove).
     std::unordered_set<const syntax::Node*> permittedMoves;
     bool insideDeinit = false;
+    // Calls that are direct arguments of another call, where `place_address` may appear.
+    std::unordered_set<const syntax::Node*> permittedPlaceAddress;
     // Type parameters with constraints, checked for conflicting requirements once all are known.
     std::vector<semantic::SymbolId> constrainedParameters;
     // A call of a protocol requirement on a type parameter, inside a generic function or method. When
@@ -1227,20 +1230,22 @@ private:
                         break;
                     }
                     std::unordered_map<semantic::LibraryRole, int> methodRoles;
-                    std::array<semantic::SymbolId, 3> roleMethods { semantic::invalidSymbolId,
-                            semantic::invalidSymbolId, semantic::invalidSymbolId };
+                    std::array<semantic::SymbolId, 4> roleMethods { semantic::invalidSymbolId,
+                            semantic::invalidSymbolId, semantic::invalidSymbolId, semantic::invalidSymbolId };
                     for (const auto& member : model->semanticModelValue->symbols()) {
                         if (member.kind == semantic::SymbolKind::method && member.containingSymbol == symbol.id) {
                             ++methodRoles[member.libraryRole];
                             if (member.libraryRole == semantic::LibraryRole::arrayElement) roleMethods[0] = member.id;
                             if (member.libraryRole == semantic::LibraryRole::arrayCopy) roleMethods[1] = member.id;
                             if (member.libraryRole == semantic::LibraryRole::containerEnd) roleMethods[2] = member.id;
+                            if (member.libraryRole == semantic::LibraryRole::arrayLiteral) roleMethods[3] = member.id;
                         }
                     }
-                    for (const auto& [role, roleName] : std::array<std::pair<semantic::LibraryRole, const char*>, 3> {{
+                    for (const auto& [role, roleName] : std::array<std::pair<semantic::LibraryRole, const char*>, 4> {{
                              { semantic::LibraryRole::arrayElement, "array_element" },
                              { semantic::LibraryRole::arrayCopy, "array_copy" },
-                             { semantic::LibraryRole::containerEnd, "container_end" } }}) {
+                             { semantic::LibraryRole::containerEnd, "container_end" },
+                             { semantic::LibraryRole::arrayLiteral, "array_literal" } }}) {
                         if (methodRoles[role] != 1) {
                             roleFailure = std::string("the array_type role requires exactly one method with the role ") +
                                     roleName;
@@ -1253,10 +1258,13 @@ private:
                 }
                 case semantic::LibraryRole::arrayElement:
                 case semantic::LibraryRole::arrayCopy:
+                case semantic::LibraryRole::arrayLiteral:
                 case semantic::LibraryRole::containerEnd: {
                     const std::string roleName = symbol.libraryRole == semantic::LibraryRole::arrayElement
                             ? "array_element"
-                            : symbol.libraryRole == semantic::LibraryRole::arrayCopy ? "array_copy" : "container_end";
+                            : symbol.libraryRole == semantic::LibraryRole::arrayCopy ? "array_copy"
+                            : symbol.libraryRole == semantic::LibraryRole::arrayLiteral ? "array_literal"
+                                                                                       : "container_end";
                     const auto* owner = symbol.containingSymbol.has_value() ? symbolOf(*symbol.containingSymbol)
                                                                             : nullptr;
                     if (symbol.kind != semantic::SymbolKind::method || owner == nullptr ||
@@ -1285,6 +1293,22 @@ private:
                                         model->typeContext.typeParameterType(ownerParameters->front()) };
                         if (!matches) roleFailure = "the array_copy role requires 'borrowing func name(): Self' returning "
                                 "the declaring type";
+                    } else if (symbol.libraryRole == semantic::LibraryRole::arrayLiteral) {
+                        // `consuming func name(address: Int, count: Int): Self`, called on an inert zero value.
+                        matches = receiver == syntax::AccessEffect::consuming && written.size() == 2 &&
+                                written[0].label == std::optional<std::string>("address") &&
+                                written[1].label == std::optional<std::string>("count") &&
+                                written[0].access == syntax::AccessEffect::borrowing &&
+                                written[1].access == syntax::AccessEffect::borrowing &&
+                                signature->parameters == std::vector<TypeId> { model->typeContext.intType(),
+                                                                               model->typeContext.intType() } &&
+                                result != nullptr && result->kind == TypeKind::structure &&
+                                result->symbol == owner->id && ownerParameters != nullptr &&
+                                ownerParameters->size() == 1 &&
+                                result->arguments == std::vector<TypeId> {
+                                        model->typeContext.typeParameterType(ownerParameters->front()) };
+                        if (!matches) roleFailure = "the array_literal role requires 'consuming func name(address: Int, "
+                                "count: Int): Self' returning the declaring type";
                     } else {
                         matches = receiver == syntax::AccessEffect::consuming && written.empty() &&
                                 signature->result == model->typeContext.voidType();
@@ -4609,6 +4633,14 @@ private:
             const syntax::CallExprSyntax::Ptr& expression,
             ReceiverMarker receiverMarker = ReceiverMarker::none,
             std::optional<TypeId> expectedResult = std::nullopt) {
+        // A `place_address` call is accepted only as a direct argument of another call (decision 0026).
+        for (const auto& argument : expression->arguments) {
+            auto direct = argument->value;
+            while (direct != nullptr && direct->kind == syntax::Kind::parenthesizedExpr) {
+                direct = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(direct)->expression;
+            }
+            if (direct != nullptr && direct->kind == syntax::Kind::callExpr) permittedPlaceAddress.insert(direct.get());
+        }
         const auto* savedCallee = currentCallee;
         currentCallee = expression->callee.get();
         const auto calleeType = checkExpression(expression->callee).value_or(
@@ -5098,7 +5130,40 @@ private:
             return model->typeContext.intType();
         }
         if (expression->arguments.empty()) return error;
+        if (name == "joyeer_intrinsic_place_address") {
+            // `place_address<T>(&place)`: the address of an `inout` place, as an `Int`, for passing the place to a
+            // runtime function. It must be a direct argument of a call, so that call holds the `inout` access for
+            // its duration; a stored or returned address would outlive the access (decision 0026).
+            if (expression->arguments.size() != 1) return error;
+            if (!permittedPlaceAddress.contains(expression.get())) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, expression->span,
+                       "'" + name + "' may only be a direct argument of a call",
+                       "write f(address: " + name + "<T>(value: &place)), not a binding or a return value");
+            }
+            const auto& placeArgument = expression->arguments[0];
+            const auto actual = checkExpression(placeArgument->value,
+                    type == error ? std::nullopt : std::optional<TypeId>(type));
+            if (actual.has_value() && type != error) requireAssignable(*actual, type, placeArgument->value->span);
+            checkCallArgumentAccess(target, 0, *placeArgument);
+            return model->typeContext.intType();
+        }
         checkAddress(0);
+        if (name == "joyeer_intrinsic_stack_block") {
+            // `stack_block<T>(count: N)`: contiguous stack storage for `N` slots, valid until the invocation
+            // returns and never destroyed. The count is a literal so the storage is sized at compile time and is
+            // allocated once per invocation, not on a loop's back edge (decision 0026).
+            if (expression->arguments.size() != 1) return error;
+            const auto& countArgument = expression->arguments[0];
+            const auto literal = countArgument->value != nullptr && countArgument->value->kind == syntax::Kind::literalExpr
+                    ? std::static_pointer_cast<syntax::LiteralExprSyntax>(countArgument->value) : nullptr;
+            if (literal == nullptr || literal->literal == nullptr || literal->literal->kind != decimalLiteral) {
+                report(TypeCheckingDiagnosticId::invalidCallArguments, countArgument->value->span,
+                       "the count of a stack block must be a non-negative integer literal",
+                       "write " + name + "<T>(count: 8)");
+                return error;
+            }
+            return model->typeContext.intType();
+        }
         if (name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range" ||
             name == "joyeer_intrinsic_slot_address") {
             if (expression->arguments.size() != 2) return error;
@@ -5292,6 +5357,26 @@ private:
             syntax::AccessEffect effect,
             std::vector<CallAccess>& accesses,
             bool sustained = true) const {
+        // A direct `place_address(&place)` argument holds `place` inout while the enclosing call runs, so a
+        // sibling argument that reads or writes the same place conflicts (decision 0026).
+        auto direct = argument.value;
+        while (direct != nullptr && direct->kind == syntax::Kind::parenthesizedExpr) {
+            direct = std::static_pointer_cast<syntax::ParenthesizedExprSyntax>(direct)->expression;
+        }
+        if (direct != nullptr && direct->kind == syntax::Kind::callExpr) {
+            const auto inner = std::static_pointer_cast<syntax::CallExprSyntax>(direct);
+            const auto innerTarget = model->callTarget(inner);
+            const auto* innerSymbol = innerTarget.has_value() ? model->semanticModelValue->symbol(*innerTarget) : nullptr;
+            if (innerSymbol != nullptr && innerSymbol->name == "joyeer_intrinsic_place_address" &&
+                innerSymbol->kind == semantic::SymbolKind::builtinFunction && inner->arguments.size() == 1) {
+                const auto placePath = storagePath(inner->arguments[0]->value);
+                if (placePath.has_value()) {
+                    collectSubscriptIndexAccesses(inner->arguments[0]->value, accesses);
+                    accesses.push_back(CallAccess { *placePath, syntax::AccessEffect::inout, argument.value->span, true });
+                    return;
+                }
+            }
+        }
         const auto path = storagePath(argument.value);
         if (path.has_value()) {
             collectSubscriptIndexAccesses(argument.value, accesses);

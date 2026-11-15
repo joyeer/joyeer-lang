@@ -3967,7 +3967,8 @@ protected:
 
         resolution = joyeer::semantic::NameResolver().resolve({
                 { "app", { userParse.root } },
-                { "$role-prelude", { roleParse.root }, false, false, true, true } });
+                { "$role-prelude", { roleParse.root }, false, false, true,
+                  joyeer::semantic::ReplacedPrelude::roles } });
         if (resolution.succeeded()) checking = joyeer::typing::TypeChecker().check(resolution.model);
     }
 

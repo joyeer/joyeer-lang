@@ -3421,6 +3421,32 @@ private:
             recordValue(result, ValueOwnership::trivial);
             return result;
         }
+        if (name == "joyeer_intrinsic_place_address") {
+            if (expression->arguments.size() != 1) {
+                report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes a place");
+                return std::nullopt;
+            }
+            const auto place = lowerAddress(expression->arguments[0]->value);
+            if (!place.has_value()) return std::nullopt;
+            return emitValue(ir::Opcode::pointerToInteger, model->types().intType(), ir::ValueCategory::value,
+                             { place->id }, expression->span);
+        }
+        if (name == "joyeer_intrinsic_stack_block") {
+            if (expression->arguments.size() != 1) {
+                report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes a count");
+                return std::nullopt;
+            }
+            const auto count = lowerExpression(expression->arguments[0]->value);
+            if (!count.has_value()) return std::nullopt;
+            auto instruction = makeInstruction(ir::Opcode::stackBlock, expression->span);
+            instruction.integerValue = static_cast<int64_t>(type);
+            instruction.operands = { count->id };
+            instruction.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
         if (name == "joyeer_intrinsic_slot_address") {
             if (expression->arguments.size() != 2) {
                 report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes a base and an index");

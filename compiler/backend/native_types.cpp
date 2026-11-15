@@ -301,7 +301,9 @@ llvm::Function* Builder::declareFunction(const ir::Function& function) {
         parameters.emplace_back(parameter.value.type, parameter.value.category);
     }
     auto* declared = llvm::Function::Create(signatureType(parameters, function.resultType),
-            source.isRuntimeObject || function.nativeBinding.has_value()
+            // An element addressor is only ever called from this program, so its out-of-line copy is discarded
+            // once every call is inlined (decision 0026).
+            source.isRuntimeObject || function.nativeBinding.has_value() || function.elementAddressor
                     ? llvm::GlobalValue::InternalLinkage : llvm::GlobalValue::ExternalLinkage,
             "joyeer_fn_" + std::to_string(function.id), module());
     // A library array's element addressor is a bounds check and an address computation; every `a[i]`

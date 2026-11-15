@@ -130,6 +130,10 @@ enum class Opcode {
     // (operands: base, index; an `Int` result): `base + index * size`, with no overflow or bounds check. Library
     // code checks the bounds first and keeps size computations for allocation checked (decision 0026).
     slotAddress,
+    // Contiguous stack storage for a constant number of slots of the type `integerValue` names (operand: the
+    // constant count; an `Int` address result, 0 for no storage). Allocated once per invocation and never
+    // destroyed; runtime-only (decision 0026).
+    stackBlock,
 };
 
 enum class PatternKind {

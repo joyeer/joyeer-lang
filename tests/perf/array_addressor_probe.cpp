@@ -78,7 +78,8 @@ int main(int argc, char** argv) {
         if (!libraryParse.succeeded()) throw std::runtime_error(joyeer::parser::dump(libraryParse.diagnostics));
         if (!lexerDiagnostics.errors.empty()) throw std::runtime_error(lexerDiagnostics.errors.front().message);
 
-        joyeer::semantic::ModuleInput libraryModule { "$role-prelude", { libraryParse.root }, true, false, true, true };
+        joyeer::semantic::ModuleInput libraryModule { "$role-prelude", { libraryParse.root }, true, false, true,
+                                                      joyeer::semantic::ReplacedPrelude::roles };
         const auto resolution = joyeer::semantic::NameResolver().resolve({
                 { "app", { programParse.root } }, libraryModule });
         if (!resolution.succeeded()) throw std::runtime_error(joyeer::semantic::dump(resolution.diagnostics));

@@ -129,7 +129,7 @@ allocation counter, not the policy.
 - **Removal (last step).** `TypeKind::array`, the builtin `Array` registration, the array branches and the opcodes
   `array_append`, `array_remove_last`, `array_consume_empty`, `construct_array` and the array cases of `count`,
   `subscript` and `subscript_address` are removed. Numeric opcode encodings are not renumbered: the slots are held
-  (wire version 21 becomes 22 for the structure change and the removals).
+  (wire version 22 becomes 23 for the structure change and the removals).
 - **IR mark.** `StructureDefinition` replaces `inertZero` with a `role` enum (`none`, `array`), as `EnumerationRole`
   does in 0024, plus the existing `copier`. The element type is the structure's first type argument, not a separate
   field. The verifier checks the arity and the shape per role.
@@ -179,9 +179,9 @@ allocation counter, not the policy.
   concurrency prelude already refers to `Result`; a test pins it with a caller-supplied concurrency prelude.
 - **Packaging.** The embedded source needs `prelude_source.h.in`, `prelude.cpp`, `CMakeLists.txt`, the release
   staging and `docs/building.md`. Compile time is measured before and after.
-- **Linkage.** Today an instance of a prelude function in a user program has external linkage, so the out-of-line
-  copy of an inlined addressor survives (a size cost, measured above). The infrastructure change gives prelude
-  instances internal linkage, so the copies are discarded after inlining; the size gate checks it.
+- **Linkage.** An element addressor has internal linkage (stage 3), so the out-of-line copy of every inlined instance
+  is discarded; before this an instance of a prelude function had external linkage and the copy survived (a size
+  cost, measured above). The size gate checks the effect.
 
 ### 4. Cost mechanism, measurement and gates
 
@@ -285,7 +285,7 @@ role-marked addressor, a general mechanism. An array-specific inline check in th
 - **Runtime.** The `joyeer_array_*_abi` symbols and their C declarations stay: they are the public ABI and the
   library calls them. The runtime functions use no state beyond the allocator, the constant blocks are read-only,
   and a spawned array stays bitwise relocatable, so thread safety is unchanged.
-- **Wire.** Version 22 (the structure role, the removals; 21 is taken by the measurement change's `slot_address`);
+- **Wire.** Version 23 (the structure role, the removals; 21 and 22 are taken by `slot_address` and `stack_block`);
   malformed-IR tests cover the removed opcodes, the new opcode and the role arity.
 - **Dictionary.** Unchanged. `Dict` stays builtin until Phase 4; its keys and values may be arrays, which reach the
   copier and the destroy helper through the dictionary's type arguments (a test copies and drops a `[String: [Int]]`

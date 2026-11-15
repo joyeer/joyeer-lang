@@ -455,4 +455,21 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   missed-gate rules; it needs the user's acceptance.
 - 2026-11-15: The user accepted 0026 revision 3 "for now", including the `-O0` gate amendment (median at most 1.15),
   and asked to implement first; the decision is revisited if the switch's measurement contradicts it.
+- 2026-11-15: 0026 stage 3 (infrastructure), Windows x64 Debug. A third bundled prelude, `lib/Runtime/collections.joyeer`
+  (empty until stage 4; a runtime unit like the concurrency prelude), is embedded by the CMake template, parsed by
+  `parsePrelude` and loaded after the concurrency and role preludes with source identities max+1, +2 and +3 (each only
+  when bundled); the driver's source-table check needed no change, and two tests that hard-coded the table size
+  (`ModuleServiceTest`, `IRLoweringTest`) now expect the third prelude. The test seam `ModuleInput::rolePreludeContext`
+  is now the enum `ReplacedPrelude` (`none`, `roles`, `collections`). New layout intrinsics (spec 20.12.5, wire
+  version 22, all authorized like the others): `joyeer_intrinsic_stack_block<T>(count: N)` (one opcode; a literal
+  count; storage allocated in the prologue; 0 for none), and `joyeer_intrinsic_place_address<T>(value: &place)`
+  (accepted only as a direct argument of a call, which holds the `inout` access, so a sibling argument that touches the
+  place is `overlapping-access`; no new opcode). The fourth method role `array_literal` (`consuming func
+  name(address: Int, count: Int): Self`, closed shape, required and unique, `self` exempt from the linear-not-consumed
+  check) has no user yet: its literal lowering and instance discovery belong to stage 4, where a literal first
+  produces a role array. An element addressor now has internal linkage. Tests: `CompilerCollectionRoleTests` 47 of 47
+  (three-prelude identities, replacing the collections prelude, a supplied concurrency prelude, `stack_block` and
+  `place_address` forms and verifier cases, the `array_literal` shape), and the stage fixture
+  `tests/c-interop/layout-intrinsics.joyeer` runs `slot_address`, `stack_block` and `place_address` at -O0 to -O3.
+  Not done in this commit: the cost gate (stage 4), Release, Linux and macOS.
 

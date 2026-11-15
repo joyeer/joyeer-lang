@@ -51,6 +51,11 @@ public struct Buffer<T> {
     @compiler_role(container_end)
     public consuming func finish() {}
 
+    @compiler_role(array_literal)
+    public consuming func literal(address: Int, count: Int): Buffer<T> {
+        return Buffer(address: address, count: count, capacity: count)
+    }
+
     // Decision 1's order: destroy the live elements, clear the count, then free the block. The runtime destroy
     // would do the free here; its C binding is declared by the backend with a pointer parameter, which a Joyeer
     // binding cannot match, so the free is written out (the same `release` of `24 + capacity * size` bytes).

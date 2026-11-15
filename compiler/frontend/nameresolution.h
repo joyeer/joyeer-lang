@@ -31,6 +31,14 @@ enum class NameResolutionDiagnosticId {
     invalidPrelude,
 };
 
+// Which bundled prelude a test-supplied module replaces (decisions 0024 and 0026). The concurrency prelude is
+// replaced by a module with `preludeContext` set and no replacement named, as before.
+enum class ReplacedPrelude {
+    none,
+    roles,
+    collections,
+};
+
 struct ModuleInput {
     std::string name;
     std::vector<syntax::SourceFileSyntax::Ptr> files;
@@ -39,9 +47,9 @@ struct ModuleInput {
     bool coreContext = false;
     // Set only by the compiler, never by --runtime-module.
     bool preludeContext = false;
-    // Test-only: this module replaces the bundled role prelude (decision 0024); it also sets
-    // preludeContext. Never set by the driver.
-    bool rolePreludeContext = false;
+    // Test-only: this module replaces the named bundled prelude; it also sets preludeContext. Never set by
+    // the driver.
+    ReplacedPrelude replaces = ReplacedPrelude::none;
 };
 
 struct NameResolutionDiagnostic {

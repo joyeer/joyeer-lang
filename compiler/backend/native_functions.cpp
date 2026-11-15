@@ -256,6 +256,19 @@ bool Builder::emitInstruction(const ir::Instruction& instruction) {
             builder.SetInsertPoint(exit);
             break;
         }
+        case Opcode::stackBlock: {
+            // Contiguous storage for a constant number of slots, allocated in the prologue (once per invocation).
+            const auto id = static_cast<ir::TypeId>(instruction.integerValue);
+            const auto* count = llvm::dyn_cast<llvm::ConstantInt>(argument(0));
+            if (count == nullptr) throw std::runtime_error("stack_block needs a constant count");
+            if (unit(id) || count->isZero()) {
+                result = builder.getInt64(0);
+                break;
+            }
+            auto* block = stack(llvm::ArrayType::get(llvmType(id), count->getZExtValue()));
+            result = builder.CreatePtrToInt(block, builder.getInt64Ty());
+            break;
+        }
         case Opcode::slotAddress: {
             // Element `index` of a run of `T` slots: `base + index * size`, unchecked; the library checks the
             // bounds. A plain (not `inbounds`) GEP, so an address that is never loaded through, or a zero-size

@@ -77,6 +77,8 @@ enum class LibraryRole {
     arrayElement,
     arrayCopy,
     containerEnd,
+    // The method a literal calls on an inert zero value to build the array (decision 0026).
+    arrayLiteral,
 };
 
 enum class CallableKind {

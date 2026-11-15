@@ -674,6 +674,7 @@ private:
                         else if (name == "array_element") value.libraryRole = LibraryRole::arrayElement;
                         else if (name == "array_copy") value.libraryRole = LibraryRole::arrayCopy;
                         else if (name == "container_end") value.libraryRole = LibraryRole::containerEnd;
+                        else if (name == "array_literal") value.libraryRole = LibraryRole::arrayLiteral;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }
@@ -950,6 +951,13 @@ private:
         layoutIntrinsic("joyeer_intrinsic_slot_address",
                 { CallableParameter { std::string("base"), true, std::nullopt, std::nullopt, intType },
                   CallableParameter { std::string("index"), true, std::nullopt, std::nullopt, intType } },
+                intType);
+        layoutIntrinsic("joyeer_intrinsic_place_address",
+                { CallableParameter { std::string("value"), true, std::nullopt, std::nullopt, std::nullopt,
+                                      syntax::AccessEffect::inout } },
+                intType);
+        layoutIntrinsic("joyeer_intrinsic_stack_block",
+                { CallableParameter { std::string("count"), true, std::nullopt, std::nullopt, intType } },
                 intType);
         layoutIntrinsic("joyeer_intrinsic_clone_callback", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_destroy_callback", {}, intType);
@@ -2558,22 +2566,25 @@ NameResolutionResult NameResolver::resolve(const std::vector<ModuleInput>& modul
 }
 
 NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> modules, bool singleFile) const {
-    // A caller-supplied prelude replaces only the concurrency prelude. The role prelude is
-    // toolchain-owned and always loaded (decision 0024).
+    // A caller-supplied prelude replaces only the concurrency prelude. The role and collections preludes are
+    // toolchain-owned and always loaded (decisions 0024 and 0026); a test seam can replace either.
     const bool supplied = std::any_of(modules.begin(), modules.end(),
-            [](const auto& module) { return module.preludeContext && !module.rolePreludeContext; });
+            [](const auto& module) { return module.preludeContext && module.replaces == ReplacedPrelude::none; });
     const bool suppliedRoles = std::any_of(modules.begin(), modules.end(),
-            [](const auto& module) { return module.rolePreludeContext; });
-    // The test seam implies prelude context; a module that sets only the role flag would be inert.
+            [](const auto& module) { return module.replaces == ReplacedPrelude::roles; });
+    const bool suppliedCollections = std::any_of(modules.begin(), modules.end(),
+            [](const auto& module) { return module.replaces == ReplacedPrelude::collections; });
+    // The test seam implies prelude context; a module that names a replacement only would be inert.
     for (auto& module : modules) {
-        if (module.rolePreludeContext) module.preludeContext = true;
+        if (module.replaces != ReplacedPrelude::none) module.preludeContext = true;
     }
     uint32_t sourceId = 0;
     for (const auto& module : modules) {
         for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);
     }
-    // Source identities are dense: the concurrency prelude takes max+1 and the role prelude the next.
-    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u);
+    // Source identities are dense: the concurrency prelude takes max+1, the role prelude the next and the
+    // collections prelude the one after, each only when it is bundled.
+    const uint32_t needed = (supplied ? 0u : 1u) + (suppliedRoles ? 0u : 1u) + (suppliedCollections ? 0u : 1u);
     if (sourceId > std::numeric_limits<uint32_t>::max() - needed) {
         auto result = NameResolutionBuilder().build(modules, singleFile);
         result.diagnostics.push_back({NameResolutionDiagnosticId::invalidPrelude, {},
@@ -2581,15 +2592,34 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
         return result;
     }
     std::vector<Prelude> preludes;
+    std::vector<PreludeKind> kinds;
     uint32_t nextSourceId = sourceId + 1;
-    if (!supplied) preludes.push_back(parsePrelude(PreludeKind::concurrency, nextSourceId++));
-    if (!suppliedRoles) preludes.push_back(parsePrelude(PreludeKind::roles, nextSourceId++));
+    if (!supplied) {
+        preludes.push_back(parsePrelude(PreludeKind::concurrency, nextSourceId++));
+        kinds.push_back(PreludeKind::concurrency);
+    }
+    if (!suppliedRoles) {
+        preludes.push_back(parsePrelude(PreludeKind::roles, nextSourceId++));
+        kinds.push_back(PreludeKind::roles);
+    }
+    if (!suppliedCollections) {
+        preludes.push_back(parsePrelude(PreludeKind::collections, nextSourceId++));
+        kinds.push_back(PreludeKind::collections);
+    }
     for (size_t index = 0; index < preludes.size(); ++index) {
         auto& prelude = preludes[index];
-        const bool roles = !suppliedRoles && index + 1 == preludes.size();
-        if (prelude.root != nullptr) {
-            // Only the concurrency prelude may declare C bindings; the role prelude has none.
-            modules.push_back({roles ? "$role-prelude" : "$prelude", {prelude.root}, !roles, false, true});
+        if (prelude.root == nullptr) continue;
+        // The concurrency and collections preludes may declare C bindings; the role prelude has none.
+        switch (kinds[index]) {
+            case PreludeKind::concurrency:
+                modules.push_back({"$prelude", {prelude.root}, true, false, true});
+                break;
+            case PreludeKind::roles:
+                modules.push_back({"$role-prelude", {prelude.root}, false, false, true});
+                break;
+            case PreludeKind::collections:
+                modules.push_back({"$collections-prelude", {prelude.root}, true, false, true});
+                break;
         }
     }
     auto result = NameResolutionBuilder().build(modules, singleFile);

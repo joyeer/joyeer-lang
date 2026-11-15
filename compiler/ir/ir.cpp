@@ -88,6 +88,7 @@ bool producesValue(Opcode opcode) {
         case Opcode::cloneCallback:
         case Opcode::destroyCallback:
         case Opcode::slotAddress:
+        case Opcode::stackBlock:
             return true;
         default:
             return false;
@@ -1786,13 +1787,16 @@ VerificationResult Verifier::verify(const Module& module) const {
                     case Opcode::cloneAt:
                     case Opcode::linearRangeGuard:
                     case Opcode::slotAddress:
+                    case Opcode::stackBlock:
                     case Opcode::cloneCallback:
                     case Opcode::destroyCallback: {
                         const bool noOperands = instruction.opcode == Opcode::cloneCallback ||
                                 instruction.opcode == Opcode::destroyCallback;
-                        const bool yieldsInt = noOperands || instruction.opcode == Opcode::slotAddress;
+                        const bool yieldsInt = noOperands || instruction.opcode == Opcode::slotAddress ||
+                                instruction.opcode == Opcode::stackBlock;
                         const bool guard = instruction.opcode == Opcode::linearRangeGuard;
-                        const size_t expected = noOperands ? 0 : guard ? 1 : 2;
+                        const bool stackBlockOp = instruction.opcode == Opcode::stackBlock;
+                        const size_t expected = noOperands ? 0 : (guard || stackBlockOp) ? 1 : 2;
                         if (requireShape(expected, 0)) {
                             for (const auto* operand : operands) {
                                 const auto* operandType = operand != nullptr && types.contains(operand->type)
@@ -1815,6 +1819,20 @@ VerificationResult Verifier::verify(const Module& module) const {
                         } else if (instruction.result.has_value()) {
                             report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
                                    std::string(opcodeName(instruction.opcode)) + " yields no value");
+                        }
+                        if (stackBlockOp && instruction.operands.size() == 1 && operands[0] != nullptr) {
+                            // The count is a constant, so the backend sizes the storage at compile time.
+                            const auto definition = valueDefinitions.find(operands[0]->id);
+                            const auto definingBlock = definition == valueDefinitions.end() ? blocks.end()
+                                    : blocks.find(definition->second.first);
+                            const auto* defining = definingBlock != blocks.end() &&
+                                    definition->second.second < definingBlock->second->instructions.size()
+                                    ? &definingBlock->second->instructions[definition->second.second] : nullptr;
+                            if (defining == nullptr || defining->opcode != Opcode::integerConstant ||
+                                defining->integerValue < 0) {
+                                report(VerificationErrorId::invalidInstruction, functionId, block.id, location,
+                                       "stack_block takes a non-negative constant count");
+                            }
                         }
                         if (!guard) {
                             const auto queried = static_cast<TypeId>(instruction.integerValue);
@@ -2961,6 +2979,7 @@ const char* opcodeName(Opcode opcode) {
         case Opcode::destroyCallback: return "destroy_callback";
         case Opcode::linearRangeGuard: return "linear_range_guard";
         case Opcode::slotAddress: return "slot_address";
+        case Opcode::stackBlock: return "stack_block";
         case Opcode::call: return "call";
         case Opcode::functionAddress: return "function_address";
         case Opcode::callIndirect: return "call_indirect";
@@ -3231,6 +3250,7 @@ std::string dump(const Module& module) {
                     case Opcode::destroyRange:
                     case Opcode::cloneAt:
                     case Opcode::slotAddress:
+                    case Opcode::stackBlock:
                         out << " of type " << instruction.integerValue;
                         for (size_t index = 0; index < instruction.operands.size(); ++index) {
                             out << (index == 0 ? " " : ", ") << valueName(instruction.operands[index]);

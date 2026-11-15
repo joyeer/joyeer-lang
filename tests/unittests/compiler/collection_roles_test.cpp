@@ -52,6 +52,13 @@ constexpr auto bufferEnd = R"(
     @compiler_role(container_end)
     public consuming func finish() {}
 )";
+// The literal method: called on an inert zero value, it builds the array from `count` moved-in elements.
+constexpr auto bufferLiteral = R"(
+    @compiler_role(array_literal)
+    public consuming func literal(address: Int, count: Int): Buffer<T> {
+        return joyeer_intrinsic_move_out<Buffer<T>>(address: address)
+    }
+)";
 constexpr auto bufferTail = R"(
     deinit() {
         joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
@@ -61,8 +68,8 @@ constexpr auto bufferTail = R"(
 
 std::string buffer(const std::string& head = bufferHead, const std::string& element = bufferElement,
                    const std::string& copy = bufferCopy, const std::string& end = bufferEnd,
-                   const std::string& tail = bufferTail) {
-    return head + element + copy + end + tail;
+                   const std::string& tail = bufferTail, const std::string& literal = bufferLiteral) {
+    return head + element + copy + end + literal + tail;
 }
 
 class CollectionRoleTest : public testing::Test {
@@ -86,7 +93,8 @@ protected:
 
         resolution = joyeer::semantic::NameResolver().resolve({
                 { "app", { userParse.root } },
-                { "$role-prelude", { roleParse.root }, false, false, true, true } });
+                { "$role-prelude", { roleParse.root }, false, false, true,
+                  joyeer::semantic::ReplacedPrelude::roles } });
         checking = {};
         if (resolution.succeeded()) checking = joyeer::typing::TypeChecker().check(resolution.model);
     }
@@ -419,7 +427,7 @@ TEST_F(CollectionRoleTest, TheRoleStructKeepsTheThreeWordLayoutWithoutALiveFlag)
 }
 
 TEST_F(CollectionRoleTest, TheWireCarriesTheCollectionRolesAndAdvancesItsVersion) {
-    EXPECT_EQ(joyeer::llvmbackend::wire::version, 21u);
+    EXPECT_EQ(joyeer::llvmbackend::wire::version, 22u);
     load("func first(items: Buffer<Int>): Int { return items[0] }\n");
     const auto module = lower();
     ASSERT_NE(module, nullptr);
@@ -1025,6 +1033,9 @@ TEST_F(CollectionRoleTest, SlotAddressIsAnAuthorizedUncheckedElementAddress) {
     EXPECT_TRUE(std::regex_search(text, std::regex(R"(= getelementptr i64, ptr %[^,]+, i64 %)"))) << text;
     EXPECT_TRUE(std::regex_search(text, std::regex(R"(= getelementptr %joyeer\.string, ptr %[^,]+, i64 %)"))) << text;
     EXPECT_EQ(text.find("smul.with.overflow"), std::string::npos) << text;
+    // Internal linkage lets the always-inliner discard the out-of-line copy of every instance.
+    EXPECT_TRUE(std::regex_search(text, std::regex(R"(define internal i64 @joyeer_fn_[0-9]+\(%joyeer\.struct)")))
+            << text;
 }
 
 TEST_F(CollectionRoleTest, SlotAddressMalformedFormsAreRejectedByTheVerifier) {
@@ -1136,6 +1147,321 @@ TEST_F(CollectionRoleTest, TheWireRoundTripKeepsSlotAddressInstructions) {
     EXPECT_EQ(collect(decoded), collect(*module));
     EXPECT_EQ(collect(*module).size(), 1u);
     EXPECT_EQ(verifierMessages(decoded).find("ir."), std::string::npos) << verifierMessages(decoded);
+}
+
+// ---- The collections prelude (decision 0026, stage 3) ----
+
+// Resolves `user` with the bundled preludes, optionally replacing the collections prelude by `collections`
+// and/or the concurrency prelude by `concurrency`; returns the source table of the resolved model.
+struct PreludeLoad {
+    joyeer::semantic::NameResolutionResult resolution;
+    std::vector<uint32_t> ids;
+};
+
+PreludeLoad loadPreludes(const std::string& user, const std::string& collections = {},
+                         const std::string& concurrency = {}) {
+    Diagnostics diagnostics;
+    LexParser lexer(&diagnostics);
+    const auto userSource = std::make_shared<SourceFile>(user);
+    lexer.parse(userSource);
+    const auto userParse = joyeer::parser::Parser(userSource->tokens, true).parse();
+    std::vector<joyeer::semantic::ModuleInput> modules { { "app", { userParse.root } } };
+    std::vector<SourceFile::Ptr> keep;
+    uint32_t nextId = 1;
+    const auto supply = [&](const std::string& text, joyeer::semantic::ReplacedPrelude replaces) {
+        const auto source = std::make_shared<SourceFile>(text);
+        lexer.parse(source);
+        for (auto& token : source->tokens) token->span.sourceId = nextId;
+        ++nextId;
+        const auto parse = joyeer::parser::Parser(source->tokens, true, true).parse();
+        EXPECT_TRUE(parse.succeeded()) << joyeer::parser::dump(parse.diagnostics);
+        joyeer::semantic::ModuleInput module { replaces == joyeer::semantic::ReplacedPrelude::none ? "$prelude" : "$collections-prelude",
+                                               { parse.root }, true, false, true, replaces };
+        modules.push_back(module);
+        keep.push_back(source);
+    };
+    if (!concurrency.empty()) supply(concurrency, joyeer::semantic::ReplacedPrelude::none);
+    if (!collections.empty()) supply(collections, joyeer::semantic::ReplacedPrelude::collections);
+    PreludeLoad load;
+    load.resolution = joyeer::semantic::NameResolver().resolve(modules);
+    if (load.resolution.model != nullptr) {
+        for (const auto& source : load.resolution.model->preludeSources()) {
+            load.ids.push_back(source != nullptr && !source->tokens.empty() ? source->tokens.front()->span.sourceId : 999);
+        }
+    }
+    return load;
+}
+
+TEST(CollectionsPrelude, ThreeBundledPreludesGetDenseSourceIdentitiesInOrder) {
+    const auto load = loadPreludes("func main() {}\n");
+    ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
+    // The user source is 0; concurrency, roles and collections follow.
+    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 1, 2, 3 }));
+    const auto& sources = load.resolution.model->preludeSources();
+    ASSERT_EQ(sources.size(), 3u);
+    EXPECT_NE(sources[0]->getAbstractPath().string().find("concurrency.joyeer"), std::string::npos);
+    EXPECT_NE(sources[1]->getAbstractPath().string().find("roles.joyeer"), std::string::npos);
+    EXPECT_NE(sources[2]->getAbstractPath().string().find("collections.joyeer"), std::string::npos);
+}
+
+TEST(CollectionsPrelude, ReplacingTheCollectionsPreludeKeepsTheIdentitiesDense) {
+    const auto load = loadPreludes("func main() {}\n", "public func fromTest(): Int { return 7 }\n");
+    ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
+    // The replacement carries source 1; the bundled concurrency and role preludes follow it.
+    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 2, 3 }));
+}
+
+TEST(CollectionsPrelude, ASuppliedConcurrencyPreludeDoesNotRemoveTheCollectionsPrelude) {
+    // The collections prelude is separate from the concurrency prelude (decision 0026): a test that supplies its own
+    // concurrency prelude still gets the bundled role and collections preludes, and `Optional` is visible to it.
+    const auto load = loadPreludes("func main() {}\n", {},
+            "public func fromConcurrency(): Int? { return nil }\n");
+    ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
+    EXPECT_EQ(load.ids, (std::vector<uint32_t> { 2, 3 }));
+}
+
+TEST(CollectionsPrelude, ALibraryInTheCollectionsPreludeIsVisibleToUserCodeAndMayUseTheRoles) {
+    const auto load = loadPreludes("func main() { let value: Int? = answer() }\n",
+            "public func answer(): Int? { return 42 }\n");
+    ASSERT_TRUE(load.resolution.succeeded()) << joyeer::semantic::dump(load.resolution.diagnostics);
+    const auto checking = joyeer::typing::TypeChecker().check(load.resolution.model);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(CollectionRoleTest, StackBlockIsAuthorizedHasALiteralCountAndLowersToOneOpcode) {
+    load("func main() {\n    let block = joyeer_intrinsic_stack_block<Int>(count: 4)\n}\n");
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedIntrinsic))
+            << diagnostics();
+    const auto withBlock = [&](const std::string& body) {
+        return buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+    public borrowing func scratch(count: Int): Int {
+)" + body + R"(
+    }
+}
+)");
+    };
+    // A count that is not a literal is rejected where it is written.
+    load("func main() {}\n", withBlock("        return joyeer_intrinsic_stack_block<T>(count: count)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::invalidCallArguments)) << diagnostics();
+    // A literal count lowers per instance to one `stack_block` and verifies; the backend sizes it at compile time.
+    load("func use(items: Buffer<Int>): Int { return items.scratch(count: 1) }\n"
+         "func text(items: Buffer<String>): Int { return items.scratch(count: 1) }\n",
+         withBlock("        return joyeer_intrinsic_stack_block<T>(count: 8)"));
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    EXPECT_NE(joyeer::ir::dump(*module).find("stack_block of type"), std::string::npos);
+    EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
+    joyeer::llvmbackend::EmitOptions options;
+    options.optimizationLevel = joyeer::OptimizationLevel::O0;
+    const auto emitted = joyeer::llvmbackend::Emitter().emit(*module, options);
+    ASSERT_TRUE(emitted.succeeded()) << joyeer::llvmbackend::dump(emitted.diagnostics);
+    EXPECT_TRUE(std::regex_search(emitted.text, std::regex(R"(alloca \[8 x i64\])"))) << emitted.text;
+    EXPECT_TRUE(std::regex_search(emitted.text, std::regex(R"(alloca \[8 x %joyeer\.string\])"))) << emitted.text;
+    // Wire round trip keeps the opcode, its type and its constant operand.
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    EXPECT_EQ(joyeer::ir::dump(decoded), joyeer::ir::dump(*module));
+}
+
+TEST_F(CollectionRoleTest, StackBlockMalformedFormsAreRejectedByTheVerifier) {
+    using joyeer::ir::Opcode;
+    const auto library = buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+    public borrowing func scratch(): Int {
+        return joyeer_intrinsic_stack_block<T>(count: 2)
+    }
+}
+)");
+    load("func use(items: Buffer<Int>): Int { return items.scratch() }\n", library);
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    ASSERT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
+    // The count must be a constant: point the operand at a non-constant value.
+    auto copy = std::make_shared<joyeer::ir::Module>(*module);
+    bool changed = false;
+    for (auto& function : copy->functions) {
+        for (auto& block : function.blocks) {
+            for (auto& instruction : block.instructions) {
+                if (instruction.opcode == Opcode::stackBlock) {
+                    // The addressor's own parameter is not an integerConstant definition.
+                    instruction.operands = { function.parameters.empty() ? 0 : function.parameters.back().value.id };
+                    changed = true;
+                }
+            }
+        }
+    }
+    ASSERT_TRUE(changed);
+    EXPECT_NE(verifierMessages(*copy).find("constant count"), std::string::npos) << verifierMessages(*copy);
+    // Two operands and a missing result.
+    for (auto& function : copy->functions) {
+        for (auto& block : function.blocks) {
+            for (auto& instruction : block.instructions) {
+                if (instruction.opcode == Opcode::stackBlock) instruction.operands.push_back(instruction.operands.front());
+            }
+        }
+    }
+    EXPECT_NE(verifierMessages(*copy).find("expects 1 operand(s)"), std::string::npos) << verifierMessages(*copy);
+}
+
+TEST_F(CollectionRoleTest, PlaceAddressIsAuthorizedAndOnlyADirectArgumentOfAnInoutPlace) {
+    load("func main() {\n    var value = 1\n    let address = joyeer_intrinsic_place_address<Int>(value: &value)\n}\n");
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(joyeer::typing::TypeCheckingDiagnosticId::unauthorizedIntrinsic))
+            << diagnostics();
+    const auto withMethods = [&](const std::string& body) {
+        return buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+)" + body + R"(
+}
+private func sink(address: Int, count: Int) {}
+private func hold(address: Int): Int { return address }
+)");
+    };
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    // The accepted form: a direct argument of a call, over a mutating receiver and a field path of it.
+    load("func main() {}\n", withMethods(R"(
+    public mutating func accepted() {
+        sink(address: joyeer_intrinsic_place_address<Buffer<T>>(value: &self), count: 1)
+        sink(address: joyeer_intrinsic_place_address<Int>(value: &self.count), count: 1)
+    }
+    public func local() {
+        var slot = 0
+        sink(address: joyeer_intrinsic_place_address<Int>(value: &slot), count: 1)
+    }
+    public consuming func owned() {
+        sink(address: joyeer_intrinsic_place_address<Buffer<T>>(value: &self), count: 1)
+    }
+)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(checking.succeeded()) << diagnostics();
+    // A stored result, a returned result and one in a condition outlive the access and are rejected.
+    const auto stored = [&](const std::string& form) {
+        load("func main() {}\n", withMethods("    public func bad() {\n        var slot = 0\n        " + form + "\n    }\n"));
+        EXPECT_TRUE(resolution.succeeded()) << diagnostics();
+        return hasTypeDiagnostic(Id::invalidCallArguments);
+    };
+    EXPECT_TRUE(stored("let address = joyeer_intrinsic_place_address<Int>(value: &slot)")) << diagnostics();
+    EXPECT_TRUE(stored("let again = hold(address: 1) + joyeer_intrinsic_place_address<Int>(value: &slot)"))
+            << diagnostics();
+    // Receivers that are not writable places are rejected: a `let`, a borrowing parameter and a borrowing self.
+    const auto notWritable = [&](const std::string& body) {
+        load("func main() {}\n", withMethods(body));
+        EXPECT_TRUE(resolution.succeeded()) << diagnostics();
+        return !checking.succeeded();
+    };
+    EXPECT_TRUE(notWritable("    public func bad() {\n        let slot = 0\n"
+            "        sink(address: joyeer_intrinsic_place_address<Int>(value: &slot), count: 1)\n    }\n")) << diagnostics();
+    EXPECT_TRUE(notWritable("    public func bad(other: Int) {\n"
+            "        sink(address: joyeer_intrinsic_place_address<Int>(value: &other), count: 1)\n    }\n")) << diagnostics();
+    EXPECT_TRUE(notWritable("    public borrowing func bad() {\n"
+            "        sink(address: joyeer_intrinsic_place_address<Int>(value: &self.count), count: 1)\n    }\n")) << diagnostics();
+    EXPECT_TRUE(notWritable("    public func bad() {\n"
+            "        sink(address: joyeer_intrinsic_place_address<Int>(value: &(1 + 2)), count: 1)\n    }\n")) << diagnostics();
+    // The place and the sibling argument may not overlap: the call holds the place inout.
+    load("func main() {}\n", withMethods(R"(
+    public mutating func overlap() {
+        sink(address: joyeer_intrinsic_place_address<Buffer<T>>(value: &self), count: self.count)
+    }
+)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(hasTypeDiagnostic(Id::overlappingAccess)) << diagnostics();
+    // A disjoint sibling is fine.
+    load("func main() {}\n", withMethods(R"(
+    public mutating func disjoint(other: Int) {
+        sink(address: joyeer_intrinsic_place_address<Buffer<T>>(value: &self), count: other)
+    }
+)"));
+    ASSERT_TRUE(resolution.succeeded()) << diagnostics();
+    EXPECT_TRUE(checking.succeeded()) << diagnostics();
+}
+
+TEST_F(CollectionRoleTest, PlaceAddressLowersToTheAddressOfThePlace) {
+    const auto library = buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, R"(
+    deinit() {
+        joyeer_intrinsic_destroy_range<T>(address: self.address, count: self.count)
+    }
+    public mutating func bump() {
+        sink(address: joyeer_intrinsic_place_address<Int>(value: &self.count), count: 1)
+    }
+}
+private func sink(address: Int, count: Int) {}
+)");
+    load("func use(items: inout Buffer<Int>) { &items.bump() }\n", library);
+    const auto module = lower();
+    ASSERT_NE(module, nullptr);
+    const auto dumped = joyeer::ir::dump(*module);
+    EXPECT_NE(dumped.find("pointer_to_integer"), std::string::npos) << dumped;
+    EXPECT_EQ(verifierMessages(*module).find("ir."), std::string::npos) << verifierMessages(*module);
+}
+
+TEST_F(CollectionRoleTest, TheArrayLiteralRoleHasAClosedShapeAndIsRequired) {
+    const auto head = std::string(bufferHead);
+    const auto element = std::string(bufferElement);
+    const auto copy = std::string(bufferCopy);
+    const auto end = std::string(bufferEnd);
+    const auto tail = std::string(bufferTail);
+    const auto literal = std::string(bufferLiteral);
+    const auto replaceOnce = [](std::string text, const std::string& from, const std::string& to) {
+        const auto at = text.find(from);
+        EXPECT_NE(at, std::string::npos) << from;
+        if (at != std::string::npos) text.replace(at, from.size(), to);
+        return text;
+    };
+    // Required, and unique.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(buffer(head, element, copy, end, tail, ""), "array_literal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(buffer(head, element, copy, end, tail, literal + R"(
+    @compiler_role(array_literal)
+    public consuming func again(address: Int, count: Int): Buffer<T> {
+        return Buffer(address: address, count: count, capacity: count)
+    }
+)"), "array_literal"));
+    // Shape: consuming, the labels address and count of Int, a result of the declaring type.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(head, element, copy, end, tail, replaceOnce(literal, "consuming func", "borrowing func")),
+            "array_literal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(head, element, copy, end, tail, replaceOnce(literal, "address: Int, count: Int", "count: Int, address: Int")),
+            "array_literal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(head, element, copy, end, tail, replaceOnce(literal, "(address: Int, count: Int)", "(address: Int)")),
+            "array_literal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(head, element, copy, end, tail, replaceOnce(literal, "count: Int): Buffer<T>", "count: String): Buffer<T>")),
+            "array_literal"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer(head, element, copy, end, tail, R"(
+    @compiler_role(array_literal)
+    public consuming func literal(address: Int, count: Int): Int { return 0 }
+)"), "array_literal"));
+    // A free function with the role is a misplaced role.
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            buffer() + "\n@compiler_role(array_literal)\npublic func loose(address: Int, count: Int): Int { return 0 }\n",
+            "array_literal"));
+}
+
+TEST_F(CollectionRoleTest, TheLiteralMethodMayLeaveItsZeroSelfUnconsumedButNoOtherConsumingMethodMay) {
+    load("func main() {}\n");
+    EXPECT_EQ(analyze(), "") << "the literal method's self is an inert zero value";
+    // Another consuming method of the declaration still has to consume self.
+    const auto extra = std::string(R"(
+    public consuming func leak() {}
+)");
+    load("func main() {}\n", buffer(bufferHead, bufferElement, bufferCopy, bufferEnd, bufferTail,
+                                    std::string(bufferLiteral) + extra));
+    EXPECT_NE(analyze().find("linear-not-consumed"), std::string::npos);
 }
 
 } // namespace

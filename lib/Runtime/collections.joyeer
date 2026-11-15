@@ -1,0 +1,7 @@
+// The compiler-bundled collections prelude: the library collections that language syntax binds to by closed
+// `@compiler_role` roles (decision 0026). It is always loaded, separately from the concurrency and role preludes,
+// so a caller-supplied concurrency prelude never removes it, and it is a runtime unit (it may declare C bindings
+// to the runtime's collection functions).
+//
+// It is empty until the library `Array<T>` replaces the builtin array: this file only reserves the third prelude,
+// its source identity and its packaging.

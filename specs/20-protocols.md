@@ -644,15 +644,18 @@ role that selects layout-relevant behavior, through a fixed table:
 | Linear policy | `T` may be linear |
 | Read-only `count` | the second field may be read, and borrowed, outside the declaration; it is never writable there |
 
-Three method roles, shape-checked and unique per declaration (`invalid-prelude` otherwise): `array_element`
+Four method roles, shape-checked and unique per declaration (`invalid-prelude` otherwise): `array_element`
 (`borrowing func ...(index: Int): Int`, the element address, trapping with `array index out of bounds`),
-`array_copy` (`borrowing func ...(): Self`) and `container_end` (`consuming func ...()` returning `Void`).
+`array_copy` (`borrowing func ...(): Self`), `container_end` (`consuming func ...()` returning `Void`) and
+`array_literal` (`consuming func ...(address: Int, count: Int): Self`, called on an inert zero value by an array
+literal with `count` elements moved to `address`, [0026](../docs/decisions/0026-library-array.md)). `self` of an
+`array_literal` method is exempt from the linear-not-consumed check, like that of `container_end`.
 An `extension` of an `array_type` struct is `invalid-prelude`. `self` of a `container_end` method is exempt
 from the linear-not-consumed exit check and is destroyed after the body; the method must trap before
 returning unless the container is empty (`array not empty`), and `deinit` of a linear container that is not
 empty traps `linear container dropped while not empty`.
 
-Five further layout intrinsics, authorized units only (the bundled prelude and `--runtime-module` units),
+Seven further layout intrinsics, authorized units only (the bundled prelude and `--runtime-module` units),
 with explicit type arguments:
 
 | Function | Meaning |
@@ -661,6 +664,8 @@ with explicit type arguments:
 | `joyeer_intrinsic_destroy_range<T>(address: Int, count: Int)` | Destroys `count` live elements; for a linear `T` it instead traps `linear container dropped while not empty` when `count != 0` |
 | `joyeer_intrinsic_clone_callback<T>(): Int` | The address of the per-type clone helper kept in an array header, or `0` when none applies (always for a noncopyable `T`) |
 | `joyeer_intrinsic_destroy_callback<T>(): Int` | The address of the per-type destroy helper, or `0` when none applies (always for a linear or trivial `T`) |
+| `joyeer_intrinsic_stack_block<T>(count: N): Int` | Uninitialized contiguous stack storage for `N` slots of `T` (an integer literal, at least 0), valid until the invocation returns, allocated once per invocation, never destroyed; `0` for `N == 0` or a `Void` `T`. Code must move or destroy each value stored in it, as for `stack_slot` |
+| `joyeer_intrinsic_place_address<T>(value: &place): Int` | The address of an `inout` place of type `T`, valid for the call it is an argument of. It is accepted only as a direct argument of another call, which holds the `inout` access for its duration, so a sibling argument that reads or writes the same place is `overlapping-access`; a binding, a return value or any other use is `type-checking.invalid-call-arguments`. The place is a local `var`, an `inout`, `mutating` or `consuming` receiver, or a field path of those; a `let`, a `borrowing` parameter or receiver, a constant or an rvalue is rejected. It is authorized exactly like the other layout intrinsics (the bundled preludes and `--runtime-module` units) |
 | `joyeer_intrinsic_slot_address<T>(base: Int, index: Int): Int` | `base + index * size_of<T>()` with no overflow or bounds check ([0026](../docs/decisions/0026-library-array.md)): the address of element `index` of a run of `T` slots starting at `base`. For a zero-size `T` it is `base`. The result is an ordinary integer, defined for any operands, but it is a valid place only when `base` is the start of a run of at least `n` `T` slots in one live block and `0 <= index < n` (`index == n` is the end address, which must not be accessed). Library code checks the index before it accesses the result, and keeps byte counts for allocation in checked arithmetic |
 
 For an `array_type` value `a`, `a[i]` calls the `array_element` addressor and then accesses the returned

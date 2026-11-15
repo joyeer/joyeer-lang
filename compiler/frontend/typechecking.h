@@ -474,7 +474,7 @@ private:
     std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
     std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
     // For each `array_type` struct: its `array_element`, `array_copy` and `container_end` methods.
-    std::unordered_map<semantic::SymbolId, std::array<semantic::SymbolId, 3>> arrayRoleMethods;
+    std::unordered_map<semantic::SymbolId, std::array<semantic::SymbolId, 4>> arrayRoleMethods;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

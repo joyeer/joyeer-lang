@@ -108,9 +108,9 @@ The current prelude declares:
 - `Optional` and `Result`, declared as ordinary enums in the always-loaded role prelude
   `lib/Runtime/roles.joyeer` and bound by `@compiler_role(optional_type)` / `@compiler_role(result_type)`
   ([0024](../decisions/0024-library-optional-and-result.md)); `T?` and `nil` bind to the role, not the name;
-- the roles `array_type`, `array_element`, `array_copy` and `container_end`
+- the roles `array_type`, `array_element`, `array_copy`, `container_end` and `array_literal`
   ([0025](../decisions/0025-library-collection-capabilities.md)), accepted only in a bundled prelude. No bundled
-  declaration uses them until Phase 3 of plan 0011; the type checker validates the shape and the second field
+  declaration uses them until stage 4 of [0026](../decisions/0026-library-array.md); the type checker validates the shape and the second field
   (`count`) of an `array_type` struct is marked readable from any file, while writing it elsewhere is rejected;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
