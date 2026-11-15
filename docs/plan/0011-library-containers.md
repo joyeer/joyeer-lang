@@ -388,4 +388,13 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   removed, and a characterization suite written first on the builtin array. The always-inliner is expected at
   `-O0` (`buildO0DefaultPipeline`), to be confirmed by a prototype. It awaits a language-designer review; nothing
   is implemented.
+- 2026-11-15: Language-designer review of 0026: accept with changes. Folded into revision 2: the literal's
+  ownership on early exit and a `stack_block` opcode, `array_literal` as a method role of the struct, a fully specified
+  `place_address` (direct call argument only), the cost mechanism and the `NoInline` debug-scope hazard made
+  preconditions with predeclared gate numbers and a generic fallback, the third prelude's seam and packaging,
+  an honest residual set of array-aware code (the plan's "implement operations in Joyeer" is reworded: the
+  algorithms are already Joyeer in the runtime, the deliverable is removing compiler paths), a structure `role`
+  instead of extra marks, and the recursive-type, Dict, extension and Equatable risks. Phase 3 is staged as five
+  changes: a characterization PR on the builtin array, a measurement PR, an infrastructure PR, the switch, and the
+  cleanup. 0026 stays proposed until the measurement exists.
 
