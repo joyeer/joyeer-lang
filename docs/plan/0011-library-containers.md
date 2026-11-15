@@ -5,7 +5,7 @@
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
   [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
-  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted,
+  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted and merged in #27),
   [0026](../decisions/0026-library-array.md) (Phase 3 library `Array`, proposed)
 - Spec: [ยง2](../../specs/02-types.md), [ยง20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
@@ -86,7 +86,7 @@ cannot express element-dependent copyability, linearity, and destruction through
 - [x] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
   and element-dependent ownership of a raw-address container. Evidence:
   [0025](../decisions/0025-library-collection-capabilities.md), accepted by the user 2026-11-15 after
-  two language-designer reviews (revision 3); spec ง2.6, ง4.1.1, ง4.4, ง20.12.5 and ง21.2.2 amended.
+  two language-designer reviews (revision 3); spec ยง2.6, ยง4.1.1, ยง4.4, ยง20.12.5 and ยง21.2.2 amended.
 - [x] Decide how generic code transfers or ends linear elements without allowing them to be
   silently dropped. The closed task-transfer exception in 0023 is not a general solution.
   Evidence: 0025 section 5 (the `container_end` method role, must-transfer bodies of the `array_type`
@@ -314,10 +314,10 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   new `consume-of-linear-element` diagnostic changes no accepted program; an array of `JoinHandle` is a
   valid task input today, so a library array must stay sendable (ยง21). 0025 stays `proposed` until the
   user accepts it.
-- 2026-11-15: The user accepted 0025. Status set to accepted and the spec amended: ง20.12.5 (the
-  `array_type` role with its capability table, the three method roles and the four intrinsics), ง2.6
-  (a pointer, since `Array` stays builtin until Phase 3), ง4.1.1 (the role is copyable exactly when its
-  owned type is, although it has `deinit`), ง4.4 (addressor, ordering, `consume a[i]`) and ง21.2.2 (a
+- 2026-11-15: The user accepted 0025. Status set to accepted and the spec amended: ยง20.12.5 (the
+  `array_type` role with its capability table, the three method roles and the four intrinsics), ยง2.6
+  (a pointer, since `Array` stays builtin until Phase 3), ยง4.1.1 (the role is copyable exactly when its
+  owned type is, although it has `deinit`), ยง4.4 (addressor, ordering, `consume a[i]`) and ยง21.2.2 (a
   library array stays a valid task input exactly when its element is). Tests first, part 1:
   `tests/unittests/compiler/collection_roles_test.cpp` (new target `CompilerCollectionRoleTests`, label
   `collection-roles`) builds a small `Buffer<T>` bound by the role through the 0024 role-prelude seam and
