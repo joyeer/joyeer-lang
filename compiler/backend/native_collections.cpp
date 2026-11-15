@@ -155,14 +155,12 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
             return true;
         case Opcode::arrayRemoveLast: {
             const auto id = instruction.result->type;
-            const auto& cases = enumerations.at(id)->cases;
-            size_t someTag = cases.size();
-            size_t noneTag = cases.size();
-            for (size_t index = 0; index < cases.size(); ++index) {
-                if (cases[index].name == "Some") someTag = index;
-                if (cases[index].name == "None") noneTag = index;
-            }
-            if (someTag == cases.size() || noneTag == cases.size()) return false;
+            // The present and absent tags come from the optional role, never from case spellings.
+            const auto& definition = *enumerations.at(id);
+            if (definition.role != ir::EnumerationRole::optional) return false;
+            const size_t someTag = definition.firstRoleCase;
+            const size_t noneTag = definition.secondRoleCase;
+            if (someTag >= definition.cases.size() || noneTag >= definition.cases.size()) return false;
             const auto arrayId = values.at(instruction.operands[0]).type;
             const auto elementId = type(arrayId).arguments.at(0);
             auto* address = stack(resultType());
@@ -221,14 +219,12 @@ bool Builder::emitCollection(const ir::Instruction& instruction, llvm::Value*& r
         }
         case Opcode::dictionaryGet: {
             const auto id = instruction.result->type;
-            const auto& cases = enumerations.at(id)->cases;
-            size_t someTag = cases.size();
-            size_t noneTag = cases.size();
-            for (size_t index = 0; index < cases.size(); ++index) {
-                if (cases[index].name == "Some") someTag = index;
-                if (cases[index].name == "None") noneTag = index;
-            }
-            if (someTag == cases.size() || noneTag == cases.size()) return false;
+            // The present and absent tags come from the optional role, never from case spellings.
+            const auto& definition = *enumerations.at(id);
+            if (definition.role != ir::EnumerationRole::optional) return false;
+            const size_t someTag = definition.firstRoleCase;
+            const size_t noneTag = definition.secondRoleCase;
+            if (someTag >= definition.cases.size() || noneTag >= definition.cases.size()) return false;
             const auto dictionaryId = values.at(instruction.operands[0]).type;
             const auto storedId = type(dictionaryId).arguments.at(1);
             auto* found = dictionaryFind(dictionaryId, argument(0), argument(1));

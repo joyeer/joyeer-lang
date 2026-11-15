@@ -1,10 +1,10 @@
 # 0011: Library enums and collections
 
-- Status: proposed (updated 2026-11-14)
+- Status: in progress (updated 2026-11-14)
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
-  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, proposed)
+  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted; implemented, reviewed once; follow-ups open)
 - Spec: [§2](../../specs/02-types.md), [§20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -42,16 +42,35 @@ cannot express element-dependent copyability, linearity, and destruction through
 
 ### Phase 1: Optional and Result
 
-- [ ] Record a decision for canonical library enum identities, optional sugar, and propagation.
-  Do not merely replace builtin-name dispatch with enum-name dispatch.
+- [x] Record a decision for canonical library enum identities, optional sugar, and propagation.
+  Do not merely replace builtin-name dispatch with enum-name dispatch. Evidence:
+  [0024](../decisions/0024-library-optional-and-result.md), accepted by the user 2026-11-14 after
+  three language-designer reviews.
 - [ ] Update the normative rules and add failing stage tests and durable fixtures for every
-  existing case, pattern, optional wrapping, propagation, and ownership boundary.
-- [ ] Declare the enums in the source prelude and preserve source-module visibility/shadowing.
-- [ ] Implement generic enum construction, payload access, matching, and propagation through
-  concrete typed/IR models; preserve diagnostics and source/debug locations.
-- [ ] Remove the dedicated type kinds and cases only after compatible fixtures pass.
+  existing case, pattern, optional wrapping, propagation, and ownership boundary. Spec done
+  2026-11-14 (§2, §4.1.1, §5.2, §5.4.1, §8.3, §19.4.7, §20.12, Appendix C); the failing tests and
+  fixtures listed in 0024 "Tests" are only partly written: equality (see the log entry of
+  2026-11-14, tests first). Still missing: the prelude role and shape tests, the IR/wire tests, the
+  concurrency and `.Some(_)` linear tests, and the `Never` propagation tests; most need APIs the
+  implementation adds (the role enumerators, the role-prelude seam).
+- [x] Declare the enums in the source prelude and preserve source-module visibility/shadowing. Evidence:
+  `lib/Runtime/roles.joyeer` in a separate role prelude (a second source ID, always loaded); Windows x64
+  Debug `ctest` 1703/1703 on 2026-11-15, including `UserOptionalDoesNotCaptureTheOptionalSugar`.
+- [x] Implement generic enum construction, payload access, matching, and propagation through
+  concrete typed/IR models; preserve diagnostics and source/debug locations. Evidence: the same
+  Debug run; `EnumerationDefinition` carries the role and case indices, wire version 19, and the
+  backend reads present/absent tags from it. Reviews and other platforms are open (see below).
+- [x] Remove the dedicated type kinds and cases only after compatible fixtures pass. Evidence: `TypeKind::optional`
+  and `result`, their builtin symbols and the case-spelling comparisons are gone; the same Debug run
+  passed every existing fixture. `==`/`!=` rejection is the one intended change (the new equality tests).
 - [ ] Measure representative compiler output size and runtime behavior in both profiles; run
   the role reviewers and full supported-platform validation.
+- [ ] Phase 1 follow-ups found while implementing 0024 and by its reviews. Done on Windows x64 Debug (see
+  the 2026-11-15 log entry): the test-only role-prelude seam and the malformed-shape, duplicate-role,
+  missing-role and prelude-`extension` tests; the specific shape message; constraint and linear-marker
+  rejection; the lowering role and wire round-trip test; the source-ID assert; the `extension Int?: P`
+  help; the prelude span of a missing role; `docs/impl/supported-features.md`. Windows x64 Release `ctest` also passes (see the log). Still open: a test that the concurrency
+  prelude's `Result<Void, ChannelClosed>` shows in `--report-instantiations`; Linux and macOS runs.
 
 ### Phase 2: borrowing and linear collection ownership
 
@@ -119,3 +138,93 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `==`/`!=` on `Optional`/`Result` are now rejected; restoring them through `Equatable` is
   [plan 0012](0012-equatable.md). The decision item stays open: the applied changes have not been
   re-reviewed.
+- 2026-11-14: Phase 1 inventory, as 0024 requires before implementation (commit `886c6a9`).
+  Line numbers drift; re-run the greps below before each step.
+  - `TypeKind::optional`/`result` (48 uses, `grep -rnE "TypeKind::(optional|result)\b" compiler`):
+    `frontend/typechecking.cpp` 31 (66, 67, 302, 309, 368, 372, 534, 535, 636, 637, 1972, 3545, 3591,
+    3615, 3618, 3629, 3630, 3646, 3650, 4009, 4010, 4034, 4133, 5818–5833, 6042, 6341, 6342);
+    `ir/irlowering.cpp` 7 (552, 553, 689–693, 2313, 3703); `ir/ir.cpp` 5 (208, 209, 441, 2131, 2271);
+    `backend/native_types.cpp` 4 (162, 163, 218, 219); `frontend/semanticanalysis.cpp` 1 (743).
+  - Case-spelling dispatch (`grep -rnE '"(Some|None|Ok|Err)"' compiler`): synthesized case symbols
+    `frontend/nameresolution.cpp` 825–843; `frontend/typechecking.cpp` 5818–5824;
+    `frontend/semanticanalysis.cpp` 1210–1212; `ir/irlowering.cpp` 689–693, 1452, 1663–1664,
+    2315–2319, 2621, 3706 (`findEnumCase` by name); `backend/native_collections.cpp` 162–163,
+    228–229 (`removeLast`/`get` tags).
+  - Type-name lookup: `frontend/nameresolution.cpp` 743–744 (`declareBuiltinType`), 1847
+    (`T?` binds `"Optional"`); `frontend/typechecking.cpp` 66–67 (`registerGenericBuiltin`), 133, 152
+    (`builtinSymbol`); `frontend/platform.cpp` 67 (syntactic `Optional<X>` printed as `X?`; must not
+    sugar a user `Optional`).
+- 2026-11-14: Third review of 0024 gave "accept with changes"; the changes are applied (role-prelude
+  load order, verifier wording for per-instance definitions, no-cascade mechanism, diagnostic stages,
+  equality test forms, display in the unnamed root module, spec list, removal list). Chosen with the
+  user: the enums live in a separate always-loaded role prelude, so test-supplied preludes keep
+  working. The decision item stays open until a final language-designer pass confirms these edits.
+  Nothing is implemented; no build or test was run (documentation only).
+- 2026-11-14: Final review of 0024 gave "accept with changes": four blockers (source IDs and source
+  tables for two prelude sources, the removal list wrongly dropping IR lowering's shared builtin
+  enumeration collection, duplicate-role scope breaking the 0023 roles test, and a test-only seam
+  for malformed role preludes) plus wording fixes. All are applied to 0024. One choice was made
+  without asking: a test-only `ModuleInput` flag replaces the bundled role prelude. The decision
+  item stays open until the user accepts the record. Documentation only; nothing built or run.
+- 2026-11-14: The user accepted 0024. Checked the decision item and amended the spec for it: §2.4–2.6
+  and §2.9, §4.1.1, §5.2, §5.4.1, §8.3, §19.4.7, §20.12.3/.5, Appendix C (`prelude_enum`), plus a
+  pointer in 0023. The spec item stays open until the failing stage tests and durable fixtures exist.
+  `docs/impl/` notes (supported-features, ir, backend, runtime) change with the implementation, not
+  now. Documentation only; nothing built or run.
+- 2026-11-14: Tests first, part 1 (Windows x64 Debug, `out/build/x64-debug-comp`). Added
+  `TypeCheckingTest.EqualityOnOptionalAndResultIsRejectedWithMatchHelp` and the stage fixtures
+  `tests/type-checking/err/{optional,result}_equality.joyeer` (`TypeOptionalEqualityRejected`,
+  `TypeResultEqualityRejected`). Observed failing for the expected reason: the checker accepts `==`
+  on these types today, so there is no `invalid-operator-operands` (the CLI fixtures then fail with
+  that diagnostic missing). Also added passing guards that pin behavior 0024 must keep:
+  `NilOnTheLeftOfEquality…`, `UserOptionalDoesNotCaptureTheOptionalSugar`,
+  `NestedOptionalKeepsItsOuterLayerForNone`, `OptionalFunctionValuesStayRejected…`,
+  `UserGenericsStillRejectLinearOptionalArguments`. Running them found two errors in 0024, now
+  corrected there: `Int??` lexes as the `??` operator, and `Optional.Some(nil)` is rejected today
+  (`missing-contextual-type`), so it was dropped from the nesting test. The full
+  `CompilerTypeCheckingTests` binary has one failure, the new equality test; the rest pass. Not run:
+  the rest of the suite, Release, Linux. The item above stays open.
+- 2026-11-15: Phase 1 implemented (Windows x64 Debug only). The role prelude `lib/Runtime/roles.joyeer`
+  declares `Optional` and `Result`; name resolution binds `T?` and the builtin `get`/`removeLast` to the
+  role symbol; `TypeKind::optional`/`result` and every case-spelling comparison are removed in favor of
+  `TypeContext::isOptional`/`isResult` and the IR's `EnumerationRole` (wire version 19). The full
+  Debug `ctest` passes 1703/1703, including the equality tests that failed first. Two corrections to
+  0024: the role attribute is spelled `optional_type`/`result_type` because `result` is a reserved
+  word, and `Result<Void, ChannelClosed>` now appears in `--report-instantiations` for programs that do
+  not use channels (the expected files are regenerated with the compiler). Not done: the type-system and
+  IR/backend reviews, Release, Linux, macOS, benchmarks, `docs/impl/`; none of this is committed.
+- 2026-11-15: Reviews of Phase 1 (type-system and IR/backend, separate agents). Neither found a
+  soundness or destruction hole; the IR reviewer saw identical O0/O2 output and unchanged layout and
+  tags. Fixed: (1) `Optional.None` / `Optional.Some(x)` against an expected `Optional<Int?>` looked
+  through a layer and built the inner one (`Optional.None` printed the inner layer; 0024's "as today"
+  was wrong, the old binary rejected these expressions). Both look-through sites now skip the optional
+  role's own declaration; new fixture `tests/e2e/optional_nested_layers.joyeer` (`E2EOptionalNestedLayers`
+  O0-O3) printed `1 0 0 1` before the fix against the expected `0 0 0 1`, and passes now. (2) `Result`
+  success/failure were bound by position in lowering but accepted in either order by the checker; the
+  shape check now requires `Ok(T), Err(E)` order, and 0024 says so. (3) The verifier now rejects a role
+  value outside the closed set, one declaration bound to both roles, payloads that disagree with the type
+  arguments, a swapped result pair and a non-enumeration role type (`IRModelTest.VerifierRejectsMalformedRoleEnumerations`;
+  written after the verifier change, so not observed failing). (4) A user `Optional`/`Result` is named
+  `<main>.Result` in every diagnostic, and `nil`/`?` on it carries a help line
+  (`UserResultShadowingExplainsItselfAndDisplaysQualified`). (5) The IR dump prints the role.
+  Decided: the syntactic `Optional<X>` to `X?` spelling in `platform.cpp` stays, see 0024. Stale wire
+  version 18 and builtin-identity text updated in `docs/impl/` (`ir`, `backend`, `c-interop`,
+  `name-resolution`, `runtime`). Windows x64 Debug `ctest` passes 1710/1710. Open: the follow-up item
+  above, `supported-features.md`, Release/Linux/macOS, benchmarks; none of this is committed.
+- 2026-11-15: Phase 1 follow-ups. `ModuleInput::rolePreludeContext` (test-only, never set by the driver)
+  replaces the bundled role prelude, so `RolePreludeTest` covers a well-shaped replacement, a swapped
+  `Result`, three cases, a labelled payload, a constrained or extra type parameter, a wrong payload, a
+  duplicate role, a prelude `extension` of a role enum, and a missing or non-enum role. The validator now
+  says which shape rule failed and rejects constraints on the role parameters; a prelude `extension` of
+  either enum is `invalid-prelude`. An empty payload clause (`None()`) is already a parse error, so no
+  check was added. `CInteropTest.RoleBindingsSurviveLoweringAndTheWire` asserts the role and case
+  indices after lowering (a user `enum Optional` keeps none) and that they survive the wire. The
+  driver asserts each prelude source's ID equals its table index; the `extension Int?: P` help no longer
+  suggests an impossible fix; a missing role is reported at the role prelude's source. These tests were
+  written together with the changes they cover, so none was observed failing first. Windows x64 Debug
+  `ctest` passes 1715/1715. Not done: Release/Linux/macOS results, benchmarks, the instantiation-report
+  test above; none of this is committed.
+- 2026-11-15: Windows x64 Release `ctest` (`out/build/x64-release-comp`, `-j6`): 1714 of 1715 passed. The
+  one failure, `ValidationScriptTests`, timed out at 33 s under parallel load and passes alone in 0.5 s,
+  so it is load flakiness in a script test, not this change. Linux, macOS, the benchmarks and
+  `python scripts/validate.py --llvm-root <sdk>` have not been run; none of this is committed.

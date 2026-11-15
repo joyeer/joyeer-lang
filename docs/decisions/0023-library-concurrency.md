@@ -53,7 +53,7 @@ than names. Ordinary user units and explicit `--runtime-module` units cannot opt
 - a task-result owner whose linear diagnostic help names its ending method.
 
 Contracts validate ordinary calls and types. They do not generate task/channel IR, construct results,
-select layouts, or implement destruction. User declarations cannot opt into them.
+select layouts, or implement destruction. User declarations cannot opt into them. ([0024](0024-library-optional-and-result.md) amends this for the `optional` and `result` roles, which bind syntax and propagation lowering and the compiler-made `as?`, `removeLast` and `get` values.)
 
 ### Generic task targets and linear arguments
 

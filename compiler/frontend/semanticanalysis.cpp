@@ -740,7 +740,7 @@ private:
                             ? model->types().type(*operandType)
                             : nullptr;
                     if (container == nullptr ||
-                        container->kind != typing::TypeKind::result ||
+                        !model->types().isResult(container) ||
                         container->arguments[1] != model->types().neverType()) {
                         reportUninitializedParameters(expression->span, state);
                     }
@@ -1196,23 +1196,18 @@ private:
         state = merge({ std::move(thenState), std::move(elseState) });
     }
 
-    // The payload types of an enum case pattern: from the case's signature, or for the builtin
-    // Optional and Result cases from the scrutinee's type arguments.
+    // The payload types of an enum case pattern: the case's signature with the scrutinee instance's
+    // type arguments substituted, so a linear payload of `Optional<JoinHandle<Int>>` is seen as linear
+    // (decision 0024: never the declared parameter).
     std::vector<typing::TypeId> payloadTypesOf(
             const std::optional<semantic::SymbolId>& caseSymbol,
             typing::TypeId scrutineeType) const {
         if (!caseSymbol.has_value()) return {};
         const auto* signature = model->callable(*caseSymbol);
-        if (signature != nullptr && !signature->parameters.empty()) return signature->parameters;
-        const auto* symbol = model->semanticModel()->symbol(*caseSymbol);
-        const auto* type = model->types().type(scrutineeType);
-        if (symbol == nullptr || type == nullptr) return {};
-        if (symbol->name == "Some" || symbol->name == "Ok") {
-            if (!type->arguments.empty()) return { type->arguments[0] };
-        } else if (symbol->name == "Err") {
-            if (type->arguments.size() > 1) return { type->arguments[1] };
-        }
-        return {};
+        if (signature == nullptr) return {};
+        auto payloads = signature->parameters;
+        for (auto& payload : payloads) payload = model->memberTypeOf(scrutineeType, payload);
+        return payloads;
     }
 
     // A pattern that skips a linear payload (`_`, a literal) would leave it to be destroyed with the

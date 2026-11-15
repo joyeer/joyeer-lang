@@ -1,0 +1,19 @@
+// The compiler-bundled role prelude: library declarations that the compiler binds to language
+// syntax by closed `@compiler_role` roles (decision 0024). It is always loaded, separately from the
+// concurrency prelude, so a caller-supplied concurrency prelude never removes these declarations.
+//
+// `T?`, `nil`, implicit wrapping, `x!`, `x?.field` and postfix `?` bind to `Optional`; postfix `?`
+// and the values the compiler creates for `as?` bind to `Result`. The declarations carry no code,
+// and the cases are in tag order.
+
+@compiler_role(optional_type)
+public enum Optional<T> {
+    Some(T),
+    None,
+}
+
+@compiler_role(result_type)
+public enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}

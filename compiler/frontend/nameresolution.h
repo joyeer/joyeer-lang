@@ -39,6 +39,9 @@ struct ModuleInput {
     bool coreContext = false;
     // Set only by the compiler, never by --runtime-module.
     bool preludeContext = false;
+    // Test-only: this module replaces the bundled role prelude (decision 0024); it also sets
+    // preludeContext. Never set by the driver.
+    bool rolePreludeContext = false;
 };
 
 struct NameResolutionDiagnostic {

@@ -100,12 +100,14 @@ The current prelude declares:
 
 - types: `Void`, `Never`, `Bool`, `String`, `Int`/`UInt`, signed/unsigned
   8/16/32/64-bit integers, `Float`, `Double`, `Array`, `Dict`,
-  `Optional`, `Result`, `IOError`, `FileSystemError`, `FileKind`,
+  `IOError`, `FileSystemError`, `FileKind`,
   `ProcessStatus`, and `ProcessError`;
 - `String.count`, `Array.count`, and `Dict.count`;
 - `String.utf8()` and mutating `Array.append(element:)`;
 - borrowing `Dict.get(key:)`, with concrete key/result types supplied by typing;
-- `Optional.Some` / `Optional.None` and `Result.Ok` / `Result.Err`;
+- `Optional` and `Result`, declared as ordinary enums in the always-loaded role prelude
+  `lib/Runtime/roles.joyeer` and bound by `@compiler_role(optional_type)` / `@compiler_role(result_type)`
+  ([0024](../decisions/0024-library-optional-and-result.md)); `T?` and `nil` bind to the role, not the name;
 - the builtin `IOError`, `FileSystemError`, `FileKind`, `ProcessStatus`, and
   `ProcessError` cases;
 - builtin functions: `print(value:)`, `byteToInt(value:)`, and

@@ -1412,12 +1412,13 @@ TEST(LLVMOwnershipBackendTest, DictionaryGetUsesConcreteOptionalCaseTags) {
             { 0, "Int", joyeer::typing::TypeKind::integer },
             { 1, "[Int: Int]", joyeer::typing::TypeKind::dictionary,
               joyeer::semantic::invalidSymbolId, { 0, 0 } },
-            { 2, "Int?", joyeer::typing::TypeKind::optional, 10, { 0 } },
+            { 2, "Int?", joyeer::typing::TypeKind::enumeration, 10, { 0 } },
         };
         const joyeer::ir::EnumCaseDefinition some { 11, "Some", { 0 } };
         const joyeer::ir::EnumCaseDefinition none { 12, "None", {} };
         module.enumerations = {
-            { 10, 2, "Int?", { someFirst ? some : none, someFirst ? none : some } },
+            { 10, 2, "Int?", { someFirst ? some : none, someFirst ? none : some },
+              joyeer::ir::EnumerationRole::optional, someFirst ? 0u : 1u, someFirst ? 1u : 0u },
         };
         joyeer::ir::Function function;
         function.id = 0;

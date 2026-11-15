@@ -14,7 +14,14 @@ struct Prelude {
     std::string problem;
 };
 
-[[nodiscard]] Prelude parsePrelude(uint32_t sourceId);
+enum class PreludeKind {
+    concurrency,
+    roles,
+};
+
+// Parses a compiler-bundled prelude with every token carrying `sourceId`. `source` is set even when
+// parsing fails, so the source table stays dense.
+[[nodiscard]] Prelude parsePrelude(PreludeKind kind, uint32_t sourceId);
 
 }
 

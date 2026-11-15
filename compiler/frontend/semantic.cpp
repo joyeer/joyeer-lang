@@ -19,13 +19,21 @@ const syntax::SourceFileSyntax::Ptr& SemanticModel::compilationRoot() const {
     return compilationRoot_;
 }
 
-const std::shared_ptr<SourceFile>& SemanticModel::preludeSource() const {
-    return preludeSource_;
+const std::vector<std::shared_ptr<SourceFile>>& SemanticModel::preludeSources() const {
+    return preludeSourceFiles_;
 }
 
 bool SemanticModel::isPreludeSource(SourceSpan span) const {
     const auto found = preludeSources_.find(span.sourceId);
     return found != preludeSources_.end() && found->second;
+}
+
+std::optional<SymbolId> SemanticModel::roleSymbol(LibraryRole role) const {
+    switch (role) {
+        case LibraryRole::optional: return optionalSymbol_;
+        case LibraryRole::result: return resultSymbol_;
+        default: return std::nullopt;
+    }
 }
 
 ScopeId SemanticModel::preludeScope() const {

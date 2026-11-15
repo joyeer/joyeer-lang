@@ -1,0 +1,18 @@
+func viaCase(): Optional<Int?> { return Optional.None }
+func viaShorthand(): Optional<Int?> { return .None }
+func viaNil(): Optional<Int?> { return nil }
+func viaSome(): Optional<Int?> { return Optional.Some(5) }
+
+func layers(value: Optional<Int?>): Int {
+    return match value {
+        .Some(_) => 1,
+        .None => 0,
+    }
+}
+
+func main() {
+    print(value: layers(value: viaCase()))
+    print(value: layers(value: viaShorthand()))
+    print(value: layers(value: viaNil()))
+    print(value: layers(value: viaSome()))
+}

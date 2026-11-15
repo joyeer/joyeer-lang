@@ -510,7 +510,7 @@ methods and conditional conformance are deferred (§20.10).
 A generic type is written with all its type arguments in every type position (`Box<Int>`, `Tree<[T]>`).
 A wrong number of arguments, or arguments given to a non-generic type, is
 `type-checking.invalid-type-arguments`; each argument must satisfy its constraints
-(`type-checking.unsatisfied-constraint`). A user type named like a builtin (`Array`, `Optional`) is an
+(`type-checking.unsatisfied-constraint`). A user type named like a builtin or prelude type (`Array`, `Optional`) is an
 ordinary generic type in its scope, with its own arity.
 
 #### 20.12.1 Construction
@@ -550,9 +550,12 @@ a linear type argument (`type-checking.linear-type-argument`), or `Any` or `Neve
 §21 names a more specific diagnostic (`linear-collection-element`, `linear-in-deinit-type`,
 `linear-channel-element`), that one is reported.
 
-The closed compiler-prelude task declarations are the sole exception to the linear-argument
-prohibition: their parameters are checked as must-transfer values (§20.12.5), not as ordinary
-affine placeholders. This does not change the rule for user or explicit runtime-module generics.
+There are two closed exceptions to the linear-argument prohibition. The compiler-prelude task
+declarations have their parameters checked as must-transfer values (§20.12.5), not as ordinary affine
+placeholders. The role-bound enums `Optional` and `Result` (§2.4, §2.5) accept linear and `Never`
+arguments: an instance is linear exactly when a payload type is (§4.1.1), and `Never` makes a case
+uninhabited (§2.9). The exception is keyed on the role, not on the name, and does not change the rule for
+user or explicit runtime-module generics; `Box<JoinHandle<Int>?>` is still `linear-type-argument`.
 
 #### 20.12.4 Termination
 
@@ -620,4 +623,8 @@ In the compiler-owned prelude only, size, alignment, stack slots, `move_in`, and
 operate on linear/must-transfer types. `destroy_at` never accepts one. The private affine task-block
 owner traps on abandonment rather than attempting to destroy a raw linear task input or result.
 `@compiler_role(...)` is a closed compatibility role for prelude declarations: it selects the
-existing contextual §21 diagnostics and restrictions, never layout or executable lowering.
+existing contextual §21 diagnostics and restrictions, never layout. The `optional` and `result` roles
+(§2.4, §2.5) additionally bind syntax and propagation lowering (`T?`, `nil`, `?`, and the values the
+compiler creates for `as?`, `removeLast` and `get`) to their declarations; they still select no
+layout. This amends [decision 0023](../docs/decisions/0023-library-concurrency.md), whose contracts
+did not construct results.

@@ -77,7 +77,7 @@ TEST_F(TypeContextTest, InternsConcreteBuiltinGenericApplications) {
     EXPECT_EQ(type(array).kind, TypeKind::array);
     EXPECT_EQ(type(array).arguments, std::vector { types->intType() });
     EXPECT_EQ(type(dictionary).kind, TypeKind::dictionary);
-    EXPECT_EQ(type(result).kind, TypeKind::result);
+    EXPECT_TRUE(types->isResult(&type(result)));
     EXPECT_EQ(
             types->displayName(result),
             "Result<[String: [Int]], String?>");
@@ -315,11 +315,11 @@ TEST_F(TypeContextTest, PropagatesErrorTypesWithoutCreatingCompositeNoise) {
         auto& types = checking.model->types();
         const auto* nested = types.type(declaredType(function->body->items[0]));
         ASSERT_NE(nested, nullptr);
-        EXPECT_EQ(nested->kind, joyeer::typing::TypeKind::optional);
+        EXPECT_TRUE(types.isOptional(nested));
         ASSERT_EQ(nested->arguments.size(), 1u);
         const auto* payload = types.type(nested->arguments[0]);
         ASSERT_NE(payload, nullptr);
-        EXPECT_EQ(payload->kind, joyeer::typing::TypeKind::optional);
+        EXPECT_TRUE(types.isOptional(payload));
         EXPECT_EQ(payload->arguments, std::vector<joyeer::typing::TypeId> { types.intType() });
         EXPECT_EQ(types.displayName(declaredType(function->body->items[1])), "Void?");
         EXPECT_EQ(types.displayName(declaredType(function->body->items[2])), "Int?");
@@ -3805,3 +3805,225 @@ TEST_F(TypeCheckingTest, PayloadlessCaseOfAGenericEnumTakesItsTypeFromContext) {
           "}\n");
     EXPECT_NE(joyeer::typing::dump(checking.diagnostics).find("cannot-infer-type-parameter"), std::string::npos);
 }
+
+// Optional and Result as role-bound library enums (decision 0024, spec 2.4, 2.5, 5.2).
+// The equality tests fail until 0024 is implemented: today the checker accepts `==` on them (and
+// the backend cannot lower it). The other tests pin behavior 0024 must preserve.
+namespace {
+
+bool diagnosticHelpContains(const joyeer::typing::TypeCheckingResult& checking,
+                            joyeer::typing::TypeCheckingDiagnosticId id, const std::string& text) {
+    return std::any_of(checking.diagnostics.begin(), checking.diagnostics.end(), [&](const auto& diagnostic) {
+        return diagnostic.id == id && diagnostic.help.has_value() &&
+                diagnostic.help->find(text) != std::string::npos;
+    });
+}
+
+}  // namespace
+
+TEST_F(TypeCheckingTest, EqualityOnOptionalAndResultIsRejectedWithMatchHelp) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    for (const auto* text : {
+            "func f(a: Int?, b: Int?): Bool { return a == b }\n",
+            "func f(a: Int?, b: Int?): Bool { return a != b }\n",
+            "func f(a: Int?): Bool { return a == nil }\n",
+            "func f(a: Int?): Bool { return a != nil }\n",
+            "struct Point { var x: Int }\nfunc f(a: Point?, b: Point?): Bool { return a == b }\n",
+            "func f(a: Result<Int, String>, b: Result<Int, String>): Bool { return a == b }\n",
+        }) {
+        SCOPED_TRACE(text);
+        check(text);
+        EXPECT_FALSE(checking.succeeded());
+        EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
+                << joyeer::typing::dump(checking.diagnostics);
+        EXPECT_TRUE(diagnosticHelpContains(checking, Id::invalidOperatorOperands, "match"))
+                << joyeer::typing::dump(checking.diagnostics);
+    }
+}
+
+TEST_F(TypeCheckingTest, NilOnTheLeftOfEqualityNeedsContextUnlessAnOptionalIsExpected) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func f(a: Int?): Bool { return nil == a }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::missingContextualType))
+            << joyeer::typing::dump(checking.diagnostics);
+    check("func f(a: Int?): Bool? { return nil == a }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidOperatorOperands))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Guard: a user `Optional` shadows the name, never the `T?` sugar.
+TEST_F(TypeCheckingTest, UserOptionalDoesNotCaptureTheOptionalSugar) {
+    check("enum Optional<T: Copyable> { Present(T) }\n"
+          "func wrap(value: Int): Int? { return value }\n"
+          "func user(value: Int): Optional<Int> { return .Present(value) }\n"
+          "func unwrap(value: Int?): Int { return match value { .Some(inner) => inner, .None => 0 } }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+    check("enum Optional<T: Copyable> { Present(T) }\n"
+          "func bad(value: Int): Int? { return Optional.Present(value) }\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, joyeer::typing::TypeCheckingDiagnosticId::typeMismatch))
+            << joyeer::typing::dump(checking.diagnostics);
+}
+
+// A user declaration that shares a role-bound name is named apart in every diagnostic and explains
+// why the sugar did not bind to it (decision 0024).
+TEST_F(TypeCheckingTest, UserResultShadowingExplainsItselfAndDisplaysQualified) {
+    check("enum Result<T, E> { Ok(T), Err(E) }\n"
+          "func f(x: Int): Result<Int32, ConversionError> { return x as? Int32 }\n");
+    ASSERT_FALSE(checking.succeeded());
+    bool qualified = false;
+    for (const auto& diagnostic : checking.diagnostics) {
+        qualified |= diagnostic.message.find("<main>.Result") != std::string::npos;
+    }
+    EXPECT_TRUE(qualified) << joyeer::typing::dump(checking.diagnostics);
+
+    check("enum Result<T, E> { Ok(T), Err(E) }\n"
+          "func g(): Result<Int, String> { return .Ok(1) }\n"
+          "func h(): Result<Int, String> { let x = g()?\n return .Ok(x) }\n");
+    ASSERT_FALSE(checking.succeeded());
+    bool help = false;
+    for (const auto& diagnostic : checking.diagnostics) {
+        help |= diagnostic.help.has_value() && diagnostic.help->find("not the prelude's") != std::string::npos;
+    }
+    EXPECT_TRUE(help) << joyeer::typing::dump(checking.diagnostics);
+
+    check("enum Optional<T: Copyable> { Present(T) }\n"
+          "func k(): Optional<Int> { let x: Optional<Int> = nil\n return x }\n");
+    ASSERT_FALSE(checking.succeeded());
+    help = false;
+    for (const auto& diagnostic : checking.diagnostics) {
+        help |= diagnostic.help.has_value() && diagnostic.help->find("not the prelude's") != std::string::npos;
+    }
+    EXPECT_TRUE(help) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Guard: no optional layer is flattened, and `Optional.None` is the outer layer (0024 "No hidden layer").
+TEST_F(TypeCheckingTest, NestedOptionalKeepsItsOuterLayerForNone) {
+    check("func f(): Optional<Int?> { return nil }\n"
+          "func g(): Optional<Int?> { return .None }\n"
+          "func h(): Optional<Int?> { return Optional.None }\n"
+          "func j(value: Optional<Int?>): Int? { return match value { .Some(inner) => inner, .None => nil } }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// Guard: optional function values stay rejected at top level and as dictionary keys.
+TEST_F(TypeCheckingTest, OptionalFunctionValuesStayRejectedWhereFunctionTypesAre) {
+    check("func work(): Int { return 1 }\n"
+          "func main() { let f: (()): Int? = nil\n print(value: f) }\n");
+    EXPECT_FALSE(checking.succeeded()) << "print must not accept an optional function value";
+}
+
+// Guard: a user generic still cannot take a linear optional (0022 C1 stays for user generics).
+TEST_F(TypeCheckingTest, UserGenericsStillRejectLinearOptionalArguments) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    check("func work(value: consuming Int): Int { return value }\n"
+          "struct Box<T> { var value: Int }\n"
+          "func f<T>(value: T) {}\n"
+          "func main() {\n"
+          "    let h: JoinHandle<Int>? = spawn(function: work, input: consume 1)\n"
+          "    f(value: h)\n"
+          "}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::linearTypeArgument)) << joyeer::typing::dump(checking.diagnostics);
+}
+
+// ---- Role prelude replacement (decision 0024): the shape rules each have a failing form ----
+namespace {
+
+class RolePreludeTest : public testing::Test {
+protected:
+    void load(const std::string& roles, const std::string& user) {
+        Diagnostics lexerDiagnostics;
+        LexParser lexer(&lexerDiagnostics);
+        userSource = std::make_shared<SourceFile>(user);
+        lexer.parse(userSource);
+        ASSERT_TRUE(lexerDiagnostics.errors.empty());
+        const auto userParse = joyeer::parser::Parser(userSource->tokens).parse();
+        ASSERT_TRUE(userParse.succeeded()) << joyeer::parser::dump(userParse.diagnostics);
+
+        roleSource = std::make_shared<SourceFile>(roles);
+        lexer.parse(roleSource);
+        ASSERT_TRUE(lexerDiagnostics.errors.empty());
+        for (auto& token : roleSource->tokens) token->span.sourceId = 1;
+        const auto roleParse = joyeer::parser::Parser(roleSource->tokens, true, true).parse();
+        ASSERT_TRUE(roleParse.succeeded()) << joyeer::parser::dump(roleParse.diagnostics);
+
+        resolution = joyeer::semantic::NameResolver().resolve({
+                { "app", { userParse.root } },
+                { "$role-prelude", { roleParse.root }, false, false, true, true } });
+        if (resolution.succeeded()) checking = joyeer::typing::TypeChecker().check(resolution.model);
+    }
+
+    bool rejectedAsInvalidPrelude(const std::string& roles, const std::string& needle) {
+        load(roles, "func main() {}\n");
+        if (!resolution.succeeded()) return false;
+        for (const auto& diagnostic : checking.diagnostics) {
+            if (diagnostic.id == joyeer::typing::TypeCheckingDiagnosticId::invalidPrelude &&
+                diagnostic.message.find(needle) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static std::string optionalDeclaration(const std::string& declaration =
+            "public enum Optional<T> { Some(T), None, }") {
+        return "@compiler_role(optional_type)\n" + declaration + "\n";
+    }
+    static std::string resultDeclaration(const std::string& declaration =
+            "public enum Result<T, E> { Ok(T), Err(E), }") {
+        return "@compiler_role(result_type)\n" + declaration + "\n";
+    }
+
+    SourceFile::Ptr userSource;
+    SourceFile::Ptr roleSource;
+    joyeer::semantic::NameResolutionResult resolution;
+    joyeer::typing::TypeCheckingResult checking;
+};
+
+TEST_F(RolePreludeTest, AWellShapedReplacementBindsTheSugar) {
+    load(optionalDeclaration() + resultDeclaration(),
+         "func wrap(value: Int): Int? { return value }\n"
+         "func parse(value: Int): Result<Int, String> { return .Ok(value) }\n");
+    ASSERT_TRUE(resolution.succeeded()) << joyeer::semantic::dump(resolution.diagnostics);
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
+}
+
+TEST_F(RolePreludeTest, EachMalformedShapeIsRejected) {
+    const auto optional = optionalDeclaration();
+    const auto result = resultDeclaration();
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optional + resultDeclaration("public enum Result<T, E> { Err(E), Ok(T), }"), "first case"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration("public enum Optional<T> { Some(T), None, Extra, }") + result, "two cases"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration("public enum Optional<T> { Some(value: T), None, }") + result, "unlabelled"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration("public enum Optional<T: Copyable> { Some(T), None, }") + result, "constraints"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration("public enum Optional<T, U> { Some(T), None, }") + result, "type parameter"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration("public enum Optional<T> { Some(Int), None, }") + result, "carrying exactly"));
+}
+
+TEST_F(RolePreludeTest, ADuplicateRoleAndAPreludeExtensionAreRejected) {
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration() + resultDeclaration() +
+            "@compiler_role(optional_type)\npublic enum Maybe<T> { Some(T), None, }\n",
+            "second enum"));
+    EXPECT_TRUE(rejectedAsInvalidPrelude(
+            optionalDeclaration() + resultDeclaration() + "extension Optional<U> { }\n", "may not extend"));
+}
+
+TEST_F(RolePreludeTest, AMissingRoleIsReportedByNameResolution) {
+    load(optionalDeclaration(), "func main() {}\n");
+    ASSERT_FALSE(resolution.succeeded());
+    EXPECT_EQ(resolution.diagnostics.front().id, joyeer::semantic::NameResolutionDiagnosticId::invalidPrelude)
+            << joyeer::semantic::dump(resolution.diagnostics);
+    // A role on a declaration that is not an enum binds nothing, so that role is missing too.
+    load(optionalDeclaration("public struct Optional<T> { var value: Int }") + resultDeclaration(),
+         "func main() {}\n");
+    ASSERT_FALSE(resolution.succeeded());
+    EXPECT_EQ(resolution.diagnostics.front().id, joyeer::semantic::NameResolutionDiagnosticId::invalidPrelude)
+            << joyeer::semantic::dump(resolution.diagnostics);
+}
+
+} // namespace

@@ -1,4 +1,5 @@
 #include "compiler+service.h"
+#include <cassert>
 
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
@@ -533,8 +534,15 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
 
     const auto resolution = joyeer::semantic::NameResolver().resolve(modules);
     sourcefile->semanticModel = resolution.model;
-    if (resolution.model != nullptr && resolution.model->preludeSource() != nullptr) {
-        compilationSources.push_back(resolution.model->preludeSource());
+    if (resolution.model != nullptr) {
+        // Prelude sources follow the user sources in identity order; a span indexes this table.
+        for (const auto& prelude : resolution.model->preludeSources()) {
+            if (prelude == nullptr) continue;
+            // A span's source ID indexes this table (decision 0024): the resolver numbered the prelude
+            // sources densely after the highest user source, so each lands at its own ID.
+            assert(prelude->tokens.empty() || prelude->tokens.front()->span.sourceId == compilationSources.size());
+            compilationSources.push_back(prelude);
+        }
     }
     for (const auto& diagnostic : resolution.diagnostics) {
         reportSpannedDiagnostic(

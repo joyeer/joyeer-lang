@@ -1,8 +1,10 @@
 add_subdirectory(backend)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer")
+    "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer"
+    "${JOYEER_SOURCE_DIR}/lib/Runtime/roles.joyeer")
 file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/concurrency.joyeer" JOYEER_PRELUDE_SOURCE)
+file(READ "${JOYEER_SOURCE_DIR}/lib/Runtime/roles.joyeer" JOYEER_ROLE_PRELUDE_SOURCE)
 configure_file(frontend/prelude_source.h.in generated/prelude_source.h @ONLY)
 
 # One private object target serves the compiler and its stage-specific tests.

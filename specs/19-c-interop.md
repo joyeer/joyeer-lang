@@ -327,7 +327,7 @@ A **core unit**, selected with `--runtime-core-module <name>` (which implies
 `--runtime-module`), may use only `Bool`, the integer and floating types, `Void`,
 `Never`, function types (§2.3.1) built from those, and top-level scalar
 constants. `String`, arrays, dictionaries,
-`Optional`, `Result`, enums, structs, `print` and string literals (other than as
+`Optional`, `Result` (ordinary prelude enums, §2.4, §2.5), other enums, structs, `print` and string literals (other than as
 the argument of the constant-data intrinsic) are reported as
 `type-checking.managed-type-in-core-unit`, because each lowers to a call into the
 runtime that the core unit is itself part of. None of this changes ordinary

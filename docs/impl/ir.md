@@ -39,7 +39,9 @@ The module owns:
 - a deterministic snapshot of canonical compile-time `TypeId` names;
 - concrete user `struct` field definitions, and for a struct that declares `deinit` the
   function that runs it plus a hidden trailing `$live` Bool field (below);
-- user enum and instantiated `Optional<T>` / `Result<T,E>` case definitions;
+- user enum and instantiated generic enum case definitions, including the `Optional<T>` / `Result<T,E>`
+  instances, whose `EnumerationDefinition` carries the role (`optional` or `result`) and the indices of
+  its present/absent or success/failure cases ([0024](../decisions/0024-library-optional-and-result.md));
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
   source-spanned instructions;
@@ -170,7 +172,7 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 18;
+  the existing IR destruction analysis. The wire format version is 19;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
@@ -395,7 +397,7 @@ Native regression fixtures exercise these invariants at both `-O0` and `-O2`:
 | Aggregate capture | Components become ownership-safe in evaluation order, before later mutation can invalidate a borrowed source. |
 | Pending operand cleanup | Acquiring ownership does not commit transfer; later operand divergence still cleans prepared values. |
 | Loop stack storage | LLVM source and scratch allocations are emitted in a one-time function prologue, not reallocated on every iteration. Initialization and debug-variable bindings remain at their source points. |
-| Builtin enum identity | Case lookup includes concrete `TypeId`; distinct `Optional`/`Result` instantiations do not collide. Failed emission produces diagnostics and no partial success. |
+| Enum identity | Case lookup includes concrete `TypeId`; distinct `Optional`/`Result` instantiations do not collide, and their role indices come from the definition, never from case names. The verifier rejects a role with a wrong shape, a value outside the closed set, one declaration bound to two roles, or payloads that disagree with the type arguments. Failed emission produces diagnostics and no partial success. |
 | Optional binding promotion | Binding initialization applies its destination conversion before storing. |
 | `deinit` (decision 0015) | A struct that declares one records its function (a method-like function taking the struct's address) and ends with a hidden `$live` Bool. Construction sets it; `take`, zero-initialization and the end of destroy clear it, so only a live value runs the `deinit`, once, before its fields are destroyed in reverse order. Returning an owning local of a noncopyable type is lowered as a `take`; binding a noncopyable value in a pattern and copying one are lowering errors. |
 

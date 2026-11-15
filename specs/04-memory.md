@@ -56,8 +56,8 @@ with its own destruction obligation:
   their parameter and result types are: `(consuming TcpConnection): ()` is
   copyable. Copyability and linearity do not look inside a function type, and a
   struct holding one has no recursive layout (`struct S { var f: (S): S }`);
-- `String`, `Array`, `Dict`, `Optional`, and `Result` are copyable when their
-  contained types are copyable; heap-backed storage is cloned recursively;
+- `String`, `Array`, and `Dict`, and the role-bound enums `Optional` and `Result` (§2.4, §2.5), are
+  copyable when their contained types are copyable; heap-backed storage is cloned recursively;
 - a `struct` or `enum` is copyable when all of its stored fields or payloads
   are copyable and it does not declare a custom `deinit`.
 - a type parameter of a generic function or type (§20.4, §20.12) is copyable
@@ -69,7 +69,8 @@ with its own destruction obligation:
   copyability. A type that owns `T` values through an `Int` address has no `T`
   field, so it must declare `deinit` (§20.12.4); the compiler cannot detect the
   omission. User generic declarations may not take a linear type argument (§20.12.3); the
-  compiler-prelude task declarations use its closed must-transfer exception.
+  compiler-prelude task declarations use its closed must-transfer exception, and the role-bound
+  enums `Optional` and `Result` accept one because their linearity follows their payload.
 
 A type that declares `deinit` is noncopyable by default. Ordinary
 initialization or assignment from a binding of that type is rejected rather
@@ -98,6 +99,9 @@ key or value may not be. A linear type is noncopyable, so it does not satisfy `C
 A linear type may not be a type argument of a generic function
 (`type-checking.linear-type-argument`, §20.4.1): ordinary generic code may drop a `T`. The
 compiler-prelude transfer exception checks owning values as potentially linear instead (§20.12.5).
+The role-bound enums `Optional` and `Result` (§2.4, §2.5) are the other exception: they hold their
+payload but never drop it, and a `Some(_)`, `Ok(_)` or `Err(_)` pattern on a moved linear instance is
+checked against the substituted payload type, so it is still `linear-result-dropped`.
 
 A linear binding must not be **live** at any exit of its scope (§4.7.1). **Implementation
 status:** the checks are implemented for a struct declared `linear` in a toolchain-authorized

@@ -81,6 +81,11 @@ Both explicit `match` and postfix `?` work with these results.
 
 ### 8.3 `?` propagation
 
+Propagation binds to the `optional` and `result` roles (§2.4, §2.5): it requires the operand and the
+enclosing function result to be instances of the same role, whatever other types are named `Optional` or
+`Result` in scope. A `Result` whose failure type is `Never` has an uninhabited failure case, so `?` on it
+is not an early exit. `?` on a `Result<Never, E>` or `Never?` has type `Never`.
+
 Postfix `?` evaluates its operand exactly once. `Result<T, E>?` produces
 `T` from `.Ok` and returns `.Err(E)` from the enclosing function on failure;
 `Optional<T>?` produces `T` from `.Some` and returns `.None` on failure.

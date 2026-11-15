@@ -69,6 +69,9 @@ enum class LibraryRole {
     channelSender,
     channelReceiver,
     storedConsumer,
+    // The enums `Optional` and `Result` that `T?`, `nil` and postfix `?` bind to (decision 0024).
+    optional,
+    result,
 };
 
 enum class CallableKind {
@@ -160,8 +163,12 @@ public:
 
     [[nodiscard]] const syntax::SourceFileSyntax::Ptr& root() const;
     [[nodiscard]] const syntax::SourceFileSyntax::Ptr& compilationRoot() const;
-    [[nodiscard]] const std::shared_ptr<SourceFile>& preludeSource() const;
+    // The bundled prelude sources in source-identity order (each is one past the previous).
+    [[nodiscard]] const std::vector<std::shared_ptr<SourceFile>>& preludeSources() const;
     [[nodiscard]] ScopeId preludeScope() const;
+    // The prelude enum bound to `optional` or `result` (decision 0024); empty until the role prelude
+    // is collected, and when the bundle lacks it.
+    [[nodiscard]] std::optional<SymbolId> roleSymbol(LibraryRole role) const;
     [[nodiscard]] ScopeId fileScope() const;
 
     [[nodiscard]] std::optional<NodeId> nodeId(const syntax::NodePtr& node) const;
@@ -202,8 +209,10 @@ private:
 
     syntax::SourceFileSyntax::Ptr root_;
     syntax::SourceFileSyntax::Ptr compilationRoot_;
-    std::shared_ptr<SourceFile> preludeSource_;
+    std::vector<std::shared_ptr<SourceFile>> preludeSourceFiles_;
     ScopeId preludeScope_ = invalidScopeId;
+    std::optional<SymbolId> optionalSymbol_;
+    std::optional<SymbolId> resultSymbol_;
     ScopeId fileScope_ = invalidScopeId;
 
     std::vector<syntax::NodePtr> nodes_;

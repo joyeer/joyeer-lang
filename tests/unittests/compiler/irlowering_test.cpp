@@ -693,8 +693,9 @@ TEST_F(IRLoweringTest, RejectsInvalidTopLevelConstants) {
 TEST_F(IRLoweringTest, PreservesGraphSymbolIdentityAndFileLocalDebugSpans) {
     result = joyeer::testing::lowerGraph(joyeer::testing::collidingGraphSources());
     ASSERT_TRUE(result.succeeded()) << joyeer::lowering::dump(result.diagnostics);
-    ASSERT_EQ(result.module->sourceFiles.size(), 4u);
-    EXPECT_EQ(result.module->sourceFiles.back().fileName, "concurrency.joyeer");
+    ASSERT_EQ(result.module->sourceFiles.size(), 5u);
+    EXPECT_EQ(result.module->sourceFiles[3].fileName, "concurrency.joyeer");
+    EXPECT_EQ(result.module->sourceFiles.back().fileName, "roles.joyeer");
     EXPECT_FALSE(result.module->sourceInfo.has_value());
     std::unordered_map<joyeer::semantic::SymbolId, joyeer::ir::FunctionId> symbols;
     size_t helpers = 0;

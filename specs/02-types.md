@@ -175,7 +175,8 @@ accept it.
 
 ### 2.4 Optional<T>
 
-`T?` is sugar for `Optional<T>`:
+`T?` is sugar for `Optional<T>`. `Optional` is an enum declared in the compiler-bundled
+prelude and bound to the language by the `optional` role ([decision 0024](../docs/decisions/0024-library-optional-and-result.md)):
 
 ```joyeer
 enum Optional<T> {
@@ -184,13 +185,22 @@ enum Optional<T> {
 }
 ```
 
+The case order shown is illustrative; case tag numbering is not part of the language (§19).
+
+The sugar binds to that declaration, not to the name `Optional`: a user-declared
+`enum Optional<T>` shadows the name in its scope but never changes the meaning of `T?`, `nil`,
+implicit wrapping, `x!`, `x?.field`, or `?`. The one-`?` look-through of an expected type (§20.12.1) does not apply when
+the type being constructed is `Optional` itself, so `let x: Optional<Int?> = nil` is the outer `None` (`Int??` is not written: it lexes as the `??` operator).
+`==` and `!=` are not defined on `Optional` (§5.2).
+
 Construction: `nil` for `None`, `T` is implicitly coerced to `Some(T)` in
 positions expecting `T?`. Force-unwrap with `x!` (traps on `None`).
 Optional chaining with `x?.field` (see §5.4).
 
 ### 2.5 Result<T, E>
 
-`Result<T, E>` is a standard-library enum (no special syntax):
+`Result<T, E>` is an enum declared in the compiler-bundled prelude and bound to the language by the
+`result` role (no special syntax; [decision 0024](../docs/decisions/0024-library-optional-and-result.md)):
 
 ```joyeer
 enum Result<T, E> {
@@ -199,14 +209,15 @@ enum Result<T, E> {
 }
 ```
 
-See §8 for error-handling semantics.
+`?` propagation (§8.3) binds to the role, not to the name. `==` and `!=` are not defined on `Result`
+(§5.2). See §8 for error-handling semantics.
 
 ### 2.6 Generics
 
 The generic types are the built-in types `Array<T>` / `[T]`, `Dict<K, V>` /
 `[K: V]`, `Optional<T>` / `T?`, and `Result<T, E>` (and the concurrency types
-below). Their angle brackets are **type arguments understood directly by the
-compiler**. User code may *use* these containers and may declare **generic
+below). `Array` and `Dict` have angle brackets that are **type arguments understood directly by the
+compiler**; `Optional` and `Result` are prelude enums bound by roles (§2.4, §2.5). User code may *use* these containers and may declare **generic
 top-level functions** and **generic `struct`s and `enum`s** bounded by protocols
 (§20, §20.12, [decision 0022](../docs/decisions/0022-generic-types-and-layout-intrinsics.md)),
 but may not declare generic methods or conditional conformances (§20.10).

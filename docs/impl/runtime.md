@@ -326,6 +326,9 @@ depend on `readStdinLine` flushing standard output before it blocks.
 
 The public generic ends and their methods are declared in `lib/Runtime/concurrency.joyeer`,
 bundled into the compiler's source prelude ([0023](../decisions/0023-library-concurrency.md)).
+`Optional` and `Result` live in a second bundled prelude, `lib/Runtime/roles.joyeer`, which is always
+loaded and is not replaced by a caller-supplied prelude
+([0024](../decisions/0024-library-optional-and-result.md)).
 They are ordinary `deinit` structs, including the hidden live flag; the ABI handle remains a private
 `Int`. Creation uses raw `Int` output slots and then constructs both ends. Sending/receiving use
 typed stack slots, not message allocations. A failed send destroys its unsent value, and the

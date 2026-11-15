@@ -1832,6 +1832,9 @@ TEST_F(CInteropTest, BundledPreludeDeclaresEachCompilerRoleExactlyOnce) {
     EXPECT_EQ(counts[LibraryRole::channelReceiver], 1);
     // JoinHandle.join and the close method of each channel end.
     EXPECT_EQ(counts[LibraryRole::storedConsumer], 3);
+    // The role prelude declares each language-bound enum exactly once (decision 0024).
+    EXPECT_EQ(counts[LibraryRole::optional], 1);
+    EXPECT_EQ(counts[LibraryRole::result], 1);
 }
 
 TEST_F(CInteropTest, CompilerMetadataOnStructsEnumsAndMethodsIsRejectedOutsideThePrelude) {
@@ -2130,4 +2133,52 @@ func read(value: )") + type + "): Int { return 0 }\n"));
             return error.message.find("noncopyable") != std::string::npos;
         })) << joyeer::ir::dump(verification);
     }
+}
+
+// Decision 0024: lowering sets each role-bound instance's role and case indices (a user enum that
+// happens to be named Optional or Result gets none), and the wire format carries them to the backend.
+TEST_F(CInteropTest, RoleBindingsSurviveLoweringAndTheWire) {
+    ASSERT_NO_FATAL_FAILURE(lower(R"(
+enum Optional<T: Copyable> { Present(T) }
+func maybe(value: Int): Int? { return value }
+func parse(value: Int): Result<Int, String> { return .Ok(value) }
+func user(value: Int): Optional<Int> { return .Present(value) }
+)"));
+    const auto describe = [](const joyeer::ir::Module& value) {
+        std::vector<std::string> roles;
+        for (const auto& enumeration : value.enumerations) {
+            roles.push_back(enumeration.name + ":" + std::to_string(static_cast<int>(enumeration.role)) + ":" +
+                            std::to_string(enumeration.firstRoleCase) + ":" + std::to_string(enumeration.secondRoleCase));
+        }
+        return roles;
+    };
+    bool sawOptional = false;
+    bool sawResult = false;
+    bool sawUser = false;
+    for (const auto& enumeration : module->enumerations) {
+        if (enumeration.role == joyeer::ir::EnumerationRole::optional) {
+            sawOptional = true;
+            EXPECT_EQ(enumeration.cases[enumeration.firstRoleCase].name, "Some");
+            EXPECT_EQ(enumeration.cases[enumeration.secondRoleCase].name, "None");
+            EXPECT_TRUE(enumeration.cases[enumeration.secondRoleCase].payloadTypes.empty());
+        } else if (enumeration.role == joyeer::ir::EnumerationRole::result) {
+            sawResult = true;
+            EXPECT_EQ(enumeration.cases[enumeration.firstRoleCase].name, "Ok");
+            EXPECT_EQ(enumeration.cases[enumeration.secondRoleCase].name, "Err");
+        } else if (enumeration.cases.size() == 1 && enumeration.cases[0].name == "Present") {
+            sawUser = true;
+        }
+    }
+    EXPECT_TRUE(sawOptional);
+    EXPECT_TRUE(sawResult);
+    EXPECT_TRUE(sawUser) << "a user enum named Optional keeps role none";
+
+    joyeer::llvmbackend::wire::Writer writer;
+    writer(*module);
+    joyeer::ir::Module decoded;
+    joyeer::llvmbackend::wire::Reader reader(writer.bytes);
+    reader(decoded);
+    ASSERT_TRUE(reader.succeeded());
+    EXPECT_EQ(describe(decoded), describe(*module));
+    EXPECT_TRUE(joyeer::ir::Verifier().verify(decoded).succeeded());
 }
