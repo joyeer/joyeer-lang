@@ -4,7 +4,7 @@
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
-  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted; implemented, reviewed once; follow-ups open)
+  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted; implemented, reviewed twice, validated on Windows and Linux; macOS validation open)
 - Spec: [§2](../../specs/02-types.md), [§20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -63,10 +63,13 @@ cannot express element-dependent copyability, linearity, and destruction through
 - [x] Remove the dedicated type kinds and cases only after compatible fixtures pass. Evidence: `TypeKind::optional`
   and `result`, their builtin symbols and the case-spelling comparisons are gone; the same Debug run
   passed every existing fixture. `==`/`!=` rejection is the one intended change (the new equality tests).
-- [ ] Measure representative compiler output size and runtime behavior in both profiles (`--emit-ir`
-  diff at -O0 and -O2 against the pre-change compiler, and the benchmark programs). Not done.
+- [x] Measure representative compiler output size and runtime behavior in both profiles. Evidence: the
+  2026-11-15 measurement entry below (executables byte-for-byte the same size, LLVM IR identical after
+  type-id normalization, runtime within noise).
 - [x] Run the role reviewers (type-system and IR/backend, twice each, separately from the author) and
-  validate on Windows x64 and Linux x64 (WSL Ubuntu). Evidence: the 2026-11-15 log entries.
+  validate on Windows x64 and Linux x64 (WSL Ubuntu). Evidence: Windows `scripts/validate.py` Debug and
+  Release `ctest` 1717/1717 and `fern test` 7/7 (three load-sensitive tests passed on the validator's
+  rerun); Linux Debug and Release `ctest` 1693/1693 and `fern test` 7/7; both on commit c0e39c3.
 - [ ] macOS validation: run `python3 scripts/validate.py --llvm-root <sdk>` on macOS (Debug and Release,
   unfiltered CTest and fern test). Owner: the user. Not run from the Windows/WSL environment.
 - [x] Phase 1 follow-ups found while implementing 0024 and by its reviews: the role-prelude test seam
@@ -245,7 +248,23 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   fix it; the equality help shows the `x == nil` replacement; the constraint help shows a `match`.
   Tests that passed vacuously were replaced: `OptionalFunctionValuesStayRejectedWhereFunctionTypesAre`
   now pins `invalid-function-type` for `[((): Int)?: Int]`, and `E2EOptionalNestedLayers` inspects the
-  inner layer for `Optional.Some(5)`, `Optional.Some(nil)` and three-level nesting. Linux (WSL Ubuntu,
-  `scripts/validate.py`, commit 348e33d): Debug and Release `ctest` 1691/1691 and `fern test` 7/7. Windows
-  `scripts/validate.py` on the same commit passed Debug (1715/1715, four tests only on rerun: load flakiness)
-  before this pass; the final Windows and Linux runs follow this entry.
+  inner layer for `Optional.Some(5)`, `Optional.Some(nil)` and three-level nesting. `scripts/validate.py` on
+  commit c0e39c3 passes: Windows x64 Debug and Release `ctest` 1717/1717 and `fern test` 7/7 (`Fern.Manifest`,
+  `Fern.Workspace` and `Compression.Interoperability` passed only on the validator's rerun in both
+  configurations, a parallel-load timeout pattern also seen earlier); Linux x86_64 (WSL Ubuntu) Debug and
+  Release `ctest` 1693/1693 and `fern test` 7/7. (An earlier run on commit 348e33d passed too.)
+- 2026-11-15: Output size and runtime measurement (Windows x64, Release compilers, no other work running).
+  Baseline: `main` at 886c6a9 built in a separate worktree; candidate: c0e39c3. Programs: `hello`,
+  `array_remove_last`, `dictionary_get`, `propagation`, `alloc_heavy`, `print_heavy`, `task_churn` and
+  `channel_throughput`, each at -O0 and -O2. Executable sizes are identical in all 16 pairs (for example
+  hello 48128 and 43520 bytes, propagation 73216 and 54272, dictionary_get 115712 and 98304). The
+  `--emit-llvm` text differs only in type-id numbers (the new compiler interns more types, so an id such as
+  `joyeer_clone_type_49` becomes `_54`); after normalizing those numbers all 16 pairs are the same lines.
+  Runtime, 15 interleaved rounds alternating A/B order, median new/base: 0.92 to 1.03 for every program
+  and profile (task_churn 1.00 to 1.02, channel_throughput 0.99, alloc_heavy 0.99 and 1.03, print_heavy
+  1.01 and 0.995, propagation 0.92 and 1.00), with identical output and exit status in each run. A 3-round
+  first pass showed channel_throughput at -O0 at 1.17; it did not reproduce in 15 rounds (0.986), so it was
+  noise. Compile time is unchanged (for example hello 0.17 s both). The gate in tests/perf/README.md
+  (no regression outside noise, bounded hello growth) is met: hello grew by 0 bytes. The paired bootstrap
+  interval of `benchmark_concurrency.py` was not run; the ratios above are plain medians.
+  Phase 1 remains open only for the macOS validation item.
