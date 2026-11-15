@@ -207,8 +207,11 @@ is unambiguous: success and failure are the declaration's cases, whatever the ar
   decision `Optional.None` was rejected outright, so there is no earlier behavior to preserve; the
   look-through is skipped at both `bindFromExpectedType` and the payload-free member path, and
   `tests/e2e/optional_nested_layers.joyeer` matches the layer at run time.
-  (`Int??` is not written: it lexes as the `??` operator. `Optional.Some(nil)` is rejected today with
-  `missing-contextual-type`; this decision does not change that.)
+  (`Int??` is not written: it lexes as the `??` operator, so a nested optional prints as
+  `Optional<Int?>` in diagnostics. With an expected `Optional<Int?>`, `Optional.Some(nil)` is `Some(None)`
+  and `Optional.Some(5)` is `Some(Some(5))`; without a contextual type `Optional.Some(nil)` is still
+  `missing-contextual-type`.) One implicit promotion wraps one layer: `Int` is not assignable to
+  `Optional<Int?>`, because lowering wraps one layer and a silent second wrap would be a hidden layer.
 - **Propagation** (§8.3) requires the operand and the enclosing result to be instances of the same
   role. For `result`, the failure types must be identical: the same concrete type or the same type
   parameter (§20.7).

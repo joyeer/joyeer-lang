@@ -1057,7 +1057,7 @@ if(JOYEER_CLANG_EXECUTABLE)
             0 1 2 3)
     add_joyeer_native_regression(
             E2EOptionalNestedLayers optional_nested_layers
-            "0\n0\n0\n1\n"
+            "0\n0\n0\n2\n1\n2\n3\n0\n"
             0 1 2 3)
     add_joyeer_native_regression(
             E2EGenericTypes generic_types

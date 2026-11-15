@@ -302,6 +302,8 @@ std::string TypeContext::displayName(TypeId id, bool disambiguateNominals) const
     if (isOptional(value) && value->arguments.size() == 1) {
         // `((Int): Int)?` is an optional function; `(Int): Int?` returns an optional.
         const auto* wrapped = type(value->arguments[0]);
+        // `Int??` lexes as the `??` operator and cannot be written, so a nested optional prints nominally.
+        if (isOptional(wrapped)) return "Optional<" + displayName(value->arguments[0], disambiguateNominals) + ">";
         const bool function = wrapped != nullptr && wrapped->kind == TypeKind::function;
         return (function ? "(" : "") + displayName(value->arguments[0], disambiguateNominals) +
                 (function ? ")?" : "?");
@@ -402,6 +404,9 @@ bool TypeContext::isAssignable(TypeId source, TypeId destination) const {
     if (isOptional(sourceType)) {
         return isAssignable(sourceType->arguments[0], destinationType->arguments[0]);
     }
+    // One implicit promotion wraps one layer (§2.6.1): `Int` does not become `Int??`, and lowering
+    // wraps exactly one layer, so a destination whose payload is itself optional is not reachable.
+    if (isOptional(type(destinationType->arguments[0]))) return false;
     return isAssignable(source, destinationType->arguments[0]);
 }
 
@@ -891,10 +896,15 @@ public:
         const auto& root = semanticModel->compilationRoot();
         if (root != nullptr) {
             for (const auto& item : root->items) resolveTopLevelDeclaration(item);
-            const auto beforePrelude = diagnostics.size();
             validatePreludeContracts();
             // A malformed prelude role must not cascade into errors in function bodies (decision 0024).
-            if (diagnostics.size() != beforePrelude) return TypeCheckingResult { model, std::move(diagnostics) };
+            // Declaration-time prelude errors (an extension of a role enum, a role annotation outside the
+            // prelude) count as well as the shape errors.
+            if (std::any_of(diagnostics.begin(), diagnostics.end(), [](const auto& diagnostic) {
+                    return diagnostic.id == TypeCheckingDiagnosticId::invalidPrelude;
+                })) {
+                return TypeCheckingResult { model, std::move(diagnostics) };
+            }
             const auto declarationDiagnostics = diagnostics.size();
             checkExpandingRecursion(true);
             if (diagnostics.size() != declarationDiagnostics) {
@@ -2299,7 +2309,7 @@ private:
                 } else if (model->typeContext.isOptional(argument) || model->typeContext.isResult(argument)) {
                     // An optional or result type cannot be extended (decision 0024), so no extension can fix this.
                     help = "an optional or result type cannot conform to '" + symbolName(protocol) +
-                            "'; constrain the generic with a type that can, or match the value first";
+                            "'; match the value first, as in 'match p { .Some(v) => show(value: v), .None => ... }'";
                 } else {
                     help = "declare 'extension " + model->typeContext.displayName(argument) + ": " +
                             symbolName(protocol) + " { ... }'";
@@ -3727,8 +3737,11 @@ private:
             const auto roleSymbol = model->semanticModelValue->roleSymbol(role);
             const auto* roleDeclaration = roleSymbol.has_value() ? model->semanticModelValue->symbol(*roleSymbol) : nullptr;
             if (roleDeclaration != nullptr && roleDeclaration->name == declaration->name) {
-                return "'" + declaration->name + "' here is the declaration in your program, not the prelude's; "
-                       "'?', 'nil' and postfix '?' work only on the prelude's " + declaration->name;
+                return "'" + declaration->name + "' here is the declaration in your program, not the prelude's; " +
+                       (role == semantic::LibraryRole::optional
+                                ? "'T?', 'nil' and postfix '?' work only on the prelude's Optional"
+                                : "postfix '?' works only on the prelude's Result") +
+                       ". Rename your type, or remove it to use the prelude's";
             }
         }
         return std::nullopt;
@@ -4013,7 +4026,11 @@ private:
                 return model->typeContext.isOptional(operand) || model->typeContext.isResult(operand);
             })) {
             // Equality on the role-bound enums is not defined (decision 0024, spec 5.2).
-            help = "compare with 'match', for example 'match x { .Some(_) => ..., .None => ... }'";
+            // The common `x == nil` has a drop-in replacement.
+            help = std::any_of(operands.begin(), operands.end(),
+                               [this](TypeId operand) { return model->typeContext.isOptional(operand); })
+                    ? "compare with 'match', for example 'match x { .None => true, .Some(_) => false }' for 'x == nil'"
+                    : "compare with 'match', for example 'match x { .Ok(_) => ..., .Err(_) => ... }'";
         }
         report(TypeCheckingDiagnosticId::invalidOperatorOperands, span, std::move(message), std::move(help));
     }

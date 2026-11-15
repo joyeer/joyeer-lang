@@ -46,13 +46,13 @@ cannot express element-dependent copyability, linearity, and destruction through
   Do not merely replace builtin-name dispatch with enum-name dispatch. Evidence:
   [0024](../decisions/0024-library-optional-and-result.md), accepted by the user 2026-11-14 after
   three language-designer reviews.
-- [ ] Update the normative rules and add failing stage tests and durable fixtures for every
-  existing case, pattern, optional wrapping, propagation, and ownership boundary. Spec done
-  2026-11-14 (§2, §4.1.1, §5.2, §5.4.1, §8.3, §19.4.7, §20.12, Appendix C); the failing tests and
-  fixtures listed in 0024 "Tests" are only partly written: equality (see the log entry of
-  2026-11-14, tests first). Still missing: the prelude role and shape tests, the IR/wire tests, the
-  concurrency and `.Some(_)` linear tests, and the `Never` propagation tests; most need APIs the
-  implementation adds (the role enumerators, the role-prelude seam).
+- [x] Update the normative rules and add failing stage tests and durable fixtures for every
+  existing case, pattern, optional wrapping, propagation, and ownership boundary. Evidence: spec
+  (§2, §4.1.1, §5.2, §5.4.1, §8.3, §19.4.7, §20.12, Appendix C); equality tests (written first, see the
+  2026-11-14 log); `RolePreludeTest` (shape, duplicate role, prelude extension, missing role),
+  `IRModelTest.VerifierRejectsMalformedRoleEnumerations`, `CInteropTest.RoleBindingsSurviveLoweringAndTheWire`
+  (lowering and wire), `SemanticAnalysisTest.WildcardsOverAJoinHandleInsideOptionalAndResultDropALinearPayload`,
+  `E2EPropagation` (`Never` forms) and `E2EOptionalNestedLayers`.
 - [x] Declare the enums in the source prelude and preserve source-module visibility/shadowing. Evidence:
   `lib/Runtime/roles.joyeer` in a separate role prelude (a second source ID, always loaded); Windows x64
   Debug `ctest` 1703/1703 on 2026-11-15, including `UserOptionalDoesNotCaptureTheOptionalSugar`.
@@ -63,14 +63,18 @@ cannot express element-dependent copyability, linearity, and destruction through
 - [x] Remove the dedicated type kinds and cases only after compatible fixtures pass. Evidence: `TypeKind::optional`
   and `result`, their builtin symbols and the case-spelling comparisons are gone; the same Debug run
   passed every existing fixture. `==`/`!=` rejection is the one intended change (the new equality tests).
-- [ ] Measure representative compiler output size and runtime behavior in both profiles; run
-  the role reviewers and full supported-platform validation.
-- [ ] Phase 1 follow-ups found while implementing 0024 and by its reviews. Done on Windows x64 Debug (see
-  the 2026-11-15 log entry): the test-only role-prelude seam and the malformed-shape, duplicate-role,
-  missing-role and prelude-`extension` tests; the specific shape message; constraint and linear-marker
-  rejection; the lowering role and wire round-trip test; the source-ID assert; the `extension Int?: P`
-  help; the prelude span of a missing role; `docs/impl/supported-features.md`. Windows x64 Release `ctest` also passes (see the log). Still open: a test that the concurrency
-  prelude's `Result<Void, ChannelClosed>` shows in `--report-instantiations`; Linux and macOS runs.
+- [ ] Measure representative compiler output size and runtime behavior in both profiles (`--emit-ir`
+  diff at -O0 and -O2 against the pre-change compiler, and the benchmark programs). Not done.
+- [x] Run the role reviewers (type-system and IR/backend, twice each, separately from the author) and
+  validate on Windows x64 and Linux x64 (WSL Ubuntu). Evidence: the 2026-11-15 log entries.
+- [ ] macOS validation: run `python3 scripts/validate.py --llvm-root <sdk>` on macOS (Debug and Release,
+  unfiltered CTest and fern test). Owner: the user. Not run from the Windows/WSL environment.
+- [x] Phase 1 follow-ups found while implementing 0024 and by its reviews: the role-prelude test seam
+  and the malformed-shape, duplicate-role, missing-role and prelude-`extension` tests; per-rule shape
+  messages; constraint and linear-marker rejection; the lowering and wire tests; the driver's source-table
+  check; the unsatisfied-constraint help; the missing-role span; `docs/impl/`. The concurrency prelude's
+  `Result<Void, ChannelClosed>` line in `--report-instantiations` is pinned by the regenerated
+  `tests/type-checking/generics_report.txt` and `generic_types_report.txt`.
 
 ### Phase 2: borrowing and linear collection ownership
 
@@ -228,3 +232,20 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   one failure, `ValidationScriptTests`, timed out at 33 s under parallel load and passes alone in 0.5 s,
   so it is load flakiness in a script test, not this change. Linux, macOS, the benchmarks and
   `python scripts/validate.py --llvm-root <sdk>` have not been run; none of this is committed.
+- 2026-11-15: Second review pass and fixes. Neither reviewer found a soundness or destruction hole.
+  IR/backend: the verifier now requires a result's cases at indices 0 and 1 (equal type arguments made
+  a swap undetectable), that the type and its enumeration definition name the same declaration, and an
+  honest message for an unknown role value; `VerifierRejectsMalformedRoleEnumerations` now requires each
+  rejection to name the role and covers a `Result<Int, Int>` swap. The driver's debug-only assert became
+  an unconditional `driver.invalid-source-table` check. Type system: `isAssignable` allowed `Int` into
+  `Optional<Int?>` through two layers, which lowering cannot represent (`ir-lowering.missing-type`); one
+  promotion now wraps one layer, and a nested optional prints as `Optional<Int?>` since `Int??` cannot
+  be written. Prelude errors from declarations (an extension, an annotation) now stop body checking as the
+  shape errors do; the test seam implies prelude context; the shadowing help is per role and says how to
+  fix it; the equality help shows the `x == nil` replacement; the constraint help shows a `match`.
+  Tests that passed vacuously were replaced: `OptionalFunctionValuesStayRejectedWhereFunctionTypesAre`
+  now pins `invalid-function-type` for `[((): Int)?: Int]`, and `E2EOptionalNestedLayers` inspects the
+  inner layer for `Optional.Some(5)`, `Optional.Some(nil)` and three-level nesting. Linux (WSL Ubuntu,
+  `scripts/validate.py`, commit 348e33d): Debug and Release `ctest` 1691/1691 and `fern test` 7/7. Windows
+  `scripts/validate.py` on the same commit passed Debug (1715/1715, four tests only on rerun: load flakiness)
+  before this pass; the final Windows and Linux runs follow this entry.

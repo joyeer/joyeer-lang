@@ -1,5 +1,4 @@
 #include "compiler+service.h"
-#include <cassert>
 
 #include "compiler/frontend/lexparser.h"
 #include "compiler/frontend/nameresolution.h"
@@ -536,11 +535,21 @@ void CompilerService::compile(const std::vector<joyeer::semantic::ModuleInput>& 
     sourcefile->semanticModel = resolution.model;
     if (resolution.model != nullptr) {
         // Prelude sources follow the user sources in identity order; a span indexes this table.
+        // A span's source ID indexes this table (decision 0024): the resolver numbers the prelude
+        // sources densely after the highest user source, so each must land at its own ID. A prelude that
+        // failed to parse already has its own diagnostic and keeps unnumbered tokens.
+        const bool preludeFailed = std::any_of(resolution.diagnostics.begin(), resolution.diagnostics.end(),
+                [](const auto& diagnostic) {
+                    return diagnostic.id == joyeer::semantic::NameResolutionDiagnosticId::invalidPrelude;
+                });
         for (const auto& prelude : resolution.model->preludeSources()) {
             if (prelude == nullptr) continue;
-            // A span's source ID indexes this table (decision 0024): the resolver numbered the prelude
-            // sources densely after the highest user source, so each lands at its own ID.
-            assert(prelude->tokens.empty() || prelude->tokens.front()->span.sourceId == compilationSources.size());
+            if (!preludeFailed && !prelude->tokens.empty() &&
+                prelude->tokens.front()->span.sourceId != compilationSources.size()) {
+                diagnostics->reportDiagnostic(ErrorLevel::failure, "driver.invalid-source-table",
+                        "the compiler prelude's source identity does not match the source table");
+                return;
+            }
             compilationSources.push_back(prelude);
         }
     }

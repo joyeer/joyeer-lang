@@ -2,10 +2,33 @@ func viaCase(): Optional<Int?> { return Optional.None }
 func viaShorthand(): Optional<Int?> { return .None }
 func viaNil(): Optional<Int?> { return nil }
 func viaSome(): Optional<Int?> { return Optional.Some(5) }
+func viaSomeNil(): Optional<Int?> { return Optional.Some(nil) }
 
+func deepSomeNil(): Optional<Optional<Int?>> { return .Some(.Some(nil)) }
+func deepSome(): Optional<Optional<Int?>> { return .Some(.Some(5)) }
+func deepNone(): Optional<Optional<Int?>> { return nil }
+
+// 0 is the outer None, 1 is Some(None), 2 is Some(Some(_)).
 func layers(value: Optional<Int?>): Int {
     return match value {
-        .Some(_) => 1,
+        .Some(inner) => match inner {
+            .Some(_) => 2,
+            .None => 1,
+        },
+        .None => 0,
+    }
+}
+
+// The number of present layers, 0 to 3.
+func depth(value: Optional<Optional<Int?>>): Int {
+    return match value {
+        .Some(first) => match first {
+            .Some(second) => match second {
+                .Some(_) => 3,
+                .None => 2,
+            },
+            .None => 1,
+        },
         .None => 0,
     }
 }
@@ -15,4 +38,8 @@ func main() {
     print(value: layers(value: viaShorthand()))
     print(value: layers(value: viaNil()))
     print(value: layers(value: viaSome()))
+    print(value: layers(value: viaSomeNil()))
+    print(value: depth(value: deepSomeNil()))
+    print(value: depth(value: deepSome()))
+    print(value: depth(value: deepNone()))
 }

@@ -41,7 +41,9 @@ The module owns:
   function that runs it plus a hidden trailing `$live` Bool field (below);
 - user enum and instantiated generic enum case definitions, including the `Optional<T>` / `Result<T,E>`
   instances, whose `EnumerationDefinition` carries the role (`optional` or `result`) and the indices of
-  its present/absent or success/failure cases ([0024](../decisions/0024-library-optional-and-result.md));
+  its present/absent or success/failure cases ([0024](../decisions/0024-library-optional-and-result.md)).
+  The text dump prints it as a suffix, ` role=optional(0,1)`; a result is always `role=result(0,1)`,
+  because lowering binds success to case 0 and failure to case 1 and the verifier requires exactly that;
 - external built-ins and source functions;
 - functions containing typed values, stack addresses, basic blocks, and
   source-spanned instructions;

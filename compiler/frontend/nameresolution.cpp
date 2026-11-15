@@ -2527,6 +2527,10 @@ NameResolutionResult NameResolver::resolveWithPrelude(std::vector<ModuleInput> m
             [](const auto& module) { return module.preludeContext && !module.rolePreludeContext; });
     const bool suppliedRoles = std::any_of(modules.begin(), modules.end(),
             [](const auto& module) { return module.rolePreludeContext; });
+    // The test seam implies prelude context; a module that sets only the role flag would be inert.
+    for (auto& module : modules) {
+        if (module.rolePreludeContext) module.preludeContext = true;
+    }
     uint32_t sourceId = 0;
     for (const auto& module : modules) {
         for (const auto& file : module.files) sourceId = std::max(sourceId, file->span.sourceId);

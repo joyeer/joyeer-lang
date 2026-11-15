@@ -605,11 +605,32 @@ TEST(IRModelTest, VerifierRejectsMalformedRoleEnumerations) {
     const auto valid = Verifier().verify(module);
     ASSERT_TRUE(valid.succeeded()) << dump(valid);
 
+    // Each mutation must trip the role rule itself, not some unrelated type check.
     const auto rejects = [&](const char* what, const auto& mutate) {
         auto invalid = module;
         mutate(invalid);
-        EXPECT_TRUE(hasError(Verifier().verify(invalid), VerificationErrorId::typeMismatch)) << what;
+        const auto verification = Verifier().verify(invalid);
+        EXPECT_TRUE(hasError(verification, VerificationErrorId::typeMismatch)) << what;
+        EXPECT_TRUE(std::any_of(verification.errors.begin(), verification.errors.end(), [](const auto& error) {
+            return error.message.find("role") != std::string::npos;
+        })) << what << ": " << dump(verification);
     };
+    // Equal type arguments make the payloads alone unable to tell success from failure.
+    {
+        auto equal = module;
+        equal.types.push_back(TypeName {
+            7, "Result<Int, Int>", joyeer::typing::TypeKind::enumeration, 20, { 1, 1 },
+        });
+        equal.enumerations.push_back(EnumerationDefinition {
+            20, 7, "Result<Int, Int>",
+            { EnumCaseDefinition { 31, "Ok", { 1 } }, EnumCaseDefinition { 32, "Err", { 1 } } },
+            EnumerationRole::result, 0, 1,
+        });
+        ASSERT_TRUE(Verifier().verify(equal).succeeded()) << dump(Verifier().verify(equal));
+        std::swap(equal.enumerations.back().firstRoleCase, equal.enumerations.back().secondRoleCase);
+        const auto swapped = Verifier().verify(equal);
+        EXPECT_TRUE(hasError(swapped, VerificationErrorId::typeMismatch)) << dump(swapped);
+    }
     rejects("role value outside the closed set", [](auto& m) {
         m.enumerations[1].role = static_cast<EnumerationRole>(7);
     });
@@ -636,6 +657,15 @@ TEST(IRModelTest, VerifierRejectsMalformedRoleEnumerations) {
     });
     rejects("role type is not an enumeration", [](auto& m) {
         m.types[m.types.size() - 1].kind = joyeer::typing::TypeKind::structure;
+    });
+    rejects("result failure payload disagrees with the second type argument", [](auto& m) {
+        m.enumerations[1].cases[1].payloadTypes = { 2 };
+    });
+    rejects("wrong number of type arguments", [](auto& m) {
+        m.types[m.types.size() - 1].arguments = { 2 };
+    });
+    rejects("type and definition name different declarations", [](auto& m) {
+        m.types[m.types.size() - 1].symbol = 99;
     });
 }
 

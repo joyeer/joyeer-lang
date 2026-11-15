@@ -3907,9 +3907,28 @@ TEST_F(TypeCheckingTest, NestedOptionalKeepsItsOuterLayerForNone) {
 
 // Guard: optional function values stay rejected at top level and as dictionary keys.
 TEST_F(TypeCheckingTest, OptionalFunctionValuesStayRejectedWhereFunctionTypesAre) {
+    using Id = joyeer::typing::TypeCheckingDiagnosticId;
+    // `((): Int)?` is an optional function (a function returning an optional is `(): Int?`).
+    check("func key(d: [((): Int)?: Int]) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidFunctionType)) << joyeer::typing::dump(checking.diagnostics);
+    check("func key(d: [Result<((): Int), String>: Int]) {}\n");
+    EXPECT_TRUE(hasTypeDiagnostic(checking, Id::invalidFunctionType)) << joyeer::typing::dump(checking.diagnostics);
     check("func work(): Int { return 1 }\n"
-          "func main() { let f: (()): Int? = nil\n print(value: f) }\n");
+          "func main() { let f: ((): Int)? = nil\n print(value: f) }\n");
     EXPECT_FALSE(checking.succeeded()) << "print must not accept an optional function value";
+}
+
+// One implicit promotion wraps one layer: `Int` never reaches `Optional<Int?>` (lowering wraps one),
+// and a nested optional prints as the nominal type, since `Int??` cannot be written.
+TEST_F(TypeCheckingTest, ImplicitPromotionWrapsOneLayerAndNestedOptionalsPrintNominally) {
+    check("func f(): Optional<Int?> { return 5 }\n");
+    ASSERT_FALSE(checking.succeeded());
+    const auto dumped = joyeer::typing::dump(checking.diagnostics);
+    EXPECT_NE(dumped.find("Optional<Int?>"), std::string::npos) << dumped;
+    EXPECT_EQ(dumped.find("Int??"), std::string::npos) << dumped;
+    check("func g(): Int? { return 5 }\n"
+          "func h(value: Int?): Optional<Int?> { return value }\n");
+    EXPECT_TRUE(checking.succeeded()) << joyeer::typing::dump(checking.diagnostics);
 }
 
 // Guard: a user generic still cannot take a linear optional (0022 C1 stays for user generics).

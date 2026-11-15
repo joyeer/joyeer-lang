@@ -609,6 +609,9 @@ VerificationResult Verifier::verify(const Module& module) const {
                     enumeration.cases.size() == 2 &&
                     enumeration.firstRoleCase < 2 && enumeration.secondRoleCase < 2 &&
                     enumeration.firstRoleCase != enumeration.secondRoleCase;
+            // Lowering binds a result's success to case 0 and its failure to case 1; the payload
+            // types alone cannot tell the two apart when both type arguments are equal.
+            if (shaped && !isOptional) shaped = enumeration.firstRoleCase == 0 && enumeration.secondRoleCase == 1;
         }
         if (shaped) {
             const auto& first = enumeration.cases[enumeration.firstRoleCase];
@@ -621,6 +624,7 @@ VerificationResult Verifier::verify(const Module& module) const {
             // and the result's failure case carries the second.
             const auto type = types.find(enumeration.type);
             shaped = type != types.end() && type->second->kind == typing::TypeKind::enumeration &&
+                    type->second->symbol == enumeration.symbol &&
                     type->second->arguments.size() == (isOptional ? 1u : 2u) &&
                     enumeration.cases[enumeration.firstRoleCase].payloadTypes[0] == type->second->arguments[0] &&
                     (isOptional ||
@@ -633,7 +637,8 @@ VerificationResult Verifier::verify(const Module& module) const {
                     std::nullopt,
                     std::nullopt,
                     "enumeration '" + enumeration.name + "' does not have the shape of its " +
-                            (isOptional ? "optional" : "result") + " role");
+                            (enumeration.role == EnumerationRole::optional ? "optional"
+                             : enumeration.role == EnumerationRole::result ? "result" : "unknown") + " role");
         }
     }
     // The payload of an optional instance's present case.
@@ -2860,7 +2865,8 @@ std::string dump(const Module& module) {
         }
         out << (enumeration->cases.empty() ? "}" : " }");
         if (enumeration->role != EnumerationRole::none) {
-            out << " role=" << (enumeration->role == EnumerationRole::optional ? "optional" : "result") << '('
+            out << " role=" << (enumeration->role == EnumerationRole::optional ? "optional"
+                                : enumeration->role == EnumerationRole::result ? "result" : "unknown") << '('
                 << enumeration->firstRoleCase << ',' << enumeration->secondRoleCase << ')';
         }
         out << '\n';
