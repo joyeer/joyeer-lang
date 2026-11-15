@@ -72,6 +72,10 @@ with its own destruction obligation:
   compiler-prelude task declarations use its closed must-transfer exception, and the role-bound
   enums `Optional` and `Result` accept one because their linearity follows their payload.
 
+A struct bound by the role `array_type` (§20.12.5, [0025](../docs/decisions/0025-library-collection-capabilities.md))
+is the exception: it declares `deinit` yet is copyable exactly when its owned type parameter is, copied
+element by element, and is linear exactly when that parameter is.
+
 A type that declares `deinit` is noncopyable by default. Ordinary
 initialization or assignment from a binding of that type is rejected rather
 than synthesizing a fieldwise copy that could release the same resource twice.
@@ -324,6 +328,11 @@ let tmp = a[1]
 update(dst: &a[0], src: tmp)        // ✅
 &a.bumpAt(0, by: a[1])              // hypothetical: API takes care of disjointness
 ```
+
+A subscript on an `array_type` struct (§20.12.5) is a wildcard path step exactly as above. Its access is
+made through the type's `array_element` addressor, which is not itself an access subject to this analysis:
+the surrounding `a[i]` carries it. Index operands are evaluated first, then any right-hand side, then the
+addressor (and its bounds trap), then the access. `consume a[i]` of a linear element is rejected.
 
 #### 4.4.3 Assignment
 

@@ -310,6 +310,7 @@ public:
             model->fileScope_ = file.scope;
             collectMembers(file.file);
         }
+        markReadOnlyCounts();
         for (const auto& file : files) {
             activeModule = file.module;
             model->fileScope_ = file.scope;
@@ -665,6 +666,14 @@ private:
                         else if (name == "stored_consumer") value.libraryRole = LibraryRole::storedConsumer;
                         else if (name == "optional_type") value.libraryRole = LibraryRole::optional;
                         else if (name == "result_type") value.libraryRole = LibraryRole::result;
+                        else if (name == "array_type") {
+                            value.libraryRole = LibraryRole::arrayType;
+                            // The role owns its element type, which may be linear (decision 0025).
+                            value.acceptsLinearArguments = true;
+                        }
+                        else if (name == "array_element") value.libraryRole = LibraryRole::arrayElement;
+                        else if (name == "array_copy") value.libraryRole = LibraryRole::arrayCopy;
+                        else if (name == "container_end") value.libraryRole = LibraryRole::containerEnd;
                         else report(NameResolutionDiagnosticId::invalidPrelude, attribute.span,
                                     "unknown compiler prelude role '" + name + "'");
                     }
@@ -727,6 +736,20 @@ private:
         symbol(id).declaredType = resultType;
         symbol(id).callable = std::move(callable);
         return id;
+    }
+
+    // The second field of an array role struct is readable everywhere (decision 0025). The shape check
+    // in the type checker guarantees it is `count`.
+    void markReadOnlyCounts() {
+        for (const auto& candidate : model->symbols_) {
+            if (candidate.kind != SymbolKind::structure || candidate.libraryRole != LibraryRole::arrayType) continue;
+            for (auto& field : model->symbols_) {
+                if (field.kind == SymbolKind::structureField && field.containingSymbol == candidate.id &&
+                    field.name == "count") {
+                    field.readableOutsideDeclaration = true;
+                }
+            }
+        }
     }
 
     // Records the prelude enums bound to the `optional` and `result` roles, then declares the builtin
@@ -916,6 +939,16 @@ private:
         layoutIntrinsic("joyeer_intrinsic_destroy_at", { addressParameter() }, voidType);
         layoutIntrinsic("joyeer_intrinsic_stack_slot", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_needs_destroy", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_clone_at",
+                { CallableParameter { std::string("destination"), true, std::nullopt, std::nullopt, intType },
+                  CallableParameter { std::string("source"), true, std::nullopt, std::nullopt, intType } },
+                voidType);
+        layoutIntrinsic("joyeer_intrinsic_destroy_range",
+                { addressParameter(),
+                  CallableParameter { std::string("count"), true, std::nullopt, std::nullopt, intType } },
+                voidType);
+        layoutIntrinsic("joyeer_intrinsic_clone_callback", {}, intType);
+        layoutIntrinsic("joyeer_intrinsic_destroy_callback", {}, intType);
         layoutIntrinsic("joyeer_intrinsic_callback_address",
                 { CallableParameter {
                     std::string("function"), true, std::nullopt, std::nullopt, std::nullopt } },

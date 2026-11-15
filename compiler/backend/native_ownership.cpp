@@ -28,6 +28,12 @@ void Builder::emitOwnership() {
             for (const auto& block : function.blocks) {
                 for (const auto& instruction : block.instructions) {
                     if (instruction.result.has_value()) pending.push_back(instruction.result->type);
+                    // The element type a collection capability names is used even when nothing else mentions it.
+                    if (instruction.opcode == ir::Opcode::destroyRange || instruction.opcode == ir::Opcode::cloneAt ||
+                        instruction.opcode == ir::Opcode::cloneCallback ||
+                        instruction.opcode == ir::Opcode::destroyCallback) {
+                        pending.push_back(static_cast<ir::TypeId>(instruction.integerValue));
+                    }
                 }
             }
         }
@@ -67,6 +73,11 @@ void Builder::emitOwnership() {
 // helper calls the `deinit` of a struct that declares one.
 void Builder::emitOwnershipBodies() {
     for (const auto& [id, function] : clones) {
+        // Like a destroy helper that calls a `deinit`: this helper has no debug scope, and the copier has one.
+        if (const auto found = structures.find(id);
+            found != structures.end() && found->second->copier.has_value()) {
+            function->addFnAttr(llvm::Attribute::NoInline);
+        }
         activeFunction = function;
         prologue = llvm::BasicBlock::Create(context(), "entry", function);
         builder.SetInsertPoint(prologue);
@@ -107,6 +118,13 @@ void Builder::emitClone(ir::TypeId id) {
         return;
     }
     if (kind == typing::TypeKind::structure) {
+        if (structures.at(id)->copier.has_value()) {
+            // A library array copies through its own method, which returns the new value (decision 0025).
+            auto* borrowed = builder.CreateLoad(llvmType(id), sourceAddress, "borrowed");
+            auto* copied = builder.CreateCall(functions.at(*structures.at(id)->copier), {borrowed}, "copied");
+            builder.CreateStore(copied, destination);
+            return;
+        }
         const auto& fields = structures.at(id)->fields;
         for (size_t index = 0; index < fields.size(); ++index) {
             copy(fields[index].type, field(llvmType(id), destination, static_cast<unsigned>(index)),
@@ -154,7 +172,11 @@ void Builder::emitDestroy(ir::TypeId id) {
     if (kind == typing::TypeKind::structure) {
         const auto& definition = *structures.at(id);
         const auto& fields = definition.fields;
-        if (definition.deinitializer.has_value()) {
+        if (definition.deinitializer.has_value() && definition.inertZero) {
+            // No live flag: the `deinit` runs on the zero value too and does nothing there, and the
+            // zero-fill at the end of this helper makes a second destroy harmless (decision 0025).
+            builder.CreateCall(functions.at(*definition.deinitializer), {address});
+        } else if (definition.deinitializer.has_value()) {
             // The `deinit` runs first, and only for a live value: the hidden last field is
             // cleared by `take`, by zero-initialization and at the end of this helper.
             auto* live = builder.CreateLoad(llvmType(fields.back().type),

@@ -103,6 +103,12 @@ joyeer_discover_tests(CompilerCInteropTests
         PROPERTIES LABELS c-interop
 )
 
+add_executable(CompilerCollectionRoleTests collection_roles_test.cpp)
+target_link_libraries(CompilerCollectionRoleTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
+joyeer_discover_tests(CompilerCollectionRoleTests
+        PROPERTIES LABELS collection-roles
+)
+
 add_executable(CompilerPlatformTests platform_test.cpp)
 target_link_libraries(CompilerPlatformTests PRIVATE GTest::gtest_main JoyeerCompilerCore)
 joyeer_discover_tests(CompilerPlatformTests

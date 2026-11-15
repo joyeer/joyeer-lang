@@ -628,3 +628,40 @@ existing contextual §21 diagnostics and restrictions, never layout. The `option
 compiler creates for `as?`, `removeLast` and `get`) to their declarations; they still select no
 layout. This amends [decision 0023](../docs/decisions/0023-library-concurrency.md), whose contracts
 did not construct results.
+
+**Provisional collection capabilities** ([0025](../docs/decisions/0025-library-collection-capabilities.md)):
+the role `array_type` marks a bundled `public struct Array<T>` with exactly one type parameter and the
+`private` stored fields `address: Int`, `count: Int`, `capacity: Int`, in that order. It is the one
+role that selects layout-relevant behavior, through a fixed table:
+
+| Capability | Rule |
+|---|---|
+| Owns | the first type parameter: noncopyability, linearity and destruction treat the struct as if it held a `T` |
+| Inert zero | no hidden live flag; destruction runs `deinit`, then zero-fills the instance, so the handle `{0, 0, 0}` is destroyable and a second destroy is a no-op |
+| Copy | copyable exactly when `T` is, copied by the method with role `array_copy`; a `deinit` does not make it noncopyable |
+| Linear policy | `T` may be linear |
+| Read-only `count` | the second field may be read, and borrowed, outside the declaration; it is never writable there |
+
+Three method roles, shape-checked and unique per declaration (`invalid-prelude` otherwise): `array_element`
+(`borrowing func ...(index: Int): Int`, the element address, trapping with `array index out of bounds`),
+`array_copy` (`borrowing func ...(): Self`) and `container_end` (`consuming func ...()` returning `Void`).
+An `extension` of an `array_type` struct is `invalid-prelude`. `self` of a `container_end` method is exempt
+from the linear-not-consumed exit check and is destroyed after the body; the method must trap before
+returning unless the container is empty (`array not empty`), and `deinit` of a linear container that is not
+empty traps `linear container dropped while not empty`.
+
+Four further layout intrinsics, authorized units only, with explicit type arguments:
+
+| Function | Meaning |
+|---|---|
+| `joyeer_intrinsic_clone_at<T>(destination: Int, source: Int)` | Copies the value at `source` into the uninitialized slot `destination` as an implicit copy of a `T`; `T` must be copyable |
+| `joyeer_intrinsic_destroy_range<T>(address: Int, count: Int)` | Destroys `count` live elements; for a linear `T` it instead traps `linear container dropped while not empty` when `count != 0` |
+| `joyeer_intrinsic_clone_callback<T>(): Int` | The address of the per-type clone helper kept in an array header, or `0` when none applies (always for a noncopyable `T`) |
+| `joyeer_intrinsic_destroy_callback<T>(): Int` | The address of the per-type destroy helper, or `0` when none applies (always for a linear or trivial `T`) |
+
+For an `array_type` value `a`, `a[i]` calls the `array_element` addressor and then accesses the returned
+address as a place of the first type argument. Ordering, exclusivity (§4.4) and the consuming, borrowing,
+mutating and copying forms are those of a builtin subscript. No source form names the place; library code
+reaches elements through `self[i]`, `move_in`, `move_out` and `destroy_at`. `consume a[i]` of a linear
+element is `semantic-analysis.consume-of-linear-element`. These capabilities add no source syntax and make
+no memory-safety claim about an address held across a reallocation.

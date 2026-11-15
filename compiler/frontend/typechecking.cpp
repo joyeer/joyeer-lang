@@ -497,6 +497,26 @@ syntax::FunctionDeclSyntax::Ptr TypeCheckedModel::deinitializerOf(TypeId type) c
     return structure == nullptr ? nullptr : structure->deinitializer;
 }
 
+bool TypeCheckedModel::isArrayRoleType(TypeId type) const {
+    const auto* record = typeContext.type(type);
+    if (record == nullptr || record->kind != TypeKind::structure || record->arguments.size() != 1) return false;
+    const auto* symbol = semanticModelValue->symbol(record->symbol);
+    return symbol != nullptr && symbol->libraryRole == semantic::LibraryRole::arrayType;
+}
+
+std::optional<semantic::SymbolId> TypeCheckedModel::arrayRoleMethod(
+        TypeId type, semantic::LibraryRole role) const {
+    if (!isArrayRoleType(type)) return std::nullopt;
+    const auto found = arrayRoleMethods.find(typeContext.type(type)->symbol);
+    if (found == arrayRoleMethods.end()) return std::nullopt;
+    switch (role) {
+        case semantic::LibraryRole::arrayElement: return found->second[0];
+        case semantic::LibraryRole::arrayCopy: return found->second[1];
+        case semantic::LibraryRole::containerEnd: return found->second[2];
+        default: return std::nullopt;
+    }
+}
+
 bool TypeCheckedModel::isDeclaredLinear(TypeId type) const {
     const auto structure = structureDeclaration(type);
     return structure != nullptr && structure->isLinear;
@@ -530,6 +550,14 @@ std::optional<std::string> TypeCheckedModel::linearEndingMethod(TypeId type) con
         if (record == nullptr) return std::nullopt;
         const auto arguments = record->arguments;
         const auto* declaration = semanticModelValue->symbol(record->symbol);
+        if (declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::arrayType &&
+            declaration->memberScope.has_value()) {
+            const auto* members = semanticModelValue->scope(*declaration->memberScope);
+            for (const auto& [name, symbol] : members->values) {
+                const auto* method = semanticModelValue->symbol(symbol);
+                if (method->libraryRole == semantic::LibraryRole::containerEnd) return name;
+            }
+        }
         if (declaration != nullptr && declaration->libraryRole == semantic::LibraryRole::taskHandle &&
             declaration->memberScope.has_value()) {
             const auto* members = semanticModelValue->scope(*declaration->memberScope);
@@ -578,6 +606,11 @@ bool TypeCheckedModel::isLinear(
         case TypeKind::structure: {
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
+            if (isArrayRoleType(id)) {
+                // Owns its element through an address, so the element decides (decision 0025).
+                linear = isLinear(type->arguments[0], visiting, clean);
+                break;
+            }
             if (structure->isLinear) { linear = true; break; }
             for (const auto& field : structure->fields) {
                 const auto fieldSymbol = semanticModelValue->declaredSymbol(field);
@@ -620,8 +653,8 @@ std::vector<std::vector<semantic::SymbolId>> TypeCheckedModel::linearLeafPaths(T
     if (!isLinear(type)) return {};
     const auto structure = structureDeclaration(type);
     // Any other linear type (an enum, an Optional, an Array, a builtin) is a single leaf: it is
-    // consumed whole.
-    if (structure == nullptr) return { {} };
+    // consumed whole. So is a library array, which holds its elements through an address.
+    if (structure == nullptr || isArrayRoleType(type)) return { {} };
     // A struct ends field by field. One declared `linear` has no linear field to point at, so each
     // of its fields is a leaf, copyable ones included (destructuring); one that is linear only
     // through its fields needs just those fields consumed.
@@ -699,6 +732,14 @@ std::optional<std::string> TypeCheckedModel::noncopyableReason(
             }
             const auto structure = structureDeclaration(id);
             if (structure == nullptr) break;
+            if (isArrayRoleType(id)) {
+                // Copyable exactly when the owned type is, although it declares `deinit` (decision 0025).
+                if (noncopyableReason(type->arguments[0], visiting, clean).has_value()) {
+                    reason = name + " holds the noncopyable type '" +
+                            typeContext.displayName(type->arguments[0]) + "'";
+                }
+                break;
+            }
             if (structure->deinitializer != nullptr) {
                 reason = name + " declares 'deinit'";
                 break;
@@ -1140,6 +1181,114 @@ private:
                     if (matches && ++roleDeclarations[symbol.libraryRole] > 1) {
                         report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
                                "the compiler prelude declares a second enum for the same role");
+                    }
+                    break;
+                }
+                case semantic::LibraryRole::arrayType: {
+                    // The library array (decision 0025): three private Int words, one owned type parameter and
+                    // the three method roles the compiler calls.
+                    if (node->kind != syntax::Kind::structDecl) {
+                        roleFailure = "the array_type role requires a struct";
+                        break;
+                    }
+                    if (++roleDeclarations[symbol.libraryRole] > 1) {
+                        report(TypeCheckingDiagnosticId::invalidPrelude, symbol.span,
+                               "the compiler prelude declares a second struct for the array_type role");
+                    }
+                    if (parameters == nullptr || parameters->size() != 1 ||
+                        !model->constraints(parameters->front()).empty()) {
+                        roleFailure = "the array_type role requires exactly one unconstrained type parameter";
+                        break;
+                    }
+                    if (symbol.visibility != syntax::Visibility::public_) {
+                        roleFailure = "the array_type role requires a public struct";
+                        break;
+                    }
+                    const auto structure = std::static_pointer_cast<syntax::StructDeclSyntax>(node);
+                    if (structure->deinitializer == nullptr) {
+                        roleFailure = "the array_type role requires a deinit that destroys the elements and "
+                                "frees the storage";
+                        break;
+                    }
+                    static const char* const wordNames[3] = { "address", "count", "capacity" };
+                    bool shaped = structure->fields.size() == 3 && !structure->isLinear;
+                    for (size_t index = 0; shaped && index < 3; ++index) {
+                        const auto& field = structure->fields[index];
+                        const auto fieldSymbol = model->semanticModelValue->declaredSymbol(field);
+                        const auto fieldType = fieldSymbol.has_value() ? model->typeOf(*fieldSymbol)
+                                                                       : std::optional<TypeId>();
+                        shaped = field->name != nullptr && field->name->rawValue == wordNames[index] &&
+                                field->visibility == syntax::Visibility::private_ &&
+                                fieldType == model->typeContext.intType();
+                    }
+                    if (!shaped) {
+                        roleFailure = "the array_type role requires the private Int fields address, count and "
+                                "capacity, in that order";
+                        break;
+                    }
+                    std::unordered_map<semantic::LibraryRole, int> methodRoles;
+                    std::array<semantic::SymbolId, 3> roleMethods { semantic::invalidSymbolId,
+                            semantic::invalidSymbolId, semantic::invalidSymbolId };
+                    for (const auto& member : model->semanticModelValue->symbols()) {
+                        if (member.kind == semantic::SymbolKind::method && member.containingSymbol == symbol.id) {
+                            ++methodRoles[member.libraryRole];
+                            if (member.libraryRole == semantic::LibraryRole::arrayElement) roleMethods[0] = member.id;
+                            if (member.libraryRole == semantic::LibraryRole::arrayCopy) roleMethods[1] = member.id;
+                            if (member.libraryRole == semantic::LibraryRole::containerEnd) roleMethods[2] = member.id;
+                        }
+                    }
+                    for (const auto& [role, roleName] : std::array<std::pair<semantic::LibraryRole, const char*>, 3> {{
+                             { semantic::LibraryRole::arrayElement, "array_element" },
+                             { semantic::LibraryRole::arrayCopy, "array_copy" },
+                             { semantic::LibraryRole::containerEnd, "container_end" } }}) {
+                        if (methodRoles[role] != 1) {
+                            roleFailure = std::string("the array_type role requires exactly one method with the role ") +
+                                    roleName;
+                            break;
+                        }
+                    }
+                    matches = roleFailure.empty();
+                    if (matches) model->arrayRoleMethods[symbol.id] = roleMethods;
+                    break;
+                }
+                case semantic::LibraryRole::arrayElement:
+                case semantic::LibraryRole::arrayCopy:
+                case semantic::LibraryRole::containerEnd: {
+                    const std::string roleName = symbol.libraryRole == semantic::LibraryRole::arrayElement
+                            ? "array_element"
+                            : symbol.libraryRole == semantic::LibraryRole::arrayCopy ? "array_copy" : "container_end";
+                    const auto* owner = symbol.containingSymbol.has_value() ? symbolOf(*symbol.containingSymbol)
+                                                                            : nullptr;
+                    if (symbol.kind != semantic::SymbolKind::method || owner == nullptr ||
+                        owner->libraryRole != semantic::LibraryRole::arrayType || !symbol.callable.has_value() ||
+                        !symbol.callable->receiver.has_value() || signature == nullptr) {
+                        roleFailure = "the " + roleName + " role requires a method of an array_type struct";
+                        break;
+                    }
+                    const auto receiver = symbol.callable->receiver->access;
+                    const auto& written = symbol.callable->parameters;
+                    const auto* ownerParameters = model->genericParameters(owner->id);
+                    const auto* result = model->typeContext.type(signature->result);
+                    if (symbol.libraryRole == semantic::LibraryRole::arrayElement) {
+                        matches = receiver == syntax::AccessEffect::borrowing && written.size() == 1 &&
+                                written[0].label == std::optional<std::string>("index") &&
+                                written[0].access == syntax::AccessEffect::borrowing &&
+                                signature->parameters == std::vector<TypeId> { model->typeContext.intType() } &&
+                                signature->result == model->typeContext.intType();
+                        if (!matches) roleFailure = "the array_element role requires 'borrowing func name(index: Int): Int'";
+                    } else if (symbol.libraryRole == semantic::LibraryRole::arrayCopy) {
+                        matches = receiver == syntax::AccessEffect::borrowing && written.empty() &&
+                                result != nullptr && result->kind == TypeKind::structure &&
+                                result->symbol == owner->id && ownerParameters != nullptr &&
+                                ownerParameters->size() == 1 &&
+                                result->arguments == std::vector<TypeId> {
+                                        model->typeContext.typeParameterType(ownerParameters->front()) };
+                        if (!matches) roleFailure = "the array_copy role requires 'borrowing func name(): Self' returning "
+                                "the declaring type";
+                    } else {
+                        matches = receiver == syntax::AccessEffect::consuming && written.empty() &&
+                                signature->result == model->typeContext.voidType();
+                        if (!matches) roleFailure = "the container_end role requires 'consuming func name()' returning Void";
                     }
                     break;
                 }
@@ -2584,13 +2733,29 @@ private:
                 const auto deinitializer = std::static_pointer_cast<syntax::StructDeclSyntax>(node)->deinitializer;
                 if (deinitializer == nullptr) continue;
                 const auto deinit = model->semanticModelValue->declaredSymbol(deinitializer);
-                if (!deinit.has_value() || model->genericParameters(*deinit) == nullptr ||
-                    model->instanceIndex(*deinit, record->arguments).has_value()) {
-                    continue;
+                if (!deinit.has_value() || model->genericParameters(*deinit) == nullptr) continue;
+                // The role-lowered uses of a library array reach its element addressor and, when copyable,
+                // its copy method with no source call (decision 0025).
+                std::vector<semantic::SymbolId> required { *deinit };
+                if (model->isArrayRoleType(id)) {
+                    // A validated role always has all three methods; skip a malformed one rather than assume.
+                    if (const auto element = model->arrayRoleMethod(id, semantic::LibraryRole::arrayElement)) {
+                        required.push_back(*element);
+                    }
+                    if (const auto copy = model->arrayRoleMethod(id, semantic::LibraryRole::arrayCopy);
+                        copy.has_value() && model->isCopyable(id)) {
+                        required.push_back(*copy);
+                    }
                 }
-                const GenericCall call { *deinit, record->arguments, std::nullopt, deinitializer->span };
-                if (!require(call, record->arguments, std::nullopt)) return std::nullopt;
-                added = true;
+                for (const auto method : required) {
+                    if (model->genericParameters(method) == nullptr ||
+                        model->instanceIndex(method, record->arguments).has_value()) {
+                        continue;
+                    }
+                    const GenericCall call { method, record->arguments, std::nullopt, deinitializer->span };
+                    if (!require(call, record->arguments, std::nullopt)) return std::nullopt;
+                    added = true;
+                }
             }
             return added;
         };
@@ -3018,11 +3183,12 @@ private:
         const auto* ownerSymbol = symbolOf(*owner);
         if (ownerSymbol != nullptr &&
             (ownerSymbol->libraryRole == semantic::LibraryRole::optional ||
-             ownerSymbol->libraryRole == semantic::LibraryRole::result) &&
+             ownerSymbol->libraryRole == semantic::LibraryRole::result ||
+             ownerSymbol->libraryRole == semantic::LibraryRole::arrayType) &&
             model->semanticModelValue->isPreludeSource(declaration->span)) {
             // The role enums are closed: an extension would add members the role's shape rules never saw.
             report(TypeCheckingDiagnosticId::invalidPrelude, declaration->span,
-                   "the compiler prelude may not extend the " + ownerSymbol->name + " role enum");
+                   "the compiler prelude may not extend the " + ownerSymbol->name + " role type");
         }
         if (ownerSymbol == nullptr || ownerSymbol->typeParameters.empty()) return;
         const auto& declared = model->semanticModelValue->extensionTypeParameters(declaration);
@@ -3307,7 +3473,9 @@ private:
         if (structure->deinitializer == nullptr) return;
         const auto symbol = model->semanticModelValue->declaredSymbol(structure);
         const auto type = symbol.has_value() ? model->typeOf(*symbol) : std::optional<TypeId>();
-        if (type.has_value() && model->isLinear(*type)) {
+        if (type.has_value() && model->isLinear(*type) && !model->isArrayRoleType(*type) &&
+            !(symbol.has_value() && model->semanticModelValue->symbol(*symbol)->libraryRole ==
+                    semantic::LibraryRole::arrayType)) {
             report(TypeCheckingDiagnosticId::linearInDeinitType, structure->deinitializer->span,
                    "a linear value is never destroyed implicitly, so '" +
                            (structure->name == nullptr ? std::string() : structure->name->rawValue) +
@@ -4881,7 +5049,8 @@ private:
     TypeId checkLayoutIntrinsic(const syntax::CallExprSyntax::Ptr& expression, const semantic::Symbol& target) {
         const auto error = model->typeContext.errorType();
         const auto& name = target.name;
-        if (!model->semanticModelValue->isRuntimeSource(expression->span)) {
+        if (!model->semanticModelValue->isRuntimeSource(expression->span) &&
+            !model->semanticModelValue->isPreludeSource(expression->span)) {
             report(TypeCheckingDiagnosticId::unauthorizedIntrinsic, expression->span,
                    "'" + name + "' is available only in a toolchain-authorized runtime unit",
                    "write a checked Joyeer wrapper in a unit selected with --runtime-module");
@@ -4905,6 +5074,12 @@ private:
                        "'" + name + "' cannot take " + (type == model->typeContext.neverType() ? "'Never'" :
                                "the linear type '" + model->typeContext.displayName(type) + "'"),
                        "a layout intrinsic needs a type with a representation that is not linear (spec 20.12.5)");
+            } else if (name == "joyeer_intrinsic_clone_at" && !model->typeContext.mentionsTypeParameter(type) &&
+                       !model->isCopyable(type)) {
+                report(TypeCheckingDiagnosticId::invalidTypeArgument, expression->typeArguments[0]->span,
+                       "'" + name + "' needs a copyable type, but '" + model->typeContext.displayName(type) +
+                               "' is not",
+                       "copy only what an implicit copy of the type could produce");
             } else {
                 model->layoutIntrinsicTypes[*model->semanticModelValue->nodeId(expression)] = type;
             }
@@ -4918,11 +5093,17 @@ private:
         };
         if (name == "joyeer_intrinsic_needs_destroy") return model->typeContext.boolType();
         if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
-            name == "joyeer_intrinsic_stack_slot") {
+            name == "joyeer_intrinsic_stack_slot" || name == "joyeer_intrinsic_clone_callback" ||
+            name == "joyeer_intrinsic_destroy_callback") {
             return model->typeContext.intType();
         }
         if (expression->arguments.empty()) return error;
         checkAddress(0);
+        if (name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range") {
+            if (expression->arguments.size() != 2) return error;
+            checkAddress(1);
+            return model->typeContext.voidType();
+        }
         if (name == "joyeer_intrinsic_move_in") {
             if (expression->arguments.size() != 2) return error;
             const auto& argument = expression->arguments[1];
@@ -5425,7 +5606,14 @@ private:
         bool writable = true;
         bool requiresMarker = false;
         std::string immutableName;
+        // The place is the `count` of a library array, read-only outside the array's own file.
+        bool libraryReadOnly = false;
     };
+
+    static std::optional<std::string> readOnlyHelp(const StorageAccess& storage) {
+        if (!storage.libraryReadOnly) return std::nullopt;
+        return "an array's 'count' changes only through the array's own methods, such as append or removeLast";
+    }
 
     StorageAccess analyzeStorage(const syntax::ExprPtr& expression) const {
         if (expression == nullptr) return StorageAccess { false, false, "<invalid>" };
@@ -5452,6 +5640,12 @@ private:
                 if (result.writable && (symbol == nullptr || !symbol->isMutable)) {
                     result.writable = false;
                     result.immutableName = symbol == nullptr ? "<invalid>" : symbol->name;
+                } else if (result.writable && symbol->readableOutsideDeclaration &&
+                           member->span.sourceId != symbol->span.sourceId) {
+                    // `count` of a library array is read-only outside its declaration (decision 0025).
+                    result.writable = false;
+                    result.immutableName = symbol->name;
+                    result.libraryReadOnly = true;
                 }
                 return result;
             }
@@ -5519,7 +5713,8 @@ private:
                     TypeCheckingDiagnosticId::assignmentToImmutable,
                     target == nullptr ? SourceSpan {} : target->span,
                     "cannot assign through immutable binding or field '" +
-                            storage.immutableName + "'");
+                            storage.immutableName + "'",
+                    readOnlyHelp(storage));
             return;
         }
         if (hasMarker != storage.requiresMarker) {
@@ -5582,7 +5777,8 @@ private:
             report(
                     TypeCheckingDiagnosticId::invalidInoutArgument,
                     argument.value->span,
-                    "inout argument must refer to mutable storage");
+                    "inout argument must refer to mutable storage",
+                    readOnlyHelp(analyzeStorage(argument.value)));
         }
         if (required == syntax::AccessEffect::initializing &&
             !isInitializable(argument.value)) {
@@ -5907,6 +6103,14 @@ private:
                 indexType = baseType->arguments[0];
                 result = baseType->arguments[1];
                 break;
+            case TypeKind::structure:
+                if (model->isArrayRoleType(base)) {
+                    // A library array subscripts like a builtin one (decision 0025).
+                    indexType = model->typeContext.intType();
+                    result = baseType->arguments[0];
+                    break;
+                }
+                [[fallthrough]];
             default:
                 report(
                         TypeCheckingDiagnosticId::notSubscriptable,

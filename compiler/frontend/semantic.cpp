@@ -166,6 +166,7 @@ const std::vector<DeferredReference>& SemanticModel::deferredReferences() const 
 bool SemanticModel::isAccessible(SymbolId id, SourceSpan use) const {
     const auto* value = symbol(id);
     if (value == nullptr) return false;
+    if (value->readableOutsideDeclaration) return true;
     if (value->visibility == syntax::Visibility::public_) return true;
     if (value->visibility == syntax::Visibility::private_) {
         return value->span.sourceId == use.sourceId;

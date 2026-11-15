@@ -23,6 +23,7 @@ enum class DiagnosticId {
     partialConsumeOfDeinitType,
     linearNotConsumed,
     linearOverwrite,
+    consumeOfLinearElement,
     linearResultDropped,
     runProcessWithTasks,
     unusedBinding,

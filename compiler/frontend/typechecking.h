@@ -417,6 +417,11 @@ public:
     [[nodiscard]] std::vector<std::vector<semantic::SymbolId>> linearLeafPaths(TypeId type) const;
     // True for a struct declared with the `linear` modifier.
     [[nodiscard]] bool isDeclaredLinear(TypeId type) const;
+    // True for an instance of the struct bound to the `array_type` role (decision 0025), which owns its
+    // first type argument although it has no field of that type.
+    [[nodiscard]] bool isArrayRoleType(TypeId type) const;
+    // The method of the `array_type` struct of `type` that has `role`, or empty (decision 0025).
+    [[nodiscard]] std::optional<semantic::SymbolId> arrayRoleMethod(TypeId type, semantic::LibraryRole role) const;
     [[nodiscard]] std::optional<std::string> linearEndingMethod(TypeId type) const;
     // Generic functions (spec 20, decision 0021).
     // The type parameters of a generic function in declaration order; null for any other function.
@@ -468,6 +473,8 @@ private:
     std::unordered_map<semantic::SymbolId, std::vector<semantic::SymbolId>> constraintLists;
     std::unordered_map<semantic::NodeId, GenericCall> genericCalls;
     std::unordered_map<semantic::NodeId, TypeId> layoutIntrinsicTypes;
+    // For each `array_type` struct: its `array_element`, `array_copy` and `container_end` methods.
+    std::unordered_map<semantic::SymbolId, std::array<semantic::SymbolId, 3>> arrayRoleMethods;
     std::vector<Conformance> conformanceList;
     std::vector<Instance> instanceList;
     std::map<std::pair<semantic::SymbolId, std::vector<TypeId>>, size_t> instanceIndices;

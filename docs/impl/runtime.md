@@ -333,7 +333,10 @@ destruction query leaves the callback null for trivial element types.
 
 `Optional` and `Result` live in a second bundled prelude, `lib/Runtime/roles.joyeer`, which is always
 loaded and is not replaced by a caller-supplied prelude
-([0024](../decisions/0024-library-optional-and-result.md)).
+([0024](../decisions/0024-library-optional-and-result.md)). It is not a runtime unit (it may declare no C bindings), but its
+declarations may use the layout intrinsics, and are verified as runtime code, including the four collection capabilities of
+[0025](../decisions/0025-library-collection-capabilities.md) (`clone_at`, `destroy_range`, `clone_callback`,
+`destroy_callback`); the library array they serve is Phase 3.
 
 `lib/Runtime/core/channels.joyeer` is the fifth archive object (decision [0019](../decisions/0019-channels.md),
 spec §21.9), linked only into a program that creates a channel (which also links the thread object and

@@ -72,6 +72,11 @@ enum class LibraryRole {
     // The enums `Optional` and `Result` that `T?`, `nil` and postfix `?` bind to (decision 0024).
     optional,
     result,
+    // The library array (decision 0025): the struct, and the methods the compiler calls.
+    arrayType,
+    arrayElement,
+    arrayCopy,
+    containerEnd,
 };
 
 enum class CallableKind {
@@ -137,6 +142,9 @@ struct Symbol {
     LibraryRole libraryRole = LibraryRole::none;
     bool acceptsLinearArguments = false;
     bool mustTransferParameter = false;
+    // The `count` field of an `array_type` struct: readable from any file, writable only where it is
+    // declared (decision 0025).
+    bool readableOutsideDeclaration = false;
 };
 
 struct Scope {

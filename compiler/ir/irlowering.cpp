@@ -618,7 +618,11 @@ private:
                 semanticField != nullptr && semanticField->isMutable,
             });
         }
-        if (declaration->deinitializer != nullptr) {
+        // The library array role has no live flag: its zero value is destroyable (decision 0025).
+        const auto* structureSymbol = semanticModel.symbol(*symbol);
+        structure.inertZero = structureSymbol != nullptr &&
+                structureSymbol->libraryRole == semantic::LibraryRole::arrayType;
+        if (declaration->deinitializer != nullptr && !structure.inertZero) {
             // See ir::StructureDefinition::deinitializer: the live flag is always last.
             structure.fields.push_back(ir::FieldDefinition {
                 semantic::invalidSymbolId,
@@ -813,6 +817,27 @@ private:
                         continue;
                     }
                     instance.deinitializer = instanceFunctions[*index];
+                    if (instance.inertZero) {
+                        const auto element = model->arrayRoleMethod(instance.type, semantic::LibraryRole::arrayElement);
+                        const auto elementIndex = element.has_value()
+                                ? model->instanceIndex(*element, record->arguments) : std::nullopt;
+                        if (elementIndex.has_value() && *elementIndex < instanceFunctions.size() &&
+                            instanceFunctions[*elementIndex] != ir::invalidFunctionId) {
+                            module->functions[instanceFunctions[*elementIndex]].elementAddressor = true;
+                        }
+                    }
+                    if (!instance.inertZero || !model->isCopyable(instance.type)) continue;
+                    // A copyable library array is copied by its `array_copy` method.
+                    const auto copySymbol = model->arrayRoleMethod(instance.type, semantic::LibraryRole::arrayCopy);
+                    const auto copyIndex = copySymbol.has_value()
+                            ? model->instanceIndex(*copySymbol, record->arguments) : std::nullopt;
+                    if (!copyIndex.has_value() || *copyIndex >= instanceFunctions.size() ||
+                        instanceFunctions[*copyIndex] == ir::invalidFunctionId) {
+                        report(DiagnosticId::missingSymbol, declaration->deinitializer->span,
+                               "the copy method has no lowered instance for '" + instance.name + "'");
+                        continue;
+                    }
+                    instance.copier = instanceFunctions[*copyIndex];
                 }
                 continue;
             }
@@ -1072,7 +1097,10 @@ private:
         }
         if (currentInstance != nullptr) function.name = currentInstance->name;
         function.isRootModule = semanticSymbol == nullptr || semanticSymbol->isRootModule;
-        function.runtimeContext = semanticModel.isRuntimeSource(declaration->span);
+        // The role prelude is not a runtime unit (it may declare no C bindings), but its library bodies use the
+        // layout intrinsics, so the verifier treats them as runtime code (decision 0025).
+        function.runtimeContext = semanticModel.isRuntimeSource(declaration->span) ||
+                semanticModel.isPreludeSource(declaration->span);
         function.coreContext = semanticModel.isCoreSource(declaration->span);
         if (const auto* binding = model->nativeBinding(*symbol)) {
             function.nativeBinding = *binding;
@@ -1952,6 +1980,9 @@ private:
             if (!base.has_value() || !index.has_value() || !type.has_value()) {
                 return std::nullopt;
             }
+            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && model->isArrayRoleType(*baseType)) {
+                return emitRoleElementAddress(*baseType, *base, *index, *type, subscript->span);
+            }
             return emitValue(
                     ir::Opcode::subscriptAddress,
                     *type,
@@ -1990,10 +2021,17 @@ private:
             const auto index = lowerExpression(subscript->index);
             const auto type = typeOf(subscript);
             if (!index.has_value() || !type.has_value()) return std::nullopt;
-            return DeferredAddress([this, base = std::move(*base), index = *index, type = *type,
+            std::optional<typing::TypeId> roleBase;
+            if (const auto baseType = typeOf(subscript->base); baseType.has_value() && model->isArrayRoleType(*baseType)) {
+                roleBase = *baseType;
+            }
+            return DeferredAddress([this, base = std::move(*base), index = *index, type = *type, roleBase,
                                     span = subscript->span]() -> std::optional<ir::Value> {
                 const auto baseAddress = base();
                 if (!baseAddress.has_value()) return std::nullopt;
+                if (roleBase.has_value()) {
+                    return emitRoleElementAddress(*roleBase, *baseAddress, index, type, span);
+                }
                 return emitValue(
                         ir::Opcode::subscriptAddress,
                         type,
@@ -2122,8 +2160,56 @@ private:
         return std::nullopt;
     }
 
+    // `a[i]` on a library array (decision 0025): the `array_element` addressor of the receiver's instance
+    // returns the element's address as an `Int`, which only this lowering turns into a typed place.
+    std::optional<ir::Value> emitRoleElementAddress(
+            typing::TypeId arrayType, const ir::Value& baseAddress, const ir::Value& index,
+            typing::TypeId elementType, SourceSpan span) {
+        const auto method = model->arrayRoleMethod(arrayType, semantic::LibraryRole::arrayElement);
+        const auto* record = model->types().type(arrayType);
+        const auto instance = method.has_value() && record != nullptr
+                ? model->instanceIndex(*method, record->arguments) : std::nullopt;
+        if (!instance.has_value() || *instance >= instanceFunctions.size() ||
+            instanceFunctions[*instance] == ir::invalidFunctionId) {
+            report(DiagnosticId::missingSymbol, span, "the element addressor has no lowered instance");
+            return std::nullopt;
+        }
+        auto call = makeInstruction(ir::Opcode::call, span);
+        call.callee = instanceFunctions[*instance];
+        // A borrowing receiver is passed as a value that aliases the array's storage.
+        auto receiver = baseAddress;
+        if (module->functions[*call.callee].parameters.at(0).value.category == ir::ValueCategory::value) {
+            receiver = emitValue(ir::Opcode::load, arrayType, ir::ValueCategory::value, { baseAddress.id }, span);
+        }
+        call.operands = { receiver.id, index.id };
+        call.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+        const auto address = *call.result;
+        emit(std::move(call));
+        recordValue(address, ValueOwnership::trivial);
+        return emitValue(ir::Opcode::integerAddress, elementType, ir::ValueCategory::address, { address.id }, span);
+    }
+
     std::optional<ir::Value> lowerSubscript(
             const syntax::SubscriptExprSyntax::Ptr& expression) {
+        if (const auto baseType = typeOf(expression->base); baseType.has_value() && model->isArrayRoleType(*baseType)) {
+            std::optional<ir::Value> baseAddress;
+            if (isAddressable(expression->base)) {
+                baseAddress = lowerAddress(expression->base);
+            } else {
+                // A temporary receiver is spilled so the addressor can borrow it; the value keeps its own cleanup.
+                const auto value = lowerExpression(expression->base);
+                if (!value.has_value()) return std::nullopt;
+                baseAddress = emitValue(ir::Opcode::stackAllocate, *baseType, ir::ValueCategory::address, {},
+                                        expression->base->span);
+                emitRawStore(*value, *baseAddress, expression->base->span);
+            }
+            const auto index = lowerExpression(expression->index);
+            const auto type = typeOf(expression);
+            if (!baseAddress.has_value() || !index.has_value() || !type.has_value()) return std::nullopt;
+            const auto place = emitRoleElementAddress(*baseType, *baseAddress, *index, *type, expression->span);
+            if (!place.has_value()) return std::nullopt;
+            return emitValue(ir::Opcode::load, *type, ir::ValueCategory::value, { place->id }, expression->span);
+        }
         const auto base = lowerExpression(expression->base);
         const auto index = lowerExpression(expression->index);
         const auto type = typeOf(expression);
@@ -3318,6 +3404,51 @@ private:
             emit(std::move(instruction));
             recordValue(result, ValueOwnership::trivial);
             return result;
+        }
+        if (name == "joyeer_intrinsic_clone_callback" || name == "joyeer_intrinsic_destroy_callback") {
+            // A callback only exists for a type that needs one; otherwise the answer is 0 (decision 0025).
+            const bool clone = name == "joyeer_intrinsic_clone_callback";
+            if (clone ? !model->isCopyable(type) : model->isLinear(type)) {
+                return emitValue(ir::Opcode::integerConstant, model->types().intType(), ir::ValueCategory::value,
+                                 {}, expression->span);
+            }
+            auto instruction = makeInstruction(
+                    clone ? ir::Opcode::cloneCallback : ir::Opcode::destroyCallback, expression->span);
+            instruction.integerValue = static_cast<int64_t>(type);
+            instruction.result = makeValue(model->types().intType(), ir::ValueCategory::value);
+            const auto result = *instruction.result;
+            emit(std::move(instruction));
+            recordValue(result, ValueOwnership::trivial);
+            return result;
+        }
+        if (name == "joyeer_intrinsic_destroy_range" || name == "joyeer_intrinsic_clone_at") {
+            if (expression->arguments.size() != 2) {
+                report(DiagnosticId::unsupportedSyntax, expression->span, "'" + name + "' takes two Int arguments");
+                return std::nullopt;
+            }
+            std::vector<ir::ValueId> operands;
+            for (const auto& argument : expression->arguments) {
+                auto value = lowerExpression(argument->value);
+                if (!value.has_value()) return std::nullopt;
+                value = coerce(*value, model->types().intType(), argument->value->span);
+                if (!value.has_value()) return std::nullopt;
+                operands.push_back(value->id);
+            }
+            if (name == "joyeer_intrinsic_destroy_range" && model->isLinear(type)) {
+                // A linear element is never destroyed: a nonempty range is a defect (decision 0025).
+                auto guard = makeInstruction(ir::Opcode::linearRangeGuard, expression->span);
+                guard.operands = { operands[1] };
+                emit(std::move(guard));
+                return emitUnit(expression->span);
+            }
+            if (name == "joyeer_intrinsic_destroy_range" && !requiresDestroy(type)) return emitUnit(expression->span);
+            auto instruction = makeInstruction(
+                    name == "joyeer_intrinsic_clone_at" ? ir::Opcode::cloneAt : ir::Opcode::destroyRange,
+                    expression->span);
+            instruction.integerValue = static_cast<int64_t>(type);
+            instruction.operands = std::move(operands);
+            emit(std::move(instruction));
+            return emitUnit(expression->span);
         }
         if (name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of") {
             auto instruction = makeInstruction(

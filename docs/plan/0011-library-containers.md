@@ -4,7 +4,8 @@
 - Decisions: [0021](../decisions/0021-protocols-and-generic-functions.md),
   [0022](../decisions/0022-generic-types-and-layout-intrinsics.md),
   [0023](../decisions/0023-library-concurrency.md) (completed concurrency-library migration),
-  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted; implemented, reviewed twice, validated on Windows and Linux; macOS validation open)
+  [0024](../decisions/0024-library-optional-and-result.md) (Phase 1, accepted and merged in #26; macOS validation open),
+  [0025](../decisions/0025-library-collection-capabilities.md) (Phase 2 capabilities, accepted)
 - Spec: [ยง2](../../specs/02-types.md), [ยง20](../../specs/20-protocols.md), and the affected
   ownership, expression, and pattern chapters in the [spec index](../../specs/README.md)
 
@@ -81,15 +82,27 @@ cannot express element-dependent copyability, linearity, and destruction through
 
 ### Phase 2: borrowing and linear collection ownership
 
-- [ ] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
-  and element-dependent ownership of a raw-address container.
-- [ ] Decide how generic code transfers or ends linear elements without allowing them to be
+- [x] Record a separate decision for borrowed slot access, projection lifetime/exclusivity,
+  and element-dependent ownership of a raw-address container. Evidence:
+  [0025](../decisions/0025-library-collection-capabilities.md), accepted by the user 2026-11-15 after
+  two language-designer reviews (revision 3); spec ง2.6, ง4.1.1, ง4.4, ง20.12.5 and ง21.2.2 amended.
+- [x] Decide how generic code transfers or ends linear elements without allowing them to be
   silently dropped. The closed task-transfer exception in 0023 is not a general solution.
+  Evidence: 0025 section 5 (the `container_end` method role, must-transfer bodies of the `array_type`
+  declaration, `destroy_range` trapping for a linear type, `consume-of-linear-element`).
 - [ ] Add failing ownership tests for mutation during a borrow, escaped borrows, partial moves,
-  linear elements, early exits, and expanding generic recursion.
-- [ ] Implement the minimum runtime-only capability and verification needed by safe library
-  collection wrappers; reject unauthorized and malformed uses.
-- [ ] Review the type/ownership and IR/ABI changes separately from their author.
+  linear elements, early exits, and expanding generic recursion. Written and observed failing first
+  (`tests/unittests/compiler/collection_roles_test.cpp`, target `CompilerCollectionRoleTests`, 17 tests,
+  see the log); later additions (malformed IR, escape rule, backend emission, reviewer findings) were
+  written with their fixes. Still missing, so the item stays open: a test that executes a library array
+  (inert-zero destruction, moved-out slots, drain, an array of `JoinHandle` in a task; needs the bundled
+  `Array` of Phase 3), the C ABI size/offset test, evaluation-order and trap-order fixtures, expanding
+  recursion for the role struct, `Buffer<Never>`/`Buffer<Void>`, and the destroy-order fixture.
+- [x] Implement the minimum runtime-only capability and verification needed by safe library
+  collection wrappers; reject unauthorized and malformed uses. Evidence: the log entry of 2026-11-15
+  (implementation); `CompilerCollectionRoleTests` 33 of 33; Windows x64 Debug `ctest` passes.
+- [ ] Review the type/ownership and IR/ABI changes separately from their author. First round done (log);
+  findings fixed; a re-review of the fixes and the Release/Linux/macOS validation are open.
 
 ### Phase 3: Array
 
@@ -268,3 +281,90 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   (no regression outside noise, bounded hello growth) is met: hello grew by 0 bytes. The paired bootstrap
   interval of `benchmark_concurrency.py` was not run; the ratios above are plain medians.
   Phase 1 remains open only for the macOS validation item.
+- 2026-11-15: Phase 2 started on branch `docs/decision-0025-collection-capabilities`. Inventory of the
+  current array/dictionary machinery (read-only): the compiler owns the type kinds, the 24-byte layout,
+  element access (an inline bounds check plus a typed address, with no user subscript or projection),
+  construction and constant arrays, per-type clone/destroy callbacks and all ownership rules, in about
+  450 lines of verifier, 450 of lowering, 300 of backend collection code and 90 of type checking; the
+  algorithms already live in `lib/Runtime/core/arrays.joyeer` and `dictionaries.joyeer`. Eight obstacles
+  to a library `struct Array<T>` are listed in 0025 (no borrowed element projection, unconditional
+  noncopyability of a `deinit` struct, linear elements held through an address, the hidden `$live` flag
+  breaking the C ABI layout, zero-filled moved-out slots, inline `-O0` access cost). Drafted 0025
+  (proposed): a `slot<T>(address)` place, an `array_element` addressor role, `@compiler_owns` and
+  `@compiler_copy` prelude metadata, an ending-method rule for linear containers and
+  `@compiler_inert_zero`. No code changed; the decision item stays open pending review.
+- 2026-11-15: First language-designer review of 0025 requested changes (four blockers: the linear
+  destroy and ending story contradicted 0022's `destroy_at` rule and 0015's exit check; the copy method
+  could not be written without a clone intrinsic; the owner-pin claim was misattributed and the IR escape
+  rule undefined; the inert-zero contract lacked idempotence). Revision 2 replaces three free attributes
+  and a source-visible slot with one `array_type` role plus `array_element`, `array_copy` and
+  `container_end` method roles and a compiler-internal slot, adds `clone_at` and `is_linear`
+  intrinsics, makes the destroy helper zero-fill, and expands the tests. No code changed; the decision
+  item stays open until a review accepts revision 2.
+- 2026-11-15: Second language-designer review of 0025 revision 2: accept with changes (one blocker, the
+  constant-folded dead arm, which missed instance discovery, the checker and the header callbacks).
+  Revision 3 replaces it with per-type intrinsics (`destroy_range`, `clone_callback`, `destroy_callback`,
+  `clone_at`) that lower per concrete type, pins the `container_end` rule and trap texts, makes the IR
+  escape rule dominance-based, adds instance discovery of role-lowered uses, access-mode addressors for
+  the dictionary, the wire and verifier consequences and a larger test list. Probed with the current
+  compiler: `&a.append(a[0])` is rejected with `overlapping-access`; `consume hs[0]` on an array of
+  `JoinHandle` is accepted but the array then fails `use-after-consume` or `linear-not-consumed`, so the
+  new `consume-of-linear-element` diagnostic changes no accepted program; an array of `JoinHandle` is a
+  valid task input today, so a library array must stay sendable (ยง21). 0025 stays `proposed` until the
+  user accepts it.
+- 2026-11-15: The user accepted 0025. Status set to accepted and the spec amended: ง20.12.5 (the
+  `array_type` role with its capability table, the three method roles and the four intrinsics), ง2.6
+  (a pointer, since `Array` stays builtin until Phase 3), ง4.1.1 (the role is copyable exactly when its
+  owned type is, although it has `deinit`), ง4.4 (addressor, ordering, `consume a[i]`) and ง21.2.2 (a
+  library array stays a valid task input exactly when its element is). Tests first, part 1:
+  `tests/unittests/compiler/collection_roles_test.cpp` (new target `CompilerCollectionRoleTests`, label
+  `collection-roles`) builds a small `Buffer<T>` bound by the role through the 0024 role-prelude seam and
+  covers shape validation (each malformed type and method form, a duplicate, an `extension`), use outside
+  the prelude, element typing, read-only `count`, exclusivity, copyability and linearity, ending a linear
+  container, `consume a[i]` of a linear element, the three-word layout without `$live`, the wire version
+  and the addressor lowering. Windows x64 Debug: 17 of 17 fail, for the expected reasons: the role names
+  are unknown (`name-resolution.invalid-prelude`), `count` is inaccessible, and the parser does not yet
+  know the four new intrinsic names. (An intermediate run with the new intrinsic removed from the
+  fixture's `deinit` confirmed that every other test fails on the unknown role and not on a fixture
+  error.) Negative assertions require the library to load and a diagnostic that names the field or type,
+  so they cannot pass because the role declaration is broken. Nothing is implemented.
+- 2026-11-15: Phase 2 implemented (Windows x64 Debug). Front end: the four roles and their closed shape
+  validation (a `deinit` and all three method roles required), ownership of the first type argument
+  (`isLinear`, `noncopyableReason`, one whole-value leaf in `linearLeafPaths`), the subscript type, the
+  read-only `count` (`Symbol::readableOutsideDeclaration`, `analyzeStorage`), the four intrinsics (parser,
+  name resolution, checker; authorized in runtime and bundled prelude sources, so the role prelude is not
+  made a runtime unit), the `container_end` exemption and `semantic-analysis.consume-of-linear-element`, and
+  instance discovery of the addressor and (when copyable) the copy method. IR: `StructureDefinition::inertZero`
+  and `copier`, `Function::elementAddressor`, five opcodes (`destroy_range`, `clone_at`, `clone_callback`,
+  `destroy_callback`, `linear_range_guard`), lowering of `a[i]` to an addressor call plus `integer_address`,
+  verifier rules (shapes, runtime-only, escape and dominance of the element address, addressor and copier
+  signatures), wire version 20. Backend: the clone helper calls the copier, the destroy helper runs `deinit`
+  unconditionally for an inert-zero struct, `destroy_range` destroys last to first. The 17 failing tests now pass
+  and 16 more were added. Two reviewers (type-system, IR/backend, separate agents) found one soundness hole,
+  fixed here: a struct holding a linear library array lost that field from its required leaves
+  (`linearLeafPaths`). Also fixed: the escape rule rejected a role element used as the receiver of
+  `array_append`, `array_remove_last`, `array_consume_empty`, `dictionary_set` and `dictionary_get`; range
+  destruction order (was first to last); the copier may not consume; `clone_callback` needs a copyable type;
+  the addressor and the element type of the place are verified; the role prelude stays a non-runtime unit;
+  the ending hint names `finish`. `ValidationScriptTests` timed out once under parallel load and passed alone.
+  Known and recorded: a library `deinit` that overwrites its whole `self` recurses (the live-flag path
+  prevented that), `-O0` calls the addressor (no `alwaysinline` yet), and the addressor and copier instances are
+  produced for every concrete instance. Not done: Release, Linux, macOS, `scripts/validate.py`, executed tests,
+  the cost gate (Phase 3). Nothing here is pushed.
+- 2026-11-15: Re-review of the fixes (type-system and IR/backend, separate agents): no soundness issue remains in
+  either half; the type-system reviewer ran about 150 probe programs. Changes from it: the copier clone helper is
+  `NoInline` (same debug-scope reasoning as a destroy helper that calls a `deinit`; not yet reproduced with `-g`),
+  the verifier requires the addressor's receiver to have one type argument and a plain borrowed index, writing
+  `count` outside the library now says why, the `consume a[i]` help mentions `joyeer_intrinsic_move_out`, and
+  `clone_at` of a concrete noncopyable type is rejected where it is written. Two tests that passed vacuously were
+  fixed. Open, none a soundness defect: a library `deinit` that assigns to the whole `self` recurses (consider
+  rejecting it for `array_type` bodies); no test executes a library array; addressor and copy instances exist for
+  every concrete copyable instance (cost, Phase 3); the layout-intrinsic name list is copied in three places; more
+  coverage from the decision's list (recursive owns, `Buffer<Void>`, forgery, nested holders) is probe-verified
+  but not yet pinned. Windows x64 Debug `ctest` 1751 of 1751.
+- 2026-11-15: `scripts/validate.py` on commit f0ea4f9 passes. Windows x64: Debug and Release build, `ctest` 1751 of
+  1751 and `fern test` 7 of 7 (`Fern.Workspace` in Debug and `Fern.Manifest` and `Fern.Workspace` in Release passed only
+  on the validator's rerun, the known parallel-load timeout pattern). Linux x86_64 (WSL Ubuntu, a fresh Git clone):
+  Debug and Release build, `ctest` 1727 of 1727 and `fern test` 7 of 7, no reruns. macOS is run by the user and not
+  reported here. The Phase 2 review item stays open only for that and for the open items listed above.
+

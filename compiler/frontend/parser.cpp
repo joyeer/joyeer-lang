@@ -1634,7 +1634,9 @@ bool Parser::atIntrinsicTypeArguments(const syntax::ExprPtr& callee) const {
     return name == "joyeer_intrinsic_size_of" || name == "joyeer_intrinsic_align_of" ||
            name == "joyeer_intrinsic_move_in" || name == "joyeer_intrinsic_move_out" ||
            name == "joyeer_intrinsic_destroy_at" || name == "joyeer_intrinsic_stack_slot" ||
-           name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address";
+           name == "joyeer_intrinsic_needs_destroy" || name == "joyeer_intrinsic_callback_address" ||
+           name == "joyeer_intrinsic_clone_at" || name == "joyeer_intrinsic_destroy_range" ||
+           name == "joyeer_intrinsic_clone_callback" || name == "joyeer_intrinsic_destroy_callback";
 }
 
 std::vector<syntax::TypePtr> Parser::parseIntrinsicTypeArguments() {

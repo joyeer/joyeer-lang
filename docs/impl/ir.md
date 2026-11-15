@@ -38,7 +38,9 @@ The module owns:
 
 - a deterministic snapshot of canonical compile-time `TypeId` names;
 - concrete user `struct` field definitions, and for a struct that declares `deinit` the
-  function that runs it plus a hidden trailing `$live` Bool field (below);
+  function that runs it plus a hidden trailing `$live` Bool field (below), except a struct bound to the library
+  array role ([0025](../decisions/0025-library-collection-capabilities.md)), which is marked `inert_zero`, has no
+  live flag, and records its `copier` function when the instance is copyable;
 - user enum and instantiated generic enum case definitions, including the `Optional<T>` / `Result<T,E>`
   instances, whose `EnumerationDefinition` carries the role (`optional` or `result`) and the indices of
   its present/absent or success/failure cases ([0024](../decisions/0024-library-optional-and-result.md)).
@@ -174,7 +176,16 @@ The current instruction set covers:
   result's type. `move_in`, `move_out` and `destroy_at` lower to `store`, `take` and `destroy` on that address. The
   runtime-only stack slots use `stack_allocate` and `pointer_to_integer`; specialized callback
   addresses use `function_address` and `pointer_to_integer`. The destruction query folds through
-  the existing IR destruction analysis. The wire format version is 19;
+  the existing IR destruction analysis. The wire format version is 20;
+- collection capabilities ([decision 0025](../decisions/0025-library-collection-capabilities.md)), runtime-only:
+  `destroy_range` (address, count) destroys live elements of the type in `integerValue`, `clone_at` copies one
+  value into an uninitialized slot, `clone_callback` and `destroy_callback` yield the type's helper address as an
+  `Int`, and `linear_range_guard` traps `linear container dropped while not empty` when its count is not zero
+  (lowering uses it instead of `destroy_range` for a linear type, and an integer constant `0` instead of a
+  callback that does not apply). A function marked `elementAddressor` is the `array_element` method of a library
+  array instance; `a[i]` on such an array lowers to a call of it followed by `integer_address`, the one place
+  user code may form an integer address. The verifier requires that element address to be used only to load,
+  store, take, destroy, project or pass as an argument, and only where its definition dominates;
 - unconditional/conditional branches, returns, and unreachable;
 - struct construction, field address, and field extraction;
 - enum construction, payload extraction (`extract_payload`), and payload addresses
@@ -328,7 +339,10 @@ plus case symbol, including distinct builtin container instantiations.
   type relationships; opcode-specific Boolean constraints remain incomplete;
 - invalid `copy`, `take`, `destroy`, or `zero_init` operand categories/types;
 - a structure `deinit` that is not a function taking only the structure's address and returning
-  nothing, or a struct with one that does not end with the hidden live flag;
+  nothing, or a struct with one that does not end with the hidden live flag (an `inert_zero` struct must not
+  have one, and must have a `deinit`); a `copier` that is not a function borrowing the struct and returning it;
+  an element address that is converted, returned, stored as a value, or used outside its dominance; a
+  collection opcode outside a runtime function, or `clone_at` on a noncopyable type;
 - malformed recursive patterns;
 - malformed source maps, unknown source IDs, debug spans outside their own
   file's byte bounds, or locations without module source information;
