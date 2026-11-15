@@ -292,3 +292,14 @@ redesign. No prerequisite is considered accepted merely because this plan names 
   `container_end` method roles and a compiler-internal slot, adds `clone_at` and `is_linear`
   intrinsics, makes the destroy helper zero-fill, and expands the tests. No code changed; the decision
   item stays open until a review accepts revision 2.
+- 2026-11-15: Second language-designer review of 0025 revision 2: accept with changes (one blocker, the
+  constant-folded dead arm, which missed instance discovery, the checker and the header callbacks).
+  Revision 3 replaces it with per-type intrinsics (`destroy_range`, `clone_callback`, `destroy_callback`,
+  `clone_at`) that lower per concrete type, pins the `container_end` rule and trap texts, makes the IR
+  escape rule dominance-based, adds instance discovery of role-lowered uses, access-mode addressors for
+  the dictionary, the wire and verifier consequences and a larger test list. Probed with the current
+  compiler: `&a.append(a[0])` is rejected with `overlapping-access`; `consume hs[0]` on an array of
+  `JoinHandle` is accepted but the array then fails `use-after-consume` or `linear-not-consumed`, so the
+  new `consume-of-linear-element` diagnostic changes no accepted program; an array of `JoinHandle` is a
+  valid task input today, so a library array must stay sendable (§21). 0025 stays `proposed` until the
+  user accepts it.
